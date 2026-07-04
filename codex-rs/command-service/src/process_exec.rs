@@ -8,36 +8,33 @@ use async_channel::Sender;
 
 use crate::exec_request::ExecOptions;
 use crate::exec_request::ExecRequest;
+use crate::process_capture::CapturedProcessOutput as RawExecToolCallOutput;
+#[cfg(target_os = "windows")]
+use crate::process_capture::CapturedStreamOutput;
+use crate::process_capture::ProcessOutputChunk;
+use crate::process_capture::ProcessOutputSender;
+use crate::process_capture::ProcessOutputStream;
+#[cfg(target_os = "windows")]
+use crate::process_capture::aggregate_output;
+use crate::process_capture::consume_process_output;
+use crate::process_capture::finalize_captured_process_output;
+#[cfg(target_os = "windows")]
+use crate::process_capture::synthetic_exit_status;
 use crate::spawn::SpawnChildRequest;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
-pub use codex_command_service_api::ExecCapturePolicy;
-pub use codex_command_service_api::ExecExpiration;
-pub use codex_command_service_api::ExecExpirationOutcome;
-use codex_process_exec::CapturedProcessOutput as RawExecToolCallOutput;
-#[cfg(target_os = "windows")]
-use codex_process_exec::CapturedStreamOutput;
-pub use codex_process_exec::ExecParams;
-use codex_process_exec::ProcessOutputChunk;
-use codex_process_exec::ProcessOutputSender;
-use codex_process_exec::ProcessOutputStream;
-#[cfg(target_os = "windows")]
-use codex_process_exec::aggregate_output;
-use codex_process_exec::consume_process_output;
-use codex_process_exec::finalize_captured_process_output;
-#[cfg(target_os = "windows")]
-use codex_process_exec::synthetic_exit_status;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
-use codex_protocol::protocol::ExecOutputStream;
-use codex_protocol::protocol::SandboxPolicy;
+pub use command_service_api::ExecParams;
+use protocol::error::CodexErr;
+use protocol::error::Result;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::models::PermissionProfile;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ExecCommandOutputDeltaEvent;
+use protocol::protocol::ExecOutputStream;
+use protocol::protocol::SandboxPolicy;
 use codex_sandboxing_api::SandboxCommand;
 use codex_sandboxing_api::SandboxRuntime;
 use codex_sandboxing_api::SandboxTransformRequest;
@@ -54,7 +51,7 @@ fn select_process_exec_tool_sandbox_type(
     sandbox_runtime: &dyn SandboxRuntime,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
     network_sandbox_policy: NetworkSandboxPolicy,
-    windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
+    windows_sandbox_level: protocol::config_types::WindowsSandboxLevel,
     enforce_managed_network: bool,
 ) -> SandboxType {
     sandbox_runtime.select_initial(
@@ -233,7 +230,7 @@ pub async fn execute_exec_request(
         capture_policy,
         env,
         network: network.clone(),
-        sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+        sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
         windows_sandbox_level,
         windows_sandbox_private_desktop,
         justification: None,
@@ -306,7 +303,7 @@ fn windowsapps_path_kind(path: &str) -> &'static str {
 #[cfg(target_os = "windows")]
 fn record_windows_sandbox_spawn_failure(
     command_path: Option<&str>,
-    windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
+    windows_sandbox_level: protocol::config_types::WindowsSandboxLevel,
     err: &str,
 ) {
     let Some(error_code) = extract_create_process_as_user_error_code(err) else {
@@ -321,13 +318,13 @@ fn record_windows_sandbox_spawn_failure(
     let path_kind = windowsapps_path_kind(path);
     let level = if matches!(
         windows_sandbox_level,
-        codex_protocol::config_types::WindowsSandboxLevel::Elevated
+        protocol::config_types::WindowsSandboxLevel::Elevated
     ) {
         "elevated"
     } else {
         "legacy"
     };
-    codex_metrics_api::record_global_counter(
+    metrics_api::record_global_counter(
         "codex.windows_sandbox.createprocessasuserw_failed",
         /*inc*/ 1,
         &[

@@ -1,5 +1,5 @@
 [package]
-name = "codex-config"
+name = "config-service"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,47 +12,68 @@ test-support = []
 
 [dependencies]
 anyhow = { workspace = true }
+base64 = { workspace = true }
 codex-agent-roles = { workspace = true }
 codex-auth-types = { workspace = true }
-codex-command-service-api = { workspace = true }
-codex-config-diagnostics = { workspace = true }
-codex-config-edit = { workspace = true }
-codex-config-local-loader = { workspace = true }
-codex-config-loader = { workspace = true }
+command-service-api = { workspace = true }
 codex-config-permissions = { workspace = true }
 codex-config-requirements = { workspace = true }
 codex-config-state = { workspace = true }
 codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
 plugin-service-api = { workspace = true }
-codex-core-skills-api = { workspace = true }
-codex-execpolicy-api = { workspace = true }
+skill-service-api = { workspace = true }
+permissions-service-api = { workspace = true }
 codex-features = { workspace = true }
 codex-file-system = { workspace = true }
 codex-git-info = { workspace = true }
-codex-hooks-api = { workspace = true }
-codex-mcp-types = { workspace = true }
+hooks-api = { workspace = true }
+dunce = { workspace = true }
+futures = { workspace = true, features = ["alloc", "std"] }
+gethostname = { workspace = true }
+mcp-types = { workspace = true }
 memory-service-api = { workspace = true }
-codex-model-provider-info = { workspace = true }
-codex-models-manager-api = { workspace = true }
+model-service-api = { workspace = true }
 codex-network-proxy-api = { workspace = true }
-codex-protocol = { workspace = true }
-codex-rollout-api = { workspace = true }
+protocol = { workspace = true }
+rollout-api = { workspace = true }
 codex-sandboxing-api = { workspace = true }
-codex-state-api = { workspace = true }
+serde_ignored = { workspace = true }
+serde_path_to_error = { workspace = true }
+state-api = { workspace = true }
+tokio = { workspace = true, features = ["fs", "rt"] }
+toml_edit = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 codex-utils-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+prost = "0.14.3"
+thiserror = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 
+[target.'cfg(unix)'.dependencies]
+dns-lookup = { workspace = true }
+libc = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi-util = { workspace = true }
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+] }
+
 [dev-dependencies]
 assert_matches = { workspace = true }
-base64 = { workspace = true }
-codex-execpolicy = { workspace = true }
-codex-models-manager = { workspace = true }
+permissions-service = { workspace = true }
+model-service = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 dirs = { workspace = true }
 pretty_assertions = { workspace = true }
@@ -60,7 +81,6 @@ serde_json = { workspace = true }
 similar = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
-toml_edit = { workspace = true }
 
 [lib]
 doctest = false

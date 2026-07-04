@@ -1,0 +1,23 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "permissions-service-api"
+version.workspace = true
+
+[lib]
+name = "permissions_service_api"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-config-permissions = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+multimap = { workspace = true }
+protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+shlex = { workspace = true }
+thiserror = { workspace = true }

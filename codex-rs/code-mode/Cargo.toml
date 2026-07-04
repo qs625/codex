@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 async-channel = { workspace = true }
 codex-code-mode-api = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 deno_core_icudata = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

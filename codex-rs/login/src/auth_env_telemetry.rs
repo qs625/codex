@@ -1,6 +1,6 @@
 pub use codex_auth_types::AuthEnvTelemetry;
 pub use codex_auth_types::AuthEnvTelemetryInput;
-use codex_model_provider_info::ModelProviderInfo;
+use model_service_api::ModelProviderInfo;
 
 pub fn collect_auth_env_telemetry(
     provider: &ModelProviderInfo,
@@ -15,7 +15,7 @@ pub fn collect_auth_env_telemetry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_model_provider_info::WireApi;
+    use model_service_api::WireApi;
     use pretty_assertions::assert_eq;
 
     #[test]

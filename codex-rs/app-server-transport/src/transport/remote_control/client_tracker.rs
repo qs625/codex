@@ -11,7 +11,7 @@ use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::QueuedOutgoingMessage;
 use crate::transport::ConnectionOrigin;
 use crate::transport::remote_control::QueuedServerEnvelope;
-use codex_app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCMessage;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
@@ -318,7 +318,7 @@ impl ClientTracker {
 fn remote_control_message_starts_connection(message: &JSONRPCMessage) -> bool {
     matches!(
         message,
-        JSONRPCMessage::Request(codex_app_server_protocol::JSONRPCRequest { method, .. })
+        JSONRPCMessage::Request(app_server_protocol::JSONRPCRequest { method, .. })
             if method == "initialize"
     )
 }
@@ -333,10 +333,10 @@ mod tests {
     use crate::outgoing_message::OutgoingMessage;
     use crate::transport::remote_control::protocol::ClientEnvelope;
     use crate::transport::remote_control::protocol::ClientEvent;
-    use codex_app_server_protocol::ConfigWarningNotification;
-    use codex_app_server_protocol::JSONRPCRequest;
-    use codex_app_server_protocol::RequestId;
-    use codex_app_server_protocol::ServerNotification;
+    use app_server_protocol::ConfigWarningNotification;
+    use app_server_protocol::JSONRPCRequest;
+    use app_server_protocol::RequestId;
+    use app_server_protocol::ServerNotification;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use tokio::time::timeout;
@@ -545,7 +545,7 @@ mod tests {
             .handle_message(ClientEnvelope {
                 event: ClientEvent::ClientMessage {
                     message: JSONRPCMessage::Notification(
-                        codex_app_server_protocol::JSONRPCNotification {
+                        app_server_protocol::JSONRPCNotification {
                             method: "initialized".to_string(),
                             params: None,
                         },

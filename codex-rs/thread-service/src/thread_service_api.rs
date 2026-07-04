@@ -6,27 +6,27 @@ use crate::session::turn_context::TurnContext;
 use crate::thread::ThreadService;
 use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::SpawnAgentForkMode;
-use codex_protocol::models::ResponseItem;
+use protocol::models::ResponseItem;
 use thread_service_api::ThreadAgentMode;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadListedAgent;
+use thread_service_api::ThreadServiceApi;
+use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadSpawnAgentForkMode;
 use thread_service_api::ThreadSpawnAgentRequest;
 use thread_service_api::ThreadSpawnAgentResult;
-use thread_service_api::ThreadServiceApi;
-use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadTurnCapability;
 use thread_service_api::ThreadWaitAgentReason;
 use thread_service_api::ThreadWaitAgentResult;
-use codex_tool_types::FunctionCallError;
+use tool_service_api::FunctionCallError;
 
 fn turn_context(
     turn: Arc<dyn ThreadTurnCapability>,
 ) -> Result<Arc<TurnContext>, FunctionCallError> {
-    turn.into_any_arc()
-        .downcast::<TurnContext>()
-        .map_err(|_| FunctionCallError::Fatal("thread turn capability must be TurnContext".to_string()))
+    turn.into_any_arc().downcast::<TurnContext>().map_err(|_| {
+        FunctionCallError::Fatal("thread turn capability must be TurnContext".to_string())
+    })
 }
 
 fn session(turn: &TurnContext) -> Arc<Session> {
@@ -87,9 +87,7 @@ fn from_runtime_wait_result(
             codex_agent_runtime::WaitAgentReason::MailboxMessage => {
                 ThreadWaitAgentReason::MailboxMessage
             }
-            codex_agent_runtime::WaitAgentReason::FinalStatus => {
-                ThreadWaitAgentReason::FinalStatus
-            }
+            codex_agent_runtime::WaitAgentReason::FinalStatus => ThreadWaitAgentReason::FinalStatus,
             codex_agent_runtime::WaitAgentReason::StatusUpdate => {
                 ThreadWaitAgentReason::StatusUpdate
             }
@@ -146,8 +144,8 @@ impl ThreadServiceApi for ThreadService {
                 call_id,
                 to_runtime_spawn_request(request),
             )
-                .await
-                .map(from_runtime_spawn_result)
+            .await
+            .map(from_runtime_spawn_result)
         })
     }
 
@@ -193,9 +191,14 @@ impl ThreadServiceApi for ThreadService {
     ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
         Box::pin(async move {
             let turn = turn_context(turn)?;
-            multi_agent::close_agent_tool(session(turn.as_ref()), Arc::clone(&turn), call_id, target)
-                .await
-                .map(from_runtime_close_result)
+            multi_agent::close_agent_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                target,
+            )
+            .await
+            .map(from_runtime_close_result)
         })
     }
 
@@ -213,8 +216,8 @@ impl ThreadServiceApi for ThreadService {
                 call_id,
                 path_prefix,
             )
-                .await
-                .map(from_runtime_list_result)
+            .await
+            .map(from_runtime_list_result)
         })
     }
 

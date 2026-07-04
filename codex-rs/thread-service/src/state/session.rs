@@ -1,8 +1,8 @@
 //! Session-wide mutable state.
 
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::ResponseItem;
 use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::ResponseItem;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -10,12 +10,12 @@ use crate::session::PreviousTurnSettings;
 use crate::session::session::SessionConfiguration;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
 use codex_context_manager::ContextManager;
-use codex_protocol::protocol::RateLimitSnapshot;
-use codex_protocol::protocol::ThreadSkill;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::TurnContextItem;
 use codex_utils_output_truncation::TruncationPolicy;
+use protocol::protocol::RateLimitSnapshot;
+use protocol::protocol::ThreadSkill;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TokenUsageInfo;
+use protocol::protocol::TurnContextItem;
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
 pub(crate) struct SessionState {
@@ -33,7 +33,7 @@ pub(crate) struct SessionState {
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
     pub(crate) active_connector_selection: HashSet<String>,
     pub(crate) thread_skills: Vec<ThreadSkill>,
-    pub(crate) pending_session_start_source: Option<codex_hooks_api::SessionStartSource>,
+    pub(crate) pending_session_start_source: Option<hooks_api::SessionStartSource>,
     granted_permissions: Option<AdditionalPermissionProfile>,
     next_turn_is_first: bool,
 }
@@ -218,14 +218,14 @@ impl SessionState {
 
     pub(crate) fn set_pending_session_start_source(
         &mut self,
-        value: Option<codex_hooks_api::SessionStartSource>,
+        value: Option<hooks_api::SessionStartSource>,
     ) {
         self.pending_session_start_source = value;
     }
 
     pub(crate) fn take_pending_session_start_source(
         &mut self,
-    ) -> Option<codex_hooks_api::SessionStartSource> {
+    ) -> Option<hooks_api::SessionStartSource> {
         self.pending_session_start_source.take()
     }
 

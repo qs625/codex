@@ -10,21 +10,21 @@ use codex_analytics_api::GuardianReviewTerminalStatus;
 #[cfg(test)]
 use codex_analytics_api::GuardianReviewTrackContext;
 #[cfg(test)]
-use codex_protocol::protocol::EventMsg;
+use protocol::protocol::EventMsg;
 #[cfg(test)]
-use codex_protocol::protocol::GuardianAssessmentDecisionSource;
+use protocol::protocol::GuardianAssessmentDecisionSource;
 #[cfg(test)]
-use codex_protocol::protocol::GuardianAssessmentEvent;
+use protocol::protocol::GuardianAssessmentEvent;
 #[cfg(test)]
-use codex_protocol::protocol::GuardianAssessmentStatus;
+use protocol::protocol::GuardianAssessmentStatus;
 #[cfg(test)]
-use codex_protocol::protocol::GuardianRiskLevel;
+use protocol::protocol::GuardianRiskLevel;
 #[cfg(test)]
-use codex_protocol::protocol::GuardianUserAuthorization;
+use protocol::protocol::GuardianUserAuthorization;
 #[cfg(test)]
-use codex_protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortReason;
 #[cfg(test)]
-use codex_protocol::protocol::WarningEvent;
+use protocol::protocol::WarningEvent;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -33,22 +33,18 @@ use crate::session::turn_context::TurnContext;
 #[cfg(test)]
 use crate::turn_timing::now_unix_timestamp_ms;
 
+use crate::session::session::approval_review_session_impl::GuardianReviewSessionOutcome;
+use crate::session::session::approval_review_session_impl::GuardianReviewSessionRequest;
+use crate::session::session::approval_review_session_impl::GuardianReviewSessionReuseKey;
+use crate::session::session::approval_review_session_impl::build_guardian_review_session_config;
 #[cfg(test)]
 use codex_guardian::GUARDIAN_REVIEW_TIMEOUT;
 use codex_guardian::GuardianApprovalRequest;
 use codex_guardian::GuardianAssessment;
 #[cfg(test)]
-use codex_protocol::protocol::GuardianAssessmentOutcome;
-#[cfg(test)]
 use codex_guardian::GuardianRejection;
 #[cfg(test)]
 use codex_guardian::GuardianRejectionCircuitBreakerAction;
-#[cfg(test)]
-use codex_protocol::protocol::ReviewDecision;
-use crate::session::session::approval_review_session_impl::GuardianReviewSessionOutcome;
-use crate::session::session::approval_review_session_impl::GuardianReviewSessionRequest;
-use crate::session::session::approval_review_session_impl::GuardianReviewSessionReuseKey;
-use crate::session::session::approval_review_session_impl::build_guardian_review_session_config;
 use codex_guardian::GuardianReviewSessionParams;
 #[cfg(test)]
 use codex_guardian::guardian_assessment_action;
@@ -61,6 +57,10 @@ use codex_guardian::guardian_request_turn_id;
 #[cfg(test)]
 use codex_guardian::guardian_reviewed_action;
 use codex_guardian::parse_guardian_assessment;
+#[cfg(test)]
+use protocol::protocol::GuardianAssessmentOutcome;
+#[cfg(test)]
+use protocol::protocol::ReviewDecision;
 
 #[derive(Debug)]
 pub(crate) enum GuardianReviewOutcome {
@@ -564,12 +564,16 @@ pub(crate) async fn run_review_session(
     };
     let available_models = session
         .services
-        .models_manager
-        .list_models(codex_models_manager_api::RefreshStrategy::Offline)
-        .await;
+        .model_service
+        .list_models(model_service_api::ListModelsRequest {
+            include_hidden: true,
+            refresh: model_service_api::ModelCatalogRefresh::Offline,
+        })
+        .await
+        .unwrap_or_default();
     let preferred_reasoning_effort = |supports_low: bool, fallback| {
         if supports_low {
-            Some(codex_protocol::openai_models::ReasoningEffort::Low)
+            Some(protocol::openai_models::ReasoningEffort::Low)
         } else {
             fallback
         }
@@ -583,7 +587,7 @@ pub(crate) async fn run_review_session(
             preset
                 .supported_reasoning_efforts
                 .iter()
-                .any(|effort| effort.effort == codex_protocol::openai_models::ReasoningEffort::Low),
+                .any(|effort| effort.effort == protocol::openai_models::ReasoningEffort::Low),
             Some(preset.default_reasoning_effort),
         );
         (preferred_model_id.to_string(), reasoning_effort)
@@ -592,7 +596,7 @@ pub(crate) async fn run_review_session(
             turn.model_info
                 .supported_reasoning_levels
                 .iter()
-                .any(|preset| preset.effort == codex_protocol::openai_models::ReasoningEffort::Low),
+                .any(|preset| preset.effort == protocol::openai_models::ReasoningEffort::Low),
             turn.reasoning_effort
                 .or(turn.model_info.default_reasoning_level),
         );

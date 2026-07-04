@@ -1,8 +1,8 @@
 use super::*;
 use crate::session::tests::make_session_configuration_for_tests;
-use codex_protocol::protocol::CreditsSnapshot;
-use codex_protocol::protocol::RateLimitWindow;
 use pretty_assertions::assert_eq;
+use protocol::protocol::CreditsSnapshot;
+use protocol::protocol::RateLimitWindow;
 
 #[tokio::test]
 // Verifies connector merging deduplicates repeated IDs.
@@ -121,7 +121,7 @@ async fn set_rate_limits_carries_credits_and_plan_type_from_codex_to_codex_other
             unlimited: false,
             balance: Some("50".to_string()),
         }),
-        plan_type: Some(codex_protocol::account::PlanType::Plus),
+        plan_type: Some(protocol::account::PlanType::Plus),
         rate_limit_reached_type: None,
     });
 
@@ -155,7 +155,7 @@ async fn set_rate_limits_carries_credits_and_plan_type_from_codex_to_codex_other
                 unlimited: false,
                 balance: Some("50".to_string()),
             }),
-            plan_type: Some(codex_protocol::account::PlanType::Plus),
+            plan_type: Some(protocol::account::PlanType::Plus),
             rate_limit_reached_type: None,
         })
     );

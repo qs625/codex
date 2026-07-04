@@ -13,110 +13,96 @@ use crate::tasks::interrupted_turn_history_marker_from_config;
 use crate::thread::CodexThread;
 use codex_agent_runtime::LiveAgentShutdownAction;
 use codex_agent_runtime::live_agent_shutdown_action;
-use codex_approval_service_api::ApprovalServiceApi;
 use codex_analytics_api::AnalyticsEventsClient;
-use codex_api_runtime_api::DisabledApiRuntimeFactory;
-use codex_api_runtime_api::SharedApiRuntimeFactory;
+use codex_approval_service_api::ApprovalServiceApi;
 use codex_auth_types::SharedAuthRuntime;
 use codex_code_mode_api::CodeModeRuntimeFactory;
-use codex_command_service_api::CommandServiceApi;
-use codex_config::Config;
-use codex_config::skill_config_layer_stack_from_config_layer_stack;
-use plugin_service_api::DisabledPluginRuntime;
-use plugin_service_api::SharedPluginRuntime;
-use codex_core_skills_api::DisabledSkillsRuntime;
-use codex_core_skills_api::SharedSkillsRuntime;
-use codex_core_skills_api::SkillsLoadInput;
+use config_service::Config;
+use config_service::skill_config_layer_stack_from_config_layer_stack;
 #[cfg(any(test, feature = "test-support"))]
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_extension_api::ExtensionRegistry;
 #[cfg(any(test, feature = "test-support"))]
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
-use codex_hooks_api::DisabledHookRuntimeFactory;
-use codex_hooks_api::SharedHookRuntimeFactory;
 #[cfg(any(test, feature = "test-support"))]
 use codex_login::AuthManager;
 #[cfg(any(test, feature = "test-support"))]
 use codex_login::CodexAuth;
 #[cfg(any(test, feature = "test-support"))]
 use codex_login::model_provider_auth_manager;
-use memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider;
-use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
-use codex_model_client::AttestationProvider;
-use codex_model_provider_api::ModelProviderFactory;
-use codex_model_provider_api::SharedModelProviderAuthManager;
-use codex_model_provider_api::SharedModelProviderFactory;
-use codex_model_provider_info::ModelProviderInfo;
-#[cfg(any(test, feature = "test-support"))]
-use codex_model_provider_info::OPENAI_PROVIDER_ID;
-use codex_models_manager_api::RefreshStrategy;
-use codex_models_manager_api::SharedModelsManager;
+use model_service::AttestationProvider;
 use codex_network_proxy_api::DisabledNetworkProxyRuntimeFactory;
 use codex_network_proxy_api::SharedNetworkProxyRuntimeFactory;
 use codex_openai_files_api::DisabledOpenAiFileUploader;
 use codex_openai_files_api::SharedOpenAiFileUploader;
-use codex_permissions_runtime::EmptyExecPolicyLoader;
-use codex_permissions_runtime::ExecPolicyLoader;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::CollaborationModeMask;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelsResponse;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::ResumedHistory;
-use codex_protocol::protocol::SessionConfiguredEvent;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::TurnEnvironmentSelection;
-use codex_protocol::protocol::W3cTraceContext;
-use codex_protocol::user_input::UserInput;
-use codex_rollout_api::ForkSnapshot;
-use codex_rollout_api::fork_history_from_snapshot;
+use permissions_service::EmptyExecPolicyLoader;
+use permissions_service::ExecPolicyLoader;
 use codex_sandboxing_api::DisabledSandboxRuntime;
 use codex_sandboxing_api::SharedSandboxRuntime;
-use codex_session_telemetry_api::DisabledSessionTelemetryFactory;
-use codex_session_telemetry_api::SharedSessionTelemetryFactory;
-use codex_state_api::DirectionalThreadSpawnEdgeStatus;
-use codex_state_api::ExternalGoalSet;
-use thread_service_api::ActiveEventSubscriptionTracker;
-use thread_service_api::ThreadCreatedEvent;
-use thread_service_api::ThreadShutdownReport;
-use thread_service_api::ThreadSkillWatchPath;
-#[cfg(any(test, feature = "test-support"))]
-use codex_thread_store::LocalThreadStore;
-#[cfg(any(test, feature = "test-support"))]
-use codex_thread_store::LocalThreadStoreConfig;
-use codex_thread_store_api::LiveThreadFactory;
-use codex_thread_store_api::ReadThreadByRolloutPathParams;
-use codex_thread_store_api::ReadThreadParams;
-use codex_thread_store_api::StoredThread;
-use codex_thread_store_api::StoredThreadHistory;
-use codex_thread_store_api::ThreadMetadataPatch;
-use codex_thread_store_api::ThreadStore;
-use codex_thread_store_api::ThreadStoreError;
-use codex_thread_store_api::ThreadStoreResult;
-use codex_thread_store_api::UpdateThreadMetadataParams;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use command_service_api::CommandServiceApi;
+use exec_server_api::ExecEnvironmentProvider;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use goal_service_api::GoalServiceApi;
+use hooks_api::DisabledHookRuntimeFactory;
+use hooks_api::SharedHookRuntimeFactory;
 use mcp_service_api::DisabledMcpAuthRuntime;
 use mcp_service_api::DisabledMcpConnectionRuntimeFactory;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
 use mcp_service_api::McpServiceApi;
+use memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider;
+use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
+use model_service::ModelService;
+use model_service::ModelServiceRuntimeDeps;
+use model_service_api::DisabledApiRuntimeFactory;
+use model_service_api::ListModelsRequest;
+use model_service_api::ModelCatalogRefresh;
+use model_service_api::ModelProviderInfo;
+use model_service_api::ModelServiceApi;
+#[cfg(any(test, feature = "test-support"))]
+use model_service_api::OPENAI_PROVIDER_ID;
+use model_service_api::SharedApiRuntimeFactory;
+use model_service_api::SharedModelProviderAuthManager;
+use model_service_api::SharedModelProviderFactory;
+use model_service_api::SharedModelServiceApi;
+use plugin_service_api::DisabledPluginRuntime;
+use plugin_service_api::SharedPluginRuntime;
+use protocol::ThreadId;
+use protocol::config_types::CollaborationModeMask;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
+use protocol::mcp::CallToolResult;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelsResponse;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::Op;
+use protocol::protocol::ResumedHistory;
+use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TokenUsageInfo;
+use protocol::protocol::TurnEnvironmentSelection;
+use protocol::protocol::W3cTraceContext;
+use protocol::user_input::UserInput;
+use rollout_api::ForkSnapshot;
+use rollout_api::fork_history_from_snapshot;
+use session_telemetry_api::DisabledSessionTelemetryFactory;
+use session_telemetry_api::SharedSessionTelemetryFactory;
+use skill_service_api::DisabledSkillService;
+use skill_service_api::SharedSkillServiceApi;
+use skill_service_api::SkillWatchPath;
+use skill_service_api::SkillsLoadInput;
+use state_api::DirectionalThreadSpawnEdgeStatus;
+use state_api::ExternalGoalSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -125,6 +111,23 @@ use std::sync::RwLock as StdRwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use thread_service_api::ActiveEventSubscriptionTracker;
+use thread_service_api::ThreadCreatedEvent;
+use thread_service_api::ThreadShutdownReport;
+#[cfg(any(test, feature = "test-support"))]
+use thread_store::LocalThreadStore;
+#[cfg(any(test, feature = "test-support"))]
+use thread_store::LocalThreadStoreConfig;
+use thread_store_api::LiveThreadFactory;
+use thread_store_api::ReadThreadByRolloutPathParams;
+use thread_store_api::ReadThreadParams;
+use thread_store_api::StoredThread;
+use thread_store_api::StoredThreadHistory;
+use thread_store_api::ThreadMetadataPatch;
+use thread_store_api::ThreadStore;
+use thread_store_api::ThreadStoreError;
+use thread_store_api::ThreadStoreResult;
+use thread_store_api::UpdateThreadMetadataParams;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use tracing::warn;
@@ -186,7 +189,7 @@ pub struct StartThreadOptions {
     pub initial_history: InitialHistory,
     pub session_source: Option<SessionSource>,
     pub thread_source: Option<ThreadSource>,
-    pub dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
+    pub dynamic_tools: Vec<protocol::dynamic_tools::DynamicToolSpec>,
     pub persist_extended_history: bool,
     pub metrics_service_name: Option<String>,
     pub parent_trace: Option<W3cTraceContext>,
@@ -231,7 +234,7 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
     pub(crate) agent_control: AgentControl,
     pub(crate) session_source: SessionSource,
     pub(crate) inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
-    pub(crate) inherited_exec_policy: Option<Arc<codex_permissions_runtime::ExecPolicyManager>>,
+    pub(crate) inherited_exec_policy: Option<Arc<permissions_service::ExecPolicyManager>>,
 }
 
 /// Shared, `Arc`-owned state for [`ThreadService`]. This `Arc` is required to have a single
@@ -242,9 +245,9 @@ pub(crate) struct ThreadServiceState {
     thread_created_tx: broadcast::Sender<ThreadCreatedEvent>,
     auth_runtime: SharedAuthRuntime,
     provider_auth_manager: Option<SharedModelProviderAuthManager>,
-    models_manager: SharedModelsManager,
+    model_service: SharedModelServiceApi,
     environment_manager: Arc<dyn ExecEnvironmentProvider>,
-    skills_manager: SharedSkillsRuntime,
+    skill_service: SharedSkillServiceApi,
     plugin_runtime: SharedPluginRuntime,
     mcp_service: Arc<dyn McpServiceApi>,
     mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
@@ -275,19 +278,6 @@ pub(crate) struct ThreadServiceState {
     tool_service: Arc<crate::ToolServiceApi>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
-}
-
-pub fn build_models_manager(
-    config: &Config,
-    provider_auth_manager: Option<SharedModelProviderAuthManager>,
-    model_provider_factory: &dyn ModelProviderFactory,
-) -> SharedModelsManager {
-    let provider = model_provider_factory
-        .create_model_provider(config.model_provider.clone(), provider_auth_manager);
-    provider.models_manager(
-        config.codex_home.to_path_buf(),
-        config.model_catalog.clone(),
-    )
 }
 
 impl ThreadService {
@@ -386,7 +376,7 @@ impl ThreadService {
             Arc::new(DisabledSessionTelemetryFactory),
             Arc::new(DisabledHookRuntimeFactory),
             Arc::new(DisabledMemoryToolDeveloperInstructionsProvider),
-            Arc::new(DisabledSkillsRuntime),
+            Arc::new(DisabledSkillService),
             Arc::new(DisabledPluginRuntime),
             tool_service,
             mcp_service,
@@ -421,7 +411,7 @@ impl ThreadService {
         session_telemetry_factory: SharedSessionTelemetryFactory,
         hook_runtime_factory: SharedHookRuntimeFactory,
         memory_tool_developer_instructions_provider: SharedMemoryToolDeveloperInstructionsProvider,
-        skills_runtime: SharedSkillsRuntime,
+        skills_runtime: SharedSkillServiceApi,
         plugin_runtime: SharedPluginRuntime,
         tool_service: Arc<crate::ToolServiceApi>,
         mcp_service: Arc<dyn McpServiceApi>,
@@ -431,18 +421,28 @@ impl ThreadService {
             auth_runtime,
             provider_auth_manager,
         } = auth_runtimes;
+        let model_service: SharedModelServiceApi =
+            Arc::new(ModelService::from_runtime_deps(ModelServiceRuntimeDeps {
+                codex_home: config.codex_home.to_path_buf(),
+                config_model_catalog: config.model_catalog.clone(),
+                api_runtime_factory: Arc::clone(&api_runtime_factory),
+                provider_auth_manager: provider_auth_manager.clone(),
+                model_provider_factory: Arc::clone(&model_provider_factory),
+                default_provider: Some(config.model_provider.clone()),
+                providers_by_id: config.model_providers.clone(),
+                model_metadata_overrides: config
+                    .to_models_manager_config()
+                    .model_metadata_overrides,
+                attestation_provider: attestation_provider.clone(),
+            }));
         Self {
             state: Arc::new(ThreadServiceState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
-                models_manager: build_models_manager(
-                    config,
-                    provider_auth_manager.clone(),
-                    model_provider_factory.as_ref(),
-                ),
+                model_service,
                 provider_auth_manager,
                 environment_manager,
-                skills_manager: skills_runtime,
+                skill_service: skills_runtime,
                 plugin_runtime,
                 mcp_service,
                 mcp_auth_runtime,
@@ -544,13 +544,12 @@ impl ThreadService {
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
         let restriction_product = SessionSource::Exec.restriction_product();
         let plugin_runtime: SharedPluginRuntime = Arc::new(DisabledPluginRuntime);
-        let skills_manager: SharedSkillsRuntime = Arc::new(
-            codex_core_skills::SkillsManager::new_with_restriction_product(
+        let skill_service: SharedSkillServiceApi =
+            Arc::new(skill_service::SkillService::new_with_restriction_product(
                 skills_codex_home,
                 /*bundled_skills_enabled*/ true,
                 restriction_product,
-            ),
-        );
+            ));
         // This test constructor has no Config input. Tests that need a non-local
         // process store should construct ThreadService::new with an explicit store.
         let thread_store: Arc<dyn ThreadStore> = Arc::new(LocalThreadStore::new(
@@ -559,32 +558,46 @@ impl ThreadService {
                 sqlite_home: codex_home.clone(),
                 default_model_provider_id: OPENAI_PROVIDER_ID.to_string(),
             },
-            state_db.clone(),
+            state_db
+                .clone()
+                .map(|state_db| state_db as state_api::SharedStateDbRuntime),
         ));
         let provider_auth_manager = model_provider_auth_manager(Some(Arc::clone(&auth_manager)));
+        let model_service: SharedModelServiceApi =
+            Arc::new(ModelService::from_runtime_deps(ModelServiceRuntimeDeps {
+                codex_home,
+                config_model_catalog: None,
+                api_runtime_factory: Arc::new(model_service::DefaultApiRuntimeFactory),
+                provider_auth_manager: provider_auth_manager.clone(),
+                model_provider_factory: Arc::clone(&model_provider_factory),
+                default_provider: Some(provider.clone()),
+                providers_by_id: std::collections::HashMap::new(),
+                model_metadata_overrides: Vec::new(),
+                attestation_provider: None,
+            }));
         let auth_runtime: SharedAuthRuntime = auth_manager;
         Self {
             state: Arc::new(ThreadServiceState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
-                models_manager: model_provider_factory
-                    .create_model_provider(provider, provider_auth_manager.clone())
-                    .models_manager(codex_home, /*config_model_catalog*/ None),
+                model_service,
                 provider_auth_manager,
                 environment_manager,
-                skills_manager,
+                skill_service,
                 plugin_runtime,
-                mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
-                mcp_auth_runtime: Arc::new(codex_mcp::DefaultMcpAuthRuntime),
+                mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(
+                    approval_service::ApprovalService,
+                ))),
+                mcp_auth_runtime: Arc::new(mcp_service::DefaultMcpAuthRuntime),
                 mcp_connection_runtime_factory: Arc::new(
-                    codex_mcp::DefaultMcpConnectionRuntimeFactory,
+                    mcp_service::DefaultMcpConnectionRuntimeFactory,
                 ),
                 api_runtime_factory: Arc::new(DisabledApiRuntimeFactory),
                 network_proxy_runtime_factory: Arc::new(
                     codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
                 ),
                 sandbox_runtime: Arc::new(DisabledSandboxRuntime),
-                command_service_api: Arc::new(codex_command_service::CommandService::new()),
+                command_service_api: Arc::new(command_service::CommandService::new()),
                 session_telemetry_factory: Arc::new(DisabledSessionTelemetryFactory),
                 hook_runtime_factory: Arc::new(DisabledHookRuntimeFactory),
                 memory_tool_developer_instructions_provider: Arc::new(
@@ -592,7 +605,7 @@ impl ThreadService {
                 ),
                 extensions: empty_extension_registry(),
                 thread_store,
-                live_thread_factory: Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+                live_thread_factory: Arc::new(thread_store::DefaultLiveThreadFactory),
                 attestation_provider: None,
                 auth_runtime,
                 session_source: SessionSource::Exec,
@@ -647,8 +660,8 @@ impl ThreadService {
         self.state.auth_runtime.clone()
     }
 
-    pub fn skills_manager(&self) -> SharedSkillsRuntime {
-        self.state.skills_manager.clone()
+    pub fn skill_service(&self) -> SharedSkillServiceApi {
+        self.state.skill_service.clone()
     }
 
     pub fn plugin_runtime(&self) -> SharedPluginRuntime {
@@ -678,15 +691,19 @@ impl ThreadService {
             .map(|_| ())
     }
 
-    pub fn get_models_manager(&self) -> SharedModelsManager {
-        self.state.models_manager.clone()
+    pub fn model_service(&self) -> SharedModelServiceApi {
+        Arc::clone(&self.state.model_service)
     }
 
-    pub async fn list_models(&self, refresh_strategy: RefreshStrategy) -> Vec<ModelPreset> {
+    pub async fn list_models(&self, refresh: ModelCatalogRefresh) -> Vec<ModelPreset> {
         self.state
-            .models_manager
-            .list_models(refresh_strategy)
+            .model_service
+            .list_models(ListModelsRequest {
+                include_hidden: true,
+                refresh,
+            })
             .await
+            .unwrap_or_default()
     }
 
     pub async fn list_models_for_provider(
@@ -694,22 +711,33 @@ impl ThreadService {
         config: &Config,
         provider_info: ModelProviderInfo,
         model_catalog: Option<ModelsResponse>,
-        refresh_strategy: RefreshStrategy,
+        refresh: ModelCatalogRefresh,
     ) -> Vec<ModelPreset> {
         let mut config = config.clone();
         config.model_provider = provider_info;
         config.model_catalog = model_catalog;
-        build_models_manager(
-            &config,
-            self.state.provider_auth_manager.clone(),
-            self.state.model_provider_factory.as_ref(),
-        )
-        .list_models(refresh_strategy)
-        .await
+        let model_service = ModelService::from_runtime_deps(ModelServiceRuntimeDeps {
+            codex_home: config.codex_home.to_path_buf(),
+            config_model_catalog: config.model_catalog.clone(),
+            api_runtime_factory: Arc::clone(&self.state.api_runtime_factory),
+            provider_auth_manager: self.state.provider_auth_manager.clone(),
+            model_provider_factory: Arc::clone(&self.state.model_provider_factory),
+            default_provider: Some(config.model_provider.clone()),
+            providers_by_id: config.model_providers.clone(),
+            model_metadata_overrides: config.to_models_manager_config().model_metadata_overrides,
+            attestation_provider: self.state.attestation_provider.clone(),
+        });
+        model_service
+            .list_models(ListModelsRequest {
+                include_hidden: true,
+                refresh,
+            })
+            .await
+            .unwrap_or_default()
     }
 
     pub fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
-        self.state.models_manager.list_collaboration_modes()
+        self.state.model_service.list_collaboration_modes()
     }
 
     pub async fn list_thread_ids(&self) -> Vec<ThreadId> {
@@ -885,7 +913,7 @@ impl ThreadService {
     pub async fn start_thread_with_tools(
         &self,
         config: Config,
-        dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
+        dynamic_tools: Vec<protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
     ) -> CodexResult<NewThread> {
         let environments = default_thread_environment_selections(
@@ -1430,7 +1458,7 @@ impl ThreadServiceState {
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
-        inherited_exec_policy: Option<Arc<codex_permissions_runtime::ExecPolicyManager>>,
+        inherited_exec_policy: Option<Arc<permissions_service::ExecPolicyManager>>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> CodexResult<NewThread> {
         let environments = environments.unwrap_or_else(|| {
@@ -1499,7 +1527,7 @@ impl ThreadServiceState {
         thread_source: Option<ThreadSource>,
         persist_extended_history: bool,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
-        inherited_exec_policy: Option<Arc<codex_permissions_runtime::ExecPolicyManager>>,
+        inherited_exec_policy: Option<Arc<permissions_service::ExecPolicyManager>>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> CodexResult<NewThread> {
         let environments = environments.unwrap_or_else(|| {
@@ -1531,7 +1559,7 @@ impl ThreadServiceState {
         initial_history: InitialHistory,
         agent_control: AgentControl,
         thread_source: Option<ThreadSource>,
-        dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
+        dynamic_tools: Vec<protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
         parent_trace: Option<W3cTraceContext>,
@@ -1564,11 +1592,11 @@ impl ThreadServiceState {
         agent_control: AgentControl,
         session_source: SessionSource,
         thread_source: Option<ThreadSource>,
-        dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
+        dynamic_tools: Vec<protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
-        inherited_exec_policy: Option<Arc<codex_permissions_runtime::ExecPolicyManager>>,
+        inherited_exec_policy: Option<Arc<permissions_service::ExecPolicyManager>>,
         parent_trace: Option<W3cTraceContext>,
         environments: Vec<TurnEnvironmentSelection>,
         user_shell_override: Option<crate::runtime_shell_model::Shell>,
@@ -1618,9 +1646,8 @@ impl ThreadServiceState {
                 &self.memory_tool_developer_instructions_provider,
             ),
             hook_runtime_factory: Arc::clone(&self.hook_runtime_factory),
-            models_manager: Arc::clone(&self.models_manager),
             environment_manager,
-            skills_manager: Arc::clone(&self.skills_manager),
+            skill_service: Arc::clone(&self.skill_service),
             plugins_manager: self.plugin_runtime.clone(),
             mcp_service: Arc::clone(&self.mcp_service),
             mcp_auth_runtime: Arc::clone(&self.mcp_auth_runtime),
@@ -1730,7 +1757,7 @@ impl ThreadServiceState {
         &self,
         session_source: &SessionSource,
         initial_history: &InitialHistory,
-    ) -> codex_rollout_trace_api::ThreadTraceContext {
+    ) -> rollout_trace_api::ThreadTraceContext {
         // A fresh v2 child belongs to the same rollout tree as its parent, so
         // session startup derives its child trace from the parent's thread
         // context. Resumed children already have a prior `ThreadStarted` event
@@ -1740,10 +1767,10 @@ impl ThreadServiceState {
             parent_thread_id, ..
         }) = session_source
         else {
-            return codex_rollout_trace_api::ThreadTraceContext::disabled();
+            return rollout_trace_api::ThreadTraceContext::disabled();
         };
         if matches!(initial_history, InitialHistory::Resumed(_)) {
-            return codex_rollout_trace_api::ThreadTraceContext::disabled();
+            return rollout_trace_api::ThreadTraceContext::disabled();
         }
         // Parent lookup can fail if the parent was closed or released between
         // spawn preparation and session construction. Tracing is diagnostic, so
@@ -1753,7 +1780,7 @@ impl ThreadServiceState {
             .await
             .ok()
             .map(|thread| thread.codex.session.services.rollout_thread_trace.clone())
-            .unwrap_or_else(codex_rollout_trace_api::ThreadTraceContext::disabled)
+            .unwrap_or_else(rollout_trace_api::ThreadTraceContext::disabled)
     }
 }
 
@@ -1925,8 +1952,9 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
     fn live_thread_config_snapshot(
         &self,
         thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::ThreadConfigSnapshot>> + Send + '_
-    {
+    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::ThreadConfigSnapshot>>
+    + Send
+    + '_ {
         async move {
             let thread = self.get_thread(thread_id).await?;
             Ok(thread.config_snapshot().await)
@@ -1946,10 +1974,10 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
 }
 
 impl thread_service_api::LiveThreadStateRuntimeSource for ThreadServiceState {
-    fn thread_state_runtime(&self) -> Option<codex_state_api::SharedStateDbRuntime> {
+    fn thread_state_runtime(&self) -> Option<state_api::SharedStateDbRuntime> {
         self.state_db
             .as_ref()
-            .map(|state_db| Arc::clone(state_db) as codex_state_api::SharedStateDbRuntime)
+            .map(|state_db| Arc::clone(state_db) as state_api::SharedStateDbRuntime)
     }
 }
 
@@ -2080,8 +2108,9 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
     fn thread_runtime_status(
         &self,
         thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::ThreadRuntimeStatus>> + Send + '_
-    {
+    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::ThreadRuntimeStatus>>
+    + Send
+    + '_ {
         async move {
             let thread = self.get_thread(thread_id).await?;
             Ok(thread.runtime_thread_status().await)
@@ -2168,7 +2197,7 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
     fn thread_skill_watch_paths(
         &self,
         thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<Vec<ThreadSkillWatchPath>>> + Send + '_ {
+    ) -> impl std::future::Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_ {
         async move {
             let thread = self.get_thread(thread_id).await?;
             let environments = thread.environment_selections().await;
@@ -2201,11 +2230,11 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
                 config.bundled_skills_enabled(),
             );
             let paths = self
-                .skills_manager()
+                .skill_service()
                 .skill_root_paths_for_config(&skills_input, Some(environment.get_filesystem()))
                 .await
                 .into_iter()
-                .map(|root| ThreadSkillWatchPath {
+                .map(|root| SkillWatchPath {
                     path: root.into_path_buf(),
                     recursive: true,
                 })

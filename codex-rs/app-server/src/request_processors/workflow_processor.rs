@@ -2,32 +2,32 @@ use crate::config_manager::ConfigManager;
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::outgoing_message::OutgoingMessageSender;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::WorkflowAbortParams;
-use codex_app_server_protocol::WorkflowAbortResponse;
-use codex_app_server_protocol::WorkflowDescribeParams;
-use codex_app_server_protocol::WorkflowDescribeResponse;
-use codex_app_server_protocol::WorkflowDetails as ApiWorkflowDetails;
-use codex_app_server_protocol::WorkflowDiagnostic as ApiWorkflowDiagnostic;
-use codex_app_server_protocol::WorkflowInputSpec as ApiWorkflowInputSpec;
-use codex_app_server_protocol::WorkflowListParams;
-use codex_app_server_protocol::WorkflowListResponse;
-use codex_app_server_protocol::WorkflowResumeParams;
-use codex_app_server_protocol::WorkflowResumeResponse;
-use codex_app_server_protocol::WorkflowRun as ApiWorkflowRun;
-use codex_app_server_protocol::WorkflowRunStatus as ApiWorkflowRunStatus;
-use codex_app_server_protocol::WorkflowRunUpdatedNotification;
-use codex_app_server_protocol::WorkflowSource as ApiWorkflowSource;
-use codex_app_server_protocol::WorkflowStartParams;
-use codex_app_server_protocol::WorkflowStartResponse;
-use codex_app_server_protocol::WorkflowStatusParams;
-use codex_app_server_protocol::WorkflowStatusResponse;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::WorkflowAbortParams;
+use app_server_protocol::WorkflowAbortResponse;
+use app_server_protocol::WorkflowDescribeParams;
+use app_server_protocol::WorkflowDescribeResponse;
+use app_server_protocol::WorkflowDetails as ApiWorkflowDetails;
+use app_server_protocol::WorkflowDiagnostic as ApiWorkflowDiagnostic;
+use app_server_protocol::WorkflowInputSpec as ApiWorkflowInputSpec;
+use app_server_protocol::WorkflowListParams;
+use app_server_protocol::WorkflowListResponse;
+use app_server_protocol::WorkflowResumeParams;
+use app_server_protocol::WorkflowResumeResponse;
+use app_server_protocol::WorkflowRun as ApiWorkflowRun;
+use app_server_protocol::WorkflowRunStatus as ApiWorkflowRunStatus;
+use app_server_protocol::WorkflowRunUpdatedNotification;
+use app_server_protocol::WorkflowSource as ApiWorkflowSource;
+use app_server_protocol::WorkflowStartParams;
+use app_server_protocol::WorkflowStartResponse;
+use app_server_protocol::WorkflowStatusParams;
+use app_server_protocol::WorkflowStatusResponse;
+use codex_workflow_api::WorkflowApi;
 use codex_workflow_api::WorkflowDetails;
+use codex_workflow_api::WorkflowDiagnostic;
 use codex_workflow_api::WorkflowDiscoveryContext;
 use codex_workflow_api::WorkflowExecutionContext;
-use codex_workflow_api::WorkflowDiagnostic;
-use codex_workflow_api::WorkflowApi;
 use codex_workflow_api::WorkflowInputSpec;
 use codex_workflow_api::WorkflowRun;
 use codex_workflow_api::WorkflowRunStatus;
@@ -195,17 +195,21 @@ impl WorkflowRequestProcessor {
             .load_latest_config(fallback_cwd)
             .await
             .map_err(|err| internal_error(format!("failed to load workflow config: {err}")))?;
-        Ok(codex_workflow_api::workflow_discovery_context_from_config_layers(
-            config.codex_home.as_ref(),
-            config.cwd.as_ref(),
-            config.config_layer_stack.get_layers(
-                codex_config_state::ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                /*include_disabled*/ false,
-            )
-            .into_iter()
-            .cloned()
-            .collect(),
-        ))
+        Ok(
+            codex_workflow_api::workflow_discovery_context_from_config_layers(
+                config.codex_home.as_ref(),
+                config.cwd.as_ref(),
+                config
+                    .config_layer_stack
+                    .get_layers(
+                        config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                        /*include_disabled*/ false,
+                    )
+                    .into_iter()
+                    .cloned()
+                    .collect(),
+            ),
+        )
     }
 
     async fn send_run_updated(&self, run: WorkflowRun) {
@@ -292,8 +296,8 @@ fn map_workflow_details(details: WorkflowDetails) -> ApiWorkflowDetails {
     }
 }
 
-fn map_workflow_summary(summary: WorkflowSummary) -> codex_app_server_protocol::WorkflowSummary {
-    codex_app_server_protocol::WorkflowSummary {
+fn map_workflow_summary(summary: WorkflowSummary) -> app_server_protocol::WorkflowSummary {
+    app_server_protocol::WorkflowSummary {
         id: summary.id,
         name: summary.name,
         description: summary.description,

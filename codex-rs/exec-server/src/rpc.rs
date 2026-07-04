@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
 
-use codex_jsonrpc_types::JSONRPCError;
-use codex_jsonrpc_types::JSONRPCErrorError;
-use codex_jsonrpc_types::JSONRPCMessage;
-use codex_jsonrpc_types::JSONRPCNotification;
-use codex_jsonrpc_types::JSONRPCRequest;
-use codex_jsonrpc_types::JSONRPCResponse;
-use codex_jsonrpc_types::RequestId;
+use jsonrpc_types::JSONRPCError;
+use jsonrpc_types::JSONRPCErrorError;
+use jsonrpc_types::JSONRPCMessage;
+use jsonrpc_types::JSONRPCNotification;
+use jsonrpc_types::JSONRPCRequest;
+use jsonrpc_types::JSONRPCResponse;
+use jsonrpc_types::RequestId;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -525,8 +525,8 @@ async fn drain_pending(pending: &Mutex<HashMap<RequestId, PendingRequest>>) {
 mod tests {
     use std::time::Duration;
 
-    use codex_jsonrpc_types::JSONRPCMessage;
-    use codex_jsonrpc_types::JSONRPCResponse;
+    use jsonrpc_types::JSONRPCMessage;
+    use jsonrpc_types::JSONRPCResponse;
     use pretty_assertions::assert_eq;
     use tokio::io::AsyncBufReadExt;
     use tokio::io::AsyncWriteExt;

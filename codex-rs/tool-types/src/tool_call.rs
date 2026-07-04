@@ -1,8 +1,8 @@
 use crate::FunctionCallError;
 use crate::ToolName;
 use crate::ToolPayload;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::SearchToolCallParams;
+use protocol::models::ResponseItem;
+use protocol::models::SearchToolCallParams;
 
 // TODO: this is temporary and will disappear in the next PR as
 // codex-extension-api becomes generic on Invocation.
@@ -28,7 +28,7 @@ pub struct ToolInvocationMetadata {
 
 /// Identifies the runtime source that requested a tool invocation.
 ///
-/// This stays in `codex-tool-types` so tool dispatchers and nested runtimes can
+/// This stays in `tool-types` so tool dispatchers and nested runtimes can
 /// share the contract without depending on `codex-core`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolCallSource {

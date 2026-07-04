@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use codex_features::Feature;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::AskForApproval;
+use protocol::models::PermissionProfile;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::AskForApproval;
 use thread_service::config::Config;
 use thread_service::config::Constrained;
 

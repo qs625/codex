@@ -14,8 +14,8 @@ doctest = false
 
 [dependencies]
 codex-context-manager = { workspace = true }
-codex-core-skills-api = { workspace = true }
-codex-protocol = { workspace = true }
+skill-service-api = { workspace = true }
+protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 serde_json = { workspace = true }
 

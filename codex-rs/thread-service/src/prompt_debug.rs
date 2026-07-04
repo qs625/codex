@@ -3,16 +3,16 @@ use std::sync::Arc;
 
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_approval_service_api::is_guardian_reviewer_source;
-use codex_exec_server_api::ExecEnvironmentProvider;
-use codex_model_provider_api::SharedModelProviderFactory;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::user_input::UserInput;
-use codex_thread_store_api::LiveThreadFactory;
-use codex_thread_store_api::ThreadStore;
+use exec_server_api::ExecEnvironmentProvider;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
+use model_service_api::SharedModelProviderFactory;
+use protocol::error::Result as CodexResult;
+use protocol::models::ResponseItem;
+use protocol::protocol::SessionSource;
+use protocol::user_input::UserInput;
+use thread_store_api::LiveThreadFactory;
+use thread_store_api::ThreadStore;
 use tokio_util::sync::CancellationToken;
 
 use crate::client_common::PromptBuildParams;
@@ -59,7 +59,7 @@ pub async fn build_prompt_input(
         /*attestation_provider*/ None,
         model_provider_factory,
         Arc::new(codex_code_mode_api::DisabledCodeModeRuntimeFactory),
-        Arc::new(codex_command_service::CommandService::new()),
+        Arc::new(command_service::CommandService::new()),
         Arc::clone(&approval_service),
         Arc::new(goal_service::GoalService),
         tool_service,

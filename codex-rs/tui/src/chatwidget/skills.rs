@@ -10,18 +10,18 @@ use crate::bottom_pane::SkillsToggleView;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 use crate::skills_helpers::skill_description;
 use crate::skills_helpers::skill_display_name;
-use codex_app_server_protocol::AppInfo;
-use codex_app_server_protocol::SkillMetadata as ProtocolSkillMetadata;
-use codex_app_server_protocol::SkillsListEntry;
-use codex_app_server_protocol::SkillsListResponse;
-use codex_core_skills::model::SkillDependencies;
-use codex_core_skills::model::SkillInterface;
-use codex_core_skills::model::SkillMetadata;
-use codex_core_skills::model::SkillToolDependency;
+use ::protocol::parse_command::ParsedCommand;
+use app_server_protocol::AppInfo;
+use app_server_protocol::SkillMetadata as ProtocolSkillMetadata;
+use app_server_protocol::SkillsListEntry;
+use app_server_protocol::SkillsListResponse;
 use codex_features::Feature;
-use codex_protocol::parse_command::ParsedCommand;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use plugin_service_api::mention_syntax::TOOL_MENTION_SIGIL;
+use skill_service::model::SkillDependencies;
+use skill_service::model::SkillInterface;
+use skill_service::model::SkillMetadata;
+use skill_service::model::SkillToolDependency;
 
 impl ChatWidget {
     pub(crate) fn open_skills_list(&mut self) {

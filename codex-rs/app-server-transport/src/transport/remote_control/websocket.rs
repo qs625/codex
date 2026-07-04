@@ -19,19 +19,20 @@ use super::segment::ClientSegmentObservation;
 use super::segment::ClientSegmentReassembler;
 use super::segment::REMOTE_CONTROL_SEGMENT_MAX_BYTES;
 use super::segment::split_server_envelope_for_transport;
+use app_server_protocol::RemoteControlConnectionStatus;
+use app_server_protocol::RemoteControlStatusChangedNotification;
 use axum::http::HeaderValue;
 use base64::Engine;
-use codex_app_server_protocol::RemoteControlConnectionStatus;
-use codex_app_server_protocol::RemoteControlStatusChangedNotification;
 use codex_login::AuthManager;
 use codex_login::UnauthorizedRecovery;
-use codex_state::StateRuntime;
 use codex_utils_backoff::backoff;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use futures::SinkExt;
 use futures::StreamExt;
 use futures::stream::SplitSink;
 use futures::stream::SplitStream;
+use state_api::SharedStateDbRuntime;
+use state_api::StateDbRuntime;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io;
@@ -217,7 +218,7 @@ pub(crate) struct RemoteControlWebsocket {
     remote_control_url: String,
     installation_id: String,
     remote_control_target: Option<RemoteControlTarget>,
-    state_db: Option<Arc<StateRuntime>>,
+    state_db: Option<SharedStateDbRuntime>,
     auth_manager: Arc<AuthManager>,
     status_publisher: RemoteControlStatusPublisher,
     shutdown_token: CancellationToken,
@@ -308,7 +309,7 @@ pub(super) struct RemoteControlConnectOptions<'a> {
 impl RemoteControlWebsocket {
     pub(crate) fn new(
         config: RemoteControlWebsocketConfig,
-        state_db: Option<Arc<StateRuntime>>,
+        state_db: Option<SharedStateDbRuntime>,
         auth_manager: Arc<AuthManager>,
         channels: RemoteControlChannels,
         shutdown_token: CancellationToken,
@@ -1005,7 +1006,7 @@ pub(crate) async fn load_remote_control_auth(
     }
 
     Ok(RemoteControlConnectionAuth {
-        auth_provider: codex_api_auth::auth_provider_from_auth_snapshot(
+        auth_provider: model_service_api::auth_provider_from_auth_snapshot(
             &auth.request_auth_snapshot(),
         ),
         account_id: auth.get_account_id().ok_or_else(|| {
@@ -1019,7 +1020,7 @@ pub(crate) async fn load_remote_control_auth(
 
 pub(super) async fn connect_remote_control_websocket(
     remote_control_target: &RemoteControlTarget,
-    state_db: Option<&StateRuntime>,
+    state_db: Option<&dyn StateDbRuntime>,
     auth_manager: &Arc<AuthManager>,
     auth_recovery: &mut UnauthorizedRecovery,
     enrollment: &mut Option<RemoteControlEnrollment>,
@@ -1239,11 +1240,11 @@ mod tests {
     use crate::transport::remote_control::ServerEvent;
     use crate::transport::remote_control::protocol::StreamId;
     use crate::transport::remote_control::protocol::normalize_remote_control_url;
+    use app_server_protocol::ConfigWarningNotification;
+    use app_server_protocol::JSONRPCMessage;
+    use app_server_protocol::JSONRPCNotification;
+    use app_server_protocol::ServerNotification;
     use chrono::Utc;
-    use codex_app_server_protocol::ConfigWarningNotification;
-    use codex_app_server_protocol::JSONRPCMessage;
-    use codex_app_server_protocol::JSONRPCNotification;
-    use codex_app_server_protocol::ServerNotification;
     use codex_auth_types::AuthMode;
     use codex_config_types::AuthCredentialsStoreMode;
     use codex_login::AuthDotJson;
@@ -1251,12 +1252,12 @@ mod tests {
     use codex_login::save_auth;
     use codex_login::token_data::TokenData;
     use codex_login::token_data::parse_chatgpt_jwt_claims;
-    use codex_state::StateRuntime;
-    use thread_service::test_support::auth_manager_from_auth;
     use futures::StreamExt;
     use pretty_assertions::assert_eq;
+    use state::StateRuntime;
     use std::sync::Arc;
     use tempfile::TempDir;
+    use thread_service::test_support::auth_manager_from_auth;
     use tokio::io::AsyncBufReadExt;
     use tokio::io::AsyncWriteExt;
     use tokio::io::BufReader;
@@ -1379,7 +1380,6 @@ mod tests {
             server_name: "test-server".to_string(),
         });
         let (status_publisher, status_rx) = remote_control_status_channel();
-
         let err = match connect_remote_control_websocket(
             &remote_control_target,
             Some(state_db.as_ref()),
@@ -1457,7 +1457,6 @@ mod tests {
             );
             respond_with_status_and_headers(stream, "401 Unauthorized", &[], "unauthorized").await;
         });
-
         let err = connect_remote_control_websocket(
             &remote_control_target,
             Some(state_db.as_ref()),
@@ -1592,7 +1591,6 @@ mod tests {
             server_name: "test-server".to_string(),
         });
         let (status_publisher, _status_rx) = remote_control_status_channel();
-
         let err = connect_remote_control_websocket(
             &remote_control_target,
             /*state_db*/ None,

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::Settings;
-use codex_protocol::protocol::Op;
-use codex_protocol::user_input::UserInput;
+use protocol::config_types::CollaborationMode;
+use protocol::config_types::ModeKind;
+use protocol::config_types::Settings;
+use protocol::protocol::Op;
+use protocol::user_input::UserInput;
 
 use crate::SessionSettingsUpdate;
 
@@ -144,10 +144,10 @@ pub fn user_turn_submission_from_op(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::config_types::ApprovalsReviewer;
-    use codex_protocol::openai_models::ReasoningEffort;
-    use codex_protocol::protocol::AskForApproval;
-    use codex_protocol::protocol::SandboxPolicy;
+    use protocol::config_types::ApprovalsReviewer;
+    use protocol::openai_models::ReasoningEffort;
+    use protocol::protocol::AskForApproval;
+    use protocol::protocol::SandboxPolicy;
     use serde_json::json;
     use std::path::PathBuf;
 

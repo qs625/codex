@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
-use codex_tool_types::DiscoverablePluginInfo;
 use plugin_service_api::PluginHookSource;
 use plugin_service_api::PluginRuntime;
 use plugin_service_api::PluginsConfigInput;
+use tool_service_api::DiscoverablePluginInfo;
 
 pub async fn list_tool_suggest_discoverable_plugins(
     plugin_runtime: &dyn PluginRuntime,

@@ -1,26 +1,26 @@
 use crate::output::format_exec_output_for_model_structured;
 use crate::support::ToolError;
 use codex_apply_patch::AppliedPatchDelta;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::SandboxErr;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::items::FileChangeItem;
-use codex_protocol::items::TurnItem;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ItemCompletedEvent;
-use codex_protocol::protocol::ItemStartedEvent;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::PatchApplyStatus;
-use codex_tool_types::FunctionCallError;
 use codex_utils_output_truncation::TruncationPolicy;
+use protocol::error::CodexErr;
+use protocol::error::SandboxErr;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::items::FileChangeItem;
+use protocol::items::TurnItem;
+use protocol::protocol::EventMsg;
+use protocol::protocol::FileChange;
+use protocol::protocol::ItemCompletedEvent;
+use protocol::protocol::ItemStartedEvent;
+use protocol::protocol::PatchApplyStatus;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+use tool_service_api::FunctionCallError;
 
 pub(crate) trait ToolEventHost {
-    fn thread_id(&self) -> codex_protocol::ThreadId;
+    fn thread_id(&self) -> protocol::ThreadId;
     fn turn_id(&self) -> &str;
     fn truncation_policy(&self) -> TruncationPolicy;
     fn emit_event(&self, event: EventMsg) -> impl Future<Output = ()> + Send;

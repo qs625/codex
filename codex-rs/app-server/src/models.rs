@@ -1,17 +1,17 @@
-use codex_app_server_protocol::Model;
-use codex_app_server_protocol::ModelServiceTier;
-use codex_app_server_protocol::ModelUpgradeInfo;
-use codex_app_server_protocol::ReasoningEffortOption;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_models_manager::model_info;
-use codex_models_manager_api::RefreshStrategy;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelsResponse;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::openai_models::ReasoningEffortPreset;
+use app_server_protocol::Model;
+use app_server_protocol::ModelServiceTier;
+use app_server_protocol::ModelUpgradeInfo;
+use app_server_protocol::ReasoningEffortOption;
+use futures::future::BoxFuture;
+use model_service::model_info;
+use model_service_api::ModelCatalogRefresh;
+use model_service_api::ModelProviderInfo;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelsResponse;
+use protocol::openai_models::ReasoningEffort;
+use protocol::openai_models::ReasoningEffortPreset;
 use thread_service::ThreadService;
 use thread_service::config::Config;
-use futures::future::BoxFuture;
 
 const OPENAI_PROVIDER_ID: &str = "openai";
 const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
@@ -22,7 +22,7 @@ pub trait ModelCatalogRuntime: Send + Sync {
         config: &'a Config,
         provider_info: ModelProviderInfo,
         model_catalog: Option<ModelsResponse>,
-        refresh_strategy: RefreshStrategy,
+        refresh: ModelCatalogRefresh,
     ) -> BoxFuture<'a, Vec<ModelPreset>>;
 }
 
@@ -32,14 +32,14 @@ impl ModelCatalogRuntime for ThreadService {
         config: &'a Config,
         provider_info: ModelProviderInfo,
         model_catalog: Option<ModelsResponse>,
-        refresh_strategy: RefreshStrategy,
+        refresh: ModelCatalogRefresh,
     ) -> BoxFuture<'a, Vec<ModelPreset>> {
         Box::pin(ThreadService::list_models_for_provider(
             self,
             config,
             provider_info,
             model_catalog,
-            refresh_strategy,
+            refresh,
         ))
     }
 }
@@ -83,7 +83,7 @@ pub async fn supported_models(
                     config,
                     provider_info.clone(),
                     model_catalog,
-                    RefreshStrategy::OnlineIfUncached,
+                    ModelCatalogRefresh::OnlineIfUncached,
                 )
                 .await
                 .into_iter()
@@ -182,7 +182,7 @@ fn configured_model_from_option(
     description: String,
 ) -> Model {
     let mut model_info = model_info::model_info_from_slug(model_option.model);
-    model_info.visibility = codex_protocol::openai_models::ModelVisibility::List;
+    model_info.visibility = protocol::openai_models::ModelVisibility::List;
     if let Some(max_context_window) = model_option.max_context_window {
         model_info.max_context_window = Some(max_context_window);
     }
@@ -247,7 +247,7 @@ fn configured_model(
             description: "当前配置的默认 reasoning".to_string(),
         }],
         default_reasoning_effort,
-        input_modalities: codex_protocol::openai_models::default_input_modalities(),
+        input_modalities: protocol::openai_models::default_input_modalities(),
         context_window: None,
         max_context_window: None,
         auto_compact_token_limit: None,

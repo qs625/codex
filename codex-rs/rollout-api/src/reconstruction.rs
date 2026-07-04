@@ -4,11 +4,11 @@ use codex_context_manager::ContextManager;
 use codex_context_manager::build_compacted_history;
 use codex_context_manager::collect_compaction_user_messages;
 use codex_context_manager::is_user_turn_boundary;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::TurnContextItem;
 use codex_utils_output_truncation::TruncationPolicy;
+use protocol::models::ResponseItem;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::TurnContextItem;
 
 /// Notes from the previous real user turn.
 ///

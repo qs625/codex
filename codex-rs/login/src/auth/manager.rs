@@ -27,8 +27,8 @@ use codex_auth_types::AuthRuntimeFuture;
 use codex_auth_types::AuthTelemetrySnapshot;
 use codex_auth_types::BearerRequestAuthSnapshot;
 use codex_auth_types::RequestAuthSnapshot;
-use codex_protocol::config_types::ForcedLoginMethod;
-use codex_protocol::config_types::ModelProviderAuthInfo;
+use protocol::config_types::ForcedLoginMethod;
+use protocol::config_types::ModelProviderAuthInfo;
 
 use super::external_bearer::BearerTokenRefresher;
 use super::revoke::revoke_auth_tokens;
@@ -43,12 +43,12 @@ use crate::default_client::create_client;
 use crate::token_data::TokenData;
 use crate::token_data::parse_chatgpt_jwt_claims;
 use crate::token_data::parse_jwt_expiration;
-use codex_client::CodexHttpClient;
+use transport_client::CodexHttpClient;
 use codex_config_types::AuthCredentialsStoreMode;
-use codex_protocol::account::PlanType as AccountPlanType;
-use codex_protocol::auth::PlanType as InternalPlanType;
-use codex_protocol::auth::RefreshTokenFailedError;
-use codex_protocol::auth::RefreshTokenFailedReason;
+use protocol::account::PlanType as AccountPlanType;
+use protocol::auth::PlanType as InternalPlanType;
+use protocol::auth::RefreshTokenFailedError;
+use protocol::auth::RefreshTokenFailedReason;
 use serde_json::Value;
 use thiserror::Error;
 

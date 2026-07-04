@@ -5,27 +5,28 @@ use crate::MemoryStartupSettings;
 use crate::StageOnePromptRequest;
 use crate::StageOneRequestContext;
 use crate::start_memories_startup_task;
-use codex_api::ResponseEvent;
+use model_service_api::ResponseEvent;
 use codex_features::Feature;
 use codex_git_baseline::diff_since_latest_init;
 use codex_git_baseline::reset_git_repository;
 use codex_login::AuthManager;
 use codex_login::model_provider_auth_manager;
 use codex_otel::SessionTelemetry;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::user_input::UserInput;
-use codex_rollout_trace::InferenceTraceContext;
-use codex_session_telemetry_api::SessionTelemetry as SessionTelemetryTrait;
+use model_service_api::ModelServiceApi;
+use protocol::ThreadId;
+use protocol::config_types::ServiceTier;
+use protocol::models::ContentItem;
+use protocol::models::ResponseInputItem;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::EventMsg;
+use protocol::protocol::Op;
+use protocol::protocol::SessionSource;
+use protocol::protocol::TokenUsage;
+use protocol::user_input::UserInput;
+use rollout_trace::InferenceTraceContext;
+use session_telemetry_api::SessionTelemetry as SessionTelemetryTrait;
 use thread_service::CodexThread;
 use thread_service::ModelClient;
 use thread_service::Prompt;
@@ -369,9 +370,9 @@ async fn build_test_codex(
         .await
 }
 
-async fn init_state_db(home: &Arc<TempDir>) -> anyhow::Result<Arc<codex_state::StateRuntime>> {
+async fn init_state_db(home: &Arc<TempDir>) -> anyhow::Result<Arc<state::StateRuntime>> {
     let db =
-        codex_state::StateRuntime::init(home.path().to_path_buf(), "test-provider".into()).await?;
+        state::StateRuntime::init(home.path().to_path_buf(), "test-provider".into()).await?;
     db.mark_backfill_complete(/*last_watermark*/ None).await?;
     Ok(db)
 }
@@ -472,7 +473,7 @@ impl TestMemoryStartupRuntime {
 }
 
 impl MemoryStartupRuntime for TestMemoryStartupRuntime {
-    fn state_db(&self) -> Option<Arc<codex_state::StateRuntime>> {
+    fn state_db(&self) -> Option<Arc<state::StateRuntime>> {
         self.thread.state_db()
     }
 
@@ -497,9 +498,10 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
             let config_snapshot = self.thread.config_snapshot().await;
             let model_info = self
                 .thread_service
-                .get_models_manager()
-                .get_model_info(model_name, &self.config.to_models_manager_config())
+                .model_service()
+                .get_model_info(model_name)
                 .await;
+            let model_info = model_info.expect("model info");
 
             StageOneRequestContext {
                 model_info,
@@ -525,10 +527,10 @@ impl MemoryStartupRuntime for TestMemoryStartupRuntime {
             let session_source = self.thread.config_snapshot().await.session_source;
             let model_client = ModelClient::new(
                 model_provider_auth_manager(Some(Arc::clone(&self.auth_manager))),
-                codex_protocol::SessionId::from(self.thread_id),
+                protocol::SessionId::from(self.thread_id),
                 self.thread_id,
                 installation_id,
-                Arc::new(codex_api::DefaultApiRuntimeFactory),
+                Arc::new(model_service::DefaultApiRuntimeFactory),
                 thread_service::test_support::model_provider_factory_for_tests(),
                 self.config.model_provider.clone(),
                 session_source,
@@ -718,9 +720,10 @@ async fn stream_consolidation_prompt(
     session_telemetry: SessionTelemetry,
 ) -> anyhow::Result<(Option<String>, Option<TokenUsage>)> {
     let model_info = thread_service
-        .get_models_manager()
-        .get_model_info(&model, &config.to_models_manager_config())
+        .model_service()
+        .get_model_info(&model)
         .await;
+    let model_info = model_info.expect("model info");
     let input_item: ResponseItem = ResponseInputItem::from(user_input).into();
     let mut prompt = Prompt::default();
     prompt.input = vec![input_item];
@@ -729,10 +732,10 @@ async fn stream_consolidation_prompt(
     let session_source = thread.config_snapshot().await.session_source;
     let model_client = ModelClient::new(
         model_provider_auth_manager(Some(auth_manager)),
-        codex_protocol::SessionId::from(thread_id),
+        protocol::SessionId::from(thread_id),
         thread_id,
         installation_id,
-        Arc::new(codex_api::DefaultApiRuntimeFactory),
+        Arc::new(model_service::DefaultApiRuntimeFactory),
         thread_service::test_support::model_provider_factory_for_tests(),
         config.model_provider.clone(),
         session_source,
@@ -834,7 +837,7 @@ fn content_items_to_text(content: &[ContentItem]) -> Option<String> {
 }
 
 async fn seed_stage1_output(
-    db: &codex_state::StateRuntime,
+    db: &state::StateRuntime,
     codex_home: &Path,
     updated_at: chrono::DateTime<chrono::Utc>,
     raw_memory: &str,
@@ -842,7 +845,7 @@ async fn seed_stage1_output(
     rollout_slug: &str,
 ) -> anyhow::Result<ThreadId> {
     let thread_id = ThreadId::new();
-    let mut metadata_builder = codex_state::ThreadMetadataBuilder::new(
+    let mut metadata_builder = state::ThreadMetadataBuilder::new(
         thread_id,
         codex_home.join(format!("rollout-{thread_id}.jsonl")),
         updated_at,
@@ -946,7 +949,7 @@ async fn wait_for_phase2_workspace_reset(memory_root: &Path) -> anyhow::Result<(
 }
 
 async fn seed_stage1_output_for_existing_thread(
-    db: &codex_state::StateRuntime,
+    db: &state::StateRuntime,
     thread_id: ThreadId,
     updated_at: i64,
     raw_memory: &str,
@@ -961,7 +964,7 @@ async fn seed_stage1_output_for_existing_thread(
         )
         .await?;
     let ownership_token = match claim {
-        codex_state::Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
+        state::Stage1JobClaimOutcome::Claimed { ownership_token } => ownership_token,
         other => panic!("unexpected stage-1 claim outcome: {other:?}"),
     };
 

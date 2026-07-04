@@ -15,12 +15,12 @@ use crate::render::line_utils::push_owned_lines;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
+use app_server_protocol::CommandExecutionSource as ExecCommandSource;
 use codex_ansi_escape::ansi_escape_line;
-use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
-use codex_protocol::parse_command::ParsedCommand;
 use codex_shell_utils::bash::extract_bash_command;
 use codex_utils_elapsed::format_duration;
 use itertools::Itertools;
+use protocol::parse_command::ParsedCommand;
 use ratatui::prelude::*;
 use ratatui::style::Modifier;
 use ratatui::style::Stylize;
@@ -713,7 +713,7 @@ const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
+    use app_server_protocol::CommandExecutionSource as ExecCommandSource;
     use pretty_assertions::assert_eq;
 
     fn render_line_text(line: &Line<'static>) -> String {

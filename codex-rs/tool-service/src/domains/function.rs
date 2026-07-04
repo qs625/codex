@@ -21,38 +21,38 @@ use crate::planning::normalize_request_user_input_args;
 use crate::planning::request_permissions_tool_description;
 use crate::planning::request_user_input_tool_description;
 use crate::planning::request_user_input_unavailable_message;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::FunctionCallOutputBody;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::ImageDetail;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::plan_tool::UpdatePlanArgs;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ViewImageToolCallEvent;
-use codex_protocol::request_permissions::RequestPermissionsArgs;
-use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
-use thread_service_api::ThreadTurnCapability;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolOutput;
-use codex_tool_types::ToolPayload;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use codex_utils_image::PromptImageMode;
 use codex_utils_image::load_for_prompt_bytes;
+use protocol::config_types::ModeKind;
+use protocol::dynamic_tools::DynamicToolSpec;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
+use protocol::models::FunctionCallOutputBody;
+use protocol::models::FunctionCallOutputContentItem;
+use protocol::models::FunctionCallOutputPayload;
+use protocol::models::ImageDetail;
+use protocol::models::ResponseInputItem;
+use protocol::plan_tool::UpdatePlanArgs;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ViewImageToolCallEvent;
+use protocol::request_permissions::RequestPermissionsArgs;
+use protocol::request_user_input::RequestUserInputArgs;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use serde_json::Value as JsonValue;
+use thread_service_api::ThreadTurnCapability;
 use tokio::sync::Barrier;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::ToolOutput;
+use tool_service_api::ToolPayload;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
@@ -112,7 +112,7 @@ pub(crate) fn owns_tool_name(request: &TypedToolSpecRequest<'_>, tool_name: &Too
                 | REQUEST_PERMISSIONS_TOOL_NAME
                 | REQUEST_USER_INPUT_TOOL_NAME
                 | TEST_SYNC_TOOL_NAME
-                | codex_protocol::models::VIEW_IMAGE_TOOL_NAME
+                | protocol::models::VIEW_IMAGE_TOOL_NAME
         )
 }
 
@@ -129,7 +129,7 @@ pub(crate) fn supports_parallel(request: &TypedToolSpecRequest<'_>, call: &ToolC
         REQUEST_PERMISSIONS_TOOL_NAME
             | REQUEST_USER_INPUT_TOOL_NAME
             | TEST_SYNC_TOOL_NAME
-            | codex_protocol::models::VIEW_IMAGE_TOOL_NAME
+            | protocol::models::VIEW_IMAGE_TOOL_NAME
     ) || request
         .params
         .dynamic_tools
@@ -153,7 +153,7 @@ pub(crate) async fn dispatch(
             dispatch_request_user_input(turn.as_ref(), &request_user_input_available_modes, &call)
                 .await?,
         ),
-        codex_protocol::models::VIEW_IMAGE_TOOL_NAME => {
+        protocol::models::VIEW_IMAGE_TOOL_NAME => {
             Box::new(dispatch_view_image(turn.as_ref(), &call).await?)
         }
         TEST_SYNC_TOOL_NAME => Box::new(dispatch_test_sync(&call).await?),
@@ -186,8 +186,10 @@ async fn dispatch_update_plan(
         ));
     }
 
-    turn.emit_event(EventMsg::PlanUpdate(parse_arguments::<UpdatePlanArgs>(call)?))
-        .await;
+    turn.emit_event(EventMsg::PlanUpdate(parse_arguments::<UpdatePlanArgs>(
+        call,
+    )?))
+    .await;
     Ok(PlanToolOutput)
 }
 
@@ -200,7 +202,7 @@ async fn dispatch_request_permissions(
     let mut args: RequestPermissionsArgs =
         parse_arguments_with_base_path(call.function_arguments()?, &turn.legacy_cwd())?;
     args.permissions = normalize_additional_permissions(args.permissions.into())
-        .map(codex_protocol::request_permissions::RequestPermissionProfile::from)
+        .map(protocol::request_permissions::RequestPermissionProfile::from)
         .map_err(FunctionCallError::RespondToModel)?;
     if args.permissions.is_empty() {
         return Err(FunctionCallError::RespondToModel(

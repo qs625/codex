@@ -1,30 +1,30 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use codex_client_identity::is_first_party_originator;
-use codex_client_identity::originator;
-use codex_config::Config;
-use codex_config_edit::ConfigEditsBuilder;
-use codex_config_edit::load_global_mcp_servers;
+use transport_client_identity::is_first_party_originator;
+use transport_client_identity::originator;
+use config_service::Config;
+use config_service::ConfigEditsBuilder;
+use config_service::load_global_mcp_servers;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
-use codex_core_skills_api::SkillMetadata;
-use codex_core_skills_api::model::SkillToolDependency;
-use codex_mcp_types::ElicitationReviewerHandle;
-use codex_mcp_types::McpOAuthLoginSupport;
-use codex_mcp_types::McpPermissionPromptAutoApproveContext;
-use codex_mcp_types::ResolvedMcpOAuthScopes;
-use codex_mcp_types::mcp_permission_prompt_is_auto_approved;
-use codex_mcp_types::resolve_oauth_scopes;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_protocol::request_user_input::RequestUserInputQuestion;
-use codex_protocol::request_user_input::RequestUserInputQuestionOption;
-use codex_protocol::request_user_input::RequestUserInputResponse;
 use mcp_service_api::McpOAuthLoginRequest;
 use mcp_service_api::McpRuntimeFuture;
+use mcp_types::ElicitationReviewerHandle;
+use mcp_types::McpOAuthLoginSupport;
+use mcp_types::McpPermissionPromptAutoApproveContext;
+use mcp_types::ResolvedMcpOAuthScopes;
+use mcp_types::mcp_permission_prompt_is_auto_approved;
+use mcp_types::resolve_oauth_scopes;
+use protocol::models::PermissionProfile;
+use protocol::protocol::AskForApproval;
+use protocol::request_user_input::RequestUserInputArgs;
+use protocol::request_user_input::RequestUserInputQuestion;
+use protocol::request_user_input::RequestUserInputQuestionOption;
+use protocol::request_user_input::RequestUserInputResponse;
+use skill_service_api::SkillMetadata;
+use skill_service_api::model::SkillToolDependency;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -536,10 +536,10 @@ fn collect_missing_mcp_dependencies(
 
 #[cfg(test)]
 mod tests {
-    use codex_core_skills_api::model::SkillDependencies;
-    use codex_core_skills_api::model::SkillToolDependency;
-    use codex_protocol::protocol::SkillScope;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::SkillScope;
+    use skill_service_api::model::SkillDependencies;
+    use skill_service_api::model::SkillToolDependency;
     use tempfile::tempdir;
 
     use super::*;

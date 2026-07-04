@@ -11,7 +11,7 @@ fn failed_turn_does_not_overwrite_output_last_message_file() {
     let mut processor = EventProcessorWithJsonOutput::new(Some(output_path.clone()));
 
     let collected = processor.collect_thread_events(ServerNotification::ItemCompleted(
-        codex_app_server_protocol::ItemCompletedNotification {
+        app_server_protocol::ItemCompletedNotification {
             item: ThreadItem::AgentMessage {
                 id: "msg-1".to_string(),
                 text: "partial answer".to_string(),
@@ -28,14 +28,14 @@ fn failed_turn_does_not_overwrite_output_last_message_file() {
     assert_eq!(processor.final_message(), Some("partial answer"));
 
     let status = processor.process_server_notification(ServerNotification::TurnCompleted(
-        codex_app_server_protocol::TurnCompletedNotification {
+        app_server_protocol::TurnCompletedNotification {
             thread_id: "thread-1".to_string(),
-            turn: codex_app_server_protocol::Turn {
+            turn: app_server_protocol::Turn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: TurnStatus::Failed,
-                error: Some(codex_app_server_protocol::TurnError {
+                error: Some(app_server_protocol::TurnError {
                     message: "turn failed".to_string(),
                     additional_details: None,
                     codex_error_info: None,

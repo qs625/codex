@@ -1,9 +1,9 @@
 use anyhow::Result;
-use codex_protocol::ThreadId;
-pub use codex_state_api::ThreadGoal;
-pub use codex_state_api::ThreadGoalStatus;
+use protocol::ThreadId;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
+pub use state_api::ThreadGoal;
+pub use state_api::ThreadGoalStatus;
 
 use super::epoch_millis_to_datetime;
 

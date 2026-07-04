@@ -1,7 +1,7 @@
 use anyhow::Result;
-use codex_config_edit::CONFIG_TOML_FILE;
-use codex_config_edit::MarketplaceConfigUpdate;
-use codex_config_edit::record_user_marketplace;
+use config_service::CONFIG_TOML_FILE;
+use config_service::MarketplaceConfigUpdate;
+use config_service::record_user_marketplace;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use std::path::Path;

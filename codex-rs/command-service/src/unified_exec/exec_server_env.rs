@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use codex_protocol::config_types::ShellEnvironmentPolicy;
+use protocol::config_types::ShellEnvironmentPolicy;
 
 #[derive(Clone, Debug)]
 pub struct ExecServerEnvConfig {
@@ -170,7 +170,7 @@ mod tests {
     fn exec_server_params_use_env_policy_overlay_contract() {
         let exec_server_env_config = ExecServerEnvConfig {
             policy: codex_exec_server_protocol::ExecEnvPolicy {
-                inherit: codex_protocol::config_types::ShellEnvironmentPolicyInherit::Core,
+                inherit: protocol::config_types::ShellEnvironmentPolicyInherit::Core,
                 ignore_default_excludes: false,
                 exclude: Vec::new(),
                 r#set: HashMap::new(),

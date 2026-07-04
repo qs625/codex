@@ -5,12 +5,12 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result;
-use codex_protocol::error::SandboxErr;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::NetworkSandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::error::CodexErr;
+use protocol::error::Result;
+use protocol::error::SandboxErr;
+use protocol::models::PermissionProfile;
+use protocol::protocol::NetworkSandboxPolicy;
 
 use landlock::ABI;
 #[allow(unused_imports)]
@@ -271,8 +271,8 @@ mod tests {
     use super::NetworkSeccompMode;
     use super::network_seccomp_mode;
     use super::should_install_network_seccomp;
-    use codex_protocol::protocol::NetworkSandboxPolicy;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::NetworkSandboxPolicy;
 
     #[test]
     fn managed_network_enforces_seccomp_even_for_full_network_policy() {

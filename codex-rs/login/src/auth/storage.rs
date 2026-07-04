@@ -25,8 +25,8 @@ use codex_auth_types::AuthMode;
 use codex_config_types::AuthCredentialsStoreMode;
 use codex_keyring_store::DefaultKeyringStore;
 use codex_keyring_store::KeyringStore;
-use codex_protocol::account::PlanType as AccountPlanType;
 use once_cell::sync::Lazy;
+use protocol::account::PlanType as AccountPlanType;
 
 /// Expected structure for $CODEX_HOME/auth.json.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]

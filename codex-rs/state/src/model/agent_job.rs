@@ -2,13 +2,13 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
 
-pub use codex_state_api::AgentJob;
-pub use codex_state_api::AgentJobCreateParams;
-pub use codex_state_api::AgentJobItem;
-pub use codex_state_api::AgentJobItemCreateParams;
-pub use codex_state_api::AgentJobItemStatus;
-pub use codex_state_api::AgentJobProgress;
-pub use codex_state_api::AgentJobStatus;
+pub use state_api::AgentJob;
+pub use state_api::AgentJobCreateParams;
+pub use state_api::AgentJobItem;
+pub use state_api::AgentJobItemCreateParams;
+pub use state_api::AgentJobItemStatus;
+pub use state_api::AgentJobProgress;
+pub use state_api::AgentJobStatus;
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct AgentJobRow {

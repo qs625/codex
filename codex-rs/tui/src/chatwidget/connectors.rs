@@ -54,8 +54,8 @@ impl ChatWidget {
                 AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
             let auth = auth_manager.auth().await;
             let auth_snapshot = auth.as_ref().map(|auth| auth.request_auth_snapshot());
-            let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
-            let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
+            let mcp_auth_runtime = mcp_service::DefaultMcpAuthRuntime;
+            let mcp_connection_runtime_factory = mcp_service::DefaultMcpConnectionRuntimeFactory;
             let plugin_runtime =
                 plugin_service::PluginsManager::new(config.codex_home.to_path_buf());
             let accessible_result =

@@ -11,9 +11,9 @@ use std::time::Duration;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
+use app_server_transport::app_server_control_socket_path;
 pub use backend::BackendKind;
 use backend::BackendPaths;
-use codex_app_server_transport::app_server_control_socket_path;
 use codex_utils_home_dir::find_codex_home;
 use managed_install::managed_codex_bin;
 #[cfg(unix)]

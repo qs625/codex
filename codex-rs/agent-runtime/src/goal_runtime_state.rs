@@ -1,6 +1,6 @@
 use anyhow::Context;
-use codex_state_api::SharedStateDbRuntime;
-use codex_state_api::ThreadGoalAccountingSnapshot as GoalAccountingSnapshot;
+use state_api::SharedStateDbRuntime;
+use state_api::ThreadGoalAccountingSnapshot as GoalAccountingSnapshot;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
 use tokio::sync::SemaphorePermit;

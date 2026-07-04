@@ -1,6 +1,6 @@
-use codex_app_server_protocol::McpToolCallResult;
-use codex_app_server_protocol::Thread;
-use codex_app_server_protocol::ThreadItem;
+use app_server_protocol::McpToolCallResult;
+use app_server_protocol::Thread;
+use app_server_protocol::ThreadItem;
 use serde_json::Value as JsonValue;
 
 // Temporary bandaid for remote clients: thread/resume can include large MCP and
@@ -77,13 +77,13 @@ fn redacted_mcp_tool_call_result() -> McpToolCallResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::McpToolCallError;
-    use codex_app_server_protocol::McpToolCallStatus;
-    use codex_app_server_protocol::SessionSource;
-    use codex_app_server_protocol::ThreadStatus;
-    use codex_app_server_protocol::Turn;
-    use codex_app_server_protocol::TurnItemsView;
-    use codex_app_server_protocol::TurnStatus;
+    use app_server_protocol::McpToolCallError;
+    use app_server_protocol::McpToolCallStatus;
+    use app_server_protocol::SessionSource;
+    use app_server_protocol::ThreadStatus;
+    use app_server_protocol::Turn;
+    use app_server_protocol::TurnItemsView;
+    use app_server_protocol::TurnStatus;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;

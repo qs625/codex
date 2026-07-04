@@ -1,11 +1,11 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-thread-store"
+name = "thread-store"
 version.workspace = true
 
 [lib]
-name = "codex_thread_store"
+name = "thread_store"
 path = "src/lib.rs"
 doctest = false
 
@@ -15,11 +15,11 @@ workspace = true
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 codex-git-info = { workspace = true }
-codex-protocol = { workspace = true }
-codex-rollout = { workspace = true }
-codex-rollout-api = { workspace = true }
-codex-state = { workspace = true }
-codex-thread-store-api = { workspace = true }
+protocol = { workspace = true }
+rollout = { workspace = true }
+rollout-api = { workspace = true }
+state = { workspace = true }
+thread-store-api = { workspace = true }
 codex-utils-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

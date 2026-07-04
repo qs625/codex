@@ -58,8 +58,8 @@ impl ChatWidget {
         id: String,
         turn_id: String,
         started_at_ms: i64,
-        review: codex_app_server_protocol::GuardianApprovalReview,
-        completion: Option<(i64, codex_app_server_protocol::AutoReviewDecisionSource)>,
+        review: app_server_protocol::GuardianApprovalReview,
+        completion: Option<(i64, app_server_protocol::AutoReviewDecisionSource)>,
         action: GuardianApprovalReviewAction,
     ) {
         let (completed_at_ms, decision_source) = match completion {
@@ -76,55 +76,55 @@ impl ChatWidget {
             started_at_ms,
             completed_at_ms,
             status: match review.status {
-                codex_app_server_protocol::GuardianApprovalReviewStatus::InProgress => {
+                app_server_protocol::GuardianApprovalReviewStatus::InProgress => {
                     GuardianAssessmentStatus::InProgress
                 }
-                codex_app_server_protocol::GuardianApprovalReviewStatus::Approved => {
+                app_server_protocol::GuardianApprovalReviewStatus::Approved => {
                     GuardianAssessmentStatus::Approved
                 }
-                codex_app_server_protocol::GuardianApprovalReviewStatus::Denied => {
+                app_server_protocol::GuardianApprovalReviewStatus::Denied => {
                     GuardianAssessmentStatus::Denied
                 }
-                codex_app_server_protocol::GuardianApprovalReviewStatus::TimedOut => {
+                app_server_protocol::GuardianApprovalReviewStatus::TimedOut => {
                     GuardianAssessmentStatus::TimedOut
                 }
-                codex_app_server_protocol::GuardianApprovalReviewStatus::Aborted => {
+                app_server_protocol::GuardianApprovalReviewStatus::Aborted => {
                     GuardianAssessmentStatus::Aborted
                 }
             },
             risk_level: review.risk_level.map(|risk_level| match risk_level {
-                codex_app_server_protocol::GuardianRiskLevel::Low => {
-                    codex_protocol::approvals::GuardianRiskLevel::Low
+                app_server_protocol::GuardianRiskLevel::Low => {
+                    ::protocol::approvals::GuardianRiskLevel::Low
                 }
-                codex_app_server_protocol::GuardianRiskLevel::Medium => {
-                    codex_protocol::approvals::GuardianRiskLevel::Medium
+                app_server_protocol::GuardianRiskLevel::Medium => {
+                    ::protocol::approvals::GuardianRiskLevel::Medium
                 }
-                codex_app_server_protocol::GuardianRiskLevel::High => {
-                    codex_protocol::approvals::GuardianRiskLevel::High
+                app_server_protocol::GuardianRiskLevel::High => {
+                    ::protocol::approvals::GuardianRiskLevel::High
                 }
-                codex_app_server_protocol::GuardianRiskLevel::Critical => {
-                    codex_protocol::approvals::GuardianRiskLevel::Critical
+                app_server_protocol::GuardianRiskLevel::Critical => {
+                    ::protocol::approvals::GuardianRiskLevel::Critical
                 }
             }),
             user_authorization: review.user_authorization.map(|user_authorization| {
                 match user_authorization {
-                    codex_app_server_protocol::GuardianUserAuthorization::Unknown => {
-                        codex_protocol::approvals::GuardianUserAuthorization::Unknown
+                    app_server_protocol::GuardianUserAuthorization::Unknown => {
+                        ::protocol::approvals::GuardianUserAuthorization::Unknown
                     }
-                    codex_app_server_protocol::GuardianUserAuthorization::Low => {
-                        codex_protocol::approvals::GuardianUserAuthorization::Low
+                    app_server_protocol::GuardianUserAuthorization::Low => {
+                        ::protocol::approvals::GuardianUserAuthorization::Low
                     }
-                    codex_app_server_protocol::GuardianUserAuthorization::Medium => {
-                        codex_protocol::approvals::GuardianUserAuthorization::Medium
+                    app_server_protocol::GuardianUserAuthorization::Medium => {
+                        ::protocol::approvals::GuardianUserAuthorization::Medium
                     }
-                    codex_app_server_protocol::GuardianUserAuthorization::High => {
-                        codex_protocol::approvals::GuardianUserAuthorization::High
+                    app_server_protocol::GuardianUserAuthorization::High => {
+                        ::protocol::approvals::GuardianUserAuthorization::High
                     }
                 }
             }),
             rationale: review.rationale,
             decision_source: decision_source.map(|source| match source {
-                codex_app_server_protocol::AutoReviewDecisionSource::Agent => {
+                app_server_protocol::AutoReviewDecisionSource::Agent => {
                     GuardianAssessmentDecisionSource::Agent
                 }
             }),

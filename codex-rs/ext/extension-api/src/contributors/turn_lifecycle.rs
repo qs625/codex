@@ -1,4 +1,4 @@
-use codex_protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortReason;
 
 use crate::ExtensionData;
 

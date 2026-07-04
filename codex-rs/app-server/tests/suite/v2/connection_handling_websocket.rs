@@ -1,23 +1,23 @@
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCNotification;
+use app_server_protocol::JSONRPCRequest;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ThreadLoadedListParams;
+use app_server_protocol::ThreadLoadedListResponse;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
 use app_test_support::DISABLE_PLUGIN_STARTUP_TASKS_ARG;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::to_response;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCRequest;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ThreadLoadedListParams;
-use codex_app_server_protocol::ThreadLoadedListResponse;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
 use futures::SinkExt;
 use futures::StreamExt;
 use hmac::Hmac;
@@ -208,7 +208,7 @@ async fn websocket_transport_verifies_signed_short_lived_bearer_tokens() -> Resu
         "--ws-issuer".to_string(),
         "codex-enroller".to_string(),
         "--ws-audience".to_string(),
-        "codex-app-server".to_string(),
+        "app-server".to_string(),
         "--ws-max-clock-skew-seconds".to_string(),
         "1".to_string(),
     ];
@@ -220,7 +220,7 @@ async fn websocket_transport_verifies_signed_short_lived_bearer_tokens() -> Resu
         json!({
             "exp": OffsetDateTime::now_utc().unix_timestamp() - 30,
             "iss": "codex-enroller",
-            "aud": "codex-app-server",
+            "aud": "app-server",
         }),
     )?;
     assert_websocket_connect_rejected(bind_addr, Some(expired_token.as_str())).await?;
@@ -234,7 +234,7 @@ async fn websocket_transport_verifies_signed_short_lived_bearer_tokens() -> Resu
             "exp": OffsetDateTime::now_utc().unix_timestamp() + 60,
             "nbf": OffsetDateTime::now_utc().unix_timestamp() + 30,
             "iss": "codex-enroller",
-            "aud": "codex-app-server",
+            "aud": "app-server",
         }),
     )?;
     assert_websocket_connect_rejected(bind_addr, Some(not_yet_valid_token.as_str())).await?;
@@ -244,7 +244,7 @@ async fn websocket_transport_verifies_signed_short_lived_bearer_tokens() -> Resu
         json!({
             "exp": OffsetDateTime::now_utc().unix_timestamp() + 60,
             "iss": "someone-else",
-            "aud": "codex-app-server",
+            "aud": "app-server",
         }),
     )?;
     assert_websocket_connect_rejected(bind_addr, Some(wrong_issuer_token.as_str())).await?;
@@ -264,7 +264,7 @@ async fn websocket_transport_verifies_signed_short_lived_bearer_tokens() -> Resu
         json!({
             "exp": OffsetDateTime::now_utc().unix_timestamp() + 60,
             "iss": "codex-enroller",
-            "aud": "codex-app-server",
+            "aud": "app-server",
         }),
     )?;
     assert_websocket_connect_rejected(bind_addr, Some(wrong_signature_token.as_str())).await?;
@@ -274,7 +274,7 @@ async fn websocket_transport_verifies_signed_short_lived_bearer_tokens() -> Resu
         json!({
             "exp": OffsetDateTime::now_utc().unix_timestamp() + 60,
             "iss": "codex-enroller",
-            "aud": "codex-app-server",
+            "aud": "app-server",
         }),
     )?;
     let mut ws = connect_websocket_with_bearer(bind_addr, Some(valid_token.as_str())).await?;
@@ -384,8 +384,8 @@ pub(super) async fn spawn_websocket_server_with_args(
     listen_url: &str,
     extra_args: &[String],
 ) -> Result<(Child, SocketAddr)> {
-    let program = codex_utils_cargo_bin::cargo_bin("codex-app-server")
-        .context("should find app-server binary")?;
+    let program =
+        codex_utils_cargo_bin::cargo_bin("app-server").context("should find app-server binary")?;
     let mut cmd = Command::new(program);
     cmd.arg("--listen")
         .arg(listen_url)
@@ -520,8 +520,8 @@ async fn run_websocket_server_to_completion_with_args(
     listen_url: &str,
     extra_args: &[String],
 ) -> Result<std::process::Output> {
-    let program = codex_utils_cargo_bin::cargo_bin("codex-app-server")
-        .context("should find app-server binary")?;
+    let program =
+        codex_utils_cargo_bin::cargo_bin("app-server").context("should find app-server binary")?;
     let mut cmd = Command::new(program);
     cmd.arg("--listen")
         .arg(listen_url)

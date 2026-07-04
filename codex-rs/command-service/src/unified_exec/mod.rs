@@ -24,23 +24,24 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Weak;
 
-pub(crate) use codex_command_service_api::CommandNotificationFilter;
-pub(crate) use codex_command_service_api::CommandNotificationKind;
-pub(crate) use codex_command_service_api::CommandWaitOutput;
-pub(crate) use codex_command_service_api::CommandWaitRequest;
-pub(crate) use codex_command_service_api::CommandWaitStatus;
-pub(crate) use codex_command_service_api::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
+use codex_approval_service_api::ApprovalSessionCapability;
+pub(crate) use command_service_api::CommandNotificationFilter;
+pub(crate) use command_service_api::CommandNotificationKind;
+pub(crate) use command_service_api::CommandWaitOutput;
+pub(crate) use command_service_api::CommandWaitRequest;
+pub(crate) use command_service_api::CommandWaitStatus;
+pub(crate) use command_service_api::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 #[cfg(test)]
-pub(crate) use codex_command_service_api::MIN_YIELD_TIME_MS;
-pub(crate) use codex_command_service_api::WaitBackoffState;
-pub(crate) use codex_command_service_api::WriteStdinOutput;
-pub(crate) use codex_command_service_api::WriteStdinRequest;
-pub(crate) use codex_command_service_api::clamp_yield_time;
-pub(crate) use codex_command_service_api::generate_chunk_id;
-use codex_exec_server_api::ExecEnvironment;
+pub(crate) use command_service_api::MIN_YIELD_TIME_MS;
+pub(crate) use command_service_api::WaitBackoffState;
+pub(crate) use command_service_api::WriteStdinOutput;
+pub(crate) use command_service_api::WriteStdinRequest;
+pub(crate) use command_service_api::clamp_yield_time;
+pub(crate) use command_service_api::generate_chunk_id;
+use exec_server_api::ExecEnvironment;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_tool_config::ToolUserShellType;
+use protocol::models::AdditionalPermissionProfile;
+use tool_config::ToolUserShellType;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::Mutex;
 
@@ -70,16 +71,16 @@ pub(crate) use exec_server_env::ExecServerSpawnRequest;
 pub(crate) use exec_server_env::apply_unified_exec_env;
 pub(crate) use exec_server_env::exec_env_policy_from_shell_policy;
 pub(crate) use exec_server_env::exec_server_spawn_params;
-pub(crate) use codex_command_service_api::ExecApprovalRequirement;
-pub(crate) use codex_command_service_api::ExecCommandApprovalMode;
-pub(crate) use codex_command_service_api::ExecCommandRunRequest;
+pub(crate) use command_service_api::ExecApprovalRequirement;
+pub(crate) use command_service_api::ExecCommandApprovalMode;
+pub(crate) use command_service_api::ExecCommandRunRequest;
 pub(crate) use output::collect_output_until_deadline;
 pub(crate) use output::resolve_aggregated_output;
 pub(crate) use output::split_valid_utf8_prefix;
 pub(crate) use unified_exec_process::NoopSpawnLifecycle;
 pub(crate) use unified_exec_process::SpawnLifecycleHandle;
 pub(crate) use unified_exec_process::UnifiedExecProcess;
-pub(crate) use codex_command_service_api::UnifiedExecError;
+pub(crate) use command_service_api::UnifiedExecError;
 pub(crate) use process_manager::UnifiedExecCommandSessionController;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadRuntimeCapability;
@@ -87,10 +88,11 @@ use thread_service_api::ToolRuntimeNetworkApprovalHandle;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
 pub(crate) const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize =
-    codex_command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES / 4;
+    command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES / 4;
 
 pub(crate) struct UnifiedExecContext {
     pub session: Arc<dyn ThreadSessionCapability>,
+    pub approval_session: Arc<dyn ApprovalSessionCapability>,
     pub turn: Arc<dyn ThreadRuntimeCapability>,
     pub call_id: String,
 }
@@ -98,11 +100,13 @@ pub(crate) struct UnifiedExecContext {
 impl UnifiedExecContext {
     pub fn new(
         session: Arc<dyn ThreadSessionCapability>,
+        approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
     ) -> Self {
         Self {
             session,
+            approval_session,
             turn,
             call_id,
         }
@@ -159,10 +163,10 @@ impl ExecCommandRequest {
             prefix_rule: request.prefix_rule,
             notify_on: request.notify_on,
             approval_mode: match request.approval_mode {
-                codex_command_service_api::ExecCommandApprovalMode::ContinueInRuntime => {
+                command_service_api::ExecCommandApprovalMode::ContinueInRuntime => {
                     ExecCommandApprovalMode::ContinueInRuntime
                 }
-                codex_command_service_api::ExecCommandApprovalMode::AlreadyApproved => {
+                command_service_api::ExecCommandApprovalMode::AlreadyApproved => {
                     ExecCommandApprovalMode::AlreadyApproved
                 }
             },
@@ -173,10 +177,10 @@ impl ExecCommandRequest {
 
 pub(crate) fn command_notification_filter_to_protocol(
     value: CommandNotificationFilter,
-) -> codex_protocol::protocol::ExecCommandNotifyOn {
+) -> protocol::protocol::ExecCommandNotifyOn {
     match value {
-        CommandNotificationFilter::Output => codex_protocol::protocol::ExecCommandNotifyOn::Output,
-        CommandNotificationFilter::Exit => codex_protocol::protocol::ExecCommandNotifyOn::Exit,
+        CommandNotificationFilter::Output => protocol::protocol::ExecCommandNotifyOn::Output,
+        CommandNotificationFilter::Exit => protocol::protocol::ExecCommandNotifyOn::Exit,
     }
 }
 

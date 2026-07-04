@@ -31,7 +31,7 @@ pub use sandbox_tags::permission_profile_sandbox_tag;
 pub use sandbox_tags::sandbox_tag;
 pub use shell_escalation::EscalationDecision;
 pub use shell_escalation::EscalationExecution;
-pub use codex_protocol::approvals::EscalationPermissions;
+pub use protocol::approvals::EscalationPermissions;
 pub use shell_escalation::EscalationPolicyDecisionParams;
 pub use shell_escalation::EscalationPromptDecision;
 pub use shell_escalation::EscalationPromptFuture;
@@ -39,7 +39,7 @@ pub use shell_escalation::EscalationPromptHandler;
 pub use shell_escalation::EscalationPromptRequest;
 pub use shell_escalation::ExecResult;
 pub use shell_escalation::ParsedShellCommand;
-pub use codex_protocol::approvals::ResolvedPermissionProfile;
+pub use protocol::approvals::ResolvedPermissionProfile;
 pub use shell_escalation_stopwatch::Stopwatch;
 pub use shell_escalation::approval_sandbox_permissions;
 pub use shell_escalation::determine_escalation_action;
@@ -55,13 +55,13 @@ pub use windows_filesystem_overrides::should_use_windows_restricted_token_sandbo
 pub use windows_filesystem_overrides::unsupported_windows_restricted_token_sandbox_reason;
 pub use windows_filesystem_overrides::windows_sandbox_uses_elevated_backend;
 
-use codex_exec_server_api::ExecEnvironment;
+use exec_server_api::ExecEnvironment;
 use codex_file_system::ExecutorFileSystem;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_session_telemetry_api::SharedSessionTelemetry;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::PermissionProfile;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::NetworkSandboxPolicy;
+use session_telemetry_api::SharedSessionTelemetry;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 /// Filesystem/environment boundary needed by apply-patch and exec-style tools.
@@ -108,10 +108,10 @@ pub struct ResolvedExecCommandEnvironment {
 pub trait SandboxRuntime: Send + Sync {
     fn select_initial(
         &self,
-        file_system_policy: &codex_protocol::permissions::FileSystemSandboxPolicy,
-        network_policy: codex_protocol::permissions::NetworkSandboxPolicy,
+        file_system_policy: &protocol::permissions::FileSystemSandboxPolicy,
+        network_policy: protocol::permissions::NetworkSandboxPolicy,
         pref: SandboxablePreference,
-        windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
+        windows_sandbox_level: protocol::config_types::WindowsSandboxLevel,
         has_managed_network_requirements: bool,
     ) -> SandboxType {
         select_initial_sandbox(
@@ -143,26 +143,26 @@ impl SandboxRuntime for DisabledSandboxRuntime {
     }
 }
 
-impl From<SandboxTransformError> for codex_protocol::error::CodexErr {
+impl From<SandboxTransformError> for protocol::error::CodexErr {
     fn from(err: SandboxTransformError) -> Self {
         match err {
             SandboxTransformError::MissingLinuxSandboxExecutable => {
-                codex_protocol::error::CodexErr::LandlockSandboxExecutableNotProvided
+                protocol::error::CodexErr::LandlockSandboxExecutableNotProvided
             }
             SandboxTransformError::SandboxRuntimeUnavailable => {
-                codex_protocol::error::CodexErr::UnsupportedOperation(
+                protocol::error::CodexErr::UnsupportedOperation(
                     "sandbox runtime is unavailable".to_string(),
                 )
             }
             #[cfg(target_os = "linux")]
             SandboxTransformError::Wsl1UnsupportedForBubblewrap => {
-                codex_protocol::error::CodexErr::UnsupportedOperation(
+                protocol::error::CodexErr::UnsupportedOperation(
                     manager::WSL1_BWRAP_WARNING.to_string(),
                 )
             }
             #[cfg(not(target_os = "macos"))]
             SandboxTransformError::SeatbeltUnavailable => {
-                codex_protocol::error::CodexErr::UnsupportedOperation(
+                protocol::error::CodexErr::UnsupportedOperation(
                     "seatbelt sandbox is only available on macOS".to_string(),
                 )
             }

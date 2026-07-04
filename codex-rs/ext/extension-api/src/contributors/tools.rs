@@ -1,6 +1,6 @@
-use codex_tool_types::JsonToolOutput;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolExecutor;
+use tool_service_api::JsonToolOutput;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolExecutor;
 
 /// Model-facing output returned by extension-owned tools.
 pub type ExtensionToolOutput = JsonToolOutput;

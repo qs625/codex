@@ -1,5 +1,5 @@
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
 
 /// Context payload that is injected as a message fragment.
 ///

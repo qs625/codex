@@ -12,113 +12,113 @@ use crate::thread_state::TurnSummary;
 use crate::thread_state::resolve_server_request_on_thread_listener;
 use crate::thread_status::ThreadWatchActiveGuard;
 use crate::thread_status::ThreadWatchManager;
-use codex_app_server_protocol::AccountRateLimitsUpdatedNotification;
-use codex_app_server_protocol::AdditionalPermissionProfile as V2AdditionalPermissionProfile;
-use codex_app_server_protocol::CodexErrorInfo as V2CodexErrorInfo;
-use codex_app_server_protocol::CommandAction as V2ParsedCommand;
-use codex_app_server_protocol::CommandExecutionApprovalDecision;
-use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
-use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
-use codex_app_server_protocol::CommandExecutionSource;
-use codex_app_server_protocol::CommandExecutionStatus;
-use codex_app_server_protocol::DeprecationNoticeNotification;
-use codex_app_server_protocol::DynamicToolCallParams;
-use codex_app_server_protocol::DynamicToolCallStatus;
-use codex_app_server_protocol::ErrorNotification;
-use codex_app_server_protocol::ExecPolicyAmendment as V2ExecPolicyAmendment;
-use codex_app_server_protocol::FileChangeApprovalDecision;
-use codex_app_server_protocol::FileChangeRequestApprovalParams;
-use codex_app_server_protocol::FileChangeRequestApprovalResponse;
-use codex_app_server_protocol::GrantedPermissionProfile as V2GrantedPermissionProfile;
-use codex_app_server_protocol::GuardianWarningNotification;
-use codex_app_server_protocol::HookCompletedNotification;
-use codex_app_server_protocol::HookStartedNotification;
-use codex_app_server_protocol::ItemCompletedNotification;
-use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::McpServerElicitationAction;
-use codex_app_server_protocol::McpServerElicitationRequestParams;
-use codex_app_server_protocol::McpServerElicitationRequestResponse;
-use codex_app_server_protocol::McpServerStartupState;
-use codex_app_server_protocol::McpServerStatusUpdatedNotification;
-use codex_app_server_protocol::ModelReroutedNotification;
-use codex_app_server_protocol::ModelVerificationNotification;
-use codex_app_server_protocol::NetworkApprovalContext as V2NetworkApprovalContext;
-use codex_app_server_protocol::NetworkPolicyAmendment as V2NetworkPolicyAmendment;
-use codex_app_server_protocol::NetworkPolicyRuleAction as V2NetworkPolicyRuleAction;
-use codex_app_server_protocol::PermissionsRequestApprovalParams;
-use codex_app_server_protocol::PermissionsRequestApprovalResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequestPayload;
-use codex_app_server_protocol::ThreadContextUsageUpdatedNotification;
-use codex_app_server_protocol::ThreadGoalUpdatedNotification;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadRealtimeClosedNotification;
-use codex_app_server_protocol::ThreadRealtimeErrorNotification;
-use codex_app_server_protocol::ThreadRealtimeItemAddedNotification;
-use codex_app_server_protocol::ThreadRealtimeOutputAudioDeltaNotification;
-use codex_app_server_protocol::ThreadRealtimeSdpNotification;
-use codex_app_server_protocol::ThreadRealtimeStartedNotification;
-use codex_app_server_protocol::ThreadRealtimeTranscriptDeltaNotification;
-use codex_app_server_protocol::ThreadRealtimeTranscriptDoneNotification;
-use codex_app_server_protocol::ThreadRollbackResponse;
-use codex_app_server_protocol::ThreadSkillsUpdatedNotification;
-use codex_app_server_protocol::ThreadStatus;
-use codex_app_server_protocol::ThreadTokenUsage;
-use codex_app_server_protocol::ThreadTokenUsageUpdatedNotification;
-use codex_app_server_protocol::ToolRequestUserInputOption;
-use codex_app_server_protocol::ToolRequestUserInputParams;
-use codex_app_server_protocol::ToolRequestUserInputQuestion;
-use codex_app_server_protocol::ToolRequestUserInputResponse;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnCompletedNotification;
-use codex_app_server_protocol::TurnDiffUpdatedNotification;
-use codex_app_server_protocol::TurnError;
-use codex_app_server_protocol::TurnInterruptResponse;
-use codex_app_server_protocol::TurnItemsView;
-use codex_app_server_protocol::TurnPlanStep;
-use codex_app_server_protocol::TurnPlanUpdatedNotification;
-use codex_app_server_protocol::TurnStartedNotification;
-use codex_app_server_protocol::TurnStatus;
-use codex_app_server_protocol::WarningNotification;
-use codex_app_server_protocol::build_item_from_guardian_event;
-use codex_app_server_protocol::guardian_auto_approval_review_notification;
-use codex_app_server_protocol::item_event_to_server_notification;
-use codex_protocol::ThreadId;
-use codex_protocol::items::TurnItem as CoreTurnItem;
-#[cfg(test)]
-use codex_protocol::items::parse_hook_prompt_message;
-use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
-use codex_protocol::plan_tool::UpdatePlanArgs;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecApprovalRequestEvent;
-use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::RealtimeEvent;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::ReviewOutputEvent;
-use codex_protocol::protocol::TokenCountEvent;
-use codex_protocol::protocol::TurnAbortedEvent;
-use codex_protocol::protocol::TurnCompleteEvent;
-use codex_protocol::protocol::TurnDiffEvent;
-use codex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
-use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
-use codex_protocol::request_permissions::RequestPermissionsResponse as CoreRequestPermissionsResponse;
-use codex_protocol::request_user_input::RequestUserInputAnswer as CoreRequestUserInputAnswer;
-use codex_protocol::request_user_input::RequestUserInputResponse as CoreRequestUserInputResponse;
+use app_server_protocol::AccountRateLimitsUpdatedNotification;
+use app_server_protocol::AdditionalPermissionProfile as V2AdditionalPermissionProfile;
+use app_server_protocol::CodexErrorInfo as V2CodexErrorInfo;
+use app_server_protocol::CommandAction as V2ParsedCommand;
+use app_server_protocol::CommandExecutionApprovalDecision;
+use app_server_protocol::CommandExecutionRequestApprovalParams;
+use app_server_protocol::CommandExecutionRequestApprovalResponse;
+use app_server_protocol::CommandExecutionSource;
+use app_server_protocol::CommandExecutionStatus;
+use app_server_protocol::DeprecationNoticeNotification;
+use app_server_protocol::DynamicToolCallParams;
+use app_server_protocol::DynamicToolCallStatus;
+use app_server_protocol::ErrorNotification;
+use app_server_protocol::ExecPolicyAmendment as V2ExecPolicyAmendment;
+use app_server_protocol::FileChangeApprovalDecision;
+use app_server_protocol::FileChangeRequestApprovalParams;
+use app_server_protocol::FileChangeRequestApprovalResponse;
+use app_server_protocol::GrantedPermissionProfile as V2GrantedPermissionProfile;
+use app_server_protocol::GuardianWarningNotification;
+use app_server_protocol::HookCompletedNotification;
+use app_server_protocol::HookStartedNotification;
+use app_server_protocol::ItemCompletedNotification;
+use app_server_protocol::ItemStartedNotification;
+use app_server_protocol::McpServerElicitationAction;
+use app_server_protocol::McpServerElicitationRequestParams;
+use app_server_protocol::McpServerElicitationRequestResponse;
+use app_server_protocol::McpServerStartupState;
+use app_server_protocol::McpServerStatusUpdatedNotification;
+use app_server_protocol::ModelReroutedNotification;
+use app_server_protocol::ModelVerificationNotification;
+use app_server_protocol::NetworkApprovalContext as V2NetworkApprovalContext;
+use app_server_protocol::NetworkPolicyAmendment as V2NetworkPolicyAmendment;
+use app_server_protocol::NetworkPolicyRuleAction as V2NetworkPolicyRuleAction;
+use app_server_protocol::PermissionsRequestApprovalParams;
+use app_server_protocol::PermissionsRequestApprovalResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequestPayload;
+use app_server_protocol::ThreadContextUsageUpdatedNotification;
+use app_server_protocol::ThreadGoalUpdatedNotification;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadRealtimeClosedNotification;
+use app_server_protocol::ThreadRealtimeErrorNotification;
+use app_server_protocol::ThreadRealtimeItemAddedNotification;
+use app_server_protocol::ThreadRealtimeOutputAudioDeltaNotification;
+use app_server_protocol::ThreadRealtimeSdpNotification;
+use app_server_protocol::ThreadRealtimeStartedNotification;
+use app_server_protocol::ThreadRealtimeTranscriptDeltaNotification;
+use app_server_protocol::ThreadRealtimeTranscriptDoneNotification;
+use app_server_protocol::ThreadRollbackResponse;
+use app_server_protocol::ThreadSkillsUpdatedNotification;
+use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadTokenUsage;
+use app_server_protocol::ThreadTokenUsageUpdatedNotification;
+use app_server_protocol::ToolRequestUserInputOption;
+use app_server_protocol::ToolRequestUserInputParams;
+use app_server_protocol::ToolRequestUserInputQuestion;
+use app_server_protocol::ToolRequestUserInputResponse;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnDiffUpdatedNotification;
+use app_server_protocol::TurnError;
+use app_server_protocol::TurnInterruptResponse;
+use app_server_protocol::TurnItemsView;
+use app_server_protocol::TurnPlanStep;
+use app_server_protocol::TurnPlanUpdatedNotification;
+use app_server_protocol::TurnStartedNotification;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::WarningNotification;
+use app_server_protocol::build_item_from_guardian_event;
+use app_server_protocol::guardian_auto_approval_review_notification;
+use app_server_protocol::item_event_to_server_notification;
 use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
 use codex_shell_utils::shlex_join;
-use thread_service_api::ThreadRuntimeStatus;
-use thread_service::review_format::format_review_findings_block;
-use thread_service::review_prompts;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::ThreadId;
+use protocol::items::TurnItem as CoreTurnItem;
+#[cfg(test)]
+use protocol::items::parse_hook_prompt_message;
+use protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
+use protocol::plan_tool::UpdatePlanArgs;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ExecApprovalRequestEvent;
+use protocol::protocol::InterAgentOperation;
+use protocol::protocol::Op;
+use protocol::protocol::RealtimeEvent;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::ReviewOutputEvent;
+use protocol::protocol::TokenCountEvent;
+use protocol::protocol::TurnAbortedEvent;
+use protocol::protocol::TurnCompleteEvent;
+use protocol::protocol::TurnDiffEvent;
+use protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
+use protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
+use protocol::request_permissions::RequestPermissionsResponse as CoreRequestPermissionsResponse;
+use protocol::request_user_input::RequestUserInputAnswer as CoreRequestUserInputAnswer;
+use protocol::request_user_input::RequestUserInputResponse as CoreRequestUserInputResponse;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+use thread_service::review_format::format_review_findings_block;
+use thread_service::review_prompts;
+use thread_service_api::ThreadRuntimeStatus;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
 use tracing::error;
@@ -146,9 +146,7 @@ fn child_completion_trigger_turn(item: &CoreTurnItem) -> Option<bool> {
     }
 }
 
-fn collab_wait_completed_agent(
-    end_event: &codex_protocol::protocol::CollabWaitingEndEvent,
-) -> bool {
+fn collab_wait_completed_agent(end_event: &protocol::protocol::CollabWaitingEndEvent) -> bool {
     end_event
         .statuses
         .values()
@@ -234,16 +232,14 @@ pub(crate) async fn apply_bespoke_event_handling(
         }
         EventMsg::McpStartupUpdate(update) => {
             let (status, error) = match update.status {
-                codex_protocol::protocol::McpStartupStatus::Starting => {
+                protocol::protocol::McpStartupStatus::Starting => {
                     (McpServerStartupState::Starting, None)
                 }
-                codex_protocol::protocol::McpStartupStatus::Ready => {
-                    (McpServerStartupState::Ready, None)
-                }
-                codex_protocol::protocol::McpStartupStatus::Failed { error } => {
+                protocol::protocol::McpStartupStatus::Ready => (McpServerStartupState::Ready, None),
+                protocol::protocol::McpStartupStatus::Failed { error } => {
                     (McpServerStartupState::Failed, Some(error))
                 }
-                codex_protocol::protocol::McpStartupStatus::Cancelled => {
+                protocol::protocol::McpStartupStatus::Cancelled => {
                     (McpServerStartupState::Cancelled, None)
                 }
             };
@@ -300,7 +296,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             } else {
                 assessment.turn_id.clone()
             };
-            if assessment.status == codex_protocol::protocol::GuardianAssessmentStatus::InProgress
+            if assessment.status == protocol::protocol::GuardianAssessmentStatus::InProgress
                 && let Some((target_item_id, completion_item)) = pending_command_execution.as_ref()
             {
                 start_command_execution_item(
@@ -323,15 +319,15 @@ pub(crate) async fn apply_bespoke_event_handling(
             );
             outgoing.send_server_notification(notification).await;
             let completion_status = match assessment.status {
-                codex_protocol::protocol::GuardianAssessmentStatus::Denied
-                | codex_protocol::protocol::GuardianAssessmentStatus::Aborted => {
+                protocol::protocol::GuardianAssessmentStatus::Denied
+                | protocol::protocol::GuardianAssessmentStatus::Aborted => {
                     Some(CommandExecutionStatus::Declined)
                 }
-                codex_protocol::protocol::GuardianAssessmentStatus::TimedOut => {
+                protocol::protocol::GuardianAssessmentStatus::TimedOut => {
                     Some(CommandExecutionStatus::Failed)
                 }
-                codex_protocol::protocol::GuardianAssessmentStatus::InProgress
-                | codex_protocol::protocol::GuardianAssessmentStatus::Approved => None,
+                protocol::protocol::GuardianAssessmentStatus::InProgress
+                | protocol::protocol::GuardianAssessmentStatus::Approved => None,
             };
             if let Some(completion_status) = completion_status
                 && let Some((target_item_id, completion_item)) = pending_command_execution
@@ -752,7 +748,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                         .submit_op(Op::ResolveElicitation {
                             server_name: request.server_name,
                             request_id: request.id,
-                            decision: codex_protocol::approvals::ElicitationAction::Cancel,
+                            decision: protocol::approvals::ElicitationAction::Cancel,
                             content: None,
                             meta: None,
                         })
@@ -1127,7 +1123,7 @@ pub(crate) async fn apply_bespoke_event_handling(
         EventMsg::ExecCommandBegin(exec_command_begin_event) => {
             if matches!(
                 exec_command_begin_event.source,
-                codex_protocol::protocol::ExecCommandSource::UnifiedExecInteraction
+                protocol::protocol::ExecCommandSource::UnifiedExecInteraction
             ) {
                 // TerminalInteraction is the v2 surface for unified exec
                 // stdin/poll events. Suppress the legacy CommandExecution
@@ -1170,7 +1166,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             }
             if matches!(
                 exec_command_end_event.source,
-                codex_protocol::protocol::ExecCommandSource::UnifiedExecInteraction
+                protocol::protocol::ExecCommandSource::UnifiedExecInteraction
             ) {
                 // The paired begin event is suppressed above; keep the
                 // completion out of v2 as well so no orphan legacy item is
@@ -1501,10 +1497,10 @@ async fn complete_command_execution_item(
 pub(crate) async fn maybe_emit_hook_prompt_item_completed(
     conversation_id: ThreadId,
     turn_id: &str,
-    item: &codex_protocol::models::ResponseItem,
+    item: &protocol::models::ResponseItem,
     outgoing: &ThreadScopedOutgoingMessageSender,
 ) {
-    let codex_protocol::models::ResponseItem::Message {
+    let protocol::models::ResponseItem::Message {
         role, content, id, ..
     } = item
     else {
@@ -1528,7 +1524,7 @@ pub(crate) async fn maybe_emit_hook_prompt_item_completed(
             fragments: hook_prompt
                 .fragments
                 .into_iter()
-                .map(codex_app_server_protocol::HookPromptFragment::from)
+                .map(app_server_protocol::HookPromptFragment::from)
                 .collect(),
         },
     };
@@ -1614,7 +1610,7 @@ async fn handle_thread_rollback_failed(
 }
 
 fn thread_rollback_response_from_stored_thread(
-    stored_thread: codex_thread_store::StoredThread,
+    stored_thread: thread_store::StoredThread,
     session_id: String,
     fallback_model_provider: &str,
     fallback_cwd: &AbsolutePathBuf,
@@ -1770,7 +1766,7 @@ async fn on_request_user_input_response(
 
 async fn on_mcp_server_elicitation_response(
     server_name: String,
-    request_id: codex_protocol::mcp::RequestId,
+    request_id: protocol::mcp::RequestId,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
     conversation: Arc<dyn AppServerLiveThreadHandle>,
@@ -1913,7 +1909,7 @@ fn request_permissions_response_from_client_result(
             error!("failed to deserialize PermissionsRequestApprovalResponse: {err}");
             PermissionsRequestApprovalResponse {
                 permissions: V2GrantedPermissionProfile::default(),
-                scope: codex_app_server_protocol::PermissionGrantScope::Turn,
+                scope: app_server_protocol::PermissionGrantScope::Turn,
                 strict_auto_review: None,
             }
         });
@@ -1921,7 +1917,7 @@ fn request_permissions_response_from_client_result(
     if strict_auto_review
         && matches!(
             response.scope,
-            codex_app_server_protocol::PermissionGrantScope::Session
+            app_server_protocol::PermissionGrantScope::Session
         )
     {
         error!("strict auto review is only supported for turn-scoped permission grants");
@@ -2164,50 +2160,50 @@ mod tests {
     use anyhow::Result;
     use anyhow::anyhow;
     use anyhow::bail;
+    use app_server_protocol::AutoReviewDecisionSource;
+    use app_server_protocol::GuardianApprovalReviewStatus;
+    use app_server_protocol::JSONRPCErrorError;
+    use app_server_protocol::TurnPlanStepStatus;
     use chrono::Utc;
-    use codex_app_server_protocol::AutoReviewDecisionSource;
-    use codex_app_server_protocol::GuardianApprovalReviewStatus;
-    use codex_app_server_protocol::JSONRPCErrorError;
-    use codex_app_server_protocol::TurnPlanStepStatus;
     use codex_login::CodexAuth;
-    use codex_protocol::items::HookPromptFragment;
-    use codex_protocol::items::build_hook_prompt_message;
-    use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
-    use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSpecialPath;
-    use codex_protocol::plan_tool::PlanItemArg;
-    use codex_protocol::plan_tool::StepStatus;
-    use codex_protocol::protocol::AgentMessageEvent;
-    use codex_protocol::protocol::AskForApproval;
-    use codex_protocol::protocol::CreditsSnapshot;
-    use codex_protocol::protocol::EventMsg;
-    use codex_protocol::protocol::GuardianAssessmentEvent;
-    use codex_protocol::protocol::GuardianAssessmentStatus;
-    use codex_protocol::protocol::RateLimitSnapshot;
-    use codex_protocol::protocol::RateLimitWindow;
-    use codex_protocol::protocol::RolloutItem;
-    use codex_protocol::protocol::SandboxPolicy;
-    use codex_protocol::protocol::SessionSource;
-    use codex_protocol::protocol::ThreadSkill;
-    use codex_protocol::protocol::ThreadSkillKind;
-    use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
-    use codex_protocol::protocol::TokenUsage;
-    use codex_protocol::protocol::TokenUsageInfo;
-    use codex_protocol::protocol::UserMessageEvent;
-    use thread_service::CodexThread;
-    use thread_service::ThreadService;
-    use codex_thread_store::StoredThread;
-    use codex_thread_store::StoredThreadHistory;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use core_test_support::load_default_config_for_test;
     use pretty_assertions::assert_eq;
+    use protocol::items::HookPromptFragment;
+    use protocol::items::build_hook_prompt_message;
+    use protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
+    use protocol::models::NetworkPermissions as CoreNetworkPermissions;
+    use protocol::permissions::FileSystemAccessMode;
+    use protocol::permissions::FileSystemPath;
+    use protocol::permissions::FileSystemSandboxEntry;
+    use protocol::permissions::FileSystemSpecialPath;
+    use protocol::plan_tool::PlanItemArg;
+    use protocol::plan_tool::StepStatus;
+    use protocol::protocol::AgentMessageEvent;
+    use protocol::protocol::AskForApproval;
+    use protocol::protocol::CreditsSnapshot;
+    use protocol::protocol::EventMsg;
+    use protocol::protocol::GuardianAssessmentEvent;
+    use protocol::protocol::GuardianAssessmentStatus;
+    use protocol::protocol::RateLimitSnapshot;
+    use protocol::protocol::RateLimitWindow;
+    use protocol::protocol::RolloutItem;
+    use protocol::protocol::SandboxPolicy;
+    use protocol::protocol::SessionSource;
+    use protocol::protocol::ThreadSkill;
+    use protocol::protocol::ThreadSkillKind;
+    use protocol::protocol::ThreadSkillsUpdatedEvent;
+    use protocol::protocol::TokenUsage;
+    use protocol::protocol::TokenUsageInfo;
+    use protocol::protocol::UserMessageEvent;
     use serde_json::json;
     use tempfile::TempDir;
+    use thread_service::CodexThread;
+    use thread_service::ThreadService;
+    use thread_store::StoredThread;
+    use thread_store::StoredThreadHistory;
     use tokio::sync::Mutex;
     use tokio::sync::mpsc;
 
@@ -2321,7 +2317,7 @@ mod tests {
     fn turn_aborted_event(turn_id: &str) -> TurnAbortedEvent {
         TurnAbortedEvent {
             turn_id: Some(turn_id.to_string()),
-            reason: codex_protocol::protocol::TurnAbortReason::Interrupted,
+            reason: protocol::protocol::TurnAbortReason::Interrupted,
             completed_at: Some(TEST_TURN_COMPLETED_AT),
             duration_ms: Some(TEST_TURN_DURATION_MS),
         }
@@ -2345,13 +2341,13 @@ mod tests {
         let (risk_level, user_authorization, rationale) = match status {
             GuardianAssessmentStatus::InProgress => (None, None, None),
             GuardianAssessmentStatus::Approved => (
-                Some(codex_protocol::protocol::GuardianRiskLevel::Low),
-                Some(codex_protocol::protocol::GuardianUserAuthorization::High),
+                Some(protocol::protocol::GuardianRiskLevel::Low),
+                Some(protocol::protocol::GuardianUserAuthorization::High),
                 Some("looks safe".to_string()),
             ),
             GuardianAssessmentStatus::Denied => (
-                Some(codex_protocol::protocol::GuardianRiskLevel::High),
-                Some(codex_protocol::protocol::GuardianUserAuthorization::Low),
+                Some(protocol::protocol::GuardianRiskLevel::High),
+                Some(protocol::protocol::GuardianUserAuthorization::Low),
                 Some("too risky".to_string()),
             ),
             GuardianAssessmentStatus::TimedOut => {
@@ -2373,7 +2369,7 @@ mod tests {
             decision_source: if matches!(status, GuardianAssessmentStatus::InProgress) {
                 None
             } else {
-                Some(codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent)
+                Some(protocol::protocol::GuardianAssessmentDecisionSource::Agent)
             },
             action: serde_json::from_value(json!({
                 "type": "command",
@@ -2418,8 +2414,8 @@ mod tests {
     #[test]
     fn guardian_assessment_started_uses_event_turn_id_fallback() {
         let conversation_id = ThreadId::new();
-        let action = codex_protocol::protocol::GuardianAssessmentAction::Command {
-            source: codex_protocol::protocol::GuardianCommandSource::Shell,
+        let action = protocol::protocol::GuardianAssessmentAction::Command {
+            source: protocol::protocol::GuardianCommandSource::Shell,
             command: "rm -rf /tmp/example.sqlite".to_string(),
             cwd: test_path_buf("/tmp").abs(),
         };
@@ -2432,7 +2428,7 @@ mod tests {
                 turn_id: String::new(),
                 started_at_ms: 1_000,
                 completed_at_ms: None,
-                status: codex_protocol::protocol::GuardianAssessmentStatus::InProgress,
+                status: protocol::protocol::GuardianAssessmentStatus::InProgress,
                 risk_level: None,
                 user_authorization: None,
                 rationale: None,
@@ -2464,8 +2460,8 @@ mod tests {
     #[test]
     fn guardian_assessment_completed_emits_review_payload() {
         let conversation_id = ThreadId::new();
-        let action = codex_protocol::protocol::GuardianAssessmentAction::Command {
-            source: codex_protocol::protocol::GuardianCommandSource::Shell,
+        let action = protocol::protocol::GuardianAssessmentAction::Command {
+            source: protocol::protocol::GuardianCommandSource::Shell,
             command: "rm -rf /tmp/example.sqlite".to_string(),
             cwd: test_path_buf("/tmp").abs(),
         };
@@ -2478,13 +2474,11 @@ mod tests {
                 turn_id: "turn-from-assessment".to_string(),
                 started_at_ms: 1_000,
                 completed_at_ms: Some(1_042),
-                status: codex_protocol::protocol::GuardianAssessmentStatus::Denied,
-                risk_level: Some(codex_protocol::protocol::GuardianRiskLevel::High),
-                user_authorization: Some(codex_protocol::protocol::GuardianUserAuthorization::Low),
+                status: protocol::protocol::GuardianAssessmentStatus::Denied,
+                risk_level: Some(protocol::protocol::GuardianRiskLevel::High),
+                user_authorization: Some(protocol::protocol::GuardianUserAuthorization::Low),
                 rationale: Some("too risky".to_string()),
-                decision_source: Some(
-                    codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
-                ),
+                decision_source: Some(protocol::protocol::GuardianAssessmentDecisionSource::Agent),
                 action: action.clone(),
             },
         );
@@ -2501,11 +2495,11 @@ mod tests {
                 assert_eq!(payload.review.status, GuardianApprovalReviewStatus::Denied);
                 assert_eq!(
                     payload.review.risk_level,
-                    Some(codex_app_server_protocol::GuardianRiskLevel::High)
+                    Some(app_server_protocol::GuardianRiskLevel::High)
                 );
                 assert_eq!(
                     payload.review.user_authorization,
-                    Some(codex_app_server_protocol::GuardianUserAuthorization::Low)
+                    Some(app_server_protocol::GuardianUserAuthorization::Low)
                 );
                 assert_eq!(payload.review.rationale.as_deref(), Some("too risky"));
                 assert_eq!(payload.action, action.into());
@@ -2517,10 +2511,10 @@ mod tests {
     #[test]
     fn guardian_assessment_aborted_emits_completed_review_payload() {
         let conversation_id = ThreadId::new();
-        let action = codex_protocol::protocol::GuardianAssessmentAction::NetworkAccess {
+        let action = protocol::protocol::GuardianAssessmentAction::NetworkAccess {
             target: "api.openai.com:443".to_string(),
             host: "api.openai.com".to_string(),
-            protocol: codex_protocol::protocol::NetworkApprovalProtocol::Https,
+            protocol: protocol::protocol::NetworkApprovalProtocol::Https,
             port: 443,
         };
         let notification = guardian_auto_approval_review_notification(
@@ -2532,13 +2526,11 @@ mod tests {
                 turn_id: "turn-from-assessment".to_string(),
                 started_at_ms: 1_000,
                 completed_at_ms: Some(1_042),
-                status: codex_protocol::protocol::GuardianAssessmentStatus::Aborted,
+                status: protocol::protocol::GuardianAssessmentStatus::Aborted,
                 risk_level: None,
                 user_authorization: None,
                 rationale: None,
-                decision_source: Some(
-                    codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
-                ),
+                decision_source: Some(protocol::protocol::GuardianAssessmentDecisionSource::Agent),
                 action: action.clone(),
             },
         );
@@ -3117,7 +3109,7 @@ mod tests {
     fn request_permissions_response_preserves_turn_scoped_strict_auto_review() {
         let response = request_permissions_response_from_client_result(
             CoreRequestPermissionProfile {
-                network: Some(codex_protocol::models::NetworkPermissions {
+                network: Some(protocol::models::NetworkPermissions {
                     enabled: Some(true),
                 }),
                 ..Default::default()
@@ -3312,7 +3304,7 @@ mod tests {
             let mut state = thread_state.lock().await;
             state.track_current_turn_event(
                 "turn-1",
-                &EventMsg::TurnStarted(codex_protocol::protocol::TurnStartedEvent {
+                &EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
                     turn_id: "turn-1".to_string(),
                     started_at: Some(42),
                     model_context_window: None,
@@ -3321,7 +3313,7 @@ mod tests {
             );
             state.track_current_turn_event(
                 "turn-1",
-                &EventMsg::UserMessage(codex_protocol::protocol::UserMessageEvent {
+                &EventMsg::UserMessage(protocol::protocol::UserMessageEvent {
                     message: "already tracked".to_string(),
                     images: None,
                     local_images: Vec::new(),
@@ -3345,7 +3337,7 @@ mod tests {
         apply_bespoke_event_handling(
             Event {
                 id: "turn-1".to_string(),
-                msg: EventMsg::TurnStarted(codex_protocol::protocol::TurnStartedEvent {
+                msg: EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
                     turn_id: "turn-1".to_string(),
                     started_at: Some(42),
                     model_context_window: None,
@@ -3400,23 +3392,19 @@ mod tests {
         apply_bespoke_event_handling(
             Event {
                 id: "turn-1".to_string(),
-                msg: EventMsg::CommandWaitCompleted(
-                    codex_protocol::protocol::CommandWaitDisplayEvent {
-                        thread_id: conversation_id.clone(),
-                        turn_id: "turn-1".to_string(),
-                        id: "wait-1".to_string(),
-                        command_id: "cmd-1".to_string(),
-                        status: codex_protocol::models::CommandWaitStatus::Completed,
-                        notification: Some(
-                            codex_protocol::models::CommandWaitNotificationKind::Exit,
-                        ),
-                        exit_code: Some(0),
-                        wall_time_seconds: 1.25,
-                        wait_timeout_ms: 250,
-                        created_at_ms: 1234,
-                        lifecycle_at_ms: 5678,
-                    },
-                ),
+                msg: EventMsg::CommandWaitCompleted(protocol::protocol::CommandWaitDisplayEvent {
+                    thread_id: conversation_id.clone(),
+                    turn_id: "turn-1".to_string(),
+                    id: "wait-1".to_string(),
+                    command_id: "cmd-1".to_string(),
+                    status: protocol::models::CommandWaitStatus::Completed,
+                    notification: Some(protocol::models::CommandWaitNotificationKind::Exit),
+                    exit_code: Some(0),
+                    wall_time_seconds: 1.25,
+                    wait_timeout_ms: 250,
+                    created_at_ms: 1234,
+                    lifecycle_at_ms: 5678,
+                }),
             },
             conversation_id,
             conversation,
@@ -3440,10 +3428,8 @@ mod tests {
                     ThreadItem::CommandWait {
                         id: "wait-1".to_string(),
                         command_id: "cmd-1".to_string(),
-                        status: codex_app_server_protocol::CommandWaitStatus::Completed,
-                        notification: Some(
-                            codex_app_server_protocol::CommandWaitNotificationKind::Exit,
-                        ),
+                        status: app_server_protocol::CommandWaitStatus::Completed,
+                        notification: Some(app_server_protocol::CommandWaitNotificationKind::Exit,),
                         exit_code: Some(0),
                         wall_time_seconds: 1.25,
                         wait_timeout_ms: 250,
@@ -3541,7 +3527,7 @@ mod tests {
             let mut state = thread_state.lock().await;
             state.track_current_turn_event(
                 &event_turn_id,
-                &EventMsg::TurnStarted(codex_protocol::protocol::TurnStartedEvent {
+                &EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
                     turn_id: event_turn_id.clone(),
                     started_at: Some(42),
                     model_context_window: None,
@@ -4056,11 +4042,11 @@ mod tests {
                     ThreadItem::HookPrompt {
                         id: notification.item.id().to_string(),
                         fragments: vec![
-                            codex_app_server_protocol::HookPromptFragment {
+                            app_server_protocol::HookPromptFragment {
                                 text: "Retry with tests.".into(),
                                 hook_run_id: "hook-run-1".into(),
                             },
-                            codex_app_server_protocol::HookPromptFragment {
+                            app_server_protocol::HookPromptFragment {
                                 text: "Then summarize cleanly.".into(),
                                 hook_run_id: "hook-run-2".into(),
                             },

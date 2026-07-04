@@ -7,9 +7,9 @@ use crate::sync_rollout_summaries_from_memories;
 use chrono::TimeZone;
 use chrono::Utc;
 use codex_config_types::DEFAULT_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION;
-use codex_protocol::ThreadId;
-use codex_state::Stage1Output;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use state_api::Stage1Output;
 use std::path::PathBuf;
 use tempfile::tempdir;
 

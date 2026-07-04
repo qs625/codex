@@ -1,4 +1,4 @@
-use codex_app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::JSONRPCErrorError;
 
 pub(crate) const TURN_TRANSITION_PENDING_REQUEST_ERROR_REASON: &str = "turnTransition";
 
@@ -14,7 +14,7 @@ pub(crate) fn is_turn_transition_server_request_error(error: &JSONRPCErrorError)
 #[cfg(test)]
 mod tests {
     use super::is_turn_transition_server_request_error;
-    use codex_app_server_protocol::JSONRPCErrorError;
+    use app_server_protocol::JSONRPCErrorError;
     use pretty_assertions::assert_eq;
     use serde_json::json;
 

@@ -1,30 +1,31 @@
 use super::*;
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
-use codex_app_server_protocol::PluginAvailability;
-use codex_app_server_protocol::PluginInstallPolicy;
-use codex_app_server_protocol::PluginSharePrincipalRole;
-use codex_app_server_protocol::PluginShareTargetRole;
+use app_server_protocol::PluginAvailability;
+use app_server_protocol::PluginInstallPolicy;
+use app_server_protocol::PluginSharePrincipalRole;
+use app_server_protocol::PluginShareTargetRole;
 use codex_config_types::McpServerConfig;
-use plugin_service_api::PluginRuntime;
+use codex_rmcp_client::perform_oauth_login_silent;
+use mcp_service::oauth_login_support;
+use mcp_service::should_retry_without_scopes;
+use mcp_types::McpOAuthLoginSupport;
+use model_service_api::SharedModelServiceApi;
 use plugin_service::RemotePluginAuth;
 use plugin_service::is_valid_remote_plugin_id;
 use plugin_service::validate_remote_plugin_id;
-use codex_core_skills_api::SkillMetadata;
-use codex_mcp::oauth_login_support;
-use codex_mcp::should_retry_without_scopes;
-use codex_mcp_types::McpOAuthLoginSupport;
-use codex_protocol::protocol::Product;
-use codex_rmcp_client::perform_oauth_login_silent;
+use plugin_service_api::PluginRuntime;
+use protocol::protocol::Product;
+use skill_service_api::SharedSkillServiceApi;
+use skill_service_api::SkillMetadata;
 
 pub(crate) trait PluginProcessorRuntime: Send + Sync {
     fn spawn_effective_plugins_changed_task(
         self: Arc<Self>,
         plugins_manager: Arc<PluginsManager>,
         config_manager: ConfigManager,
+        skill_service: SharedSkillServiceApi,
     );
-
-    fn clear_skills_cache(&self);
 
     fn restriction_product(&self) -> Option<Product>;
 }
@@ -34,19 +35,16 @@ impl PluginProcessorRuntime for ThreadService {
         self: Arc<Self>,
         plugins_manager: Arc<PluginsManager>,
         config_manager: ConfigManager,
+        skill_service: SharedSkillServiceApi,
     ) {
         tokio::spawn(async move {
             plugins_manager.clear_cache();
-            self.skills_manager().clear_cache();
+            skill_service.clear_cache();
             if self.list_thread_ids().await.is_empty() {
                 return;
             }
             crate::mcp_refresh::queue_best_effort_refresh(self.as_ref(), &config_manager).await;
         });
-    }
-
-    fn clear_skills_cache(&self) {
-        self.skills_manager().clear_cache();
     }
 
     fn restriction_product(&self) -> Option<Product> {
@@ -58,6 +56,8 @@ impl PluginProcessorRuntime for ThreadService {
 pub(crate) struct PluginRequestProcessor {
     auth_manager: Arc<AuthManager>,
     runtime: Arc<dyn PluginProcessorRuntime>,
+    model_service: SharedModelServiceApi,
+    skill_service: SharedSkillServiceApi,
     plugins_manager: Arc<PluginsManager>,
     outgoing: Arc<OutgoingMessageSender>,
     analytics_events_client: AnalyticsEventsClient,
@@ -92,7 +92,7 @@ fn plugin_skills_to_info(
             description: skill.description.clone(),
             short_description: skill.short_description.clone(),
             interface: skill.interface.clone().map(|interface| {
-                codex_app_server_protocol::SkillInterface {
+                app_server_protocol::SkillInterface {
                     display_name: interface.display_name,
                     short_description: interface.short_description,
                     icon_small: interface.icon_small,
@@ -149,14 +149,13 @@ fn marketplace_plugin_source_to_info(source: MarketplacePluginSource) -> PluginS
 fn load_shared_plugin_ids_by_local_path(
     config: &Config,
 ) -> Result<std::collections::BTreeMap<AbsolutePathBuf, String>, JSONRPCErrorError> {
-    plugin_service::load_plugin_share_remote_ids_by_local_path(
-        config.codex_home.as_path(),
+    plugin_service::load_plugin_share_remote_ids_by_local_path(config.codex_home.as_path()).map_err(
+        |err| {
+            internal_error(format!(
+                "failed to load plugin share local path mapping: {err}"
+            ))
+        },
     )
-    .map_err(|err| {
-        internal_error(format!(
-            "failed to load plugin share local path mapping: {err}"
-        ))
-    })
 }
 
 fn share_context_for_source(
@@ -227,12 +226,8 @@ fn remote_plugin_share_target_role(
     role: PluginShareTargetRole,
 ) -> plugin_service::RemotePluginShareTargetRole {
     match role {
-        PluginShareTargetRole::Reader => {
-            plugin_service::RemotePluginShareTargetRole::Reader
-        }
-        PluginShareTargetRole::Editor => {
-            plugin_service::RemotePluginShareTargetRole::Editor
-        }
+        PluginShareTargetRole::Reader => plugin_service::RemotePluginShareTargetRole::Reader,
+        PluginShareTargetRole::Editor => plugin_service::RemotePluginShareTargetRole::Editor,
     }
 }
 
@@ -240,15 +235,9 @@ fn plugin_share_principal_role_from_remote(
     role: plugin_service::RemotePluginSharePrincipalRole,
 ) -> PluginSharePrincipalRole {
     match role {
-        plugin_service::RemotePluginSharePrincipalRole::Reader => {
-            PluginSharePrincipalRole::Reader
-        }
-        plugin_service::RemotePluginSharePrincipalRole::Editor => {
-            PluginSharePrincipalRole::Editor
-        }
-        plugin_service::RemotePluginSharePrincipalRole::Owner => {
-            PluginSharePrincipalRole::Owner
-        }
+        plugin_service::RemotePluginSharePrincipalRole::Reader => PluginSharePrincipalRole::Reader,
+        plugin_service::RemotePluginSharePrincipalRole::Editor => PluginSharePrincipalRole::Editor,
+        plugin_service::RemotePluginSharePrincipalRole::Owner => PluginSharePrincipalRole::Owner,
     }
 }
 
@@ -257,23 +246,21 @@ fn remote_plugin_share_targets(
 ) -> Vec<plugin_service::RemotePluginShareTarget> {
     targets
         .into_iter()
-        .map(
-            |target| plugin_service::RemotePluginShareTarget {
-                principal_type: match target.principal_type {
-                    PluginSharePrincipalType::User => {
-                        plugin_service::RemotePluginSharePrincipalType::User
-                    }
-                    PluginSharePrincipalType::Group => {
-                        plugin_service::RemotePluginSharePrincipalType::Group
-                    }
-                    PluginSharePrincipalType::Workspace => {
-                        plugin_service::RemotePluginSharePrincipalType::Workspace
-                    }
-                },
-                principal_id: target.principal_id,
-                role: remote_plugin_share_target_role(target.role),
+        .map(|target| plugin_service::RemotePluginShareTarget {
+            principal_type: match target.principal_type {
+                PluginSharePrincipalType::User => {
+                    plugin_service::RemotePluginSharePrincipalType::User
+                }
+                PluginSharePrincipalType::Group => {
+                    plugin_service::RemotePluginSharePrincipalType::Group
+                }
+                PluginSharePrincipalType::Workspace => {
+                    plugin_service::RemotePluginSharePrincipalType::Workspace
+                }
             },
-        )
+            principal_id: target.principal_id,
+            role: remote_plugin_share_target_role(target.role),
+        })
         .collect()
 }
 
@@ -282,9 +269,7 @@ fn plugin_share_principal_from_remote(
 ) -> PluginSharePrincipal {
     PluginSharePrincipal {
         principal_type: match principal.principal_type {
-            plugin_service::RemotePluginSharePrincipalType::User => {
-                PluginSharePrincipalType::User
-            }
+            plugin_service::RemotePluginSharePrincipalType::User => PluginSharePrincipalType::User,
             plugin_service::RemotePluginSharePrincipalType::Group => {
                 PluginSharePrincipalType::Group
             }
@@ -302,6 +287,8 @@ impl PluginRequestProcessor {
     pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
         runtime: Arc<R>,
+        model_service: SharedModelServiceApi,
+        skill_service: SharedSkillServiceApi,
         plugins_manager: Arc<PluginsManager>,
         outgoing: Arc<OutgoingMessageSender>,
         analytics_events_client: AnalyticsEventsClient,
@@ -316,6 +303,8 @@ impl PluginRequestProcessor {
         Self {
             auth_manager,
             runtime,
+            model_service,
+            skill_service,
             plugins_manager,
             outgoing,
             analytics_events_client,
@@ -417,12 +406,14 @@ impl PluginRequestProcessor {
 
     pub(crate) fn effective_plugins_changed_callback(&self) -> Arc<dyn Fn() + Send + Sync> {
         let runtime = Arc::clone(&self.runtime);
+        let skill_service = Arc::clone(&self.skill_service);
         let plugins_manager = Arc::clone(&self.plugins_manager);
         let config_manager = self.config_manager.clone();
         Arc::new(move || {
             Arc::clone(&runtime).spawn_effective_plugins_changed_task(
                 Arc::clone(&plugins_manager),
                 config_manager.clone(),
+                Arc::clone(&skill_service),
             );
         })
     }
@@ -431,12 +422,13 @@ impl PluginRequestProcessor {
         Arc::clone(&self.runtime).spawn_effective_plugins_changed_task(
             Arc::clone(&self.plugins_manager),
             self.config_manager.clone(),
+            Arc::clone(&self.skill_service),
         );
     }
 
     fn clear_plugin_related_caches(&self) {
         self.plugins_manager.clear_cache();
-        self.runtime.clear_skills_cache();
+        self.skill_service.clear_cache();
     }
 
     async fn load_latest_config(
@@ -507,6 +499,7 @@ impl PluginRequestProcessor {
         if include_local || marketplace_kinds.contains(&PluginListMarketplaceKind::SharedWithMe) {
             plugin_service::maybe_start_plugin_list_background_tasks_for_config(
                 plugins_manager.clone(),
+                Arc::clone(&self.model_service),
                 &plugins_input,
                 remote_auth.clone(),
                 &roots,
@@ -523,7 +516,7 @@ impl PluginRequestProcessor {
                 Ok::<
                     (
                         Vec<PluginMarketplaceEntry>,
-                        Vec<codex_app_server_protocol::MarketplaceLoadErrorInfo>,
+                        Vec<app_server_protocol::MarketplaceLoadErrorInfo>,
                     ),
                     MarketplaceError,
                 >((
@@ -570,7 +563,7 @@ impl PluginRequestProcessor {
                     outcome
                         .errors
                         .into_iter()
-                        .map(|err| codex_app_server_protocol::MarketplaceLoadErrorInfo {
+                        .map(|err| app_server_protocol::MarketplaceLoadErrorInfo {
                             marketplace_path: err.path,
                             message: err.message,
                         })
@@ -610,6 +603,7 @@ impl PluginRequestProcessor {
                 chatgpt_base_url: config.chatgpt_base_url.clone(),
             };
             match plugin_service::fetch_remote_marketplaces(
+                self.model_service.as_ref(),
                 &remote_plugin_service_config,
                 remote_auth.as_ref(),
                 &remote_sources,
@@ -663,7 +657,8 @@ impl PluginRequestProcessor {
             .iter()
             .any(|marketplace| marketplace.name == OPENAI_CURATED_MARKETPLACE_NAME)
         {
-            match plugin_service::featured_plugin_ids_for_config(
+            match plugin_service::featured_plugin_ids_for_config_with_model_service(
+                self.model_service.as_ref(),
                 &plugins_input,
                 remote_auth.as_ref(),
                 plugins_manager.restriction_product(),
@@ -740,6 +735,7 @@ impl PluginRequestProcessor {
                             chatgpt_base_url: config.chatgpt_base_url.clone(),
                         };
                         match plugin_service::fetch_remote_plugin_share_context(
+                            self.model_service.as_ref(),
                             &remote_plugin_service_config,
                             remote_auth.as_ref(),
                             &context.remote_plugin_id,
@@ -830,7 +826,7 @@ impl PluginRequestProcessor {
                         .plugin
                         .hooks
                         .into_iter()
-                        .map(|hook| codex_app_server_protocol::PluginHookSummary {
+                        .map(|hook| app_server_protocol::PluginHookSummary {
                             key: hook.key,
                             event_name: hook.event_name.into(),
                         })
@@ -852,6 +848,7 @@ impl PluginRequestProcessor {
                 };
                 validate_remote_plugin_id_for_request(&plugin_name)?;
                 let remote_detail = plugin_service::fetch_remote_plugin_detail(
+                    self.model_service.as_ref(),
                     &remote_plugin_service_config,
                     remote_auth.as_ref(),
                     &remote_marketplace_name,
@@ -913,6 +910,7 @@ impl PluginRequestProcessor {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
         let remote_skill_detail = plugin_service::fetch_remote_plugin_skill_detail(
+            self.model_service.as_ref(),
             &remote_plugin_service_config,
             remote_auth.as_ref(),
             &remote_marketplace_name,
@@ -970,6 +968,7 @@ impl PluginRequestProcessor {
             share_targets: share_targets.map(remote_plugin_share_targets),
         };
         let result = plugin_service::save_remote_plugin_share(
+            self.model_service.as_ref(),
             &remote_plugin_service_config,
             auth.as_ref(),
             config.codex_home.as_path(),
@@ -1009,6 +1008,7 @@ impl PluginRequestProcessor {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
         let result = plugin_service::update_remote_plugin_share_targets(
+            self.model_service.as_ref(),
             &remote_plugin_service_config,
             auth.as_ref(),
             &remote_plugin_id,
@@ -1039,6 +1039,7 @@ impl PluginRequestProcessor {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
         let data = plugin_service::list_remote_plugin_shares(
+            self.model_service.as_ref(),
             &remote_plugin_service_config,
             auth.as_ref(),
             config.codex_home.as_path(),
@@ -1078,6 +1079,7 @@ impl PluginRequestProcessor {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
         let result = plugin_service::checkout_remote_plugin_share(
+            self.model_service.as_ref(),
             &remote_plugin_service_config,
             auth.as_ref(),
             config.codex_home.as_path(),
@@ -1111,6 +1113,7 @@ impl PluginRequestProcessor {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
         plugin_service::delete_remote_plugin_share(
+            self.model_service.as_ref(),
             &remote_plugin_service_config,
             auth.as_ref(),
             config.codex_home.as_path(),
@@ -1232,20 +1235,17 @@ impl PluginRequestProcessor {
         let remote_plugin_service_config = RemotePluginServiceConfig {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
-        let remote_detail =
-            plugin_service::fetch_remote_plugin_detail_with_download_urls(
-                &remote_plugin_service_config,
-                remote_auth.as_ref(),
-                &remote_marketplace_name,
-                &remote_plugin_id,
-            )
-            .await
-            .map_err(|err| {
-                remote_plugin_catalog_error_to_jsonrpc(
-                    err,
-                    "read remote plugin details before install",
-                )
-            })?;
+        let remote_detail = plugin_service::fetch_remote_plugin_detail_with_download_urls(
+            self.model_service.as_ref(),
+            &remote_plugin_service_config,
+            remote_auth.as_ref(),
+            &remote_marketplace_name,
+            &remote_plugin_id,
+        )
+        .await
+        .map_err(|err| {
+            remote_plugin_catalog_error_to_jsonrpc(err, "read remote plugin details before install")
+        })?;
         if remote_detail.summary.availability == PluginAvailability::DisabledByAdmin {
             return Err(invalid_request(format!(
                 "remote plugin {remote_plugin_id} is disabled by admin"
@@ -1265,28 +1265,28 @@ impl PluginRequestProcessor {
                 &actual_remote_marketplace_name,
                 &remote_detail.summary.name,
             );
-        let validated_bundle =
-            plugin_service::remote_bundle::validate_remote_plugin_bundle(
-                &remote_plugin_id,
-                &actual_remote_marketplace_name,
-                &remote_detail.summary.name,
-                remote_detail.release_version.as_deref(),
-                remote_detail.bundle_download_url.as_deref(),
-            )
-            .map_err(remote_plugin_bundle_install_error_to_jsonrpc)?;
+        let validated_bundle = plugin_service::remote_bundle::validate_remote_plugin_bundle(
+            &remote_plugin_id,
+            &actual_remote_marketplace_name,
+            &remote_detail.summary.name,
+            remote_detail.release_version.as_deref(),
+            remote_detail.bundle_download_url.as_deref(),
+        )
+        .map_err(remote_plugin_bundle_install_error_to_jsonrpc)?;
 
-        let result =
-            plugin_service::remote_bundle::download_and_install_remote_plugin_bundle(
-                config.codex_home.to_path_buf(),
-                validated_bundle,
-            )
-            .await
-            .map_err(remote_plugin_bundle_install_error_to_jsonrpc)?;
+        let result = plugin_service::remote_bundle::download_and_install_remote_plugin_bundle(
+            self.model_service.http_client().as_ref(),
+            config.codex_home.to_path_buf(),
+            validated_bundle,
+        )
+        .await
+        .map_err(remote_plugin_bundle_install_error_to_jsonrpc)?;
 
         // Cache first so a backend install cannot succeed when local materialization fails.
         // If this backend call fails, the cache entry is harmless because remote installed state
         // is still backend-gated.
         plugin_service::install_remote_plugin(
+            self.model_service.as_ref(),
             &remote_plugin_service_config,
             remote_auth.as_ref(),
             &actual_remote_marketplace_name,
@@ -1297,6 +1297,7 @@ impl PluginRequestProcessor {
 
         plugin_service::maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
             Arc::clone(&self.plugins_manager),
+            Arc::clone(&self.model_service),
             &config.plugins_config_input(),
             remote_auth.clone(),
             Some(self.effective_plugins_changed_callback()),
@@ -1348,8 +1349,8 @@ impl PluginRequestProcessor {
 
         let environment_manager = Arc::clone(&self.environment_manager);
         let chatgpt_config = chatgpt_config_from_core(config);
-        let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
-        let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
+        let mcp_auth_runtime = mcp_service::DefaultMcpAuthRuntime;
+        let mcp_connection_runtime_factory = mcp_service::DefaultMcpConnectionRuntimeFactory;
         let (all_connectors_result, accessible_connectors_result) = tokio::join!(
             chatgpt_connectors::list_all_connectors_with_options(
                 &chatgpt_config,
@@ -1595,6 +1596,7 @@ impl PluginRequestProcessor {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
         let uninstall_result = plugin_service::uninstall_remote_plugin(
+            self.model_service.as_ref(),
             &remote_plugin_service_config,
             remote_auth.as_ref(),
             config.codex_home.to_path_buf(),
@@ -1612,6 +1614,7 @@ impl PluginRequestProcessor {
             }
             plugin_service::maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
                 plugins_manager,
+                Arc::clone(&self.model_service),
                 &config.plugins_config_input(),
                 remote_auth.clone(),
                 Some(self.effective_plugins_changed_callback()),
@@ -1654,8 +1657,8 @@ async fn load_plugin_app_summaries(
 
     let plugin_connectors = chatgpt_connectors::connectors_for_plugin_apps(connectors, plugin_apps);
 
-    let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
-    let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
+    let mcp_auth_runtime = mcp_service::DefaultMcpAuthRuntime;
+    let mcp_connection_runtime_factory = mcp_service::DefaultMcpConnectionRuntimeFactory;
     let accessible_connectors =
         match core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
             config,
@@ -1857,6 +1860,7 @@ fn remote_plugin_catalog_error_to_jsonrpc(
         | RemotePluginCatalogError::UnknownMarketplace { .. } => invalid_request(message),
         RemotePluginCatalogError::AuthToken(_)
         | RemotePluginCatalogError::Request { .. }
+        | RemotePluginCatalogError::ServiceRequest { .. }
         | RemotePluginCatalogError::UnexpectedStatus { .. }
         | RemotePluginCatalogError::Decode { .. }
         | RemotePluginCatalogError::InvalidBaseUrl(_)

@@ -1,7 +1,7 @@
 mod client;
 
 pub use client::LMStudioClient;
-use codex_model_provider_info::ModelProviderInfo;
+use model_service_api::ModelProviderInfo;
 
 /// Default OSS model to use when `--oss` is passed without an explicit `-m`.
 pub const DEFAULT_OSS_MODEL: &str = "openai/gpt-oss-20b";

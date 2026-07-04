@@ -1,10 +1,10 @@
 use codex_network_proxy_api::NetworkProxyRuntimeSnapshot;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::SandboxPolicy;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::PermissionProfile;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::ffi::OsString;

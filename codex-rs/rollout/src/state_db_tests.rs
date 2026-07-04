@@ -28,8 +28,7 @@ fn cursor_to_anchor_normalizes_timestamp_format() {
 async fn try_init_waits_for_concurrent_startup_backfill() -> anyhow::Result<()> {
     let home = TempDir::new().expect("temp dir");
     let runtime =
-        codex_state::StateRuntime::init(home.path().to_path_buf(), "test-provider".to_string())
-            .await?;
+        state::StateRuntime::init(home.path().to_path_buf(), "test-provider".to_string()).await?;
     let claimed = runtime.try_claim_backfill(/*lease_seconds*/ 60).await?;
     assert!(claimed);
     let runtime_for_completion = runtime.clone();
@@ -50,7 +49,7 @@ async fn try_init_waits_for_concurrent_startup_backfill() -> anyhow::Result<()> 
     complete_backfill.await??;
     assert_eq!(
         initialized.get_backfill_state().await?.status,
-        codex_state::BackfillStatus::Complete
+        state::BackfillStatus::Complete
     );
 
     Ok(())
@@ -60,8 +59,7 @@ async fn try_init_waits_for_concurrent_startup_backfill() -> anyhow::Result<()> 
 async fn try_init_times_out_waiting_for_stuck_startup_backfill() -> anyhow::Result<()> {
     let home = TempDir::new().expect("temp dir");
     let runtime =
-        codex_state::StateRuntime::init(home.path().to_path_buf(), "test-provider".to_string())
-            .await?;
+        state::StateRuntime::init(home.path().to_path_buf(), "test-provider".to_string()).await?;
     let claimed = runtime.try_claim_backfill(/*lease_seconds*/ 60).await?;
     assert!(claimed);
 

@@ -14,20 +14,20 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use chrono::DateTime;
 use chrono::Duration as ChronoDuration;
 use chrono::Utc;
-use codex_backend_client::Client as BackendClient;
-use codex_config_requirements::CloudRequirementsLoadError;
-use codex_config_requirements::CloudRequirementsLoadErrorCode;
-use codex_config_requirements::CloudRequirementsLoader;
-use codex_config_requirements::ConfigRequirementsToml;
+use openai_backend_client::Client as BackendClient;
+use config_service::CloudRequirementsLoadError;
+use config_service::CloudRequirementsLoadErrorCode;
+use config_service::CloudRequirementsLoader;
+use config_service::ConfigRequirementsToml;
 use codex_config_types::AuthCredentialsStoreMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::RefreshTokenError;
 use codex_login::default_client::get_codex_user_agent;
-use codex_protocol::account::PlanType;
 use codex_utils_backoff::backoff;
 use hmac::Hmac;
 use hmac::Mac;
+use protocol::account::PlanType;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Sha256;
@@ -838,8 +838,8 @@ mod tests {
     use codex_config_types::AuthCredentialsStoreMode;
     use codex_login::auth::AgentIdentityAuth;
     use codex_login::auth::AgentIdentityAuthRecord;
-    use codex_protocol::protocol::AskForApproval;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::AskForApproval;
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::collections::VecDeque;
@@ -1404,10 +1404,10 @@ enabled = false
         assert_eq!(
             result,
             Some(ConfigRequirementsToml {
-                apps: Some(codex_config_requirements::AppsRequirementsToml {
+                apps: Some(config_service::AppsRequirementsToml {
                     apps: BTreeMap::from([(
                         "connector_5f3c8c41a1e54ad7a76272c89e2554fa".to_string(),
-                        codex_config_requirements::AppRequirementToml {
+                        config_service::AppRequirementToml {
                             enabled: Some(false),
                             tools: None,
                         },
@@ -1430,15 +1430,15 @@ approval_mode = "approve"
         assert_eq!(
             result,
             Some(ConfigRequirementsToml {
-                apps: Some(codex_config_requirements::AppsRequirementsToml {
+                apps: Some(config_service::AppsRequirementsToml {
                     apps: BTreeMap::from([(
                         "connector_5f3c8c41a1e54ad7a76272c89e2554fa".to_string(),
-                        codex_config_requirements::AppRequirementToml {
+                        config_service::AppRequirementToml {
                             enabled: None,
-                            tools: Some(codex_config_requirements::AppToolsRequirementsToml {
+                            tools: Some(config_service::AppToolsRequirementsToml {
                                 tools: BTreeMap::from([(
                                     "calendar/list_events".to_string(),
-                                    codex_config_requirements::AppToolRequirementToml {
+                                    config_service::AppToolRequirementToml {
                                         approval_mode: Some(AppToolApproval::Approve),
                                     },
                                 )]),
@@ -1465,11 +1465,11 @@ command = "sample-mcp"
             Some(ConfigRequirementsToml {
                 plugins: Some(BTreeMap::from([(
                     "sample@test".to_string(),
-                    codex_config_requirements::PluginRequirementsToml {
+                    config_service::PluginRequirementsToml {
                         mcp_servers: Some(BTreeMap::from([(
                             "sample".to_string(),
-                            codex_config_requirements::McpServerRequirement {
-                                identity: codex_config_requirements::McpServerIdentity::Command {
+                            config_service::McpServerRequirement {
+                                identity: config_service::McpServerIdentity::Command {
                                     command: "sample-mcp".to_string(),
                                 },
                             },

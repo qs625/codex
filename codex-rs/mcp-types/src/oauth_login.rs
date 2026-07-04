@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use codex_config_types::McpServerConfig;
-use codex_protocol::protocol::McpAuthStatus;
+use protocol::protocol::McpAuthStatus;
 
 #[derive(Debug, Clone)]
 pub struct McpOAuthLoginConfig {

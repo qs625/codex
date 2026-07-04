@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 use base64::Engine;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ModelsResponse;
 use futures::SinkExt;
 use futures::StreamExt;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ModelsResponse;
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;

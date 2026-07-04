@@ -212,10 +212,10 @@ use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
 use crate::style::user_message_style;
-use codex_protocol::ThreadId;
-use codex_protocol::user_input::ByteRange;
-use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
-use codex_protocol::user_input::TextElement;
+use protocol::ThreadId;
+use protocol::user_input::ByteRange;
+use protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
+use protocol::user_input::TextElement;
 
 mod attachment_state;
 mod history_search;
@@ -238,14 +238,14 @@ use crate::history_cell;
 use crate::skills_helpers::skill_display_name;
 use crate::tui::FrameRequester;
 use crate::ui_consts::LIVE_PREFIX_COLS;
-use codex_app_server_protocol::AppInfo;
-#[cfg(test)]
-use codex_core_skills::model::SkillInterface;
-use codex_core_skills::model::SkillMetadata;
+use app_server_protocol::AppInfo;
 use codex_file_search::FileMatch;
 #[cfg(test)]
 use plugin_service_api::AppConnectorId;
 use plugin_service_api::PluginCapabilitySummary;
+#[cfg(test)]
+use skill_service::model::SkillInterface;
+use skill_service::model::SkillMetadata;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -4677,7 +4677,7 @@ mod tests {
     use crate::bottom_pane::InputResult;
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
     use crate::bottom_pane::textarea::TextArea;
-    use codex_protocol::models::local_image_label_text;
+    use protocol::models::local_image_label_text;
     use tokio::sync::mpsc::unbounded_channel;
 
     #[test]

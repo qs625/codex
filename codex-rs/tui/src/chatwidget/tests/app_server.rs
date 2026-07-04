@@ -8,12 +8,12 @@ async fn invalid_url_elicitation_is_declined() {
     chat.thread_id = Some(thread_id);
 
     chat.handle_elicitation_request_now(
-        codex_app_server_protocol::RequestId::Integer(9),
-        codex_app_server_protocol::McpServerElicitationRequestParams {
+        app_server_protocol::RequestId::Integer(9),
+        app_server_protocol::McpServerElicitationRequestParams {
             thread_id: thread_id.to_string(),
             turn_id: Some("turn-auth".to_string()),
             server_name: "payments".to_string(),
-            request: codex_app_server_protocol::McpServerElicitationRequest::Url {
+            request: app_server_protocol::McpServerElicitationRequest::Url {
                 meta: None,
                 message: "Review the payment details to continue.".to_string(),
                 url: "http://payments.example/checkout/123".to_string(),
@@ -28,8 +28,8 @@ async fn invalid_url_elicitation_is_declined() {
             thread_id: op_thread_id,
             op: Op::ResolveElicitation {
                 server_name,
-                request_id: codex_app_server_protocol::RequestId::Integer(9),
-                decision: codex_app_server_protocol::McpServerElicitationAction::Decline,
+                request_id: app_server_protocol::RequestId::Integer(9),
+                decision: app_server_protocol::McpServerElicitationAction::Decline,
                 content: None,
                 meta: None,
             },
@@ -159,7 +159,7 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
@@ -203,7 +203,7 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::Completed,
                 error: None,
@@ -228,7 +228,7 @@ async fn live_app_server_turn_started_sets_feedback_turn_id() {
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
@@ -607,7 +607,7 @@ async fn live_app_server_failed_turn_does_not_duplicate_error_history() {
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
@@ -642,7 +642,7 @@ async fn live_app_server_failed_turn_does_not_duplicate_error_history() {
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::Failed,
                 error: Some(AppServerTurnError {
@@ -671,7 +671,7 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
@@ -700,14 +700,12 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
     drain_insert_history(&mut rx);
 
     chat.handle_server_notification(
-        ServerNotification::AgentMessageDelta(
-            codex_app_server_protocol::AgentMessageDeltaNotification {
-                thread_id: "thread-1".to_string(),
-                turn_id: "turn-1".to_string(),
-                item_id: "item-1".to_string(),
-                delta: "hello".to_string(),
-            },
-        ),
+        ServerNotification::AgentMessageDelta(app_server_protocol::AgentMessageDeltaNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            item_id: "item-1".to_string(),
+            delta: "hello".to_string(),
+        }),
         /*replay_kind*/ None,
     );
 
@@ -729,7 +727,7 @@ async fn live_app_server_server_overloaded_error_renders_warning() {
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
@@ -771,7 +769,7 @@ async fn live_app_server_cyber_policy_error_renders_dedicated_notice() {
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
@@ -837,12 +835,10 @@ async fn live_app_server_invalid_thread_name_update_is_ignored() {
     chat.thread_name = Some("original name".to_string());
 
     chat.handle_server_notification(
-        ServerNotification::ThreadNameUpdated(
-            codex_app_server_protocol::ThreadNameUpdatedNotification {
-                thread_id: "not-a-thread-id".to_string(),
-                thread_name: Some("bad update".to_string()),
-            },
-        ),
+        ServerNotification::ThreadNameUpdated(app_server_protocol::ThreadNameUpdatedNotification {
+            thread_id: "not-a-thread-id".to_string(),
+            thread_name: Some("bad update".to_string()),
+        }),
         /*replay_kind*/ None,
     );
 
@@ -857,12 +853,10 @@ async fn live_app_server_thread_name_update_shows_resume_hint() {
     chat.thread_id = Some(thread_id);
 
     chat.handle_server_notification(
-        ServerNotification::ThreadNameUpdated(
-            codex_app_server_protocol::ThreadNameUpdatedNotification {
-                thread_id: thread_id.to_string(),
-                thread_name: Some("review-fix".to_string()),
-            },
-        ),
+        ServerNotification::ThreadNameUpdated(app_server_protocol::ThreadNameUpdatedNotification {
+            thread_id: thread_id.to_string(),
+            thread_name: Some("review-fix".to_string()),
+        }),
         /*replay_kind*/ None,
     );
 

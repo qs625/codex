@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::Thread;
-use codex_app_server_protocol::ThreadContextUsageUpdatedNotification;
-use codex_app_server_protocol::ThreadHistoryBuilder;
-use codex_app_server_protocol::ThreadTokenUsage;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnStatus;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
-use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
-use codex_protocol::protocol::TokenUsageInfo;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::Thread;
+use app_server_protocol::ThreadContextUsageUpdatedNotification;
+use app_server_protocol::ThreadHistoryBuilder;
+use app_server_protocol::ThreadTokenUsage;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnStatus;
 use futures::future::BoxFuture;
+use protocol::ThreadId;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadContextUsageCategoryBreakdown;
+use protocol::protocol::ThreadContextUsageLoadedSkills;
+use protocol::protocol::TokenUsageInfo;
 
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::outgoing_message::ConnectionId;
@@ -267,16 +267,16 @@ fn latest_context_usage_turn_id(thread: &Thread) -> String {
 mod tests {
     use super::latest_context_usage_turn_id_from_rollout_items;
     use super::latest_thread_context_usage_from_rollout_items;
-    use codex_app_server_protocol::build_turns_from_rollout_items;
-    use codex_protocol::protocol::AgentMessageEvent;
-    use codex_protocol::protocol::EventMsg;
-    use codex_protocol::protocol::RolloutItem;
-    use codex_protocol::protocol::ThreadContextUsage;
-    use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
-    use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
-    use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
-    use codex_protocol::protocol::UserMessageEvent;
+    use app_server_protocol::build_turns_from_rollout_items;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::AgentMessageEvent;
+    use protocol::protocol::EventMsg;
+    use protocol::protocol::RolloutItem;
+    use protocol::protocol::ThreadContextUsage;
+    use protocol::protocol::ThreadContextUsageCategoryBreakdown;
+    use protocol::protocol::ThreadContextUsageLoadedSkills;
+    use protocol::protocol::ThreadContextUsageUpdatedEvent;
+    use protocol::protocol::UserMessageEvent;
 
     #[test]
     fn replay_extracts_latest_context_usage() {

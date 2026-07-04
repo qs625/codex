@@ -157,10 +157,7 @@ impl App {
                             .as_ref()
                             .and_then(|entry| entry.agent_role.clone())
                     }),
-                    matches!(
-                        thread.status,
-                        codex_app_server_protocol::ThreadStatus::NotLoaded
-                    ),
+                    matches!(thread.status, app_server_protocol::ThreadStatus::NotLoaded),
                 );
                 true
             }

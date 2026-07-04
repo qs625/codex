@@ -1,12 +1,12 @@
 use super::*;
-use codex_protocol::AgentPath;
-use codex_protocol::items::HookPromptFragment;
-use codex_protocol::items::build_hook_prompt_message;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ReasoningItemReasoningSummary;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::ThreadRolledBackEvent;
 use pretty_assertions::assert_eq;
+use protocol::AgentPath;
+use protocol::items::HookPromptFragment;
+use protocol::items::build_hook_prompt_message;
+use protocol::models::ContentItem;
+use protocol::models::ReasoningItemReasoningSummary;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::ThreadRolledBackEvent;
 
 fn user_msg(text: &str) -> ResponseItem {
     ResponseItem::Message {
@@ -47,7 +47,7 @@ fn inter_agent_msg(text: &str, trigger_turn: bool) -> ResponseItem {
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         text.to_string(),
-        codex_protocol::protocol::InterAgentOperation::Unknown,
+        protocol::protocol::InterAgentOperation::Unknown,
     )
     .with_trigger_turn(trigger_turn);
     ResponseItem::InterAgentCommunication {

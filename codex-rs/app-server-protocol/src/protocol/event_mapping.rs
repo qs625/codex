@@ -20,8 +20,8 @@ use crate::protocol::v2::ReasoningSummaryTextDeltaNotification;
 use crate::protocol::v2::ReasoningTextDeltaNotification;
 use crate::protocol::v2::TerminalInteractionNotification;
 use crate::protocol::v2::ThreadItem;
-use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
-use codex_protocol::protocol::EventMsg;
+use protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
+use protocol::protocol::EventMsg;
 use std::collections::HashMap;
 
 /// Build the v2 app-server notification that directly corresponds to a single core event.
@@ -123,10 +123,8 @@ pub fn item_event_to_server_notification(
         EventMsg::CollabAgentSpawnEnd(end_event) => {
             let has_receiver = end_event.new_thread_id.is_some();
             let status = match &end_event.status {
-                codex_protocol::protocol::AgentStatus::Errored(_)
-                | codex_protocol::protocol::AgentStatus::NotFound => {
-                    CollabAgentToolCallStatus::Failed
-                }
+                protocol::protocol::AgentStatus::Errored(_)
+                | protocol::protocol::AgentStatus::NotFound => CollabAgentToolCallStatus::Failed,
                 _ if has_receiver => CollabAgentToolCallStatus::Completed,
                 _ => CollabAgentToolCallStatus::Failed,
             };
@@ -188,10 +186,8 @@ pub fn item_event_to_server_notification(
         }
         EventMsg::CollabAgentInteractionEnd(end_event) => {
             let status = match &end_event.status {
-                codex_protocol::protocol::AgentStatus::Errored(_)
-                | codex_protocol::protocol::AgentStatus::NotFound => {
-                    CollabAgentToolCallStatus::Failed
-                }
+                protocol::protocol::AgentStatus::Errored(_)
+                | protocol::protocol::AgentStatus::NotFound => CollabAgentToolCallStatus::Failed,
                 _ => CollabAgentToolCallStatus::Completed,
             };
             let receiver_id = end_event.receiver_thread_id.to_string();
@@ -318,8 +314,8 @@ pub fn item_event_to_server_notification(
             let status = if end_event.statuses.values().any(|status| {
                 matches!(
                     status,
-                    codex_protocol::protocol::AgentStatus::Errored(_)
-                        | codex_protocol::protocol::AgentStatus::NotFound
+                    protocol::protocol::AgentStatus::Errored(_)
+                        | protocol::protocol::AgentStatus::NotFound
                 )
             }) {
                 CollabAgentToolCallStatus::Failed
@@ -389,10 +385,8 @@ pub fn item_event_to_server_notification(
         }
         EventMsg::CollabCloseEnd(end_event) => {
             let status = match &end_event.status {
-                codex_protocol::protocol::AgentStatus::Errored(_)
-                | codex_protocol::protocol::AgentStatus::NotFound => {
-                    CollabAgentToolCallStatus::Failed
-                }
+                protocol::protocol::AgentStatus::Errored(_)
+                | protocol::protocol::AgentStatus::NotFound => CollabAgentToolCallStatus::Failed,
                 _ => CollabAgentToolCallStatus::Completed,
             };
             let receiver_id = end_event.receiver_thread_id.to_string();
@@ -446,10 +440,8 @@ pub fn item_event_to_server_notification(
         }
         EventMsg::CollabResumeEnd(end_event) => {
             let status = match &end_event.status {
-                codex_protocol::protocol::AgentStatus::Errored(_)
-                | codex_protocol::protocol::AgentStatus::NotFound => {
-                    CollabAgentToolCallStatus::Failed
-                }
+                protocol::protocol::AgentStatus::Errored(_)
+                | protocol::protocol::AgentStatus::NotFound => CollabAgentToolCallStatus::Failed,
                 _ => CollabAgentToolCallStatus::Completed,
             };
             let receiver_id = end_event.receiver_thread_id.to_string();
@@ -480,8 +472,7 @@ pub fn item_event_to_server_notification(
             })
         }
         EventMsg::AgentMessageContentDelta(event) => {
-            let codex_protocol::protocol::AgentMessageContentDeltaEvent { item_id, delta, .. } =
-                event;
+            let protocol::protocol::AgentMessageContentDeltaEvent { item_id, delta, .. } = event;
             ServerNotification::AgentMessageDelta(AgentMessageDeltaNotification {
                 thread_id,
                 turn_id,
@@ -574,29 +565,29 @@ pub fn item_event_to_server_notification(
 mod tests {
     use super::*;
     use crate::protocol::v2::CollabAgentStatus;
-    use codex_protocol::AgentPath;
-    use codex_protocol::ThreadId;
-    use codex_protocol::event_command::EventCommandEvent;
-    use codex_protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
-    use codex_protocol::items::AgentMessageContent;
-    use codex_protocol::items::AgentMessageItem;
-    use codex_protocol::items::CollabAgentMessageItem;
-    use codex_protocol::items::EventCommandEventItem;
-    use codex_protocol::items::EventDrivenToolItem;
-    use codex_protocol::items::TurnItem;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::ResponseItem;
-    use codex_protocol::protocol::AgentStatus;
-    use codex_protocol::protocol::CollabResumeBeginEvent;
-    use codex_protocol::protocol::CollabResumeEndEvent;
-    use codex_protocol::protocol::CollabWaitingBeginEvent;
-    use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
-    use codex_protocol::protocol::ExecOutputStream;
-    use codex_protocol::protocol::InterAgentCommunication;
-    use codex_protocol::protocol::InterAgentOperation;
-    use codex_protocol::protocol::ItemCompletedEvent;
-    use codex_protocol::protocol::ItemStartedEvent;
     use pretty_assertions::assert_eq;
+    use protocol::AgentPath;
+    use protocol::ThreadId;
+    use protocol::event_command::EventCommandEvent;
+    use protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
+    use protocol::items::AgentMessageContent;
+    use protocol::items::AgentMessageItem;
+    use protocol::items::CollabAgentMessageItem;
+    use protocol::items::EventCommandEventItem;
+    use protocol::items::EventDrivenToolItem;
+    use protocol::items::TurnItem;
+    use protocol::models::ContentItem;
+    use protocol::models::ResponseItem;
+    use protocol::protocol::AgentStatus;
+    use protocol::protocol::CollabResumeBeginEvent;
+    use protocol::protocol::CollabResumeEndEvent;
+    use protocol::protocol::CollabWaitingBeginEvent;
+    use protocol::protocol::ExecCommandOutputDeltaEvent;
+    use protocol::protocol::ExecOutputStream;
+    use protocol::protocol::InterAgentCommunication;
+    use protocol::protocol::InterAgentOperation;
+    use protocol::protocol::ItemCompletedEvent;
+    use protocol::protocol::ItemStartedEvent;
     use serde_json::json;
 
     fn assert_item_started_server_notification(
@@ -684,7 +675,7 @@ mod tests {
             receiver_agent_path: "/root/scout".to_string(),
             receiver_agent_nickname: None,
             receiver_agent_role: None,
-            status: codex_protocol::protocol::AgentStatus::NotFound,
+            status: protocol::protocol::AgentStatus::NotFound,
         };
 
         let receiver_id = event.receiver_thread_id.to_string();
@@ -715,9 +706,7 @@ mod tests {
                         receiver_id,
                         CollabAgentState {
                             path: Some(event.receiver_agent_path),
-                            ..CollabAgentState::from(
-                                codex_protocol::protocol::AgentStatus::NotFound,
-                            )
+                            ..CollabAgentState::from(protocol::protocol::AgentStatus::NotFound)
                         },
                     )]
                     .into_iter()
@@ -736,7 +725,7 @@ mod tests {
             sender_thread_id,
             sender_agent_path: "/root".to_string(),
             receiver_thread_ids: vec![receiver_thread_id],
-            receiver_agents: vec![codex_protocol::protocol::CollabAgentRef {
+            receiver_agents: vec![protocol::protocol::CollabAgentRef {
                 thread_id: receiver_thread_id,
                 agent_path: Some("/root/scout".to_string()),
                 agent_nickname: None,
@@ -815,13 +804,13 @@ mod tests {
 
     #[test]
     fn command_wait_completed_display_event_maps_to_thread_item() {
-        let event = codex_protocol::protocol::CommandWaitDisplayEvent {
+        let event = protocol::protocol::CommandWaitDisplayEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-ignored".to_string(),
             id: "wait-1".to_string(),
             command_id: "cmd-1".to_string(),
-            status: codex_protocol::models::CommandWaitStatus::Completed,
-            notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+            status: protocol::models::CommandWaitStatus::Completed,
+            notification: Some(protocol::models::CommandWaitNotificationKind::Exit),
             exit_code: Some(0),
             wall_time_seconds: 1.25,
             wait_timeout_ms: 250,

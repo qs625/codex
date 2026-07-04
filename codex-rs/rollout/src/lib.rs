@@ -2,7 +2,7 @@
 
 use std::sync::LazyLock;
 
-use codex_protocol::protocol::SessionSource;
+use protocol::protocol::SessionSource;
 
 pub(crate) mod config;
 pub(crate) mod list;
@@ -14,13 +14,13 @@ mod sqlite_metrics;
 pub mod state_db;
 
 pub(crate) mod default_client {
-    pub use codex_default_client_api::*;
+    pub use transport_client_identity::*;
 }
 
-pub(crate) use codex_protocol::protocol;
+pub(crate) use protocol::protocol as rollout_protocol;
 
-pub use codex_rollout_api::ARCHIVED_SESSIONS_SUBDIR;
-pub use codex_rollout_api::SESSIONS_SUBDIR;
+pub use rollout_api::ARCHIVED_SESSIONS_SUBDIR;
+pub use rollout_api::SESSIONS_SUBDIR;
 pub static INTERACTIVE_SESSION_SOURCES: LazyLock<Vec<SessionSource>> = LazyLock::new(|| {
     vec![
         SessionSource::Cli,
@@ -30,7 +30,6 @@ pub static INTERACTIVE_SESSION_SOURCES: LazyLock<Vec<SessionSource>> = LazyLock:
     ]
 });
 
-pub use codex_protocol::protocol::SessionMeta;
 pub use config::Config;
 pub use config::RolloutConfig;
 pub use config::RolloutConfigView;
@@ -57,6 +56,7 @@ pub use policy::EventPersistenceMode;
 pub use policy::is_persisted_rollout_item;
 pub use policy::persisted_rollout_items;
 pub use policy::should_persist_response_item_for_memories;
+pub use protocol::protocol::SessionMeta;
 pub use recorder::RolloutRecorder;
 pub use recorder::RolloutRecorderParams;
 pub use recorder::append_rollout_item_to_path;

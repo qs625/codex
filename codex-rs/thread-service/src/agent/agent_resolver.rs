@@ -1,8 +1,8 @@
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_protocol::ThreadId;
-use codex_tool_types::FunctionCallError;
+use protocol::ThreadId;
 use std::sync::Arc;
+use tool_service_api::FunctionCallError;
 
 /// Resolves a single tool-facing agent target to a thread id.
 pub(crate) async fn resolve_agent_target(
@@ -19,7 +19,7 @@ pub(crate) async fn resolve_agent_target(
         .resolve_agent_reference_for_turn(turn, target)
         .await
         .map_err(|err| match err {
-            codex_protocol::error::CodexErr::UnsupportedOperation(message) => {
+            protocol::error::CodexErr::UnsupportedOperation(message) => {
                 FunctionCallError::RespondToModel(message)
             }
             other => FunctionCallError::RespondToModel(other.to_string()),

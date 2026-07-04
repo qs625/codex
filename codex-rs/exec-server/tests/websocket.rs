@@ -4,10 +4,10 @@ mod common;
 
 use codex_exec_server::InitializeParams;
 use codex_exec_server::InitializeResponse;
-use codex_jsonrpc_types::JSONRPCError;
-use codex_jsonrpc_types::JSONRPCMessage;
-use codex_jsonrpc_types::JSONRPCResponse;
 use common::exec_server::exec_server;
+use jsonrpc_types::JSONRPCError;
+use jsonrpc_types::JSONRPCMessage;
+use jsonrpc_types::JSONRPCResponse;
 use pretty_assertions::assert_eq;
 use uuid::Uuid;
 
@@ -22,7 +22,7 @@ async fn exec_server_reports_malformed_websocket_json_and_keeps_running() -> any
     let JSONRPCMessage::Error(JSONRPCError { id, error }) = response else {
         panic!("expected malformed-message error response");
     };
-    assert_eq!(id, codex_jsonrpc_types::RequestId::Integer(-1));
+    assert_eq!(id, jsonrpc_types::RequestId::Integer(-1));
     assert_eq!(error.code, -32600);
     assert!(
         error
@@ -64,8 +64,8 @@ async fn exec_server_reports_malformed_websocket_json_and_keeps_running() -> any
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exec_server_accepts_binary_websocket_json() -> anyhow::Result<()> {
     let mut server = exec_server().await?;
-    let initialize_id = codex_jsonrpc_types::RequestId::Integer(1);
-    let initialize = JSONRPCMessage::Request(codex_jsonrpc_types::JSONRPCRequest {
+    let initialize_id = jsonrpc_types::RequestId::Integer(1);
+    let initialize = JSONRPCMessage::Request(jsonrpc_types::JSONRPCRequest {
         id: initialize_id.clone(),
         method: "initialize".to_string(),
         params: Some(serde_json::to_value(InitializeParams {

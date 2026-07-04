@@ -1,4 +1,4 @@
-use codex_protocol::AgentPath;
+use protocol::AgentPath;
 
 use super::ContextualUserFragment;
 

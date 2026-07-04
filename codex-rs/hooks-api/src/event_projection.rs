@@ -1,6 +1,6 @@
 use codex_config_types::HookEventsToml;
 use codex_config_types::MatcherGroup;
-use codex_protocol::protocol::HookEventName;
+use protocol::protocol::HookEventName;
 
 pub fn hook_events_into_matcher_groups(
     hook_events: HookEventsToml,

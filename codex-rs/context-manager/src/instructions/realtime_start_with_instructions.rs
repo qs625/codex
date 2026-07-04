@@ -1,6 +1,6 @@
 use super::ContextualUserFragment;
-use codex_protocol::protocol::REALTIME_CONVERSATION_CLOSE_TAG;
-use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
+use protocol::protocol::REALTIME_CONVERSATION_CLOSE_TAG;
+use protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RealtimeStartWithInstructions {

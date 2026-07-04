@@ -1,35 +1,35 @@
-use codex_protocol::items::AgentMessageContent;
-use codex_protocol::items::AgentMessageItem;
-use codex_protocol::items::CollabAgentMessageItem;
-use codex_protocol::items::EventDrivenToolItem;
-use codex_protocol::items::InjectedContextItem;
-use codex_protocol::items::InjectedContextSection;
-use codex_protocol::items::ReasoningItem;
-use codex_protocol::items::TurnItem;
-use codex_protocol::items::UserMessageItem;
-use codex_protocol::items::WebSearchItem;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ReasoningItemContent;
-use codex_protocol::models::ReasoningItemReasoningSummary;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::WebSearchAction;
-use codex_protocol::models::is_image_close_tag_text;
-use codex_protocol::models::is_image_open_tag_text;
-use codex_protocol::models::is_local_image_close_tag_text;
-use codex_protocol::models::is_local_image_open_tag_text;
-use codex_protocol::protocol::CommandExecutionNotificationDisplayEvent;
-use codex_protocol::protocol::CommandWaitDisplayEvent;
-use codex_protocol::protocol::CommandWriteStdinDisplayEvent;
-use codex_protocol::protocol::EventCommandDisplayEvent;
-use codex_protocol::protocol::EventDrivenToolDisplayEvent;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentCommunicationDisplayEvent;
-use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::ThreadGoalUpdateDisplayEvent;
-use codex_protocol::protocol::WorkflowRunProgressDisplayEvent;
-use codex_protocol::user_input::UserInput;
+use protocol::items::AgentMessageContent;
+use protocol::items::AgentMessageItem;
+use protocol::items::CollabAgentMessageItem;
+use protocol::items::EventDrivenToolItem;
+use protocol::items::InjectedContextItem;
+use protocol::items::InjectedContextSection;
+use protocol::items::ReasoningItem;
+use protocol::items::TurnItem;
+use protocol::items::UserMessageItem;
+use protocol::items::WebSearchItem;
+use protocol::models::ContentItem;
+use protocol::models::MessagePhase;
+use protocol::models::ReasoningItemContent;
+use protocol::models::ReasoningItemReasoningSummary;
+use protocol::models::ResponseItem;
+use protocol::models::WebSearchAction;
+use protocol::models::is_image_close_tag_text;
+use protocol::models::is_image_open_tag_text;
+use protocol::models::is_local_image_close_tag_text;
+use protocol::models::is_local_image_open_tag_text;
+use protocol::protocol::CommandExecutionNotificationDisplayEvent;
+use protocol::protocol::CommandWaitDisplayEvent;
+use protocol::protocol::CommandWriteStdinDisplayEvent;
+use protocol::protocol::EventCommandDisplayEvent;
+use protocol::protocol::EventDrivenToolDisplayEvent;
+use protocol::protocol::EventMsg;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentCommunicationDisplayEvent;
+use protocol::protocol::InterAgentOperation;
+use protocol::protocol::ThreadGoalUpdateDisplayEvent;
+use protocol::protocol::WorkflowRunProgressDisplayEvent;
+use protocol::user_input::UserInput;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -167,7 +167,7 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
         | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::ThreadGoalUpdate { .. } => None,
         ResponseItem::EventCommandEvent { id, event } => Some(TurnItem::EventCommandEvent(
-            codex_protocol::items::EventCommandEventItem {
+            protocol::items::EventCommandEventItem {
                 id: id.clone().unwrap_or_else(|| event.stable_item_id()),
                 event: event.clone(),
             },
@@ -248,7 +248,7 @@ pub fn parse_turn_item(item: &ResponseItem) -> Option<TurnItem> {
             revised_prompt,
             result,
         } => Some(TurnItem::ImageGeneration(
-            codex_protocol::items::ImageGenerationItem {
+            protocol::items::ImageGenerationItem {
                 id: id.clone(),
                 status: status.clone(),
                 revised_prompt: revised_prompt.clone(),
@@ -343,7 +343,7 @@ fn injected_context_section_label(role: &str, text: &str) -> &'static str {
 }
 
 pub fn started_display_event_from_model_item(
-    thread_id: codex_protocol::ThreadId,
+    thread_id: protocol::ThreadId,
     turn_id: String,
     item: &ResponseItem,
     started_at_ms: i64,
@@ -376,7 +376,7 @@ pub fn started_display_event_from_model_item(
 }
 
 pub fn completed_display_event_from_model_item(
-    thread_id: codex_protocol::ThreadId,
+    thread_id: protocol::ThreadId,
     turn_id: String,
     item: &ResponseItem,
     completed_at_ms: i64,

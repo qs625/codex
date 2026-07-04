@@ -11,13 +11,13 @@ use codex_exec_server::HttpRequestBodyDeltaNotification;
 use codex_exec_server::HttpRequestParams;
 use codex_exec_server::HttpRequestResponse;
 use codex_exec_server::InitializeParams;
-use codex_jsonrpc_types::JSONRPCError;
-use codex_jsonrpc_types::JSONRPCMessage;
-use codex_jsonrpc_types::JSONRPCNotification;
-use codex_jsonrpc_types::JSONRPCResponse;
-use codex_jsonrpc_types::RequestId;
 use common::exec_server::ExecServerHarness;
 use common::exec_server::exec_server;
+use jsonrpc_types::JSONRPCError;
+use jsonrpc_types::JSONRPCMessage;
+use jsonrpc_types::JSONRPCNotification;
+use jsonrpc_types::JSONRPCResponse;
+use jsonrpc_types::RequestId;
 use pretty_assertions::assert_eq;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -392,7 +392,7 @@ where
 async fn wait_for_error_response(
     server: &mut ExecServerHarness,
     request_id: RequestId,
-) -> anyhow::Result<codex_jsonrpc_types::JSONRPCErrorError> {
+) -> anyhow::Result<jsonrpc_types::JSONRPCErrorError> {
     let response = server
         .wait_for_event(|event| {
             matches!(

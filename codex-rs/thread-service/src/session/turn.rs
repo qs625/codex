@@ -5,19 +5,23 @@ use std::sync::atomic::Ordering;
 
 use codex_approval_service_api::is_guardian_reviewer_source;
 use codex_features::Feature;
+use skill_service_api::SkillLoadOutcome;
+use skill_service_api::collect_env_var_dependencies;
+use skill_service_api::collect_explicit_app_ids_from_messages;
+use skill_service_api::collect_explicit_app_ids_from_skill_items;
+use skill_service_api::filter_connectors_for_user_messages;
+use skill_service_api::injection::SkillInjections;
+use skill_service_api::injection::SkillInvocationType;
+use skill_service_api::injection::build_skill_injections;
+use skill_service_api::injection::collect_explicit_skill_mentions;
 
 use crate::SharedTurnDiffTracker;
-use crate::SkillInjections;
-use crate::SkillLoadOutcome;
 use crate::TurnResolvedConfigFactInput;
-use crate::build_skill_injections;
 use crate::build_turn_resolved_config_fact;
 use crate::client_common::Prompt;
 use crate::client_common::PromptBuildParams;
 use crate::client_common::ResponseEvent;
 use crate::client_common::build_prompt;
-use crate::collect_env_var_dependencies;
-use crate::collect_explicit_skill_mentions;
 use crate::compact::InitialContextInjection;
 use crate::compact::collect_user_messages;
 use crate::compact::run_inline_auto_compact_task;
@@ -38,6 +42,7 @@ use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
 use crate::stream_events_utils::mark_thread_memory_mode_polluted_if_external_context;
 use crate::stream_events_utils::record_completed_response_item_with_finalized_facts;
+use crate::turn_plugin_injection::build_plugin_injections;
 use crate::turn_timing::record_turn_ttft_metric;
 use crate::util::backoff;
 use crate::util::error_or_panic;
@@ -50,49 +55,7 @@ use codex_analytics_api::build_track_events_context;
 use codex_async_utils::OrCancelExt;
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::SkillInstructions;
-use codex_core_skills_api::collect_explicit_app_ids_from_skill_items;
-use codex_core_skills_api::collect_explicit_app_ids_from_messages;
-use codex_core_skills_api::filter_connectors_for_user_messages;
 use codex_git_info::get_git_repo_root;
-use codex_hooks::PendingInputHookDisposition;
-use codex_hooks::emit_hook_completed_events;
-use codex_hooks::inspect_pending_input;
-use codex_hooks::record_additional_contexts;
-use codex_hooks::record_pending_input;
-use codex_hooks::run_pending_session_start_hooks;
-use codex_hooks::run_user_prompt_submit_hooks;
-use codex_hooks_api::HookEvent;
-use codex_hooks_api::HookEventAfterAgent;
-use codex_hooks_api::HookPayload;
-use codex_hooks_api::HookResult;
-use codex_model_client::ModelClientSession;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::items::TurnItem;
-use codex_protocol::items::UserMessageItem;
-use codex_protocol::items::build_hook_prompt_message;
-use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AgentMessageContentDeltaEvent;
-use codex_protocol::protocol::AgentReasoningSectionBreakEvent;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::CodexErrorInfo;
-use codex_protocol::protocol::ErrorEvent;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::PlanDeltaEvent;
-use codex_protocol::protocol::ReasoningContentDeltaEvent;
-use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
-use codex_protocol::protocol::TurnDiffEvent;
-use codex_protocol::protocol::WarningEvent;
-use codex_protocol::user_input::UserInput;
-use plugin_service_api::PluginCapabilitySummary;
-use thread_service_api::TurnDiffTracker;
-use codex_tool_service_api::ExtensionToolBuildParams;
-use codex_tool_service_api::ToolServiceParams;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolName;
 use codex_turn_items::AssistantMessageStreamParsers;
 use codex_turn_items::ParsedAssistantTextDelta;
 use codex_turn_items::PlanModeStreamAction;
@@ -101,7 +64,52 @@ use codex_turn_items::raw_assistant_output_text_from_item;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::FuturesOrdered;
+use hooks::PendingInputHookDisposition;
+use hooks::emit_hook_completed_events;
+use hooks::inspect_pending_input;
+use hooks::record_additional_contexts;
+use hooks::record_pending_input;
+use hooks::run_pending_session_start_hooks;
+use hooks::run_user_prompt_submit_hooks;
+use hooks_api::HookEvent;
+use hooks_api::HookEventAfterAgent;
+use hooks_api::HookPayload;
+use hooks_api::HookResult;
+use model_service_api::CreateModelClientRequest;
+use model_service_api::ModelCatalogRefresh;
+use model_service_api::ModelSelectionPolicy;
+use model_service_api::OwnedModelTurnClientApi;
+use model_service_api::SharedModelClientApi;
+use model_service_api::TurnModelRequest;
+use plugin_service_api::PluginCapabilitySummary;
+use protocol::config_types::ModeKind;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
+use protocol::items::TurnItem;
+use protocol::items::UserMessageItem;
+use protocol::items::build_hook_prompt_message;
+use protocol::models::MessagePhase;
+use protocol::models::ResponseInputItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::AgentMessageContentDeltaEvent;
+use protocol::protocol::AgentReasoningSectionBreakEvent;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::CodexErrorInfo;
+use protocol::protocol::ErrorEvent;
+use protocol::protocol::EventMsg;
+use protocol::protocol::PlanDeltaEvent;
+use protocol::protocol::ReasoningContentDeltaEvent;
+use protocol::protocol::ReasoningRawContentDeltaEvent;
+use protocol::protocol::TurnDiffEvent;
+use protocol::protocol::WarningEvent;
+use protocol::user_input::UserInput;
+use session_telemetry_api::ResponseEvent as SessionTelemetryResponseEvent;
+use thread_service_api::TurnDiffTracker;
 use tokio_util::sync::CancellationToken;
+use tool_service_api::ExtensionToolBuildParams;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolName;
+use tool_service_api::ToolServiceParams;
 use tracing::Instrument;
 use tracing::error;
 use tracing::field;
@@ -110,7 +118,6 @@ use tracing::instrument;
 use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
-use crate::turn_plugin_injection::build_plugin_injections;
 
 /// Takes a user message as input and runs a loop where, at each sampling request, the model
 /// replies with either:
@@ -135,7 +142,7 @@ pub(crate) async fn run_turn(
     turn_context: Arc<TurnContext>,
     turn_extension_data: Arc<codex_extension_api::ExtensionData>,
     input: Vec<UserInput>,
-    prewarmed_client_session: Option<ModelClientSession>,
+    prewarmed_client_session: Option<OwnedModelTurnClientApi>,
     cancellation_token: CancellationToken,
 ) -> Option<String> {
     if input.is_empty() && !sess.has_pending_input().await {
@@ -144,21 +151,35 @@ pub(crate) async fn run_turn(
 
     let model_info = turn_context.model_info.clone();
     let auto_compact_limit = model_info.auto_compact_token_limit().unwrap_or(i64::MAX);
-    let turn_provider = turn_context.provider.info();
-    let prewarmed_client_session = prewarmed_client_session
-        .filter(|_| sess.services.model_client.provider_info() == turn_provider);
-    let mut client_session = prewarmed_client_session.unwrap_or_else(|| {
-        sess.services.model_client.new_session_for_provider(
-            sess.services.model_client.auth_manager(),
-            turn_provider.clone(),
-        )
-    });
+    let turn_provider_id = Some(turn_context.config.model_provider_id.as_str());
+    let prewarmed_client_session = if turn_provider_id.is_none() {
+        prewarmed_client_session
+    } else {
+        prewarmed_client_session.filter(|client| client.provider() == turn_provider_id)
+    };
+    let model_client_api = match model_client_api_for_turn(&sess, &turn_context).await {
+        Ok(client) => client,
+        Err(err) => {
+            error!("failed to resolve turn model client api: {err}");
+            return None;
+        }
+    };
+    let mut client_session = match prewarmed_client_session {
+        Some(client) => client,
+        None => match model_client_api.create_turn_client().await {
+            Ok(client) => client,
+            Err(err) => {
+                error!("failed to create turn model client: {err}");
+                return None;
+            }
+        },
+    };
     // TODO(ccunningham): Pre-turn compaction runs before context updates and the
     // new user message are recorded. Estimate pending incoming items (context
     // diffs/full reinjection + user input) and trigger compaction preemptively
     // when they would push the thread over the compaction threshold.
     let pre_sampling_compact =
-        match run_pre_sampling_compact(&sess, &turn_context, &mut client_session).await {
+        match run_pre_sampling_compact(&sess, &turn_context, &mut *client_session).await {
             Ok(pre_sampling_compact) => pre_sampling_compact,
             Err(_) => {
                 error!("Failed to run pre-sampling compact");
@@ -274,8 +295,8 @@ pub(crate) async fn run_turn(
             skill_path: invocation.skill_path.clone(),
             plugin_id: invocation.plugin_id.clone(),
             invocation_type: match invocation.invocation_type {
-                crate::injection::SkillInvocationType::Explicit => InvocationType::Explicit,
-                crate::injection::SkillInvocationType::Implicit => InvocationType::Implicit,
+                SkillInvocationType::Explicit => InvocationType::Explicit,
+                SkillInvocationType::Implicit => InvocationType::Implicit,
             },
         })
         .collect::<Vec<_>>();
@@ -504,7 +525,7 @@ pub(crate) async fn run_turn(
             turn_context: Arc::clone(&turn_context),
             turn_store: Arc::clone(&turn_extension_data),
             turn_diff_tracker: Arc::clone(&turn_diff_tracker),
-            client_session: &mut client_session,
+            client_session: &mut *client_session,
             turn_metadata_header: turn_metadata_header.as_deref(),
             input: sampling_request_input,
             explicitly_enabled_connectors: &explicitly_enabled_connectors,
@@ -544,7 +565,7 @@ pub(crate) async fn run_turn(
                     let reset_client_session = match run_auto_compact(
                         &sess,
                         &turn_context,
-                        &mut client_session,
+                        &mut *client_session,
                         InitialContextInjection::BeforeLastUserMessage,
                         CompactionReason::ContextLimit,
                         CompactionPhase::MidTurn,
@@ -571,7 +592,7 @@ pub(crate) async fn run_turn(
                         | AskForApproval::Granular(_) => "default",
                     }
                     .to_string();
-                    let stop_request = codex_hooks_api::StopRequest {
+                    let stop_request = hooks_api::StopRequest {
                         session_id: sess.session_id().into(),
                         turn_id: turn_context.sub_id.clone(),
                         #[allow(deprecated)]
@@ -586,7 +607,7 @@ pub(crate) async fn run_turn(
                     for run in hooks.preview_stop(&stop_request) {
                         sess.send_event(
                             &turn_context,
-                            EventMsg::HookStarted(codex_protocol::protocol::HookStartedEvent {
+                            EventMsg::HookStarted(protocol::protocol::HookStartedEvent {
                                 turn_id: Some(turn_context.sub_id.clone()),
                                 run,
                             }),
@@ -723,6 +744,45 @@ pub(crate) async fn run_turn(
     last_agent_message
 }
 
+pub(crate) async fn model_client_api_for_turn(
+    sess: &Session,
+    turn_context: &TurnContext,
+) -> Result<SharedModelClientApi, model_service_api::ModelServiceError> {
+    let requested_provider = turn_context.config.model_provider_id.clone();
+    if sess.services.model_client_api.descriptor().provider == Some(requested_provider.clone()) {
+        return Ok(Arc::clone(&sess.services.model_client_api));
+    }
+
+    sess.services
+        .model_service
+        .create_client(CreateModelClientRequest {
+            selection: ModelSelectionPolicy {
+                requested_model: Some(turn_context.model_info.slug.clone()),
+                provider_hint: Some(requested_provider),
+                allow_default_fallback: true,
+                refresh: ModelCatalogRefresh::OnlineIfUncached,
+            },
+            installation_id: sess.installation_id.clone(),
+            session_id: sess.session_id(),
+            thread_id: sess.conversation_id,
+            session_source: turn_context.session_source.clone(),
+            reasoning_effort: turn_context.reasoning_effort,
+            service_tier: model_service_tier(turn_context.config.service_tier.as_deref()),
+            verbosity: None,
+            chat_completions_max_tokens_by_model: HashMap::new(),
+            enable_request_compression: sess.features.enabled(Feature::EnableRequestCompression),
+            include_timing_metrics: sess.features.enabled(Feature::RuntimeMetrics),
+            beta_features_header: None,
+        })
+        .await
+}
+
+pub(crate) fn model_service_tier(
+    service_tier: Option<&str>,
+) -> Option<protocol::config_types::ServiceTier> {
+    service_tier.and_then(protocol::config_types::ServiceTier::from_request_value)
+}
+
 async fn track_turn_resolved_config_analytics(
     sess: &Session,
     turn_context: &TurnContext,
@@ -775,7 +835,7 @@ struct PreSamplingCompactResult {
 async fn run_pre_sampling_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    client_session: &mut ModelClientSession,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
 ) -> CodexResult<PreSamplingCompactResult> {
     let total_usage_tokens_before_compaction = sess.get_total_token_usage().await;
     let mut pre_sampling_compacted = maybe_run_previous_model_inline_compact(
@@ -818,7 +878,7 @@ async fn run_pre_sampling_compact(
 async fn maybe_run_previous_model_inline_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    client_session: &mut ModelClientSession,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
     total_usage_tokens: i64,
 ) -> CodexResult<bool> {
     let Some(previous_turn_settings) = sess.previous_turn_settings().await else {
@@ -826,7 +886,7 @@ async fn maybe_run_previous_model_inline_compact(
     };
     let previous_model_turn_context = Arc::new(
         turn_context
-            .with_model(previous_turn_settings.model, &sess.services.models_manager)
+            .with_model(previous_turn_settings.model, &sess.services.model_service)
             .await,
     );
 
@@ -861,7 +921,7 @@ async fn maybe_run_previous_model_inline_compact(
 async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    client_session: &mut ModelClientSession,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
     initial_context_injection: InitialContextInjection,
     reason: CompactionReason,
     phase: CompactionPhase,
@@ -983,8 +1043,8 @@ async fn run_sampling_request(request: SamplingRequest<'_>) -> CodexResult<Sampl
         let max_retries = turn_context.provider.info().stream_max_retries();
         if retries >= max_retries
             && client_session.try_switch_fallback_transport(
-                &turn_context.session_telemetry,
-                &turn_context.model_info,
+                turn_context.session_telemetry.clone(),
+                turn_context.model_info.clone(),
             )
         {
             sess.send_event(
@@ -1013,7 +1073,7 @@ async fn run_sampling_request(request: SamplingRequest<'_>) -> CodexResult<Sampl
             // transient reconnect messages. In debug builds, keep full visibility for diagnosis.
             let report_error = retries > 1
                 || cfg!(debug_assertions)
-                || !sess.services.model_client.responses_websocket_enabled();
+                || !sess.services.model_client_api.responses_websocket_enabled();
             if report_error {
                 // Surface retry information to any UI/front‑end so the
                 // user understands what is happening instead of staring
@@ -1142,11 +1202,10 @@ pub(crate) async fn built_tools(
 }
 
 pub(crate) struct TurnToolInputs {
-    pub(crate) session_capability:
-        std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
-    pub(crate) mcp_tools: Vec<codex_mcp_tool_types::ToolInfo>,
-    pub(crate) deferred_mcp_tools: Vec<codex_mcp_tool_types::ToolInfo>,
-    pub(crate) discoverable_tools: Vec<codex_tool_types::DiscoverableTool>,
+    pub(crate) session_capability: std::sync::Weak<dyn thread_service_api::ThreadSessionCapability>,
+    pub(crate) mcp_tools: Vec<mcp_types::ToolInfo>,
+    pub(crate) deferred_mcp_tools: Vec<mcp_types::ToolInfo>,
+    pub(crate) discoverable_tools: Vec<tool_service_api::DiscoverableTool>,
     pub(crate) default_agent_type_description: String,
 }
 
@@ -1154,17 +1213,18 @@ pub(crate) fn tool_service_request<'a>(
     sess: &'a Arc<Session>,
     turn_context: &'a Arc<TurnContext>,
     tool_inputs: &'a TurnToolInputs,
-) -> codex_tool_service_api::ToolSpecRequest<'a> {
-    codex_tool_service_api::ToolSpecRequest {
+) -> tool_service_api::ToolSpecRequest<'a> {
+    tool_service_api::ToolSpecRequest {
         config: &turn_context.tools_config,
         session_capability: tool_inputs.session_capability.clone(),
         session: Arc::clone(sess) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+        approval_session: Arc::clone(sess)
+            as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
         session_command_state: Arc::clone(&sess.services.command_service_state)
-            as Arc<dyn codex_command_service_api::CommandServiceSessionState>,
+            as Arc<dyn command_service_api::CommandServiceSessionState>,
         session_command_interaction: Arc::clone(sess)
-            as Arc<dyn codex_command_service_api::SessionCommandInteractionCaller>,
-        session_agent_jobs:
-            Arc::clone(sess) as Arc<dyn thread_service_api::SessionAgentJobCaller>,
+            as Arc<dyn command_service_api::SessionCommandInteractionCaller>,
+        session_agent_jobs: Arc::clone(sess) as Arc<dyn thread_service_api::SessionAgentJobCaller>,
         turn: Arc::clone(turn_context) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
         params: ToolServiceParams {
             mcp_tools: Some(tool_inputs.mcp_tools.as_slice()),
@@ -1187,12 +1247,12 @@ pub(crate) async fn dispatch_tool_call(
     turn_context: Arc<TurnContext>,
     tool_inputs: Arc<TurnToolInputs>,
     tracker: SharedTurnDiffTracker,
-    call: codex_tool_types::ToolCall,
-    source: codex_tool_types::ToolCallSource,
+    call: tool_service_api::ToolCall,
+    source: tool_service_api::ToolCallSource,
     cancellation_token: CancellationToken,
-) -> Result<codex_tool_service_api::AnyToolResult, FunctionCallError> {
+) -> Result<tool_service_api::AnyToolResult, FunctionCallError> {
     tool_service
-        .dispatch_tool(codex_tool_service_api::ToolDispatchRequest {
+        .dispatch_tool(tool_service_api::ToolDispatchRequest {
             tool: tool_service_request(&sess, &turn_context, &tool_inputs),
             cancellation_token,
             tracker,
@@ -1208,7 +1268,7 @@ pub(crate) async fn handle_tool_call(
     turn_context: Arc<TurnContext>,
     tool_inputs: Arc<TurnToolInputs>,
     tracker: SharedTurnDiffTracker,
-    call: codex_tool_types::ToolCall,
+    call: tool_service_api::ToolCall,
     cancellation_token: CancellationToken,
 ) -> Result<ResponseItem, CodexErr> {
     let error_call = call.clone();
@@ -1219,7 +1279,7 @@ pub(crate) async fn handle_tool_call(
         tool_inputs,
         tracker,
         call,
-        codex_tool_types::ToolCallSource::Direct,
+        tool_service_api::ToolCallSource::Direct,
         cancellation_token,
     )
     .await
@@ -1230,30 +1290,97 @@ pub(crate) async fn handle_tool_call(
     }
 }
 
-fn failure_response(call: codex_tool_types::ToolCall, err: FunctionCallError) -> ResponseItem {
+fn failure_response(call: tool_service_api::ToolCall, err: FunctionCallError) -> ResponseItem {
     let message = err.to_string();
     match call.payload {
-        codex_tool_types::ToolPayload::ToolSearch { .. } => ResponseItem::ToolSearchOutput {
+        tool_service_api::ToolPayload::ToolSearch { .. } => ResponseItem::ToolSearchOutput {
             call_id: Some(call.call_id),
             status: "completed".to_string(),
             execution: "client".to_string(),
             tools: Vec::new(),
         },
-        codex_tool_types::ToolPayload::Custom { .. } => ResponseItem::CustomToolCallOutput {
+        tool_service_api::ToolPayload::Custom { .. } => ResponseItem::CustomToolCallOutput {
             call_id: call.call_id,
             name: None,
-            output: codex_protocol::models::FunctionCallOutputPayload {
-                body: codex_protocol::models::FunctionCallOutputBody::Text(message),
+            output: protocol::models::FunctionCallOutputPayload {
+                body: protocol::models::FunctionCallOutputBody::Text(message),
                 success: Some(false),
             },
         },
         _ => ResponseItem::FunctionCallOutput {
             call_id: call.call_id,
-            output: codex_protocol::models::FunctionCallOutputPayload {
-                body: codex_protocol::models::FunctionCallOutputBody::Text(message),
+            output: protocol::models::FunctionCallOutputPayload {
+                body: protocol::models::FunctionCallOutputBody::Text(message),
                 success: Some(false),
             },
         },
+    }
+}
+
+pub(crate) fn map_model_response_event(
+    event: model_service_api::ModelResponseEvent,
+) -> ResponseEvent {
+    match event {
+        model_service_api::ModelResponseEvent::Created => ResponseEvent::Created,
+        model_service_api::ModelResponseEvent::ItemDone { item } => {
+            ResponseEvent::OutputItemDone(item)
+        }
+        model_service_api::ModelResponseEvent::ItemAdded { item } => {
+            ResponseEvent::OutputItemAdded(item)
+        }
+        model_service_api::ModelResponseEvent::ServerModel { model } => {
+            ResponseEvent::ServerModel(model)
+        }
+        model_service_api::ModelResponseEvent::ModelVerifications { verifications } => {
+            ResponseEvent::ModelVerifications(verifications)
+        }
+        model_service_api::ModelResponseEvent::ServerReasoningIncluded { included } => {
+            ResponseEvent::ServerReasoningIncluded(included)
+        }
+        model_service_api::ModelResponseEvent::Completed {
+            response_id,
+            token_usage,
+            end_turn,
+        } => ResponseEvent::Completed {
+            response_id,
+            token_usage,
+            end_turn,
+        },
+        model_service_api::ModelResponseEvent::OutputTextDelta { delta } => {
+            ResponseEvent::OutputTextDelta(delta)
+        }
+        model_service_api::ModelResponseEvent::ToolCallInputDelta {
+            item_id,
+            call_id,
+            delta,
+        } => ResponseEvent::ToolCallInputDelta {
+            item_id,
+            call_id,
+            delta,
+        },
+        model_service_api::ModelResponseEvent::ReasoningSummaryDelta {
+            delta,
+            summary_index,
+        } => ResponseEvent::ReasoningSummaryDelta {
+            delta,
+            summary_index,
+        },
+        model_service_api::ModelResponseEvent::ReasoningContentDelta {
+            delta,
+            content_index,
+        } => ResponseEvent::ReasoningContentDelta {
+            delta,
+            content_index,
+        },
+        model_service_api::ModelResponseEvent::ReasoningSummaryPartAdded { summary_index } => {
+            ResponseEvent::ReasoningSummaryPartAdded { summary_index }
+        }
+        model_service_api::ModelResponseEvent::RateLimits { snapshot } => {
+            ResponseEvent::RateLimits(snapshot)
+        }
+        model_service_api::ModelResponseEvent::ModelsEtag { etag } => {
+            ResponseEvent::ModelsEtag(etag)
+        }
     }
 }
 
@@ -1268,7 +1395,7 @@ struct SamplingRequest<'a> {
     turn_context: Arc<TurnContext>,
     turn_store: Arc<codex_extension_api::ExtensionData>,
     turn_diff_tracker: SharedTurnDiffTracker,
-    client_session: &'a mut ModelClientSession,
+    client_session: &'a mut dyn model_service_api::ModelTurnClientApi,
     turn_metadata_header: Option<&'a str>,
     input: Vec<ResponseItem>,
     explicitly_enabled_connectors: &'a HashSet<String>,
@@ -1281,7 +1408,7 @@ struct TrySamplingRequest<'a> {
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     turn_store: Arc<codex_extension_api::ExtensionData>,
-    client_session: &'a mut ModelClientSession,
+    client_session: &'a mut dyn model_service_api::ModelTurnClientApi,
     turn_metadata_header: Option<&'a str>,
     turn_diff_tracker: SharedTurnDiffTracker,
     prompt: &'a Prompt,
@@ -1504,20 +1631,32 @@ async fn try_run_sampling_request(
         turn_context.provider.info().name.as_str(),
     );
     let mut stream = client_session
-        .stream(
-            prompt,
-            &turn_context.model_info,
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort,
-            turn_context.reasoning_summary,
-            turn_context.config.service_tier.clone(),
-            turn_metadata_header,
-            &inference_trace,
-        )
+        .stream_responses(TurnModelRequest {
+            request: model_service_api::ResponsesModelRequest {
+                input: prompt.input.clone(),
+                tools: prompt.tools.clone(),
+                parallel_tool_calls: prompt.parallel_tool_calls,
+                base_instructions: prompt.base_instructions.clone(),
+                personality: prompt.personality,
+                output_schema: prompt.output_schema.clone(),
+                output_schema_strict: prompt.output_schema_strict,
+                model: Some(turn_context.model_info.slug.clone()),
+                reasoning_effort: turn_context.reasoning_effort,
+                reasoning_summary: turn_context.reasoning_summary,
+                service_tier: model_service_tier(turn_context.config.service_tier.as_deref()),
+                verbosity: None,
+                turn_metadata_header: turn_metadata_header.map(ToOwned::to_owned),
+            },
+            model_info: turn_context.model_info.clone(),
+            session_telemetry: turn_context.session_telemetry.clone(),
+            turn_metadata_header: turn_metadata_header.map(ToOwned::to_owned),
+            inference_trace,
+        })
         .instrument(trace_span!("stream_request"))
         .or_cancel(&cancellation_token)
         .await
-        .map_err(|_| CodexErr::TurnAborted)??;
+        .map_err(|_| CodexErr::TurnAborted)?
+        .map_err(|err| CodexErr::Stream(err.to_string(), None))?;
     let mut in_flight: FuturesOrdered<BoxFuture<'static, CodexResult<ResponseItem>>> =
         FuturesOrdered::new();
     let mut needs_follow_up = false;
@@ -1525,7 +1664,7 @@ async fn try_run_sampling_request(
     let mut active_item: Option<TurnItem> = None;
     let mut active_tool_argument_diff_consumer: Option<(
         String,
-        Box<dyn codex_tool_service_api::ErasedToolArgumentDiffConsumer>,
+        Box<dyn tool_service_api::ErasedToolArgumentDiffConsumer>,
     )> = None;
     let mut should_emit_turn_diff = false;
     let mut should_emit_token_count = false;
@@ -1564,8 +1703,8 @@ async fn try_run_sampling_request(
         };
 
         let event = match event {
-            Some(Ok(event)) => event,
-            Some(Err(err)) => break Err(err),
+            Some(Ok(event)) => map_model_response_event(event),
+            Some(Err(err)) => break Err(CodexErr::Stream(err.to_string(), None)),
             None => {
                 break Err(CodexErr::Stream(
                     "stream closed before response.completed".into(),
@@ -1574,9 +1713,10 @@ async fn try_run_sampling_request(
             }
         };
 
+        let telemetry_event = session_telemetry_response_event(&event);
         sess.services
             .session_telemetry
-            .record_responses(&handle_responses, &event);
+            .record_responses(&handle_responses, &telemetry_event);
         record_turn_ttft_metric(&turn_context, &event).await;
 
         match event {
@@ -1687,7 +1827,7 @@ async fn try_run_sampling_request(
                     active_tool_argument_diff_consumer = sess
                         .services
                         .tool_service
-                        .create_diff_consumer(codex_tool_service_api::ToolDiffConsumerRequest {
+                        .create_diff_consumer(tool_service_api::ToolDiffConsumerRequest {
                             tool: tool_service_request(&sess, &turn_context, &tool_inputs),
                             tool_name: &tool_name,
                         })
@@ -1717,7 +1857,7 @@ async fn try_run_sampling_request(
                             assistant_message_stream_parsers.seed_item_text(&item_id, &raw_text);
                         if let TurnItem::AgentMessage(agent_message) = &mut turn_item {
                             agent_message.content =
-                                vec![codex_protocol::items::AgentMessageContent::Text {
+                                vec![protocol::items::AgentMessageContent::Text {
                                     text: if plan_mode {
                                         String::new()
                                     } else {
@@ -1789,7 +1929,7 @@ async fn try_run_sampling_request(
             }
             ResponseEvent::ModelsEtag(etag) => {
                 // Update internal state with latest models etag
-                sess.services.models_manager.refresh_if_new_etag(etag).await;
+                let _ = sess.services.model_service.refresh_if_new_etag(etag).await;
             }
             ResponseEvent::Completed {
                 response_id,
@@ -1979,3 +2119,67 @@ async fn try_run_sampling_request(
 #[cfg(test)]
 #[path = "turn_tests.rs"]
 mod tests;
+fn session_telemetry_response_event(event: &ResponseEvent) -> SessionTelemetryResponseEvent {
+    match event {
+        ResponseEvent::Created => SessionTelemetryResponseEvent::Created,
+        ResponseEvent::OutputItemDone(item) => {
+            SessionTelemetryResponseEvent::OutputItemDone(item.clone())
+        }
+        ResponseEvent::OutputItemAdded(item) => {
+            SessionTelemetryResponseEvent::OutputItemAdded(item.clone())
+        }
+        ResponseEvent::ServerModel(model) => {
+            SessionTelemetryResponseEvent::ServerModel(model.clone())
+        }
+        ResponseEvent::ModelVerifications(verifications) => {
+            SessionTelemetryResponseEvent::ModelVerifications(verifications.clone())
+        }
+        ResponseEvent::ServerReasoningIncluded(included) => {
+            SessionTelemetryResponseEvent::ServerReasoningIncluded(*included)
+        }
+        ResponseEvent::Completed {
+            response_id,
+            token_usage,
+            end_turn,
+        } => SessionTelemetryResponseEvent::Completed {
+            response_id: response_id.clone(),
+            token_usage: token_usage.clone(),
+            end_turn: *end_turn,
+        },
+        ResponseEvent::OutputTextDelta(delta) => {
+            SessionTelemetryResponseEvent::OutputTextDelta(delta.clone())
+        }
+        ResponseEvent::ToolCallInputDelta {
+            item_id,
+            call_id,
+            delta,
+        } => SessionTelemetryResponseEvent::ToolCallInputDelta {
+            item_id: item_id.clone(),
+            call_id: call_id.clone(),
+            delta: delta.clone(),
+        },
+        ResponseEvent::ReasoningSummaryDelta {
+            delta,
+            summary_index,
+        } => SessionTelemetryResponseEvent::ReasoningSummaryDelta {
+            delta: delta.clone(),
+            summary_index: *summary_index,
+        },
+        ResponseEvent::ReasoningContentDelta {
+            delta,
+            content_index,
+        } => SessionTelemetryResponseEvent::ReasoningContentDelta {
+            delta: delta.clone(),
+            content_index: *content_index,
+        },
+        ResponseEvent::ReasoningSummaryPartAdded { summary_index } => {
+            SessionTelemetryResponseEvent::ReasoningSummaryPartAdded {
+                summary_index: *summary_index,
+            }
+        }
+        ResponseEvent::RateLimits(snapshot) => {
+            SessionTelemetryResponseEvent::RateLimits(snapshot.clone())
+        }
+        ResponseEvent::ModelsEtag(etag) => SessionTelemetryResponseEvent::ModelsEtag(etag.clone()),
+    }
+}

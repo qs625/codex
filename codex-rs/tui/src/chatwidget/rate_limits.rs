@@ -1,7 +1,7 @@
 //! Rate-limit warning, prompt, and notice surfaces for `ChatWidget`.
 
 use super::*;
-use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
+use app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
 
 pub(super) const NUDGE_MODEL_SLUG: &str = "gpt-5.4-mini";
 pub(super) const RATE_LIMIT_SWITCH_PROMPT_THRESHOLD: f64 = 90.0;

@@ -3,35 +3,36 @@ use async_channel::Receiver;
 use async_channel::RecvError;
 use async_channel::Sender;
 use async_channel::TrySendError;
-use codex_api_provider::Provider as ApiProvider;
-use codex_api_types::ApiError;
-use codex_api_types::RealtimeEventParser;
-use codex_api_types::RealtimeSessionConfig;
-use codex_api_types::RealtimeWebrtcSidebandConnectRuntimeRequest;
-use codex_api_types::RealtimeWebsocketClientRuntime;
-use codex_api_types::RealtimeWebsocketConnectRuntimeRequest;
-use codex_api_types::RealtimeWebsocketEventsRuntime;
-use codex_api_types::RealtimeWebsocketWriterRuntime;
-use codex_api_types::decoded_realtime_audio_samples_per_channel;
-use codex_api_types::map_api_error;
 use codex_auth_types::AuthMode;
 use codex_auth_types::read_openai_api_key_from_env;
-use codex_client_identity::default_identity_headers;
-use codex_model_client::ModelClient;
-use codex_model_provider_api::model_provider_info_to_api_provider;
-use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::protocol::RealtimeAudioFrame;
-use codex_protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
-use codex_protocol::protocol::RealtimeEvent;
-use codex_protocol::protocol::RealtimeHandoffRequested;
-use codex_protocol::protocol::RealtimeVoice;
-use codex_protocol::protocol::RealtimeVoicesList;
+use transport_client_identity::default_identity_headers;
 use http::HeaderMap;
 use http::HeaderValue;
 use http::header::AUTHORIZATION;
+use model_service_api::ApiError;
+use model_service_api::CHATGPT_CODEX_BASE_URL;
+use model_service_api::ModelClientApi;
+use model_service_api::ModelProviderInfo;
+use model_service_api::Provider as ApiProvider;
+use model_service_api::RealtimeEventParser;
+use model_service_api::RealtimeSessionConfig;
+use model_service_api::RealtimeWebrtcCallRequest;
+use model_service_api::RealtimeWebrtcSidebandConnectRuntimeRequest;
+use model_service_api::RealtimeWebsocketClientRuntime;
+use model_service_api::RealtimeWebsocketConnectRuntimeRequest;
+use model_service_api::RealtimeWebsocketEventsRuntime;
+use model_service_api::RealtimeWebsocketWriterRuntime;
+use model_service_api::decoded_realtime_audio_samples_per_channel;
+use model_service_api::map_api_error;
+use model_service_api::model_provider_info_to_api_provider;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
+use protocol::protocol::RealtimeAudioFrame;
+use protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
+use protocol::protocol::RealtimeEvent;
+use protocol::protocol::RealtimeHandoffRequested;
+use protocol::protocol::RealtimeVoice;
+use protocol::protocol::RealtimeVoicesList;
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -210,7 +211,7 @@ pub struct RealtimeStart {
     pub api_provider: ApiProvider,
     pub extra_headers: Option<HeaderMap>,
     pub session_config: RealtimeSessionConfig,
-    pub model_client: ModelClient,
+    pub model_client: Arc<dyn ModelClientApi>,
     pub sdp: Option<String>,
 }
 
@@ -291,13 +292,14 @@ impl RealtimeConversationManager {
         let client = model_client.realtime_websocket_client(api_provider.clone());
         let (task, sdp) = if let Some(sdp) = sdp {
             let call = model_client
-                .create_realtime_call_with_headers(
+                .create_realtime_call_with_transport(RealtimeWebrtcCallRequest {
                     sdp,
-                    api_provider.clone(),
-                    session_config.clone(),
-                    extra_headers.unwrap_or_default(),
-                )
-                .await?;
+                    api_provider: api_provider.clone(),
+                    session_config: session_config.clone(),
+                    extra_headers: extra_headers.unwrap_or_default(),
+                })
+                .await
+                .map_err(|err| CodexErr::InvalidRequest(err.to_string()))?;
             let task = spawn_webrtc_sideband_input_task(RealtimeWebrtcSidebandInputTask {
                 client,
                 session_config,

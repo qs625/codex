@@ -1,12 +1,12 @@
 [package]
-name = "codex-session-telemetry-api"
+name = "session-telemetry-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Lightweight session telemetry facade for Codex runtime crates."
 
 [lib]
-name = "codex_session_telemetry_api"
+name = "session_telemetry_api"
 path = "src/lib.rs"
 doctest = false
 
@@ -14,9 +14,8 @@ doctest = false
 workspace = true
 
 [dependencies]
-codex-api-types = { workspace = true }
 codex-auth-types = { workspace = true }
-codex-metrics-api = { workspace = true }
-codex-protocol = { workspace = true }
+metrics-api = { workspace = true }
+protocol = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

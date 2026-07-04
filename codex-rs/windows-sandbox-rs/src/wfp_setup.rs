@@ -2,13 +2,13 @@ use crate::install_wfp_filters_for_account;
 #[cfg(feature = "wfp-otel")]
 use crate::setup_error::sanitize_setup_metric_tag_value;
 use anyhow::Result;
-use codex_metrics_api::StatsigMetricsSettings;
 #[cfg(feature = "wfp-otel")]
 use codex_otel::OtelExporter;
 #[cfg(feature = "wfp-otel")]
 use codex_otel::OtelProvider;
 #[cfg(feature = "wfp-otel")]
 use codex_otel::OtelSettings;
+use metrics_api::StatsigMetricsSettings;
 #[cfg(feature = "wfp-otel")]
 use std::collections::BTreeMap;
 use std::path::Path;

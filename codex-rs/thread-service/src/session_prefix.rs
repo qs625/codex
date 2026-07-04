@@ -1,4 +1,4 @@
-use codex_protocol::protocol::AgentStatus;
+use protocol::protocol::AgentStatus;
 
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::SubagentNotification;

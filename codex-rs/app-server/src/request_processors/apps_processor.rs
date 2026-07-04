@@ -188,8 +188,8 @@ impl AppsRequestProcessor {
         let accessible_config = config.clone();
         let accessible_tx = tx.clone();
         tokio::spawn(async move {
-            let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
-            let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
+            let mcp_auth_runtime = mcp_service::DefaultMcpAuthRuntime;
+            let mcp_connection_runtime_factory = mcp_service::DefaultMcpConnectionRuntimeFactory;
             let result = core_connectors::list_accessible_connectors_from_mcp_tools_with_environment_provider(
                 &accessible_config,
                 auth_snapshot.as_ref(),

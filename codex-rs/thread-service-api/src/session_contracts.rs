@@ -20,71 +20,64 @@ use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
 use codex_connectors_api::AppInfo;
 use codex_file_system::FileSystemSandboxContext;
-use codex_mcp_tool_types::ToolInfo;
-use codex_mcp_types::ElicitationResponse;
-use codex_mcp_types::ElicitationReviewerHandle;
-use codex_mcp_types::CodexAppsAuthContext;
-use codex_mcp_types::McpServerElicitationRequestParams;
-use codex_mcp_types::McpToolApprovalMetadata;
-use codex_mcp_types::SandboxState;
-use codex_protocol::ThreadId;
-use codex_protocol::approvals::ExecPolicyAmendment;
-use codex_protocol::approvals::NetworkApprovalContext;
-use codex_protocol::approvals::NetworkPolicyAmendment;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::mcp::ListResourceTemplatesResult;
-use codex_protocol::mcp::ListResourcesResult;
-use codex_protocol::mcp::PaginatedRequestParams;
-use codex_protocol::mcp::ReadResourceRequestParams;
-use codex_protocol::mcp::ReadResourceResult;
-use codex_protocol::mcp::RequestId;
-use codex_protocol::mcp::Resource;
-use codex_protocol::mcp::ResourceTemplate;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::McpServerRefreshConfig;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::Submission;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::W3cTraceContext;
 use codex_sandboxing_api::ResolvedApplyPatchEnvironment;
 use codex_sandboxing_api::ResolvedExecCommandEnvironment;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_sandboxing_api::ToolSandboxContext;
-use codex_session_telemetry_api::SharedSessionTelemetry;
-use codex_state_api::ExternalGoalSet;
-use codex_state_api::SharedStateDbRuntime;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCallSource;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolOutput;
-use codex_tool_types::ToolPayload;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
+use mcp_types::CodexAppsAuthContext;
+use mcp_types::ElicitationResponse;
+use mcp_types::ElicitationReviewerHandle;
+use mcp_types::McpServerElicitationRequestParams;
+use mcp_types::McpToolApprovalMetadata;
+use mcp_types::SandboxState;
+use mcp_types::ToolInfo;
+use protocol::ThreadId;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::error::Result as CodexResult;
+use protocol::mcp::CallToolResult;
+use protocol::mcp::ListResourceTemplatesResult;
+use protocol::mcp::ListResourcesResult;
+use protocol::mcp::PaginatedRequestParams;
+use protocol::mcp::ReadResourceRequestParams;
+use protocol::mcp::ReadResourceResult;
+use protocol::mcp::RequestId;
+use protocol::mcp::Resource;
+use protocol::mcp::ResourceTemplate;
+use protocol::models::PermissionProfile;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ReasoningEffort;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::EventMsg;
+use protocol::protocol::McpServerRefreshConfig;
+use protocol::protocol::Op;
+use protocol::protocol::Submission;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::W3cTraceContext;
 use serde::Deserialize;
 use serde::Serialize;
+use session_telemetry_api::SharedSessionTelemetry;
+use state_api::ExternalGoalSet;
+use state_api::SharedStateDbRuntime;
 use tokio::sync::Mutex;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
+use tool_types::FunctionCallError;
+use tool_types::ToolCallSource;
+use tool_types::ToolName;
+use tool_types::ToolOutput;
+use tool_types::ToolPayload;
 
 use crate::NetworkApprovalSpec;
 use crate::ResolvedExecCommand;
 use crate::RuntimeShell;
 use crate::ToolRuntimeNetworkApprovalHandle;
 use crate::ToolRuntimeNetworkApprovalTrigger;
-use crate::UnifiedExecApprovalKey;
 
 #[path = "pending_input.rs"]
 mod pending_input;
@@ -114,46 +107,11 @@ where
 pub type SessionCapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub type SharedToolTurnDiffTracker = Arc<Mutex<crate::TurnDiffTracker>>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReviewRejectionRecord {
-    pub rationale: String,
-    pub source: codex_protocol::protocol::GuardianAssessmentDecisionSource,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReviewAssessmentRecord {
-    pub risk_level: codex_protocol::protocol::GuardianRiskLevel,
-    pub user_authorization: codex_protocol::protocol::GuardianUserAuthorization,
-    pub outcome: codex_protocol::protocol::GuardianAssessmentOutcome,
-    pub rationale: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReviewRuntimeError {
-    PromptBuild { message: String },
-    Session { message: String },
-    Parse { message: String },
-    Timeout,
-    Cancelled,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReviewRuntimeOutcome {
-    Completed(ReviewAssessmentRecord),
-    Error(ReviewRuntimeError),
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AutoApprovalSafetyOutcome {
     Ok,
     AskUser(String),
     SteerModel(String),
-}
-
-#[derive(Debug)]
-pub struct ReviewRuntimeResult {
-    pub outcome: ReviewRuntimeOutcome,
-    pub analytics_result: codex_analytics_api::GuardianReviewAnalyticsResult,
 }
 
 #[derive(serde::Serialize, Clone, Debug, Eq, PartialEq, Hash)]
@@ -188,36 +146,6 @@ impl HookToolName {
     pub fn matcher_aliases(&self) -> &[String] {
         &self.matcher_aliases
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PermissionRequestPayload {
-    pub tool_name: HookToolName,
-    pub tool_input: serde_json::Value,
-}
-
-impl PermissionRequestPayload {
-    pub fn bash(command: String, description: Option<String>) -> Self {
-        let mut tool_input = serde_json::Map::new();
-        tool_input.insert("command".to_string(), serde_json::Value::String(command));
-        if let Some(description) = description {
-            tool_input.insert(
-                "description".to_string(),
-                serde_json::Value::String(description),
-            );
-        }
-
-        Self {
-            tool_name: HookToolName::bash(),
-            tool_input: serde_json::Value::Object(tool_input),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ToolPermissionGrants {
-    pub session: Option<AdditionalPermissionProfile>,
-    pub turn: Option<AdditionalPermissionProfile>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -456,7 +384,7 @@ pub trait ThreadTurnCapability: Send + Sync + 'static {
     fn apply_patch_streaming_events_enabled(&self) -> bool;
 
     /// Collaboration mode configured for the active turn.
-    fn collaboration_mode_kind(&self) -> codex_protocol::config_types::ModeKind;
+    fn collaboration_mode_kind(&self) -> protocol::config_types::ModeKind;
 
     /// Session cwd used for relative-path argument normalization.
     fn legacy_cwd(&self) -> AbsolutePathBuf;
@@ -510,7 +438,7 @@ pub trait ThreadTurnCapability: Send + Sync + 'static {
     /// Collaboration mode currently configured on the owning session.
     fn session_collaboration_mode<'a>(
         &'a self,
-    ) -> SessionCapabilityFuture<'a, codex_protocol::config_types::ModeKind>;
+    ) -> SessionCapabilityFuture<'a, protocol::config_types::ModeKind>;
 
     /// Emit one typed event for the active turn.
     fn emit_event<'a>(&'a self, event: EventMsg) -> SessionCapabilityFuture<'a, ()>;
@@ -519,22 +447,19 @@ pub trait ThreadTurnCapability: Send + Sync + 'static {
     fn request_permissions<'a>(
         &'a self,
         call_id: String,
-        args: codex_protocol::request_permissions::RequestPermissionsArgs,
+        args: protocol::request_permissions::RequestPermissionsArgs,
         cancellation_token: CancellationToken,
     ) -> SessionCapabilityFuture<
         'a,
-        Option<codex_protocol::request_permissions::RequestPermissionsResponse>,
+        Option<protocol::request_permissions::RequestPermissionsResponse>,
     >;
 
     /// Request structured user input from the client/runtime.
     fn request_user_input<'a>(
         &'a self,
         call_id: String,
-        args: codex_protocol::request_user_input::RequestUserInputArgs,
-    ) -> SessionCapabilityFuture<
-        'a,
-        Option<codex_protocol::request_user_input::RequestUserInputResponse>,
-    >;
+        args: protocol::request_user_input::RequestUserInputArgs,
+    ) -> SessionCapabilityFuture<'a, Option<protocol::request_user_input::RequestUserInputResponse>>;
 
     /// Dispatch one dynamic tool call through the active thread runtime.
     fn request_dynamic_tool<'a>(
@@ -542,7 +467,7 @@ pub trait ThreadTurnCapability: Send + Sync + 'static {
         call_id: String,
         tool_name: ToolName,
         arguments: serde_json::Value,
-    ) -> SessionCapabilityFuture<'a, Option<codex_protocol::dynamic_tools::DynamicToolResponse>>;
+    ) -> SessionCapabilityFuture<'a, Option<protocol::dynamic_tools::DynamicToolResponse>>;
 }
 
 impl<Turn> ThreadTurnCapability for Arc<Turn>
@@ -621,7 +546,7 @@ where
         self.as_ref().apply_patch_streaming_events_enabled()
     }
 
-    fn collaboration_mode_kind(&self) -> codex_protocol::config_types::ModeKind {
+    fn collaboration_mode_kind(&self) -> protocol::config_types::ModeKind {
         self.as_ref().collaboration_mode_kind()
     }
 
@@ -690,7 +615,7 @@ where
 
     fn session_collaboration_mode<'a>(
         &'a self,
-    ) -> SessionCapabilityFuture<'a, codex_protocol::config_types::ModeKind> {
+    ) -> SessionCapabilityFuture<'a, protocol::config_types::ModeKind> {
         self.as_ref().session_collaboration_mode()
     }
 
@@ -701,11 +626,11 @@ where
     fn request_permissions<'a>(
         &'a self,
         call_id: String,
-        args: codex_protocol::request_permissions::RequestPermissionsArgs,
+        args: protocol::request_permissions::RequestPermissionsArgs,
         cancellation_token: CancellationToken,
     ) -> SessionCapabilityFuture<
         'a,
-        Option<codex_protocol::request_permissions::RequestPermissionsResponse>,
+        Option<protocol::request_permissions::RequestPermissionsResponse>,
     > {
         self.as_ref()
             .request_permissions(call_id, args, cancellation_token)
@@ -714,11 +639,9 @@ where
     fn request_user_input<'a>(
         &'a self,
         call_id: String,
-        args: codex_protocol::request_user_input::RequestUserInputArgs,
-    ) -> SessionCapabilityFuture<
-        'a,
-        Option<codex_protocol::request_user_input::RequestUserInputResponse>,
-    > {
+        args: protocol::request_user_input::RequestUserInputArgs,
+    ) -> SessionCapabilityFuture<'a, Option<protocol::request_user_input::RequestUserInputResponse>>
+    {
         self.as_ref().request_user_input(call_id, args)
     }
 
@@ -727,8 +650,7 @@ where
         call_id: String,
         tool_name: ToolName,
         arguments: serde_json::Value,
-    ) -> SessionCapabilityFuture<'a, Option<codex_protocol::dynamic_tools::DynamicToolResponse>>
-    {
+    ) -> SessionCapabilityFuture<'a, Option<protocol::dynamic_tools::DynamicToolResponse>> {
         self.as_ref()
             .request_dynamic_tool(call_id, tool_name, arguments)
     }
@@ -924,131 +846,8 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     /// Sandbox runtime shared by the owning session.
     fn sandbox_runtime(&self) -> SharedSandboxRuntime;
 
-    /// Whether strict auto review is enabled for the active turn.
-    fn strict_auto_review_enabled_for_turn<'a>(&'a self) -> SessionCapabilityFuture<'a, bool>;
-
-    /// Return the current active turn runtime when one exists.
-    fn active_turn_runtime<'a>(
-        &'a self,
-    ) -> SessionCapabilityFuture<'a, Option<Arc<dyn ThreadRuntimeCapability>>>;
-
-    /// Remove and return one stored guardian rejection record.
-    fn take_review_rejection<'a>(
-        &'a self,
-        review_id: &'a str,
-    ) -> SessionCapabilityFuture<'a, Option<ReviewRejectionRecord>>;
-
-    /// Store or clear one guardian rejection record by review id.
-    fn set_review_rejection<'a>(
-        &'a self,
-        review_id: String,
-        rejection: Option<ReviewRejectionRecord>,
-    ) -> SessionCapabilityFuture<'a, ()>;
-
-    /// Record guardian review analytics at the session owner boundary.
-    fn track_review_analytics<'a>(
-        &'a self,
-        tracking: codex_analytics_api::GuardianReviewTrackContext,
-        result: codex_analytics_api::GuardianReviewAnalyticsResult,
-        completed_at_ms: u64,
-    ) -> SessionCapabilityFuture<'a, ()>;
-
-    /// Run the locked-down guardian review session and return the parsed outcome.
-    fn run_review_session<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        request: serde_json::Value,
-        retry_reason: Option<String>,
-    ) -> SessionCapabilityFuture<'a, ReviewRuntimeResult>;
-
-    /// Record one non-denial guardian review result for circuit-breaker state.
-    fn record_review_non_rejection<'a>(
-        &'a self,
-        turn_id: &'a str,
-    ) -> SessionCapabilityFuture<'a, ()>;
-
-    /// Record one denial guardian review result and apply any interrupt side effects.
-    fn record_review_rejection<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        turn_id: &'a str,
-    ) -> SessionCapabilityFuture<'a, ()>;
-
-    /// Emit an exec approval prompt and await the resulting review decision.
-    #[allow(clippy::too_many_arguments)]
-    fn request_command_approval<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        call_id: String,
-        approval_id: Option<String>,
-        command: Vec<String>,
-        cwd: AbsolutePathBuf,
-        reason: Option<String>,
-        network_approval_context: Option<NetworkApprovalContext>,
-        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
-        additional_permissions: Option<AdditionalPermissionProfile>,
-        available_decisions: Option<Vec<ReviewDecision>>,
-    ) -> SessionCapabilityFuture<'a, ReviewDecision>;
-
-    /// Emit an apply-patch approval prompt and await the resulting review decision.
-    fn request_patch_approval<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        call_id: String,
-        changes: HashMap<PathBuf, FileChange>,
-        reason: Option<String>,
-        grant_root: Option<PathBuf>,
-    ) -> SessionCapabilityFuture<'a, ReviewDecision>;
-
-    /// Read one cached approval decision by serialized approval key.
-    fn cached_approval_decision<'a>(
-        &'a self,
-        key: String,
-    ) -> SessionCapabilityFuture<'a, Option<ReviewDecision>>;
-
-    /// Persist an `ApprovedForSession` decision for serialized approval keys.
-    fn cache_approval_decision<'a>(
-        &'a self,
-        keys: Vec<String>,
-        decision: ReviewDecision,
-    ) -> SessionCapabilityFuture<'a, ()>;
-
-    /// Record approval request telemetry for the specified tool.
-    fn record_approval_request_telemetry<'a>(
-        &'a self,
-        tool_name: &'a str,
-        decision: &'a ReviewDecision,
-    ) -> SessionCapabilityFuture<'a, ()>;
-
-    /// Persist one network policy amendment in runtime and execpolicy state.
-    fn persist_network_policy_amendment<'a>(
-        &'a self,
-        amendment: &'a NetworkPolicyAmendment,
-        network_approval_context: &'a NetworkApprovalContext,
-    ) -> SessionCapabilityFuture<'a, Result<(), String>>;
-
-    /// Record one model-visible message describing a persisted network policy amendment.
-    fn record_network_policy_amendment_message<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        amendment: &'a NetworkPolicyAmendment,
-    ) -> SessionCapabilityFuture<'a, ()>;
-
     /// Subscribe to out-of-band elicitation pause state for this session.
     fn subscribe_out_of_band_elicitation_pause_state(&self) -> watch::Receiver<bool>;
-
-    /// Run permission request hooks for one tool permission request.
-    fn run_permission_request_hooks<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        permission_request_run_id: &'a str,
-        permission_request: PermissionRequestPayload,
-    ) -> SessionCapabilityFuture<'a, Option<codex_hooks_api::PermissionRequestDecision>>;
-
-    /// Effective tool permission grants cached on the current session.
-    fn tool_permission_grants<'a>(
-        &'a self,
-    ) -> SessionCapabilityFuture<'a, ToolPermissionGrants>;
 
     /// Request one MCP server elicitation through the active turn lifecycle.
     fn request_mcp_server_elicitation<'a>(
@@ -1097,14 +896,14 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     fn notify_user_input_response<'a>(
         &'a self,
         sub_id: &'a str,
-        response: codex_protocol::request_user_input::RequestUserInputResponse,
+        response: protocol::request_user_input::RequestUserInputResponse,
     ) -> SessionCapabilityFuture<'a, ()>;
 
     /// 查询指定 transport 的 MCP OAuth 登录支持情况。
     fn mcp_oauth_login_support<'a>(
         &'a self,
         transport: &'a codex_config_types::McpServerTransportConfig,
-    ) -> SessionCapabilityFuture<'a, codex_mcp_types::McpOAuthLoginSupport>;
+    ) -> SessionCapabilityFuture<'a, mcp_types::McpOAuthLoginSupport>;
 
     /// 执行一次 MCP OAuth 登录流程。
     fn perform_mcp_oauth_login<'a>(
@@ -1115,7 +914,7 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     /// 判断 MCP OAuth 失败后是否应退化为无 scope 重试。
     fn should_retry_mcp_oauth_without_scopes(
         &self,
-        scopes: &codex_mcp_types::ResolvedMcpOAuthScopes,
+        scopes: &mcp_types::ResolvedMcpOAuthScopes,
         error: &anyhow::Error,
     ) -> bool;
 
@@ -1133,7 +932,7 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     /// Hard-refresh the Codex Apps MCP tools cache.
     fn hard_refresh_codex_apps_tools_cache<'a>(
         &'a self,
-    ) -> SessionCapabilityFuture<'a, Result<Vec<codex_mcp_tool_types::ToolInfo>, String>>;
+    ) -> SessionCapabilityFuture<'a, Result<Vec<mcp_types::ToolInfo>, String>>;
 
     /// Execute one raw MCP tool call through the session-owned MCP runtime.
     fn call_mcp_tool<'a>(
@@ -1152,9 +951,8 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     ) -> SessionCapabilityFuture<'a, Result<ListResourcesResult, String>>;
 
     /// List MCP resources for all visible servers.
-    fn list_all_mcp_resources(
-        &self,
-    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<Resource>>>;
+    fn list_all_mcp_resources(&self)
+    -> SessionCapabilityFuture<'_, HashMap<String, Vec<Resource>>>;
 
     /// List MCP resource templates for one server through the session-owned MCP runtime.
     fn list_mcp_resource_templates<'a>(
@@ -1229,13 +1027,13 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     /// Whether one MCP tool approval key is already remembered for the session.
     fn mcp_tool_approval_is_remembered<'a>(
         &'a self,
-        key: &'a codex_mcp_types::McpToolApprovalKey,
+        key: &'a mcp_types::McpToolApprovalKey,
     ) -> SessionCapabilityFuture<'a, bool>;
 
     /// Remember one MCP tool approval key for the current session.
     fn remember_mcp_tool_approval<'a>(
         &'a self,
-        key: codex_mcp_types::McpToolApprovalKey,
+        key: mcp_types::McpToolApprovalKey,
     ) -> SessionCapabilityFuture<'a, ()>;
 
     /// Resolve the custom approval mode for one MCP tool.
@@ -1296,14 +1094,14 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     fn emit_turn_item_started<'a>(
         &'a self,
         turn: &'a dyn ThreadTurnCapability,
-        item: &'a codex_protocol::items::TurnItem,
+        item: &'a protocol::items::TurnItem,
     ) -> SessionCapabilityFuture<'a, ()>;
 
     /// Emit one completed item for the active turn.
     fn emit_turn_item_completed<'a>(
         &'a self,
         turn: &'a dyn ThreadTurnCapability,
-        item: codex_protocol::items::TurnItem,
+        item: protocol::items::TurnItem,
     ) -> SessionCapabilityFuture<'a, ()>;
 
     /// Emit one started response item display event.
@@ -1317,25 +1115,8 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
     fn send_terminal_interaction<'a>(
         &'a self,
         turn: &'a dyn ThreadTurnCapability,
-        event: codex_protocol::protocol::TerminalInteractionEvent,
+        event: protocol::protocol::TerminalInteractionEvent,
     ) -> SessionCapabilityFuture<'a, ()>;
-
-    /// Request approval for one unified exec invocation.
-    #[allow(clippy::too_many_arguments)]
-    fn request_unified_exec_approval<'a>(
-        &'a self,
-        turn: &'a dyn ThreadRuntimeCapability,
-        call_id: String,
-        command: Vec<String>,
-        cwd: AbsolutePathBuf,
-        reason: Option<String>,
-        sandbox_permissions: codex_protocol::models::SandboxPermissions,
-        tty: bool,
-        network_approval_context: Option<NetworkApprovalContext>,
-        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
-        additional_permissions: Option<AdditionalPermissionProfile>,
-        cache_keys: Vec<UnifiedExecApprovalKey>,
-    ) -> SessionCapabilityFuture<'a, ReviewDecision>;
 
     /// Remove one in-flight network approval registration.
     fn unregister_network_approval<'a>(
@@ -1413,7 +1194,7 @@ pub trait ThreadRuntimeCapability: ThreadCapability + ThreadTurnCapability {
     /// Build a filesystem sandbox context for the selected cwd.
     fn file_system_sandbox_context(
         &self,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
         cwd: &AbsolutePathBuf,
     ) -> FileSystemSandboxContext;
 
@@ -1427,16 +1208,16 @@ pub trait ThreadRuntimeCapability: ThreadCapability + ThreadTurnCapability {
     fn routes_approval_to_guardian(&self) -> bool;
 
     /// Current exec policy snapshot visible to the active turn.
-    fn current_exec_policy(&self) -> std::sync::Arc<codex_execpolicy_api::Policy>;
+    fn current_exec_policy(&self) -> std::sync::Arc<permissions_service_api::Policy>;
 
     /// Shell environment policy configured for this turn.
-    fn shell_environment_policy(&self) -> codex_protocol::config_types::ShellEnvironmentPolicy;
+    fn shell_environment_policy(&self) -> protocol::config_types::ShellEnvironmentPolicy;
 
     /// Runtime shell resolved from the owning session shell configuration.
     fn runtime_shell(&self) -> RuntimeShell;
 
     /// Tool-facing shell type derived from the owning session shell.
-    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType;
+    fn tool_user_shell_type(&self) -> tool_config::ToolUserShellType;
 
     /// Optionally emit one implicit skill invocation derived from exec command input.
     fn maybe_emit_implicit_skill_invocation<'a>(
@@ -1478,7 +1259,7 @@ pub trait ThreadRuntimeCapability: ThreadCapability + ThreadTurnCapability {
     ) -> SessionCapabilityFuture<'a, Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>>;
 
     /// Unified exec shell mode configured for this turn.
-    fn unified_exec_shell_mode(&self) -> codex_tool_config::UnifiedExecShellMode;
+    fn unified_exec_shell_mode(&self) -> tool_config::UnifiedExecShellMode;
 
     /// Whether login shells are allowed for this turn.
     fn allow_login_shell(&self) -> bool;
@@ -1495,7 +1276,6 @@ pub trait ThreadRuntimeCapability: ThreadCapability + ThreadTurnCapability {
         environment_id: Option<&str>,
         workdir: Option<&str>,
     ) -> Result<Option<ResolvedExecCommandEnvironment>, FunctionCallError>;
-
 }
 
 impl<Turn> ThreadRuntimeCapability for Arc<Turn>
@@ -1519,7 +1299,7 @@ where
 
     fn file_system_sandbox_context(
         &self,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
         cwd: &AbsolutePathBuf,
     ) -> FileSystemSandboxContext {
         self.as_ref()
@@ -1538,11 +1318,11 @@ where
         self.as_ref().routes_approval_to_guardian()
     }
 
-    fn current_exec_policy(&self) -> std::sync::Arc<codex_execpolicy_api::Policy> {
+    fn current_exec_policy(&self) -> std::sync::Arc<permissions_service_api::Policy> {
         self.as_ref().current_exec_policy()
     }
 
-    fn shell_environment_policy(&self) -> codex_protocol::config_types::ShellEnvironmentPolicy {
+    fn shell_environment_policy(&self) -> protocol::config_types::ShellEnvironmentPolicy {
         self.as_ref().shell_environment_policy()
     }
 
@@ -1550,7 +1330,7 @@ where
         self.as_ref().runtime_shell()
     }
 
-    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
+    fn tool_user_shell_type(&self) -> tool_config::ToolUserShellType {
         self.as_ref().tool_user_shell_type()
     }
 
@@ -1604,7 +1384,7 @@ where
         self.as_ref().begin_tool_network_approval(spec)
     }
 
-    fn unified_exec_shell_mode(&self) -> codex_tool_config::UnifiedExecShellMode {
+    fn unified_exec_shell_mode(&self) -> tool_config::UnifiedExecShellMode {
         self.as_ref().unified_exec_shell_mode()
     }
 
@@ -1628,7 +1408,6 @@ where
         self.as_ref()
             .resolve_exec_command_environment(environment_id, workdir)
     }
-
 }
 
 /// Session-owned agent-job capability consumed by CSV agent-job tools.
@@ -1647,7 +1426,10 @@ pub trait SessionAgentJobCaller: Send + Sync + 'static {
         self: Arc<Self>,
         turn: &dyn ThreadRuntimeCapability,
         requested_concurrency: Option<usize>,
-    ) -> SessionCapabilityFuture<'_, Result<AgentJobRunnerOptions<AgentJobSpawnConfig>, FunctionCallError>>;
+    ) -> SessionCapabilityFuture<
+        '_,
+        Result<AgentJobRunnerOptions<AgentJobSpawnConfig>, FunctionCallError>,
+    >;
 
     /// Spawn one agent-job worker.
     fn spawn_agent_job_worker<'a>(
@@ -1693,7 +1475,10 @@ where
         self: Arc<Self>,
         turn: &dyn ThreadRuntimeCapability,
         requested_concurrency: Option<usize>,
-    ) -> SessionCapabilityFuture<'_, Result<AgentJobRunnerOptions<AgentJobSpawnConfig>, FunctionCallError>> {
+    ) -> SessionCapabilityFuture<
+        '_,
+        Result<AgentJobRunnerOptions<AgentJobSpawnConfig>, FunctionCallError>,
+    > {
         Arc::clone(self.as_ref()).build_agent_job_runner_options(turn, requested_concurrency)
     }
 

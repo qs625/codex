@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
 use codex_analytics_api::TurnResolvedConfigFact;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SessionSource;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::ModeKind;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary;
+use protocol::config_types::ServiceTier;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::SessionSource;
 
 pub struct TurnResolvedConfigFactInput {
     pub turn_id: String,
@@ -64,10 +64,10 @@ pub fn build_turn_resolved_config_fact(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::config_types::ReasoningSummary;
-    use codex_protocol::models::PermissionProfile;
-    use codex_protocol::openai_models::ReasoningEffort;
-    use codex_protocol::protocol::SessionSource;
+    use protocol::config_types::ReasoningSummary;
+    use protocol::models::PermissionProfile;
+    use protocol::openai_models::ReasoningEffort;
+    use protocol::protocol::SessionSource;
 
     fn sample_input(service_tier: Option<String>) -> TurnResolvedConfigFactInput {
         TurnResolvedConfigFactInput {

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 mod approval_request;
 mod prompt;
 mod review_session;
@@ -14,12 +12,6 @@ pub use approval_request::guardian_assessment_action;
 pub use approval_request::guardian_request_target_item_id;
 pub use approval_request::guardian_request_turn_id;
 pub use approval_request::guardian_reviewed_action;
-use codex_extension_api::AgentSpawnFuture;
-use codex_extension_api::AgentSpawner;
-use codex_extension_api::ExtensionRegistryBuilder;
-use codex_extension_api::ThreadLifecycleContributor;
-use codex_extension_api::ThreadStartInput;
-use codex_protocol::ThreadId;
 pub use prompt::GuardianAssessment;
 pub use prompt::GuardianPromptItems;
 pub use prompt::GuardianPromptMode;
@@ -53,7 +45,7 @@ pub const AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX: &str =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardianRejection {
     pub rationale: String,
-    pub source: codex_protocol::protocol::GuardianAssessmentDecisionSource,
+    pub source: protocol::protocol::GuardianAssessmentDecisionSource,
 }
 
 #[derive(Debug, Default)]
@@ -179,72 +171,11 @@ fn split_guardian_truncation_bounds(
     (&content[..prefix_end], &content[suffix_start..])
 }
 
-/// Guardian extension dependencies supplied by the host at construction time.
-#[derive(Clone, Debug)]
-pub struct GuardianExtension<S> {
-    agent_spawner: S,
-}
-
-impl<S> GuardianExtension<S> {
-    /// Creates a guardian extension with its host-provided agent spawn helper.
-    pub fn new(agent_spawner: S) -> Self {
-        Self { agent_spawner }
-    }
-
-    /// Delegates one guardian-owned subagent spawn request to the host helper.
-    pub fn spawn_subagent<'a, R>(
-        &'a self,
-        forked_from_thread_id: ThreadId,
-        request: R,
-    ) -> AgentSpawnFuture<'a, <S as AgentSpawner<R>>::Spawned, <S as AgentSpawner<R>>::Error>
-    where
-        S: AgentSpawner<R>,
-    {
-        self.agent_spawner
-            .spawn_subagent(forked_from_thread_id, request)
-    }
-}
-
-/// Thread-local guardian state captured when the host starts a thread.
-#[derive(Clone, Copy, Debug)]
-pub struct GuardianThreadContext {
-    forked_from_thread_id: ThreadId,
-}
-
-impl GuardianThreadContext {
-    /// Returns the thread that future guardian subagents should fork from by default.
-    pub fn forked_from_thread_id(&self) -> ThreadId {
-        self.forked_from_thread_id
-    }
-}
-
-impl<C, S> ThreadLifecycleContributor<C> for GuardianExtension<S>
-where
-    S: Send + Sync,
-{
-    fn on_thread_start(&self, input: ThreadStartInput<'_, C>) {
-        let Ok(forked_from_thread_id) = ThreadId::from_string(input.thread_store.level_id()) else {
-            return;
-        };
-        input.thread_store.insert(GuardianThreadContext {
-            forked_from_thread_id,
-        });
-    }
-}
-
-/// Installs the guardian contributors into the extension registry.
-pub fn install<C, S>(registry: &mut ExtensionRegistryBuilder<C>, agent_spawner: S)
-where
-    S: Send + Sync + 'static,
-{
-    registry.thread_lifecycle_contributor(Arc::new(GuardianExtension::new(agent_spawner)));
-}
-
 #[cfg(test)]
 mod tests {
-    use codex_protocol::approvals::NetworkApprovalProtocol;
-    use codex_protocol::models::SandboxPermissions;
     use codex_utils_absolute_path::AbsolutePathBuf;
+    use protocol::approvals::NetworkApprovalProtocol;
+    use protocol::models::SandboxPermissions;
 
     use super::AUTO_REVIEW_DENIAL_WINDOW_SIZE;
     use super::GuardianApprovalRequest;

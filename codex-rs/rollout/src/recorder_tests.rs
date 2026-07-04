@@ -3,21 +3,21 @@
 use super::*;
 use crate::config::RolloutConfig;
 use chrono::TimeZone;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AgentMessageEvent;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionMeta;
-use codex_protocol::protocol::SessionMetaLine;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::TurnContextItem;
-use codex_protocol::protocol::UserMessageEvent;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use protocol::models::ResponseItem;
+use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::RolloutLine;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionMeta;
+use protocol::protocol::SessionMetaLine;
+use protocol::protocol::SessionSource;
+use protocol::protocol::TurnContextItem;
+use protocol::protocol::UserMessageEvent;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -163,7 +163,7 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
     assert_eq!(metadata.rollout_path, rollout_path);
     assert_eq!(
         runtime.get_backfill_state().await?.status,
-        codex_state::BackfillStatus::Complete
+        state::BackfillStatus::Complete
     );
 
     Ok(())
@@ -640,12 +640,10 @@ async fn list_threads_db_enabled_drops_missing_rollout_paths() -> std::io::Resul
         "sessions/2099/01/01/rollout-2099-01-01T00-00-00-{uuid}.jsonl"
     ));
 
-    let runtime = codex_state::StateRuntime::init(
-        home.path().to_path_buf(),
-        config.model_provider_id.clone(),
-    )
-    .await
-    .expect("state db should initialize");
+    let runtime =
+        state::StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
+            .await
+            .expect("state db should initialize");
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -654,12 +652,8 @@ async fn list_threads_db_enabled_drops_missing_rollout_paths() -> std::io::Resul
         .with_ymd_and_hms(2025, 1, 3, 13, 0, 0)
         .single()
         .expect("valid datetime");
-    let mut builder = codex_state::ThreadMetadataBuilder::new(
-        thread_id,
-        stale_path,
-        created_at,
-        SessionSource::Cli,
-    );
+    let mut builder =
+        state::ThreadMetadataBuilder::new(thread_id, stale_path, created_at, SessionSource::Cli);
     builder.model_provider = Some(config.model_provider_id.clone());
     builder.cwd = home.path().to_path_buf();
     let mut metadata = builder.build(config.model_provider_id.as_str());
@@ -706,12 +700,10 @@ async fn list_threads_db_enabled_repairs_stale_rollout_paths() -> std::io::Resul
         "sessions/2099/01/01/rollout-2099-01-01T00-00-00-{uuid}.jsonl"
     ));
 
-    let runtime = codex_state::StateRuntime::init(
-        home.path().to_path_buf(),
-        config.model_provider_id.clone(),
-    )
-    .await
-    .expect("state db should initialize");
+    let runtime =
+        state::StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
+            .await
+            .expect("state db should initialize");
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -720,12 +712,8 @@ async fn list_threads_db_enabled_repairs_stale_rollout_paths() -> std::io::Resul
         .with_ymd_and_hms(2025, 1, 3, 13, 0, 0)
         .single()
         .expect("valid datetime");
-    let mut builder = codex_state::ThreadMetadataBuilder::new(
-        thread_id,
-        stale_path,
-        created_at,
-        SessionSource::Cli,
-    );
+    let mut builder =
+        state::ThreadMetadataBuilder::new(thread_id, stale_path, created_at, SessionSource::Cli);
     builder.model_provider = Some(config.model_provider_id.clone());
     builder.cwd = home.path().to_path_buf();
     let mut metadata = builder.build(config.model_provider_id.as_str());
@@ -767,12 +755,10 @@ async fn list_threads_state_db_only_skips_jsonl_repair_scan() -> std::io::Result
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
 
-    let runtime = codex_state::StateRuntime::init(
-        home.path().to_path_buf(),
-        config.model_provider_id.clone(),
-    )
-    .await
-    .expect("state db should initialize");
+    let runtime =
+        state::StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
+            .await
+            .expect("state db should initialize");
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -870,12 +856,10 @@ async fn list_threads_default_filter_returns_filesystem_scan_results() -> std::i
     let real_path = write_session_file(home.path(), "2025-01-03T13-00-00", uuid)?;
     let stale_cwd = home.path().join("stale-cwd");
 
-    let runtime = codex_state::StateRuntime::init(
-        home.path().to_path_buf(),
-        config.model_provider_id.clone(),
-    )
-    .await
-    .expect("state db should initialize");
+    let runtime =
+        state::StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
+            .await
+            .expect("state db should initialize");
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -884,12 +868,8 @@ async fn list_threads_default_filter_returns_filesystem_scan_results() -> std::i
         .with_ymd_and_hms(2025, 1, 3, 13, 0, 0)
         .single()
         .expect("valid datetime");
-    let mut builder = codex_state::ThreadMetadataBuilder::new(
-        thread_id,
-        real_path,
-        created_at,
-        SessionSource::Cli,
-    );
+    let mut builder =
+        state::ThreadMetadataBuilder::new(thread_id, real_path, created_at, SessionSource::Cli);
     builder.model_provider = Some(config.model_provider_id.clone());
     builder.cwd = stale_cwd.clone();
     let mut metadata = builder.build(config.model_provider_id.as_str());
@@ -960,12 +940,10 @@ async fn list_threads_metadata_filter_overlays_state_db_list_metadata() -> std::
     let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
     let rollout_path = write_session_file(home.path(), "2025-01-03T16-00-00", uuid)?;
 
-    let runtime = codex_state::StateRuntime::init(
-        home.path().to_path_buf(),
-        config.model_provider_id.clone(),
-    )
-    .await
-    .expect("state db should initialize");
+    let runtime =
+        state::StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
+            .await
+            .expect("state db should initialize");
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -974,12 +952,8 @@ async fn list_threads_metadata_filter_overlays_state_db_list_metadata() -> std::
         .with_ymd_and_hms(2025, 1, 3, 16, 0, 0)
         .single()
         .expect("valid datetime");
-    let mut builder = codex_state::ThreadMetadataBuilder::new(
-        thread_id,
-        rollout_path,
-        created_at,
-        SessionSource::Cli,
-    );
+    let mut builder =
+        state::ThreadMetadataBuilder::new(thread_id, rollout_path, created_at, SessionSource::Cli);
     builder.model_provider = Some(config.model_provider_id.clone());
     builder.cwd = home.path().to_path_buf();
     builder.git_branch = Some("sqlite-branch".to_string());
@@ -1096,12 +1070,10 @@ async fn list_threads_search_repairs_stale_state_db_hits_before_returning() -> s
     let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
     let real_path = write_session_file(home.path(), "2025-01-03T15-00-00", uuid)?;
 
-    let runtime = codex_state::StateRuntime::init(
-        home.path().to_path_buf(),
-        config.model_provider_id.clone(),
-    )
-    .await
-    .expect("state db should initialize");
+    let runtime =
+        state::StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
+            .await
+            .expect("state db should initialize");
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -1110,12 +1082,8 @@ async fn list_threads_search_repairs_stale_state_db_hits_before_returning() -> s
         .with_ymd_and_hms(2025, 1, 3, 15, 0, 0)
         .single()
         .expect("valid datetime");
-    let mut builder = codex_state::ThreadMetadataBuilder::new(
-        thread_id,
-        real_path,
-        created_at,
-        SessionSource::Cli,
-    );
+    let mut builder =
+        state::ThreadMetadataBuilder::new(thread_id, real_path, created_at, SessionSource::Cli);
     builder.model_provider = Some(config.model_provider_id.clone());
     builder.cwd = home.path().to_path_buf();
     let mut metadata = builder.build(config.model_provider_id.as_str());

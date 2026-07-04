@@ -39,22 +39,27 @@ use codex_agent_runtime::thread_spawn_descendants;
 use codex_agent_runtime::thread_spawn_parent_thread_id;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
-use codex_protocol::AgentPath;
-use codex_protocol::SessionId;
-use codex_protocol::ThreadId;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
+use protocol::AgentPath;
+use protocol::SessionId;
+use protocol::ThreadId;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
 #[cfg(test)]
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::Op;
+use protocol::models::ResponseItem;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::Op;
 #[cfg(any(test, feature = "test-support"))]
-use codex_protocol::protocol::ResumedHistory;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::ThreadSource;
-use codex_state_api::DirectionalThreadSpawnEdgeStatus;
+use protocol::protocol::ResumedHistory;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::protocol::ThreadSource;
+use state_api::DirectionalThreadSpawnEdgeStatus;
+use std::collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::Weak;
 use thread_service_api::LiveThreadActivitySource;
 use thread_service_api::LiveThreadChildCompletionRuntime;
 use thread_service_api::LiveThreadCommandRuntime;
@@ -62,12 +67,7 @@ use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::LiveThreadStatusRuntime;
-use codex_thread_store_api::ReadThreadParams;
-use std::collections::HashMap;
-#[cfg(any(test, feature = "test-support"))]
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::sync::Weak;
+use thread_store_api::ReadThreadParams;
 use tokio::sync::watch;
 use tracing::warn;
 
@@ -111,7 +111,7 @@ impl AgentControl {
     #[cfg(test)]
     pub(crate) async fn spawn_agent(
         &self,
-        config: codex_config::Config,
+        config: config_service::Config,
         initial_operation: Op,
         session_source: Option<SessionSource>,
     ) -> CodexResult<ThreadId> {
@@ -128,7 +128,7 @@ impl AgentControl {
     /// Spawn an agent thread with some metadata.
     pub(crate) async fn spawn_agent_with_metadata(
         &self,
-        config: codex_config::Config,
+        config: config_service::Config,
         initial_operation: Op,
         session_source: Option<SessionSource>,
         options: SpawnAgentOptions, // TODO(jif) drop with new fork.
@@ -139,7 +139,7 @@ impl AgentControl {
 
     async fn spawn_agent_internal(
         &self,
-        config: codex_config::Config,
+        config: config_service::Config,
         initial_operation: Op,
         session_source: Option<SessionSource>,
         options: SpawnAgentOptions,
@@ -301,11 +301,11 @@ impl AgentControl {
     async fn spawn_forked_thread(
         &self,
         state: &Arc<ThreadServiceState>,
-        config: codex_config::Config,
+        config: config_service::Config,
         session_source: SessionSource,
         options: &SpawnAgentOptions,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
-        inherited_exec_policy: Option<Arc<codex_permissions_runtime::ExecPolicyManager>>,
+        inherited_exec_policy: Option<Arc<permissions_service::ExecPolicyManager>>,
     ) -> CodexResult<NewThread> {
         if options.fork_parent_spawn_call_id.is_none() {
             return Err(CodexErr::Fatal(
@@ -394,7 +394,7 @@ impl AgentControl {
     #[allow(dead_code)]
     pub(crate) async fn resume_agent_from_rollout(
         &self,
-        config: codex_config::Config,
+        config: config_service::Config,
         thread_id: ThreadId,
         session_source: SessionSource,
     ) -> CodexResult<ThreadId> {
@@ -473,7 +473,7 @@ impl AgentControl {
     #[allow(dead_code)]
     async fn resume_single_agent_from_rollout(
         &self,
-        config: codex_config::Config,
+        config: config_service::Config,
         thread_id: ThreadId,
         session_source: SessionSource,
     ) -> CodexResult<ThreadId> {
@@ -895,7 +895,7 @@ impl AgentControl {
     fn prepare_thread_spawn(
         &self,
         reservation: &mut SpawnReservation,
-        config: &codex_config::Config,
+        config: &config_service::Config,
         parent_thread_id: ThreadId,
         depth: i32,
         agent_path: Option<AgentPath>,
@@ -949,8 +949,8 @@ impl AgentControl {
         &self,
         state: &Arc<ThreadServiceState>,
         session_source: Option<&SessionSource>,
-        child_config: &codex_config::Config,
-    ) -> Option<Arc<codex_permissions_runtime::ExecPolicyManager>> {
+        child_config: &config_service::Config,
+    ) -> Option<Arc<permissions_service::ExecPolicyManager>> {
         let Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
             parent_thread_id, ..
         })) = session_source
@@ -960,7 +960,7 @@ impl AgentControl {
 
         let parent_thread = state.get_thread(*parent_thread_id).await.ok()?;
         let parent_config = parent_thread.codex.session.get_config().await;
-        if !codex_config::child_uses_parent_exec_policy(&parent_config, child_config) {
+        if !config_service::child_uses_parent_exec_policy(&parent_config, child_config) {
             return None;
         }
 

@@ -109,7 +109,7 @@ impl Notification {
     }
 
     pub(super) fn user_input_request_summary(
-        questions: &[codex_app_server_protocol::ToolRequestUserInputQuestion],
+        questions: &[app_server_protocol::ToolRequestUserInputQuestion],
     ) -> Option<String> {
         let first_question = questions.first()?;
         let summary = if first_question.header.trim().is_empty() {

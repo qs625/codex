@@ -1,25 +1,25 @@
 use std::env;
 use std::time::Duration;
 
-use codex_api_auth::auth_provider_from_auth_snapshot;
-use codex_api_types::ArcMonitorResult;
-use codex_api_types::ArcMonitorResultOutcome;
-use codex_api_types::ArcMonitorRuntimeRequest;
-use codex_api_types::build_arc_monitor_request as build_arc_monitor_request_from_history;
 use codex_context_manager::is_contextual_user_message_content;
+use model_service_api::ArcMonitorResult;
+use model_service_api::ArcMonitorResultOutcome;
+use model_service_api::ArcMonitorRuntimeRequest;
+use model_service_api::auth_provider_from_auth_snapshot;
+use model_service_api::build_arc_monitor_request as build_arc_monitor_request_from_history;
 use tracing::warn;
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 
 #[cfg(test)]
-pub(crate) use codex_api_types::ArcMonitorChatMessage;
+pub(crate) use model_service_api::ArcMonitorChatMessage;
 #[cfg(test)]
-pub(crate) use codex_api_types::ArcMonitorMetadata;
+pub(crate) use model_service_api::ArcMonitorMetadata;
 #[cfg(test)]
-pub(crate) use codex_api_types::ArcMonitorPolicies;
+pub(crate) use model_service_api::ArcMonitorPolicies;
 #[cfg(test)]
-pub(crate) use codex_api_types::ArcMonitorRequest;
+pub(crate) use model_service_api::ArcMonitorRequest;
 
 const ARC_MONITOR_TIMEOUT: Duration = Duration::from_secs(30);
 const CODEX_ARC_MONITOR_ENDPOINT_OVERRIDE: &str = "CODEX_ARC_MONITOR_ENDPOINT_OVERRIDE";
@@ -177,7 +177,7 @@ async fn build_arc_monitor_request(
     turn_context: &TurnContext,
     action: serde_json::Map<String, serde_json::Value>,
     protection_client_callsite: &'static str,
-) -> codex_api_types::ArcMonitorRequest {
+) -> model_service_api::ArcMonitorRequest {
     let history = sess.clone_history().await;
     let conversation_id = sess.conversation_id.to_string();
     build_arc_monitor_request_from_history(

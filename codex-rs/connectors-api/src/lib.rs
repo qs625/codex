@@ -6,8 +6,8 @@ use std::time::Instant;
 use serde::Deserialize;
 use serde::Serialize;
 
-mod app_types;
 pub mod accessible;
+mod app_types;
 pub mod directory_cache;
 pub mod filter;
 pub mod merge;

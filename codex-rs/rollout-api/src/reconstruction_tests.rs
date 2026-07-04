@@ -1,22 +1,22 @@
 use super::*;
 use codex_context_manager::build_compacted_history_with_limit;
 use codex_context_manager::content_items_to_text;
-use codex_protocol::AgentPath;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::CompactedItem;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::ThreadRolledBackEvent;
-use codex_protocol::protocol::TurnCompleteEvent;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::protocol::UserMessageEvent;
 use codex_utils_output_truncation::TruncationPolicy;
 use pretty_assertions::assert_eq;
+use protocol::AgentPath;
+use protocol::config_types::ModeKind;
+use protocol::config_types::ReasoningSummary;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::CompactedItem;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentOperation;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::ThreadRolledBackEvent;
+use protocol::protocol::TurnCompleteEvent;
+use protocol::protocol::TurnStartedEvent;
+use protocol::protocol::UserMessageEvent;
 use std::path::PathBuf;
 
 fn options() -> RolloutReconstructionOptions<'static> {

@@ -72,12 +72,12 @@ pub use codex_config_types::TuiVimOperatorKeymap;
 pub use codex_config_types::UriBasedFileOpener;
 pub use codex_config_types::WindowsSandboxModeToml;
 pub use codex_config_types::WindowsToml;
-pub use codex_protocol::config_types::AltScreenMode;
-pub use codex_protocol::config_types::ApprovalsReviewer;
-pub use codex_protocol::config_types::ModeKind;
-pub use codex_protocol::config_types::Personality;
-pub use codex_protocol::config_types::ServiceTier;
-pub use codex_protocol::config_types::WebSearchMode;
+pub use protocol::config_types::AltScreenMode;
+pub use protocol::config_types::ApprovalsReviewer;
+pub use protocol::config_types::ModeKind;
+pub use protocol::config_types::Personality;
+pub use protocol::config_types::ServiceTier;
+pub use protocol::config_types::WebSearchMode;
 
 #[cfg(test)]
 #[path = "types_tests.rs"]

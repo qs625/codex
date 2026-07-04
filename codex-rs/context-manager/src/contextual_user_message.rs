@@ -1,10 +1,10 @@
-use codex_protocol::items::HookPromptItem;
-use codex_protocol::items::parse_hook_prompt_fragment;
-use codex_protocol::models::ContentItem;
-use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
-use codex_protocol::protocol::ENVIRONMENT_CONTEXT_CLOSE_TAG;
-use codex_protocol::protocol::ENVIRONMENT_CONTEXT_OPEN_TAG;
-use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
+use protocol::items::HookPromptItem;
+use protocol::items::parse_hook_prompt_fragment;
+use protocol::models::ContentItem;
+use protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
+use protocol::protocol::ENVIRONMENT_CONTEXT_CLOSE_TAG;
+use protocol::protocol::ENVIRONMENT_CONTEXT_OPEN_TAG;
+use protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 
 const CONTEXTUAL_USER_MARKERS: &[(&str, &str)] = &[
     ("# AGENTS.md instructions for ", "</INSTRUCTIONS>"),
@@ -126,9 +126,9 @@ pub fn parse_visible_hook_prompt_message(
 mod tests {
     use super::*;
     use crate::ContextualUserFragment;
-    use codex_protocol::items::HookPromptFragment;
-    use codex_protocol::items::build_hook_prompt_message;
-    use codex_protocol::models::ResponseItem;
+    use protocol::items::HookPromptFragment;
+    use protocol::items::build_hook_prompt_message;
+    use protocol::models::ResponseItem;
 
     struct GoalContext {
         prompt: String,

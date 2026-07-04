@@ -8,25 +8,30 @@ use crate::metadata;
 use crate::sqlite_metrics;
 use chrono::DateTime;
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::ThreadSkill;
-pub use codex_state::LogEntry;
-use codex_state::ThreadMetadataBuilder;
 use codex_utils_path::normalize_for_path_comparison;
+use protocol::ThreadId;
+use protocol::dynamic_tools::DynamicToolSpec;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadSkill;
 use serde_json::Value;
+use state_api::Anchor;
+pub use state_api::LogEntry;
+use state_api::SharedStateDbRuntime;
+use state_api::SortDirection as StateSortDirection;
+use state_api::SortKey as StateSortKey;
+use state_api::StateDbRuntime;
+use state_api::ThreadMetadataBuilder;
+use state_api::ThreadsPage;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
 /// Core-facing handle to the SQLite-backed state runtime.
-pub type StateDbHandle = Arc<codex_state::StateRuntime>;
+pub type StateDbHandle = SharedStateDbRuntime;
 
 #[cfg(not(test))]
 const STARTUP_BACKFILL_POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -65,12 +70,14 @@ pub async fn init(config: &impl RolloutConfigView) -> Option<StateDbHandle> {
 /// tracing or UI setup has completed.
 pub async fn try_init(config: &impl RolloutConfigView) -> anyhow::Result<StateDbHandle> {
     let config = RolloutConfig::from_view(config);
-    try_init_with_roots(
+    try_init_with_roots_inner(
         config.codex_home,
         config.sqlite_home,
         config.model_provider_id,
+        /*backfill_lease_seconds*/ None,
     )
     .await
+    .map(|runtime| runtime as StateDbHandle)
 }
 
 async fn try_init_with_roots(
@@ -85,6 +92,7 @@ async fn try_init_with_roots(
         /*backfill_lease_seconds*/ None,
     )
     .await
+    .map(|runtime| runtime as StateDbHandle)
 }
 
 #[cfg(test)]
@@ -101,6 +109,7 @@ async fn try_init_with_roots_and_backfill_lease(
         Some(backfill_lease_seconds),
     )
     .await
+    .map(|runtime| runtime as StateDbHandle)
 }
 
 async fn try_init_with_roots_inner(
@@ -108,16 +117,15 @@ async fn try_init_with_roots_inner(
     sqlite_home: PathBuf,
     default_model_provider_id: String,
     backfill_lease_seconds: Option<i64>,
-) -> anyhow::Result<StateDbHandle> {
-    let runtime =
-        codex_state::StateRuntime::init(sqlite_home.clone(), default_model_provider_id.clone())
-            .await
-            .map_err(|err| {
-                anyhow::anyhow!(
-                    "failed to initialize state runtime at {}: {err}",
-                    sqlite_home.display()
-                )
-            })?;
+) -> anyhow::Result<std::sync::Arc<state::StateRuntime>> {
+    let runtime = state::StateRuntime::init(sqlite_home.clone(), default_model_provider_id.clone())
+        .await
+        .map_err(|err| {
+            anyhow::anyhow!(
+                "failed to initialize state runtime at {}: {err}",
+                sqlite_home.display()
+            )
+        })?;
     let backfill_gate_started = Instant::now();
     let backfill_gate_result = wait_for_backfill_gate(
         runtime.as_ref(),
@@ -126,7 +134,7 @@ async fn try_init_with_roots_inner(
         backfill_lease_seconds,
     )
     .await;
-    codex_state::record_backfill_gate(
+    state::record_backfill_gate(
         /*telemetry*/ None,
         backfill_gate_started.elapsed(),
         &backfill_gate_result,
@@ -136,7 +144,7 @@ async fn try_init_with_roots_inner(
 }
 
 async fn wait_for_backfill_gate(
-    runtime: &codex_state::StateRuntime,
+    runtime: &state::StateRuntime,
     codex_home: &Path,
     default_model_provider_id: &str,
     backfill_lease_seconds: Option<i64>,
@@ -150,7 +158,7 @@ async fn wait_for_backfill_gate(
                 codex_home.display()
             )
         })?;
-        if backfill_state.status == codex_state::BackfillStatus::Complete {
+        if backfill_state.status == state::BackfillStatus::Complete {
             return Ok(());
         }
 
@@ -171,7 +179,7 @@ async fn wait_for_backfill_gate(
                 codex_home.display()
             )
         })?;
-        if backfill_state.status == codex_state::BackfillStatus::Complete {
+        if backfill_state.status == state::BackfillStatus::Complete {
             return Ok(());
         }
         if wait_started.elapsed() >= STARTUP_BACKFILL_WAIT_TIMEOUT {
@@ -214,16 +222,16 @@ fn emit_startup_warning(message: &str) {
 /// Unlike [`init`], this helper does not run rollout backfill. It is for
 /// optional local reads from non-owning contexts such as remote app-server mode.
 pub async fn get_state_db(config: &impl RolloutConfigView) -> Option<StateDbHandle> {
-    let state_path = codex_state::state_db_path(config.sqlite_home());
+    let state_path = state::state_db_path(config.sqlite_home());
     if !tokio::fs::try_exists(&state_path).await.unwrap_or(false) {
-        codex_state::record_fallback(
+        state::record_fallback(
             "get_state_db",
             "db_unavailable",
             /*telemetry_override*/ None,
         );
         return None;
     }
-    let runtime = match codex_state::StateRuntime::init(
+    let runtime = match state::StateRuntime::init(
         config.sqlite_home().to_path_buf(),
         config.model_provider_id().to_string(),
     )
@@ -231,38 +239,36 @@ pub async fn get_state_db(config: &impl RolloutConfigView) -> Option<StateDbHand
     {
         Ok(runtime) => runtime,
         Err(_) => {
-            codex_state::record_fallback(
-                "get_state_db",
-                "db_error",
-                /*telemetry_override*/ None,
-            );
+            state::record_fallback("get_state_db", "db_error", /*telemetry_override*/ None);
             return None;
         }
     };
-    require_backfill_complete(runtime, config.sqlite_home()).await
+    require_backfill_complete(runtime, config.sqlite_home())
+        .await
+        .map(|runtime| runtime as StateDbHandle)
 }
 
 /// Build a SQLite telemetry recorder backed by a metrics sink.
 pub fn sqlite_telemetry_recorder(
-    metrics: std::sync::Arc<dyn codex_metrics_api::MetricsSink>,
+    metrics: std::sync::Arc<dyn metrics_api::MetricsSink>,
     originator: &str,
-) -> codex_state::DbTelemetryHandle {
+) -> state::DbTelemetryHandle {
     sqlite_metrics::recorder(metrics, originator)
 }
 
 async fn require_backfill_complete(
-    runtime: StateDbHandle,
+    runtime: std::sync::Arc<state::StateRuntime>,
     codex_home: &Path,
-) -> Option<StateDbHandle> {
+) -> Option<std::sync::Arc<state::StateRuntime>> {
     match runtime.get_backfill_state().await {
-        Ok(state) if state.status == codex_state::BackfillStatus::Complete => Some(runtime),
+        Ok(state) if state.status == state::BackfillStatus::Complete => Some(runtime),
         Ok(state) => {
             warn!(
                 "state db backfill not complete at {} (status: {})",
                 codex_home.display(),
                 state.status.as_str()
             );
-            codex_state::record_fallback(
+            state::record_fallback(
                 "get_state_db",
                 "backfill_incomplete",
                 /*telemetry_override*/ None,
@@ -274,22 +280,18 @@ async fn require_backfill_complete(
                 "failed to read backfill state at {}: {err}",
                 codex_home.display()
             );
-            codex_state::record_fallback(
-                "get_state_db",
-                "db_error",
-                /*telemetry_override*/ None,
-            );
+            state::record_fallback("get_state_db", "db_error", /*telemetry_override*/ None);
             None
         }
     }
 }
 
-fn cursor_to_anchor(cursor: Option<&Cursor>) -> Option<codex_state::Anchor> {
+fn cursor_to_anchor(cursor: Option<&Cursor>) -> Option<Anchor> {
     let cursor = cursor?;
     let millis = cursor.timestamp().unix_timestamp_nanos() / 1_000_000;
     let millis = i64::try_from(millis).ok()?;
     let ts = chrono::DateTime::<Utc>::from_timestamp_millis(millis)?;
-    Some(codex_state::Anchor { ts })
+    Some(Anchor { ts })
 }
 
 pub fn normalize_cwd_for_state_db(cwd: &Path) -> PathBuf {
@@ -299,8 +301,8 @@ pub fn normalize_cwd_for_state_db(cwd: &Path) -> PathBuf {
 /// List thread ids from SQLite for parity checks without rollout scanning.
 #[allow(clippy::too_many_arguments)]
 pub async fn list_thread_ids_db(
-    context: Option<&codex_state::StateRuntime>,
-    codex_home: &Path,
+    context: Option<&dyn StateDbRuntime>,
+    _codex_home: &Path,
     page_size: usize,
     cursor: Option<&Cursor>,
     sort_key: ThreadSortKey,
@@ -310,14 +312,6 @@ pub async fn list_thread_ids_db(
     stage: &str,
 ) -> Option<Vec<ThreadId>> {
     let ctx = context?;
-    if ctx.codex_home() != codex_home {
-        warn!(
-            "state db codex_home mismatch: expected {}, got {}",
-            ctx.codex_home().display(),
-            codex_home.display()
-        );
-    }
-
     let anchor = cursor_to_anchor(cursor);
     let allowed_sources: Vec<String> = allowed_sources
         .iter()
@@ -333,8 +327,8 @@ pub async fn list_thread_ids_db(
             page_size,
             anchor.as_ref(),
             match sort_key {
-                ThreadSortKey::CreatedAt => codex_state::SortKey::CreatedAt,
-                ThreadSortKey::UpdatedAt => codex_state::SortKey::UpdatedAt,
+                ThreadSortKey::CreatedAt => StateSortKey::CreatedAt,
+                ThreadSortKey::UpdatedAt => StateSortKey::UpdatedAt,
             },
             allowed_sources.as_slice(),
             model_providers.as_deref(),
@@ -353,8 +347,8 @@ pub async fn list_thread_ids_db(
 /// List thread metadata from SQLite without rollout directory traversal.
 #[allow(clippy::too_many_arguments)]
 pub async fn list_threads_db(
-    context: Option<&codex_state::StateRuntime>,
-    codex_home: &Path,
+    context: Option<&dyn StateDbRuntime>,
+    _codex_home: &Path,
     page_size: usize,
     cursor: Option<&Cursor>,
     sort_key: ThreadSortKey,
@@ -364,16 +358,8 @@ pub async fn list_threads_db(
     cwd_filters: Option<&[PathBuf]>,
     archived: bool,
     search_term: Option<&str>,
-) -> Option<codex_state::ThreadsPage> {
+) -> Option<ThreadsPage> {
     let ctx = context?;
-    if ctx.codex_home() != codex_home {
-        warn!(
-            "state db codex_home mismatch: expected {}, got {}",
-            ctx.codex_home().display(),
-            codex_home.display()
-        );
-    }
-
     let anchor = cursor_to_anchor(cursor);
     let allowed_sources: Vec<String> = allowed_sources
         .iter()
@@ -393,22 +379,20 @@ pub async fn list_threads_db(
     match ctx
         .list_threads(
             page_size,
-            codex_state::ThreadFilterOptions {
-                archived_only: archived,
-                allowed_sources: allowed_sources.as_slice(),
-                model_providers: model_providers.as_deref(),
-                cwd_filters: normalized_cwd_filters.as_deref(),
-                anchor: anchor.as_ref(),
-                sort_key: match sort_key {
-                    ThreadSortKey::CreatedAt => codex_state::SortKey::CreatedAt,
-                    ThreadSortKey::UpdatedAt => codex_state::SortKey::UpdatedAt,
-                },
-                sort_direction: match sort_direction {
-                    SortDirection::Asc => codex_state::SortDirection::Asc,
-                    SortDirection::Desc => codex_state::SortDirection::Desc,
-                },
-                search_term,
+            archived,
+            allowed_sources.as_slice(),
+            model_providers.as_deref(),
+            normalized_cwd_filters.as_deref(),
+            anchor.as_ref(),
+            match sort_key {
+                ThreadSortKey::CreatedAt => StateSortKey::CreatedAt,
+                ThreadSortKey::UpdatedAt => StateSortKey::UpdatedAt,
             },
+            match sort_direction {
+                SortDirection::Asc => StateSortDirection::Asc,
+                SortDirection::Desc => StateSortDirection::Desc,
+            },
+            search_term,
         )
         .await
     {
@@ -442,7 +426,7 @@ pub async fn list_threads_db(
 
 /// Look up the rollout path for a thread id using SQLite.
 pub async fn find_rollout_path_by_id(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     thread_id: ThreadId,
     archived_only: Option<bool>,
     stage: &str,
@@ -458,7 +442,7 @@ pub async fn find_rollout_path_by_id(
 
 /// Get dynamic tools for a thread id using SQLite.
 pub async fn get_dynamic_tools(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     thread_id: ThreadId,
     stage: &str,
 ) -> Option<Vec<DynamicToolSpec>> {
@@ -474,7 +458,7 @@ pub async fn get_dynamic_tools(
 
 /// Persist dynamic tools for a thread id using SQLite, if none exist yet.
 pub async fn persist_dynamic_tools(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     thread_id: ThreadId,
     tools: Option<&[DynamicToolSpec]>,
     stage: &str,
@@ -489,7 +473,7 @@ pub async fn persist_dynamic_tools(
 
 /// Get aggregate thread-level skills for a thread id using SQLite.
 pub async fn get_thread_skills(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     thread_id: ThreadId,
     stage: &str,
 ) -> Option<Vec<ThreadSkill>> {
@@ -505,7 +489,7 @@ pub async fn get_thread_skills(
 
 /// Persist aggregate thread-level skills for a thread id using SQLite.
 pub async fn persist_thread_skills(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     thread_id: ThreadId,
     skills: Option<&[ThreadSkill]>,
     stage: &str,
@@ -519,7 +503,7 @@ pub async fn persist_thread_skills(
 }
 
 pub async fn mark_thread_memory_mode_polluted(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     thread_id: ThreadId,
     stage: &str,
 ) {
@@ -533,7 +517,7 @@ pub async fn mark_thread_memory_mode_polluted(
 
 /// Reconcile rollout items into SQLite, falling back to scanning the rollout file.
 pub async fn reconcile_rollout(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     rollout_path: &Path,
     default_provider: &str,
     builder: Option<&ThreadMetadataBuilder>,
@@ -611,9 +595,9 @@ pub async fn reconcile_rollout(
         .await;
         if let Ok((items, _, _)) = RolloutRecorder::load_rollout_items(rollout_path).await {
             let thread_skills = items.iter().rev().find_map(|item| match item {
-                RolloutItem::EventMsg(codex_protocol::protocol::EventMsg::ThreadSkillsUpdated(
-                    event,
-                )) => Some(event.skills.as_slice()),
+                RolloutItem::EventMsg(protocol::protocol::EventMsg::ThreadSkillsUpdated(event)) => {
+                    Some(event.skills.as_slice())
+                }
                 RolloutItem::SessionMeta(_)
                 | RolloutItem::TurnContext(_)
                 | RolloutItem::ResponseItem(_)
@@ -638,7 +622,7 @@ pub async fn reconcile_rollout(
 
 /// Repair a thread's rollout path after filesystem fallback succeeds.
 pub async fn read_repair_rollout_path(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     thread_id: Option<ThreadId>,
     archived_only: Option<bool>,
     rollout_path: &Path,
@@ -705,7 +689,7 @@ pub async fn read_repair_rollout_path(
 /// Apply rollout items incrementally to SQLite.
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_rollout_items(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     rollout_path: &Path,
     default_provider: &str,
     builder: Option<&ThreadMetadataBuilder>,
@@ -748,7 +732,7 @@ pub async fn apply_rollout_items(
 }
 
 pub async fn touch_thread_updated_at(
-    context: Option<&codex_state::StateRuntime>,
+    context: Option<&dyn StateDbRuntime>,
     thread_id: Option<ThreadId>,
     updated_at: DateTime<Utc>,
     stage: &str,

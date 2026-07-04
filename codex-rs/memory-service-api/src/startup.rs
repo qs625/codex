@@ -1,21 +1,20 @@
 use anyhow::Result;
 use codex_config_types::MemoriesConfig;
 use codex_otel::Timer;
-use codex_protocol::ThreadId;
-use codex_protocol::models::BaseInstructions;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::user_input::UserInput;
-use codex_state::StateRuntime;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::ThreadId;
+use protocol::models::BaseInstructions;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ModelInfo;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::SessionSource;
+use protocol::protocol::TokenUsage;
+use protocol::user_input::UserInput;
 use serde_json::Value;
+use state_api::SharedStateDbRuntime;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 
 pub type MemoryRuntimeFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -59,7 +58,7 @@ pub trait MemoryConsolidationAgent: Send + Sync {
 
 /// Composition-root capability contract required by the memory startup pipeline.
 pub trait MemoryStartupRuntime: Send + Sync {
-    fn state_db(&self) -> Option<Arc<StateRuntime>>;
+    fn state_db(&self) -> Option<SharedStateDbRuntime>;
 
     fn counter(&self, name: &str, inc: i64, tags: &[(&str, &str)]);
 

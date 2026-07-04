@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use plugin_service_api::PluginHookSource;
-use codex_protocol::protocol::HookRunSummary;
+use protocol::protocol::HookRunSummary;
 
 use crate::HookConfigLayerStack;
 use crate::HookPayload;

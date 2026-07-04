@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_api::ResponseEvent;
 use codex_auth_types::TelemetryAuthMode;
 use codex_config_types::Constrained;
 use codex_features::Feature;
@@ -10,42 +9,44 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
 use codex_login::default_client::originator;
-use codex_login::model_provider_auth_manager;
+use codex_otel::SessionTelemetry;
+use codex_otel::Timer;
+use codex_terminal_detection::user_agent;
+use futures::StreamExt;
 use memory_service_api::MemoryConsolidationAgent;
 use memory_service_api::MemoryRuntimeFuture;
 use memory_service_api::MemoryStartupRuntime;
 use memory_service_api::MemoryStartupSettings;
 use memory_service_api::StageOnePromptRequest;
 use memory_service_api::StageOneRequestContext;
-use codex_otel::SessionTelemetry;
-use codex_otel::Timer;
-use codex_protocol::SessionId;
-use codex_protocol::ThreadId;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::InternalSessionSource;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::user_input::UserInput;
-use codex_rollout_trace::InferenceTraceContext;
-use codex_state::StateRuntime;
-use codex_terminal_detection::user_agent;
-use thread_service_api::ThreadConfigSnapshot;
-use thread_service::ModelClient;
+use model_service_api::CreateModelClientRequest;
+use model_service_api::ModelCatalogRefresh;
+use model_service_api::ModelResponseEvent;
+use model_service_api::ModelSelectionPolicy;
+use model_service_api::ResponsesModelRequest;
+use model_service_api::SharedModelServiceApi;
+use protocol::SessionId;
+use protocol::ThreadId;
+use protocol::config_types::ServiceTier;
+use protocol::models::ContentItem;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::InternalSessionSource;
+use protocol::protocol::Op;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TokenUsage;
+use protocol::user_input::UserInput;
+use state_api::SharedStateDbRuntime;
 use thread_service::NewThread;
-use thread_service::Prompt;
 use thread_service::StartThreadOptions;
 use thread_service::ThreadService;
 use thread_service::config::Config;
 use thread_service::resolve_installation_id;
-use futures::StreamExt;
+use thread_service_api::ThreadConfigSnapshot;
 
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 
@@ -55,14 +56,6 @@ use crate::live_thread_runtime::AppServerLiveThreadHandle;
 /// handles. Implementations own model catalog lookup and consolidation thread
 /// lifecycle, while memory code consumes only this app-server boundary trait.
 pub(crate) trait MemoryServiceHost: Send + Sync {
-    fn stage_one_request_context<'a>(
-        &'a self,
-        model_name: &'a str,
-        config: &'a Config,
-        reasoning_effort: ReasoningEffort,
-        service_tier: Option<String>,
-    ) -> MemoryRuntimeFuture<'a, StageOneRequestContext>;
-
     fn start_consolidation_thread<'a>(
         &'a self,
         config: Config,
@@ -80,27 +73,6 @@ pub(crate) struct MemoryConsolidationThread {
 }
 
 impl MemoryServiceHost for ThreadService {
-    fn stage_one_request_context<'a>(
-        &'a self,
-        model_name: &'a str,
-        config: &'a Config,
-        reasoning_effort: ReasoningEffort,
-        service_tier: Option<String>,
-    ) -> MemoryRuntimeFuture<'a, StageOneRequestContext> {
-        Box::pin(async move {
-            let model_info = self
-                .get_models_manager()
-                .get_model_info(model_name, &config.to_models_manager_config())
-                .await;
-
-            StageOneRequestContext {
-                model_info,
-                reasoning_effort: Some(reasoning_effort),
-                service_tier,
-            }
-        })
-    }
-
     fn start_consolidation_thread<'a>(
         &'a self,
         config: Config,
@@ -143,22 +115,23 @@ impl MemoryServiceHost for ThreadService {
 
 pub(crate) struct AppServerMemoryStartupAdapter {
     host: Arc<dyn MemoryServiceHost>,
-    auth_manager: Arc<AuthManager>,
+    model_service: SharedModelServiceApi,
     thread_id: ThreadId,
     config_snapshot: ThreadConfigSnapshot,
     config: Arc<Config>,
-    state_db: Option<Arc<StateRuntime>>,
+    state_db: Option<SharedStateDbRuntime>,
     session_telemetry: SessionTelemetry,
 }
 
 impl AppServerMemoryStartupAdapter {
     pub(crate) fn new(
         host: Arc<dyn MemoryServiceHost>,
+        model_service: SharedModelServiceApi,
         auth_manager: Arc<AuthManager>,
         thread_id: ThreadId,
         config_snapshot: ThreadConfigSnapshot,
         config: Arc<Config>,
-        state_db: Option<Arc<StateRuntime>>,
+        state_db: Option<SharedStateDbRuntime>,
     ) -> Self {
         let auth = auth_manager.auth_cached();
         let auth = auth.as_ref();
@@ -186,7 +159,7 @@ impl AppServerMemoryStartupAdapter {
 
         Self {
             host,
-            auth_manager,
+            model_service,
             thread_id,
             config_snapshot,
             config,
@@ -196,8 +169,12 @@ impl AppServerMemoryStartupAdapter {
     }
 }
 
+fn service_tier_from_string(value: Option<String>) -> Option<ServiceTier> {
+    value.and_then(|tier| ServiceTier::from_request_value(&tier))
+}
+
 impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
-    fn state_db(&self) -> Option<Arc<StateRuntime>> {
+    fn state_db(&self) -> Option<SharedStateDbRuntime> {
         self.state_db.clone()
     }
 
@@ -219,14 +196,18 @@ impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
         reasoning_effort: ReasoningEffort,
     ) -> MemoryRuntimeFuture<'a, StageOneRequestContext> {
         Box::pin(async move {
-            self.host
-                .stage_one_request_context(
-                    model_name,
-                    self.config.as_ref(),
-                    reasoning_effort,
-                    self.config_snapshot.service_tier.clone(),
-                )
+            let model_info = self
+                .model_service
+                .get_model_info(model_name)
                 .await
+                .unwrap_or_else(|err| {
+                    panic!("failed to load model info for memory startup: {err}")
+                });
+            StageOneRequestContext {
+                model_info,
+                reasoning_effort: Some(reasoning_effort),
+                service_tier: self.config_snapshot.service_tier.clone(),
+            }
         })
     }
 
@@ -236,41 +217,47 @@ impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
         context: &'a StageOneRequestContext,
     ) -> MemoryRuntimeFuture<'a, anyhow::Result<(String, Option<TokenUsage>)>> {
         Box::pin(async move {
-            let mut prompt = Prompt::default();
-            prompt.input = request.input;
-            prompt.base_instructions = request.base_instructions;
-            prompt.output_schema = request.output_schema;
-            prompt.output_schema_strict = request.output_schema_strict;
-
             let installation_id = resolve_installation_id(&self.config.codex_home).await?;
-            let model_client = ModelClient::new(
-                model_provider_auth_manager(Some(Arc::clone(&self.auth_manager))),
-                SessionId::from(self.thread_id),
-                self.thread_id,
-                installation_id,
-                Arc::new(codex_api::DefaultApiRuntimeFactory),
-                Arc::new(codex_model_provider::DefaultModelProviderFactory),
-                self.config.model_provider.clone(),
-                self.config_snapshot.session_source.clone(),
-                self.config.model_verbosity,
-                self.config
-                    .model_options
-                    .iter()
-                    .filter(|model_option| model_option.provider == self.config.model_provider_id)
-                    .filter_map(|model_option| {
-                        model_option
-                            .max_tokens
-                            .map(|max_tokens| (model_option.model.clone(), max_tokens))
-                    })
-                    .collect(),
-                self.config
-                    .features
-                    .enabled(Feature::EnableRequestCompression),
-                self.config.features.enabled(Feature::RuntimeMetrics),
-                /*beta_features_header*/ None,
-                /*attestation_provider*/ None,
-            );
-
+            let model_client = self
+                .model_service
+                .create_client(CreateModelClientRequest {
+                    selection: ModelSelectionPolicy {
+                        requested_model: Some(context.model_info.slug.clone()),
+                        provider_hint: Some(self.config.model_provider_id.clone()),
+                        allow_default_fallback: true,
+                        refresh: ModelCatalogRefresh::Offline,
+                    },
+                    installation_id,
+                    session_id: SessionId::from(self.thread_id),
+                    thread_id: self.thread_id,
+                    session_source: self.config_snapshot.session_source.clone(),
+                    reasoning_effort: self.config.model_reasoning_effort,
+                    service_tier: service_tier_from_string(
+                        self.config_snapshot.service_tier.clone(),
+                    ),
+                    verbosity: self.config.model_verbosity,
+                    chat_completions_max_tokens_by_model: self
+                        .config
+                        .model_options
+                        .iter()
+                        .filter(|model_option| {
+                            model_option.provider == self.config.model_provider_id
+                        })
+                        .filter_map(|model_option| {
+                            model_option
+                                .max_tokens
+                                .map(|max_tokens| (model_option.model.clone(), max_tokens))
+                        })
+                        .collect(),
+                    enable_request_compression: self
+                        .config
+                        .features
+                        .enabled(Feature::EnableRequestCompression),
+                    include_timing_metrics: self.config.features.enabled(Feature::RuntimeMetrics),
+                    beta_features_header: None,
+                })
+                .await
+                .map_err(anyhow::Error::msg)?;
             let reasoning_summary = self
                 .config
                 .model_reasoning_summary
@@ -284,50 +271,55 @@ impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
                 context.model_info.slug.as_str(),
                 context.model_info.slug.as_str(),
             )) as codex_otel::SharedSessionTelemetry;
-            let mut client_session = model_client.new_session();
-            let mut stream = client_session
-                .stream(
-                    &prompt,
-                    &context.model_info,
-                    &session_telemetry,
-                    context.reasoning_effort,
+            let _session_telemetry = session_telemetry;
+            let mut stream = model_client
+                .stream_responses(ResponsesModelRequest {
+                    input: request.input,
+                    tools: Vec::new(),
+                    parallel_tool_calls: false,
+                    base_instructions: request.base_instructions,
+                    personality: None,
+                    output_schema: request.output_schema,
+                    output_schema_strict: request.output_schema_strict,
+                    model: Some(context.model_info.slug.clone()),
+                    reasoning_effort: context.reasoning_effort,
                     reasoning_summary,
-                    context.service_tier.clone(),
-                    turn_metadata_header.as_deref(),
-                    &InferenceTraceContext::disabled(),
-                )
+                    service_tier: service_tier_from_string(context.service_tier.clone()),
+                    verbosity: self.config.model_verbosity,
+                    turn_metadata_header,
+                })
                 .await?;
 
             let mut result = String::new();
             let mut token_usage = None;
             while let Some(message) = stream.next().await.transpose()? {
                 match message {
-                    ResponseEvent::OutputTextDelta(delta) => result.push_str(&delta),
-                    ResponseEvent::OutputItemDone(item) => {
+                    ModelResponseEvent::OutputTextDelta { delta } => result.push_str(&delta),
+                    ModelResponseEvent::ItemDone { item } => {
                         if result.is_empty()
-                            && let ResponseItem::Message { content, .. } = item
+                            && let protocol::models::ResponseItem::Message { content, .. } = item
                             && let Some(text) = content_items_to_text(content.as_slice())
                         {
                             result.push_str(&text);
                         }
                     }
-                    ResponseEvent::Completed {
+                    ModelResponseEvent::Completed {
                         token_usage: usage, ..
                     } => {
                         token_usage = usage;
                         break;
                     }
-                    ResponseEvent::Created
-                    | ResponseEvent::OutputItemAdded(_)
-                    | ResponseEvent::ServerModel(_)
-                    | ResponseEvent::ModelVerifications(_)
-                    | ResponseEvent::ServerReasoningIncluded(_)
-                    | ResponseEvent::ToolCallInputDelta { .. }
-                    | ResponseEvent::ReasoningSummaryDelta { .. }
-                    | ResponseEvent::ReasoningContentDelta { .. }
-                    | ResponseEvent::ReasoningSummaryPartAdded { .. }
-                    | ResponseEvent::RateLimits(_)
-                    | ResponseEvent::ModelsEtag(_) => {}
+                    ModelResponseEvent::Created
+                    | ModelResponseEvent::ItemAdded { .. }
+                    | ModelResponseEvent::ServerModel { .. }
+                    | ModelResponseEvent::ModelVerifications { .. }
+                    | ModelResponseEvent::ServerReasoningIncluded { .. }
+                    | ModelResponseEvent::ToolCallInputDelta { .. }
+                    | ModelResponseEvent::ReasoningSummaryDelta { .. }
+                    | ModelResponseEvent::ReasoningContentDelta { .. }
+                    | ModelResponseEvent::ReasoningSummaryPartAdded { .. }
+                    | ModelResponseEvent::RateLimits { .. }
+                    | ModelResponseEvent::ModelsEtag { .. } => {}
                 }
             }
 
@@ -388,11 +380,12 @@ impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
                 return Err(err.into());
             }
 
-            let agent: Box<dyn MemoryConsolidationAgent> = Box::new(AppServerMemoryConsolidationAgent {
-                host: Arc::clone(&self.host),
-                thread_id,
-                thread,
-            });
+            let agent: Box<dyn MemoryConsolidationAgent> =
+                Box::new(AppServerMemoryConsolidationAgent {
+                    host: Arc::clone(&self.host),
+                    thread_id,
+                    thread,
+                });
             Ok(agent)
         })
     }

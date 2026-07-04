@@ -4,24 +4,24 @@
 //! sessions, patch application, MCP calls, and collaboration tools. Rollout
 //! tracing reuses those observations instead of adding another set of hooks in
 //! `codex-core`: this module translates the protocol surface into the smaller
-//! trace vocabulary and keeps the mapping isolated inside `codex-rollout-trace-api`.
+//! trace vocabulary and keeps the mapping isolated inside `rollout-trace-api`.
 //!
 //! The long explicit `EventMsg` matches are intentional. Most protocol events
 //! are not trace runtime boundaries, but spelling them out makes new protocol
 //! variants a compile-time prompt to decide whether the trace should capture
 //! them.
 
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecCommandBeginEvent;
-use codex_protocol::protocol::ExecCommandEndEvent;
-use codex_protocol::protocol::ExecCommandSource;
-use codex_protocol::protocol::ExecCommandStatus;
-use codex_protocol::protocol::McpToolCallBeginEvent;
-use codex_protocol::protocol::McpToolCallEndEvent;
-use codex_protocol::protocol::PatchApplyBeginEvent;
-use codex_protocol::protocol::PatchApplyEndEvent;
-use codex_protocol::protocol::PatchApplyStatus;
-use codex_protocol::protocol::TurnAbortReason;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ExecCommandBeginEvent;
+use protocol::protocol::ExecCommandEndEvent;
+use protocol::protocol::ExecCommandSource;
+use protocol::protocol::ExecCommandStatus;
+use protocol::protocol::McpToolCallBeginEvent;
+use protocol::protocol::McpToolCallEndEvent;
+use protocol::protocol::PatchApplyBeginEvent;
+use protocol::protocol::PatchApplyEndEvent;
+use protocol::protocol::PatchApplyStatus;
+use protocol::protocol::TurnAbortReason;
 use serde::Serialize;
 
 use crate::AgentThreadId;
@@ -102,16 +102,16 @@ pub(crate) enum ToolRuntimePayload<'a> {
     PatchApplyEnd(&'a PatchApplyEndEvent),
     McpToolCallBegin(&'a McpToolCallBeginEvent),
     McpToolCallEnd(&'a McpToolCallEndEvent),
-    CollabAgentSpawnBegin(&'a codex_protocol::protocol::CollabAgentSpawnBeginEvent),
-    CollabAgentSpawnEnd(&'a codex_protocol::protocol::CollabAgentSpawnEndEvent),
-    CollabAgentInteractionBegin(&'a codex_protocol::protocol::CollabAgentInteractionBeginEvent),
-    CollabAgentInteractionEnd(&'a codex_protocol::protocol::CollabAgentInteractionEndEvent),
-    CollabListAgentsBegin(&'a codex_protocol::protocol::CollabListAgentsBeginEvent),
-    CollabListAgentsEnd(&'a codex_protocol::protocol::CollabListAgentsEndEvent),
-    CollabWaitingBegin(&'a codex_protocol::protocol::CollabWaitingBeginEvent),
-    CollabWaitingEnd(&'a codex_protocol::protocol::CollabWaitingEndEvent),
-    CollabCloseBegin(&'a codex_protocol::protocol::CollabCloseBeginEvent),
-    CollabCloseEnd(&'a codex_protocol::protocol::CollabCloseEndEvent),
+    CollabAgentSpawnBegin(&'a protocol::protocol::CollabAgentSpawnBeginEvent),
+    CollabAgentSpawnEnd(&'a protocol::protocol::CollabAgentSpawnEndEvent),
+    CollabAgentInteractionBegin(&'a protocol::protocol::CollabAgentInteractionBeginEvent),
+    CollabAgentInteractionEnd(&'a protocol::protocol::CollabAgentInteractionEndEvent),
+    CollabListAgentsBegin(&'a protocol::protocol::CollabListAgentsBeginEvent),
+    CollabListAgentsEnd(&'a protocol::protocol::CollabListAgentsEndEvent),
+    CollabWaitingBegin(&'a protocol::protocol::CollabWaitingBeginEvent),
+    CollabWaitingEnd(&'a protocol::protocol::CollabWaitingEndEvent),
+    CollabCloseBegin(&'a protocol::protocol::CollabCloseBeginEvent),
+    CollabCloseEnd(&'a protocol::protocol::CollabCloseEndEvent),
 }
 
 impl Serialize for ToolRuntimePayload<'_> {
@@ -438,8 +438,8 @@ fn execution_status_for_abort_reason(reason: &TurnAbortReason) -> ExecutionStatu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::ThreadId;
-    use codex_protocol::protocol::CollabListAgentsEndEvent;
+    use protocol::ThreadId;
+    use protocol::protocol::CollabListAgentsEndEvent;
 
     #[test]
     fn failed_list_agents_end_maps_to_failed_trace_status() {

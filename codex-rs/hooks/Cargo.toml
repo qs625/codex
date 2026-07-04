@@ -1,12 +1,12 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-hooks"
+name = "hooks"
 version.workspace = true
 
 [lib]
 doctest = false
-name = "codex_hooks"
+name = "hooks"
 path = "src/lib.rs"
 
 [lints]
@@ -18,9 +18,9 @@ chrono = { workspace = true, features = ["serde"] }
 codex-analytics-api = { workspace = true }
 codex-config-types = { workspace = true }
 codex-context-manager = { workspace = true }
-codex-hooks-api = { workspace = true }
+hooks-api = { workspace = true }
 plugin-service-api = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 thread-service-api = { workspace = true }
 codex-turn-items = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
@@ -37,8 +37,8 @@ tracing = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-codex-config = { workspace = true }
-codex-hooks-api = { workspace = true }
+config-service = { workspace = true }
+hooks-api = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

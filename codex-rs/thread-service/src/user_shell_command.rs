@@ -1,5 +1,5 @@
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::models::ResponseItem;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::models::ResponseItem;
 
 use crate::session::turn_context::TurnContext;
 use crate::tool_output_utils::format_exec_output_str;

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
-use codex_jsonrpc_types::JSONRPCErrorError;
+use jsonrpc_types::JSONRPCErrorError;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 

@@ -10,8 +10,6 @@ use crate::config_manager::ConfigManager;
 use crate::connection_rpc_gate::ConnectionRpcGate;
 use crate::error_code::invalid_request;
 use crate::extensions::FileSubscriptionThreadHost;
-use crate::extensions::GuardianAgentSpawnHost;
-use crate::extensions::guardian_agent_spawner;
 use crate::extensions::thread_extensions;
 use crate::fs_watch::FsWatchManager;
 use crate::outgoing_message::ConnectionId;
@@ -49,34 +47,28 @@ use crate::thread_state::ThreadStateManager;
 use crate::thread_store_factory::thread_store_from_config;
 use crate::transport::AppServerTransport;
 use crate::transport::RemoteControlHandle;
+use app_server_protocol::ChatgptAuthTokensRefreshParams;
+use app_server_protocol::ChatgptAuthTokensRefreshReason;
+use app_server_protocol::ChatgptAuthTokensRefreshResponse;
+use app_server_protocol::ClientNotification;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::ClientResponsePayload;
+use app_server_protocol::ConfigWarningNotification;
+use app_server_protocol::ExperimentalApi;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::JSONRPCNotification;
+use app_server_protocol::JSONRPCRequest;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::ServerRequestPayload;
+use app_server_protocol::experimental_required_message;
 use async_trait::async_trait;
 use codex_analytics::AnalyticsEventsClient;
 use codex_analytics::AppServerRpcTransport;
-use codex_app_server_protocol::ChatgptAuthTokensRefreshParams;
-use codex_app_server_protocol::ChatgptAuthTokensRefreshReason;
-use codex_app_server_protocol::ChatgptAuthTokensRefreshResponse;
-use codex_app_server_protocol::ClientNotification;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ClientResponsePayload;
-use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::ExperimentalApi;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCRequest;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::ServerRequestPayload;
-use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_auth_types::AuthMode as LoginAuthMode;
 use codex_chatgpt::workspace_settings;
-use plugin_service::PluginAnalyticsEventSink;
-use plugin_service::PluginsManager;
-use plugin_service::RemotePluginAuth;
-use plugin_service::RemotePluginAuthFuture;
-use plugin_service::RemotePluginAuthProvider;
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -85,14 +77,20 @@ use codex_login::auth::ExternalAuthRefreshContext;
 use codex_login::auth::ExternalAuthRefreshReason;
 use codex_login::auth::ExternalAuthTokens;
 use codex_login::model_provider_auth_manager;
-use plugin_service_api::PluginTelemetryMetadata;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::W3cTraceContext;
-use codex_rollout::StateDbHandle;
-use codex_state::log_db::LogDbLayer;
-use codex_state_api::SharedStateDbRuntime;
 use codex_terminal_detection::user_agent;
+use exec_server_api::ExecEnvironmentProvider;
+use plugin_service::PluginAnalyticsEventSink;
+use plugin_service::PluginsManager;
+use plugin_service::RemotePluginAuth;
+use plugin_service::RemotePluginAuthFuture;
+use plugin_service::RemotePluginAuthProvider;
+use plugin_service_api::PluginTelemetryMetadata;
+use protocol::ThreadId;
+use protocol::protocol::SessionSource;
+use protocol::protocol::W3cTraceContext;
+use rollout::StateDbHandle;
+use state::log_db::LogDbLayer;
+use state_api::SharedStateDbRuntime;
 use thread_service::ThreadAuthRuntimes;
 use thread_service::ThreadService;
 use thread_service::config::Config;
@@ -383,13 +381,13 @@ impl MessageProcessor {
                     .set(Arc::clone(&workflow_service))
                     .unwrap_or_else(|_| panic!("workflow service slot should only be set once"));
                 let approval_service = Arc::new(approval_service::ApprovalService);
-                let mcp_service =
-                    Arc::new(mcp_service::McpService::new(approval_service.clone()));
+                let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
                 let tool_service = Arc::new(codex_tool_service::ToolService::new(
                     approval_service,
-                    Arc::new(codex_command_service::CommandService::new()),
+                    Arc::new(command_service::CommandService::new()),
                     Arc::new(goal_service::GoalService),
                     mcp_service.clone(),
+                    Arc::new(permissions_service::PermissionsService),
                     workflow_service,
                     thread_service_api,
                 ));
@@ -399,7 +397,6 @@ impl MessageProcessor {
                     auth_manager.clone(),
                     model_provider_auth_manager(Some(auth_manager.clone())),
                 );
-                let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_service.clone();
                 let file_subscription_host: Weak<dyn FileSubscriptionThreadHost> =
                     thread_service.clone();
                 let thread_state_db: Option<SharedStateDbRuntime> = state_db
@@ -411,7 +408,6 @@ impl MessageProcessor {
                     session_source.clone(),
                     runtime_environment_provider,
                     thread_extensions(
-                        guardian_agent_spawner(guardian_agent_host),
                         shared_file_watcher,
                         file_subscription_host,
                         thread_watch_manager.clone(),
@@ -419,34 +415,32 @@ impl MessageProcessor {
                     Some(analytics_events_client.api_client()),
                     Arc::clone(&thread_store),
                     thread_state_db,
-                    Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+                    Arc::new(thread_store::DefaultLiveThreadFactory),
                     installation_id,
                     Some(app_server_attestation_provider(
                         outgoing.clone(),
                         thread_state_manager.clone(),
                     )),
-                    Arc::new(codex_model_provider::DefaultModelProviderFactory),
+                    Arc::new(model_service::DefaultModelProviderFactory),
                     Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
-                    Arc::new(codex_command_service::CommandService::new()),
+                    Arc::new(command_service::CommandService::new()),
                     Arc::new(approval_service::ApprovalService),
                     Arc::new(goal_service::GoalService),
-                    Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-                    Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+                    Arc::new(mcp_service::DefaultMcpAuthRuntime),
+                    Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),
                     Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
-                    Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
-                    Arc::new(codex_api::DefaultApiRuntimeFactory),
+                    Arc::new(permissions_service::StarlarkExecPolicyLoader),
+                    Arc::new(model_service::DefaultApiRuntimeFactory),
                     Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
                     Arc::new(codex_sandboxing::SandboxManager::new()),
                     Arc::new(codex_otel::OtelSessionTelemetryFactory),
-                    Arc::new(codex_hooks::HooksRuntimeFactory),
+                    Arc::new(hooks::HooksRuntimeFactory),
                     Arc::new(memory_service::FsMemoryToolDeveloperInstructionsProvider),
-                    Arc::new(
-                        codex_core_skills::SkillsManager::new_with_restriction_product(
-                            config.codex_home.clone(),
-                            config.bundled_skills_enabled(),
-                            session_source.restriction_product(),
-                        ),
-                    ),
+                    Arc::new(skill_service::SkillService::new_with_restriction_product(
+                        config.codex_home.clone(),
+                        config.bundled_skills_enabled(),
+                        session_source.restriction_product(),
+                    )),
                     thread_service_plugin_runtime.clone(),
                     tool_service.clone(),
                     mcp_service.clone(),
@@ -461,7 +455,9 @@ impl MessageProcessor {
                 analytics_events_client: analytics_events_client.clone(),
             },
         ));
-        let skills_watcher = SkillsWatcher::new(thread_service.skills_manager(), outgoing.clone());
+        let skill_service = thread_service.skill_service();
+        let model_service = thread_service.model_service();
+        let skills_watcher = SkillsWatcher::new(Arc::clone(&skill_service), outgoing.clone());
 
         let pending_thread_unloads = Arc::new(Mutex::new(HashSet::new()));
         let thread_list_state_permit = Arc::new(Semaphore::new(/*permits*/ 1));
@@ -470,6 +466,8 @@ impl MessageProcessor {
         let account_processor = AccountRequestProcessor::new(
             auth_manager.clone(),
             Arc::clone(&thread_service),
+            Arc::clone(&model_service),
+            Arc::clone(&skill_service),
             Arc::clone(&plugins_manager),
             outgoing.clone(),
             Arc::clone(&config),
@@ -486,6 +484,7 @@ impl MessageProcessor {
         let catalog_processor = CatalogRequestProcessor::new(
             auth_manager.clone(),
             Arc::clone(&thread_service),
+            Arc::clone(&skill_service),
             Arc::clone(&plugins_manager),
             Arc::clone(&config),
             config_manager.clone(),
@@ -530,6 +529,8 @@ impl MessageProcessor {
         let plugin_processor = PluginRequestProcessor::new(
             auth_manager.clone(),
             Arc::clone(&thread_service),
+            Arc::clone(&model_service),
+            Arc::clone(&skill_service),
             Arc::clone(&plugins_manager),
             outgoing.clone(),
             analytics_events_client.clone(),
@@ -564,6 +565,7 @@ impl MessageProcessor {
         let turn_processor = TurnRequestProcessor::new(
             auth_manager.clone(),
             Arc::clone(&thread_service),
+            Arc::clone(&model_service),
             outgoing.clone(),
             analytics_events_client.clone(),
             arg0_paths.clone(),
@@ -582,6 +584,7 @@ impl MessageProcessor {
                 plugin_processor.effective_plugins_changed_callback();
             plugin_service::maybe_start_plugin_startup_tasks_for_config(
                 Arc::clone(&plugins_manager),
+                Arc::clone(&model_service),
                 &config.plugins_config_input(),
                 Arc::new(LoginRemotePluginAuthProvider {
                     auth_manager: auth_manager.clone(),
@@ -594,6 +597,7 @@ impl MessageProcessor {
             config_manager.clone(),
             auth_manager,
             thread_service.clone(),
+            Arc::clone(&skill_service),
             Arc::clone(&plugins_manager),
             Arc::clone(&environment_manager),
             analytics_events_client,
@@ -601,6 +605,7 @@ impl MessageProcessor {
         let external_agent_config_processor = ExternalAgentConfigRequestProcessor::new(
             outgoing.clone(),
             Arc::clone(&thread_service),
+            Arc::clone(&skill_service),
             Arc::clone(&plugins_manager),
             config_manager.clone(),
             config_processor.clone(),
@@ -618,11 +623,8 @@ impl MessageProcessor {
             Arc::clone(&config),
             config_manager.clone(),
         );
-        let workflow_processor = WorkflowRequestProcessor::new(
-            config_manager,
-            outgoing.clone(),
-            workflow_service,
-        );
+        let workflow_processor =
+            WorkflowRequestProcessor::new(config_manager, outgoing.clone(), workflow_service);
 
         Self {
             outgoing,

@@ -31,10 +31,10 @@
 //! `MessageProcessor` with overload or internal errors so approval flows do
 //! not hang indefinitely.
 //!
-//! # Relationship to `codex-app-server-client`
+//! # Relationship to `app-server-client`
 //!
 //! This module provides the low-level runtime handle ([`InProcessClientHandle`]).
-//! Higher-level callers (TUI, exec) should go through `codex-app-server-client`,
+//! Higher-level callers (TUI, exec) should go through `app-server-client`,
 //! which wraps this module behind a worker task with async request/response
 //! helpers, surface-specific startup policy, and bounded shutdown.
 
@@ -66,29 +66,29 @@ use crate::outgoing_message::QueuedOutgoingMessage;
 use crate::transport::CHANNEL_CAPACITY;
 use crate::transport::OutboundConnectionState;
 use crate::transport::route_outgoing_envelope;
+use app_server_protocol::ClientNotification;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::ConfigWarningNotification;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::RequestId;
+use app_server_protocol::Result;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
 use codex_analytics::AppServerRpcTransport;
-use codex_app_server_protocol::ClientNotification;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::Result;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config_loader::LoaderOverrides;
-use codex_config_loader::ThreadConfigLoader;
-use codex_config_requirements::CloudRequirementsLoader;
+use config_service::LoaderOverrides;
+use config_service::ThreadConfigLoader;
+use config_service::CloudRequirementsLoader;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
-use codex_protocol::protocol::SessionSource;
-pub use codex_rollout::StateDbHandle;
-pub use codex_state::log_db::LogDbLayer;
-use thread_service_api::ThreadCreatedEvent;
+use protocol::protocol::SessionSource;
+pub use rollout::StateDbHandle;
+pub use state::log_db::LogDbLayer;
 use thread_service::config::Config;
 use thread_service::resolve_installation_id;
+use thread_service_api::ThreadCreatedEvent;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
@@ -255,7 +255,7 @@ impl InProcessClientSender {
 /// Handle used by an in-process client to call app-server and consume events.
 ///
 /// This is the low-level runtime handle. Higher-level callers should usually go
-/// through `codex-app-server-client`, which adds worker-task buffering,
+/// through `app-server-client`, which adds worker-task buffering,
 /// request/response helpers, and surface-specific startup policy.
 pub struct InProcessClientHandle {
     client: InProcessClientSender,
@@ -745,15 +745,15 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
 mod tests {
     use super::*;
     use anyhow::Result;
-    use codex_app_server_protocol::ClientInfo;
-    use codex_app_server_protocol::ConfigRequirementsReadResponse;
-    use codex_app_server_protocol::SessionSource as ApiSessionSource;
-    use codex_app_server_protocol::ThreadStartParams;
-    use codex_app_server_protocol::ThreadStartResponse;
-    use codex_app_server_protocol::Turn;
-    use codex_app_server_protocol::TurnCompletedNotification;
-    use codex_app_server_protocol::TurnItemsView;
-    use codex_app_server_protocol::TurnStatus;
+    use app_server_protocol::ClientInfo;
+    use app_server_protocol::ConfigRequirementsReadResponse;
+    use app_server_protocol::SessionSource as ApiSessionSource;
+    use app_server_protocol::ThreadStartParams;
+    use app_server_protocol::ThreadStartResponse;
+    use app_server_protocol::Turn;
+    use app_server_protocol::TurnCompletedNotification;
+    use app_server_protocol::TurnItemsView;
+    use app_server_protocol::TurnStatus;
     use pretty_assertions::assert_eq;
     use std::future::Future;
     use std::path::Path;
@@ -803,7 +803,7 @@ mod tests {
     ) -> InProcessClientHandle {
         let codex_home = TempDir::new().expect("temp dir");
         let config = Arc::new(build_test_config(codex_home.path()).await);
-        let state_db = codex_rollout::state_db::try_init(config.as_ref())
+        let state_db = rollout::state_db::try_init(config.as_ref())
             .await
             .expect("state db should initialize for in-process test");
         let args = InProcessStartArgs {
@@ -813,7 +813,7 @@ mod tests {
             loader_overrides: LoaderOverrides::default(),
             strict_config: false,
             cloud_requirements: CloudRequirementsLoader::default(),
-            thread_config_loader: Arc::new(codex_config_loader::NoopThreadConfigLoader),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             log_db: None,
             state_db: Some(state_db),

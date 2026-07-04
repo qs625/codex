@@ -229,6 +229,7 @@ pub struct Response {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub body: Bytes,
+    pub final_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]

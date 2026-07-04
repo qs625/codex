@@ -20,15 +20,15 @@ use crate::engine::command_runner::CommandRunResult;
 use crate::engine::dispatcher;
 use crate::engine::output_parser;
 use crate::schema::PermissionRequestCommandInput;
-pub use codex_hooks_api::PermissionRequestDecision;
-pub use codex_hooks_api::PermissionRequestOutcome;
-pub use codex_hooks_api::PermissionRequestRequest;
-use codex_protocol::protocol::HookCompletedEvent;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookOutputEntry;
-use codex_protocol::protocol::HookOutputEntryKind;
-use codex_protocol::protocol::HookRunStatus;
-use codex_protocol::protocol::HookRunSummary;
+pub use hooks_api::PermissionRequestDecision;
+pub use hooks_api::PermissionRequestOutcome;
+pub use hooks_api::PermissionRequestRequest;
+use protocol::protocol::HookCompletedEvent;
+use protocol::protocol::HookEventName;
+use protocol::protocol::HookOutputEntry;
+use protocol::protocol::HookOutputEntryKind;
+use protocol::protocol::HookRunStatus;
+use protocol::protocol::HookRunSummary;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct PermissionRequestHandlerData {

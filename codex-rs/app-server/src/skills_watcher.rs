@@ -2,16 +2,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::outgoing_message::OutgoingMessageSender;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::SkillsChangedNotification;
-use codex_core_skills_api::SharedSkillsRuntime;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::SkillsChangedNotification;
 use codex_file_watcher::FileWatcher;
 use codex_file_watcher::FileWatcherSubscriber;
 use codex_file_watcher::Receiver;
 use codex_file_watcher::ThrottledWatchReceiver;
 use codex_file_watcher::WatchPath;
 use codex_file_watcher::WatchRegistration;
-use thread_service_api::ThreadSkillWatchPath;
+use skill_service_api::SharedSkillServiceApi;
+use skill_service_api::SkillWatchPath;
 use tracing::warn;
 
 #[cfg(not(test))]
@@ -25,7 +25,7 @@ pub(crate) struct SkillsWatcher {
 
 impl SkillsWatcher {
     pub(crate) fn new(
-        skills_manager: SharedSkillsRuntime,
+        skill_service: SharedSkillServiceApi,
         outgoing: Arc<OutgoingMessageSender>,
     ) -> Arc<Self> {
         let file_watcher = match FileWatcher::new() {
@@ -36,13 +36,13 @@ impl SkillsWatcher {
             }
         };
         let (subscriber, rx) = file_watcher.add_subscriber();
-        Self::spawn_event_loop(rx, skills_manager, outgoing);
+        Self::spawn_event_loop(rx, skill_service, outgoing);
         Arc::new(Self { subscriber })
     }
 
     pub(crate) fn register_thread_skill_watch_paths(
         &self,
-        paths: Vec<ThreadSkillWatchPath>,
+        paths: Vec<SkillWatchPath>,
     ) -> WatchRegistration {
         self.subscriber.register_paths(
             paths
@@ -57,7 +57,7 @@ impl SkillsWatcher {
 
     fn spawn_event_loop(
         rx: Receiver,
-        skills_manager: SharedSkillsRuntime,
+        skill_service: SharedSkillServiceApi,
         outgoing: Arc<OutgoingMessageSender>,
     ) {
         let mut rx = ThrottledWatchReceiver::new(rx, WATCHER_THROTTLE_INTERVAL);
@@ -67,7 +67,7 @@ impl SkillsWatcher {
         };
         handle.spawn(async move {
             while rx.recv().await.is_some() {
-                skills_manager.clear_cache();
+                skill_service.clear_cache();
                 outgoing
                     .send_server_notification(ServerNotification::SkillsChanged(
                         SkillsChangedNotification {},

@@ -2,29 +2,29 @@ use std::time::Duration;
 
 use anyhow::Result;
 use anyhow::bail;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::PluginAuthPolicy;
+use app_server_protocol::PluginInstallPolicy;
+use app_server_protocol::PluginListMarketplaceKind;
+use app_server_protocol::PluginListParams;
+use app_server_protocol::PluginListResponse;
+use app_server_protocol::PluginMarketplaceEntry;
+use app_server_protocol::PluginShareDiscoverability;
+use app_server_protocol::PluginSource;
+use app_server_protocol::PluginSummary;
+use app_server_protocol::RequestId;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::PluginAuthPolicy;
-use codex_app_server_protocol::PluginInstallPolicy;
-use codex_app_server_protocol::PluginListMarketplaceKind;
-use codex_app_server_protocol::PluginListParams;
-use codex_app_server_protocol::PluginListResponse;
-use codex_app_server_protocol::PluginMarketplaceEntry;
-use codex_app_server_protocol::PluginShareDiscoverability;
-use codex_app_server_protocol::PluginSource;
-use codex_app_server_protocol::PluginSummary;
-use codex_app_server_protocol::RequestId;
-use codex_config::types::AuthCredentialsStoreMode;
-use codex_protocol::config_types::TrustLevel;
-use thread_service::config::set_project_trust_level;
+use config_service::types::AuthCredentialsStoreMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use pretty_assertions::assert_eq;
+use protocol::config_types::TrustLevel;
 use tempfile::TempDir;
+use thread_service::config::set_project_trust_level;
 use tokio::time::timeout;
 use wiremock::Mock;
 use wiremock::MockServer;
@@ -251,7 +251,7 @@ async fn plugin_list_keeps_valid_marketplaces_when_another_marketplace_fails_to_
                 enabled: false,
                 install_policy: PluginInstallPolicy::Available,
                 auth_policy: PluginAuthPolicy::OnInstall,
-                availability: codex_app_server_protocol::PluginAvailability::Available,
+                availability: app_server_protocol::PluginAvailability::Available,
                 interface: None,
                 keywords: vec!["api-key".to_string(), "developer tools".to_string()],
             }],
@@ -542,8 +542,8 @@ async fn plugin_list_uses_alternate_discoverable_manifest_and_keeps_undiscoverab
                     enabled: false,
                     install_policy: PluginInstallPolicy::Available,
                     auth_policy: PluginAuthPolicy::OnInstall,
-                    availability: codex_app_server_protocol::PluginAvailability::Available,
-                    interface: Some(codex_app_server_protocol::PluginInterface {
+                    availability: app_server_protocol::PluginAvailability::Available,
+                    interface: Some(app_server_protocol::PluginInterface {
                         display_name: Some("Valid Plugin".to_string()),
                         short_description: None,
                         long_description: None,
@@ -579,7 +579,7 @@ async fn plugin_list_uses_alternate_discoverable_manifest_and_keeps_undiscoverab
                     enabled: false,
                     install_policy: PluginInstallPolicy::Available,
                     auth_policy: PluginAuthPolicy::OnInstall,
-                    availability: codex_app_server_protocol::PluginAvailability::Available,
+                    availability: app_server_protocol::PluginAvailability::Available,
                     interface: None,
                     keywords: Vec::new(),
                 },
@@ -1645,7 +1645,7 @@ async fn plugin_list_includes_remote_marketplaces_when_remote_plugin_enabled() -
     assert_eq!(remote_marketplace.plugins[0].enabled, true);
     assert_eq!(
         remote_marketplace.plugins[0].availability,
-        codex_app_server_protocol::PluginAvailability::Available
+        app_server_protocol::PluginAvailability::Available
     );
     assert_eq!(
         remote_marketplace.plugins[0]
@@ -2186,7 +2186,7 @@ async fn plugin_list_marks_remote_plugin_disabled_by_admin() -> Result<()> {
     assert_eq!(plugin.enabled, true);
     assert_eq!(
         plugin.availability,
-        codex_app_server_protocol::PluginAvailability::DisabledByAdmin
+        app_server_protocol::PluginAvailability::DisabledByAdmin
     );
     Ok(())
 }

@@ -1,11 +1,11 @@
+use app_server_daemon::BootstrapOptions as AppServerBootstrapOptions;
+use app_server_daemon::LifecycleCommand as AppServerLifecycleCommand;
+use app_server_daemon::RemoteControlMode as AppServerRemoteControlMode;
 use clap::Args;
 use clap::CommandFactory;
 use clap::Parser;
 use clap_complete::Shell;
 use clap_complete::generate;
-use codex_app_server_daemon::BootstrapOptions as AppServerBootstrapOptions;
-use codex_app_server_daemon::LifecycleCommand as AppServerLifecycleCommand;
-use codex_app_server_daemon::RemoteControlMode as AppServerRemoteControlMode;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_chatgpt::apply_command::ApplyCommand;
@@ -25,12 +25,7 @@ use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
 use codex_exec::Command as ExecCommand;
 use codex_exec::ReviewArgs;
-use codex_execpolicy_cli::ExecPolicyCheckCommand;
 use codex_responses_api_proxy::Args as ResponsesApiProxyArgs;
-use codex_rollout_trace::REDUCED_STATE_FILE_NAME;
-use codex_rollout_trace::replay_bundle;
-use codex_state::StateRuntime;
-use codex_state::state_db_path;
 use codex_tui::AppExitInfo;
 use codex_tui::Cli as TuiCli;
 use codex_tui::ExitReason;
@@ -40,6 +35,10 @@ use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::ProfileV2Name;
 use codex_utils_cli::resume_command;
 use owo_colors::OwoColorize;
+use rollout_trace::REDUCED_STATE_FILE_NAME;
+use rollout_trace::replay_bundle;
+use state::StateRuntime;
+use state::state_db_path;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -51,6 +50,7 @@ mod app_cmd;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod desktop_app;
 mod doctor;
+mod execpolicy_cmd;
 mod marketplace_cmd;
 mod mcp_cmd;
 mod plugin_cmd;
@@ -59,29 +59,32 @@ mod state_db_recovery;
 mod wsl_paths;
 
 use crate::mcp_cmd::McpCli;
+use crate::execpolicy_cmd::ExecPolicyCheckCommand;
 use crate::plugin_cmd::PluginCli;
 use crate::plugin_cmd::PluginSubcommand;
 use doctor::DoctorCommand;
 use state_db_recovery as local_state_db;
 
-use codex_config_loader::LoaderOverrides;
-use codex_config_local_loader::LocalConfigLayerLoader;
+use config_service::LoaderOverrides;
+use config_service::LocalConfigLayerLoader;
 use codex_config_types::CONFIG_TOML_FILE;
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server_api::ExecServerRuntimePaths;
 use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
 use codex_login::AuthManager;
-use memory_service::clear_memory_roots_contents;
-use codex_models_manager::bundled_models_response;
-use codex_models_manager_api::RefreshStrategy;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::user_input::UserInput;
-use codex_rollout::StateDbHandle;
 use codex_terminal_detection::TerminalName;
+use exec_server_api::ExecServerRuntimePaths;
+use memory_service::clear_memory_roots_contents;
+use model_service::ModelService;
+use model_service::ModelServiceRuntimeDeps;
+use model_service::bundled_models_response;
+use model_service_api::ModelCatalogRefresh;
+use model_service_api::ModelServiceApi;
+use protocol::protocol::AskForApproval;
+use protocol::user_input::UserInput;
+use rollout::StateDbHandle;
 use thread_service::ThreadAuthRuntimes;
-use thread_service::build_models_manager;
 use thread_service::config::Config;
 use thread_service::config::ConfigBuilder;
 use thread_service::config::ConfigOverrides;
@@ -456,9 +459,9 @@ struct AppServerCommand {
     #[arg(
         long = "listen",
         value_name = "URL",
-        default_value = codex_app_server::AppServerTransport::DEFAULT_LISTEN_URL
+        default_value = app_server::AppServerTransport::DEFAULT_LISTEN_URL
     )]
-    listen: codex_app_server::AppServerTransport,
+    listen: app_server::AppServerTransport,
 
     /// Enable remote control for this app-server process.
     #[arg(long = "remote-control", hide = true)]
@@ -483,7 +486,7 @@ struct AppServerCommand {
     analytics_default_enabled: bool,
 
     #[command(flatten)]
-    auth: codex_app_server::AppServerWebsocketAuthArgs,
+    auth: app_server::AppServerWebsocketAuthArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -748,7 +751,7 @@ async fn run_debug_app_server_command(cmd: DebugAppServerCommand) -> anyhow::Res
     match cmd.subcommand {
         DebugAppServerSubcommand::SendMessageV2(cmd) => {
             let codex_bin = std::env::current_exe()?;
-            codex_app_server_test_client::send_message_v2(&codex_bin, &[], cmd.user_message, &None)
+            app_server_test_client::send_message_v2(&codex_bin, &[], cmd.user_message, &None)
                 .await
         }
     }
@@ -992,18 +995,18 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 None => {
                     let transport = listen;
                     let auth = auth.try_into_settings()?;
-                    let runtime_options = codex_app_server::AppServerRuntimeOptions {
+                    let runtime_options = app_server::AppServerRuntimeOptions {
                         remote_control_enabled: remote_control,
                         ..Default::default()
                     };
-                    codex_app_server::run_main_with_transport_options(
+                    app_server::run_main_with_transport_options(
                         arg0_paths.clone(),
                         root_config_overrides,
                         LoaderOverrides::default(),
                         strict_config,
                         analytics_default_enabled,
                         transport,
-                        codex_protocol::protocol::SessionSource::VSCode,
+                        protocol::protocol::SessionSource::VSCode,
                         auth,
                         runtime_options,
                     )
@@ -1014,11 +1017,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         print_app_server_daemon_output(AppServerLifecycleCommand::Start).await?;
                     }
                     AppServerDaemonSubcommand::Bootstrap(bootstrap_cli) => {
-                        let output =
-                            codex_app_server_daemon::bootstrap(AppServerBootstrapOptions {
-                                remote_control_enabled: bootstrap_cli.remote_control,
-                            })
-                            .await?;
+                        let output = app_server_daemon::bootstrap(AppServerBootstrapOptions {
+                            remote_control_enabled: bootstrap_cli.remote_control,
+                        })
+                        .await?;
                         println!("{}", serde_json::to_string(&output)?);
                     }
                     AppServerDaemonSubcommand::Restart => {
@@ -1041,7 +1043,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         print_app_server_daemon_output(AppServerLifecycleCommand::Version).await?;
                     }
                     AppServerDaemonSubcommand::PidUpdateLoop => {
-                        codex_app_server_daemon::run_pid_update_loop().await?;
+                        app_server_daemon::run_pid_update_loop().await?;
                     }
                 },
                 Some(AppServerSubcommand::Proxy(proxy_cli)) => {
@@ -1049,30 +1051,30 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         Some(socket_path) => socket_path,
                         None => {
                             let codex_home = find_codex_home()?;
-                            codex_app_server::app_server_control_socket_path(&codex_home)?
+                            app_server::app_server_control_socket_path(&codex_home)?
                         }
                     };
                     codex_stdio_to_uds::run(socket_path.as_path()).await?;
                 }
                 Some(AppServerSubcommand::GenerateTs(gen_cli)) => {
-                    let options = codex_app_server_protocol::GenerateTsOptions {
+                    let options = app_server_protocol::GenerateTsOptions {
                         experimental_api: gen_cli.experimental,
                         ..Default::default()
                     };
-                    codex_app_server_protocol::generate_ts_with_options(
+                    app_server_protocol::generate_ts_with_options(
                         &gen_cli.out_dir,
                         gen_cli.prettier.as_deref(),
                         options,
                     )?;
                 }
                 Some(AppServerSubcommand::GenerateJsonSchema(gen_cli)) => {
-                    codex_app_server_protocol::generate_json_with_experimental(
+                    app_server_protocol::generate_json_with_experimental(
                         &gen_cli.out_dir,
                         gen_cli.experimental,
                     )?;
                 }
                 Some(AppServerSubcommand::GenerateInternalJsonSchema(gen_cli)) => {
-                    codex_app_server_protocol::generate_internal_json_schema(&gen_cli.out_dir)?;
+                    app_server_protocol::generate_internal_json_schema(&gen_cli.out_dir)?;
                 }
             }
         }
@@ -1088,7 +1090,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 .unwrap_or(RemoteControlSubcommand::Start)
             {
                 RemoteControlSubcommand::Start => {
-                    let output = codex_app_server_daemon::ensure_remote_control_started().await?;
+                    let output = app_server_daemon::ensure_remote_control_started().await?;
                     println!("{}", serde_json::to_string(&output)?);
                 }
                 RemoteControlSubcommand::Stop => {
@@ -1628,7 +1630,7 @@ async fn run_debug_prompt_input_command(
         interactive.approval_policy.map(Into::into)
     };
     let sandbox_mode = if shared.dangerously_bypass_approvals_and_sandbox {
-        Some(codex_protocol::config_types::SandboxMode::DangerFullAccess)
+        Some(protocol::config_types::SandboxMode::DangerFullAccess)
     } else {
         shared.sandbox_mode.map(Into::into)
     };
@@ -1695,20 +1697,23 @@ async fn run_debug_prompt_input_command(
         state_db.clone(),
         environment_provider,
         thread_store,
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+        Arc::new(thread_store::DefaultLiveThreadFactory),
         auth_runtimes,
-        Arc::new(codex_model_provider::DefaultModelProviderFactory),
+        Arc::new(model_service::DefaultModelProviderFactory),
         Arc::new(approval_service::ApprovalService),
         Arc::new(codex_tool_service::ToolService::new(
             Arc::new(approval_service::ApprovalService),
-            Arc::new(codex_command_service::CommandService::new()),
+            Arc::new(command_service::CommandService::new()),
             Arc::new(goal_service::GoalService),
-            Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
+            Arc::new(mcp_service::McpService::new(Arc::new(
+                approval_service::ApprovalService,
+            ))),
+            Arc::new(permissions_service::PermissionsService),
             workflow_service,
             missing_thread_service_api,
         )),
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+        Arc::new(mcp_service::DefaultMcpAuthRuntime),
+        Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),
     )
     .await?;
     println!("{}", serde_json::to_string_pretty(&prompt_input)?);
@@ -1719,13 +1724,13 @@ async fn run_debug_prompt_input_command(
 fn thread_store_from_config(
     config: &Config,
     state_db: Option<StateDbHandle>,
-) -> Arc<dyn codex_thread_store::ThreadStore> {
+) -> Arc<dyn thread_store::ThreadStore> {
     match &config.experimental_thread_store {
-        ThreadStoreConfig::Local => Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_thread_store::LocalThreadStoreConfig::from_config(config),
+        ThreadStoreConfig::Local => Arc::new(thread_store::LocalThreadStore::new(
+            thread_store::LocalThreadStoreConfig::from_config(config),
             state_db,
         )),
-        ThreadStoreConfig::InMemory { id } => codex_thread_store::InMemoryThreadStore::for_id(id),
+        ThreadStoreConfig::InMemory { id } => thread_store::InMemoryThreadStore::for_id(id),
     }
 }
 
@@ -1745,14 +1750,20 @@ async fn run_debug_models_command(
             .await?;
         let auth_manager =
             AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true).await;
-        let models_manager = build_models_manager(
-            &config,
-            codex_login::model_provider_auth_manager(Some(auth_manager)),
-            &codex_model_provider::DefaultModelProviderFactory,
-        );
-        models_manager
-            .raw_model_catalog(RefreshStrategy::OnlineIfUncached)
-            .await
+        Arc::new(ModelService::from_runtime_deps(ModelServiceRuntimeDeps {
+            codex_home: config.codex_home.to_path_buf(),
+            config_model_catalog: config.model_catalog.clone(),
+            api_runtime_factory: Arc::new(model_service::DefaultApiRuntimeFactory),
+            provider_auth_manager: codex_login::model_provider_auth_manager(Some(auth_manager)),
+            model_provider_factory: Arc::new(model_service::DefaultModelProviderFactory),
+            default_provider: Some(config.model_provider.clone()),
+            providers_by_id: config.model_providers.clone(),
+            model_metadata_overrides: config.to_models_manager_config().model_metadata_overrides,
+            attestation_provider: None,
+        }))
+        .raw_model_catalog(ModelCatalogRefresh::OnlineIfUncached)
+        .await
+        .map_err(anyhow::Error::msg)?
     };
 
     serde_json::to_writer(std::io::stdout(), &catalog)?;
@@ -1964,7 +1975,7 @@ fn app_server_subcommand_name(subcommand: Option<&AppServerSubcommand>) -> &'sta
 }
 
 async fn print_app_server_daemon_output(command: AppServerLifecycleCommand) -> anyhow::Result<()> {
-    let output = codex_app_server_daemon::run(command).await?;
+    let output = app_server_daemon::run(command).await?;
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
@@ -1972,7 +1983,7 @@ async fn print_app_server_daemon_output(command: AppServerLifecycleCommand) -> a
 async fn print_app_server_remote_control_output(
     mode: AppServerRemoteControlMode,
 ) -> anyhow::Result<()> {
-    let output = codex_app_server_daemon::set_remote_control(mode).await?;
+    let output = app_server_daemon::set_remote_control(mode).await?;
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
 }
@@ -2206,9 +2217,9 @@ fn print_completion(cmd: CompletionCommand) {
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
-    use codex_protocol::ThreadId;
     use codex_tui::TokenUsage;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
 
     fn finalize_resume_from_args(args: &[&str]) -> TuiCli {
         let cli = MultitoolCli::try_parse_from(args).expect("parse");
@@ -2379,7 +2390,7 @@ mod tests {
 
     fn default_app_server_socket_path() -> AbsolutePathBuf {
         let codex_home = find_codex_home().expect("codex home");
-        codex_app_server::app_server_control_socket_path(&codex_home)
+        app_server::app_server_control_socket_path(&codex_home)
             .expect("default app-server socket path")
     }
 
@@ -2863,10 +2874,7 @@ mod tests {
         let app_server = app_server_from_args(["codex", "app-server"].as_ref());
         assert!(!app_server.analytics_default_enabled);
         assert!(!app_server.remote_control);
-        assert_eq!(
-            app_server.listen,
-            codex_app_server::AppServerTransport::Stdio
-        );
+        assert_eq!(app_server.listen, app_server::AppServerTransport::Stdio);
     }
 
     #[test]
@@ -3082,7 +3090,7 @@ mod tests {
         );
         assert_eq!(
             app_server.listen,
-            codex_app_server::AppServerTransport::WebSocket {
+            app_server::AppServerTransport::WebSocket {
                 bind_address: "127.0.0.1:4500".parse().expect("valid socket address"),
             }
         );
@@ -3092,10 +3100,7 @@ mod tests {
     fn app_server_listen_stdio_url_parses() {
         let app_server =
             app_server_from_args(["codex", "app-server", "--listen", "stdio://"].as_ref());
-        assert_eq!(
-            app_server.listen,
-            codex_app_server::AppServerTransport::Stdio
-        );
+        assert_eq!(app_server.listen, app_server::AppServerTransport::Stdio);
     }
 
     #[test]
@@ -3104,7 +3109,7 @@ mod tests {
             app_server_from_args(["codex", "app-server", "--listen", "unix://"].as_ref());
         assert_eq!(
             app_server.listen,
-            codex_app_server::AppServerTransport::UnixSocket {
+            app_server::AppServerTransport::UnixSocket {
                 socket_path: default_app_server_socket_path()
             }
         );
@@ -3117,7 +3122,7 @@ mod tests {
         );
         assert_eq!(
             app_server.listen,
-            codex_app_server::AppServerTransport::UnixSocket {
+            app_server::AppServerTransport::UnixSocket {
                 socket_path: AbsolutePathBuf::from_absolute_path("/tmp/codex.sock")
                     .expect("absolute path should parse")
             }
@@ -3127,7 +3132,7 @@ mod tests {
     #[test]
     fn app_server_listen_off_parses() {
         let app_server = app_server_from_args(["codex", "app-server", "--listen", "off"].as_ref());
-        assert_eq!(app_server.listen, codex_app_server::AppServerTransport::Off);
+        assert_eq!(app_server.listen, app_server::AppServerTransport::Off);
     }
 
     #[test]
@@ -3269,7 +3274,7 @@ mod tests {
         );
         assert_eq!(
             app_server.auth.ws_auth,
-            Some(codex_app_server::WebsocketAuthCliMode::CapabilityToken)
+            Some(app_server::WebsocketAuthCliMode::CapabilityToken)
         );
         assert_eq!(
             app_server.auth.ws_token_file,
@@ -3298,7 +3303,7 @@ mod tests {
         );
         assert_eq!(
             app_server.auth.ws_auth,
-            Some(codex_app_server::WebsocketAuthCliMode::SignedBearerToken)
+            Some(app_server::WebsocketAuthCliMode::SignedBearerToken)
         );
         assert_eq!(
             app_server.auth.ws_shared_secret_file,

@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use crate::pkce::PkceCodes;
 use crate::server::ServerOptions;
-use codex_client::build_reqwest_client_with_custom_ca;
+use transport_client::build_reqwest_client_with_custom_ca;
 use std::io;
 
 const ANSI_BLUE: &str = "\x1b[94m";

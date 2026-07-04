@@ -1,15 +1,15 @@
 use crate::config_manager::ConfigManager;
 use codex_config_types::McpServerConfig;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::McpServerRefreshConfig;
-use codex_protocol::protocol::Op;
-use thread_service_api::LiveThreadRegistry;
-use thread_service::ThreadService;
-use thread_service::config::Config;
 use futures::future::BoxFuture;
+use protocol::ThreadId;
+use protocol::protocol::McpServerRefreshConfig;
+use protocol::protocol::Op;
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
+use thread_service::ThreadService;
+use thread_service::config::Config;
+use thread_service_api::LiveThreadRegistry;
 use tracing::warn;
 
 /// Runtime capability needed to plan and queue MCP refreshes for live threads.
@@ -154,31 +154,29 @@ where
 mod tests {
     use super::*;
     use crate::extensions::FileSubscriptionThreadHost;
-    use crate::extensions::GuardianAgentSpawnHost;
-    use crate::extensions::guardian_agent_spawner;
     use crate::extensions::thread_extensions;
     use codex_arg0::Arg0DispatchPaths;
-    use codex_config_loader::LoaderOverrides;
-    use codex_config_loader::ThreadConfigContext;
-    use codex_config_loader::ThreadConfigLoadError;
-    use codex_config_loader::ThreadConfigLoadErrorCode;
-    use codex_config_loader::ThreadConfigLoader;
-    use codex_config_loader::ThreadConfigSource;
-    use codex_config_requirements::CloudRequirementsLoader;
+    use config_service::LoaderOverrides;
+    use config_service::ThreadConfigContext;
+    use config_service::ThreadConfigLoadError;
+    use config_service::ThreadConfigLoadErrorCode;
+    use config_service::ThreadConfigLoader;
+    use config_service::ThreadConfigSource;
+    use config_service::CloudRequirementsLoader;
     use codex_exec_server::EnvironmentManager;
     use codex_file_watcher::FileWatcher;
     use codex_login::AuthManager;
     use codex_login::CodexAuth;
-    use codex_protocol::protocol::SessionSource;
-    use thread_service::config::ConfigOverrides;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::SessionSource;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Weak;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use tempfile::TempDir;
+    use thread_service::config::ConfigOverrides;
 
     #[tokio::test]
     async fn strict_refresh_reports_thread_planning_failures() -> anyhow::Result<()> {
@@ -233,7 +231,7 @@ mod tests {
             .await?;
 
         let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
-        let state_db = codex_rollout::state_db::init(&good_config)
+        let state_db = rollout::state_db::init(&good_config)
             .await
             .expect("refresh tests require state db");
         let thread_store = crate::thread_store_factory::thread_store_from_config(
@@ -250,13 +248,13 @@ mod tests {
                     thread_service_api.clone(),
                 ));
                 let approval_service = Arc::new(approval_service::ApprovalService);
-                let mcp_service =
-                    Arc::new(mcp_service::McpService::new(approval_service.clone()));
+                let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
                 let tool_service = Arc::new(codex_tool_service::ToolService::new(
                     approval_service,
-                    Arc::new(codex_command_service::CommandService::new()),
+                    Arc::new(command_service::CommandService::new()),
                     Arc::new(goal_service::GoalService),
                     mcp_service.clone(),
+                    Arc::new(permissions_service::PermissionsService),
                     workflow_service,
                     thread_service_api,
                 ));
@@ -264,7 +262,6 @@ mod tests {
                     auth_manager.clone(),
                     codex_login::model_provider_auth_manager(Some(auth_manager.clone())),
                 );
-                let guardian_agent_host: Weak<dyn GuardianAgentSpawnHost> = thread_service.clone();
                 let file_subscription_host: Weak<dyn FileSubscriptionThreadHost> =
                     Weak::<ThreadService>::clone(thread_service);
                 ThreadService::new_with_openai_file_uploader(
@@ -273,7 +270,6 @@ mod tests {
                     SessionSource::Exec,
                     Arc::new(EnvironmentManager::default_for_tests()),
                     thread_extensions(
-                        guardian_agent_spawner(guardian_agent_host),
                         Arc::new(FileWatcher::noop()),
                         file_subscription_host,
                         thread_watch_manager.clone(),
@@ -281,31 +277,29 @@ mod tests {
                     /*analytics_events_client*/ None,
                     thread_store,
                     Some(state_db.clone()),
-                    Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+                    Arc::new(thread_store::DefaultLiveThreadFactory),
                     "11111111-1111-4111-8111-111111111111".to_string(),
                     /*attestation_provider*/ None,
-                    Arc::new(codex_model_provider::DefaultModelProviderFactory),
+                    Arc::new(model_service::DefaultModelProviderFactory),
                     Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
-                    Arc::new(codex_command_service::CommandService::new()),
+                    Arc::new(command_service::CommandService::new()),
                     Arc::new(approval_service::ApprovalService),
                     Arc::new(goal_service::GoalService),
-                    Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-                    Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+                    Arc::new(mcp_service::DefaultMcpAuthRuntime),
+                    Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),
                     Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
-                    Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
-                    Arc::new(codex_api::DefaultApiRuntimeFactory),
+                    Arc::new(permissions_service::StarlarkExecPolicyLoader),
+                    Arc::new(model_service::DefaultApiRuntimeFactory),
                     Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
                     Arc::new(codex_sandboxing::SandboxManager::new()),
                     Arc::new(codex_otel::OtelSessionTelemetryFactory),
-                    Arc::new(codex_hooks::HooksRuntimeFactory),
+                    Arc::new(hooks::HooksRuntimeFactory),
                     Arc::new(memory_service::FsMemoryToolDeveloperInstructionsProvider),
-                    Arc::new(
-                        codex_core_skills::SkillsManager::new_with_restriction_product(
-                            good_config.codex_home.clone(),
-                            good_config.bundled_skills_enabled(),
-                            SessionSource::Exec.restriction_product(),
-                        ),
-                    ),
+                    Arc::new(skill_service::SkillService::new_with_restriction_product(
+                        good_config.codex_home.clone(),
+                        good_config.bundled_skills_enabled(),
+                        SessionSource::Exec.restriction_product(),
+                    )),
                     Arc::new(
                         plugin_service::PluginsManager::new_with_restriction_product(
                             good_config.codex_home.to_path_buf(),

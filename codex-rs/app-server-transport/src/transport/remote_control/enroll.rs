@@ -2,11 +2,11 @@ use super::protocol::EnrollRemoteServerRequest;
 use super::protocol::EnrollRemoteServerResponse;
 use super::protocol::RemoteControlTarget;
 use axum::http::HeaderMap;
-use codex_api_provider::SharedAuthProvider;
 use codex_login::default_client::build_reqwest_client;
-use codex_state::RemoteControlEnrollmentRecord;
-use codex_state::StateRuntime;
 use gethostname::gethostname;
+use model_service_api::SharedAuthProvider;
+use state_api::RemoteControlEnrollmentRecord;
+use state_api::StateDbRuntime;
 use std::io;
 use std::io::ErrorKind;
 use tracing::info;
@@ -35,7 +35,7 @@ pub(super) struct RemoteControlConnectionAuth {
 }
 
 pub(super) async fn load_persisted_remote_control_enrollment(
-    state_db: Option<&StateRuntime>,
+    state_db: Option<&dyn StateDbRuntime>,
     remote_control_target: &RemoteControlTarget,
     account_id: &str,
     app_server_client_name: Option<&str>,
@@ -95,7 +95,7 @@ pub(super) async fn load_persisted_remote_control_enrollment(
 }
 
 pub(super) async fn update_persisted_remote_control_enrollment(
-    state_db: Option<&StateRuntime>,
+    state_db: Option<&dyn StateDbRuntime>,
     remote_control_target: &RemoteControlTarget,
     account_id: &str,
     app_server_client_name: Option<&str>,
@@ -263,9 +263,9 @@ pub(super) async fn enroll_remote_control_server(
 mod tests {
     use super::*;
     use crate::transport::remote_control::protocol::normalize_remote_control_url;
-    use codex_state::StateRuntime;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use state::StateRuntime;
     use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::io::AsyncBufReadExt;
@@ -460,7 +460,7 @@ mod tests {
         let err = enroll_remote_control_server(
             &remote_control_target,
             &RemoteControlConnectionAuth {
-                auth_provider: codex_api_auth::unauthenticated_auth_provider(),
+                auth_provider: model_service_api::unauthenticated_auth_provider(),
                 account_id: "account_id".to_string(),
             },
             "11111111-1111-4111-8111-111111111111",

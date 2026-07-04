@@ -1,10 +1,10 @@
 use std::path::Path;
 
 use anyhow::Result;
-use codex_state::StateRuntime;
-use codex_state::state_db_path;
 use predicates::str::contains;
 use sqlx::SqlitePool;
+use state::StateRuntime;
+use state::state_db_path;
 use tempfile::TempDir;
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {

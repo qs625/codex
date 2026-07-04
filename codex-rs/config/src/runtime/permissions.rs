@@ -23,19 +23,19 @@ use codex_network_proxy_api::NetworkMode;
 use codex_network_proxy_api::NetworkProxyConfig;
 #[cfg(test)]
 use codex_network_proxy_api::NetworkUnixSocketPermission as ProxyNetworkUnixSocketPermission;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::FileSystemSpecialPath;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::permissions::project_roots_glob_pattern;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+use protocol::models::PermissionProfile;
+use protocol::permissions::FileSystemAccessMode;
+use protocol::permissions::FileSystemPath;
+use protocol::permissions::FileSystemSandboxEntry;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::FileSystemSpecialPath;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::permissions::project_roots_glob_pattern;
 
 use super::ProjectConfig;
 

@@ -1,5 +1,5 @@
 use super::*;
-use codex_protocol::protocol::RateLimitReachedType;
+use protocol::protocol::RateLimitReachedType;
 
 fn snapshot(
     primary_used_percent: Option<f64>,

@@ -1,37 +1,37 @@
 use anyhow::Result;
+use app_server_protocol::AppConfig;
+use app_server_protocol::AppToolApproval;
+use app_server_protocol::AppsConfig;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::ConfigBatchWriteParams;
+use app_server_protocol::ConfigEdit;
+use app_server_protocol::ConfigLayerSource;
+use app_server_protocol::ConfigReadParams;
+use app_server_protocol::ConfigReadResponse;
+use app_server_protocol::ConfigValueWriteParams;
+use app_server_protocol::ConfigWriteResponse;
+use app_server_protocol::ForcedChatgptWorkspaceIds;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::MergeStrategy;
+use app_server_protocol::RequestId;
+use app_server_protocol::SandboxMode;
+use app_server_protocol::ToolsV2;
+use app_server_protocol::WriteStatus;
 use app_test_support::McpProcess;
 use app_test_support::test_path_buf_with_windows;
 use app_test_support::test_tmp_path_buf;
 use app_test_support::to_response;
-use codex_app_server_protocol::AppConfig;
-use codex_app_server_protocol::AppToolApproval;
-use codex_app_server_protocol::AppsConfig;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::ConfigBatchWriteParams;
-use codex_app_server_protocol::ConfigEdit;
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_app_server_protocol::ConfigReadParams;
-use codex_app_server_protocol::ConfigReadResponse;
-use codex_app_server_protocol::ConfigValueWriteParams;
-use codex_app_server_protocol::ConfigWriteResponse;
-use codex_app_server_protocol::ForcedChatgptWorkspaceIds;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::MergeStrategy;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::SandboxMode;
-use codex_app_server_protocol::ToolsV2;
-use codex_app_server_protocol::WriteStatus;
-use codex_protocol::config_types::TrustLevel;
-use codex_protocol::config_types::WebSearchContextSize;
-use codex_protocol::config_types::WebSearchLocation;
-use codex_protocol::config_types::WebSearchToolConfig;
-use codex_protocol::openai_models::ReasoningEffort;
-use thread_service::config::set_project_trust_level;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
+use protocol::config_types::TrustLevel;
+use protocol::config_types::WebSearchContextSize;
+use protocol::config_types::WebSearchLocation;
+use protocol::config_types::WebSearchToolConfig;
+use protocol::openai_models::ReasoningEffort;
 use serde_json::json;
 use tempfile::TempDir;
+use thread_service::config::set_project_trust_level;
 use tokio::time::timeout;
 
 // Bazel CI can spend tens of seconds starting app-server subprocesses or
@@ -958,7 +958,7 @@ async fn config_batch_write_updates_multiple_desktop_settings() -> Result<()> {
 }
 
 fn assert_layers_user_then_optional_system(
-    layers: &[codex_app_server_protocol::ConfigLayer],
+    layers: &[app_server_protocol::ConfigLayer],
     user_file: AbsolutePathBuf,
 ) -> Result<()> {
     let mut first_index = 0;
@@ -984,7 +984,7 @@ fn assert_layers_user_then_optional_system(
 }
 
 fn assert_layers_managed_user_then_optional_system(
-    layers: &[codex_app_server_protocol::ConfigLayer],
+    layers: &[app_server_protocol::ConfigLayer],
     managed_file: AbsolutePathBuf,
     user_file: AbsolutePathBuf,
 ) -> Result<()> {

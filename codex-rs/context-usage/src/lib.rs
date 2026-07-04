@@ -3,30 +3,30 @@ use codex_context_manager::estimate_response_item_model_visible_bytes;
 use codex_context_manager::is_contextual_dev_message_content;
 use codex_context_manager::is_contextual_user_fragment;
 use codex_context_manager::is_contextual_user_message_content;
-use codex_core_skills_api::SkillLoadOutcome;
-use codex_core_skills_api::detect_implicit_skill_invocation_for_command;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::LocalShellAction;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;
-use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
-use codex_protocol::protocol::COLLABORATION_MODE_CLOSE_TAG;
-use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
-use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_CLOSE_TAG;
-use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
-use codex_protocol::protocol::REALTIME_CONVERSATION_CLOSE_TAG;
-use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
-use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
-use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
-use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
-use codex_protocol::protocol::ThreadContextUsageSkill;
-use codex_protocol::protocol::ThreadSkill;
-use codex_protocol::protocol::ThreadSkillKind;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::models::ContentItem;
+use protocol::models::FunctionCallOutputContentItem;
+use protocol::models::LocalShellAction;
+use protocol::models::ResponseItem;
+use protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;
+use protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
+use protocol::protocol::COLLABORATION_MODE_CLOSE_TAG;
+use protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
+use protocol::protocol::PLUGINS_INSTRUCTIONS_CLOSE_TAG;
+use protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
+use protocol::protocol::REALTIME_CONVERSATION_CLOSE_TAG;
+use protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
+use protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
+use protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadContextUsageCategoryBreakdown;
+use protocol::protocol::ThreadContextUsageLoadedSkills;
+use protocol::protocol::ThreadContextUsageSkill;
+use protocol::protocol::ThreadSkill;
+use protocol::protocol::ThreadSkillKind;
 use serde_json::Value;
+use skill_service_api::SkillLoadOutcome;
+use skill_service_api::detect_implicit_skill_invocation_for_command;
 use std::collections::HashMap;
 
 const SKILL_OPEN_TAG: &str = "<skill>";
@@ -366,7 +366,7 @@ fn extract_command_from_function_arguments(
     Some((command, workdir))
 }
 
-fn function_call_output_bytes(output: &codex_protocol::models::FunctionCallOutputPayload) -> i64 {
+fn function_call_output_bytes(output: &protocol::models::FunctionCallOutputPayload) -> i64 {
     if let Some(text) = output.body.to_text() {
         i64::try_from(text.len()).unwrap_or(i64::MAX)
     } else if let Some(items) = output.content_items() {
@@ -551,10 +551,10 @@ fn text_bytes_len(text: &str) -> i64 {
 mod tests {
     use super::classify_developer_message;
     use super::parse_explicit_skill_injections;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
-    use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
     use pretty_assertions::assert_eq;
+    use protocol::models::ContentItem;
+    use protocol::protocol::SKILLS_INSTRUCTIONS_CLOSE_TAG;
+    use protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 
     #[test]
     fn parses_explicit_skill_injections_from_mixed_contextual_message() {

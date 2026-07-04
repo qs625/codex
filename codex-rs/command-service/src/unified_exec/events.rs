@@ -1,16 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::exec_output::StreamOutput;
-use codex_protocol::models::CommandExecutionNotificationKind;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::ExecCommandBeginEvent;
-use codex_protocol::protocol::ExecCommandEndEvent;
-use codex_protocol::protocol::ExecCommandNotifyOn;
-use codex_protocol::protocol::ExecCommandSource;
-use codex_protocol::protocol::ExecCommandStatus;
-use codex_protocol::protocol::EventMsg;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::exec_output::StreamOutput;
+use protocol::models::CommandExecutionNotificationKind;
+use protocol::models::ResponseItem;
+use protocol::protocol::ExecCommandBeginEvent;
+use protocol::protocol::ExecCommandEndEvent;
+use protocol::protocol::ExecCommandNotifyOn;
+use protocol::protocol::ExecCommandSource;
+use protocol::protocol::ExecCommandStatus;
+use protocol::protocol::EventMsg;
 use codex_shell_utils::parse_command::parse_command;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use thread_service_api::ThreadSessionCapability;

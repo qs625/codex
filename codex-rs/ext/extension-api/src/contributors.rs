@@ -1,15 +1,13 @@
 use std::future::Future;
-use std::sync::Arc;
 
-use codex_protocol::items::TurnItem;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::TokenUsageInfo;
+use protocol::items::TurnItem;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::TokenUsageInfo;
 
 use crate::ExtensionData;
 
 mod prompt;
 mod thread_lifecycle;
-mod tools;
 mod turn_lifecycle;
 
 pub use prompt::PromptFragment;
@@ -17,8 +15,6 @@ pub use prompt::PromptSlot;
 pub use thread_lifecycle::ThreadResumeInput;
 pub use thread_lifecycle::ThreadStartInput;
 pub use thread_lifecycle::ThreadStopInput;
-pub use tools::ExtensionToolExecutor;
-pub use tools::ExtensionToolOutput;
 pub use turn_lifecycle::TurnAbortInput;
 pub use turn_lifecycle::TurnStartInput;
 pub use turn_lifecycle::TurnStopInput;
@@ -97,16 +93,6 @@ pub trait TokenUsageContributor: Send + Sync {
         _token_usage: &TokenUsageInfo,
     ) {
     }
-}
-
-/// Extension contribution that exposes native tools owned by a feature.
-pub trait ToolContributor: Send + Sync {
-    /// Returns the native tools visible for the supplied extension stores.
-    fn tools(
-        &self,
-        session_store: &ExtensionData,
-        thread_store: &ExtensionData,
-    ) -> Vec<Arc<dyn ExtensionToolExecutor>>;
 }
 
 /// Future returned by one claimed approval-review contribution.

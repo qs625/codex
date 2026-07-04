@@ -1,7 +1,7 @@
 use crate::ToolSpec;
-use codex_protocol::config_types::WebSearchConfig;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::openai_models::WebSearchToolType;
+use protocol::config_types::WebSearchConfig;
+use protocol::config_types::WebSearchMode;
+use protocol::openai_models::WebSearchToolType;
 
 const WEB_SEARCH_TEXT_AND_IMAGE_CONTENT_TYPES: [&str; 2] = ["text", "image"];
 

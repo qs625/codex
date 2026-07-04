@@ -6,9 +6,9 @@
 
 use super::background_requests::request_plugin_list;
 use super::*;
-use codex_app_server_protocol::PluginListResponse;
-use codex_app_server_protocol::PluginMarketplaceEntry;
-use codex_app_server_protocol::PluginSummary;
+use app_server_protocol::PluginListResponse;
+use app_server_protocol::PluginMarketplaceEntry;
+use app_server_protocol::PluginSummary;
 use plugin_service::PluginsManager;
 use plugin_service_api::PluginCapabilitySummary;
 use std::collections::HashMap;

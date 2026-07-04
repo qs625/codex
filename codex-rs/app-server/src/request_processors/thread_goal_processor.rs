@@ -1,32 +1,32 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
-use codex_protocol::protocol::validate_thread_goal_objective;
-use codex_state_api::protocol_goal_from_state;
-use codex_state_api::state_goal_status_from_protocol;
-use codex_state_api::validate_thread_goal_budget;
 use futures::future::BoxFuture;
+use protocol::protocol::validate_thread_goal_objective;
+use state_api::protocol_goal_from_state;
+use state_api::state_goal_status_from_protocol;
+use state_api::validate_thread_goal_budget;
 
 pub(crate) trait ThreadGoalRuntime: Send + Sync {
     fn live_thread_info(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, codex_protocol::error::Result<LiveThreadInfo>>;
+    ) -> BoxFuture<'_, protocol::error::Result<LiveThreadInfo>>;
 
     fn prepare_thread_external_goal_mutation(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, codex_protocol::error::Result<()>>;
+    ) -> BoxFuture<'_, protocol::error::Result<()>>;
 
     fn apply_thread_external_goal_set(
         &self,
         thread_id: ThreadId,
         external_set: ExternalGoalSet,
-    ) -> BoxFuture<'_, codex_protocol::error::Result<()>>;
+    ) -> BoxFuture<'_, protocol::error::Result<()>>;
 
     fn apply_thread_external_goal_clear(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, codex_protocol::error::Result<()>>;
+    ) -> BoxFuture<'_, protocol::error::Result<()>>;
 }
 
 impl<T> ThreadGoalRuntime for T
@@ -36,14 +36,14 @@ where
     fn live_thread_info(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, codex_protocol::error::Result<LiveThreadInfo>> {
+    ) -> BoxFuture<'_, protocol::error::Result<LiveThreadInfo>> {
         Box::pin(LiveThreadRegistry::live_thread_info(self, thread_id))
     }
 
     fn prepare_thread_external_goal_mutation(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, codex_protocol::error::Result<()>> {
+    ) -> BoxFuture<'_, protocol::error::Result<()>> {
         Box::pin(LiveThreadRegistry::prepare_thread_external_goal_mutation(
             self, thread_id,
         ))
@@ -53,7 +53,7 @@ where
         &self,
         thread_id: ThreadId,
         external_set: ExternalGoalSet,
-    ) -> BoxFuture<'_, codex_protocol::error::Result<()>> {
+    ) -> BoxFuture<'_, protocol::error::Result<()>> {
         Box::pin(LiveThreadRegistry::apply_thread_external_goal_set(
             self,
             thread_id,
@@ -64,7 +64,7 @@ where
     fn apply_thread_external_goal_clear(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, codex_protocol::error::Result<()>> {
+    ) -> BoxFuture<'_, protocol::error::Result<()>> {
         Box::pin(LiveThreadRegistry::apply_thread_external_goal_clear(
             self, thread_id,
         ))
@@ -174,7 +174,7 @@ impl ThreadGoalRequestProcessor {
                     "ephemeral thread does not support goals: {thread_id}"
                 ))
             })?,
-            None => codex_rollout::find_thread_path_by_id_str(
+            None => rollout::find_thread_path_by_id_str(
                 &self.config.codex_home,
                 &thread_id.to_string(),
                 self.state_db.as_deref(),
@@ -186,7 +186,7 @@ impl ThreadGoalRequestProcessor {
             .ok_or_else(|| invalid_request(format!("thread not found: {thread_id}")))?,
         };
         reconcile_rollout(
-            Some(&state_db),
+            Some(state_db.as_ref()),
             rollout_path.as_path(),
             self.config.model_provider_id.as_str(),
             /*builder*/ None,
@@ -233,7 +233,7 @@ impl ThreadGoalRequestProcessor {
                 state_db
                     .update_thread_goal(
                         thread_id,
-                        codex_state::ThreadGoalUpdate {
+                        state::ThreadGoalUpdate {
                             objective: Some(objective.to_string()),
                             status,
                             token_budget: params.token_budget,
@@ -255,7 +255,7 @@ impl ThreadGoalRequestProcessor {
                     .replace_thread_goal(
                         thread_id,
                         objective,
-                        status.unwrap_or(codex_state::ThreadGoalStatus::Active),
+                        status.unwrap_or(state::ThreadGoalStatus::Active),
                         params.token_budget.flatten(),
                     )
                     .await
@@ -275,7 +275,7 @@ impl ThreadGoalRequestProcessor {
             state_db
                 .update_thread_goal(
                     thread_id,
-                    codex_state::ThreadGoalUpdate {
+                    state::ThreadGoalUpdate {
                         objective: None,
                         status,
                         token_budget: params.token_budget,
@@ -351,7 +351,7 @@ impl ThreadGoalRequestProcessor {
                     "ephemeral thread does not support goals: {thread_id}"
                 ))
             })?,
-            None => codex_rollout::find_thread_path_by_id_str(
+            None => rollout::find_thread_path_by_id_str(
                 &self.config.codex_home,
                 &thread_id.to_string(),
                 self.state_db.as_deref(),
@@ -363,7 +363,7 @@ impl ThreadGoalRequestProcessor {
             .ok_or_else(|| invalid_request(format!("thread not found: {thread_id}")))?,
         };
         reconcile_rollout(
-            Some(&state_db),
+            Some(state_db.as_ref()),
             rollout_path.as_path(),
             self.config.model_provider_id.as_str(),
             /*builder*/ None,
@@ -423,7 +423,7 @@ impl ThreadGoalRequestProcessor {
                 )));
             }
         } else {
-            codex_rollout::find_thread_path_by_id_str(
+            rollout::find_thread_path_by_id_str(
                 &self.config.codex_home,
                 &thread_id.to_string(),
                 self.state_db.as_deref(),
@@ -522,7 +522,7 @@ impl ThreadGoalRequestProcessor {
     }
 }
 
-pub(super) fn api_thread_goal_from_state(goal: codex_state::ThreadGoal) -> ThreadGoal {
+pub(super) fn api_thread_goal_from_state(goal: state::ThreadGoal) -> ThreadGoal {
     protocol_goal_from_state(goal).into()
 }
 

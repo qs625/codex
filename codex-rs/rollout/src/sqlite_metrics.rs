@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_metrics_api::MetricsSink;
-use codex_metrics_api::ORIGINATOR_TAG;
-use codex_metrics_api::bounded_originator_tag_value;
-use codex_state::DbTelemetry;
-use codex_state::DbTelemetryHandle;
+use metrics_api::MetricsSink;
+use metrics_api::ORIGINATOR_TAG;
+use metrics_api::bounded_originator_tag_value;
+use state::DbTelemetry;
+use state::DbTelemetryHandle;
 
 struct MetricsDbTelemetry {
     metrics: Arc<dyn MetricsSink>,

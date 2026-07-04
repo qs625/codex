@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
-use codex_core_skills_api::collect_tool_mentions_from_messages_with_sigil;
-use codex_core_skills_api::injection::ToolMentionKind;
-use codex_core_skills_api::injection::plugin_config_name_from_path;
-use codex_core_skills_api::injection::tool_kind_for_path;
-use codex_protocol::user_input::UserInput;
 use plugin_service_api::PLUGIN_TEXT_MENTION_SIGIL;
 use plugin_service_api::PluginCapabilitySummary;
+use protocol::user_input::UserInput;
+use skill_service_api::collect_tool_mentions_from_messages_with_sigil;
+use skill_service_api::injection::ToolMentionKind;
+use skill_service_api::injection::plugin_config_name_from_path;
+use skill_service_api::injection::tool_kind_for_path;
 
 pub(crate) fn collect_explicit_plugin_mentions(
     input: &[UserInput],

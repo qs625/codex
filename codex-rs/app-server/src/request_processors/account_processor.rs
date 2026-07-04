@@ -1,7 +1,9 @@
 use super::*;
-use plugin_service::RemotePluginAuth;
 use codex_login::default_client::get_codex_user_agent;
 use futures::future::BoxFuture;
+use model_service_api::SharedModelServiceApi;
+use plugin_service::RemotePluginAuth;
+use skill_service_api::SharedSkillServiceApi;
 
 // Duration before a browser ChatGPT login attempt is abandoned.
 const LOGIN_CHATGPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -64,24 +66,29 @@ fn remote_plugin_auth_from_codex_auth(auth: Option<CodexAuth>) -> Option<RemoteP
 pub(crate) trait AccountRuntime: Send + Sync {
     fn maybe_refresh_remote_installed_plugins_cache_for_current_config(
         self: Arc<Self>,
+        model_service: SharedModelServiceApi,
         config_manager: ConfigManager,
         plugins_manager: Arc<PluginsManager>,
         auth: Option<CodexAuth>,
+        skill_service: SharedSkillServiceApi,
     ) -> BoxFuture<'static, ()>;
 
     fn spawn_effective_plugins_changed_task(
         self: Arc<Self>,
         plugins_manager: Arc<PluginsManager>,
         config_manager: ConfigManager,
+        skill_service: SharedSkillServiceApi,
     );
 }
 
 impl AccountRuntime for ThreadService {
     fn maybe_refresh_remote_installed_plugins_cache_for_current_config(
         self: Arc<Self>,
+        model_service: SharedModelServiceApi,
         config_manager: ConfigManager,
         plugins_manager: Arc<PluginsManager>,
         auth: Option<CodexAuth>,
+        skill_service: SharedSkillServiceApi,
     ) -> BoxFuture<'static, ()> {
         Box::pin(async move {
             match config_manager
@@ -94,12 +101,14 @@ impl AccountRuntime for ThreadService {
                     let refresh_config_manager = config_manager.clone();
                     plugin_service::maybe_start_remote_installed_plugins_cache_refresh(
                         Arc::clone(&plugins_manager),
+                        model_service,
                         &config.plugins_config_input(),
                         remote_plugin_auth_from_codex_auth(auth),
                         Some(Arc::new(move || {
                             Arc::clone(&refresh_runtime).spawn_effective_plugins_changed_task(
                                 Arc::clone(&refresh_plugins_manager),
                                 refresh_config_manager.clone(),
+                                Arc::clone(&skill_service),
                             );
                         })),
                     );
@@ -117,10 +126,11 @@ impl AccountRuntime for ThreadService {
         self: Arc<Self>,
         plugins_manager: Arc<PluginsManager>,
         config_manager: ConfigManager,
+        skill_service: SharedSkillServiceApi,
     ) {
         tokio::spawn(async move {
             plugins_manager.clear_cache();
-            self.skills_manager().clear_cache();
+            skill_service.clear_cache();
             if self.list_thread_ids().await.is_empty() {
                 return;
             }
@@ -139,6 +149,8 @@ impl Drop for ActiveLogin {
 pub(crate) struct AccountRequestProcessor {
     auth_manager: Arc<AuthManager>,
     account_runtime: Arc<dyn AccountRuntime>,
+    model_service: SharedModelServiceApi,
+    skill_service: SharedSkillServiceApi,
     plugins_manager: Arc<PluginsManager>,
     outgoing: Arc<OutgoingMessageSender>,
     config: Arc<Config>,
@@ -150,6 +162,8 @@ impl AccountRequestProcessor {
     pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
         account_runtime: Arc<R>,
+        model_service: SharedModelServiceApi,
+        skill_service: SharedSkillServiceApi,
         plugins_manager: Arc<PluginsManager>,
         outgoing: Arc<OutgoingMessageSender>,
         config: Arc<Config>,
@@ -162,6 +176,8 @@ impl AccountRequestProcessor {
         Self {
             auth_manager,
             account_runtime,
+            model_service,
+            skill_service,
             plugins_manager,
             outgoing,
             config,
@@ -426,6 +442,8 @@ impl AccountRequestProcessor {
         let outgoing_clone = self.outgoing.clone();
         let config_manager = self.config_manager.clone();
         let account_runtime = Arc::clone(&self.account_runtime);
+        let model_service = Arc::clone(&self.model_service);
+        let skill_service = Arc::clone(&self.skill_service);
         let plugins_manager = Arc::clone(&self.plugins_manager);
         let auth_manager = Arc::clone(&self.auth_manager);
         let chatgpt_base_url = self.config.chatgpt_base_url.clone();
@@ -450,6 +468,8 @@ impl AccountRequestProcessor {
                 &outgoing_clone,
                 config_manager,
                 account_runtime,
+                model_service,
+                skill_service,
                 plugins_manager,
                 auth_manager,
                 chatgpt_base_url,
@@ -506,6 +526,8 @@ impl AccountRequestProcessor {
         let outgoing_clone = self.outgoing.clone();
         let config_manager = self.config_manager.clone();
         let account_runtime = Arc::clone(&self.account_runtime);
+        let model_service = Arc::clone(&self.model_service);
+        let skill_service = Arc::clone(&self.skill_service);
         let plugins_manager = Arc::clone(&self.plugins_manager);
         let auth_manager = Arc::clone(&self.auth_manager);
         let chatgpt_base_url = self.config.chatgpt_base_url.clone();
@@ -527,6 +549,8 @@ impl AccountRequestProcessor {
                 &outgoing_clone,
                 config_manager,
                 account_runtime,
+                model_service,
+                skill_service,
                 plugins_manager,
                 auth_manager,
                 chatgpt_base_url,
@@ -650,9 +674,11 @@ impl AccountRequestProcessor {
     async fn send_login_success_notifications(&self, login_id: Option<Uuid>) {
         Arc::clone(&self.account_runtime)
             .maybe_refresh_remote_installed_plugins_cache_for_current_config(
+                Arc::clone(&self.model_service),
                 self.config_manager.clone(),
                 Arc::clone(&self.plugins_manager),
                 self.auth_manager.auth_cached(),
+                Arc::clone(&self.skill_service),
             )
             .await;
 
@@ -678,6 +704,8 @@ impl AccountRequestProcessor {
         outgoing: &OutgoingMessageSender,
         config_manager: ConfigManager,
         account_runtime: Arc<dyn AccountRuntime>,
+        model_service: SharedModelServiceApi,
+        skill_service: SharedSkillServiceApi,
         plugins_manager: Arc<PluginsManager>,
         auth_manager: Arc<AuthManager>,
         chatgpt_base_url: String,
@@ -705,9 +733,11 @@ impl AccountRequestProcessor {
             let auth = auth_manager.auth_cached();
             account_runtime
                 .maybe_refresh_remote_installed_plugins_cache_for_current_config(
+                    model_service,
                     config_manager.clone(),
                     Arc::clone(&plugins_manager),
                     auth.clone(),
+                    skill_service,
                 )
                 .await;
             let payload_v2 = AccountUpdatedNotification {
@@ -738,9 +768,11 @@ impl AccountRequestProcessor {
 
         Arc::clone(&self.account_runtime)
             .maybe_refresh_remote_installed_plugins_cache_for_current_config(
+                Arc::clone(&self.model_service),
                 self.config_manager.clone(),
                 Arc::clone(&self.plugins_manager),
                 self.auth_manager.auth_cached(),
+                Arc::clone(&self.skill_service),
             )
             .await;
 

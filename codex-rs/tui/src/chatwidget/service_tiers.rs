@@ -4,9 +4,9 @@ use super::ChatWidget;
 use crate::app_command::AppCommand;
 use crate::app_event::AppEvent;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
+use ::protocol::config_types::ServiceTier;
+use ::protocol::openai_models::SPEED_TIER_FAST;
 use codex_features::Feature;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::openai_models::SPEED_TIER_FAST;
 
 impl ChatWidget {
     pub(crate) fn set_service_tier(&mut self, service_tier: Option<String>) {

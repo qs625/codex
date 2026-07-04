@@ -11,7 +11,7 @@ use codex_file_watcher::FileWatcher;
 fn make_thread_store(registry: Arc<FsSubscriptionRegistry>) -> ExtensionData {
     let thread_store = ExtensionData::new("thread");
     thread_store.insert(ThreadSubscriptionState {
-        thread_id: codex_protocol::ThreadId::new(),
+        thread_id: protocol::ThreadId::new(),
         registry,
     });
     thread_store

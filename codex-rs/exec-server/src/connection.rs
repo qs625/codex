@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use axum::extract::ws::Message as AxumWebSocketMessage;
 use axum::extract::ws::WebSocket as AxumWebSocket;
-use codex_jsonrpc_types::JSONRPCMessage;
 use futures::Sink;
 use futures::SinkExt;
 use futures::Stream;
 use futures::StreamExt;
+use jsonrpc_types::JSONRPCMessage;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tokio::process::Child;

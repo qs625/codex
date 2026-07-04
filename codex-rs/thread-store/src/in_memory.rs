@@ -6,10 +6,10 @@ use std::sync::MutexGuard;
 use std::sync::OnceLock;
 
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
+use protocol::ThreadId;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SandboxPolicy;
 
 use crate::AppendThreadItemsParams;
 use crate::ArchiveThreadParams;
@@ -423,7 +423,7 @@ fn stored_thread_from_state(
     })
 }
 
-fn git_info_from_patch(patch: &ThreadMetadataPatch) -> Option<codex_protocol::protocol::GitInfo> {
+fn git_info_from_patch(patch: &ThreadMetadataPatch) -> Option<protocol::protocol::GitInfo> {
     let git_info = patch.git_info.as_ref()?;
     let sha = git_info.sha.clone().flatten();
     let branch = git_info.branch.clone().flatten();
@@ -431,7 +431,7 @@ fn git_info_from_patch(patch: &ThreadMetadataPatch) -> Option<codex_protocol::pr
     if sha.is_none() && branch.is_none() && origin_url.is_none() {
         return None;
     }
-    Some(codex_protocol::protocol::GitInfo {
+    Some(protocol::protocol::GitInfo {
         commit_hash: sha.as_deref().map(codex_git_info::GitSha::new),
         branch,
         repository_url: origin_url,

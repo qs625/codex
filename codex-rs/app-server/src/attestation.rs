@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use app_server_protocol::AttestationGenerateParams;
+use app_server_protocol::AttestationGenerateResponse;
+use app_server_protocol::ServerRequestPayload;
 use axum::http::HeaderValue;
-use codex_app_server_protocol::AttestationGenerateParams;
-use codex_app_server_protocol::AttestationGenerateResponse;
-use codex_app_server_protocol::ServerRequestPayload;
+use serde::Serialize;
 use thread_service::AttestationContext;
 use thread_service::AttestationProvider;
 use thread_service::GenerateAttestationFuture;
-use serde::Serialize;
 use tokio::time::Duration;
 use tokio::time::timeout;
 use tracing::warn;
@@ -60,7 +60,7 @@ impl AttestationProvider for AppServerAttestationProvider {
 async fn request_attestation_header_value_with_timeout(
     outgoing: Arc<OutgoingMessageSender>,
     thread_state_manager: ThreadStateManager,
-    thread_id: codex_protocol::ThreadId,
+    thread_id: protocol::ThreadId,
     timeout_duration: Duration,
 ) -> Option<String> {
     let connection_id = thread_state_manager

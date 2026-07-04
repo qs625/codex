@@ -1,9 +1,9 @@
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::GuardianAssessmentOutcome;
-use codex_protocol::protocol::GuardianRiskLevel;
-use codex_protocol::protocol::GuardianUserAuthorization;
-use codex_protocol::user_input::UserInput;
 use codex_utils_output_truncation::approx_token_count;
+use protocol::models::ResponseItem;
+use protocol::protocol::GuardianAssessmentOutcome;
+use protocol::protocol::GuardianRiskLevel;
+use protocol::protocol::GuardianUserAuthorization;
+use protocol::user_input::UserInput;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -577,9 +577,9 @@ pub fn guardian_policy_prompt_with_config(tenant_policy_config: &str) -> String 
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::protocol::GuardianAssessmentOutcome;
-    use codex_protocol::protocol::GuardianRiskLevel;
-    use codex_protocol::protocol::GuardianUserAuthorization;
+    use protocol::protocol::GuardianAssessmentOutcome;
+    use protocol::protocol::GuardianRiskLevel;
+    use protocol::protocol::GuardianUserAuthorization;
 
     use super::GuardianAssessment;
     use super::GuardianTranscriptEntry;
@@ -590,9 +590,9 @@ mod tests {
     use super::render_guardian_transcript_entries;
     use crate::AUTO_REVIEW_DENIED_ACTION_APPROVAL_DEVELOPER_PREFIX;
     use crate::guardian_truncate_text;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::FunctionCallOutputPayload;
-    use codex_protocol::models::ResponseItem;
+    use protocol::models::ContentItem;
+    use protocol::models::FunctionCallOutputPayload;
+    use protocol::models::ResponseItem;
 
     #[test]
     fn build_guardian_transcript_keeps_original_numbering() {

@@ -17,8 +17,8 @@ pub(crate) mod status {
     pub(crate) use codex_agent_runtime::is_final;
 }
 
-pub(crate) use codex_protocol::protocol::AgentStatus;
 pub(crate) use control::AgentControl;
+pub(crate) use protocol::protocol::AgentStatus;
 pub(crate) use registry::AgentMode;
 pub(crate) use registry::SpawnAgentOptions;
 pub(crate) use registry::exceeds_thread_spawn_depth_limit;

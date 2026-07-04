@@ -1,12 +1,10 @@
 use super::emit_turn_memory_metric;
 use super::emit_turn_network_proxy_metric;
-use codex_metrics_api::TURN_MEMORY_METRIC;
-use codex_metrics_api::TURN_NETWORK_PROXY_METRIC;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::SessionTelemetry;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::SessionSource;
+use metrics_api::TURN_MEMORY_METRIC;
+use metrics_api::TURN_NETWORK_PROXY_METRIC;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use opentelemetry_sdk::metrics::data::AggregatedMetrics;
@@ -14,6 +12,8 @@ use opentelemetry_sdk::metrics::data::Metric;
 use opentelemetry_sdk::metrics::data::MetricData;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::protocol::SessionSource;
 use std::collections::BTreeMap;
 
 fn test_session_telemetry() -> SessionTelemetry {

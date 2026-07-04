@@ -1,8 +1,8 @@
 use crate::metrics::Result;
 use crate::metrics::validation::validate_tag_key;
 use crate::metrics::validation::validate_tag_value;
-pub use codex_metrics_api::ORIGINATOR_TAG;
-pub use codex_metrics_api::bounded_originator_tag_value;
+pub use metrics_api::ORIGINATOR_TAG;
+pub use metrics_api::bounded_originator_tag_value;
 
 pub const APP_VERSION_TAG: &str = "app.version";
 pub const AUTH_MODE_TAG: &str = "auth_mode";

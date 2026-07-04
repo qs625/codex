@@ -1,7 +1,7 @@
 //! Helpers for deciding which buffered events to replay when switching threads.
 
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
 
 use super::ThreadBufferedEvent;
 use super::ThreadEventSnapshot;

@@ -1,12 +1,12 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-metrics-api"
+name = "metrics-api"
 version.workspace = true
 
 [lib]
 doctest = false
-name = "codex_metrics_api"
+name = "metrics_api"
 path = "src/lib.rs"
 
 [lints]

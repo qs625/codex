@@ -14,7 +14,7 @@ pub(crate) trait ThreadFeedbackRuntime: Send + Sync {
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<Option<PathBuf>>>;
 
-    fn session_source(&self) -> codex_protocol::protocol::SessionSource;
+    fn session_source(&self) -> protocol::protocol::SessionSource;
 }
 
 impl<T> ThreadFeedbackRuntime for T
@@ -43,7 +43,7 @@ where
         ))
     }
 
-    fn session_source(&self) -> codex_protocol::protocol::SessionSource {
+    fn session_source(&self) -> protocol::protocol::SessionSource {
         LiveThreadRegistry::session_source(self)
     }
 }
@@ -153,8 +153,8 @@ impl FeedbackRequestProcessor {
                         let mut thread_ids = vec![conversation_id];
                         if let Some(state_db_ctx) = state_db_ctx.as_ref() {
                             for status in [
-                                codex_state::DirectionalThreadSpawnEdgeStatus::Open,
-                                codex_state::DirectionalThreadSpawnEdgeStatus::Closed,
+                                state::DirectionalThreadSpawnEdgeStatus::Open,
+                                state::DirectionalThreadSpawnEdgeStatus::Closed,
                             ] {
                                 match state_db_ctx
                                     .list_thread_spawn_descendants_with_status(

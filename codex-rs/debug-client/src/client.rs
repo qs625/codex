@@ -15,24 +15,24 @@ use std::sync::mpsc::Sender;
 
 use anyhow::Context;
 use anyhow::Result;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientNotification;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::CommandExecutionApprovalDecision;
-use codex_app_server_protocol::FileChangeApprovalDecision;
-use codex_app_server_protocol::InitializeCapabilities;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCRequest;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadResumeParams;
-use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::UserInput;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientNotification;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::CommandExecutionApprovalDecision;
+use app_server_protocol::FileChangeApprovalDecision;
+use app_server_protocol::InitializeCapabilities;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCRequest;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::UserInput;
 use serde::Serialize;
 
 use crate::output::Output;
@@ -95,7 +95,7 @@ impl AppServerClient {
         let request_id = self.next_request_id();
         let request = ClientRequest::Initialize {
             request_id: request_id.clone(),
-            params: codex_app_server_protocol::InitializeParams {
+            params: app_server_protocol::InitializeParams {
                 client_info: ClientInfo {
                     name: "debug-client".to_string(),
                     title: Some("Debug Client".to_string()),
@@ -111,7 +111,7 @@ impl AppServerClient {
 
         self.send(&request)?;
         let response = self.read_until_response(&request_id)?;
-        let _parsed: codex_app_server_protocol::InitializeResponse =
+        let _parsed: app_server_protocol::InitializeResponse =
             serde_json::from_value(response.result).context("decode initialize response")?;
         let initialized = ClientNotification::Initialized;
         self.send(&initialized)?;
@@ -330,24 +330,21 @@ fn handle_server_request(
     request: JSONRPCRequest,
     stdin: &Arc<Mutex<Option<ChildStdin>>>,
 ) -> Result<()> {
-    let Ok(server_request) = codex_app_server_protocol::ServerRequest::try_from(request) else {
+    let Ok(server_request) = app_server_protocol::ServerRequest::try_from(request) else {
         return Ok(());
     };
 
     match server_request {
-        codex_app_server_protocol::ServerRequest::CommandExecutionRequestApproval {
-            request_id,
-            ..
+        app_server_protocol::ServerRequest::CommandExecutionRequestApproval {
+            request_id, ..
         } => {
-            let response = codex_app_server_protocol::CommandExecutionRequestApprovalResponse {
+            let response = app_server_protocol::CommandExecutionRequestApprovalResponse {
                 decision: CommandExecutionApprovalDecision::Decline,
             };
             send_jsonrpc_response(stdin, request_id, response)
         }
-        codex_app_server_protocol::ServerRequest::FileChangeRequestApproval {
-            request_id, ..
-        } => {
-            let response = codex_app_server_protocol::FileChangeRequestApprovalResponse {
+        app_server_protocol::ServerRequest::FileChangeRequestApproval { request_id, .. } => {
+            let response = app_server_protocol::FileChangeRequestApprovalResponse {
                 decision: FileChangeApprovalDecision::Decline,
             };
             send_jsonrpc_response(stdin, request_id, response)

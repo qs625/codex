@@ -1,6 +1,6 @@
 use codex_agent_identity::AgentIdentityKey;
 use codex_agent_identity::register_agent_task;
-use codex_protocol::account::PlanType as AccountPlanType;
+use protocol::account::PlanType as AccountPlanType;
 use std::env;
 
 use crate::default_client::build_reqwest_client;

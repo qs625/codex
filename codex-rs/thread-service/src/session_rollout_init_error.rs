@@ -1,8 +1,8 @@
 use std::io::ErrorKind;
 use std::path::Path;
 
-use codex_protocol::error::CodexErr;
-use codex_rollout_api::SESSIONS_SUBDIR;
+use protocol::error::CodexErr;
+use rollout_api::SESSIONS_SUBDIR;
 
 pub(crate) fn map_session_init_error(err: &anyhow::Error, codex_home: &Path) -> CodexErr {
     if let Some(mapped) = err

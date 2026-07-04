@@ -1,6 +1,6 @@
 use codex_features::FEATURES;
-use codex_protocol::account::PlanType;
 use lazy_static::lazy_static;
+use protocol::account::PlanType;
 use rand::Rng;
 
 const ANNOUNCEMENT_TIP_URL: &str =
@@ -125,7 +125,7 @@ pub(crate) mod announcement {
     use crate::version::CODEX_CLI_VERSION;
     use chrono::NaiveDate;
     use chrono::Utc;
-    use codex_protocol::account::PlanType;
+    use protocol::account::PlanType;
     use regex_lite::Regex;
     use serde::Deserialize;
     use std::sync::OnceLock;

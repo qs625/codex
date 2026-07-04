@@ -1,13 +1,14 @@
 use super::*;
 use crate::manifest::load_plugin_manifest;
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigLayerSource;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigRequirements;
-use codex_config::ConfigRequirementsToml;
+use config_service::ConfigLayerEntry;
+use config_service::ConfigLayerSource;
+use config_service::ConfigLayerStack;
+use config_service::ConfigRequirements;
+use config_service::ConfigRequirementsToml;
 use plugin_service_api::PluginId;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
+use crate::test_support::plugin_config_layer_stack_from_config;
 
 fn user_config_path(temp_dir: &TempDir, file_name: &str) -> AbsolutePathBuf {
     AbsolutePathBuf::from_absolute_path(temp_dir.path().join(file_name))
@@ -42,7 +43,7 @@ fn configured_plugins_from_stack_merges_user_layers() {
         ConfigRequirementsToml::default(),
     )
     .expect("valid config layer stack");
-    let stack = stack.into();
+    let stack = plugin_config_layer_stack_from_config(&stack);
 
     let plugins = configured_plugins_from_stack(&stack);
 

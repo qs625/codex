@@ -1,6 +1,6 @@
 use anyhow::Result;
-use codex_config_edit::MarketplaceConfigUpdate;
-use codex_config_edit::record_user_marketplace;
+use config_service::MarketplaceConfigUpdate;
+use config_service::record_user_marketplace;
 use plugin_service::installed_marketplaces::marketplace_install_root;
 use predicates::str::contains;
 use std::path::Path;

@@ -1,10 +1,10 @@
 use super::*;
 use codex_connectors_api::AppInfo;
-use codex_tool_types::JsonSchema;
-use codex_tool_types::ResponsesApiTool;
-use codex_tool_types::ToolSpec;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use tool_service_api::JsonSchema;
+use tool_service_api::ResponsesApiTool;
+use tool_service_api::ToolSpec;
 
 #[test]
 fn discoverable_tool_enums_use_expected_wire_names() {
@@ -49,7 +49,7 @@ fn tool_search_info_from_spec_converts_function_to_loadable_output() {
 
     assert_eq!(info.entry.search_text, "create calendar event");
     assert_eq!(info.source_info, Some(source_info));
-    let codex_tool_types::LoadableToolSpec::Function(tool) = info.entry.output else {
+    let tool_service_api::LoadableToolSpec::Function(tool) = info.entry.output else {
         panic!("expected function output");
     };
     assert_eq!(tool.name, "create_event");

@@ -11,7 +11,7 @@ doctest = false
 
 
 [dependencies]
-codex-model-provider-info = { path = "../model-provider-info" }
+model-service-api = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt"] }

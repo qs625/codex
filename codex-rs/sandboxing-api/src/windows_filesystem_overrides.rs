@@ -2,11 +2,11 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::permissions::FileSystemSandboxKind;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::SandboxPolicy;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::permissions::FileSystemSandboxKind;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path::normalize_for_native_workdir;
 
@@ -369,7 +369,7 @@ fn canonicalize_absolute_path_or_original(path: PathBuf) -> PathBuf {
 }
 
 fn has_reopened_writable_descendant(
-    writable_roots: &[codex_protocol::protocol::WritableRoot],
+    writable_roots: &[protocol::protocol::WritableRoot],
 ) -> bool {
     writable_roots.iter().any(|writable_root| {
         writable_root
@@ -391,11 +391,11 @@ fn has_reopened_writable_descendant(
 mod tests {
     use super::*;
 
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSpecialPath;
-    use codex_protocol::protocol::NetworkAccess;
+    use protocol::permissions::FileSystemAccessMode;
+    use protocol::permissions::FileSystemPath;
+    use protocol::permissions::FileSystemSandboxEntry;
+    use protocol::permissions::FileSystemSpecialPath;
+    use protocol::protocol::NetworkAccess;
     use pretty_assertions::assert_eq;
 
     fn abs(path: impl AsRef<Path>) -> AbsolutePathBuf {

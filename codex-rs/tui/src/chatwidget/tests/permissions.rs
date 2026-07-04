@@ -1,11 +1,11 @@
 use super::*;
-use codex_app_server_protocol::FileSystemAccessMode;
-use codex_app_server_protocol::FileSystemPath;
-use codex_app_server_protocol::FileSystemSandboxEntry;
-use codex_app_server_protocol::FileSystemSpecialPath;
-use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
-use codex_app_server_protocol::PermissionProfileNetworkPermissions;
+use app_server_protocol::FileSystemAccessMode;
+use app_server_protocol::FileSystemPath;
+use app_server_protocol::FileSystemSandboxEntry;
+use app_server_protocol::FileSystemSpecialPath;
+use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use app_server_protocol::PermissionProfileFileSystemPermissions;
+use app_server_protocol::PermissionProfileNetworkPermissions;
 use pretty_assertions::assert_eq;
 
 fn app_server_workspace_write_profile(extra_root: AbsolutePathBuf) -> PermissionProfile {

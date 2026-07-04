@@ -3,14 +3,14 @@ use crate::auth::storage::FileAuthStorage;
 use crate::auth::storage::get_auth_file;
 use crate::token_data::IdTokenInfo;
 use codex_auth_types::AuthMode;
-use codex_protocol::account::PlanType as AccountPlanType;
-use codex_protocol::auth::KnownPlan as InternalKnownPlan;
-use codex_protocol::auth::PlanType as InternalPlanType;
+use protocol::account::PlanType as AccountPlanType;
+use protocol::auth::KnownPlan as InternalKnownPlan;
+use protocol::auth::PlanType as InternalPlanType;
 
 use base64::Engine;
-use codex_protocol::config_types::ForcedLoginMethod;
-use codex_protocol::config_types::ModelProviderAuthInfo;
 use pretty_assertions::assert_eq;
+use protocol::config_types::ForcedLoginMethod;
+use protocol::config_types::ModelProviderAuthInfo;
 use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -1144,7 +1144,7 @@ fn fake_agent_identity_jwt_with_plan_type(
     let header_b64 = encode(br#"{"alg":"EdDSA","typ":"JWT"}"#);
     let payload = json!({
         "iss": "https://chatgpt.com/codex-backend/agent-identity",
-        "aud": "codex-app-server",
+        "aud": "app-server",
         "iat": 1_700_000_000usize,
         "exp": 4_000_000_000usize,
         "agent_runtime_id": record.agent_runtime_id,
@@ -1170,7 +1170,7 @@ fn signed_agent_identity_jwt(
         &header,
         &json!({
             "iss": "https://chatgpt.com/codex-backend/agent-identity",
-            "aud": "codex-app-server",
+            "aud": "app-server",
             "iat": 1_700_000_000usize,
             "exp": 4_000_000_000usize,
             "agent_runtime_id": record.agent_runtime_id,

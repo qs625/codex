@@ -1551,16 +1551,16 @@ client_notification_definitions! {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use codex_protocol::ThreadId;
-    use codex_protocol::account::PlanType;
-    use codex_protocol::parse_command::ParsedCommand;
-    use codex_protocol::protocol::RealtimeConversationVersion;
-    use codex_protocol::protocol::RealtimeOutputModality;
-    use codex_protocol::protocol::RealtimeVoice;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::account::PlanType;
+    use protocol::parse_command::ParsedCommand;
+    use protocol::protocol::RealtimeConversationVersion;
+    use protocol::protocol::RealtimeOutputModality;
+    use protocol::protocol::RealtimeVoice;
     use serde_json::json;
     use std::path::PathBuf;
 

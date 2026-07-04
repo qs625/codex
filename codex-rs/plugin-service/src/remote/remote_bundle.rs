@@ -3,13 +3,13 @@ use crate::store::PluginInstallResult;
 use crate::store::PluginStore;
 use crate::store::PluginStoreError;
 use crate::store::validate_plugin_version_segment;
-use codex_default_client::build_reqwest_client;
+use transport_client_types::Request;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use flate2::read::GzDecoder;
+use model_service_api::HttpClientApi;
 use plugin_service_api::PluginId;
 use plugin_service_api::PluginIdError;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use plugin_service_api::find_plugin_manifest_path;
-use flate2::read::GzDecoder;
-use reqwest::Response;
 use reqwest::StatusCode;
 use std::fs;
 use std::io;
@@ -80,12 +80,8 @@ pub enum RemotePluginBundleInstallError {
         source: PluginIdError,
     },
 
-    #[error("failed to send remote plugin bundle download request to {url}: {source}")]
-    DownloadRequest {
-        url: String,
-        #[source]
-        source: reqwest::Error,
-    },
+    #[error("failed to send remote plugin bundle download request to {url}: {message}")]
+    DownloadRequest { url: String, message: String },
 
     #[error("remote plugin bundle download from {url} failed with status {status}: {body}")]
     DownloadStatus {
@@ -94,12 +90,8 @@ pub enum RemotePluginBundleInstallError {
         body: String,
     },
 
-    #[error("failed to read remote plugin bundle download response from {url}: {source}")]
-    DownloadBody {
-        url: String,
-        #[source]
-        source: reqwest::Error,
-    },
+    #[error("failed to read remote plugin bundle download response from {url}: {message}")]
+    DownloadBody { url: String, message: String },
 
     #[error("remote plugin bundle download from {url} exceeded maximum size of {max_bytes} bytes")]
     DownloadTooLarge { url: String, max_bytes: u64 },
@@ -221,10 +213,12 @@ fn is_loopback_url(url: &Url) -> bool {
 }
 
 pub async fn download_and_install_remote_plugin_bundle(
+    http_client: &dyn HttpClientApi,
     codex_home: PathBuf,
     bundle: ValidatedRemotePluginBundle,
 ) -> Result<PluginInstallResult, RemotePluginBundleInstallError> {
     let bundle_bytes = download_remote_plugin_bundle_with_limit(
+        http_client,
         &bundle.bundle_download_url,
         /*max_bytes*/ REMOTE_PLUGIN_BUNDLE_MAX_DOWNLOAD_BYTES,
     )
@@ -241,10 +235,12 @@ pub async fn download_and_install_remote_plugin_bundle(
 }
 
 pub(crate) async fn download_and_extract_remote_plugin_bundle_to_path(
+    http_client: &dyn HttpClientApi,
     bundle: ValidatedRemotePluginBundle,
     destination: AbsolutePathBuf,
 ) -> Result<AbsolutePathBuf, RemotePluginBundleInstallError> {
     let bundle_bytes = download_remote_plugin_bundle_with_limit(
+        http_client,
         &bundle.bundle_download_url,
         /*max_bytes*/ REMOTE_PLUGIN_BUNDLE_MAX_DOWNLOAD_BYTES,
     )
@@ -261,21 +257,30 @@ pub(crate) async fn download_and_extract_remote_plugin_bundle_to_path(
 }
 
 async fn download_remote_plugin_bundle_with_limit(
+    http_client: &dyn HttpClientApi,
     bundle_download_url: &str,
     max_bytes: u64,
 ) -> Result<Vec<u8>, RemotePluginBundleInstallError> {
-    let client = build_reqwest_client();
-    let response = client
-        .get(bundle_download_url)
-        .timeout(REMOTE_PLUGIN_BUNDLE_DOWNLOAD_TIMEOUT)
-        .send()
+    let mut request = Request::new(http::Method::GET, bundle_download_url.to_string());
+    request.timeout = Some(REMOTE_PLUGIN_BUNDLE_DOWNLOAD_TIMEOUT);
+    let response = http_client
+        .execute(request)
         .await
         .map_err(|source| RemotePluginBundleInstallError::DownloadRequest {
             url: bundle_download_url.to_string(),
-            source,
+            message: source.to_string(),
         })?;
 
-    let final_url = response.url().clone();
+    let final_url = response
+        .final_url
+        .as_deref()
+        .unwrap_or(bundle_download_url)
+        .to_string();
+    let final_url = Url::parse(&final_url).map_err(|err| {
+        RemotePluginBundleInstallError::InvalidBundle(format!(
+            "remote plugin bundle download final URL `{final_url}` is invalid: {err}"
+        ))
+    })?;
     // reqwest may already have followed redirects here. For backend-issued bundle URLs, keep the
     // shared client policy and fail unsupported final schemes before caching.
     if !is_allowed_bundle_download_url(&final_url, allow_test_loopback_http_bundle_downloads()) {
@@ -288,46 +293,31 @@ async fn download_remote_plugin_bundle_with_limit(
     }
 
     let url = final_url.to_string();
-    let status = response.status();
+    let status = response.status;
     if !status.is_success() {
-        let body = read_response_body_with_limit(
-            response,
-            &url,
-            /*max_bytes*/ REMOTE_PLUGIN_BUNDLE_ERROR_BODY_MAX_BYTES,
-        )
-        .await?;
+        let body = read_response_body_with_limit(&response, &url, REMOTE_PLUGIN_BUNDLE_ERROR_BODY_MAX_BYTES)?;
         let body = String::from_utf8_lossy(&body).to_string();
         return Err(RemotePluginBundleInstallError::DownloadStatus { url, status, body });
     }
 
-    read_response_body_with_limit(response, &url, max_bytes).await
+    read_response_body_with_limit(&response, &url, max_bytes)
 }
 
-async fn read_response_body_with_limit(
-    mut response: Response,
+fn read_response_body_with_limit(
+    response: &transport_client_types::Response,
     url: &str,
     max_bytes: u64,
 ) -> Result<Vec<u8>, RemotePluginBundleInstallError> {
-    if let Some(content_length) = response.content_length() {
+    if let Some(content_length) = response
+        .headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
         enforce_download_size_limit(url, content_length, max_bytes)?;
     }
-
-    let mut body = Vec::new();
-    while let Some(chunk) =
-        response
-            .chunk()
-            .await
-            .map_err(|source| RemotePluginBundleInstallError::DownloadBody {
-                url: url.to_string(),
-                source,
-            })?
-    {
-        let next_len = body.len() as u64 + chunk.len() as u64;
-        enforce_download_size_limit(url, next_len, max_bytes)?;
-        body.extend_from_slice(&chunk);
-    }
-
-    Ok(body)
+    enforce_download_size_limit(url, response.body.len() as u64, max_bytes)?;
+    Ok(response.body.to_vec())
 }
 
 fn enforce_download_size_limit(

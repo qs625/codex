@@ -11,16 +11,16 @@
 
 use std::sync::Arc;
 
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::Thread;
-use codex_app_server_protocol::ThreadHistoryBuilder;
-use codex_app_server_protocol::ThreadTokenUsage;
-use codex_app_server_protocol::ThreadTokenUsageUpdatedNotification;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnStatus;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::Thread;
+use app_server_protocol::ThreadHistoryBuilder;
+use app_server_protocol::ThreadTokenUsage;
+use app_server_protocol::ThreadTokenUsageUpdatedNotification;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnStatus;
+use protocol::ThreadId;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
 
 use super::context_usage_replay::ThreadUsageSource;
 use crate::outgoing_message::ConnectionId;
@@ -131,11 +131,11 @@ fn latest_token_usage_turn_id(thread: &Thread) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::build_turns_from_rollout_items;
-    use codex_protocol::protocol::AgentMessageEvent;
-    use codex_protocol::protocol::TokenCountEvent;
-    use codex_protocol::protocol::UserMessageEvent;
+    use app_server_protocol::build_turns_from_rollout_items;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::AgentMessageEvent;
+    use protocol::protocol::TokenCountEvent;
+    use protocol::protocol::UserMessageEvent;
 
     #[test]
     fn replay_attribution_uses_already_loaded_history() {
@@ -187,15 +187,15 @@ mod tests {
                 memory_citation: None,
             })),
             RolloutItem::EventMsg(EventMsg::TokenCount(TokenCountEvent {
-                info: Some(codex_protocol::protocol::TokenUsageInfo {
-                    total_token_usage: codex_protocol::protocol::TokenUsage {
+                info: Some(protocol::protocol::TokenUsageInfo {
+                    total_token_usage: protocol::protocol::TokenUsage {
                         input_tokens: 120,
                         cached_input_tokens: 20,
                         output_tokens: 30,
                         reasoning_output_tokens: 10,
                         total_tokens: 150,
                     },
-                    last_token_usage: codex_protocol::protocol::TokenUsage {
+                    last_token_usage: protocol::protocol::TokenUsage {
                         input_tokens: 70,
                         cached_input_tokens: 10,
                         output_tokens: 20,

@@ -24,8 +24,8 @@ use crate::client::Inner;
 use crate::protocol::HTTP_REQUEST_BODY_DELTA_METHOD;
 use crate::protocol::HttpRequestBodyDeltaNotification;
 use crate::rpc::RpcNotificationSender;
-use codex_exec_server_api::ExecRuntimeError;
-use codex_exec_server_api::HttpResponseBody;
+use exec_server_api::ExecRuntimeError;
+use exec_server_api::HttpResponseBody;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 

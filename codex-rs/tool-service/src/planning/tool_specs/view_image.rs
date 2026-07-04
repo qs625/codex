@@ -1,7 +1,7 @@
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
 use crate::ToolSpec;
-use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
+use protocol::models::VIEW_IMAGE_TOOL_NAME;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;

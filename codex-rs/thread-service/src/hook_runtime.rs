@@ -2,22 +2,22 @@ use std::path::PathBuf;
 
 use codex_analytics_api::HookRunFact;
 use codex_analytics_api::build_track_events_context;
-use codex_hooks::HookRuntimeHost;
-use codex_hooks::HookRuntimeTurn;
-use codex_hooks_api::SharedHookRuntime;
-use codex_metrics_api::HOOK_RUN_DURATION_METRIC;
-use codex_metrics_api::HOOK_RUN_METRIC;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::HookCompletedEvent;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookRunStatus;
-use codex_protocol::protocol::HookRunSummary;
-use codex_protocol::protocol::HookSource;
-use codex_protocol::protocol::HookStartedEvent;
-use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use hooks::HookRuntimeHost;
+use hooks::HookRuntimeTurn;
+use hooks_api::SharedHookRuntime;
+use metrics_api::HOOK_RUN_DURATION_METRIC;
+use metrics_api::HOOK_RUN_METRIC;
+use protocol::models::ResponseItem;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::EventMsg;
+use protocol::protocol::HookCompletedEvent;
+use protocol::protocol::HookEventName;
+use protocol::protocol::HookRunStatus;
+use protocol::protocol::HookRunSummary;
+use protocol::protocol::HookSource;
+use protocol::protocol::HookStartedEvent;
+use protocol::user_input::UserInput;
 
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
@@ -44,7 +44,7 @@ impl HookRuntimeTurn for TurnContext {
 impl HookRuntimeHost for Session {
     type Turn = TurnContext;
 
-    fn session_id(&self) -> codex_protocol::ThreadId {
+    fn session_id(&self) -> protocol::ThreadId {
         Session::session_id(self).into()
     }
 
@@ -52,9 +52,7 @@ impl HookRuntimeHost for Session {
         Session::hooks(self)
     }
 
-    async fn take_pending_session_start_source(
-        &self,
-    ) -> Option<codex_hooks_api::SessionStartSource> {
+    async fn take_pending_session_start_source(&self) -> Option<hooks_api::SessionStartSource> {
         Session::take_pending_session_start_source(self).await
     }
 
@@ -198,17 +196,17 @@ fn hook_run_metric_tags(run: &HookRunSummary) -> [(&'static str, &'static str); 
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::protocol::HookCompletedEvent;
-    use codex_protocol::protocol::HookEventName;
-    use codex_protocol::protocol::HookExecutionMode;
-    use codex_protocol::protocol::HookHandlerType;
-    use codex_protocol::protocol::HookRunStatus;
-    use codex_protocol::protocol::HookRunSummary;
-    use codex_protocol::protocol::HookScope;
-    use codex_protocol::protocol::HookSource;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::HookCompletedEvent;
+    use protocol::protocol::HookEventName;
+    use protocol::protocol::HookExecutionMode;
+    use protocol::protocol::HookHandlerType;
+    use protocol::protocol::HookRunStatus;
+    use protocol::protocol::HookRunSummary;
+    use protocol::protocol::HookScope;
+    use protocol::protocol::HookSource;
 
     use super::hook_run_analytics_payload;
     use super::hook_run_metric_tags;

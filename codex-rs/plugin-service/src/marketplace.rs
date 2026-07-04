@@ -1,12 +1,12 @@
 use crate::manifest::PluginManifestInterface;
 use crate::manifest::load_plugin_manifest;
 use codex_git_info::get_git_repo_root;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use plugin_service_api::PluginAuthPolicy;
 use plugin_service_api::PluginId;
 use plugin_service_api::PluginIdError;
-use plugin_service_api::PluginAuthPolicy;
 use plugin_service_api::PluginInstallPolicy;
-use codex_protocol::protocol::Product;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::protocol::Product;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use std::fs;

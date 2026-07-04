@@ -4,8 +4,8 @@ use crate::ResponsesApiNamespace;
 use crate::ResponsesApiNamespaceTool;
 use crate::ResponsesApiTool;
 use crate::ToolSpec;
-use codex_protocol::models::SearchToolCallParams;
 use pretty_assertions::assert_eq;
+use protocol::models::SearchToolCallParams;
 use std::collections::BTreeMap;
 
 #[test]

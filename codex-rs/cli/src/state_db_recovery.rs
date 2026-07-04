@@ -48,7 +48,7 @@ pub(crate) async fn repair_files(
         Err(err) => return Err(err),
     }
 
-    let logs_db_path = codex_state::logs_db_path(sqlite_home);
+    let logs_db_path = state::logs_db_path(sqlite_home);
     for path in sqlite_paths(state_db_path)
         .into_iter()
         .chain(sqlite_paths(logs_db_path.as_path()))
@@ -135,8 +135,8 @@ mod tests {
     #[tokio::test]
     async fn repair_backs_up_owned_database_files() -> std::io::Result<()> {
         let temp_dir = TempDir::new()?;
-        let state_path = codex_state::state_db_path(temp_dir.path());
-        let logs_path = codex_state::logs_db_path(temp_dir.path());
+        let state_path = state::state_db_path(temp_dir.path());
+        let logs_path = state::logs_db_path(temp_dir.path());
         let state_sidecars = sqlite_paths(state_path.as_path());
         tokio::fs::write(state_path.as_path(), b"state").await?;
         tokio::fs::write(state_sidecars[1].as_path(), b"state-wal").await?;
@@ -162,7 +162,7 @@ mod tests {
         let sqlite_home = temp_dir.path().join("sqlite-home");
         tokio::fs::write(sqlite_home.as_path(), b"not-a-directory").await?;
         let startup_error = LocalStateDbStartupError::new(
-            codex_state::state_db_path(sqlite_home.as_path()),
+            state::state_db_path(sqlite_home.as_path()),
             "File exists".to_string(),
         );
 

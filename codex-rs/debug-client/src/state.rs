@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use codex_app_server_protocol::RequestId;
+use app_server_protocol::RequestId;
 
 #[derive(Debug, Default)]
 pub struct State {

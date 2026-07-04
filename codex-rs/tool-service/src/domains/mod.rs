@@ -11,10 +11,10 @@ pub(crate) mod mcp;
 pub(crate) mod workflow;
 
 use crate::planning::merge_tool_specs_into_namespaces;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolSpec;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::ToolSpec;
 
 use crate::ToolService;
 use crate::context::TypedToolSpecRequest;

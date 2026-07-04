@@ -3,41 +3,41 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub use codex_config_edit::ConfigEdit;
-pub use codex_config_edit::apply;
-pub use codex_config_edit::apply_blocking;
-pub use codex_config_edit::keymap_binding_clear_edit;
-pub use codex_config_edit::keymap_binding_edit;
-pub use codex_config_edit::keymap_bindings_edit;
-pub use codex_config_edit::model_availability_nux_count_edits;
-pub use codex_config_edit::session_picker_view_edit;
-pub use codex_config_edit::status_line_items_edit;
-pub use codex_config_edit::status_line_use_colors_edit;
-pub use codex_config_edit::syntax_theme_edit;
-pub use codex_config_edit::terminal_title_items_edit;
-pub use codex_config_edit::tui_pet_edit;
+pub use crate::editing::ConfigEdit;
+pub use crate::editing::apply;
+pub use crate::editing::apply_blocking;
+pub use crate::editing::keymap_binding_clear_edit;
+pub use crate::editing::keymap_binding_edit;
+pub use crate::editing::keymap_bindings_edit;
+pub use crate::editing::model_availability_nux_count_edits;
+pub use crate::editing::session_picker_view_edit;
+pub use crate::editing::status_line_items_edit;
+pub use crate::editing::status_line_use_colors_edit;
+pub use crate::editing::syntax_theme_edit;
+pub use crate::editing::terminal_title_items_edit;
+pub use crate::editing::tui_pet_edit;
 use codex_config_types::McpServerConfig;
 use codex_config_types::SessionPickerViewMode;
 use codex_features::FEATURES;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::TrustLevel;
-use codex_protocol::openai_models::ReasoningEffort;
+use protocol::config_types::Personality;
+use protocol::config_types::TrustLevel;
+use protocol::openai_models::ReasoningEffort;
 
 use super::CONFIG_TOML_FILE;
 use super::Config;
 
-/// Core compatibility wrapper around the config-edit owner crate.
+/// Compatibility wrapper around the editing implementation owned by `config-service`.
 ///
-/// The config editing engine lives in `codex-config-edit`; this wrapper only
-/// keeps the historical `for_config(&Config)` constructor at the core boundary.
+/// This wrapper only keeps the historical `for_config(&Config)` constructor at the
+/// runtime boundary.
 pub struct ConfigEditsBuilder {
-    inner: codex_config_edit::ConfigEditsBuilder,
+    inner: crate::editing::ConfigEditsBuilder,
 }
 
 impl ConfigEditsBuilder {
     pub fn new(codex_home: &Path) -> Self {
         Self {
-            inner: with_core_feature_defaults(codex_config_edit::ConfigEditsBuilder::new(
+            inner: with_core_feature_defaults(crate::editing::ConfigEditsBuilder::new(
                 codex_home,
             )),
         }
@@ -46,7 +46,7 @@ impl ConfigEditsBuilder {
     pub fn for_config(config: &Config) -> Self {
         Self {
             inner: with_core_feature_defaults(
-                codex_config_edit::ConfigEditsBuilder::for_config_path(
+                crate::editing::ConfigEditsBuilder::for_config_path(
                     config_path_for_config(config).as_path(),
                 ),
             ),
@@ -56,7 +56,7 @@ impl ConfigEditsBuilder {
     pub fn for_config_path(config_path: &Path) -> Self {
         Self {
             inner: with_core_feature_defaults(
-                codex_config_edit::ConfigEditsBuilder::for_config_path(config_path),
+                crate::editing::ConfigEditsBuilder::for_config_path(config_path),
             ),
         }
     }
@@ -217,8 +217,8 @@ pub(crate) fn config_path_for_config(config: &Config) -> PathBuf {
 }
 
 fn with_core_feature_defaults(
-    builder: codex_config_edit::ConfigEditsBuilder,
-) -> codex_config_edit::ConfigEditsBuilder {
+    builder: crate::editing::ConfigEditsBuilder,
+) -> crate::editing::ConfigEditsBuilder {
     builder.with_default_false_feature_keys(
         FEATURES
             .iter()

@@ -1,6 +1,6 @@
-pub use codex_exec_server_api::ExecProcessEvent;
-pub use codex_exec_server_api::ExecProcessEventLog;
-pub use codex_exec_server_api::ExecProcessEventReceiver;
+pub use exec_server_api::ExecProcessEvent;
+pub use exec_server_api::ExecProcessEventLog;
+pub use exec_server_api::ExecProcessEventReceiver;
 
 #[cfg(test)]
 mod tests {
@@ -10,8 +10,8 @@ mod tests {
 
     use crate::protocol::ExecOutputStream;
     use crate::protocol::ProcessOutputChunk;
-    use codex_exec_server_api::ExecProcessEvent;
-    use codex_exec_server_api::ExecProcessEventLog;
+    use exec_server_api::ExecProcessEvent;
+    use exec_server_api::ExecProcessEventLog;
 
     #[tokio::test]
     async fn event_history_replay_is_bounded_by_retained_bytes() {

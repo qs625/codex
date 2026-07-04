@@ -1,0 +1,7 @@
+load("//:defs.bzl", "codex_rust_crate")
+
+codex_rust_crate(
+    name = "transport-client",
+    crate_name = "transport_client",
+    compile_data = glob(["tests/fixtures/**"]),
+)

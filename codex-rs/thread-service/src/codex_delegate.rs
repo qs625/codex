@@ -3,29 +3,29 @@ use std::sync::Arc;
 
 use async_channel::Receiver;
 use async_channel::Sender;
+use codex_analytics_api::GuardianApprovalRequestSource;
 use codex_approval_service_api::GuardianReviewDispatch;
 use codex_approval_service_api::routes_approval_to_guardian;
-use codex_analytics_api::GuardianApprovalRequestSource;
 use codex_async_utils::OrCancelExt;
-use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecApprovalRequestEvent;
-use codex_protocol::protocol::McpInvocation;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::RequestUserInputEvent;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::Submission;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::request_permissions::PermissionGrantScope;
-use codex_protocol::request_permissions::RequestPermissionsArgs;
-use codex_protocol::request_permissions::RequestPermissionsEvent;
-use codex_protocol::request_permissions::RequestPermissionsResponse;
-use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_protocol::user_input::UserInput;
+use protocol::protocol::ApplyPatchApprovalRequestEvent;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ExecApprovalRequestEvent;
+use protocol::protocol::McpInvocation;
+use protocol::protocol::Op;
+use protocol::protocol::RequestUserInputEvent;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::protocol::Submission;
+use protocol::protocol::ThreadSource;
+use protocol::request_permissions::PermissionGrantScope;
+use protocol::request_permissions::RequestPermissionsArgs;
+use protocol::request_permissions::RequestPermissionsEvent;
+use protocol::request_permissions::RequestPermissionsResponse;
+use protocol::request_user_input::RequestUserInputArgs;
+use protocol::request_user_input::RequestUserInputResponse;
+use protocol::user_input::UserInput;
 use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -42,15 +42,14 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use codex_auth_types::SharedAuthRuntime;
 use codex_guardian::GuardianApprovalRequest;
-use codex_model_provider_api::SharedModelProviderAuthManager;
-use codex_models_manager_api::SharedModelsManager;
-use codex_protocol::error::CodexErr;
-use codex_protocol::protocol::InitialHistory;
-use codex_mcp_types::MCP_TOOL_APPROVAL_ACCEPT;
-use codex_mcp_types::MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION;
-use codex_mcp_types::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
-use codex_mcp_types::is_mcp_tool_approval_question_id;
 use mcp_service::build_guardian_mcp_tool_review_request;
+use mcp_types::MCP_TOOL_APPROVAL_ACCEPT;
+use mcp_types::MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION;
+use mcp_types::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
+use mcp_types::is_mcp_tool_approval_question_id;
+use model_service_api::SharedModelProviderAuthManager;
+use protocol::error::CodexErr;
+use protocol::protocol::InitialHistory;
 
 #[cfg(test)]
 use crate::session::completed_session_loop_termination;
@@ -65,7 +64,6 @@ pub(crate) async fn run_codex_thread_interactive(
     config: Config,
     auth_runtime: SharedAuthRuntime,
     provider_auth_manager: Option<SharedModelProviderAuthManager>,
-    models_manager: SharedModelsManager,
     parent_session: Arc<Session>,
     parent_ctx: Arc<TurnContext>,
     cancel_token: CancellationToken,
@@ -91,9 +89,8 @@ pub(crate) async fn run_codex_thread_interactive(
         ),
         hook_runtime_factory: Arc::clone(&parent_session.services.hook_runtime_factory),
         sandbox_runtime: Arc::clone(&parent_session.services.sandbox_runtime),
-        models_manager,
         environment_manager: Arc::clone(&parent_session.services.environment_manager),
-        skills_manager: Arc::clone(&parent_session.services.skills_manager),
+        skill_service: Arc::clone(&parent_session.services.skill_service),
         plugins_manager: Arc::clone(&parent_session.services.plugins_manager),
         mcp_service: Arc::clone(&parent_session.services.mcp_service),
         mcp_auth_runtime: Arc::clone(&parent_session.services.mcp_auth_runtime),
@@ -116,7 +113,7 @@ pub(crate) async fn run_codex_thread_interactive(
         user_shell_override: None,
         inherited_exec_policy: Some(Arc::clone(&parent_session.services.exec_policy)),
         exec_policy_loader: Arc::clone(&parent_session.services.exec_policy_loader),
-        parent_rollout_thread_trace: codex_rollout_trace_api::ThreadTraceContext::disabled(),
+        parent_rollout_thread_trace: rollout_trace_api::ThreadTraceContext::disabled(),
         parent_trace: None,
         environment_selections: parent_ctx.environments.clone(),
         analytics_events_client: Some(parent_session.services.analytics_events_client.clone()),
@@ -198,7 +195,6 @@ pub(crate) async fn run_codex_thread_one_shot(
     config: Config,
     auth_runtime: SharedAuthRuntime,
     provider_auth_manager: Option<SharedModelProviderAuthManager>,
-    models_manager: SharedModelsManager,
     input: Vec<UserInput>,
     parent_session: Arc<Session>,
     parent_ctx: Arc<TurnContext>,
@@ -214,7 +210,6 @@ pub(crate) async fn run_codex_thread_one_shot(
         config,
         auth_runtime,
         provider_auth_manager,
-        models_manager,
         parent_session,
         parent_ctx,
         child_cancel.clone(),
@@ -495,7 +490,7 @@ async fn handle_exec_approval(
             .approval_service
             .review_guardian_request(GuardianReviewDispatch {
                 session: Arc::clone(parent_session)
-                    as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                    as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
                 turn: Arc::clone(parent_ctx)
                     as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                 review_id: uuid::Uuid::new_v4().to_string(),
@@ -504,9 +499,9 @@ async fn handle_exec_approval(
                     command,
                     cwd,
                     sandbox_permissions: if additional_permissions.is_some() {
-                        codex_protocol::models::SandboxPermissions::WithAdditionalPermissions
+                        protocol::models::SandboxPermissions::WithAdditionalPermissions
                     } else {
-                        codex_protocol::models::SandboxPermissions::UseDefault
+                        protocol::models::SandboxPermissions::UseDefault
                     },
                     additional_permissions,
                     justification: None,
@@ -579,13 +574,13 @@ async fn handle_patch_approval(
         let patch = changes
             .iter()
             .map(|(path, change)| match change {
-                codex_protocol::protocol::FileChange::Add { content } => {
+                protocol::protocol::FileChange::Add { content } => {
                     format!("*** Add File: {}\n{}", path.display(), content)
                 }
-                codex_protocol::protocol::FileChange::Delete { content } => {
+                protocol::protocol::FileChange::Delete { content } => {
                     format!("*** Delete File: {}\n{}", path.display(), content)
                 }
-                codex_protocol::protocol::FileChange::Update {
+                protocol::protocol::FileChange::Update {
                     unified_diff,
                     move_path,
                 } => {
@@ -609,7 +604,7 @@ async fn handle_patch_approval(
                 .approval_service
                 .review_guardian_request(GuardianReviewDispatch {
                     session: Arc::clone(parent_session)
-                        as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                        as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
                     turn: Arc::clone(parent_ctx)
                         as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                     review_id: uuid::Uuid::new_v4().to_string(),
@@ -665,15 +660,14 @@ async fn handle_request_user_input(
     if routes_approval_to_guardian(
         &parent_ctx.approval_policy.value(),
         parent_ctx.config.approvals_reviewer,
+    ) && let Some(response) = maybe_auto_review_mcp_request_user_input(
+        parent_session,
+        parent_ctx,
+        pending_mcp_invocations,
+        &event,
+        cancel_token,
     )
-        && let Some(response) = maybe_auto_review_mcp_request_user_input(
-            parent_session,
-            parent_ctx,
-            pending_mcp_invocations,
-            &event,
-            cancel_token,
-        )
-        .await
+    .await
     {
         let _ = codex.submit(Op::UserInputAnswer { id, response }).await;
         return;
@@ -735,7 +729,7 @@ async fn maybe_auto_review_mcp_request_user_input(
         .approval_service
         .review_guardian_request(GuardianReviewDispatch {
             session: Arc::clone(parent_session)
-                as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
             turn: Arc::clone(parent_ctx) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
             review_id: uuid::Uuid::new_v4().to_string(),
             request: build_guardian_mcp_tool_review_request(
@@ -770,7 +764,7 @@ async fn maybe_auto_review_mcp_request_user_input(
     Some(RequestUserInputResponse {
         answers: HashMap::from([(
             question.id.clone(),
-            codex_protocol::request_user_input::RequestUserInputAnswer {
+            protocol::request_user_input::RequestUserInputAnswer {
                 answers: vec![selected_label],
             },
         )]),
@@ -874,9 +868,9 @@ async fn await_approval_with_cancel<F>(
     approval_id: &str,
     cancel_token: &CancellationToken,
     review_cancel_token: Option<&CancellationToken>,
-) -> codex_protocol::protocol::ReviewDecision
+) -> protocol::protocol::ReviewDecision
 where
-    F: core::future::Future<Output = codex_protocol::protocol::ReviewDecision>,
+    F: core::future::Future<Output = protocol::protocol::ReviewDecision>,
 {
     tokio::select! {
         biased;
@@ -885,9 +879,9 @@ where
                 review_cancel_token.cancel();
             }
             parent_session
-                .notify_approval(approval_id, codex_protocol::protocol::ReviewDecision::Abort)
+                .notify_approval(approval_id, protocol::protocol::ReviewDecision::Abort)
                 .await;
-            codex_protocol::protocol::ReviewDecision::Abort
+            protocol::protocol::ReviewDecision::Abort
         }
         decision = fut => {
             decision

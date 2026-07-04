@@ -1,4 +1,4 @@
-use codex_protocol::config_types::CollaborationModeMask;
+use ::protocol::config_types::CollaborationModeMask;
 
 use crate::app_event::AppEvent;
 use crate::bottom_pane::SelectionAction;

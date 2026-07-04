@@ -1,19 +1,19 @@
 use anyhow::Result;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::InitializeCapabilities;
+use app_server_protocol::InitializeResponse;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::to_response;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::InitializeCapabilities;
-use codex_app_server_protocol::InitializeResponse;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cargo_bin::cargo_bin;
 use core_test_support::fs_wait;
@@ -73,7 +73,7 @@ async fn initialize_probe_does_not_override_originator() -> Result<()> {
     let message = timeout(
         DEFAULT_READ_TIMEOUT,
         mcp.initialize_with_client_info(ClientInfo {
-            name: "codex_app_server_daemon".to_string(),
+            name: "app_server_daemon".to_string(),
             title: Some("Codex App Server Daemon".to_string()),
             version: "0.1.0".to_string(),
         }),

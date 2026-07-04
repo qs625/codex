@@ -2,6 +2,7 @@ pub(crate) mod config;
 mod events;
 pub(crate) mod metrics;
 pub(crate) mod provider;
+mod trace_context;
 
 mod otlp;
 mod targets;
@@ -20,24 +21,24 @@ pub use crate::metrics::*;
 pub use crate::provider::OtelProvider;
 pub use codex_auth_types::AuthEnvTelemetryMetadata;
 pub use codex_auth_types::TelemetryAuthMode;
-pub use codex_metrics_api::RuntimeMetricTotals;
-pub use codex_metrics_api::RuntimeMetricsSummary;
-pub use codex_metrics_api::ToolDecisionSource;
-pub use codex_session_telemetry_api::SessionTelemetryCreateParams;
-pub use codex_session_telemetry_api::SharedSessionTelemetry;
-pub use codex_session_telemetry_api::SharedSessionTelemetryFactory;
-pub use codex_trace_context::context_from_w3c_trace_context;
-pub use codex_trace_context::current_span_trace_id;
-pub use codex_trace_context::current_span_w3c_trace_context;
-pub use codex_trace_context::set_parent_from_context;
-pub use codex_trace_context::set_parent_from_w3c_trace_context;
-pub use codex_trace_context::span_w3c_trace_context;
-pub use codex_trace_context::traceparent_context_from_env;
-pub use codex_trace_context::validate_tracestate_entries;
-pub use codex_trace_context::validate_tracestate_member;
 pub use codex_utils_string::sanitize_metric_tag_value;
+pub use metrics_api::RuntimeMetricTotals;
+pub use metrics_api::RuntimeMetricsSummary;
+pub use metrics_api::ToolDecisionSource;
+pub use session_telemetry_api::SessionTelemetryCreateParams;
+pub use session_telemetry_api::SharedSessionTelemetry;
+pub use session_telemetry_api::SharedSessionTelemetryFactory;
+pub use trace_context::context_from_w3c_trace_context;
+pub use trace_context::current_span_trace_id;
+pub use trace_context::current_span_w3c_trace_context;
+pub use trace_context::set_parent_from_context;
+pub use trace_context::set_parent_from_w3c_trace_context;
+pub use trace_context::span_w3c_trace_context;
+pub use trace_context::traceparent_context_from_env;
+pub use trace_context::validate_tracestate_entries;
+pub use trace_context::validate_tracestate_member;
 
-impl codex_metrics_api::MetricsSink for SessionTelemetry {
+impl metrics_api::MetricsSink for SessionTelemetry {
     fn counter(&self, name: &str, inc: i64, tags: &[(&str, &str)]) {
         SessionTelemetry::counter(self, name, inc, tags);
     }
@@ -53,11 +54,11 @@ impl codex_metrics_api::MetricsSink for SessionTelemetry {
 
 pub struct OtelSessionTelemetryFactory;
 
-impl codex_session_telemetry_api::SessionTelemetryFactory for OtelSessionTelemetryFactory {
+impl session_telemetry_api::SessionTelemetryFactory for OtelSessionTelemetryFactory {
     fn create(
         &self,
-        params: codex_session_telemetry_api::SessionTelemetryCreateParams,
-    ) -> codex_session_telemetry_api::SharedSessionTelemetry {
+        params: session_telemetry_api::SessionTelemetryCreateParams,
+    ) -> session_telemetry_api::SharedSessionTelemetry {
         let mut telemetry = SessionTelemetry::new(
             params.conversation_id,
             params.model.as_str(),
@@ -78,12 +79,8 @@ impl codex_session_telemetry_api::SessionTelemetryFactory for OtelSessionTelemet
     }
 }
 
-impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
-    fn with_model(
-        &self,
-        model: &str,
-        slug: &str,
-    ) -> codex_session_telemetry_api::SharedSessionTelemetry {
+impl session_telemetry_api::SessionTelemetry for SessionTelemetry {
+    fn with_model(&self, model: &str, slug: &str) -> session_telemetry_api::SharedSessionTelemetry {
         std::sync::Arc::new(SessionTelemetry::with_model(self.clone(), model, slug))
     }
 
@@ -104,10 +101,10 @@ impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
         &self,
         name: &str,
         tags: &[(&str, &str)],
-    ) -> Option<codex_session_telemetry_api::SessionTelemetryTimer> {
+    ) -> Option<session_telemetry_api::SessionTelemetryTimer> {
         SessionTelemetry::start_timer(self, name, tags)
             .ok()
-            .map(|timer| Box::new(timer) as codex_session_telemetry_api::SessionTelemetryTimer)
+            .map(|timer| Box::new(timer) as session_telemetry_api::SessionTelemetryTimer)
     }
 
     fn runtime_metrics_summary(&self) -> Option<RuntimeMetricsSummary> {
@@ -117,7 +114,7 @@ impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
     fn record_responses(
         &self,
         handle_responses_span: &tracing::Span,
-        event: &codex_api_types::ResponseEvent,
+        event: &session_telemetry_api::ResponseEvent,
     ) {
         SessionTelemetry::record_responses(self, handle_responses_span, event);
     }
@@ -125,12 +122,12 @@ impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
     fn conversation_starts(
         &self,
         provider_name: &str,
-        reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
-        reasoning_summary: codex_protocol::config_types::ReasoningSummary,
+        reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
+        reasoning_summary: protocol::config_types::ReasoningSummary,
         context_window: Option<i64>,
         auto_compact_token_limit: Option<i64>,
-        approval_policy: codex_protocol::protocol::AskForApproval,
-        sandbox_policy: codex_protocol::protocol::SandboxPolicy,
+        approval_policy: protocol::protocol::AskForApproval,
+        sandbox_policy: protocol::protocol::SandboxPolicy,
         mcp_servers: &[&str],
         active_profile: Option<&str>,
     ) {
@@ -257,7 +254,7 @@ impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
 
     fn record_websocket_event(
         &self,
-        event: Option<&codex_api_types::WebsocketEventTelemetry>,
+        event: Option<&session_telemetry_api::WebsocketEventTelemetry>,
         duration: std::time::Duration,
     ) {
         SessionTelemetry::record_websocket_event(self, event, duration);
@@ -265,7 +262,7 @@ impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
 
     fn log_sse_event(
         &self,
-        event: Option<&codex_api_types::SseEventTelemetry>,
+        event: Option<&session_telemetry_api::SseEventTelemetry>,
         duration: std::time::Duration,
     ) {
         SessionTelemetry::log_sse_event(self, event, duration);
@@ -293,7 +290,7 @@ impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
         );
     }
 
-    fn user_prompt(&self, items: &[codex_protocol::user_input::UserInput]) {
+    fn user_prompt(&self, items: &[protocol::user_input::UserInput]) {
         SessionTelemetry::user_prompt(self, items);
     }
 
@@ -301,8 +298,8 @@ impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
         &self,
         tool_name: &str,
         call_id: &str,
-        decision: &codex_protocol::protocol::ReviewDecision,
-        source: codex_metrics_api::ToolDecisionSource,
+        decision: &protocol::protocol::ReviewDecision,
+        source: metrics_api::ToolDecisionSource,
     ) {
         SessionTelemetry::tool_decision(self, tool_name, call_id, decision, source);
     }
@@ -332,7 +329,7 @@ impl codex_session_telemetry_api::SessionTelemetry for SessionTelemetry {
     }
 }
 
-impl codex_session_telemetry_api::SessionTelemetryTimerHandle for Timer {
+impl session_telemetry_api::SessionTelemetryTimerHandle for Timer {
     fn record(&self, additional_tags: &[(&str, &str)]) {
         let _ = Timer::record(self, additional_tags);
     }

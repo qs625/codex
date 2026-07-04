@@ -4,15 +4,15 @@ use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_exec_server_api::ExecRuntimeError;
-use codex_jsonrpc_types::JSONRPCErrorError;
-use codex_protocol::config_types::EnvironmentVariablePattern;
-use codex_protocol::config_types::ShellEnvironmentPolicy;
-use codex_protocol::shell_environment;
 use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::TerminalSize;
+use exec_server_api::ExecRuntimeError;
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use jsonrpc_types::JSONRPCErrorError;
+use protocol::config_types::EnvironmentVariablePattern;
+use protocol::config_types::ShellEnvironmentPolicy;
+use protocol::shell_environment;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
@@ -729,9 +729,9 @@ fn notification_sender(inner: &Inner) -> Option<RpcNotificationSender> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
     use codex_utils_pty::ProcessDriver;
     use pretty_assertions::assert_eq;
+    use protocol::config_types::ShellEnvironmentPolicyInherit;
     use tokio::sync::oneshot;
     use tokio::time::timeout;
 

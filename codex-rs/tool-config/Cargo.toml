@@ -1,11 +1,12 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-tool-config"
+name = "tool-config"
 version.workspace = true
 
 [lib]
 doctest = false
+name = "tool_config"
 path = "src/lib.rs"
 
 [lints]
@@ -13,7 +14,7 @@ workspace = true
 
 [dependencies]
 codex-features = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-pty = { workspace = true }
 tracing = { workspace = true }

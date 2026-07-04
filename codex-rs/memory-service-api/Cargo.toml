@@ -16,8 +16,8 @@ workspace = true
 anyhow = { workspace = true }
 codex-config-types = { workspace = true }
 codex-otel = { workspace = true }
-codex-protocol = { workspace = true }
-codex-state = { workspace = true }
+protocol = { workspace = true }
+state-api = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 serde_json = { workspace = true }
 

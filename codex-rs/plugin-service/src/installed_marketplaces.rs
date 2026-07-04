@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use plugin_service_api::validate_plugin_segment;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use plugin_service_api::validate_plugin_segment;
 use tracing::warn;
 
 use crate::config_layers::PluginConfigLayerStack;

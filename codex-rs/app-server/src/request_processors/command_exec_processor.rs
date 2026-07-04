@@ -230,8 +230,7 @@ impl CommandExecRequestProcessor {
         };
 
         let effective_permission_profile = if let Some(permission_profile) = permission_profile {
-            let permission_profile =
-                codex_protocol::models::PermissionProfile::from(permission_profile);
+            let permission_profile = protocol::models::PermissionProfile::from(permission_profile);
             let (mut file_system_sandbox_policy, network_sandbox_policy) =
                 permission_profile.to_runtime_permissions();
             let configured_file_system_sandbox_policy =
@@ -241,7 +240,7 @@ impl CommandExecRequestProcessor {
                 &configured_file_system_sandbox_policy,
             );
             let effective_permission_profile =
-                codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
+                protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
                     permission_profile.enforcement(),
                     &file_system_sandbox_policy,
                     network_sandbox_policy,
@@ -257,12 +256,14 @@ impl CommandExecRequestProcessor {
                 .can_set_legacy_sandbox_policy(&policy, &sandbox_cwd)
                 .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
             let file_system_sandbox_policy =
-                codex_protocol::permissions::FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&policy, &sandbox_cwd);
-            let network_sandbox_policy =
-                codex_protocol::permissions::NetworkSandboxPolicy::from(&policy);
+                protocol::permissions::FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
+                    &policy,
+                    &sandbox_cwd,
+                );
+            let network_sandbox_policy = protocol::permissions::NetworkSandboxPolicy::from(&policy);
             let permission_profile =
-                codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
-                    codex_protocol::models::SandboxEnforcement::from_legacy_sandbox_policy(&policy),
+                protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
+                    protocol::models::SandboxEnforcement::from_legacy_sandbox_policy(&policy),
                     &file_system_sandbox_policy,
                     network_sandbox_policy,
                 );
@@ -286,7 +287,7 @@ impl CommandExecRequestProcessor {
             None => None,
         };
 
-        let exec_request = codex_command_service::build_exec_request(
+        let exec_request = command_service::build_exec_request(
             exec_params,
             &effective_permission_profile,
             &sandbox_cwd,

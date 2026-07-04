@@ -15,13 +15,13 @@ use super::TurnEnvironmentParams;
 use super::TurnItemsView;
 use super::shared::v2_enum_from_core;
 use codex_experimental_api_macros::ExperimentalApi;
-use codex_protocol::config_types::Personality;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::ThreadGoalStatus as CoreThreadGoalStatus;
-use codex_protocol::protocol::TokenUsage as CoreTokenUsage;
-use codex_protocol::protocol::TokenUsageInfo as CoreTokenUsageInfo;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::config_types::Personality;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::ThreadGoalStatus as CoreThreadGoalStatus;
+use protocol::protocol::TokenUsage as CoreTokenUsage;
+use protocol::protocol::TokenUsageInfo as CoreTokenUsageInfo;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -595,8 +595,8 @@ pub struct ThreadGoal {
     pub updated_at: i64,
 }
 
-impl From<codex_protocol::protocol::ThreadGoal> for ThreadGoal {
-    fn from(value: codex_protocol::protocol::ThreadGoal) -> Self {
+impl From<protocol::protocol::ThreadGoal> for ThreadGoal {
+    fn from(value: protocol::protocol::ThreadGoal) -> Self {
         Self {
             thread_id: value.thread_id.to_string(),
             objective: value.objective,
@@ -735,10 +735,10 @@ impl ThreadMemoryMode {
         }
     }
 
-    pub fn to_core(self) -> codex_protocol::protocol::ThreadMemoryMode {
+    pub fn to_core(self) -> protocol::protocol::ThreadMemoryMode {
         match self {
-            Self::Enabled => codex_protocol::protocol::ThreadMemoryMode::Enabled,
-            Self::Disabled => codex_protocol::protocol::ThreadMemoryMode::Disabled,
+            Self::Enabled => protocol::protocol::ThreadMemoryMode::Enabled,
+            Self::Disabled => protocol::protocol::ThreadMemoryMode::Disabled,
         }
     }
 }
@@ -802,7 +802,7 @@ pub struct ThreadShellCommandResponse {}
 #[ts(export_to = "v2/")]
 pub struct ThreadApproveGuardianDeniedActionParams {
     pub thread_id: String,
-    /// Serialized `codex_protocol::protocol::GuardianAssessmentEvent`.
+    /// Serialized `protocol::protocol::GuardianAssessmentEvent`.
     pub event: JsonValue,
 }
 

@@ -11,11 +11,11 @@ use std::io;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use codex_exec_server_api::ExecRuntimeError;
-use codex_exec_server_api::HttpClient;
-use codex_exec_server_api::HttpResponseBodyStream;
 use codex_exec_server_protocol::HttpHeader;
 use codex_exec_server_protocol::HttpRequestParams;
+use exec_server_api::ExecRuntimeError;
+use exec_server_api::HttpClient;
+use exec_server_api::HttpResponseBodyStream;
 use futures::StreamExt;
 use futures::stream;
 use futures::stream::BoxStream;

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use codex_jsonrpc_types::JSONRPCMessage;
 use futures::SinkExt;
 use futures::StreamExt;
+use jsonrpc_types::JSONRPCMessage;
 use prost::Message as ProstMessage;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;

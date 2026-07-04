@@ -1,5 +1,5 @@
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
+use protocol::models::PermissionProfile;
+use protocol::protocol::AskForApproval;
 
 /// A simple preset pairing an approval policy with a permission profile.
 #[derive(Debug, Clone)]

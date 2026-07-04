@@ -1,7 +1,7 @@
-use codex_app_server_protocol::ThreadSourceKind;
-use codex_protocol::protocol::SessionSource as CoreSessionSource;
-use codex_protocol::protocol::SubAgentSource as CoreSubAgentSource;
-use codex_rollout::INTERACTIVE_SESSION_SOURCES;
+use app_server_protocol::ThreadSourceKind;
+use protocol::protocol::SessionSource as CoreSessionSource;
+use protocol::protocol::SubAgentSource as CoreSubAgentSource;
+use rollout::INTERACTIVE_SESSION_SOURCES;
 
 pub(crate) fn compute_source_filters(
     source_kinds: Option<Vec<ThreadSourceKind>>,
@@ -84,8 +84,8 @@ pub(crate) fn source_kind_matches(source: &CoreSessionSource, filter: &[ThreadSo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::ThreadId;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
     use uuid::Uuid;
 
     #[test]

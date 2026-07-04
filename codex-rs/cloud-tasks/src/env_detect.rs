@@ -1,4 +1,7 @@
-use codex_client::build_reqwest_client_with_custom_ca;
+use transport_client::HttpTransport;
+use transport_client::Request;
+use transport_client::ReqwestTransport;
+use transport_client::build_reqwest_client;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::header::HeaderMap;
 use std::collections::HashMap;
@@ -27,6 +30,8 @@ pub async fn autodetect_environment_id(
     headers: &HeaderMap,
     desired_label: Option<String>,
 ) -> anyhow::Result<AutodetectSelection> {
+    let transport = build_transport()?;
+
     // 1) Try repo-specific environments based on local git origins (GitHub only, like VSCode)
     let origins = get_git_origins();
     crate::append_error_log(format!("env: git origins: {origins:?}"));
@@ -45,7 +50,7 @@ pub async fn autodetect_environment_id(
                 )
             };
             crate::append_error_log(format!("env: GET {url}"));
-            match get_json::<Vec<CodeEnvironment>>(&url, headers).await {
+            match get_json::<Vec<CodeEnvironment>>(&transport, &url, headers).await {
                 Ok(mut list) => {
                     crate::append_error_log(format!(
                         "env: by-repo returned {} env(s) for {owner}/{repo}",
@@ -74,16 +79,15 @@ pub async fn autodetect_environment_id(
     };
     crate::append_error_log(format!("env: GET {list_url}"));
     // Fetch and log the full environments JSON for debugging
-    let http = build_reqwest_client_with_custom_ca(reqwest::Client::builder())?;
-    let res = http.get(&list_url).headers(headers.clone()).send().await?;
-    let status = res.status();
-    let ct = res
-        .headers()
+    let response = execute_get(&transport, &list_url, headers).await?;
+    let status = response.status;
+    let ct = response
+        .headers
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let body = res.text().await.unwrap_or_default();
+    let body = String::from_utf8_lossy(&response.body).into_owned();
     crate::append_error_log(format!("env: status={status} content-type={ct}"));
     match serde_json::from_str::<serde_json::Value>(&body) {
         Ok(v) => {
@@ -145,19 +149,19 @@ fn pick_environment_row(
 }
 
 async fn get_json<T: serde::de::DeserializeOwned>(
+    transport: &impl HttpTransport,
     url: &str,
     headers: &HeaderMap,
 ) -> anyhow::Result<T> {
-    let http = build_reqwest_client_with_custom_ca(reqwest::Client::builder())?;
-    let res = http.get(url).headers(headers.clone()).send().await?;
-    let status = res.status();
-    let ct = res
-        .headers()
+    let response = execute_get(transport, url, headers).await?;
+    let status = response.status;
+    let ct = response
+        .headers
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let body = res.text().await.unwrap_or_default();
+    let body = String::from_utf8_lossy(&response.body).into_owned();
     crate::append_error_log(format!("env: status={status} content-type={ct}"));
     if !status.is_success() {
         anyhow::bail!("GET {url} failed: {status}; content-type={ct}; body={body}");
@@ -166,6 +170,23 @@ async fn get_json<T: serde::de::DeserializeOwned>(
         anyhow::anyhow!("Decode error for {url}: {e}; content-type={ct}; body={body}")
     })?;
     Ok(parsed)
+}
+
+async fn execute_get(
+    transport: &impl HttpTransport,
+    url: &str,
+    headers: &HeaderMap,
+) -> anyhow::Result<transport_client_types::Response> {
+    let mut request = Request::new(reqwest::Method::GET, url.to_string());
+    request.headers = headers.clone();
+    transport
+        .execute(request)
+        .await
+        .map_err(|error| anyhow::anyhow!("GET {url} failed: {error}"))
+}
+
+fn build_transport() -> anyhow::Result<ReqwestTransport> {
+    Ok(ReqwestTransport::new(build_reqwest_client()))
 }
 
 fn get_git_origins() -> Vec<String> {
@@ -257,6 +278,7 @@ pub async fn list_environments(
     base_url: &str,
     headers: &HeaderMap,
 ) -> anyhow::Result<Vec<crate::app::EnvironmentRow>> {
+    let transport = build_transport()?;
     let mut map: HashMap<String, crate::app::EnvironmentRow> = HashMap::new();
 
     // 1) By-repo lookup for each parsed GitHub origin
@@ -274,7 +296,7 @@ pub async fn list_environments(
                     base_url, "github", owner, repo
                 )
             };
-            match get_json::<Vec<CodeEnvironment>>(&url, headers).await {
+            match get_json::<Vec<CodeEnvironment>>(&transport, &url, headers).await {
                 Ok(list) => {
                     info!("env_tui: by-repo {}:{} -> {} envs", owner, repo, list.len());
                     for e in list {
@@ -312,7 +334,7 @@ pub async fn list_environments(
     } else {
         format!("{base_url}/api/codex/environments")
     };
-    match get_json::<Vec<CodeEnvironment>>(&list_url, headers).await {
+    match get_json::<Vec<CodeEnvironment>>(&transport, &list_url, headers).await {
         Ok(list) => {
             info!("env_tui: global list -> {} envs", list.len());
             for e in list {

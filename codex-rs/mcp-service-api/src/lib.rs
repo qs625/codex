@@ -8,50 +8,51 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use async_channel::Sender;
+use codex_approval_service_api::ApprovalSessionCapability;
+use config_service::Config;
 use codex_config_types::Constrained;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
 use codex_connectors_api::AppInfo;
-use codex_core_skills_api::SkillMetadata;
-use codex_config::Config;
-use codex_exec_server_api::ExecBackend;
-use codex_exec_server_api::ExecEnvironment;
-use codex_exec_server_api::HttpClient;
-use codex_mcp_types::CodexAppsToolsCacheKey;
-use codex_mcp_types::EffectiveMcpServer;
-use codex_mcp_types::ElicitationReviewRequest;
-use codex_mcp_types::ElicitationResponse;
-use codex_mcp_types::ElicitationReviewerHandle;
-use codex_mcp_types::McpServerElicitationRequestParams;
-use codex_mcp_types::McpAuthStatusEntry;
-use codex_mcp_types::McpClientElicitationSupport;
-use codex_mcp_types::McpOAuthLoginSupport;
-use codex_mcp_types::McpToolApprovalMetadata;
-use codex_mcp_types::ResolvedMcpOAuthScopes;
-use codex_mcp_types::ToolPluginProvenance;
 use codex_openai_files_api::OpenAiFileUploader;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::mcp::ListResourceTemplatesResult;
-use codex_protocol::mcp::ListResourcesResult;
-use codex_protocol::mcp::PaginatedRequestParams;
-use codex_protocol::mcp::ReadResourceRequestParams;
-use codex_protocol::mcp::ReadResourceResult;
-use codex_protocol::mcp::RequestId;
-use codex_protocol::mcp::Resource;
-use codex_protocol::mcp::ResourceTemplate;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::McpServerRefreshConfig;
-use codex_protocol::protocol::McpStartupFailure;
-use codex_tool_config::ToolsConfig;
-use codex_tool_types::DiscoverableTool;
+use exec_server_api::ExecBackend;
+use exec_server_api::ExecEnvironment;
+use exec_server_api::HttpClient;
+use http::HeaderMap;
+use mcp_types::CodexAppsToolsCacheKey;
+use mcp_types::EffectiveMcpServer;
+use mcp_types::ElicitationResponse;
+use mcp_types::ElicitationReviewRequest;
+use mcp_types::ElicitationReviewerHandle;
+use mcp_types::McpAuthStatusEntry;
+use mcp_types::McpClientElicitationSupport;
+use mcp_types::McpOAuthLoginSupport;
+use mcp_types::McpServerElicitationRequestParams;
+use mcp_types::McpToolApprovalMetadata;
+use mcp_types::ResolvedMcpOAuthScopes;
+use mcp_types::ToolPluginProvenance;
 use plugin_service_api::PluginRuntime;
+use protocol::mcp::CallToolResult;
+use protocol::mcp::ListResourceTemplatesResult;
+use protocol::mcp::ListResourcesResult;
+use protocol::mcp::PaginatedRequestParams;
+use protocol::mcp::ReadResourceRequestParams;
+use protocol::mcp::ReadResourceResult;
+use protocol::mcp::RequestId;
+use protocol::mcp::Resource;
+use protocol::mcp::ResourceTemplate;
+use protocol::models::PermissionProfile;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::Event;
+use protocol::protocol::McpServerRefreshConfig;
+use protocol::protocol::McpStartupFailure;
+use skill_service_api::SkillMetadata;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
-use http::HeaderMap;
 use tokio_util::sync::CancellationToken;
+use tool_config::ToolsConfig;
+use tool_service_api::DiscoverableTool;
 
 pub type McpRuntimeFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub type McpAuthFuture<'a, T> = McpRuntimeFuture<'a, T>;
@@ -64,8 +65,8 @@ pub struct McpToolCallOutcome {
 
 #[derive(Clone, Debug, Default)]
 pub struct McpToolExposure {
-    pub direct_tools: Vec<codex_mcp_tool_types::ToolInfo>,
-    pub deferred_tools: Option<Vec<codex_mcp_tool_types::ToolInfo>>,
+    pub direct_tools: Vec<mcp_types::ToolInfo>,
+    pub deferred_tools: Option<Vec<mcp_types::ToolInfo>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -205,11 +206,11 @@ pub trait McpConnectionRuntime: McpToolRuntime {
         response: ElicitationResponse,
     ) -> McpRuntimeFuture<'a, anyhow::Result<()>>;
 
-    fn list_all_tools<'a>(&'a self) -> McpRuntimeFuture<'a, Vec<codex_mcp_tool_types::ToolInfo>>;
+    fn list_all_tools<'a>(&'a self) -> McpRuntimeFuture<'a, Vec<mcp_types::ToolInfo>>;
 
     fn hard_refresh_codex_apps_tools_cache<'a>(
         &'a self,
-    ) -> McpRuntimeFuture<'a, anyhow::Result<Vec<codex_mcp_tool_types::ToolInfo>>>;
+    ) -> McpRuntimeFuture<'a, anyhow::Result<Vec<mcp_types::ToolInfo>>>;
 
     fn wait_for_server_ready<'a>(
         &'a self,
@@ -408,13 +409,13 @@ impl McpConnectionRuntime for DisabledMcpConnectionRuntime {
         })
     }
 
-    fn list_all_tools<'a>(&'a self) -> McpRuntimeFuture<'a, Vec<codex_mcp_tool_types::ToolInfo>> {
+    fn list_all_tools<'a>(&'a self) -> McpRuntimeFuture<'a, Vec<mcp_types::ToolInfo>> {
         Box::pin(async { Vec::new() })
     }
 
     fn hard_refresh_codex_apps_tools_cache<'a>(
         &'a self,
-    ) -> McpRuntimeFuture<'a, anyhow::Result<Vec<codex_mcp_tool_types::ToolInfo>>> {
+    ) -> McpRuntimeFuture<'a, anyhow::Result<Vec<mcp_types::ToolInfo>>> {
         Box::pin(async { Ok(Vec::new()) })
     }
 
@@ -578,14 +579,14 @@ impl McpRuntimeEnvironment {
 pub trait McpServiceApi: Send + Sync + 'static {
     fn list_accessible_connectors(
         &self,
-        all_mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        all_mcp_tools: &[mcp_types::ToolInfo],
         config: &Config,
     ) -> Vec<AppInfo>;
 
     fn list_available_connectors<'a>(
         &self,
         plugin_runtime: &'a dyn PluginRuntime,
-        all_mcp_tools: &'a [codex_mcp_tool_types::ToolInfo],
+        all_mcp_tools: &'a [mcp_types::ToolInfo],
         config: &'a Config,
     ) -> McpRuntimeFuture<'a, Vec<AppInfo>>;
 
@@ -602,7 +603,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn build_tool_exposure(
         &self,
-        all_mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        all_mcp_tools: &[mcp_types::ToolInfo],
         connectors: Option<&[AppInfo]>,
         explicitly_enabled_connectors: &[AppInfo],
         config: &Config,
@@ -621,7 +622,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn lookup_app_usage_metadata(
         &self,
-        all_mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        all_mcp_tools: &[mcp_types::ToolInfo],
         server: &str,
         tool_name: &str,
     ) -> Option<McpAppUsageMetadata>;
@@ -630,13 +631,13 @@ pub trait McpServiceApi: Send + Sync + 'static {
         &self,
         plugin_runtime: &'a dyn PluginRuntime,
         config: &'a Config,
-    ) -> McpRuntimeFuture<'a, HashMap<String, codex_config::McpServerConfig>>;
+    ) -> McpRuntimeFuture<'a, HashMap<String, config_service::McpServerConfig>>;
 
     fn effective_servers<'a>(
         &self,
         plugin_runtime: &'a dyn PluginRuntime,
         config: &'a Config,
-        auth_context: Option<&'a codex_mcp_types::CodexAppsAuthContext>,
+        auth_context: Option<&'a mcp_types::CodexAppsAuthContext>,
     ) -> McpRuntimeFuture<'a, HashMap<String, EffectiveMcpServer>>;
 
     fn tool_plugin_provenance<'a>(
@@ -647,7 +648,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn list_accessible_and_enabled_connectors(
         &self,
-        all_mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        all_mcp_tools: &[mcp_types::ToolInfo],
         config: &Config,
     ) -> Vec<AppInfo>;
 
@@ -656,7 +657,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
         plugin_runtime: &'a dyn PluginRuntime,
         config: &'a Config,
         auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
-        environment_provider: &'a dyn codex_exec_server_api::ExecEnvironmentProvider,
+        environment_provider: &'a dyn exec_server_api::ExecEnvironmentProvider,
         mcp_auth_runtime: &'a dyn McpAuthRuntime,
         mcp_connection_runtime_factory: &'a dyn McpConnectionRuntimeFactory,
     ) -> McpRuntimeFuture<'a, anyhow::Result<Vec<AppInfo>>>;
@@ -664,7 +665,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
     fn app_tool_policy(
         &self,
         config: &Config,
-        metadata: Option<&codex_mcp_types::McpToolApprovalMetadata>,
+        metadata: Option<&mcp_types::McpToolApprovalMetadata>,
         tool_name: &str,
     ) -> thread_service_api::ThreadAppToolPolicy;
 
@@ -677,14 +678,14 @@ pub trait McpServiceApi: Send + Sync + 'static {
     fn refresh_accessible_connectors_cache(
         &self,
         config: &Config,
-        connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
-        mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        connector_auth_context: Option<&mcp_types::CodexAppsAuthContext>,
+        mcp_tools: &[mcp_types::ToolInfo],
     );
 
     fn codex_apps_auth_context(
         &self,
         auth: Option<&codex_auth_types::RequestAuthSnapshot>,
-    ) -> Option<codex_mcp_types::CodexAppsAuthContext>;
+    ) -> Option<mcp_types::CodexAppsAuthContext>;
 
     fn codex_apps_auth_provider(
         &self,
@@ -706,7 +707,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
 
     fn review_guardian_elicitation<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         request: ElicitationReviewRequest,
     ) -> McpRuntimeFuture<'a, anyhow::Result<Option<ElicitationResponse>>>;
@@ -789,7 +790,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
     fn hard_refresh_codex_apps_tools_cache<'a>(
         &self,
         session: &'a dyn ThreadSessionCapability,
-    ) -> McpRuntimeFuture<'a, Result<Vec<codex_mcp_tool_types::ToolInfo>, String>>;
+    ) -> McpRuntimeFuture<'a, Result<Vec<mcp_types::ToolInfo>, String>>;
 
     fn lookup_tool_metadata<'a>(
         &self,
@@ -802,6 +803,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
     fn call_tool<'a>(
         &self,
         session: Arc<dyn ThreadSessionCapability>,
+        approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: String,

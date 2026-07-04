@@ -11,21 +11,21 @@ use super::format_startup_context_blob;
 use chrono::TimeZone;
 use chrono::Utc;
 use codex_git_info::GitSha;
-use codex_protocol::ThreadId;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::GitInfo;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionSource;
-use codex_thread_store_api::StoredThread;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::GitInfo;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionSource;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
+use thread_store_api::StoredThread;
 
 fn stored_thread(cwd: &str, title: &str, first_user_message: &str) -> StoredThread {
     StoredThread {

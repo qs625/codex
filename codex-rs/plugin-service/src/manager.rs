@@ -41,26 +41,26 @@ use crate::startup_sync::read_curated_plugins_sha;
 use crate::store::PluginInstallResult as StorePluginInstallResult;
 use crate::store::PluginStore;
 use crate::store::PluginStoreError;
-use codex_config_edit::clear_user_plugin;
-use codex_config_edit::set_user_plugin_enabled;
-use codex_config_state::version_for_toml;
+use config_service::clear_user_plugin;
+use config_service::set_user_plugin_enabled;
+use config_service::version_for_toml;
 use codex_config_types::PluginConfig;
-use plugin_service_api::PluginRuntime;
-use plugin_service_api::PluginRuntimeFuture;
-use plugin_service_api::PluginsConfigInput;
-use plugin_service_api::ToolSuggestDiscoverablePlugin;
-use codex_core_skills::SkillMetadata;
-use codex_hooks_api::plugin_hook_declarations;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use hooks_api::plugin_hook_declarations;
 use plugin_service_api::AppConnectorId;
 use plugin_service_api::PluginCapabilitySummary;
 use plugin_service_api::PluginId;
 use plugin_service_api::PluginIdError;
-use plugin_service_api::PluginTelemetryMetadata;
-use plugin_service_api::prompt_safe_plugin_description;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::Product;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use plugin_service_api::PluginRuntime;
+use plugin_service_api::PluginRuntimeFuture;
 use plugin_service_api::PluginSkillRoot;
+use plugin_service_api::PluginTelemetryMetadata;
+use plugin_service_api::PluginsConfigInput;
+use plugin_service_api::ToolSuggestDiscoverablePlugin;
+use plugin_service_api::prompt_safe_plugin_description;
+use protocol::protocol::HookEventName;
+use protocol::protocol::Product;
+use skill_service::SkillMetadata;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -769,9 +769,8 @@ impl PluginsManager {
         );
         let skill_config_layer_stack =
             skill_config_layer_stack_from_config_layer_stack(&config.config_layer_stack);
-        let skill_config_rules = codex_core_skills::config_rules::skill_config_rules_from_stack(
-            &skill_config_layer_stack,
-        );
+        let skill_config_rules =
+            skill_service::config_rules::skill_config_rules_from_stack(&skill_config_layer_stack);
         let resolved_skills = load_plugin_skills(
             &source_path,
             &plugin_id,

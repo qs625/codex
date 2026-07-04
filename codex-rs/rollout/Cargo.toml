@@ -1,12 +1,12 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-rollout"
+name = "rollout"
 version.workspace = true
 
 [lib]
 doctest = false
-name = "codex_rollout"
+name = "rollout"
 path = "src/lib.rs"
 
 [lints]
@@ -16,13 +16,14 @@ workspace = true
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
-codex-default-client-api = { workspace = true }
+transport-client-identity = { workspace = true }
 codex-file-search = { workspace = true }
 codex-git-info = { workspace = true }
-codex-metrics-api = { workspace = true }
-codex-protocol = { workspace = true }
-codex-rollout-api = { workspace = true }
-codex-state = { workspace = true }
+metrics-api = { workspace = true }
+protocol = { workspace = true }
+rollout-api = { workspace = true }
+state = { workspace = true }
+state-api = { workspace = true }
 codex-utils-path = { workspace = true }
 codex-utils-string = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

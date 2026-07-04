@@ -10,16 +10,16 @@ ExecRequest for execution.
 #[cfg(target_os = "macos")]
 const CODEX_SANDBOX_ENV_VAR: &str = "CODEX_SANDBOX";
 const CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR: &str = "CODEX_SANDBOX_NETWORK_DISABLED";
-use codex_command_service_api::ExecCapturePolicy;
-use codex_command_service_api::ExecExpiration;
-pub(crate) use codex_command_service_api::ExecOptions;
+use command_service_api::ExecCapturePolicy;
+use command_service_api::ExecExpiration;
+pub(crate) use command_service_api::ExecOptions;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::PermissionProfile;
-pub use codex_protocol::models::SandboxPermissions;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::SandboxPolicy;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::PermissionProfile;
+pub use protocol::models::SandboxPermissions;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::SandboxPolicy;
 use codex_sandboxing_api::SandboxExecRequest;
 use codex_sandboxing_api::SandboxType;
 use codex_sandboxing_api::WindowsSandboxFilesystemOverrides;

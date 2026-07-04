@@ -1,11 +1,11 @@
 [package]
-name = "codex-client-identity"
+name = "transport-client-identity"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "codex_client_identity"
+name = "transport_client_identity"
 path = "src/lib.rs"
 doctest = false
 
@@ -14,8 +14,11 @@ workspace = true
 
 [dependencies]
 codex-config-types = { workspace = true }
+codex-terminal-detection = { workspace = true }
 http = { workspace = true }
+os_info = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+regex-lite = { workspace = true }

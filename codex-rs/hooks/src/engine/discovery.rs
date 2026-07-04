@@ -10,8 +10,8 @@ use codex_config_types::HooksFile;
 use codex_config_types::ManagedHooksRequirementsToml;
 use codex_config_types::MatcherGroup;
 use codex_config_types::RequirementSource;
-use plugin_service_api::PluginHookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use plugin_service_api::PluginHookSource;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -23,16 +23,16 @@ use super::ConfiguredHandler;
 use crate::config_rules::hook_states_from_stack;
 use crate::events::common::matcher_pattern_for_event;
 use crate::events::common::validate_matcher_pattern;
-use codex_hooks_api::HookConfigLayerEntry;
-use codex_hooks_api::HookConfigLayerStack;
-use codex_hooks_api::HookConfigLayerStackOrdering;
-use codex_hooks_api::HookListEntry;
-use codex_hooks_api::hook_events_into_matcher_groups;
-use codex_hooks_api::hook_key;
-use codex_hooks_api::plugin_hook_key_source;
-use codex_protocol::protocol::HookHandlerType;
-use codex_protocol::protocol::HookSource;
-use codex_protocol::protocol::HookTrustStatus;
+use hooks_api::HookConfigLayerEntry;
+use hooks_api::HookConfigLayerStack;
+use hooks_api::HookConfigLayerStackOrdering;
+use hooks_api::HookListEntry;
+use hooks_api::hook_events_into_matcher_groups;
+use hooks_api::hook_key;
+use hooks_api::plugin_hook_key_source;
+use protocol::protocol::HookHandlerType;
+use protocol::protocol::HookSource;
+use protocol::protocol::HookTrustStatus;
 
 const CONFIG_TOML_FILE: &str = "config.toml";
 
@@ -414,7 +414,7 @@ fn append_matcher_groups(
     warnings: &mut Vec<String>,
     display_order: &mut i64,
     source: &HookHandlerSource<'_>,
-    event_name: codex_protocol::protocol::HookEventName,
+    event_name: protocol::protocol::HookEventName,
     groups: Vec<MatcherGroup>,
 ) {
     for (group_index, group) in groups.into_iter().enumerate() {
@@ -537,7 +537,7 @@ struct NormalizedHookIdentity {
 }
 
 fn command_hook_hash(
-    event_name: codex_protocol::protocol::HookEventName,
+    event_name: protocol::protocol::HookEventName,
     matcher: Option<&str>,
     group: &MatcherGroup,
     normalized_handler: HookHandlerConfig,
@@ -646,22 +646,22 @@ fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> Hoo
 
 #[cfg(test)]
 mod tests {
-    use codex_config::ConfigLayerSource;
-    use codex_config::HookEventsToml;
-    use codex_protocol::protocol::HookEventName;
-    use codex_protocol::protocol::HookSource;
+    use config_service::ConfigLayerSource;
+    use config_service::HookEventsToml;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::HookEventName;
+    use protocol::protocol::HookSource;
 
     use super::ConfiguredHandler;
     use super::append_matcher_groups;
-    use codex_config::HookHandlerConfig;
-    use codex_config::HookStateToml;
-    use codex_config::MatcherGroup;
-    use codex_config::TomlValue;
-    use codex_protocol::protocol::HookTrustStatus;
+    use config_service::HookHandlerConfig;
+    use config_service::HookStateToml;
+    use config_service::MatcherGroup;
+    use config_service::TomlValue;
+    use protocol::protocol::HookTrustStatus;
 
     fn source_path() -> AbsolutePathBuf {
         test_path_buf("/tmp/hooks.json").abs()

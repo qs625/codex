@@ -1,8 +1,8 @@
 use std::future::Future;
 
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_state_api::ExternalGoalSet;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TurnAbortReason;
+use state_api::ExternalGoalSet;
 
 const UPDATE_GOAL_TOOL_NAME: &str = "update_goal";
 

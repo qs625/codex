@@ -7,31 +7,28 @@ use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::transport::AppServerTransport;
 use anyhow::Result;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::InitializeCapabilities;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::InitializeResponse;
+use app_server_protocol::JSONRPCRequest;
+use app_server_protocol::RequestId;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::UserInput;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::write_mock_responses_config_toml;
 use codex_analytics::AppServerRpcTransport;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::InitializeCapabilities;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::InitializeResponse;
-use codex_app_server_protocol::JSONRPCRequest;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::UserInput;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config_loader::LoaderOverrides;
-use codex_config_loader::NoopThreadConfigLoader;
-use codex_config_requirements::CloudRequirementsLoader;
+use config_service::LoaderOverrides;
+use config_service::NoopThreadConfigLoader;
+use config_service::CloudRequirementsLoader;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::W3cTraceContext;
-use thread_service::config::Config;
 use opentelemetry::global;
 use opentelemetry::trace::SpanId;
 use opentelemetry::trace::SpanKind;
@@ -42,6 +39,8 @@ use opentelemetry_sdk::trace::InMemorySpanExporter;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::trace::SpanData;
 use pretty_assertions::assert_eq;
+use protocol::protocol::SessionSource;
+use protocol::protocol::W3cTraceContext;
 use serial_test::serial;
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -49,6 +48,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use tempfile::TempDir;
+use thread_service::config::Config;
 use tokio::sync::mpsc;
 use tracing_subscriber::layer::SubscriberExt;
 use wiremock::MockServer;
@@ -479,7 +479,7 @@ async fn read_thread_started_notification(
                 };
                 if matches!(
                     notification,
-                    codex_app_server_protocol::ServerNotification::ThreadStarted(_)
+                    app_server_protocol::ServerNotification::ThreadStarted(_)
                 ) {
                     return;
                 }
@@ -492,7 +492,7 @@ async fn read_thread_started_notification(
                 };
                 if matches!(
                     notification,
-                    codex_app_server_protocol::ServerNotification::ThreadStarted(_)
+                    app_server_protocol::ServerNotification::ThreadStarted(_)
                 ) {
                     return;
                 }

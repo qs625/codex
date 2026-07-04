@@ -6,18 +6,18 @@ use crate::records::project_root_from_records;
 use crate::records::read_records;
 use crate::records::source_title_from_records;
 use crate::summarize_for_label;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AgentMessageEvent;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::TokenCountEvent;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::TurnCompleteEvent;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::protocol::UserMessageEvent;
 use codex_utils_output_truncation::approx_tokens_from_byte_count_i64;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::TokenCountEvent;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TokenUsageInfo;
+use protocol::protocol::TurnCompleteEvent;
+use protocol::protocol::TurnStartedEvent;
+use protocol::protocol::UserMessageEvent;
 use std::io;
 use std::path::Path;
 
@@ -197,8 +197,8 @@ fn turn_complete_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::ThreadItem;
-    use codex_app_server_protocol::build_turns_from_rollout_items;
+    use app_server_protocol::ThreadItem;
+    use app_server_protocol::build_turns_from_rollout_items;
     use serde_json::Value as JsonValue;
     use std::path::Path;
     use tempfile::TempDir;

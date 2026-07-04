@@ -16,15 +16,15 @@
 //! 3.  We do **not** walk past the project root.
 
 use crate::config::Config;
-use codex_config_loader::default_project_root_markers;
-use codex_config_loader::project_root_markers_from_config;
-use codex_config_state::ConfigLayerStackOrdering;
-use codex_config_state::merge_toml_values;
+use config_service::default_project_root_markers;
+use config_service::project_root_markers_from_config;
+use config_service::ConfigLayerStackOrdering;
+use config_service::merge_toml_values;
 use codex_config_types::ConfigLayerSource;
-use codex_exec_server_api::ExecEnvironment;
 use codex_features::Feature;
 use codex_file_system::ExecutorFileSystem;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use exec_server_api::ExecEnvironment;
 use std::io;
 use toml::Value as TomlValue;
 use tracing::error;
@@ -65,9 +65,7 @@ impl<'a> AgentsMdManager<'a> {
             if let Ok(contents) = std::fs::read_to_string(&path) {
                 let trimmed = contents.trim();
                 if !trimmed.is_empty() {
-                    return Some(LoadedAgentsMd {
-                        path,
-                    });
+                    return Some(LoadedAgentsMd { path });
                 }
             }
         }

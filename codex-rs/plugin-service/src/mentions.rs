@@ -1,24 +1,24 @@
 use std::collections::BTreeSet;
 use std::collections::HashSet;
 
-use codex_config::AgentRoleConfig;
-use codex_config::agent_roles::merge_missing_agent_roles_from_plugin_dirs;
-use codex_connectors_api::metadata::connector_display_label;
+use config_service::AgentRoleConfig;
+use config_service::agent_roles::merge_missing_agent_roles_from_plugin_dirs;
 use codex_connectors_api::AppInfo;
+use codex_connectors_api::metadata::connector_display_label;
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::PluginInstructions;
-use codex_core_skills_api::collect_tool_mentions_from_messages_with_sigil;
-use codex_core_skills_api::injection::ToolMentionKind;
-use codex_core_skills_api::injection::plugin_config_name_from_path;
-use codex_core_skills_api::injection::tool_kind_for_path;
-use codex_mcp_tool_types::ToolInfo;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::user_input::UserInput;
 use codex_file_system::LOCAL_FS;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::ToolInfo;
 use plugin_service_api::PLUGIN_TEXT_MENTION_SIGIL;
 use plugin_service_api::PluginCapabilitySummary;
 use plugin_service_api::PluginLoadOutcome;
+use protocol::models::ResponseItem;
+use protocol::user_input::UserInput;
+use skill_service_api::collect_tool_mentions_from_messages_with_sigil;
+use skill_service_api::injection::ToolMentionKind;
+use skill_service_api::injection::plugin_config_name_from_path;
+use skill_service_api::injection::tool_kind_for_path;
 
 pub fn collect_explicit_plugin_mentions(
     input: &[UserInput],

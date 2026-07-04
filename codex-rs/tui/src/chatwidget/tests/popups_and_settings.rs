@@ -1,11 +1,11 @@
 use super::*;
 use crate::app_event::ConnectorsSnapshot;
 use crate::chatwidget::connectors::ConnectorsCacheState;
-use codex_app_server_protocol::AppInfo;
-use codex_app_server_protocol::HookErrorInfo;
-use codex_app_server_protocol::HooksListEntry;
-use codex_app_server_protocol::HooksListResponse;
-use codex_app_server_protocol::MarketplaceRemoveResponse;
+use app_server_protocol::AppInfo;
+use app_server_protocol::HookErrorInfo;
+use app_server_protocol::HooksListEntry;
+use app_server_protocol::HooksListResponse;
+use app_server_protocol::MarketplaceRemoveResponse;
 use codex_features::Stage;
 use pretty_assertions::assert_eq;
 
@@ -660,8 +660,8 @@ async fn plugin_detail_popup_snapshot_shows_install_actions_and_capability_summa
                 Some("Turn Figma files into implementation context."),
                 &["design-review", "extract-copy"],
                 &[
-                    (codex_app_server_protocol::HookEventName::PreToolUse, 1),
-                    (codex_app_server_protocol::HookEventName::Stop, 2),
+                    (app_server_protocol::HookEventName::PreToolUse, 1),
+                    (app_server_protocol::HookEventName::Stop, 2),
                 ],
                 &[("Figma", true), ("Slack", false)],
                 &["figma-mcp", "docs-mcp"],
@@ -704,8 +704,8 @@ async fn plugin_detail_popup_hides_disclosure_for_installed_plugins() {
                 Some("Turn Figma files into implementation context."),
                 &["design-review", "extract-copy"],
                 &[
-                    (codex_app_server_protocol::HookEventName::PreToolUse, 1),
-                    (codex_app_server_protocol::HookEventName::Stop, 2),
+                    (app_server_protocol::HookEventName::PreToolUse, 1),
+                    (app_server_protocol::HookEventName::Stop, 2),
                 ],
                 &[("Figma", true), ("Slack", false)],
                 &["figma-mcp", "docs-mcp"],

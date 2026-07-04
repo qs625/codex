@@ -1,9 +1,9 @@
 use crate::TurnContext;
 use codex_context_manager::ContextManager;
 use codex_context_usage::ContextUsageSkillDetection;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadSkill;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadSkill;
 
 pub(crate) fn build_thread_context_usage(
     history: &ContextManager,

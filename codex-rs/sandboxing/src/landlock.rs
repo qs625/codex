@@ -1,4 +1,4 @@
-use codex_protocol::models::PermissionProfile;
+use protocol::models::PermissionProfile;
 use std::path::Path;
 
 /// Basename used when the Codex executable self-invokes as the Linux sandbox

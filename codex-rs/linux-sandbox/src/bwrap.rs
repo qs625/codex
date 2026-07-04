@@ -24,18 +24,18 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result;
-use codex_protocol::permissions::is_protected_metadata_name;
-use codex_protocol::protocol::FileSystemAccessMode;
-use codex_protocol::protocol::FileSystemPath;
-use codex_protocol::protocol::FileSystemSandboxPolicy;
-use codex_protocol::protocol::FileSystemSpecialPath;
-use codex_protocol::protocol::WritableRoot;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use globset::GlobBuilder;
 use globset::GlobSet;
 use globset::GlobSetBuilder;
+use protocol::error::CodexErr;
+use protocol::error::Result;
+use protocol::permissions::is_protected_metadata_name;
+use protocol::protocol::FileSystemAccessMode;
+use protocol::protocol::FileSystemPath;
+use protocol::protocol::FileSystemSandboxPolicy;
+use protocol::protocol::FileSystemSpecialPath;
+use protocol::protocol::WritableRoot;
 
 /// Linux "platform defaults" that keep common system binaries and dynamic
 /// libraries readable when a split filesystem policy requests `:minimal`.
@@ -1328,13 +1328,13 @@ fn find_first_non_existent_component(target_path: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    use codex_protocol::protocol::FileSystemAccessMode;
-    use codex_protocol::protocol::FileSystemPath;
-    use codex_protocol::protocol::FileSystemSandboxEntry;
-    use codex_protocol::protocol::FileSystemSandboxPolicy;
-    use codex_protocol::protocol::FileSystemSpecialPath;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::FileSystemAccessMode;
+    use protocol::protocol::FileSystemPath;
+    use protocol::protocol::FileSystemSandboxEntry;
+    use protocol::protocol::FileSystemSandboxPolicy;
+    use protocol::protocol::FileSystemSpecialPath;
     use tempfile::TempDir;
 
     const NO_UNREADABLE_GLOB_SCAN_MAX_DEPTH: Option<usize> = None;

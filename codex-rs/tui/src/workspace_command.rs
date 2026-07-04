@@ -17,11 +17,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_app_server_client::AppServerRequestHandle;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::CommandExecParams;
-use codex_app_server_protocol::CommandExecResponse;
-use codex_app_server_protocol::RequestId;
+use app_server_client::AppServerRequestHandle;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::CommandExecParams;
+use app_server_protocol::CommandExecResponse;
+use app_server_protocol::RequestId;
 use uuid::Uuid;
 
 /// Shared handle for running workspace commands from TUI components.

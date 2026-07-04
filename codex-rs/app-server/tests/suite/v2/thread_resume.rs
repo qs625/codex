@@ -1,4 +1,39 @@
 use anyhow::Result;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::CommandExecutionApprovalDecision;
+use app_server_protocol::CommandExecutionRequestApprovalResponse;
+use app_server_protocol::FileChangeApprovalDecision;
+use app_server_protocol::FileChangeRequestApprovalResponse;
+use app_server_protocol::ItemStartedNotification;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::PatchApplyStatus;
+use app_server_protocol::PatchChangeKind;
+use app_server_protocol::RequestId;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::SessionSource;
+use app_server_protocol::ThreadActiveFlag;
+use app_server_protocol::ThreadGoalClearResponse;
+use app_server_protocol::ThreadGoalSetResponse;
+use app_server_protocol::ThreadGoalStatus;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadMetadataGitInfoUpdateParams;
+use app_server_protocol::ThreadMetadataUpdateParams;
+use app_server_protocol::ThreadReadParams;
+use app_server_protocol::ThreadReadResponse;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadSource;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadStatus;
+use app_server_protocol::TurnItemsView;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::create_apply_patch_sse_response;
@@ -14,74 +49,39 @@ use app_test_support::test_absolute_path;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
 use chrono::Utc;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::CommandExecutionApprovalDecision;
-use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
-use codex_app_server_protocol::FileChangeApprovalDecision;
-use codex_app_server_protocol::FileChangeRequestApprovalResponse;
-use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::PatchApplyStatus;
-use codex_app_server_protocol::PatchChangeKind;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::SessionSource;
-use codex_app_server_protocol::ThreadActiveFlag;
-use codex_app_server_protocol::ThreadGoalClearResponse;
-use codex_app_server_protocol::ThreadGoalSetResponse;
-use codex_app_server_protocol::ThreadGoalStatus;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
-use codex_app_server_protocol::ThreadMetadataUpdateParams;
-use codex_app_server_protocol::ThreadReadParams;
-use codex_app_server_protocol::ThreadReadResponse;
-use codex_app_server_protocol::ThreadResumeParams;
-use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadSource;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::ThreadStatus;
-use codex_app_server_protocol::TurnItemsView;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::TurnStatus;
-use codex_app_server_protocol::UserInput;
-use codex_config::types::AuthCredentialsStoreMode;
+use config_service::types::AuthCredentialsStoreMode;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::Personality;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AgentMessageEvent;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ImageGenerationEndEvent;
-use codex_protocol::protocol::McpInvocation;
-use codex_protocol::protocol::McpToolCallEndEvent;
-use codex_protocol::protocol::SessionMeta;
-use codex_protocol::protocol::SessionMetaLine;
-use codex_protocol::protocol::SessionSource as RolloutSessionSource;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
-use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
-use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
-use codex_protocol::protocol::TokenCountEvent;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::TurnAbortedEvent;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::user_input::ByteRange;
-use codex_protocol::user_input::TextElement;
-use codex_state::StateRuntime;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::config_types::Personality;
+use protocol::mcp::CallToolResult;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ImageGenerationEndEvent;
+use protocol::protocol::McpInvocation;
+use protocol::protocol::McpToolCallEndEvent;
+use protocol::protocol::SessionMeta;
+use protocol::protocol::SessionMetaLine;
+use protocol::protocol::SessionSource as RolloutSessionSource;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadContextUsageCategoryBreakdown;
+use protocol::protocol::ThreadContextUsageLoadedSkills;
+use protocol::protocol::ThreadContextUsageUpdatedEvent;
+use protocol::protocol::TokenCountEvent;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TokenUsageInfo;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortedEvent;
+use protocol::protocol::TurnStartedEvent;
+use protocol::user_input::ByteRange;
+use protocol::user_input::TextElement;
 use serde_json::json;
+use state::StateRuntime;
 use std::fs::FileTimes;
 use std::io::Write;
 use std::path::Path;
@@ -547,7 +547,7 @@ async fn thread_resume_redacts_payloads_for_chatgpt_remote_clients() -> Result<(
 
 async fn resume_redaction_fixture(
     client_name: Option<&str>,
-) -> Result<codex_app_server_protocol::Thread> {
+) -> Result<app_server_protocol::Thread> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -952,7 +952,7 @@ async fn thread_goal_set_edits_objective_without_resetting_usage() -> Result<()>
             thread_id,
             /*time_delta_seconds*/ 12,
             /*token_delta*/ 50,
-            codex_state::ThreadGoalAccountingMode::ActiveOnly,
+            state::ThreadGoalAccountingMode::ActiveOnly,
             Some(persisted_goal.goal_id.as_str()),
         )
         .await?;
@@ -1095,7 +1095,7 @@ async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
         mcp.read_stream_until_response_message(RequestId::Integer(get_id)),
     )
     .await??;
-    let get: codex_app_server_protocol::ThreadGoalGetResponse = to_response(get_resp)?;
+    let get: app_server_protocol::ThreadGoalGetResponse = to_response(get_resp)?;
     assert_eq!(None, get.goal);
 
     let clear_again_id = mcp
@@ -2859,7 +2859,7 @@ async fn thread_resume_replays_pending_file_change_request_approval() -> Result<
     let expected_readme_path = workspace.join("README.md");
     let expected_file_change = ThreadItem::FileChange {
         id: "patch-call".to_string(),
-        changes: vec![codex_app_server_protocol::FileUpdateChange {
+        changes: vec![app_server_protocol::FileUpdateChange {
             path: expected_readme_path.to_string_lossy().into_owned(),
             kind: PatchChangeKind::Add,
             diff: "new line\n".to_string(),

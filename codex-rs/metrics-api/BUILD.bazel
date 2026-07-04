@@ -2,5 +2,5 @@ load("//:defs.bzl", "codex_rust_crate")
 
 codex_rust_crate(
     name = "metrics-api",
-    crate_name = "codex_metrics_api",
+    crate_name = "metrics_api",
 )

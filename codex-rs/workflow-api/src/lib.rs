@@ -28,9 +28,9 @@ pub use tool_contract::workflow_wait_agent_tool_call;
 
 use codex_config_state::ConfigLayerEntry;
 use codex_config_types::ConfigLayerSource;
-use serde_json::Value;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -109,7 +109,7 @@ pub trait WorkflowProgressSink: Send + Sync + 'static {
         workflow_id: &'a str,
         status: Value,
         runner_status: Option<String>,
-        kind: codex_protocol::models::WorkflowRunProgressKind,
+        kind: protocol::models::WorkflowRunProgressKind,
         message: Option<String>,
         updated_at: i64,
     ) -> WorkflowProgressFuture<'a>;
@@ -334,10 +334,7 @@ pub fn load_workflow_registry_from_roots(
 }
 
 pub fn load_workflow_registry(context: &WorkflowDiscoveryContext) -> WorkflowRegistry {
-    load_workflow_registry_from_roots(
-        context.home_root.clone(),
-        context.project_roots.clone(),
-    )
+    load_workflow_registry_from_roots(context.home_root.clone(), context.project_roots.clone())
 }
 
 pub fn workflow_discovery_context_from_config_layers(

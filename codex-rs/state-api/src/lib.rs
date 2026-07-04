@@ -1,14 +1,14 @@
 use chrono::DateTime;
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::ThreadGoalUpdateEventAction;
-use codex_protocol::models::ThreadGoalUpdateEventSource;
-use codex_protocol::models::ThreadGoalUpdateGoal;
-use codex_protocol::models::ThreadGoalUpdateGoalStatus;
-use codex_protocol::protocol::ThreadGoal as ProtocolThreadGoal;
-use codex_protocol::protocol::ThreadGoalStatus as ProtocolThreadGoalStatus;
-use codex_protocol::protocol::TokenUsage;
+use protocol::ThreadId;
+use protocol::models::ResponseItem;
+use protocol::models::ThreadGoalUpdateEventAction;
+use protocol::models::ThreadGoalUpdateEventSource;
+use protocol::models::ThreadGoalUpdateGoal;
+use protocol::models::ThreadGoalUpdateGoalStatus;
+use protocol::protocol::ThreadGoal as ProtocolThreadGoal;
+use protocol::protocol::ThreadGoalStatus as ProtocolThreadGoalStatus;
+use protocol::protocol::TokenUsage;
 use std::time::Duration;
 use std::time::Instant;
 use strum::AsRefStr;
@@ -16,6 +16,9 @@ use strum::Display;
 use strum::EnumString;
 
 mod agent_job;
+mod log;
+mod memory;
+mod remote_control;
 mod runtime;
 mod thread_metadata;
 
@@ -32,9 +35,18 @@ pub use agent_job::ensure_unique_agent_job_headers;
 pub use agent_job::parse_agent_job_csv;
 pub use agent_job::render_agent_job_csv;
 pub use agent_job::render_agent_job_instruction_template;
+pub use log::LogEntry;
+pub use memory::Phase2JobClaimOutcome;
+pub use memory::Stage1JobClaim;
+pub use memory::Stage1JobClaimOutcome;
+pub use memory::Stage1Output;
+pub use memory::Stage1StartupClaimParams;
+pub use remote_control::RemoteControlEnrollmentRecord;
 pub use runtime::AgentJobStateRuntime;
 pub use runtime::GoalStateRuntime;
+pub use runtime::LogStateRuntime;
 pub use runtime::MemoryStateRuntime;
+pub use runtime::RemoteControlStateRuntime;
 pub use runtime::SharedStateDbRuntime;
 pub use runtime::StateApiFuture;
 pub use runtime::StateDbRuntime;
@@ -426,7 +438,7 @@ pub enum ThreadGoalAccountingMode {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use codex_protocol::models::ThreadGoalUpdateEventSource;
+    use protocol::models::ThreadGoalUpdateEventSource;
 
     #[test]
     fn protocol_goal_conversion_preserves_state_fields() {

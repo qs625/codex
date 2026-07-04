@@ -9,15 +9,10 @@ use codex_login::AuthManager;
 use codex_login::default_client::USER_AGENT_SUFFIX;
 use codex_login::default_client::get_codex_user_agent;
 use codex_login::model_provider_auth_manager;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::Submission;
-use codex_rollout::StateDbHandle;
 use codex_terminal_detection::user_agent;
-use thread_service::ThreadAuthRuntimes;
-use thread_service::ThreadService;
-use thread_service::config::Config;
-use thread_service::config::ThreadStoreConfig;
+use protocol::ThreadId;
+use protocol::protocol::SessionSource;
+use protocol::protocol::Submission;
 use rmcp::model::CallToolRequestParams;
 use rmcp::model::CallToolResult;
 use rmcp::model::ClientNotification;
@@ -33,26 +28,31 @@ use rmcp::model::JsonRpcResponse;
 use rmcp::model::RequestId;
 use rmcp::model::ServerCapabilities;
 use rmcp::model::ToolsCapability;
+use rollout::StateDbHandle;
 use serde_json::json;
+use thread_service::ThreadAuthRuntimes;
+use thread_service::ThreadService;
+use thread_service::config::Config;
+use thread_service::config::ThreadStoreConfig;
 use tokio::sync::Mutex;
 use tokio::task;
 
-use crate::codex_tool_config::CodexToolCallParam;
-use crate::codex_tool_config::CodexToolCallReplyParam;
-use crate::codex_tool_config::create_tool_for_codex_tool_call_param;
-use crate::codex_tool_config::create_tool_for_codex_tool_call_reply_param;
 use crate::outgoing_message::OutgoingMessageSender;
+use crate::tool_config::CodexToolCallParam;
+use crate::tool_config::CodexToolCallReplyParam;
+use crate::tool_config::create_tool_for_codex_tool_call_param;
+use crate::tool_config::create_tool_for_codex_tool_call_reply_param;
 
 fn thread_store_from_config(
     config: &Config,
     state_db: Option<StateDbHandle>,
-) -> Arc<dyn codex_thread_store::ThreadStore> {
+) -> Arc<dyn thread_store::ThreadStore> {
     match &config.experimental_thread_store {
-        ThreadStoreConfig::Local => Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_thread_store::LocalThreadStoreConfig::from_config(config),
+        ThreadStoreConfig::Local => Arc::new(thread_store::LocalThreadStore::new(
+            thread_store::LocalThreadStoreConfig::from_config(config),
             state_db,
         )),
-        ThreadStoreConfig::InMemory { id } => codex_thread_store::InMemoryThreadStore::for_id(id),
+        ThreadStoreConfig::InMemory { id } => thread_store::InMemoryThreadStore::for_id(id),
     }
 }
 
@@ -76,6 +76,9 @@ impl MessageProcessor {
         installation_id: String,
     ) -> Self {
         let outgoing = Arc::new(outgoing);
+        let thread_state_db = state_db
+            .clone()
+            .map(|runtime| runtime as Arc<dyn state_api::StateDbRuntime>);
         let auth_manager = AuthManager::shared_from_config(
             config.as_ref(),
             /*enable_codex_api_key_env*/ false,
@@ -94,12 +97,13 @@ impl MessageProcessor {
             ));
             let approval_service = Arc::new(approval_service::ApprovalService);
             let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
-            let command_service = Arc::new(codex_command_service::CommandService::new());
+            let command_service = Arc::new(command_service::CommandService::new());
             let tool_service = Arc::new(codex_tool_service::ToolService::new(
                 approval_service,
                 command_service.clone(),
                 Arc::new(goal_service::GoalService),
                 mcp_service.clone(),
+                Arc::new(permissions_service::PermissionsService),
                 workflow_service,
                 thread_service_api,
             ));
@@ -111,32 +115,30 @@ impl MessageProcessor {
                 empty_extension_registry(),
                 /*analytics_events_client*/ None,
                 thread_store_from_config(config.as_ref(), state_db.clone()),
-                state_db.clone(),
-                Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+                thread_state_db.clone(),
+                Arc::new(thread_store::DefaultLiveThreadFactory),
                 installation_id,
                 /*attestation_provider*/ None,
-                Arc::new(codex_model_provider::DefaultModelProviderFactory),
+                Arc::new(model_service::DefaultModelProviderFactory),
                 Arc::new(codex_code_mode::V8CodeModeRuntimeFactory),
                 command_service,
                 Arc::new(approval_service::ApprovalService),
                 Arc::new(goal_service::GoalService),
-                Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-                Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+                Arc::new(mcp_service::DefaultMcpAuthRuntime),
+                Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),
                 Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
-                Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
-                Arc::new(codex_api::DefaultApiRuntimeFactory),
+                Arc::new(permissions_service::StarlarkExecPolicyLoader),
+                Arc::new(model_service::DefaultApiRuntimeFactory),
                 Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
                 Arc::new(codex_sandboxing::SandboxManager::new()),
                 Arc::new(codex_otel::OtelSessionTelemetryFactory),
-                Arc::new(codex_hooks::HooksRuntimeFactory),
+                Arc::new(hooks::HooksRuntimeFactory),
                 Arc::new(memory_service::FsMemoryToolDeveloperInstructionsProvider),
-                Arc::new(
-                    codex_core_skills::SkillsManager::new_with_restriction_product(
-                        config.codex_home.clone(),
-                        config.bundled_skills_enabled(),
-                        SessionSource::Mcp.restriction_product(),
-                    ),
-                ),
+                Arc::new(skill_service::SkillService::new_with_restriction_product(
+                    config.codex_home.clone(),
+                    config.bundled_skills_enabled(),
+                    SessionSource::Mcp.restriction_product(),
+                )),
                 Arc::new(
                     plugin_service::PluginsManager::new_with_restriction_product(
                         config.codex_home.to_path_buf(),
@@ -654,7 +656,7 @@ impl MessageProcessor {
         if let Err(e) = codex_arc
             .submit_with_id(Submission {
                 id: request_id_string,
-                op: codex_protocol::protocol::Op::Interrupt,
+                op: protocol::protocol::Op::Interrupt,
                 trace: None,
             })
             .await

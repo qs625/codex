@@ -1,8 +1,10 @@
-//! Shared Codex client identity headers that do not require User-Agent probing.
+//! Shared Codex client identity headers and User-Agent helpers.
 
+use codex_terminal_detection::user_agent;
 use http::HeaderMap;
 use http::HeaderValue;
 use std::sync::LazyLock;
+use std::sync::Mutex;
 use std::sync::RwLock;
 
 pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs";
@@ -20,6 +22,7 @@ pub struct Originator {
 static ORIGINATOR: LazyLock<RwLock<Option<Originator>>> = LazyLock::new(|| RwLock::new(None));
 static REQUIREMENTS_RESIDENCY: LazyLock<RwLock<Option<ResidencyRequirement>>> =
     LazyLock::new(|| RwLock::new(None));
+pub static USER_AGENT_SUFFIX: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
 #[derive(Debug)]
 pub enum SetOriginatorError {
@@ -118,6 +121,67 @@ pub fn default_identity_headers() -> HeaderMap {
     headers
 }
 
+pub fn get_codex_user_agent() -> String {
+    let build_version = env!("CARGO_PKG_VERSION");
+    let os_info = os_info::get();
+    let originator = originator();
+    let prefix = format!(
+        "{}/{build_version} ({} {}; {}) {}",
+        originator.value.as_str(),
+        os_info.os_type(),
+        os_info.version(),
+        os_info.architecture().unwrap_or("unknown"),
+        user_agent()
+    );
+    let suffix = USER_AGENT_SUFFIX
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    let suffix = suffix
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map_or_else(String::new, |value| format!(" ({value})"));
+
+    let candidate = format!("{prefix}{suffix}");
+    sanitize_user_agent(candidate, &prefix)
+}
+
+fn sanitize_user_agent(candidate: String, fallback: &str) -> String {
+    if HeaderValue::from_str(candidate.as_str()).is_ok() {
+        return candidate;
+    }
+
+    let sanitized: String = candidate
+        .chars()
+        .map(|ch| if matches!(ch, ' '..='~') { ch } else { '_' })
+        .collect();
+    if !sanitized.is_empty() && HeaderValue::from_str(sanitized.as_str()).is_ok() {
+        tracing::warn!(
+            "Sanitized Codex user agent because provided suffix contained invalid header characters"
+        );
+        sanitized
+    } else if HeaderValue::from_str(fallback).is_ok() {
+        tracing::warn!(
+            "Falling back to base Codex user agent because provided suffix could not be sanitized"
+        );
+        fallback.to_string()
+    } else {
+        tracing::warn!(
+            "Falling back to default Codex originator because base user agent string is invalid"
+        );
+        originator().value
+    }
+}
+
+pub fn default_headers() -> HeaderMap {
+    let mut headers = default_identity_headers();
+    if let Ok(user_agent) = HeaderValue::from_str(&get_codex_user_agent()) {
+        headers.insert(http::header::USER_AGENT, user_agent);
+    }
+    headers
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +225,73 @@ mod tests {
         assert_eq!(residency_header.to_str().unwrap(), "us");
 
         set_default_client_residency_requirement(/*enforce_residency*/ None);
+    }
+
+    #[test]
+    fn test_get_codex_user_agent() {
+        let user_agent = get_codex_user_agent();
+        let originator = originator().value;
+        let prefix = format!("{originator}/");
+        assert!(user_agent.starts_with(&prefix));
+    }
+
+    #[test]
+    fn default_headers_include_identity_headers() {
+        set_default_client_residency_requirement(Some(ResidencyRequirement::Us));
+
+        let headers = default_headers();
+
+        let originator_header = headers
+            .get("originator")
+            .expect("originator header missing");
+        assert_eq!(originator_header.to_str().unwrap(), originator().value);
+
+        let expected_ua = get_codex_user_agent();
+        let ua_header = headers
+            .get("user-agent")
+            .expect("user-agent header missing");
+        assert_eq!(ua_header.to_str().unwrap(), expected_ua);
+
+        let residency_header = headers
+            .get(RESIDENCY_HEADER_NAME)
+            .expect("residency header missing");
+        assert_eq!(residency_header.to_str().unwrap(), "us");
+
+        set_default_client_residency_requirement(/*enforce_residency*/ None);
+    }
+
+    #[test]
+    fn test_invalid_suffix_is_sanitized() {
+        let prefix = "codex_cli_rs/0.0.0";
+        let suffix = "bad\rsuffix";
+
+        assert_eq!(
+            sanitize_user_agent(format!("{prefix} ({suffix})"), prefix),
+            "codex_cli_rs/0.0.0 (bad_suffix)"
+        );
+    }
+
+    #[test]
+    fn test_invalid_suffix_is_sanitized2() {
+        let prefix = "codex_cli_rs/0.0.0";
+        let suffix = "bad\0suffix";
+
+        assert_eq!(
+            sanitize_user_agent(format!("{prefix} ({suffix})"), prefix),
+            "codex_cli_rs/0.0.0 (bad_suffix)"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_macos() {
+        use regex_lite::Regex;
+        let user_agent = get_codex_user_agent();
+        let originator = regex_lite::escape(originator().value.as_str());
+        let re = Regex::new(&format!(
+            r"^{originator}/\d+\.\d+\.\d+ \(Mac OS \d+\.\d+\.\d+; (x86_64|arm64)\) (\S+)$"
+        ))
+        .unwrap();
+        assert!(re.is_match(&user_agent));
     }
 }

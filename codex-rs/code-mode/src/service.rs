@@ -716,8 +716,8 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use std::time::Duration;
 
-    use codex_protocol::ToolName;
     use pretty_assertions::assert_eq;
+    use protocol::ToolName;
     use tokio::sync::Mutex;
     use tokio::sync::mpsc;
     use tokio::sync::oneshot;

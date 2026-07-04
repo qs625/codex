@@ -1,9 +1,9 @@
-use codex_mcp_tool_types::declared_openai_file_input_param_names;
-use codex_protocol::mcp::CallToolResult;
+use protocol::mcp::CallToolResult;
 use serde_json::Map;
 use serde_json::Value;
 
 use crate::CODEX_APPS_MCP_SERVER_NAME;
+use crate::declared_openai_file_input_param_names;
 
 pub const MCP_RESULT_TELEMETRY_TARGET_ID_SPAN_ATTR: &str = "codex.mcp.target.id";
 pub const MCP_RESULT_TELEMETRY_SERVER_USER_FLOW_SPAN_ATTR: &str =

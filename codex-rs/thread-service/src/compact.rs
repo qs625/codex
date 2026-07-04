@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::Prompt;
-use crate::client::ModelClientSession;
 use crate::client_common::ResponseEvent;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
@@ -18,26 +17,27 @@ use codex_analytics_api::CompactionStrategy;
 use codex_analytics_api::CompactionTrigger;
 use codex_analytics_api::now_unix_seconds;
 use codex_features::Feature;
-use codex_hooks::PostCompactHookOutcome;
-use codex_hooks::PreCompactHookOutcome;
-use codex_hooks::run_post_compact_hooks;
-use codex_hooks::run_pre_compact_hooks;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::items::ContextCompactionItem;
-use codex_protocol::items::TurnItem;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::CompactedItem;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::protocol::WarningEvent;
-use codex_protocol::user_input::UserInput;
-use codex_rollout_trace_api::InferenceTraceContext;
 use codex_turn_items::last_assistant_message_from_turn;
 #[cfg(test)]
 use codex_turn_items::process_remote_compacted_history;
 use futures::prelude::*;
+use hooks::PostCompactHookOutcome;
+use hooks::PreCompactHookOutcome;
+use hooks::run_post_compact_hooks;
+use hooks::run_pre_compact_hooks;
+use model_service_api::TurnModelRequest;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
+use protocol::items::ContextCompactionItem;
+use protocol::items::TurnItem;
+use protocol::models::ResponseInputItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::CompactedItem;
+use protocol::protocol::EventMsg;
+use protocol::protocol::TurnStartedEvent;
+use protocol::protocol::WarningEvent;
+use protocol::user_input::UserInput;
+use rollout_trace_api::InferenceTraceContext;
 use tracing::error;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
@@ -182,7 +182,16 @@ async fn run_compact_task_inner_impl(
 
     let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
-    let mut client_session = sess.services.model_client.new_session();
+    let model_client_api =
+        crate::session::turn::model_client_api_for_turn(sess.as_ref(), turn_context.as_ref())
+            .await
+            .map_err(|err| {
+                CodexErr::Fatal(format!("failed to resolve compact model client api: {err}"))
+            })?;
+    let mut client_session = model_client_api
+        .create_turn_client()
+        .await
+        .map_err(|err| CodexErr::Fatal(format!("failed to create compact model client: {err}")))?;
     // Reuse one client session so turn-scoped state (sticky routing, websocket incremental
     // request tracking)
     // survives retries within this compact turn.
@@ -203,7 +212,7 @@ async fn run_compact_task_inner_impl(
         let attempt_result = drain_to_completed(
             &sess,
             turn_context.as_ref(),
-            &mut client_session,
+            &mut *client_session,
             turn_metadata_header.as_deref(),
             &prompt,
         )
@@ -443,24 +452,38 @@ pub(crate) async fn process_compacted_history(
 async fn drain_to_completed(
     sess: &Session,
     turn_context: &TurnContext,
-    client_session: &mut ModelClientSession,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
     turn_metadata_header: Option<&str>,
     prompt: &Prompt,
 ) -> CodexResult<String> {
     let mut stream = client_session
-        .stream(
-            prompt,
-            &turn_context.model_info,
-            &turn_context.session_telemetry,
-            turn_context.reasoning_effort,
-            turn_context.reasoning_summary,
-            turn_context.config.service_tier.clone(),
-            turn_metadata_header,
+        .stream_responses(TurnModelRequest {
+            request: model_service_api::ResponsesModelRequest {
+                input: prompt.input.clone(),
+                tools: prompt.tools.clone(),
+                parallel_tool_calls: prompt.parallel_tool_calls,
+                base_instructions: prompt.base_instructions.clone(),
+                personality: prompt.personality,
+                output_schema: prompt.output_schema.clone(),
+                output_schema_strict: prompt.output_schema_strict,
+                model: Some(turn_context.model_info.slug.clone()),
+                reasoning_effort: turn_context.reasoning_effort,
+                reasoning_summary: turn_context.reasoning_summary,
+                service_tier: crate::session::turn::model_service_tier(
+                    turn_context.config.service_tier.as_deref(),
+                ),
+                verbosity: None,
+                turn_metadata_header: turn_metadata_header.map(ToOwned::to_owned),
+            },
+            model_info: turn_context.model_info.clone(),
+            session_telemetry: turn_context.session_telemetry.clone(),
+            turn_metadata_header: turn_metadata_header.map(ToOwned::to_owned),
             // Rollout tracing currently models remote compaction only; local compaction streams
             // are left untraced until the reducer has a first-class local compaction lifecycle.
-            &InferenceTraceContext::disabled(),
-        )
-        .await?;
+            inference_trace: InferenceTraceContext::disabled(),
+        })
+        .await
+        .map_err(|err| CodexErr::Stream(err.to_string(), None))?;
     loop {
         let maybe_event = stream.next().await;
         let Some(event) = maybe_event else {
@@ -470,27 +493,29 @@ async fn drain_to_completed(
             ));
         };
         match event {
-            Ok(ResponseEvent::OutputItemDone(item)) => {
-                sess.record_into_history(std::slice::from_ref(&item), turn_context)
-                    .await;
-            }
-            Ok(ResponseEvent::ServerReasoningIncluded(included)) => {
-                sess.set_server_reasoning_included(included).await;
-            }
-            Ok(ResponseEvent::RateLimits(snapshot)) => {
-                sess.update_rate_limits(turn_context, snapshot).await;
-            }
-            Ok(ResponseEvent::Completed {
-                response_id,
-                token_usage,
-                ..
-            }) => {
-                sess.update_token_usage_info(turn_context, token_usage.as_ref())
-                    .await;
-                return Ok(response_id);
-            }
-            Ok(_) => continue,
-            Err(e) => return Err(e),
+            Ok(event) => match crate::session::turn::map_model_response_event(event) {
+                ResponseEvent::OutputItemDone(item) => {
+                    sess.record_into_history(std::slice::from_ref(&item), turn_context)
+                        .await;
+                }
+                ResponseEvent::ServerReasoningIncluded(included) => {
+                    sess.set_server_reasoning_included(included).await;
+                }
+                ResponseEvent::RateLimits(snapshot) => {
+                    sess.update_rate_limits(turn_context, snapshot).await;
+                }
+                ResponseEvent::Completed {
+                    response_id,
+                    token_usage,
+                    ..
+                } => {
+                    sess.update_token_usage_info(turn_context, token_usage.as_ref())
+                        .await;
+                    return Ok(response_id);
+                }
+                _ => continue,
+            },
+            Err(err) => return Err(CodexErr::Stream(err.to_string(), None)),
         }
     }
 }

@@ -4,8 +4,8 @@ use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingError;
 use crate::outgoing_message::OutgoingMessage;
 use crate::outgoing_message::QueuedOutgoingMessage;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::JSONRPCMessage;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_home_dir::find_codex_home;
 use std::net::SocketAddr;
@@ -257,12 +257,12 @@ fn serialize_outgoing_message(outgoing_message: OutgoingMessage) -> Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::ConfigWarningNotification;
-    use codex_app_server_protocol::JSONRPCNotification;
-    use codex_app_server_protocol::JSONRPCRequest;
-    use codex_app_server_protocol::JSONRPCResponse;
-    use codex_app_server_protocol::RequestId;
-    use codex_app_server_protocol::ServerNotification;
+    use app_server_protocol::ConfigWarningNotification;
+    use app_server_protocol::JSONRPCNotification;
+    use app_server_protocol::JSONRPCRequest;
+    use app_server_protocol::JSONRPCResponse;
+    use app_server_protocol::RequestId;
+    use app_server_protocol::ServerNotification;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use tokio::time::Duration;

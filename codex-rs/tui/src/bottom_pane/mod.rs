@@ -30,21 +30,21 @@ use crate::render::renderable::FlexRenderable;
 use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableItem;
 use crate::tui::FrameRequester;
+use app_server_protocol::ToolRequestUserInputParams;
 pub(crate) use bottom_pane_view::BottomPaneView;
 pub(crate) use bottom_pane_view::ViewCompletion;
-use codex_app_server_protocol::ToolRequestUserInputParams;
-use codex_core_skills::model::SkillMetadata;
 use codex_features::Features;
 use codex_file_search::FileMatch;
-use plugin_service_api::PluginCapabilitySummary;
-use codex_protocol::ThreadId;
-use codex_protocol::user_input::TextElement;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use plugin_service_api::PluginCapabilitySummary;
+use protocol::ThreadId;
+use protocol::user_input::TextElement;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
+use skill_service::model::SkillMetadata;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -1763,7 +1763,7 @@ mod tests {
     use crate::status_indicator_widget::StatusDetailsCapitalization;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
-    use codex_app_server_protocol::CommandExecutionApprovalDecision;
+    use app_server_protocol::CommandExecutionApprovalDecision;
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
     use crossterm::event::KeyEventKind;
@@ -1817,7 +1817,7 @@ mod tests {
 
     fn exec_request() -> ApprovalRequest {
         ApprovalRequest::Exec {
-            thread_id: codex_protocol::ThreadId::new(),
+            thread_id: protocol::ThreadId::new(),
             thread_label: None,
             id: "1".to_string(),
             command: vec!["echo".into(), "ok".into()],

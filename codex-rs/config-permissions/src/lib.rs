@@ -5,10 +5,14 @@ use codex_network_proxy_api::NetworkMode;
 use codex_network_proxy_api::NetworkProxyConfig;
 use codex_network_proxy_api::NetworkUnixSocketPermission as ProxyNetworkUnixSocketPermission;
 use codex_network_proxy_api::normalize_host;
-use codex_protocol::permissions::FileSystemAccessMode;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::permissions::FileSystemAccessMode;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::Error as _;
+use serde::de::value::Error as ValueDeserializerError;
+use serde::de::value::StrDeserializer;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 pub struct PermissionsToml {
@@ -65,6 +69,84 @@ impl FilesystemPermissionsToml {
 pub enum FilesystemPermissionToml {
     Access(FileSystemAccessMode),
     Scoped(BTreeMap<String, FileSystemAccessMode>),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+pub struct FilesystemRequirementsToml {
+    pub deny_read: Option<Vec<FilesystemDenyReadPattern>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+pub struct PermissionsRequirementsToml {
+    pub filesystem: Option<FilesystemRequirementsToml>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+pub struct FilesystemConstraints {
+    pub deny_read: Vec<FilesystemDenyReadPattern>,
+}
+
+impl From<PermissionsRequirementsToml> for FilesystemConstraints {
+    fn from(value: PermissionsRequirementsToml) -> Self {
+        let deny_read = value
+            .filesystem
+            .and_then(|filesystem| filesystem.deny_read)
+            .unwrap_or_default();
+        Self { deny_read }
+    }
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash, JsonSchema)]
+#[serde(transparent)]
+pub struct FilesystemDenyReadPattern(String);
+
+impl FilesystemDenyReadPattern {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn contains_glob(&self) -> bool {
+        self.0.chars().any(is_glob_metacharacter)
+    }
+
+    pub fn from_input(input: &str) -> Result<Self, String> {
+        if !input.chars().any(is_glob_metacharacter) {
+            let path = deserialize_absolute_path(input)?;
+            return Ok(Self(path.to_string_lossy().into_owned()));
+        }
+
+        let (directory_prefix, suffix) = split_glob_pattern(input);
+        let normalized_prefix = if directory_prefix.is_empty() {
+            deserialize_absolute_path(".")?
+        } else {
+            deserialize_absolute_path(directory_prefix)?
+        };
+        let normalized_prefix = normalized_prefix.to_string_lossy();
+        let normalized = if suffix.is_empty() {
+            normalized_prefix.into_owned()
+        } else if normalized_prefix == "/" {
+            format!("/{suffix}")
+        } else {
+            format!("{normalized_prefix}/{suffix}")
+        };
+        Ok(Self(normalized))
+    }
+}
+
+impl From<AbsolutePathBuf> for FilesystemDenyReadPattern {
+    fn from(value: AbsolutePathBuf) -> Self {
+        Self(value.to_string_lossy().into_owned())
+    }
+}
+
+impl<'de> Deserialize<'de> for FilesystemDenyReadPattern {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let input = String::deserialize(deserializer)?;
+        Self::from_input(&input).map_err(D::Error::custom)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
@@ -256,4 +338,46 @@ pub fn overlay_network_domain_permissions(
             .network
             .upsert_domain_permission(pattern.clone(), permission, normalize_host);
     }
+}
+
+fn deserialize_absolute_path(input: &str) -> Result<AbsolutePathBuf, String> {
+    AbsolutePathBuf::deserialize(StrDeserializer::<ValueDeserializerError>::new(input))
+        .map_err(|err| err.to_string())
+}
+
+fn split_glob_pattern(input: &str) -> (&str, &str) {
+    let Some(first_glob) = input.find(is_glob_metacharacter) else {
+        return ("", input);
+    };
+    let separator_index = input[..first_glob]
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| is_path_separator(*ch))
+        .map(|(index, _)| index);
+
+    match separator_index {
+        Some(0) => ("/", &input[1..]),
+        Some(index)
+            if cfg!(windows)
+                && index == 2
+                && input.as_bytes().get(1) == Some(&b':')
+                && input.as_bytes().get(2).is_some() =>
+        {
+            (&input[..=index], &input[index + 1..])
+        }
+        Some(index) => (&input[..index], &input[index + 1..]),
+        None => ("", input),
+    }
+}
+
+fn is_path_separator(ch: char) -> bool {
+    if cfg!(windows) {
+        ch == '/' || ch == '\\'
+    } else {
+        ch == '/'
+    }
+}
+
+fn is_glob_metacharacter(ch: char) -> bool {
+    matches!(ch, '*' | '?' | '[')
 }

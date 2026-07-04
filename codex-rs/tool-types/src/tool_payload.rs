@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use codex_protocol::models::SearchToolCallParams;
+use protocol::models::SearchToolCallParams;
 
 /// Canonical payload shapes accepted by model-visible tool runtimes.
 #[derive(Clone, Debug)]

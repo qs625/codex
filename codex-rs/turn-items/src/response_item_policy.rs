@@ -1,13 +1,13 @@
-use memory_service_api::citations::parse_memory_citation;
-use codex_protocol::items::AgentMessageContent;
-use codex_protocol::items::AgentMessageItem;
-use codex_protocol::items::TurnItem;
-use codex_protocol::memory_citation::MemoryCitation;
-use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
 use codex_utils_stream_parser::strip_citations;
 use codex_utils_stream_parser::strip_proposed_plan_blocks;
+use memory_service_api::citations::parse_memory_citation;
+use protocol::items::AgentMessageContent;
+use protocol::items::AgentMessageItem;
+use protocol::items::TurnItem;
+use protocol::memory_citation::MemoryCitation;
+use protocol::models::MessagePhase;
+use protocol::models::ResponseInputItem;
+use protocol::models::ResponseItem;
 
 use crate::last_assistant_message_from_item;
 
@@ -146,13 +146,13 @@ fn strip_hidden_assistant_markup_and_parse_memory_citation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::items::ImageGenerationItem;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::FunctionCallOutputPayload;
-    use codex_protocol::models::LocalShellAction;
-    use codex_protocol::models::LocalShellExecAction;
-    use codex_protocol::models::LocalShellStatus;
     use pretty_assertions::assert_eq;
+    use protocol::items::ImageGenerationItem;
+    use protocol::models::ContentItem;
+    use protocol::models::FunctionCallOutputPayload;
+    use protocol::models::LocalShellAction;
+    use protocol::models::LocalShellExecAction;
+    use protocol::models::LocalShellStatus;
 
     fn assistant_output_text(text: &str) -> ResponseItem {
         assistant_output_text_with_phase(text, /*phase*/ None)

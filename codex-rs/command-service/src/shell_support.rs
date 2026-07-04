@@ -6,14 +6,14 @@ use codex_network_proxy_api::PROXY_ACTIVE_ENV_KEY;
 use codex_network_proxy_api::PROXY_ENV_KEYS;
 #[cfg(target_os = "macos")]
 use codex_network_proxy_api::PROXY_GIT_SSH_COMMAND_ENV_KEY;
-use codex_command_service_api::RuntimeShell;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::SandboxPermissions;
-use codex_protocol::shell_environment::CODEX_THREAD_ID_ENV_VAR;
+use command_service_api::RuntimeShell;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::SandboxPermissions;
+use protocol::shell_environment::CODEX_THREAD_ID_ENV_VAR;
 use codex_sandboxing_api::SandboxCommand;
 use codex_sandboxing_api::SandboxType;
-use codex_tool_config::ToolUserShellType;
+use tool_config::ToolUserShellType;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path::paths_match_after_normalization;
 

@@ -89,7 +89,7 @@ async fn run_connection(
                 warn!("ignoring malformed exec-server message: {reason}");
                 if outgoing_tx
                     .send(RpcServerOutboundMessage::Error {
-                        request_id: codex_jsonrpc_types::RequestId::Integer(-1),
+                        request_id: jsonrpc_types::RequestId::Integer(-1),
                         error: invalid_request(reason),
                     })
                     .await
@@ -99,7 +99,7 @@ async fn run_connection(
                 }
             }
             JsonRpcConnectionEvent::Message(message) => match message {
-                codex_jsonrpc_types::JSONRPCMessage::Request(request) => {
+                jsonrpc_types::JSONRPCMessage::Request(request) => {
                     if let Some(route) = router.request_route(request.method.as_str()) {
                         let message = tokio::select! {
                             message = route(Arc::clone(&handler), request) => message,
@@ -127,7 +127,7 @@ async fn run_connection(
                         break;
                     }
                 }
-                codex_jsonrpc_types::JSONRPCMessage::Notification(notification) => {
+                jsonrpc_types::JSONRPCMessage::Notification(notification) => {
                     let Some(route) = router.notification_route(notification.method.as_str())
                     else {
                         warn!(
@@ -150,14 +150,14 @@ async fn run_connection(
                         break;
                     }
                 }
-                codex_jsonrpc_types::JSONRPCMessage::Response(response) => {
+                jsonrpc_types::JSONRPCMessage::Response(response) => {
                     warn!(
                         "closing exec-server connection after unexpected client response: {:?}",
                         response.id
                     );
                     break;
                 }
-                codex_jsonrpc_types::JSONRPCMessage::Error(error) => {
+                jsonrpc_types::JSONRPCMessage::Error(error) => {
                     warn!(
                         "closing exec-server connection after unexpected client error: {:?}",
                         error.id
@@ -190,11 +190,11 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use codex_jsonrpc_types::JSONRPCMessage;
-    use codex_jsonrpc_types::JSONRPCNotification;
-    use codex_jsonrpc_types::JSONRPCRequest;
-    use codex_jsonrpc_types::JSONRPCResponse;
-    use codex_jsonrpc_types::RequestId;
+    use jsonrpc_types::JSONRPCMessage;
+    use jsonrpc_types::JSONRPCNotification;
+    use jsonrpc_types::JSONRPCRequest;
+    use jsonrpc_types::JSONRPCResponse;
+    use jsonrpc_types::RequestId;
     use serde::Serialize;
     use serde::de::DeserializeOwned;
     use tokio::io::AsyncBufReadExt;

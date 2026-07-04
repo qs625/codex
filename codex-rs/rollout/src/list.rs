@@ -18,15 +18,15 @@ use uuid::Uuid;
 
 use super::ARCHIVED_SESSIONS_SUBDIR;
 use super::SESSIONS_SUBDIR;
-use crate::protocol::EventMsg;
+use crate::rollout_protocol::EventMsg;
 use crate::state_db;
 use codex_file_search as file_search;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::SessionMetaLine;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::USER_MESSAGE_BEGIN;
+use protocol::ThreadId;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::RolloutLine;
+use protocol::protocol::SessionMetaLine;
+use protocol::protocol::SessionSource;
+use protocol::protocol::USER_MESSAGE_BEGIN;
 
 /// Returned page of thread (thread) summaries.
 #[derive(Debug, Default, PartialEq)]
@@ -304,8 +304,8 @@ impl<'de> serde::Deserialize<'de> for Cursor {
     }
 }
 
-impl From<codex_state::Anchor> for Cursor {
-    fn from(anchor: codex_state::Anchor) -> Self {
+impl From<state::Anchor> for Cursor {
+    fn from(anchor: state::Anchor) -> Self {
         let ts = anchor
             .ts
             .timestamp_nanos_opt()
@@ -1279,7 +1279,7 @@ async fn find_thread_path_by_id_str_in_subdir(
     codex_home: &Path,
     subdir: &str,
     id_str: &str,
-    state_db_ctx: Option<&codex_state::StateRuntime>,
+    state_db_ctx: Option<&dyn state_api::StateDbRuntime>,
 ) -> io::Result<Option<PathBuf>> {
     // Validate UUID format early.
     if Uuid::parse_str(id_str).is_err() {
@@ -1318,7 +1318,7 @@ async fn find_thread_path_by_id_str_in_subdir(
                             tracing::warn!(
                                 "state db discrepancy during find_thread_path_by_id_str_in_subdir: mismatched_db_path"
                             );
-                            codex_state::record_fallback(
+                            state::record_fallback(
                                 "find_thread_path",
                                 "mismatch",
                                 /*telemetry_override*/ None,
@@ -1340,7 +1340,7 @@ async fn find_thread_path_by_id_str_in_subdir(
                     tracing::warn!(
                         "state db discrepancy during find_thread_path_by_id_str_in_subdir: stale_db_path"
                     );
-                    codex_state::record_fallback(
+                    state::record_fallback(
                         "find_thread_path",
                         "stale_path",
                         /*telemetry_override*/ None,
@@ -1382,11 +1382,7 @@ async fn find_thread_path_by_id_str_in_subdir(
             "state db discrepancy during find_thread_path_by_id_str_in_subdir: falling_back"
         );
         if let Some(reason) = fallback_reason {
-            codex_state::record_fallback(
-                "find_thread_path",
-                reason,
-                /*telemetry_override*/ None,
-            );
+            state::record_fallback("find_thread_path", reason, /*telemetry_override*/ None);
         }
         state_db::read_repair_rollout_path(
             state_db_ctx,
@@ -1406,7 +1402,7 @@ async fn find_thread_path_by_id_str_in_subdir(
 pub async fn find_thread_path_by_id_str(
     codex_home: &Path,
     id_str: &str,
-    state_db_ctx: Option<&codex_state::StateRuntime>,
+    state_db_ctx: Option<&dyn state_api::StateDbRuntime>,
 ) -> io::Result<Option<PathBuf>> {
     find_thread_path_by_id_str_in_subdir(codex_home, SESSIONS_SUBDIR, id_str, state_db_ctx).await
 }
@@ -1415,7 +1411,7 @@ pub async fn find_thread_path_by_id_str(
 pub async fn find_archived_thread_path_by_id_str(
     codex_home: &Path,
     id_str: &str,
-    state_db_ctx: Option<&codex_state::StateRuntime>,
+    state_db_ctx: Option<&dyn state_api::StateDbRuntime>,
 ) -> io::Result<Option<PathBuf>> {
     find_thread_path_by_id_str_in_subdir(codex_home, ARCHIVED_SESSIONS_SUBDIR, id_str, state_db_ctx)
         .await

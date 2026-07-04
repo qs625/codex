@@ -1,12 +1,12 @@
 #![allow(warnings, clippy::all)]
 
 use super::*;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::SessionMeta;
-use codex_protocol::protocol::SessionMetaLine;
-use codex_protocol::protocol::SessionSource;
 use pretty_assertions::assert_eq;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::RolloutLine;
+use protocol::protocol::SessionMeta;
+use protocol::protocol::SessionMetaLine;
+use protocol::protocol::SessionSource;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use tempfile::TempDir;

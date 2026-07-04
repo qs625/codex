@@ -6,14 +6,14 @@
 
 use super::plugin_mentions::fetch_plugin_mentions;
 use super::*;
-use codex_app_server_protocol::MarketplaceAddParams;
-use codex_app_server_protocol::MarketplaceAddResponse;
-use codex_app_server_protocol::MarketplaceRemoveParams;
-use codex_app_server_protocol::MarketplaceRemoveResponse;
-use codex_app_server_protocol::MarketplaceUpgradeParams;
-use codex_app_server_protocol::MarketplaceUpgradeResponse;
+use app_server_protocol::MarketplaceAddParams;
+use app_server_protocol::MarketplaceAddResponse;
+use app_server_protocol::MarketplaceRemoveParams;
+use app_server_protocol::MarketplaceRemoveResponse;
+use app_server_protocol::MarketplaceUpgradeParams;
+use app_server_protocol::MarketplaceUpgradeResponse;
 
-use codex_app_server_protocol::RequestId;
+use app_server_protocol::RequestId;
 
 use crate::hooks_rpc::fetch_hooks_list;
 use crate::hooks_rpc::write_hook_trust;
@@ -602,9 +602,9 @@ pub(super) async fn fetch_account_rate_limits(
 pub(super) async fn send_add_credits_nudge_email(
     request_handle: AppServerRequestHandle,
     credit_type: AddCreditsNudgeCreditType,
-) -> Result<codex_app_server_protocol::AddCreditsNudgeEmailStatus> {
+) -> Result<app_server_protocol::AddCreditsNudgeEmailStatus> {
     let request_id = RequestId::String(format!("add-credits-nudge-{}", Uuid::new_v4()));
-    let response: codex_app_server_protocol::SendAddCreditsNudgeEmailResponse = request_handle
+    let response: app_server_protocol::SendAddCreditsNudgeEmailResponse = request_handle
         .request_typed(ClientRequest::SendAddCreditsNudgeEmail {
             request_id,
             params: SendAddCreditsNudgeEmailParams { credit_type },
@@ -821,7 +821,7 @@ pub(super) async fn write_hook_enabled(
         .request_typed(ClientRequest::ConfigBatchWrite {
             request_id,
             params: ConfigBatchWriteParams {
-                edits: vec![codex_app_server_protocol::ConfigEdit {
+                edits: vec![app_server_protocol::ConfigEdit {
                     key_path: "hooks.state".to_string(),
                     value: serde_json::json!({
                         key: {
@@ -880,9 +880,9 @@ pub(super) async fn fetch_feedback_upload(
 /// renders directly from `McpServerStatus` rather than these maps.
 #[cfg(test)]
 pub(super) type McpInventoryMaps = (
-    HashMap<String, codex_protocol::mcp::Tool>,
-    HashMap<String, Vec<codex_protocol::mcp::Resource>>,
-    HashMap<String, Vec<codex_protocol::mcp::ResourceTemplate>>,
+    HashMap<String, protocol::mcp::Tool>,
+    HashMap<String, Vec<protocol::mcp::Resource>>,
+    HashMap<String, Vec<protocol::mcp::ResourceTemplate>>,
     HashMap<String, McpAuthStatus>,
 );
 
@@ -898,10 +898,10 @@ pub(super) fn mcp_inventory_maps_from_statuses(statuses: Vec<McpServerStatus>) -
         auth_statuses.insert(
             server_name.clone(),
             match status.auth_status {
-                codex_app_server_protocol::McpAuthStatus::Unsupported => McpAuthStatus::Unsupported,
-                codex_app_server_protocol::McpAuthStatus::NotLoggedIn => McpAuthStatus::NotLoggedIn,
-                codex_app_server_protocol::McpAuthStatus::BearerToken => McpAuthStatus::BearerToken,
-                codex_app_server_protocol::McpAuthStatus::OAuth => McpAuthStatus::OAuth,
+                app_server_protocol::McpAuthStatus::Unsupported => McpAuthStatus::Unsupported,
+                app_server_protocol::McpAuthStatus::NotLoggedIn => McpAuthStatus::NotLoggedIn,
+                app_server_protocol::McpAuthStatus::BearerToken => McpAuthStatus::BearerToken,
+                app_server_protocol::McpAuthStatus::OAuth => McpAuthStatus::OAuth,
             },
         );
         resources.insert(server_name.clone(), status.resources);
@@ -917,10 +917,10 @@ pub(super) fn mcp_inventory_maps_from_statuses(statuses: Vec<McpServerStatus>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::PluginMarketplaceEntry;
-    use codex_protocol::mcp::Tool;
+    use app_server_protocol::PluginMarketplaceEntry;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use protocol::mcp::Tool;
 
     fn test_absolute_path(path: &str) -> AbsolutePathBuf {
         AbsolutePathBuf::try_from(PathBuf::from(path)).expect("absolute test path")
@@ -1005,14 +1005,14 @@ mod tests {
                 )]),
                 resources: Vec::new(),
                 resource_templates: Vec::new(),
-                auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
+                auth_status: app_server_protocol::McpAuthStatus::Unsupported,
             },
             McpServerStatus {
                 name: "disabled".to_string(),
                 tools: HashMap::new(),
                 resources: Vec::new(),
                 resource_templates: Vec::new(),
-                auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
+                auth_status: app_server_protocol::McpAuthStatus::Unsupported,
             },
         ];
 

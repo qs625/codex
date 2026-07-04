@@ -1,7 +1,7 @@
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::ImageDetail;
-use codex_protocol::openai_models::ModelInfo;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
+use protocol::models::FunctionCallOutputContentItem;
+use protocol::models::ImageDetail;
+use protocol::openai_models::ModelInfo;
 
 pub fn can_request_original_image_detail(model_info: &ModelInfo) -> bool {
     model_info.supports_image_detail_original

@@ -2,33 +2,21 @@ use super::*;
 use crate::compact::InitialContextInjection;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::guardian::GUARDIAN_REVIEWER_NAME;
-use crate::test_support::create_model_provider_for_tests_with_provider_auth;
-use crate::test_support::models_manager_with_provider_auth;
 use crate::test_support::DisabledToolServiceForTests;
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigRequirements;
-use codex_config::ConfigRequirementsToml;
+use crate::test_support::create_model_provider_for_tests_with_provider_auth;
+use config_service::ConfigLayerEntry;
+use config_service::ConfigRequirements;
+use config_service::ConfigRequirementsToml;
 use codex_config_types::ConfigLayerSource;
-use plugin_service::PluginsManager;
-use codex_core_skills::SkillsManager;
 use codex_exec_server::EnvironmentManager;
-use codex_execpolicy_api::Decision;
-use codex_execpolicy_api::Evaluation;
-use codex_execpolicy_api::RuleMatch;
+use permissions_service_api::Decision;
+use permissions_service_api::Evaluation;
+use permissions_service_api::RuleMatch;
 use codex_features::Feature;
 use codex_login::AuthManager;
-use codex_permissions_runtime::ExecPolicyManager;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::models::AdditionalPermissionProfile as PermissionProfile;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::NetworkPermissions;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::SandboxPermissions;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::request_permissions::PermissionGrantScope;
-use codex_protocol::request_permissions::RequestPermissionProfile;
-use codex_protocol::request_permissions::RequestPermissionsArgs;
-use codex_protocol::request_permissions::RequestPermissionsResponse;
+use permissions_service::ExecPolicyManager;
+use core_test_support::PathExt;
+use core_test_support::TempDirExt;
 use core_test_support::codex_linux_sandbox_exe_or_skip;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -38,9 +26,20 @@ use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::sse;
 use core_test_support::responses::sse_response;
 use core_test_support::responses::start_mock_server;
-use core_test_support::PathExt;
-use core_test_support::TempDirExt;
+use plugin_service::PluginsManager;
 use pretty_assertions::assert_eq;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::models::AdditionalPermissionProfile as PermissionProfile;
+use protocol::models::ContentItem;
+use protocol::models::NetworkPermissions;
+use protocol::models::ResponseItem;
+use protocol::models::SandboxPermissions;
+use protocol::protocol::AskForApproval;
+use protocol::request_permissions::PermissionGrantScope;
+use protocol::request_permissions::RequestPermissionProfile;
+use protocol::request_permissions::RequestPermissionsArgs;
+use protocol::request_permissions::RequestPermissionsResponse;
+use skill_service::SkillService;
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -84,12 +83,11 @@ async fn request_permissions_routes_to_guardian_when_reviewer_is_enabled() {
     config.approvals_reviewer = ApprovalsReviewer::AutoReview;
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     let config = Arc::new(config);
-    let models_manager = models_manager_with_provider_auth(
-        config.codex_home.to_path_buf(),
+    session.services.model_service = super::build_test_model_service_for_config(
+        config.as_ref(),
         turn_context_raw.provider.auth_manager(),
-        config.model_provider.clone(),
+        Arc::clone(&session.services.model_provider_factory),
     );
-    session.services.models_manager = models_manager;
     turn_context_raw.config = Arc::clone(&config);
     turn_context_raw.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
@@ -163,15 +161,14 @@ async fn request_permissions_guardian_review_stops_when_cancelled() {
     config.approvals_reviewer = ApprovalsReviewer::AutoReview;
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     let config = Arc::new(config);
-    let models_manager = models_manager_with_provider_auth(
-        config.codex_home.to_path_buf(),
-        turn_context_raw.provider.auth_manager(),
-        config.model_provider.clone(),
-    );
     Arc::get_mut(&mut session)
         .expect("single session ref")
         .services
-        .models_manager = models_manager;
+        .model_service = super::build_test_model_service_for_config(
+        config.as_ref(),
+        turn_context_raw.provider.auth_manager(),
+        Arc::clone(&session.services.model_provider_factory),
+    );
     turn_context_raw.config = Arc::clone(&config);
     turn_context_raw.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
@@ -210,7 +207,7 @@ async fn request_permissions_guardian_review_stops_when_cancelled() {
             let event = rx_event.recv().await.expect("event channel should be open");
             if matches!(
                 event.msg,
-                codex_protocol::protocol::EventMsg::GuardianAssessment(_)
+                protocol::protocol::EventMsg::GuardianAssessment(_)
             ) {
                 break;
             }
@@ -265,16 +262,15 @@ async fn guardian_allows_exec_command_additional_permissions_requests_past_polic
         .features
         .enable(Feature::ExecPermissionApprovals)
         .expect("test setup should allow enabling request permissions");
-    turn_context_raw.permission_profile = codex_protocol::models::PermissionProfile::Disabled;
+    turn_context_raw.permission_profile = protocol::models::PermissionProfile::Disabled;
     let mut config = (*turn_context_raw.config).clone();
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     let config = Arc::new(config);
-    let models_manager = models_manager_with_provider_auth(
-        config.codex_home.to_path_buf(),
+    session.services.model_service = super::build_test_model_service_for_config(
+        config.as_ref(),
         turn_context_raw.provider.auth_manager(),
-        config.model_provider.clone(),
+        Arc::clone(&session.services.model_provider_factory),
     );
-    session.services.models_manager = models_manager;
     turn_context_raw.config = Arc::clone(&config);
     turn_context_raw.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
@@ -352,17 +348,16 @@ async fn strict_auto_review_turn_grant_forces_guardian_for_exec_command_policy_s
         .approval_policy
         .set(AskForApproval::OnFailure)
         .expect("test setup should allow updating approval policy");
-    turn_context_raw.permission_profile = codex_protocol::models::PermissionProfile::Disabled;
+    turn_context_raw.permission_profile = protocol::models::PermissionProfile::Disabled;
     let mut config = (*turn_context_raw.config).clone();
     config.approvals_reviewer = ApprovalsReviewer::User;
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     let config = Arc::new(config);
-    let models_manager = models_manager_with_provider_auth(
-        config.codex_home.to_path_buf(),
+    session.services.model_service = super::build_test_model_service_for_config(
+        config.as_ref(),
         turn_context_raw.provider.auth_manager(),
-        config.model_provider.clone(),
+        Arc::clone(&session.services.model_provider_factory),
     );
-    session.services.models_manager = models_manager;
     turn_context_raw.config = Arc::clone(&config);
     turn_context_raw.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
@@ -477,9 +472,11 @@ async fn process_compacted_history_preserves_separate_guardian_developer_message
         })
         .collect::<Vec<_>>();
 
-    assert!(!developer_messages
-        .iter()
-        .any(|message| message.contains("stale developer message")));
+    assert!(
+        !developer_messages
+            .iter()
+            .any(|message| message.contains("stale developer message"))
+    );
     assert!(developer_messages.len() >= 2);
     assert_eq!(developer_messages.last(), Some(&guardian_policy));
 }
@@ -568,7 +565,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
     let command = [vec!["rm".to_string()]];
     let parent_exec_policy = ExecPolicyManager::load(
         &config.config_layer_stack,
-        &codex_execpolicy_loader::StarlarkExecPolicyLoader,
+        &permissions_service::StarlarkExecPolicyLoader,
     )
     .await
     .expect("load parent exec policy");
@@ -590,18 +587,13 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
     let auth_runtime: codex_auth_types::SharedAuthRuntime = auth_manager.clone();
     let provider_auth_manager = codex_login::model_provider_auth_manager(Some(auth_manager));
-    let models_manager = models_manager_with_provider_auth(
-        config.codex_home.to_path_buf(),
-        provider_auth_manager.clone(),
-        config.model_provider.clone(),
-    );
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
-    let skills_manager = Arc::new(SkillsManager::new(
+    let skill_service = Arc::new(SkillService::new(
         config.codex_home.clone(),
         /*bundled_skills_enabled*/ true,
     ));
-    let thread_store = Arc::new(codex_thread_store::LocalThreadStore::new(
-        codex_thread_store::LocalThreadStoreConfig::from_config(&config),
+    let thread_store = Arc::new(thread_store::LocalThreadStore::new(
+        thread_store::LocalThreadStoreConfig::from_config(&config),
         /*state_db*/ None,
     ));
 
@@ -612,24 +604,25 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         auth_runtime,
         provider_auth_manager,
         model_provider_factory: crate::test_support::model_provider_factory_for_tests(),
-        api_runtime_factory: Arc::new(codex_api::DefaultApiRuntimeFactory),
+        api_runtime_factory: Arc::new(model_service::DefaultApiRuntimeFactory),
         session_telemetry_factory: Arc::new(codex_otel::OtelSessionTelemetryFactory),
         memory_tool_developer_instructions_provider: Arc::new(
             memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider,
         ),
-        hook_runtime_factory: Arc::new(codex_hooks_api::DisabledHookRuntimeFactory),
+        hook_runtime_factory: Arc::new(hooks_api::DisabledHookRuntimeFactory),
         sandbox_runtime: Arc::new(codex_sandboxing_api::DisabledSandboxRuntime),
-        models_manager,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
-        skills_manager,
+        skill_service,
         plugins_manager,
-        mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
-        mcp_auth_runtime: Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        mcp_connection_runtime_factory: Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+        mcp_service: Arc::new(mcp_service::McpService::new(Arc::new(
+            approval_service::ApprovalService,
+        ))),
+        mcp_auth_runtime: Arc::new(mcp_service::DefaultMcpAuthRuntime),
+        mcp_connection_runtime_factory: Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),
         network_proxy_runtime_factory: Arc::new(
             codex_network_proxy::DefaultNetworkProxyRuntimeFactory,
         ),
-        command_service_api: Arc::new(codex_command_service::CommandService::new()),
+        command_service_api: Arc::new(command_service::CommandService::new()),
         extensions: codex_extension_api::empty_extension_registry(),
         conversation_history: InitialHistory::New,
         session_source: SessionSource::SubAgent(SubAgentSource::Other(
@@ -643,7 +636,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         inherited_shell_snapshot: None,
         inherited_exec_policy: Some(Arc::new(parent_exec_policy)),
         exec_policy_loader: Arc::new(crate::EmptyExecPolicyLoader),
-        parent_rollout_thread_trace: codex_rollout_trace::ThreadTraceContext::disabled(),
+        parent_rollout_thread_trace: rollout_trace::ThreadTraceContext::disabled(),
         user_shell_override: None,
         parent_trace: None,
         environment_selections: ResolvedTurnEnvironments {
@@ -652,7 +645,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         analytics_events_client: None,
         thread_store,
         state_db: None,
-        live_thread_factory: Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+        live_thread_factory: Arc::new(thread_store::DefaultLiveThreadFactory),
         attestation_provider: None,
         active_event_subscriptions: Arc::new(crate::ActiveEventSubscriptionTracker::default()),
         openai_file_uploader: Arc::new(codex_openai_files_api::DisabledOpenAiFileUploader),

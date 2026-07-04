@@ -11,13 +11,13 @@ use codex_features::Feature;
 use codex_features::Features;
 use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::Verbosity;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary;
+use protocol::config_types::Verbosity;
+use protocol::config_types::WebSearchMode;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AskForApproval;
 use serde::Serialize;
 
 /// Resolved session fields that may not be present in the raw config layer stack.
@@ -205,10 +205,10 @@ pub fn config_lock_to_pretty_toml(lock: &ConfigLockfileToml<ConfigToml>) -> anyh
 mod tests {
     use super::*;
     use codex_features::Feature;
-    use codex_protocol::config_types::ReasoningSummary;
-    use codex_protocol::config_types::Verbosity;
-    use codex_protocol::openai_models::ReasoningEffort;
     use codex_utils_absolute_path::AbsolutePathBuf;
+    use protocol::config_types::ReasoningSummary;
+    use protocol::config_types::Verbosity;
+    use protocol::openai_models::ReasoningEffort;
 
     fn sample_input(save_session_fields: bool) -> ConfigLockBuildInput {
         let mut effective_config = ConfigToml {

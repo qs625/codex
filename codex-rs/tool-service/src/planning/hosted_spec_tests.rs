@@ -1,11 +1,11 @@
 use super::*;
 use crate::ResponsesApiWebSearchFilters;
 use crate::ResponsesApiWebSearchUserLocation;
-use codex_protocol::config_types::WebSearchContextSize;
-use codex_protocol::config_types::WebSearchFilters;
-use codex_protocol::config_types::WebSearchUserLocation;
-use codex_protocol::config_types::WebSearchUserLocationType;
 use pretty_assertions::assert_eq;
+use protocol::config_types::WebSearchContextSize;
+use protocol::config_types::WebSearchFilters;
+use protocol::config_types::WebSearchUserLocation;
+use protocol::config_types::WebSearchUserLocationType;
 
 #[test]
 fn image_generation_tool_matches_expected_spec() {

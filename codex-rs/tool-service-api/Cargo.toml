@@ -6,18 +6,25 @@ version.workspace = true
 
 [lib]
 doctest = false
+name = "tool_service_api"
 path = "src/lib.rs"
 
 [lints]
 workspace = true
 
 [dependencies]
-codex-command-service-api = { workspace = true }
-codex-extension-api = { workspace = true }
-codex-mcp-tool-types = { workspace = true }
-codex-protocol = { workspace = true }
-thread-service-api = { workspace = true }
-codex-tool-config = { workspace = true }
-codex-tool-types = { workspace = true }
+codex-approval-service-api = { workspace = true }
+command-service-api = { workspace = true }
+codex-connectors-api = { workspace = true }
+mcp-types = { workspace = true }
+protocol = { workspace = true }
+tool-types = { workspace = true }
+codex-utils-string = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+thread-service-api = { workspace = true }
+tool-config = { workspace = true }
 tokio-util = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

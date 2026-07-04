@@ -39,7 +39,7 @@ pub(crate) struct RunningTask {
     pub(crate) turn_extension_data: Arc<ExtensionData>,
     // Timer recorded when the task drops to capture the full turn duration.
     // Boxed so turn state does not expose the concrete telemetry timer type.
-    pub(crate) _timer: Option<codex_session_telemetry_api::SessionTelemetryTimer>,
+    pub(crate) _timer: Option<session_telemetry_api::SessionTelemetryTimer>,
 }
 
 pub(crate) struct RemovedTask {

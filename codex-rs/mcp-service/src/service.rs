@@ -3,37 +3,38 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use codex_approval_service_api::ApprovalServiceApi;
+use codex_approval_service_api::ApprovalSessionCapability;
 use codex_approval_service_api::GuardianReviewDispatch;
-use codex_core_skills_api::SkillMetadata;
-use codex_hooks_api::PermissionRequestDecision;
-use codex_mcp_tool_types::ToolInfo;
-use codex_mcp_types::ElicitationResponse;
-use codex_mcp_types::McpServerElicitationRequestParams;
-use codex_mcp_types::McpToolApprovalDecision;
-use codex_mcp_types::McpToolApprovalKey;
-use codex_mcp_types::McpToolApprovalMetadata;
-use codex_protocol::items::TurnItem;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::mcp::ListResourceTemplatesResult;
-use codex_protocol::mcp::ListResourcesResult;
-use codex_protocol::mcp::PaginatedRequestParams;
-use codex_protocol::mcp::ReadResourceRequestParams;
-use codex_protocol::mcp::ReadResourceResult;
-use codex_protocol::mcp::RequestId;
-use codex_protocol::mcp::Resource;
-use codex_protocol::mcp::ResourceTemplate;
-use codex_protocol::protocol::McpInvocation;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_protocol::request_user_input::RequestUserInputResponse;
-use mcp_service_api::McpRuntimeFuture;
+use codex_approval_service_api::PermissionRequestPayload;
+use hooks_api::PermissionRequestDecision;
 use mcp_service_api::McpAppUsageMetadata;
+use mcp_service_api::McpRuntimeFuture;
 use mcp_service_api::McpServiceApi;
 use mcp_service_api::McpToolCallOutcome;
 use mcp_service_api::McpToolExposure;
+use mcp_types::ElicitationResponse;
+use mcp_types::McpServerElicitationRequestParams;
+use mcp_types::McpToolApprovalDecision;
+use mcp_types::McpToolApprovalKey;
+use mcp_types::McpToolApprovalMetadata;
+use mcp_types::ToolInfo;
+use protocol::items::TurnItem;
+use protocol::mcp::CallToolResult;
+use protocol::mcp::ListResourceTemplatesResult;
+use protocol::mcp::ListResourcesResult;
+use protocol::mcp::PaginatedRequestParams;
+use protocol::mcp::ReadResourceRequestParams;
+use protocol::mcp::ReadResourceResult;
+use protocol::mcp::RequestId;
+use protocol::mcp::Resource;
+use protocol::mcp::ResourceTemplate;
+use protocol::protocol::McpInvocation;
+use protocol::protocol::ReviewDecision;
+use protocol::request_user_input::RequestUserInputArgs;
+use protocol::request_user_input::RequestUserInputResponse;
+use skill_service_api::SkillMetadata;
 use thread_service_api::AutoApprovalSafetyOutcome;
 use thread_service_api::HookToolName;
-use thread_service_api::PermissionRequestPayload;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
@@ -43,6 +44,8 @@ use crate::CodexAppsAuthElicitationHost;
 use crate::MCP_CALL_COUNT_METRIC;
 use crate::MCP_CALL_DURATION_METRIC;
 use crate::McpApprovedToolCallLifecycleHost;
+use crate::McpSkillDependencyHost;
+use crate::McpSkillDependencyTurnContext;
 use crate::McpToolApprovalHookDecision;
 use crate::McpToolApprovalMonitorOutcome;
 use crate::McpToolApprovalPersistenceHost;
@@ -52,19 +55,17 @@ use crate::McpToolCallContext;
 use crate::McpToolCallHost;
 use crate::McpToolExecutionHost;
 use crate::McpToolMetadataLookupHost;
-use crate::McpSkillDependencyHost;
-use crate::McpSkillDependencyTurnContext;
 use crate::build_mcp_tool_call_completed_item;
 use crate::build_mcp_tool_call_started_item;
 use crate::codex_apps_auth_context;
 use crate::handle_mcp_tool_call;
 use crate::insert_sandbox_state_request_meta;
 use crate::list_tool_suggest_discoverable_tools_with_auth;
-use crate::mcp_call_metric_tags;
 use crate::maybe_prompt_and_install_mcp_dependencies;
 use crate::maybe_request_mcp_tool_approval;
-use codex_tool_types::DiscoverableTool;
-use codex_tool_types::filter_request_plugin_install_discoverable_tools_for_client;
+use crate::mcp_call_metric_tags;
+use tool_service_api::DiscoverableTool;
+use tool_service_api::filter_request_plugin_install_discoverable_tools_for_client;
 
 #[derive(Clone)]
 pub struct McpService {
@@ -80,6 +81,7 @@ impl McpService {
 struct ServiceMcpHost {
     approval_api: Arc<dyn ApprovalServiceApi>,
     session: Arc<dyn ThreadSessionCapability>,
+    approval_session: Option<Arc<dyn ApprovalSessionCapability>>,
     turn: Arc<dyn ThreadRuntimeCapability>,
 }
 
@@ -97,7 +99,7 @@ struct ServiceMcpSkillDependencyHost<'a> {
 impl McpSkillDependencyHost for ServiceMcpSkillDependencyHost<'_> {
     fn configured_servers<'a>(
         &'a self,
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
     ) -> McpRuntimeFuture<'a, HashMap<String, codex_config_types::McpServerConfig>> {
         let _ = config;
         self.session.configured_mcp_servers()
@@ -128,14 +130,16 @@ impl McpSkillDependencyHost for ServiceMcpSkillDependencyHost<'_> {
         response: RequestUserInputResponse,
     ) -> McpRuntimeFuture<'a, ()> {
         Box::pin(async move {
-            self.session.notify_user_input_response(sub_id, response).await;
+            self.session
+                .notify_user_input_response(sub_id, response)
+                .await;
         })
     }
 
     fn oauth_login_support<'a>(
         &'a self,
         transport: &'a codex_config_types::McpServerTransportConfig,
-    ) -> McpRuntimeFuture<'a, codex_mcp_types::McpOAuthLoginSupport> {
+    ) -> McpRuntimeFuture<'a, mcp_types::McpOAuthLoginSupport> {
         self.session.mcp_oauth_login_support(transport)
     }
 
@@ -160,19 +164,20 @@ impl McpSkillDependencyHost for ServiceMcpSkillDependencyHost<'_> {
 
     fn should_retry_without_scopes(
         &self,
-        scopes: &codex_mcp_types::ResolvedMcpOAuthScopes,
+        scopes: &mcp_types::ResolvedMcpOAuthScopes,
         error: &anyhow::Error,
     ) -> bool {
-        self.session.should_retry_mcp_oauth_without_scopes(scopes, error)
+        self.session
+            .should_retry_mcp_oauth_without_scopes(scopes, error)
     }
 
     fn refresh_mcp_servers_now<'a>(
         &'a self,
         servers: HashMap<String, codex_config_types::McpServerConfig>,
         store_mode: codex_config_types::OAuthCredentialsStoreMode,
-        elicitation_reviewer: Option<codex_mcp_types::ElicitationReviewerHandle>,
+        elicitation_reviewer: Option<mcp_types::ElicitationReviewerHandle>,
     ) -> McpRuntimeFuture<'a, ()> {
-        let refresh_config = codex_protocol::protocol::McpServerRefreshConfig {
+        let refresh_config = protocol::protocol::McpServerRefreshConfig {
             mcp_servers: serde_json::to_value(servers)
                 .unwrap_or_else(|_| serde_json::Value::Object(Default::default())),
             mcp_oauth_credentials_store_mode: serde_json::to_value(store_mode)
@@ -187,7 +192,7 @@ impl McpServiceApi for McpService {
     fn list_accessible_connectors(
         &self,
         all_mcp_tools: &[ToolInfo],
-        config: &codex_config::Config,
+        config: &config_service::Config,
     ) -> Vec<codex_connectors_api::AppInfo> {
         crate::with_app_enabled_state(
             crate::accessible_connectors_from_mcp_tools(all_mcp_tools),
@@ -199,14 +204,16 @@ impl McpServiceApi for McpService {
         &self,
         plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
         all_mcp_tools: &'a [ToolInfo],
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
     ) -> McpRuntimeFuture<'a, Vec<codex_connectors_api::AppInfo>> {
         Box::pin(async move {
             let plugin_effective_apps = plugin_runtime
                 .effective_apps_for_config(&config.plugins_config_input())
                 .await;
             let connectors = codex_connectors_api::merge::merge_plugin_connectors_with_accessible(
-                plugin_effective_apps.into_iter().map(|connector_id| connector_id.0),
+                plugin_effective_apps
+                    .into_iter()
+                    .map(|connector_id| connector_id.0),
                 crate::accessible_connectors_from_mcp_tools(all_mcp_tools),
             );
             crate::with_app_enabled_state(connectors, config)
@@ -218,7 +225,7 @@ impl McpServiceApi for McpService {
         turn: &'a dyn ThreadTurnCapability,
         plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
         accessible_connectors: &'a [codex_connectors_api::AppInfo],
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
         app_server_client_name: Option<&'a str>,
         tool_suggest_enabled: bool,
         apps_enabled: bool,
@@ -252,8 +259,8 @@ impl McpServiceApi for McpService {
         all_mcp_tools: &[ToolInfo],
         connectors: Option<&[codex_connectors_api::AppInfo]>,
         explicitly_enabled_connectors: &[codex_connectors_api::AppInfo],
-        config: &codex_config::Config,
-        tools_config: &codex_tool_config::ToolsConfig,
+        config: &config_service::Config,
+        tools_config: &tool_config::ToolsConfig,
     ) -> McpToolExposure {
         let exposure = crate::build_mcp_tool_exposure(
             all_mcp_tools,
@@ -272,10 +279,10 @@ impl McpServiceApi for McpService {
         &self,
         session: &'a dyn ThreadSessionCapability,
         turn: &'a dyn ThreadTurnCapability,
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
         cancellation_token: &'a tokio_util::sync::CancellationToken,
         mentioned_skills: &'a [SkillMetadata],
-        elicitation_reviewer: Option<codex_mcp_types::ElicitationReviewerHandle>,
+        elicitation_reviewer: Option<mcp_types::ElicitationReviewerHandle>,
     ) -> McpRuntimeFuture<'a, ()> {
         let host = ServiceMcpSkillDependencyHost { session, turn };
         let turn_context = McpSkillDependencyTurnContext {
@@ -308,54 +315,57 @@ impl McpServiceApi for McpService {
     fn configured_servers<'a>(
         &self,
         plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
-        config: &'a codex_config::Config,
-    ) -> McpRuntimeFuture<'a, HashMap<String, codex_config::McpServerConfig>> {
+        config: &'a config_service::Config,
+    ) -> McpRuntimeFuture<'a, HashMap<String, config_service::McpServerConfig>> {
         Box::pin(async move {
             let mcp_config = config.to_mcp_config(plugin_runtime).await;
-            codex_mcp_types::configured_mcp_servers(&mcp_config)
+            mcp_types::configured_mcp_servers(&mcp_config)
         })
     }
 
     fn effective_servers<'a>(
         &self,
         plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
-        config: &'a codex_config::Config,
-        auth_context: Option<&'a codex_mcp_types::CodexAppsAuthContext>,
-    ) -> McpRuntimeFuture<'a, HashMap<String, codex_mcp_types::EffectiveMcpServer>> {
+        config: &'a config_service::Config,
+        auth_context: Option<&'a mcp_types::CodexAppsAuthContext>,
+    ) -> McpRuntimeFuture<'a, HashMap<String, mcp_types::EffectiveMcpServer>> {
         Box::pin(async move {
             let mcp_config = config.to_mcp_config(plugin_runtime).await;
-            codex_mcp_types::effective_mcp_servers(&mcp_config, auth_context)
+            mcp_types::effective_mcp_servers(&mcp_config, auth_context)
         })
     }
 
     fn tool_plugin_provenance<'a>(
         &self,
         plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
-        config: &'a codex_config::Config,
-    ) -> McpRuntimeFuture<'a, codex_mcp_types::ToolPluginProvenance> {
+        config: &'a config_service::Config,
+    ) -> McpRuntimeFuture<'a, mcp_types::ToolPluginProvenance> {
         Box::pin(async move {
             let mcp_config = config.to_mcp_config(plugin_runtime).await;
-            codex_mcp_types::tool_plugin_provenance(&mcp_config)
+            mcp_types::tool_plugin_provenance(&mcp_config)
         })
     }
 
     fn list_accessible_and_enabled_connectors(
         &self,
         all_mcp_tools: &[ToolInfo],
-        config: &codex_config::Config,
+        config: &config_service::Config,
     ) -> Vec<codex_connectors_api::AppInfo> {
-        crate::with_app_enabled_state(crate::accessible_connectors_from_mcp_tools(all_mcp_tools), config)
-            .into_iter()
-            .filter(|connector| connector.is_accessible && connector.is_enabled)
-            .collect()
+        crate::with_app_enabled_state(
+            crate::accessible_connectors_from_mcp_tools(all_mcp_tools),
+            config,
+        )
+        .into_iter()
+        .filter(|connector| connector.is_accessible && connector.is_enabled)
+        .collect()
     }
 
     fn fetch_accessible_connectors<'a>(
         &self,
         plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
         auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
-        environment_provider: &'a dyn codex_exec_server_api::ExecEnvironmentProvider,
+        environment_provider: &'a dyn exec_server_api::ExecEnvironmentProvider,
         mcp_auth_runtime: &'a dyn mcp_service_api::McpAuthRuntime,
         mcp_connection_runtime_factory: &'a dyn mcp_service_api::McpConnectionRuntimeFactory,
     ) -> McpRuntimeFuture<'a, anyhow::Result<Vec<codex_connectors_api::AppInfo>>> {
@@ -374,8 +384,8 @@ impl McpServiceApi for McpService {
 
     fn app_tool_policy(
         &self,
-        config: &codex_config::Config,
-        metadata: Option<&codex_mcp_types::McpToolApprovalMetadata>,
+        config: &config_service::Config,
+        metadata: Option<&mcp_types::McpToolApprovalMetadata>,
         tool_name: &str,
     ) -> thread_service_api::ThreadAppToolPolicy {
         let policy = crate::app_tool_policy(
@@ -393,7 +403,7 @@ impl McpServiceApi for McpService {
 
     fn list_cached_accessible_connectors<'a>(
         &self,
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
         auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
     ) -> McpRuntimeFuture<'a, Option<Vec<codex_connectors_api::AppInfo>>> {
         Box::pin(async move {
@@ -403,8 +413,8 @@ impl McpServiceApi for McpService {
 
     fn refresh_accessible_connectors_cache(
         &self,
-        config: &codex_config::Config,
-        connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
+        config: &config_service::Config,
+        connector_auth_context: Option<&mcp_types::CodexAppsAuthContext>,
         mcp_tools: &[ToolInfo],
     ) {
         crate::refresh_accessible_connectors_cache_from_mcp_tools(
@@ -417,7 +427,7 @@ impl McpServiceApi for McpService {
     fn codex_apps_auth_context(
         &self,
         auth: Option<&codex_auth_types::RequestAuthSnapshot>,
-    ) -> Option<codex_mcp_types::CodexAppsAuthContext> {
+    ) -> Option<mcp_types::CodexAppsAuthContext> {
         crate::codex_apps_auth_context(auth)
     }
 
@@ -430,8 +440,8 @@ impl McpServiceApi for McpService {
 
     fn build_runtime_environment(
         &self,
-        environment: Arc<dyn codex_exec_server_api::ExecEnvironment>,
-        local_environment: Arc<dyn codex_exec_server_api::ExecEnvironment>,
+        environment: Arc<dyn exec_server_api::ExecEnvironment>,
+        local_environment: Arc<dyn exec_server_api::ExecEnvironment>,
         fallback_cwd: std::path::PathBuf,
     ) -> mcp_service_api::McpRuntimeEnvironment {
         crate::mcp_runtime_environment(environment, local_environment, fallback_cwd)
@@ -447,10 +457,10 @@ impl McpServiceApi for McpService {
 
     fn review_guardian_elicitation<'a>(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
-        request: codex_mcp_types::ElicitationReviewRequest,
-    ) -> McpRuntimeFuture<'a, anyhow::Result<Option<codex_mcp_types::ElicitationResponse>>> {
+        request: mcp_types::ElicitationReviewRequest,
+    ) -> McpRuntimeFuture<'a, anyhow::Result<Option<mcp_types::ElicitationResponse>>> {
         let approval_api = Arc::clone(&self.approval_api);
         Box::pin(async move {
             if !codex_approval_service_api::routes_approval_to_guardian(
@@ -469,11 +479,11 @@ impl McpServiceApi for McpService {
                         reason,
                         "declining Guardian MCP elicitation before review"
                     );
-                    return Ok(Some(codex_mcp_types::ElicitationResponse {
-                        action: codex_mcp_types::ElicitationAction::Decline,
+                    return Ok(Some(mcp_types::ElicitationResponse {
+                        action: mcp_types::ElicitationAction::Decline,
                         content: None,
                         meta: Some(serde_json::json!({
-                            "approvals_reviewer": codex_protocol::config_types::ApprovalsReviewer::AutoReview,
+                            "approvals_reviewer": protocol::config_types::ApprovalsReviewer::AutoReview,
                         })),
                     }));
                 }
@@ -541,7 +551,7 @@ impl McpServiceApi for McpService {
     fn custom_tool_approval_mode<'a>(
         &self,
         plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
         server: &'a str,
         tool_name: &'a str,
     ) -> McpRuntimeFuture<'a, codex_config_types::AppToolApproval> {
@@ -552,7 +562,7 @@ impl McpServiceApi for McpService {
 
     fn persist_codex_app_tool_approval<'a>(
         &self,
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
         connector_id: &'a str,
         tool_name: &'a str,
     ) -> McpRuntimeFuture<'a, anyhow::Result<()>> {
@@ -564,7 +574,7 @@ impl McpServiceApi for McpService {
     fn persist_non_app_mcp_tool_approval<'a>(
         &self,
         plugin_runtime: &'a dyn plugin_service_api::PluginRuntime,
-        config: &'a codex_config::Config,
+        config: &'a config_service::Config,
         server: &'a str,
         tool_name: &'a str,
     ) -> McpRuntimeFuture<'a, anyhow::Result<()>> {
@@ -581,7 +591,11 @@ impl McpServiceApi for McpService {
         request_id: RequestId,
         params: McpServerElicitationRequestParams,
     ) -> McpRuntimeFuture<'a, Option<ElicitationResponse>> {
-        Box::pin(async move { session.request_mcp_server_elicitation(turn, request_id, params).await })
+        Box::pin(async move {
+            session
+                .request_mcp_server_elicitation(turn, request_id, params)
+                .await
+        })
     }
 
     fn resolve_elicitation<'a>(
@@ -591,14 +605,18 @@ impl McpServiceApi for McpService {
         request_id: RequestId,
         response: ElicitationResponse,
     ) -> McpRuntimeFuture<'a, Result<(), String>> {
-        Box::pin(async move { session.resolve_mcp_elicitation(server_name, request_id, response).await })
+        Box::pin(async move {
+            session
+                .resolve_mcp_elicitation(server_name, request_id, response)
+                .await
+        })
     }
 
     fn refresh_servers_if_requested<'a>(
         &self,
         session: &'a dyn ThreadSessionCapability,
         turn: &'a dyn ThreadTurnCapability,
-        elicitation_reviewer: Option<codex_mcp_types::ElicitationReviewerHandle>,
+        elicitation_reviewer: Option<mcp_types::ElicitationReviewerHandle>,
     ) -> McpRuntimeFuture<'a, ()> {
         Box::pin(async move {
             session
@@ -610,7 +628,7 @@ impl McpServiceApi for McpService {
     fn queue_server_refresh<'a>(
         &self,
         session: &'a dyn ThreadSessionCapability,
-        refresh_config: codex_protocol::protocol::McpServerRefreshConfig,
+        refresh_config: protocol::protocol::McpServerRefreshConfig,
     ) -> McpRuntimeFuture<'a, ()> {
         Box::pin(async move { session.queue_mcp_server_refresh(refresh_config).await })
     }
@@ -619,8 +637,8 @@ impl McpServiceApi for McpService {
         &self,
         session: &'a dyn ThreadSessionCapability,
         turn: &'a dyn ThreadTurnCapability,
-        refresh_config: codex_protocol::protocol::McpServerRefreshConfig,
-        elicitation_reviewer: Option<codex_mcp_types::ElicitationReviewerHandle>,
+        refresh_config: protocol::protocol::McpServerRefreshConfig,
+        elicitation_reviewer: Option<mcp_types::ElicitationReviewerHandle>,
     ) -> McpRuntimeFuture<'a, ()> {
         Box::pin(async move {
             session
@@ -653,6 +671,7 @@ impl McpServiceApi for McpService {
         let host = ServiceMcpHost {
             approval_api: Arc::clone(&self.approval_api),
             session,
+            approval_session: None,
             turn,
         };
         Box::pin(async move { crate::lookup_mcp_tool_metadata(&host, server, tool_name).await })
@@ -661,6 +680,7 @@ impl McpServiceApi for McpService {
     fn call_tool<'a>(
         &self,
         session: Arc<dyn ThreadSessionCapability>,
+        approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         server: String,
@@ -671,6 +691,7 @@ impl McpServiceApi for McpService {
         let host = ServiceMcpHost {
             approval_api: Arc::clone(&self.approval_api),
             session,
+            approval_session: Some(approval_session),
             turn,
         };
         Box::pin(async move {
@@ -717,7 +738,15 @@ impl McpServiceApi for McpService {
             emit_mcp_resource_started(session.as_ref(), turn.as_ref(), &call_id, &invocation).await;
             let start = Instant::now();
             let result = session.list_mcp_resources(server, params).await;
-            emit_mcp_resource_completed(session.as_ref(), turn.as_ref(), &call_id, invocation, start.elapsed(), &result).await;
+            emit_mcp_resource_completed(
+                session.as_ref(),
+                turn.as_ref(),
+                &call_id,
+                invocation,
+                start.elapsed(),
+                &result,
+            )
+            .await;
             result
         })
     }
@@ -771,7 +800,15 @@ impl McpServiceApi for McpService {
             emit_mcp_resource_started(session.as_ref(), turn.as_ref(), &call_id, &invocation).await;
             let start = Instant::now();
             let result = session.list_mcp_resource_templates(server, params).await;
-            emit_mcp_resource_completed(session.as_ref(), turn.as_ref(), &call_id, invocation, start.elapsed(), &result).await;
+            emit_mcp_resource_completed(
+                session.as_ref(),
+                turn.as_ref(),
+                &call_id,
+                invocation,
+                start.elapsed(),
+                &result,
+            )
+            .await;
             result
         })
     }
@@ -825,7 +862,15 @@ impl McpServiceApi for McpService {
             emit_mcp_resource_started(session.as_ref(), turn.as_ref(), &call_id, &invocation).await;
             let start = Instant::now();
             let result = session.read_mcp_resource(server, params).await;
-            emit_mcp_resource_completed(session.as_ref(), turn.as_ref(), &call_id, invocation, start.elapsed(), &result).await;
+            emit_mcp_resource_completed(
+                session.as_ref(),
+                turn.as_ref(),
+                &call_id,
+                invocation,
+                start.elapsed(),
+                &result,
+            )
+            .await;
             result
         })
     }
@@ -892,7 +937,9 @@ impl McpToolExecutionHost for ServiceMcpHost {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> Result<CallToolResult, String> {
-        self.session.call_mcp_tool(server, tool, arguments, meta).await
+        self.session
+            .call_mcp_tool(server, tool, arguments, meta)
+            .await
     }
 }
 
@@ -949,9 +996,11 @@ impl McpApprovedToolCallLifecycleHost for ServiceMcpHost {
         self.turn_view()
             .tool_dispatch_telemetry()
             .counter(MCP_CALL_COUNT_METRIC, 1, &tag_refs);
-        self.turn_view()
-            .tool_dispatch_telemetry()
-            .record_duration(MCP_CALL_DURATION_METRIC, duration, &tag_refs);
+        self.turn_view().tool_dispatch_telemetry().record_duration(
+            MCP_CALL_DURATION_METRIC,
+            duration,
+            &tag_refs,
+        );
     }
 }
 
@@ -1044,8 +1093,10 @@ impl McpToolApprovalReviewHost for ServiceMcpHost {
         hook_tool_name: &str,
         tool_input: serde_json::Value,
     ) -> Option<McpToolApprovalHookDecision> {
-        match self
-            .session
+        let Some(approval_session) = self.approval_session.as_ref() else {
+            return None;
+        };
+        match approval_session
             .run_permission_request_hooks(
                 self.turn_view(),
                 call_id,
@@ -1072,12 +1123,17 @@ impl McpToolApprovalReviewHost for ServiceMcpHost {
         let result = self
             .approval_api
             .review_guardian_request(GuardianReviewDispatch {
-                session: Arc::clone(&self.session),
+                session: Arc::clone(
+                    self.approval_session
+                        .as_ref()
+                        .expect("approval session required for guardian review"),
+                ),
                 turn: Arc::clone(&self.turn),
                 review_id: uuid::Uuid::new_v4().to_string(),
                 request,
                 retry_reason: monitor_reason,
-                approval_request_source: codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
+                approval_request_source:
+                    codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
                 cancellation_token: None,
             })
             .await;
@@ -1150,6 +1206,7 @@ impl McpToolCallHost for ServiceMcpHost {
         approval_mode: codex_config_types::AppToolApproval,
     ) -> impl std::future::Future<Output = Option<McpToolApprovalDecision>> + Send {
         let session = Arc::clone(&self.session);
+        let approval_session = self.approval_session.clone();
         let turn = Arc::clone(&self.turn);
         let approval_api = Arc::clone(&self.approval_api);
         let call_id = call_id.to_string();
@@ -1160,6 +1217,7 @@ impl McpToolCallHost for ServiceMcpHost {
             let host = ServiceMcpHost {
                 approval_api,
                 session,
+                approval_session,
                 turn,
             };
             let thread_id = host.session.conversation_id().to_string();
@@ -1197,9 +1255,11 @@ impl McpToolCallHost for ServiceMcpHost {
     }
 
     fn emit_mcp_call_count_status_only(&self, status: &str) {
-        self.turn_view()
-            .tool_dispatch_telemetry()
-            .counter(MCP_CALL_COUNT_METRIC, 1, &[("status", status)]);
+        self.turn_view().tool_dispatch_telemetry().counter(
+            MCP_CALL_COUNT_METRIC,
+            1,
+            &[("status", status)],
+        );
     }
 
     fn emit_mcp_call_count_with_tags(
@@ -1227,9 +1287,7 @@ async fn emit_mcp_resource_started(
     invocation: &McpInvocation,
 ) {
     let item = build_mcp_tool_call_started_item(call_id, invocation.clone(), None);
-    session
-        .emit_turn_item_started(turn, &item)
-        .await;
+    session.emit_turn_item_started(turn, &item).await;
 }
 
 async fn emit_mcp_resource_completed<T>(

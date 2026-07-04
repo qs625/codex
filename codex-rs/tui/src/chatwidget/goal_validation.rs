@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::bottom_pane::ChatComposer;
-use codex_protocol::num_format::format_with_separators;
-use codex_protocol::protocol::MAX_THREAD_GOAL_OBJECTIVE_CHARS;
+use ::protocol::num_format::format_with_separators;
+use ::protocol::protocol::MAX_THREAD_GOAL_OBJECTIVE_CHARS;
 
 const GOAL_TOO_LONG_FILE_HINT: &str = "Put longer instructions in a file and refer to that file in the goal, for example: /goal follow the instructions in docs/goal.md.";
 

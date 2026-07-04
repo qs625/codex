@@ -1,29 +1,19 @@
 use super::*;
 use crate::models::ModelCatalogRuntime;
-use codex_core_skills_api::SharedSkillsRuntime;
-use codex_core_skills_api::SkillError;
-use codex_core_skills_api::SkillMetadata;
-use codex_core_skills_api::SkillsLoadInput;
-use codex_protocol::config_types::CollaborationModeMask;
 use futures::StreamExt;
+use protocol::config_types::CollaborationModeMask;
+use skill_service_api::SharedSkillServiceApi;
+use skill_service_api::SkillError;
+use skill_service_api::SkillMetadata;
+use skill_service_api::SkillsLoadInput;
 
 pub(crate) trait CatalogRuntime: ModelCatalogRuntime + Send + Sync {
     fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask>;
-
-    fn skills_manager(&self) -> SharedSkillsRuntime;
-
-    fn clear_skills_cache(&self) {
-        self.skills_manager().clear_cache();
-    }
 }
 
 impl CatalogRuntime for ThreadService {
     fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
         ThreadService::list_collaboration_modes(self)
-    }
-
-    fn skills_manager(&self) -> SharedSkillsRuntime {
-        ThreadService::skills_manager(self)
     }
 }
 
@@ -31,6 +21,7 @@ impl CatalogRuntime for ThreadService {
 pub(crate) struct CatalogRequestProcessor {
     pub(super) auth_manager: Arc<AuthManager>,
     pub(super) catalog_runtime: Arc<dyn CatalogRuntime>,
+    pub(super) skill_service: SharedSkillServiceApi,
     pub(super) plugins_manager: Arc<PluginsManager>,
     pub(super) config: Arc<Config>,
     pub(super) config_manager: ConfigManager,
@@ -43,17 +34,17 @@ const SKILLS_LIST_CWD_CONCURRENCY: usize = 5;
 fn skills_to_info(
     skills: &[SkillMetadata],
     disabled_paths: &HashSet<AbsolutePathBuf>,
-) -> Vec<codex_app_server_protocol::SkillMetadata> {
+) -> Vec<app_server_protocol::SkillMetadata> {
     skills
         .iter()
         .map(|skill| {
             let enabled = !disabled_paths.contains(&skill.path_to_skills_md);
-            codex_app_server_protocol::SkillMetadata {
+            app_server_protocol::SkillMetadata {
                 name: skill.name.clone(),
                 description: skill.description.clone(),
                 short_description: skill.short_description.clone(),
                 interface: skill.interface.clone().map(|interface| {
-                    codex_app_server_protocol::SkillInterface {
+                    app_server_protocol::SkillInterface {
                         display_name: interface.display_name,
                         short_description: interface.short_description,
                         icon_small: interface.icon_small,
@@ -63,11 +54,11 @@ fn skills_to_info(
                     }
                 }),
                 dependencies: skill.dependencies.clone().map(|dependencies| {
-                    codex_app_server_protocol::SkillDependencies {
+                    app_server_protocol::SkillDependencies {
                         tools: dependencies
                             .tools
                             .into_iter()
-                            .map(|tool| codex_app_server_protocol::SkillToolDependency {
+                            .map(|tool| app_server_protocol::SkillToolDependency {
                                 r#type: tool.r#type,
                                 value: tool.value,
                                 description: tool.description,
@@ -86,7 +77,7 @@ fn skills_to_info(
         .collect()
 }
 
-fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
+fn hooks_to_info(hooks: &[hooks::HookListEntry]) -> Vec<HookMetadata> {
     hooks
         .iter()
         .map(|hook| HookMetadata {
@@ -109,10 +100,10 @@ fn hooks_to_info(hooks: &[codex_hooks::HookListEntry]) -> Vec<HookMetadata> {
         .collect()
 }
 
-fn errors_to_info(errors: &[SkillError]) -> Vec<codex_app_server_protocol::SkillErrorInfo> {
+fn errors_to_info(errors: &[SkillError]) -> Vec<app_server_protocol::SkillErrorInfo> {
     errors
         .iter()
-        .map(|err| codex_app_server_protocol::SkillErrorInfo {
+        .map(|err| app_server_protocol::SkillErrorInfo {
             path: err.path.to_path_buf(),
             message: err.message.clone(),
         })
@@ -123,6 +114,7 @@ impl CatalogRequestProcessor {
     pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
         catalog_runtime: Arc<R>,
+        skill_service: SharedSkillServiceApi,
         plugins_manager: Arc<PluginsManager>,
         config: Arc<Config>,
         config_manager: ConfigManager,
@@ -136,6 +128,7 @@ impl CatalogRequestProcessor {
         Self {
             auth_manager,
             catalog_runtime,
+            skill_service,
             plugins_manager,
             config,
             config_manager,
@@ -436,7 +429,7 @@ impl CatalogRequestProcessor {
         let workspace_codex_plugins_enabled = self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
             .await;
-        let skills_manager = self.catalog_runtime.skills_manager();
+        let skill_service = Arc::clone(&self.skill_service);
         let plugins_manager = Arc::clone(&self.plugins_manager);
         let fs = Some(
             self.environment_manager
@@ -449,7 +442,7 @@ impl CatalogRequestProcessor {
                 let config = &config;
                 let fs = fs.clone();
                 let plugins_manager = &plugins_manager;
-                let skills_manager = &skills_manager;
+                let skill_service = &skill_service;
                 async move {
                     let (cwd_abs, config_layer_stack) = match self.resolve_cwd_config(&cwd).await {
                         Ok(resolved) => resolved,
@@ -457,10 +450,10 @@ impl CatalogRequestProcessor {
                             let error_path = cwd.clone();
                             return (
                                 index,
-                                codex_app_server_protocol::SkillsListEntry {
+                                app_server_protocol::SkillsListEntry {
                                     cwd,
                                     skills: Vec::new(),
-                                    errors: vec![codex_app_server_protocol::SkillErrorInfo {
+                                    errors: vec![app_server_protocol::SkillErrorInfo {
                                         path: error_path,
                                         message,
                                     }],
@@ -491,14 +484,14 @@ impl CatalogRequestProcessor {
                         ),
                         config.bundled_skills_enabled(),
                     );
-                    let outcome = skills_manager
+                    let outcome = skill_service
                         .skills_for_cwd(&skills_input, force_reload, fs)
                         .await;
                     let errors = errors_to_info(&outcome.errors);
                     let skills = skills_to_info(&outcome.skills, &outcome.disabled_paths);
                     (
                         index,
-                        codex_app_server_protocol::SkillsListEntry {
+                        app_server_protocol::SkillsListEntry {
                             cwd,
                             skills,
                             errors,
@@ -542,11 +535,11 @@ impl CatalogRequestProcessor {
                 Ok(config) => config,
                 Err(err) => {
                     let error_path = cwd.clone();
-                    data.push(codex_app_server_protocol::HooksListEntry {
+                    data.push(app_server_protocol::HooksListEntry {
                         cwd,
                         hooks: Vec::new(),
                         warnings: Vec::new(),
-                        errors: vec![codex_app_server_protocol::HookErrorInfo {
+                        errors: vec![app_server_protocol::HookErrorInfo {
                             path: error_path,
                             message: err.to_string(),
                         }],
@@ -576,7 +569,7 @@ impl CatalogRequestProcessor {
             } else {
                 PluginLoadOutcome::default()
             };
-            let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
+            let hooks = hooks::list_hooks(hooks::HooksConfig {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
                 bypass_hook_trust: config.bypass_hook_trust,
                 config_layer_stack: Some(
@@ -588,7 +581,7 @@ impl CatalogRequestProcessor {
                 plugin_hook_load_warnings: plugin_outcome.effective_plugin_hook_warnings(),
                 ..Default::default()
             });
-            data.push(codex_app_server_protocol::HooksListEntry {
+            data.push(app_server_protocol::HooksListEntry {
                 cwd,
                 hooks: hooks_to_info(&hooks.hooks),
                 warnings: hooks.warnings,
@@ -628,7 +621,7 @@ impl CatalogRequestProcessor {
             .await
             .map(|()| {
                 self.plugins_manager.clear_cache();
-                self.catalog_runtime.clear_skills_cache();
+                self.skill_service.clear_cache();
                 SkillsConfigWriteResponse {
                     effective_enabled: enabled,
                 }

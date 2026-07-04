@@ -1,3 +1,4 @@
+mod config_diagnostics;
 mod diagnostics;
 mod fingerprint;
 mod key_aliases;
@@ -5,6 +6,22 @@ mod merge;
 mod origins;
 mod state;
 
+pub use config_diagnostics::ConfigDiagnosticSource;
+pub use config_diagnostics::ConfigError;
+pub use config_diagnostics::ConfigLoadError;
+pub use config_diagnostics::TextPosition;
+pub use config_diagnostics::TextRange;
+pub use config_diagnostics::config_error_from_toml;
+pub use config_diagnostics::config_error_from_toml_for_source;
+pub use config_diagnostics::config_error_from_typed_toml;
+pub use config_diagnostics::config_error_from_typed_toml_for_source;
+pub use config_diagnostics::default_range;
+pub use config_diagnostics::format_config_error;
+pub use config_diagnostics::format_config_error_with_source;
+pub use config_diagnostics::io_error_from_config_error;
+pub use config_diagnostics::span_for_config_path;
+pub use config_diagnostics::span_for_toml_key_path;
+pub use config_diagnostics::text_range_from_span;
 pub use diagnostics::first_layer_config_error;
 pub use diagnostics::first_layer_config_error_from_entries;
 pub use fingerprint::version_for_toml;

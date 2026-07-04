@@ -1,7 +1,7 @@
-use codex_protocol::protocol::CodexErrorInfo;
-use codex_protocol::protocol::ErrorEvent;
-use codex_protocol::protocol::NonSteerableTurnKind;
-use codex_protocol::user_input::UserInput;
+use protocol::protocol::CodexErrorInfo;
+use protocol::protocol::ErrorEvent;
+use protocol::protocol::NonSteerableTurnKind;
+use protocol::user_input::UserInput;
 
 #[derive(Debug, PartialEq)]
 pub enum SteerInputError {
@@ -108,8 +108,8 @@ mod tests {
     use super::SteerInputError;
     use super::SteerableTaskKind;
     use super::validate_steer_input;
-    use codex_protocol::protocol::NonSteerableTurnKind;
-    use codex_protocol::user_input::UserInput;
+    use protocol::protocol::NonSteerableTurnKind;
+    use protocol::user_input::UserInput;
 
     fn text_input() -> Vec<UserInput> {
         vec![UserInput::Text {

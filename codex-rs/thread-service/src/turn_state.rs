@@ -2,17 +2,17 @@
 
 use std::collections::HashMap;
 
-use codex_mcp_types::ElicitationResponse;
-use codex_protocol::dynamic_tools::DynamicToolResponse;
-use codex_protocol::mcp::RequestId;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::request_permissions::RequestPermissionProfile;
-use codex_protocol::request_permissions::RequestPermissionsResponse;
-use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use mcp_types::ElicitationResponse;
+use protocol::dynamic_tools::DynamicToolResponse;
+use protocol::mcp::RequestId;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::TokenUsage;
+use protocol::request_permissions::RequestPermissionProfile;
+use protocol::request_permissions::RequestPermissionsResponse;
+use protocol::request_user_input::RequestUserInputResponse;
 use tokio::sync::oneshot;
 
 use crate::MailboxDeliveryPhase;

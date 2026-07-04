@@ -4,19 +4,19 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use codex_file_system::LOCAL_FS;
 use codex_git_info::resolve_root_git_project_for_trust;
-use codex_protocol::AgentPath;
-use codex_protocol::ThreadId;
-use codex_protocol::error::CodexErr;
-use codex_protocol::models::BaseInstructions;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::openai_models::ReasoningEffortPreset;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::user_input::UserInput;
-use codex_tool_types::FunctionCallError;
+use protocol::AgentPath;
+use protocol::ThreadId;
+use protocol::error::CodexErr;
+use protocol::models::BaseInstructions;
+use protocol::openai_models::ReasoningEffort;
+use protocol::openai_models::ReasoningEffortPreset;
+use protocol::protocol::Op;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::user_input::UserInput;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use tool_service_api::FunctionCallError;
 
 pub(crate) fn collab_spawn_error(err: CodexErr) -> FunctionCallError {
     match err {
@@ -201,7 +201,8 @@ pub(crate) async fn apply_requested_spawn_agent_model_overrides(
         let selected_model_name = find_spawn_agent_model_name(&available_models, requested_model)?;
         let selected_model_info = session
             .spawn_agent_model_info(&selected_model_name, config)
-            .await;
+            .await
+            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
 
         config.model = Some(selected_model_name.clone());
         if let Some(reasoning_effort) = requested_reasoning_effort {
@@ -244,7 +245,10 @@ pub(crate) async fn apply_spawn_agent_service_tier(
             "spawn_agent could not resolve the child model for service tier validation".to_string(),
         )
     })?;
-    let model_info = session.spawn_agent_model_info(model.as_str(), config).await;
+    let model_info = session
+        .spawn_agent_model_info(model.as_str(), config)
+        .await
+        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
 
     if model_info.supports_service_tier(candidate_service_tier) {
         config.service_tier = Some(candidate_service_tier.to_string());
@@ -272,7 +276,7 @@ pub(crate) async fn apply_spawn_agent_service_tier(
 }
 
 fn find_spawn_agent_model_name(
-    available_models: &[codex_protocol::openai_models::ModelPreset],
+    available_models: &[protocol::openai_models::ModelPreset],
     requested_model: &str,
 ) -> Result<String, FunctionCallError> {
     available_models

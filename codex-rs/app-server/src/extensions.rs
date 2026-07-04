@@ -1,28 +1,22 @@
 use std::sync::Arc;
 use std::sync::Weak;
 
-use codex_extension_api::AgentSpawnFuture;
-use codex_extension_api::AgentSpawner;
 use codex_extension_api::ExtensionRegistry;
 use codex_extension_api::ExtensionRegistryBuilder;
 use codex_file_watcher::FileWatcher;
-use codex_protocol::ThreadId;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::event_command::EventCommandEvent;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::subscriptions::PersistedSubscription;
-use thread_service_api::ActiveEventSubscriptionTracker;
-use thread_service_api::LiveThreadRegistry;
-use thread_service::NewThread;
-use thread_service::StartThreadOptions;
+use futures::future::BoxFuture;
+use protocol::ThreadId;
+use protocol::event_command::EventCommandEvent;
+use protocol::event_driven_tool::EventDrivenToolTrigger;
+use protocol::models::ResponseItem;
+use protocol::protocol::RolloutItem;
+use protocol::subscriptions::PersistedSubscription;
 use thread_service::ThreadService;
 use thread_service::config::Config;
-use codex_thread_store_api::ReadThreadParams;
-use codex_thread_store_api::ThreadMetadataPatch;
-use futures::future::BoxFuture;
+use thread_service_api::ActiveEventSubscriptionTracker;
+use thread_service_api::LiveThreadRegistry;
+use thread_store_api::ReadThreadParams;
+use thread_store_api::ThreadMetadataPatch;
 
 use crate::thread_status::ThreadWatchManager;
 
@@ -70,32 +64,6 @@ pub(crate) trait FileSubscriptionThreadHost: Send + Sync {
         &'a self,
         thread_id: ThreadId,
     ) -> BoxFuture<'a, Result<Vec<PersistedSubscription>, String>>;
-}
-
-/// Thread capability used by the guardian extension to spawn review agents.
-///
-/// Implementations are expected to fork from the source thread, apply the
-/// provided start options, and return the newly created runtime thread result.
-pub(crate) trait GuardianAgentSpawnHost: Send + Sync {
-    fn spawn_guardian_agent<'a>(
-        &'a self,
-        forked_from_thread_id: ThreadId,
-        options: StartThreadOptions,
-    ) -> BoxFuture<'a, CodexResult<NewThread>>;
-}
-
-impl GuardianAgentSpawnHost for ThreadService {
-    fn spawn_guardian_agent<'a>(
-        &'a self,
-        forked_from_thread_id: ThreadId,
-        options: StartThreadOptions,
-    ) -> BoxFuture<'a, CodexResult<NewThread>> {
-        Box::pin(ThreadService::spawn_subagent(
-            self,
-            forked_from_thread_id,
-            options,
-        ))
-    }
 }
 
 impl FileSubscriptionThreadHost for ThreadService {
@@ -263,17 +231,12 @@ impl codex_file_subscription::FileSubscriptionThreadRuntime for CoreFileSubscrip
     }
 }
 
-pub(crate) fn thread_extensions<S>(
-    guardian_agent_spawner: S,
+pub(crate) fn thread_extensions(
     file_watcher: Arc<FileWatcher>,
     file_subscription_host: Weak<dyn FileSubscriptionThreadHost>,
     thread_watch_manager: ThreadWatchManager,
-) -> Arc<ExtensionRegistry<Config>>
-where
-    S: AgentSpawner<StartThreadOptions, Spawned = NewThread, Error = CodexErr> + 'static,
-{
+) -> Arc<ExtensionRegistry<Config>> {
     let mut builder = ExtensionRegistryBuilder::<Config>::new();
-    codex_guardian::install(&mut builder, guardian_agent_spawner);
     codex_file_subscription::install(
         &mut builder,
         file_watcher,
@@ -285,21 +248,4 @@ where
         })),
     );
     Arc::new(builder.build())
-}
-
-pub(crate) fn guardian_agent_spawner(
-    host: Weak<dyn GuardianAgentSpawnHost>,
-) -> impl AgentSpawner<StartThreadOptions, Spawned = NewThread, Error = CodexErr> {
-    move |forked_from_thread_id: ThreadId,
-          options: StartThreadOptions|
-          -> AgentSpawnFuture<'static, NewThread, CodexErr> {
-        let host = host.clone();
-        Box::pin(async move {
-            let host = host.upgrade().ok_or_else(|| {
-                CodexErr::UnsupportedOperation("guardian agent spawn host dropped".to_string())
-            })?;
-            host.spawn_guardian_agent(forked_from_thread_id, options)
-                .await
-        })
-    }
 }

@@ -3,12 +3,12 @@ mod exit_status;
 pub(crate) mod login;
 
 use clap::Parser;
-use codex_config_local_loader::LocalConfigLayerLoader;
-use thread_service::config::ConfigBuilder;
+use config_service::LocalConfigLayerLoader;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use std::path::PathBuf;
 use std::sync::Arc;
+use thread_service::config::ConfigBuilder;
 
 pub use debug_sandbox::run_command_under_landlock;
 pub use debug_sandbox::run_command_under_seatbelt;

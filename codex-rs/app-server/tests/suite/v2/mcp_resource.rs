@@ -4,33 +4,32 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
+use app_server::in_process;
+use app_server::in_process::InProcessStartArgs;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::McpResourceContent;
+use app_server_protocol::McpResourceReadParams;
+use app_server_protocol::McpResourceReadResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
 use axum::Router;
-use codex_app_server::in_process;
-use codex_app_server::in_process::InProcessStartArgs;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::McpResourceContent;
-use codex_app_server_protocol::McpResourceReadParams;
-use codex_app_server_protocol::McpResourceReadResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config::CloudRequirementsLoader;
-use codex_config::LoaderOverrides;
-use codex_config::types::AuthCredentialsStoreMode;
+use config_service::CloudRequirementsLoader;
+use config_service::LoaderOverrides;
+use config_service::types::AuthCredentialsStoreMode;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
-use codex_protocol::protocol::SessionSource;
-use thread_service::config::ConfigBuilder;
 use core_test_support::responses;
 use pretty_assertions::assert_eq;
+use protocol::protocol::SessionSource;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::ReadResourceRequestParams;
@@ -44,6 +43,7 @@ use rmcp::transport::StreamableHttpServerConfig;
 use rmcp::transport::StreamableHttpService;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use tempfile::TempDir;
+use thread_service::config::ConfigBuilder;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -205,7 +205,7 @@ fn mcp_resource_read_returns_error_for_unknown_thread() -> Result<()> {
             loader_overrides,
             strict_config: false,
             cloud_requirements: CloudRequirementsLoader::default(),
-            thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             log_db: None,
             state_db: None,

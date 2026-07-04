@@ -19,7 +19,7 @@ workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 clap = { workspace = true, features = ["derive"] }
 codex-process-hardening = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 globset = { workspace = true }
@@ -32,7 +32,7 @@ sha2 = { workspace = true }
 url = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-codex-command-service = { workspace = true }
+command-service = { workspace = true }
 thread-service = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

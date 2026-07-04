@@ -1,20 +1,16 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use codex_arg0::Arg0DispatchPaths;
-use codex_config_diagnostics::ConfigLoadError;
-use codex_config_diagnostics::TextRange as CoreTextRange;
-use codex_config_loader::LoaderOverrides;
-use codex_config_loader::NoopThreadConfigLoader;
-use codex_config_loader::ThreadConfigLoader;
-use codex_config_loader_remote::RemoteThreadConfigLoader;
-use codex_config_local_loader::LocalConfigLayerLoader;
-use codex_config_state::ConfigLayerStackOrdering;
+use config_service::ConfigLoadError;
+use config_service::TextRange as CoreTextRange;
+use config_service::LoaderOverrides;
+use config_service::NoopThreadConfigLoader;
+use config_service::RemoteThreadConfigLoader;
+use config_service::ThreadConfigLoader;
+use config_service::LocalConfigLayerLoader;
+use config_service::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
 use codex_login::AuthManager;
-use thread_service_api::ThreadCreatedEvent;
-use thread_service::config::Config;
-use thread_service::config::ConfigBuilder;
-use thread_service::resolve_installation_id;
 use codex_utils_cli::CliConfigOverrides;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -23,6 +19,10 @@ use std::io::Result as IoResult;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
+use thread_service::config::Config;
+use thread_service::config::ConfigBuilder;
+use thread_service::resolve_installation_id;
+use thread_service_api::ThreadCreatedEvent;
 
 use crate::analytics_utils::analytics_events_client_from_config;
 use crate::config_manager::ConfigManager;
@@ -43,21 +43,21 @@ use crate::transport::start_control_socket_acceptor;
 use crate::transport::start_remote_control;
 use crate::transport::start_stdio_connection;
 use crate::transport::start_websocket_acceptor;
+use app_server_protocol::ConfigWarningNotification;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::RemoteControlStatusChangedNotification;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::TextPosition as AppTextPosition;
+use app_server_protocol::TextRange as AppTextRange;
 use codex_analytics::AppServerRpcTransport;
-use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::RemoteControlStatusChangedNotification;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::TextPosition as AppTextPosition;
-use codex_app_server_protocol::TextRange as AppTextRange;
 use codex_exec_server::EnvironmentManager;
-use codex_exec_server_api::ExecServerRuntimePaths;
-use codex_execpolicy_loader::ExecPolicyError;
-use codex_execpolicy_loader::check_execpolicy_for_warnings;
+use permissions_service::ExecPolicyError;
+use permissions_service::check_execpolicy_for_warnings;
 use codex_feedback::CodexFeedback;
-use codex_protocol::protocol::SessionSource;
-use codex_rollout::state_db as rollout_state_db;
-use codex_state::log_db;
+use exec_server_api::ExecServerRuntimePaths;
+use protocol::protocol::SessionSource;
+use rollout::state_db as rollout_state_db;
+use state::log_db;
 use thread_service::config::find_codex_home;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -119,7 +119,7 @@ pub use crate::transport::auth::AppServerWebsocketAuthSettings;
 pub use crate::transport::auth::WebsocketAuthCliMode;
 
 const LOG_FORMAT_ENV_VAR: &str = "LOG_FORMAT";
-const OTEL_SERVICE_NAME: &str = "codex-app-server";
+const OTEL_SERVICE_NAME: &str = "app-server";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LogFormat {
@@ -536,7 +536,7 @@ pub async fn run_main_with_transport_options(
     let state_db = match rollout_state_db::try_init(&config).await {
         Ok(state_db) => Some(state_db),
         Err(err) => {
-            let state_db_path = codex_state::state_db_path(config.sqlite_home.as_path());
+            let state_db_path = state::state_db_path(config.sqlite_home.as_path());
             return Err(std::io::Error::other(format!(
                 "failed to initialize sqlite state db at {}: {err}",
                 state_db_path.display()

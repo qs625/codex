@@ -1,11 +1,11 @@
-pub use codex_hooks_api::PreToolUseOutcome;
-pub use codex_hooks_api::PreToolUseRequest;
-use codex_protocol::protocol::HookCompletedEvent;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookOutputEntry;
-use codex_protocol::protocol::HookOutputEntryKind;
-use codex_protocol::protocol::HookRunStatus;
-use codex_protocol::protocol::HookRunSummary;
+pub use hooks_api::PreToolUseOutcome;
+pub use hooks_api::PreToolUseRequest;
+use protocol::protocol::HookCompletedEvent;
+use protocol::protocol::HookEventName;
+use protocol::protocol::HookOutputEntry;
+use protocol::protocol::HookOutputEntryKind;
+use protocol::protocol::HookRunStatus;
+use protocol::protocol::HookRunSummary;
 use serde_json::Value;
 
 use super::common;
@@ -284,14 +284,14 @@ fn serialization_failure_outcome(hook_events: Vec<HookCompletedEvent>) -> PreToo
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::ThreadId;
-    use codex_protocol::protocol::HookEventName;
-    use codex_protocol::protocol::HookOutputEntry;
-    use codex_protocol::protocol::HookOutputEntryKind;
-    use codex_protocol::protocol::HookRunStatus;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::protocol::HookEventName;
+    use protocol::protocol::HookOutputEntry;
+    use protocol::protocol::HookOutputEntryKind;
+    use protocol::protocol::HookRunStatus;
 
     use super::PreToolUseHandlerData;
     use super::command_input_json;
@@ -716,7 +716,7 @@ mod tests {
             timeout_sec: 5,
             status_message: None,
             source_path: test_path_buf("/tmp/hooks.json").abs(),
-            source: codex_protocol::protocol::HookSource::User,
+            source: protocol::protocol::HookSource::User,
             display_order: 0,
             env: std::collections::HashMap::new(),
         }

@@ -1,4 +1,4 @@
-use codex_state::Stage1Output;
+use state_api::Stage1Output;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -159,7 +159,7 @@ pub fn rollout_summary_file_stem(memory: &Stage1Output) -> String {
 }
 
 fn rollout_summary_file_stem_from_parts(
-    thread_id: codex_protocol::ThreadId,
+    thread_id: protocol::ThreadId,
     source_updated_at: chrono::DateTime<chrono::Utc>,
     rollout_slug: Option<&str>,
 ) -> String {

@@ -6,7 +6,6 @@
 
 pub mod mcp;
 
-mod prompts;
 #[path = "write/control.rs"]
 mod control;
 #[path = "write/extensions/mod.rs"]
@@ -19,8 +18,7 @@ mod metrics;
 mod phase1;
 #[path = "write/phase2.rs"]
 mod phase2;
-#[path = "write/prompts.rs"]
-mod write_prompts;
+mod prompts;
 #[path = "write/runtime.rs"]
 mod runtime;
 #[path = "write/start.rs"]
@@ -29,35 +27,37 @@ mod start;
 mod storage;
 #[path = "write/workspace.rs"]
 pub mod workspace;
+#[path = "write/prompts.rs"]
+mod write_prompts;
 
-pub use memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider;
-pub use memory_service_api::MemoryReadFuture;
-pub use memory_service_api::MemoryToolDeveloperInstructionsProvider;
-pub use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
-pub use memory_service_api::citations;
-pub use memory_service_api::memory_root;
-pub use mcp::MEMORY_TOOLS_NAMESPACE;
-pub use mcp::READ_TOOL_NAME;
-pub use mcp::SEARCH_TOOL_NAME;
+pub use control::clear_memory_roots_contents;
+pub use extensions::prune_old_extension_resources;
 pub use mcp::LIST_TOOL_NAME;
 pub use mcp::LocalMemoriesBackend;
+pub use mcp::MEMORY_TOOLS_NAMESPACE;
 pub use mcp::MemoriesBackend;
 pub use mcp::MemoriesBackendError;
 pub use mcp::MemoriesMcpServer;
-pub use mcp::memory_extension_tools;
+pub use mcp::READ_TOOL_NAME;
+pub use mcp::SEARCH_TOOL_NAME;
 pub use mcp::memory_extension_tool_name;
+pub use mcp::memory_extension_tools;
 pub use mcp::run_server;
 pub use mcp::run_stdio_server;
-pub use prompts::build_memory_tool_developer_instructions;
-pub use prompts::FsMemoryToolDeveloperInstructionsProvider;
-pub use control::clear_memory_roots_contents;
-pub use extensions::prune_old_extension_resources;
+pub use memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider;
 pub use memory_service_api::MemoryConsolidationAgent;
+pub use memory_service_api::MemoryReadFuture;
 pub use memory_service_api::MemoryRuntimeFuture;
 pub use memory_service_api::MemoryStartupRuntime;
 pub use memory_service_api::MemoryStartupSettings;
+pub use memory_service_api::MemoryToolDeveloperInstructionsProvider;
+pub use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
 pub use memory_service_api::StageOnePromptRequest;
 pub use memory_service_api::StageOneRequestContext;
+pub use memory_service_api::citations;
+pub use memory_service_api::memory_root;
+pub use prompts::FsMemoryToolDeveloperInstructionsProvider;
+pub use prompts::build_memory_tool_developer_instructions;
 pub use start::start_memories_startup_task;
 pub use storage::rebuild_raw_memories_file_from_memories;
 pub use storage::rollout_summary_file_stem;
@@ -112,8 +112,8 @@ signal to remove stale memories derived only from those resources.
 
 mod stage_one {
     pub(super) const MODEL: &str = "gpt-5.4-mini";
-    pub(super) const REASONING_EFFORT: codex_protocol::openai_models::ReasoningEffort =
-        codex_protocol::openai_models::ReasoningEffort::Low;
+    pub(super) const REASONING_EFFORT: protocol::openai_models::ReasoningEffort =
+        protocol::openai_models::ReasoningEffort::Low;
     pub(super) const CONCURRENCY_LIMIT: usize = 8;
     pub(super) const JOB_LEASE_SECONDS: i64 = 3_600;
     pub(super) const JOB_RETRY_DELAY_SECONDS: i64 = 3_600;
@@ -126,8 +126,8 @@ mod stage_one {
 
 mod stage_two {
     pub(super) const MODEL: &str = "gpt-5.4";
-    pub(super) const REASONING_EFFORT: codex_protocol::openai_models::ReasoningEffort =
-        codex_protocol::openai_models::ReasoningEffort::Medium;
+    pub(super) const REASONING_EFFORT: protocol::openai_models::ReasoningEffort =
+        protocol::openai_models::ReasoningEffort::Medium;
     pub(super) const JOB_LEASE_SECONDS: i64 = 3_600;
     pub(super) const JOB_RETRY_DELAY_SECONDS: i64 = 3_600;
     pub(super) const JOB_HEARTBEAT_SECONDS: u64 = 90;

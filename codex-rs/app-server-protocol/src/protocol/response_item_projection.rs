@@ -3,13 +3,13 @@ use crate::protocol::v2::CommandExecutionNotificationKind;
 use crate::protocol::v2::CommandWaitNotificationKind;
 use crate::protocol::v2::CommandWaitStatus;
 use crate::protocol::v2::ThreadItem;
-use codex_protocol::models::CommandExecutionNotificationKind as CoreCommandExecutionNotificationKind;
-use codex_protocol::models::CommandWaitNotificationKind as CoreCommandWaitNotificationKind;
-use codex_protocol::models::CommandWaitStatus as CoreCommandWaitStatus;
-use codex_protocol::models::ThreadGoalUpdateGoal;
-use codex_protocol::models::ThreadGoalUpdateGoalStatus;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation as CoreInterAgentOperation;
+use protocol::models::CommandExecutionNotificationKind as CoreCommandExecutionNotificationKind;
+use protocol::models::CommandWaitNotificationKind as CoreCommandWaitNotificationKind;
+use protocol::models::CommandWaitStatus as CoreCommandWaitStatus;
+use protocol::models::ThreadGoalUpdateGoal;
+use protocol::models::ThreadGoalUpdateGoalStatus;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentOperation as CoreInterAgentOperation;
 
 pub(crate) fn thread_goal_from_update_goal(
     goal: &ThreadGoalUpdateGoal,

@@ -29,64 +29,64 @@ use crate::diff_model::FileChange;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
-use codex_app_server_protocol::AdditionalFileSystemPermissions;
-use codex_app_server_protocol::AdditionalNetworkPermissions;
-use codex_app_server_protocol::AdditionalPermissionProfile;
-use codex_app_server_protocol::AgentMessageDeltaNotification;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
-use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::FileChangeRequestApprovalParams;
-use codex_app_server_protocol::FileUpdateChange;
-use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::McpServerElicitationRequest;
-use codex_app_server_protocol::McpServerElicitationRequestParams;
-use codex_app_server_protocol::McpServerStartupState;
-use codex_app_server_protocol::McpServerStatusUpdatedNotification;
-use codex_app_server_protocol::NetworkApprovalContext as AppServerNetworkApprovalContext;
-use codex_app_server_protocol::NetworkApprovalProtocol as AppServerNetworkApprovalProtocol;
-use codex_app_server_protocol::NetworkPolicyAmendment as AppServerNetworkPolicyAmendment;
-use codex_app_server_protocol::NetworkPolicyRuleAction as AppServerNetworkPolicyRuleAction;
-use codex_app_server_protocol::NonSteerableTurnKind as AppServerNonSteerableTurnKind;
-use codex_app_server_protocol::PatchChangeKind;
-use codex_app_server_protocol::PermissionsRequestApprovalParams;
-use codex_app_server_protocol::RequestId as AppServerRequestId;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::SessionSource;
-use codex_app_server_protocol::Thread;
-use codex_app_server_protocol::ThreadClosedNotification;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadStartedNotification;
-use codex_app_server_protocol::ThreadTokenUsage;
-use codex_app_server_protocol::ThreadTokenUsageUpdatedNotification;
-use codex_app_server_protocol::TokenUsageBreakdown;
-use codex_app_server_protocol::ToolRequestUserInputParams;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnCompletedNotification;
-use codex_app_server_protocol::TurnError as AppServerTurnError;
-use codex_app_server_protocol::TurnStartedNotification;
-use codex_app_server_protocol::TurnStatus;
-use codex_app_server_protocol::UserInput;
-use codex_app_server_protocol::UserInput as AppServerUserInput;
-use codex_app_server_protocol::WarningNotification;
+use app_server_protocol::AdditionalFileSystemPermissions;
+use app_server_protocol::AdditionalNetworkPermissions;
+use app_server_protocol::AdditionalPermissionProfile;
+use app_server_protocol::AgentMessageDeltaNotification;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::CommandExecutionRequestApprovalParams;
+use app_server_protocol::ConfigWarningNotification;
+use app_server_protocol::FileChangeRequestApprovalParams;
+use app_server_protocol::FileUpdateChange;
+use app_server_protocol::ItemStartedNotification;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::McpServerElicitationRequest;
+use app_server_protocol::McpServerElicitationRequestParams;
+use app_server_protocol::McpServerStartupState;
+use app_server_protocol::McpServerStatusUpdatedNotification;
+use app_server_protocol::NetworkApprovalContext as AppServerNetworkApprovalContext;
+use app_server_protocol::NetworkApprovalProtocol as AppServerNetworkApprovalProtocol;
+use app_server_protocol::NetworkPolicyAmendment as AppServerNetworkPolicyAmendment;
+use app_server_protocol::NetworkPolicyRuleAction as AppServerNetworkPolicyRuleAction;
+use app_server_protocol::NonSteerableTurnKind as AppServerNonSteerableTurnKind;
+use app_server_protocol::PatchChangeKind;
+use app_server_protocol::PermissionsRequestApprovalParams;
+use app_server_protocol::RequestId as AppServerRequestId;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::SessionSource;
+use app_server_protocol::Thread;
+use app_server_protocol::ThreadClosedNotification;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadStartedNotification;
+use app_server_protocol::ThreadTokenUsage;
+use app_server_protocol::ThreadTokenUsageUpdatedNotification;
+use app_server_protocol::TokenUsageBreakdown;
+use app_server_protocol::ToolRequestUserInputParams;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnError as AppServerTurnError;
+use app_server_protocol::TurnStartedNotification;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput;
+use app_server_protocol::UserInput as AppServerUserInput;
+use app_server_protocol::WarningNotification;
 use codex_otel::SessionTelemetry;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::CollaborationModeMask;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::config_types::Settings;
-use codex_protocol::models::FileSystemPermissions;
-use codex_protocol::models::NetworkPermissions;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::request_permissions::RequestPermissionProfile;
-use codex_protocol::user_input::TextElement;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use crossterm::event::KeyModifiers;
 use insta::assert_snapshot;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::config_types::CollaborationMode;
+use protocol::config_types::CollaborationModeMask;
+use protocol::config_types::ModeKind;
+use protocol::config_types::ServiceTier;
+use protocol::config_types::Settings;
+use protocol::models::FileSystemPermissions;
+use protocol::models::NetworkPermissions;
+use protocol::models::PermissionProfile;
+use protocol::request_permissions::RequestPermissionProfile;
+use protocol::user_input::TextElement;
 use ratatui::prelude::Line;
 use std::path::Path;
 use std::path::PathBuf;
@@ -121,7 +121,7 @@ async fn handle_mcp_inventory_result_clears_committed_loading_cell() {
             tools: HashMap::new(),
             resources: Vec::new(),
             resource_templates: Vec::new(),
-            auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
+            auth_status: app_server_protocol::McpAuthStatus::Unsupported,
         }]),
         McpServerStatusDetail::ToolsAndAuthOnly,
     );
@@ -1102,8 +1102,8 @@ async fn collab_receiver_notification_caches_thread_without_app_server_read() {
             started_at_ms: 0,
             item: ThreadItem::CollabAgentToolCall {
                 id: "wait-1".to_string(),
-                tool: codex_app_server_protocol::CollabAgentTool::Wait,
-                status: codex_app_server_protocol::CollabAgentToolCallStatus::InProgress,
+                tool: app_server_protocol::CollabAgentTool::Wait,
+                status: app_server_protocol::CollabAgentToolCallStatus::InProgress,
                 sender_thread_id: ThreadId::new().to_string(),
                 sender_path: "root".to_string(),
                 receiver_thread_ids: vec![receiver_thread_id.to_string()],
@@ -1134,14 +1134,14 @@ async fn collab_receiver_notification_does_not_cache_not_found_thread() {
         ThreadId::from_string("00000000-0000-0000-0000-000000000124").expect("valid thread id");
 
     app.handle_thread_event_now(ThreadBufferedEvent::Notification(
-        ServerNotification::ItemCompleted(codex_app_server_protocol::ItemCompletedNotification {
+        ServerNotification::ItemCompleted(app_server_protocol::ItemCompletedNotification {
             thread_id: ThreadId::new().to_string(),
             turn_id: "turn-1".to_string(),
             completed_at_ms: 0,
             item: ThreadItem::CollabAgentToolCall {
                 id: "send-1".to_string(),
-                tool: codex_app_server_protocol::CollabAgentTool::SendInput,
-                status: codex_app_server_protocol::CollabAgentToolCallStatus::Failed,
+                tool: app_server_protocol::CollabAgentTool::SendInput,
+                status: app_server_protocol::CollabAgentToolCallStatus::Failed,
                 sender_thread_id: ThreadId::new().to_string(),
                 sender_path: "root".to_string(),
                 receiver_thread_ids: vec![receiver_thread_id.to_string()],
@@ -1152,9 +1152,9 @@ async fn collab_receiver_notification_does_not_cache_not_found_thread() {
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
                     receiver_thread_id.to_string(),
-                    codex_app_server_protocol::CollabAgentState {
+                    app_server_protocol::CollabAgentState {
                         path: None,
-                        status: codex_app_server_protocol::CollabAgentStatus::NotFound,
+                        status: app_server_protocol::CollabAgentStatus::NotFound,
                         message: None,
                     },
                 )]),
@@ -1558,7 +1558,7 @@ fn update_memory_settings_updates_current_thread_memory_mode() -> Result<()> {
         ))
         .await;
 
-        let state_db = codex_state::StateRuntime::init(
+        let state_db = state::StateRuntime::init(
             codex_home.path().to_path_buf(),
             app.config.model_provider_id.clone(),
         )
@@ -2488,15 +2488,15 @@ async fn inactive_thread_exec_approval_preserves_context() {
     assert_eq!(
         available_decisions,
         vec![
-            codex_app_server_protocol::CommandExecutionApprovalDecision::Accept,
-            codex_app_server_protocol::CommandExecutionApprovalDecision::AcceptForSession,
-            codex_app_server_protocol::CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment {
+            app_server_protocol::CommandExecutionApprovalDecision::Accept,
+            app_server_protocol::CommandExecutionApprovalDecision::AcceptForSession,
+            app_server_protocol::CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment {
                 network_policy_amendment: AppServerNetworkPolicyAmendment {
                     host: "example.com".to_string(),
                     action: AppServerNetworkPolicyRuleAction::Allow,
                 },
             },
-            codex_app_server_protocol::CommandExecutionApprovalDecision::Cancel,
+            app_server_protocol::CommandExecutionApprovalDecision::Cancel,
         ]
     );
 }
@@ -2552,7 +2552,7 @@ async fn inactive_thread_file_change_approval_recovers_buffered_changes() {
                     kind: PatchChangeKind::Add,
                     diff: "hello\n".to_string(),
                 }],
-                status: codex_app_server_protocol::PatchApplyStatus::InProgress,
+                status: app_server_protocol::PatchApplyStatus::InProgress,
             },
         }),
     )
@@ -2619,7 +2619,7 @@ async fn inactive_thread_permissions_approval_preserves_file_system_permissions(
             started_at_ms: 0,
             cwd: test_absolute_path("/tmp"),
             reason: Some("Need access to .git".to_string()),
-            permissions: codex_app_server_protocol::RequestPermissionProfile {
+            permissions: app_server_protocol::RequestPermissionProfile {
                 network: Some(AdditionalNetworkPermissions {
                     enabled: Some(true),
                 }),
@@ -2726,7 +2726,7 @@ async fn inactive_thread_invalid_url_elicitation_is_declined() {
             op: Op::ResolveElicitation {
                 server_name,
                 request_id: AppServerRequestId::Integer(10),
-                decision: codex_app_server_protocol::McpServerElicitationAction::Decline,
+                decision: app_server_protocol::McpServerElicitationAction::Decline,
                 content: None,
                 meta: None,
             },
@@ -2849,11 +2849,11 @@ async fn inactive_thread_started_notification_initializes_replay_session() -> Re
                 model_provider: "agent-provider".to_string(),
                 created_at: 1,
                 updated_at: 2,
-                status: codex_app_server_protocol::ThreadStatus::Complete,
+                status: app_server_protocol::ThreadStatus::Complete,
                 path: Some(rollout_path.clone()),
                 cwd: test_path_buf("/tmp/agent").abs(),
                 cli_version: "0.0.0".to_string(),
-                source: codex_app_server_protocol::SessionSource::Unknown,
+                source: app_server_protocol::SessionSource::Unknown,
                 thread_source: None,
                 agent_nickname: Some("Robie".to_string()),
                 agent_role: Some("explorer".to_string()),
@@ -2941,11 +2941,11 @@ async fn inactive_thread_started_notification_preserves_primary_model_when_path_
                 model_provider: "agent-provider".to_string(),
                 created_at: 1,
                 updated_at: 2,
-                status: codex_app_server_protocol::ThreadStatus::Complete,
+                status: app_server_protocol::ThreadStatus::Complete,
                 path: None,
                 cwd: test_path_buf("/tmp/agent").abs(),
                 cli_version: "0.0.0".to_string(),
-                source: codex_app_server_protocol::SessionSource::Unknown,
+                source: app_server_protocol::SessionSource::Unknown,
                 thread_source: None,
                 agent_nickname: Some("Robie".to_string()),
                 agent_role: Some("explorer".to_string()),
@@ -3002,11 +3002,11 @@ async fn thread_read_session_state_does_not_reuse_primary_permission_profile() {
         model_provider: "read-provider".to_string(),
         created_at: 1,
         updated_at: 2,
-        status: codex_app_server_protocol::ThreadStatus::Complete,
+        status: app_server_protocol::ThreadStatus::Complete,
         path: None,
         cwd: test_path_buf("/tmp/read").abs(),
         cli_version: "0.0.0".to_string(),
-        source: codex_app_server_protocol::SessionSource::Unknown,
+        source: app_server_protocol::SessionSource::Unknown,
         thread_source: None,
         agent_nickname: None,
         agent_role: None,
@@ -3300,7 +3300,7 @@ async fn side_parent_status_prioritizes_input_over_approval() -> Result<()> {
     app.enqueue_thread_notification(
         parent_thread_id,
         ServerNotification::ServerRequestResolved(
-            codex_app_server_protocol::ServerRequestResolvedNotification {
+            app_server_protocol::ServerRequestResolvedNotification {
                 thread_id: parent_thread_id.to_string(),
                 request_id: AppServerRequestId::Integer(2),
             },
@@ -3317,7 +3317,7 @@ async fn side_parent_status_prioritizes_input_over_approval() -> Result<()> {
     app.enqueue_thread_notification(
         parent_thread_id,
         ServerNotification::ServerRequestResolved(
-            codex_app_server_protocol::ServerRequestResolvedNotification {
+            app_server_protocol::ServerRequestResolvedNotification {
                 thread_id: parent_thread_id.to_string(),
                 request_id: AppServerRequestId::Integer(1),
             },
@@ -3445,7 +3445,7 @@ async fn side_thread_ignores_global_mcp_startup_notifications() {
 
     app.handle_app_server_event(
         &app_server,
-        codex_app_server_client::AppServerEvent::ServerNotification(
+        app_server_client::AppServerEvent::ServerNotification(
             ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
                 name: "sentry".to_string(),
                 status: McpServerStartupState::Failed,
@@ -3590,7 +3590,7 @@ async fn active_non_primary_shutdown_target_returns_none_for_non_shutdown_event(
 
     assert_eq!(
         app.active_non_primary_shutdown_target(&ServerNotification::SkillsChanged(
-            codex_app_server_protocol::SkillsChangedNotification {},
+            app_server_protocol::SkillsChangedNotification {},
         )),
         None
     );
@@ -3808,7 +3808,7 @@ async fn clear_ui_header_shows_fast_status_for_fast_capable_models() {
     app.chat_widget
         .set_reasoning_effort(Some(ReasoningEffortConfig::XHigh));
     app.chat_widget.set_service_tier(Some(
-        codex_protocol::config_types::ServiceTier::Fast
+        protocol::config_types::ServiceTier::Fast
             .request_value()
             .to_string(),
     ));
@@ -4174,7 +4174,7 @@ async fn height_shrink_schedules_resize_reflow() {
 fn test_turn(turn_id: &str, status: TurnStatus, items: Vec<ThreadItem>) -> Turn {
     Turn {
         id: turn_id.to_string(),
-        items_view: codex_app_server_protocol::TurnItemsView::Full,
+        items_view: app_server_protocol::TurnItemsView::Full,
         items,
         status,
         error: None,
@@ -4490,7 +4490,7 @@ fn active_turn_steer_race_extracts_actual_turn_id_from_mismatch() {
 async fn fresh_session_config_uses_current_service_tier() {
     let mut app = make_test_app().await;
     app.chat_widget.set_service_tier(Some(
-        codex_protocol::config_types::ServiceTier::Fast
+        protocol::config_types::ServiceTier::Fast
             .request_value()
             .to_string(),
     ));
@@ -4500,7 +4500,7 @@ async fn fresh_session_config_uses_current_service_tier() {
     assert_eq!(
         config.service_tier,
         Some(
-            codex_protocol::config_types::ServiceTier::Fast
+            protocol::config_types::ServiceTier::Fast
                 .request_value()
                 .to_string()
         )
@@ -4761,7 +4761,7 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
             turns: vec![
                 Turn {
                     id: "turn-1".to_string(),
-                    items_view: codex_app_server_protocol::TurnItemsView::Full,
+                    items_view: app_server_protocol::TurnItemsView::Full,
                     items: vec![ThreadItem::UserMessage {
                         id: "user-1".to_string(),
                         content: vec![AppServerUserInput::Text {
@@ -4777,7 +4777,7 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
                 },
                 Turn {
                     id: "turn-2".to_string(),
-                    items_view: codex_app_server_protocol::TurnItemsView::Full,
+                    items_view: app_server_protocol::TurnItemsView::Full,
                     items: vec![
                         ThreadItem::UserMessage {
                             id: "user-2".to_string(),
@@ -4871,28 +4871,25 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
             session: None,
             turns: Vec::new(),
             events: vec![ThreadBufferedEvent::Notification(
-                ServerNotification::ItemStarted(
-                    codex_app_server_protocol::ItemStartedNotification {
-                        thread_id: "thread-1".to_string(),
-                        turn_id: "turn-1".to_string(),
-                        started_at_ms: 0,
-                        item: ThreadItem::CollabAgentToolCall {
-                            id: "wait-1".to_string(),
-                            tool: codex_app_server_protocol::CollabAgentTool::Wait,
-                            status:
-                                codex_app_server_protocol::CollabAgentToolCallStatus::InProgress,
-                            sender_thread_id: ThreadId::new().to_string(),
-                            sender_path: "root".to_string(),
-                            receiver_thread_ids: vec![receiver_thread_id.to_string()],
-                            receiver_paths: vec!["root/robie".to_string()],
-                            timeout_ms: None,
-                            prompt: None,
-                            model: None,
-                            reasoning_effort: None,
-                            agents_states: HashMap::new(),
-                        },
+                ServerNotification::ItemStarted(app_server_protocol::ItemStartedNotification {
+                    thread_id: "thread-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    started_at_ms: 0,
+                    item: ThreadItem::CollabAgentToolCall {
+                        id: "wait-1".to_string(),
+                        tool: app_server_protocol::CollabAgentTool::Wait,
+                        status: app_server_protocol::CollabAgentToolCallStatus::InProgress,
+                        sender_thread_id: ThreadId::new().to_string(),
+                        sender_path: "root".to_string(),
+                        receiver_thread_ids: vec![receiver_thread_id.to_string()],
+                        receiver_paths: vec!["root/robie".to_string()],
+                        timeout_ms: None,
+                        prompt: None,
+                        model: None,
+                        reasoning_effort: None,
+                        agents_states: HashMap::new(),
                     },
-                ),
+                }),
             )],
             input_state: None,
         },
@@ -5063,7 +5060,7 @@ async fn thread_rollback_response_discards_queued_active_thread_events() {
                 model_provider: "openai".to_string(),
                 created_at: 0,
                 updated_at: 0,
-                status: codex_app_server_protocol::ThreadStatus::Complete,
+                status: app_server_protocol::ThreadStatus::Complete,
                 path: None,
                 cwd: test_path_buf("/tmp/project").abs(),
                 cli_version: "0.0.0".to_string(),

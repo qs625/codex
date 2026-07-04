@@ -4,15 +4,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use codex_file_watcher::FileWatcher;
-use codex_protocol::ThreadId;
-use codex_protocol::event_command::EventCommandEvent;
-use codex_protocol::event_command::EventCommandEventKind;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
-use codex_protocol::subscriptions::PersistedSubscription;
 #[cfg(unix)]
 use codex_utils_pty::process_group::kill_process_group;
 #[cfg(unix)]
 use codex_utils_pty::process_group::terminate_process_group;
+use protocol::ThreadId;
+use protocol::event_command::EventCommandEvent;
+use protocol::event_command::EventCommandEventKind;
+use protocol::event_driven_tool::EventDrivenToolTrigger;
+use protocol::subscriptions::PersistedSubscription;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
@@ -355,7 +355,7 @@ impl FsSubscriptionRegistry {
     pub(crate) async fn subscribe_schedule(
         &self,
         thread_id: ThreadId,
-        schedule_spec: codex_protocol::subscriptions::ScheduleSpec,
+        schedule_spec: protocol::subscriptions::ScheduleSpec,
         schedule: CompiledSchedule,
         label: Option<String>,
         subscription_id: String,
@@ -374,7 +374,7 @@ impl FsSubscriptionRegistry {
     async fn subscribe_schedule_with_persistence(
         &self,
         thread_id: ThreadId,
-        schedule_spec: codex_protocol::subscriptions::ScheduleSpec,
+        schedule_spec: protocol::subscriptions::ScheduleSpec,
         schedule: CompiledSchedule,
         label: Option<String>,
         subscription_id: String,
@@ -959,9 +959,9 @@ mod tests {
     use std::time::Duration;
 
     use codex_file_watcher::FileWatcher;
-    use codex_protocol::ThreadId;
-    use codex_protocol::subscriptions::ScheduleSpec;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::subscriptions::ScheduleSpec;
     use tokio::io::BufReader;
     use tokio::sync::mpsc;
     use tokio::time::timeout;

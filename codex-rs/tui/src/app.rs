@@ -77,75 +77,58 @@ use crate::update_action::UpdateAction;
 use crate::version::CODEX_CLI_VERSION;
 use crate::workspace_command::AppServerWorkspaceCommandRunner;
 use crate::workspace_command::WorkspaceCommandRunner;
-use codex_ansi_escape::ansi_escape_line;
-use codex_app_server_client::AppServerRequestHandle;
-use codex_app_server_client::RemoteAppServerEndpoint;
-use codex_app_server_client::TypedRequestError;
-use codex_app_server_protocol::AddCreditsNudgeCreditType;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
-use codex_app_server_protocol::ConfigBatchWriteParams;
-use codex_app_server_protocol::ConfigLayerSource;
-use codex_app_server_protocol::ConfigValueWriteParams;
-use codex_app_server_protocol::ConfigWriteResponse;
-use codex_app_server_protocol::FeedbackUploadParams;
-use codex_app_server_protocol::FeedbackUploadResponse;
-use codex_app_server_protocol::GetAccountRateLimitsResponse;
-use codex_app_server_protocol::HooksListEntry;
-use codex_app_server_protocol::ListMcpServerStatusParams;
-use codex_app_server_protocol::ListMcpServerStatusResponse;
+use app_server_client::AppServerRequestHandle;
+use app_server_client::RemoteAppServerEndpoint;
+use app_server_client::TypedRequestError;
+use app_server_protocol::AddCreditsNudgeCreditType;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
+use app_server_protocol::ConfigBatchWriteParams;
+use app_server_protocol::ConfigLayerSource;
+use app_server_protocol::ConfigValueWriteParams;
+use app_server_protocol::ConfigWriteResponse;
+use app_server_protocol::FeedbackUploadParams;
+use app_server_protocol::FeedbackUploadResponse;
+use app_server_protocol::GetAccountRateLimitsResponse;
+use app_server_protocol::HooksListEntry;
+use app_server_protocol::ListMcpServerStatusParams;
+use app_server_protocol::ListMcpServerStatusResponse;
 #[cfg(test)]
-use codex_app_server_protocol::McpAuthStatus;
-use codex_app_server_protocol::McpServerStatus;
-use codex_app_server_protocol::McpServerStatusDetail;
-use codex_app_server_protocol::MergeStrategy;
-use codex_app_server_protocol::PluginInstallParams;
-use codex_app_server_protocol::PluginInstallResponse;
-use codex_app_server_protocol::PluginListParams;
-use codex_app_server_protocol::PluginListResponse;
-use codex_app_server_protocol::PluginReadParams;
-use codex_app_server_protocol::PluginReadResponse;
-use codex_app_server_protocol::PluginUninstallParams;
-use codex_app_server_protocol::PluginUninstallResponse;
-use codex_app_server_protocol::RateLimitSnapshot;
-use codex_app_server_protocol::SendAddCreditsNudgeEmailParams;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::SkillErrorInfo;
-use codex_app_server_protocol::SkillsListParams;
-use codex_app_server_protocol::SkillsListResponse;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadLoadedListParams;
-use codex_app_server_protocol::ThreadMemoryMode;
-use codex_app_server_protocol::ThreadRollbackResponse;
-use codex_app_server_protocol::ThreadStartSource;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnError as AppServerTurnError;
-use codex_app_server_protocol::TurnStatus;
-use codex_config_loader::LoaderOverrides;
-use codex_config_state::ConfigLayerStackOrdering;
+use app_server_protocol::McpAuthStatus;
+use app_server_protocol::McpServerStatus;
+use app_server_protocol::McpServerStatusDetail;
+use app_server_protocol::MergeStrategy;
+use app_server_protocol::PluginInstallParams;
+use app_server_protocol::PluginInstallResponse;
+use app_server_protocol::PluginListParams;
+use app_server_protocol::PluginListResponse;
+use app_server_protocol::PluginReadParams;
+use app_server_protocol::PluginReadResponse;
+use app_server_protocol::PluginUninstallParams;
+use app_server_protocol::PluginUninstallResponse;
+use app_server_protocol::RateLimitSnapshot;
+use app_server_protocol::SendAddCreditsNudgeEmailParams;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::SkillErrorInfo;
+use app_server_protocol::SkillsListParams;
+use app_server_protocol::SkillsListResponse;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLoadedListParams;
+use app_server_protocol::ThreadMemoryMode;
+use app_server_protocol::ThreadRollbackResponse;
+use app_server_protocol::ThreadStartSource;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnError as AppServerTurnError;
+use app_server_protocol::TurnStatus;
+use codex_ansi_escape::ansi_escape_line;
+use config_service::LoaderOverrides;
+use config_service::ConfigLayerStackOrdering;
 use codex_config_types::ModelAvailabilityNuxConfig;
 use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
-use codex_model_provider::create_model_provider;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
-use codex_models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
 use codex_otel::SessionTelemetry;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::Personality;
-#[cfg(target_os = "windows")]
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ModelAvailabilityNux;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelUpgrade;
-use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-#[cfg(target_os = "windows")]
-use codex_protocol::permissions::FileSystemSandboxKind;
-use codex_rollout::StateDbHandle;
 use codex_terminal_detection::user_agent;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use color_eyre::eyre::Result;
@@ -154,12 +137,29 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
+use model_service::create_model_provider;
+use model_service_api::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
+use model_service_api::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
+use model_service_api::ModelProviderInfo;
+use protocol::ThreadId;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::Personality;
+#[cfg(target_os = "windows")]
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ModelAvailabilityNux;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelUpgrade;
+use protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+#[cfg(target_os = "windows")]
+use protocol::permissions::FileSystemSandboxKind;
 use ratatui::backend::Backend;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
+use rollout::StateDbHandle;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -261,7 +261,7 @@ fn collab_receiver_is_not_found(
                 agents_states.get(receiver_thread_id).is_some_and(|state| {
                     matches!(
                         &state.status,
-                        codex_app_server_protocol::CollabAgentStatus::NotFound
+                        app_server_protocol::CollabAgentStatus::NotFound
                     )
                 })
             }
@@ -272,15 +272,13 @@ fn collab_receiver_is_not_found(
 }
 
 fn default_exec_approval_decisions(
-    network_approval_context: Option<&codex_app_server_protocol::NetworkApprovalContext>,
-    proposed_execpolicy_amendment: Option<&codex_app_server_protocol::ExecPolicyAmendment>,
-    proposed_network_policy_amendments: Option<
-        &[codex_app_server_protocol::NetworkPolicyAmendment],
-    >,
-    additional_permissions: Option<&codex_app_server_protocol::AdditionalPermissionProfile>,
-) -> Vec<codex_app_server_protocol::CommandExecutionApprovalDecision> {
-    use codex_app_server_protocol::CommandExecutionApprovalDecision;
-    use codex_app_server_protocol::NetworkPolicyRuleAction;
+    network_approval_context: Option<&app_server_protocol::NetworkApprovalContext>,
+    proposed_execpolicy_amendment: Option<&app_server_protocol::ExecPolicyAmendment>,
+    proposed_network_policy_amendments: Option<&[app_server_protocol::NetworkPolicyAmendment]>,
+    additional_permissions: Option<&app_server_protocol::AdditionalPermissionProfile>,
+) -> Vec<app_server_protocol::CommandExecutionApprovalDecision> {
+    use app_server_protocol::CommandExecutionApprovalDecision;
+    use app_server_protocol::NetworkPolicyRuleAction;
 
     if network_approval_context.is_some() {
         let mut decisions = vec![

@@ -1,30 +1,30 @@
 use std::collections::HashMap;
 
-use codex_config::Config;
-use codex_config::ConfigLayerSource;
-use codex_config::McpServerConfig;
-use codex_config::edit::ConfigEdit;
-use codex_config::edit::ConfigEditsBuilder;
+use config_service::Config;
+use config_service::ConfigLayerSource;
+use config_service::McpServerConfig;
+use config_service::edit::ConfigEdit;
+use config_service::edit::ConfigEditsBuilder;
 use codex_config_types::AppToolApproval;
-use plugin_service_api::PluginRuntime;
 use codex_guardian::GuardianApprovalRequest;
 use codex_guardian::GuardianMcpAnnotations;
 use codex_guardian::guardian_approval_request_to_json;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp_types::MCP_TOOL_CODEX_APPS_META_KEY;
-use codex_mcp_types::McpPermissionPromptAutoApproveContext;
-use codex_mcp_types::McpToolApprovalDecision;
-use codex_mcp_types::McpToolApprovalKey;
-use codex_mcp_types::McpToolApprovalMetadata;
-use codex_mcp_types::mcp_permission_prompt_is_auto_approved;
-use codex_mcp_types::requires_mcp_tool_approval;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::McpInvocation;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_protocol::request_user_input::RequestUserInputResponse;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::MCP_TOOL_CODEX_APPS_META_KEY;
+use mcp_types::McpPermissionPromptAutoApproveContext;
+use mcp_types::McpToolApprovalDecision;
+use mcp_types::McpToolApprovalKey;
+use mcp_types::McpToolApprovalMetadata;
+use mcp_types::mcp_permission_prompt_is_auto_approved;
+use mcp_types::requires_mcp_tool_approval;
+use plugin_service_api::PluginRuntime;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::models::PermissionProfile;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::McpInvocation;
+use protocol::protocol::ReviewDecision;
+use protocol::request_user_input::RequestUserInputArgs;
+use protocol::request_user_input::RequestUserInputResponse;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use tracing::error;
@@ -104,9 +104,9 @@ pub trait McpToolApprovalReviewHost: McpToolApprovalPersistenceHost {
 
     fn request_mcp_tool_approval_elicitation(
         &self,
-        request_id: codex_protocol::mcp::RequestId,
-        params: codex_mcp_types::McpServerElicitationRequestParams,
-    ) -> impl std::future::Future<Output = Option<codex_mcp_types::ElicitationResponse>> + Send;
+        request_id: protocol::mcp::RequestId,
+        params: mcp_types::McpServerElicitationRequestParams,
+    ) -> impl std::future::Future<Output = Option<mcp_types::ElicitationResponse>> + Send;
 
     fn request_user_mcp_tool_approval(
         &self,
@@ -212,12 +212,12 @@ pub async fn maybe_request_mcp_tool_approval(
         }
     }
 
-    let session_approval_key = codex_mcp_types::session_mcp_tool_approval_key(
+    let session_approval_key = mcp_types::session_mcp_tool_approval_key(
         context.invocation,
         context.metadata,
         context.approval_mode,
     );
-    let persistent_approval_key = codex_mcp_types::persistent_mcp_tool_approval_key(
+    let persistent_approval_key = mcp_types::persistent_mcp_tool_approval_key(
         context.invocation,
         context.metadata,
         context.approval_mode,
@@ -268,17 +268,17 @@ pub async fn maybe_request_mcp_tool_approval(
         return Some(decision);
     }
 
-    let prompt_options = codex_mcp_types::mcp_tool_approval_prompt_options(
+    let prompt_options = mcp_types::mcp_tool_approval_prompt_options(
         session_approval_key.as_ref(),
         persistent_approval_key.as_ref(),
         context.tool_call_mcp_elicitation_enabled,
     );
     let question_id = format!(
         "{}_{}",
-        codex_mcp_types::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX,
+        mcp_types::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX,
         context.call_id
     );
-    let rendered_template = codex_mcp_types::render_mcp_tool_approval_template(
+    let rendered_template = mcp_types::render_mcp_tool_approval_template(
         &context.invocation.server,
         context
             .metadata
@@ -295,11 +295,9 @@ pub async fn maybe_request_mcp_tool_approval(
         .as_ref()
         .map(|rendered_template| rendered_template.tool_params_display.clone())
         .or_else(|| {
-            codex_mcp_types::build_mcp_tool_approval_display_params(
-                context.invocation.arguments.as_ref(),
-            )
+            mcp_types::build_mcp_tool_approval_display_params(context.invocation.arguments.as_ref())
         });
-    let mut question = codex_mcp_types::build_mcp_tool_approval_question(
+    let mut question = mcp_types::build_mcp_tool_approval_question(
         question_id.clone(),
         &context.invocation.server,
         &context.invocation.tool,
@@ -311,19 +309,17 @@ pub async fn maybe_request_mcp_tool_approval(
             .as_ref()
             .map(|rendered_template| rendered_template.question.as_str()),
     );
-    question.question = codex_mcp_types::mcp_tool_approval_question_text(
-        question.question,
-        monitor_reason.as_deref(),
-    );
+    question.question =
+        mcp_types::mcp_tool_approval_question_text(question.question, monitor_reason.as_deref());
 
     if context.tool_call_mcp_elicitation_enabled {
-        let request_id = codex_protocol::mcp::RequestId::String(format!(
+        let request_id = protocol::mcp::RequestId::String(format!(
             "{}_{}",
-            codex_mcp_types::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX,
+            mcp_types::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX,
             context.call_id
         ));
-        let params = codex_mcp_types::build_mcp_tool_approval_elicitation_request(
-            codex_mcp_types::McpToolApprovalElicitationRequest {
+        let params = mcp_types::build_mcp_tool_approval_elicitation_request(
+            mcp_types::McpToolApprovalElicitationRequest {
                 thread_id: context.thread_id,
                 turn_id: context.turn_id,
                 server: &context.invocation.server,
@@ -342,13 +338,13 @@ pub async fn maybe_request_mcp_tool_approval(
                 prompt_options,
             },
         );
-        let decision = codex_mcp_types::parse_mcp_tool_approval_elicitation_response(
+        let decision = mcp_types::parse_mcp_tool_approval_elicitation_response(
             host.request_mcp_tool_approval_elicitation(request_id, params)
                 .await,
             &question_id,
         );
         let decision =
-            codex_mcp_types::normalize_approval_decision_for_mode(decision, context.approval_mode);
+            mcp_types::normalize_approval_decision_for_mode(decision, context.approval_mode);
         apply_mcp_tool_approval_decision(
             host,
             &decision,
@@ -359,8 +355,8 @@ pub async fn maybe_request_mcp_tool_approval(
         return Some(decision);
     }
 
-    let decision = codex_mcp_types::normalize_approval_decision_for_mode(
-        codex_mcp_types::parse_mcp_tool_approval_response(
+    let decision = mcp_types::normalize_approval_decision_for_mode(
+        mcp_types::parse_mcp_tool_approval_response(
             host.request_user_mcp_tool_approval(
                 context.call_id.to_string(),
                 RequestUserInputArgs {
@@ -701,7 +697,7 @@ fn user_mcp_server_is_configured(config: &Config, server: &str) -> anyhow::Resul
 fn project_mcp_tool_approval_config_folder(
     config: &Config,
     server: &str,
-) -> Option<codex_config::AbsolutePathBuf> {
+) -> Option<config_service::AbsolutePathBuf> {
     config
         .config_layer_stack
         .layers_high_to_low()
@@ -728,24 +724,24 @@ fn project_mcp_tool_approval_config_folder(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_config::AbsolutePathBuf;
-    use codex_config::CONFIG_TOML_FILE;
-    use codex_config::ConfigBuilder;
-    use codex_config::config_toml::ConfigToml;
-    use codex_config::types::AppConfig;
-    use codex_config::types::AppToolConfig;
-    use codex_config::types::AppToolsConfig;
-    use codex_config::types::AppsConfigToml;
-    use codex_config::types::McpServerToolConfig;
+    use config_service::AbsolutePathBuf;
+    use config_service::CONFIG_TOML_FILE;
+    use config_service::ConfigBuilder;
+    use config_service::config_toml::ConfigToml;
+    use config_service::types::AppConfig;
+    use config_service::types::AppToolConfig;
+    use config_service::types::AppToolsConfig;
+    use config_service::types::AppsConfigToml;
+    use config_service::types::McpServerToolConfig;
+    use mcp_types::ToolAnnotations;
+    use plugin_service_api::LoadedPlugin;
     use plugin_service_api::PluginLoadOutcome;
     use plugin_service_api::PluginRuntime;
     use plugin_service_api::PluginRuntimeFuture;
     use plugin_service_api::PluginsConfigInput;
     use plugin_service_api::ToolSuggestDiscoverablePlugin;
-    use codex_mcp_tool_types::ToolAnnotations;
-    use plugin_service_api::LoadedPlugin;
-    use codex_protocol::models::ManagedFileSystemPermissions;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use protocol::models::ManagedFileSystemPermissions;
+    use protocol::permissions::NetworkSandboxPolicy;
     use serde::Deserialize;
     use std::collections::HashMap;
     use std::collections::HashSet;
@@ -1080,9 +1076,9 @@ mod tests {
 
         async fn request_mcp_tool_approval_elicitation(
             &self,
-            _request_id: codex_protocol::mcp::RequestId,
-            _params: codex_mcp_types::McpServerElicitationRequestParams,
-        ) -> Option<codex_mcp_types::ElicitationResponse> {
+            _request_id: protocol::mcp::RequestId,
+            _params: mcp_types::McpServerElicitationRequestParams,
+        ) -> Option<mcp_types::ElicitationResponse> {
             None
         }
 
@@ -1113,7 +1109,7 @@ mod tests {
         }));
         let host = FakeApprovalReviewHost::default();
         host.remembered_keys.lock().unwrap().push(
-            codex_mcp_types::session_mcp_tool_approval_key(
+            mcp_types::session_mcp_tool_approval_key(
                 &invocation,
                 Some(&metadata),
                 AppToolApproval::Auto,

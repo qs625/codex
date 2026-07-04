@@ -4,10 +4,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Weak;
 
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::WorkflowRunProgressEvent;
-use codex_protocol::models::WorkflowRunProgressKind;
-use codex_tool_types::FunctionCallError;
+use protocol::models::ResponseItem;
+use protocol::models::WorkflowRunProgressEvent;
+use protocol::models::WorkflowRunProgressKind;
 use serde::Deserialize;
 use serde_json::Value;
 use thread_service_api::ThreadAgentMode;
@@ -16,6 +15,7 @@ use thread_service_api::ThreadSpawnAgentForkMode;
 use thread_service_api::ThreadSpawnAgentRequest;
 use thread_service_api::ThreadSpawnAgentResult;
 use thread_service_api::ThreadTurnCapability;
+use tool_types::FunctionCallError;
 
 use crate::workflow_runs::WorkflowRunManager;
 
@@ -125,10 +125,14 @@ impl WorkflowApi for WorkflowService {
             ));
             let run = self
                 .workflow_runs
-                .start_with_bridge(&registry, &workflow_id, args.inputs.unwrap_or_default(), bridge)
+                .start_with_bridge(
+                    &registry,
+                    &workflow_id,
+                    args.inputs.unwrap_or_default(),
+                    bridge,
+                )
                 .await?;
-            let progress_sink =
-                ThreadWorkflowProgressSink::new(thread_service_api, context.turn());
+            let progress_sink = ThreadWorkflowProgressSink::new(thread_service_api, context.turn());
             progress_sink
                 .record_workflow_progress(
                     &run.run_id,
@@ -169,8 +173,7 @@ impl WorkflowApi for WorkflowService {
                 .workflow_runs
                 .resume_with_bridge(&run_id, args.inputs, bridge)
                 .await?;
-            let progress_sink =
-                ThreadWorkflowProgressSink::new(thread_service_api, context.turn());
+            let progress_sink = ThreadWorkflowProgressSink::new(thread_service_api, context.turn());
             progress_sink
                 .record_workflow_progress(
                     &run.run_id,
@@ -408,7 +411,7 @@ struct WorkflowSpawnAgentArgs {
     agent_type: Option<String>,
     cwd: Option<codex_utils_absolute_path::AbsolutePathBuf>,
     model: Option<String>,
-    reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
     service_tier: Option<String>,
     agent_mode: Option<ThreadAgentMode>,
     fork_turns: Option<String>,
@@ -434,8 +437,7 @@ impl WorkflowSpawnAgentArgs {
     fn fork_mode(&self) -> Result<Option<ThreadSpawnAgentForkMode>, FunctionCallError> {
         if self.fork_context.is_some() {
             return Err(FunctionCallError::RespondToModel(
-                "fork_context is not supported in MultiAgentV2; use fork_turns instead"
-                    .to_string(),
+                "fork_context is not supported in MultiAgentV2; use fork_turns instead".to_string(),
             ));
         }
 

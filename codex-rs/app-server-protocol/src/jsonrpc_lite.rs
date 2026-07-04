@@ -1,1 +1,1 @@
-pub use codex_jsonrpc_types::*;
+pub use jsonrpc_types::*;

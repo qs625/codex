@@ -8,9 +8,9 @@ use crate::app_command::AppCommand;
 use crate::app_event::AppEvent;
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::status_account_display_from_auth_mode;
-use codex_app_server_client::AppServerEvent;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
+use app_server_client::AppServerEvent;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
 use codex_auth_types::AuthMode;
 
 impl App {

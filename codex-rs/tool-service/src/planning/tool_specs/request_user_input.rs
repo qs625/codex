@@ -1,8 +1,8 @@
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
 use crate::ToolSpec;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::request_user_input::RequestUserInputArgs;
+use protocol::config_types::ModeKind;
+use protocol::request_user_input::RequestUserInputArgs;
 use std::collections::BTreeMap;
 
 pub const REQUEST_USER_INPUT_TOOL_NAME: &str = "request_user_input";

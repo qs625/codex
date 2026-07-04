@@ -1,12 +1,12 @@
 use super::*;
-use codex_execpolicy_api::Decision;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::NetworkSandboxPolicy;
+use permissions_service_api::Decision;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
+use protocol::permissions::FileSystemAccessMode;
+use protocol::permissions::FileSystemPath;
+use protocol::permissions::FileSystemSandboxEntry;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::NetworkSandboxPolicy;
 use std::path::PathBuf;
 
 #[test]

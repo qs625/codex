@@ -1,15 +1,15 @@
-use codex_client_identity::originator;
-use codex_config::edit::ConfigEditsBuilder;
-use codex_config::Config;
+use transport_client_identity::originator;
+use config_service::Config;
+use config_service::edit::ConfigEditsBuilder;
 use codex_config_toml::config_toml::ConfigToml;
 use codex_config_toml::profile_toml::ConfigProfile;
 use codex_config_types::WindowsSandboxModeToml;
 use codex_features::Feature;
 use codex_features::Features;
 use codex_features::FeaturesToml;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_string::sanitize_metric_tag_value;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::protocol::SandboxPolicy;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
@@ -364,7 +364,7 @@ fn emit_windows_sandbox_setup_success_metrics(
     duration: std::time::Duration,
 ) {
     let mode_tag = windows_sandbox_setup_mode_tag(mode);
-    codex_metrics_api::record_global_duration(
+    metrics_api::record_global_duration(
         "codex.windows_sandbox.setup_duration_ms",
         duration,
         &[
@@ -373,7 +373,7 @@ fn emit_windows_sandbox_setup_success_metrics(
             ("mode", mode_tag),
         ],
     );
-    codex_metrics_api::record_global_counter(
+    metrics_api::record_global_counter(
         "codex.windows_sandbox.setup_success",
         /*inc*/ 1,
         &[("originator", originator_tag), ("mode", mode_tag)],
@@ -387,7 +387,7 @@ fn emit_windows_sandbox_setup_failure_metrics(
     _err: &anyhow::Error,
 ) {
     let mode_tag = windows_sandbox_setup_mode_tag(mode);
-    codex_metrics_api::record_global_duration(
+    metrics_api::record_global_duration(
         "codex.windows_sandbox.setup_duration_ms",
         duration,
         &[
@@ -396,7 +396,7 @@ fn emit_windows_sandbox_setup_failure_metrics(
             ("mode", mode_tag),
         ],
     );
-    codex_metrics_api::record_global_counter(
+    metrics_api::record_global_counter(
         "codex.windows_sandbox.setup_failure",
         /*inc*/ 1,
         &[("originator", originator_tag), ("mode", mode_tag)],
@@ -418,14 +418,14 @@ fn emit_windows_sandbox_setup_failure_metrics(
             if let Some(message) = message_tag.as_deref() {
                 failure_tags.push(("message", message));
             }
-            codex_metrics_api::record_global_counter(
+            metrics_api::record_global_counter(
                 elevated_setup_failure_metric_name(_err),
                 /*inc*/ 1,
                 &failure_tags,
             );
         }
     } else {
-        codex_metrics_api::record_global_counter(
+        metrics_api::record_global_counter(
             "codex.windows_sandbox.legacy_setup_preflight_failed",
             /*inc*/ 1,
             &[("originator", originator_tag)],

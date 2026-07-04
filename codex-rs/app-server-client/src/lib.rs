@@ -1,6 +1,6 @@
 //! Shared in-process app-server client facade for CLI surfaces.
 //!
-//! This crate wraps [`codex_app_server::in_process`] behind a single async API
+//! This crate wraps [`app_server::in_process`] behind a single async API
 //! used by surfaces like TUI and exec. It centralizes:
 //!
 //! - Runtime startup and initialize-capabilities handshake.
@@ -11,7 +11,7 @@
 //! - Bounded graceful shutdown with abort fallback.
 //!
 //! The facade interposes a worker task between the caller and the underlying
-//! [`InProcessClientHandle`](codex_app_server::in_process::InProcessClientHandle),
+//! [`InProcessClientHandle`](app_server::in_process::InProcessClientHandle),
 //! bridging async `mpsc` channels on both sides. Queues are bounded so overload
 //! surfaces as channel-full errors rather than unbounded memory growth.
 
@@ -25,35 +25,35 @@ use std::io::Result as IoResult;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub use codex_app_server::app_server_control_socket_path;
-pub use codex_app_server::in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
-pub use codex_app_server::in_process::InProcessServerEvent;
-use codex_app_server::in_process::InProcessStartArgs;
-use codex_app_server::in_process::LogDbLayer;
-pub use codex_app_server::in_process::StateDbHandle;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientNotification;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::InitializeCapabilities;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::Result as JsonRpcResult;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
+pub use app_server::app_server_control_socket_path;
+pub use app_server::in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
+pub use app_server::in_process::InProcessServerEvent;
+use app_server::in_process::InProcessStartArgs;
+use app_server::in_process::LogDbLayer;
+pub use app_server::in_process::StateDbHandle;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientNotification;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::ConfigWarningNotification;
+use app_server_protocol::InitializeCapabilities;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::RequestId;
+use app_server_protocol::Result as JsonRpcResult;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config_loader::LoaderOverrides;
-use codex_config_loader::NoopThreadConfigLoader;
-use codex_config_loader::ThreadConfigLoader;
-use codex_config_loader_remote::RemoteThreadConfigLoader;
-use codex_config_requirements::CloudRequirementsLoader;
+use config_service::LoaderOverrides;
+use config_service::NoopThreadConfigLoader;
+use config_service::RemoteThreadConfigLoader;
+use config_service::ThreadConfigLoader;
+use config_service::CloudRequirementsLoader;
 pub use codex_exec_server::EnvironmentManager;
 pub use codex_exec_server::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
-use codex_protocol::protocol::SessionSource;
-use thread_service::config::Config;
+use protocol::protocol::SessionSource;
 use serde::de::DeserializeOwned;
+use thread_service::config::Config;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
@@ -70,8 +70,8 @@ pub use crate::remote::RemoteAppServerEndpoint;
 /// module exists so clients can remove a direct legacy runtime dependency
 /// while legacy startup/config paths are migrated to RPCs.
 pub mod legacy_core {
-    pub use codex_execpolicy_loader::check_execpolicy_for_warnings;
-    pub use codex_execpolicy_loader::format_exec_policy_error_with_source;
+    pub use permissions_service::check_execpolicy_for_warnings;
+    pub use permissions_service::format_exec_policy_error_with_source;
     pub use codex_sandboxing::grant_read_root_non_elevated;
     pub use thread_service::DEFAULT_AGENTS_MD_FILENAME;
     pub use thread_service::LOCAL_AGENTS_MD_FILENAME;
@@ -452,7 +452,7 @@ enum ClientCommand {
 ///
 /// This type owns a worker task that bridges between:
 /// - caller-facing async `mpsc` channels used by TUI/exec
-/// - [`codex_app_server::in_process::InProcessClientHandle`], which speaks to
+/// - [`app_server::in_process::InProcessClientHandle`], which speaks to
 ///   the embedded `MessageProcessor`
 ///
 /// The facade intentionally preserves the server's request/notification/event
@@ -489,8 +489,7 @@ impl InProcessAppServerClient {
     /// with overload error instead of being silently dropped.
     pub async fn start(args: InProcessClientStartArgs) -> IoResult<Self> {
         let channel_capacity = args.channel_capacity.max(1);
-        let mut handle =
-            codex_app_server::in_process::start(args.into_runtime_start_args()).await?;
+        let mut handle = app_server::in_process::start(args.into_runtime_start_args()).await?;
         let request_sender = handle.sender();
         let (command_tx, mut command_rx) = mpsc::channel::<ClientCommand>(channel_capacity);
         let (event_tx, event_rx) = mpsc::channel::<InProcessServerEvent>(channel_capacity);
@@ -943,29 +942,29 @@ pub(crate) fn request_method_name(request: &ClientRequest) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::AccountUpdatedNotification;
-    use codex_app_server_protocol::ConfigRequirementsReadResponse;
-    use codex_app_server_protocol::GetAccountResponse;
-    use codex_app_server_protocol::JSONRPCMessage;
-    use codex_app_server_protocol::JSONRPCRequest;
-    use codex_app_server_protocol::JSONRPCResponse;
-    use codex_app_server_protocol::ServerNotification;
-    use codex_app_server_protocol::SessionSource as ApiSessionSource;
-    use codex_app_server_protocol::ThreadStartParams;
-    use codex_app_server_protocol::ThreadStartResponse;
-    use codex_app_server_protocol::ToolRequestUserInputParams;
-    use codex_app_server_protocol::ToolRequestUserInputQuestion;
-    use codex_config_loader::ThreadConfigLoadErrorCode;
-    use codex_rollout::state_db::init as init_state_db;
-    use thread_service::config::ConfigBuilder;
+    use app_server_protocol::AccountUpdatedNotification;
+    use app_server_protocol::ConfigRequirementsReadResponse;
+    use app_server_protocol::GetAccountResponse;
+    use app_server_protocol::JSONRPCMessage;
+    use app_server_protocol::JSONRPCRequest;
+    use app_server_protocol::JSONRPCResponse;
+    use app_server_protocol::ServerNotification;
+    use app_server_protocol::SessionSource as ApiSessionSource;
+    use app_server_protocol::ThreadStartParams;
+    use app_server_protocol::ThreadStartResponse;
+    use app_server_protocol::ToolRequestUserInputParams;
+    use app_server_protocol::ToolRequestUserInputQuestion;
+    use config_service::ThreadConfigLoadErrorCode;
     use codex_uds::UnixListener;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use futures::SinkExt;
     use futures::StreamExt;
     use pretty_assertions::assert_eq;
+    use rollout::state_db::init as init_state_db;
     use std::ops::Deref;
     use std::path::Path;
     use tempfile::TempDir;
+    use thread_service::config::ConfigBuilder;
     use tokio::net::TcpListener;
     use tokio::time::Duration;
     use tokio::time::timeout;
@@ -1177,7 +1176,7 @@ mod tests {
 
     fn command_execution_output_delta_notification(delta: &str) -> ServerNotification {
         ServerNotification::CommandExecutionOutputDelta(
-            codex_app_server_protocol::CommandExecutionOutputDeltaNotification {
+            app_server_protocol::CommandExecutionOutputDeltaNotification {
                 thread_id: "thread".to_string(),
                 turn_id: "turn".to_string(),
                 item_id: "item".to_string(),
@@ -1187,22 +1186,20 @@ mod tests {
     }
 
     fn agent_message_delta_notification(delta: &str) -> ServerNotification {
-        ServerNotification::AgentMessageDelta(
-            codex_app_server_protocol::AgentMessageDeltaNotification {
-                thread_id: "thread".to_string(),
-                turn_id: "turn".to_string(),
-                item_id: "item".to_string(),
-                delta: delta.to_string(),
-            },
-        )
+        ServerNotification::AgentMessageDelta(app_server_protocol::AgentMessageDeltaNotification {
+            thread_id: "thread".to_string(),
+            turn_id: "turn".to_string(),
+            item_id: "item".to_string(),
+            delta: delta.to_string(),
+        })
     }
 
     fn item_completed_notification(text: &str) -> ServerNotification {
-        ServerNotification::ItemCompleted(codex_app_server_protocol::ItemCompletedNotification {
+        ServerNotification::ItemCompleted(app_server_protocol::ItemCompletedNotification {
             thread_id: "thread".to_string(),
             turn_id: "turn".to_string(),
             completed_at_ms: 0,
-            item: codex_app_server_protocol::ThreadItem::AgentMessage {
+            item: app_server_protocol::ThreadItem::AgentMessage {
                 id: "item".to_string(),
                 text: text.to_string(),
                 phase: None,
@@ -1212,13 +1209,13 @@ mod tests {
     }
 
     fn turn_completed_notification() -> ServerNotification {
-        ServerNotification::TurnCompleted(codex_app_server_protocol::TurnCompletedNotification {
+        ServerNotification::TurnCompleted(app_server_protocol::TurnCompletedNotification {
             thread_id: "thread".to_string(),
-            turn: codex_app_server_protocol::Turn {
+            turn: app_server_protocol::Turn {
                 id: "turn".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: Some(0),
@@ -1260,7 +1257,7 @@ mod tests {
         let err = client
             .request_typed::<ConfigRequirementsReadResponse>(ClientRequest::ThreadRead {
                 request_id: RequestId::Integer(99),
-                params: codex_app_server_protocol::ThreadReadParams {
+                params: app_server_protocol::ThreadReadParams {
                     thread_id: "missing-thread".to_string(),
                     include_turns: false,
                 },
@@ -1311,15 +1308,13 @@ mod tests {
             .await
             .expect("thread/start should succeed");
         let read = client
-            .request_typed::<codex_app_server_protocol::ThreadReadResponse>(
-                ClientRequest::ThreadRead {
-                    request_id: RequestId::Integer(4),
-                    params: codex_app_server_protocol::ThreadReadParams {
-                        thread_id: response.thread.id.clone(),
-                        include_turns: false,
-                    },
+            .request_typed::<app_server_protocol::ThreadReadResponse>(ClientRequest::ThreadRead {
+                request_id: RequestId::Integer(4),
+                params: app_server_protocol::ThreadReadParams {
+                    thread_id: response.thread.id.clone(),
+                    include_turns: false,
                 },
-            )
+            })
             .await
             .expect("thread/read should return the newly started thread");
         assert_eq!(read.thread.id, response.thread.id);
@@ -1418,14 +1413,14 @@ mod tests {
                 notification
             )) if matches!(
                 &notification.item,
-                codex_app_server_protocol::ThreadItem::AgentMessage { text, .. } if text == "hello"
+                app_server_protocol::ThreadItem::AgentMessage { text, .. } if text == "hello"
             )
         ));
         assert!(matches!(
             &events[4],
             InProcessServerEvent::ServerNotification(ServerNotification::TurnCompleted(
                 notification
-            )) if notification.turn.status == codex_app_server_protocol::TurnStatus::Completed
+            )) if notification.turn.status == app_server_protocol::TurnStatus::Completed
         ));
     }
 
@@ -1460,7 +1455,7 @@ mod tests {
         let response: GetAccountResponse = client
             .request_typed(ClientRequest::GetAccount {
                 request_id: RequestId::Integer(1),
-                params: codex_app_server_protocol::GetAccountParams {
+                params: app_server_protocol::GetAccountParams {
                     refresh_token: false,
                 },
             })
@@ -1518,7 +1513,7 @@ mod tests {
         let response: GetAccountResponse = client
             .request_typed(ClientRequest::GetAccount {
                 request_id: RequestId::Integer(1),
-                params: codex_app_server_protocol::GetAccountParams {
+                params: app_server_protocol::GetAccountParams {
                     refresh_token: false,
                 },
             })
@@ -1561,7 +1556,7 @@ mod tests {
         let response: GetAccountResponse = client
             .request_typed(ClientRequest::GetAccount {
                 request_id: RequestId::Integer(1),
-                params: codex_app_server_protocol::GetAccountParams {
+                params: app_server_protocol::GetAccountParams {
                     refresh_token: false,
                 },
             })
@@ -1691,7 +1686,7 @@ mod tests {
             first_request_handle
                 .request_typed::<GetAccountResponse>(ClientRequest::GetAccount {
                     request_id: RequestId::Integer(1),
-                    params: codex_app_server_protocol::GetAccountParams {
+                    params: app_server_protocol::GetAccountParams {
                         refresh_token: false,
                     },
                 })
@@ -1706,7 +1701,7 @@ mod tests {
         let second_err = second_request_handle
             .request_typed::<GetAccountResponse>(ClientRequest::GetAccount {
                 request_id: RequestId::Integer(1),
-                params: codex_app_server_protocol::GetAccountParams {
+                params: app_server_protocol::GetAccountParams {
                     refresh_token: false,
                 },
             })
@@ -1838,16 +1833,14 @@ mod tests {
                     notification,
                 )) if matches!(
                     &notification.item,
-                    codex_app_server_protocol::ThreadItem::AgentMessage { text, .. } if text == "hello"
+                    app_server_protocol::ThreadItem::AgentMessage { text, .. } if text == "hello"
                 ) =>
                 {
                     transcript_event_names.push("item_completed");
                 }
                 AppServerEvent::ServerNotification(ServerNotification::TurnCompleted(
                     notification,
-                )) if notification.turn.status
-                    == codex_app_server_protocol::TurnStatus::Completed =>
-                {
+                )) if notification.turn.status == app_server_protocol::TurnStatus::Completed => {
                     transcript_event_names.push("turn_completed");
                 }
                 _ => panic!("unexpected remaining event: {event:?}"),
@@ -2110,14 +2103,14 @@ mod tests {
     fn event_requires_delivery_marks_transcript_and_terminal_events() {
         assert!(event_requires_delivery(
             &InProcessServerEvent::ServerNotification(
-                codex_app_server_protocol::ServerNotification::TurnCompleted(
-                    codex_app_server_protocol::TurnCompletedNotification {
+                app_server_protocol::ServerNotification::TurnCompleted(
+                    app_server_protocol::TurnCompletedNotification {
                         thread_id: "thread".to_string(),
-                        turn: codex_app_server_protocol::Turn {
+                        turn: app_server_protocol::Turn {
                             id: "turn".to_string(),
-                            items_view: codex_app_server_protocol::TurnItemsView::Full,
+                            items_view: app_server_protocol::TurnItemsView::Full,
                             items: Vec::new(),
-                            status: codex_app_server_protocol::TurnStatus::Completed,
+                            status: app_server_protocol::TurnStatus::Completed,
                             error: None,
                             started_at: None,
                             completed_at: Some(0),
@@ -2129,8 +2122,8 @@ mod tests {
         ));
         assert!(event_requires_delivery(
             &InProcessServerEvent::ServerNotification(
-                codex_app_server_protocol::ServerNotification::AgentMessageDelta(
-                    codex_app_server_protocol::AgentMessageDeltaNotification {
+                app_server_protocol::ServerNotification::AgentMessageDelta(
+                    app_server_protocol::AgentMessageDeltaNotification {
                         thread_id: "thread".to_string(),
                         turn_id: "turn".to_string(),
                         item_id: "item".to_string(),
@@ -2141,12 +2134,12 @@ mod tests {
         ));
         assert!(event_requires_delivery(
             &InProcessServerEvent::ServerNotification(
-                codex_app_server_protocol::ServerNotification::ItemCompleted(
-                    codex_app_server_protocol::ItemCompletedNotification {
+                app_server_protocol::ServerNotification::ItemCompleted(
+                    app_server_protocol::ItemCompletedNotification {
                         thread_id: "thread".to_string(),
                         turn_id: "turn".to_string(),
                         completed_at_ms: 0,
-                        item: codex_app_server_protocol::ThreadItem::AgentMessage {
+                        item: app_server_protocol::ThreadItem::AgentMessage {
                             id: "item".to_string(),
                             text: "hello".to_string(),
                             phase: None,
@@ -2161,8 +2154,8 @@ mod tests {
         }));
         assert!(!event_requires_delivery(
             &InProcessServerEvent::ServerNotification(
-                codex_app_server_protocol::ServerNotification::CommandExecutionOutputDelta(
-                    codex_app_server_protocol::CommandExecutionOutputDeltaNotification {
+                app_server_protocol::ServerNotification::CommandExecutionOutputDelta(
+                    app_server_protocol::CommandExecutionOutputDeltaNotification {
                         thread_id: "thread".to_string(),
                         turn_id: "turn".to_string(),
                         item_id: "item".to_string(),

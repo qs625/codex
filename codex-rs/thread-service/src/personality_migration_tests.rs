@@ -1,15 +1,15 @@
 use super::*;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::SessionMeta;
-use codex_protocol::protocol::SessionMetaLine;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::UserMessageEvent;
-use codex_rollout::ARCHIVED_SESSIONS_SUBDIR;
-use codex_rollout::SESSIONS_SUBDIR;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::RolloutLine;
+use protocol::protocol::SessionMeta;
+use protocol::protocol::SessionMetaLine;
+use protocol::protocol::SessionSource;
+use protocol::protocol::UserMessageEvent;
+use rollout::ARCHIVED_SESSIONS_SUBDIR;
+use rollout::SESSIONS_SUBDIR;
 use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 
@@ -24,8 +24,8 @@ async fn maybe_migrate_personality_for_test(
     codex_home: &Path,
     config_toml: &ConfigToml,
 ) -> io::Result<PersonalityMigrationStatus> {
-    let store = codex_thread_store::LocalThreadStore::new(
-        codex_thread_store::LocalThreadStoreConfig {
+    let store = thread_store::LocalThreadStore::new(
+        thread_store::LocalThreadStoreConfig {
             codex_home: codex_home.to_path_buf(),
             sqlite_home: codex_home.to_path_buf(),
             default_model_provider_id: "openai".to_string(),

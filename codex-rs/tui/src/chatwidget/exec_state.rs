@@ -1,7 +1,7 @@
 //! Unified exec bookkeeping state and helpers for `ChatWidget`.
 
-use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
-use codex_protocol::parse_command::ParsedCommand;
+use ::protocol::parse_command::ParsedCommand;
+use app_server_protocol::CommandExecutionSource as ExecCommandSource;
 
 use crate::exec_command::split_command_string;
 
@@ -70,14 +70,14 @@ pub(super) fn is_standard_tool_call(parsed_cmd: &[ParsedCommand]) -> bool {
 
 pub(super) fn command_execution_command_and_parsed(
     command: &str,
-    command_actions: &[codex_app_server_protocol::CommandAction],
+    command_actions: &[app_server_protocol::CommandAction],
 ) -> (Vec<String>, Vec<ParsedCommand>) {
     (
         split_command_string(command),
         command_actions
             .iter()
             .cloned()
-            .map(codex_app_server_protocol::CommandAction::into_core)
+            .map(app_server_protocol::CommandAction::into_core)
             .collect(),
     )
 }

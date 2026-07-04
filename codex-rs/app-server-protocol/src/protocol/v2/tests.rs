@@ -1,24 +1,24 @@
 use super::*;
-use codex_protocol::approvals::ElicitationRequest as CoreElicitationRequest;
-use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
-use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
-use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::permissions::FileSystemAccessMode as CoreFileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath as CoreFileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry as CoreFileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSpecialPath as CoreFileSystemSpecialPath;
-use codex_protocol::protocol::AgentStatus as CoreAgentStatus;
-use codex_protocol::protocol::AskForApproval as CoreAskForApproval;
-use codex_protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfig;
-use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
-use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::test_path_buf;
 use pretty_assertions::assert_eq;
+use protocol::approvals::ElicitationRequest as CoreElicitationRequest;
+use protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
+use protocol::models::ContentItem;
+use protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
+use protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
+use protocol::models::NetworkPermissions as CoreNetworkPermissions;
+use protocol::models::ResponseItem;
+use protocol::permissions::FileSystemAccessMode as CoreFileSystemAccessMode;
+use protocol::permissions::FileSystemPath as CoreFileSystemPath;
+use protocol::permissions::FileSystemSandboxEntry as CoreFileSystemSandboxEntry;
+use protocol::permissions::FileSystemSpecialPath as CoreFileSystemSpecialPath;
+use protocol::protocol::AgentStatus as CoreAgentStatus;
+use protocol::protocol::AskForApproval as CoreAskForApproval;
+use protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfig;
+use protocol::protocol::NetworkAccess as CoreNetworkAccess;
+use protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -1491,7 +1491,7 @@ fn sandbox_policy_round_trips_external_sandbox_network_access() {
     let core_policy = v2_policy.to_core();
     assert_eq!(
         core_policy,
-        codex_protocol::protocol::SandboxPolicy::ExternalSandbox {
+        protocol::protocol::SandboxPolicy::ExternalSandbox {
             network_access: CoreNetworkAccess::Enabled,
         }
     );
@@ -1509,7 +1509,7 @@ fn sandbox_policy_round_trips_read_only_network_access() {
     let core_policy = v2_policy.to_core();
     assert_eq!(
         core_policy,
-        codex_protocol::protocol::SandboxPolicy::ReadOnly {
+        protocol::protocol::SandboxPolicy::ReadOnly {
             network_access: true,
         }
     );
@@ -2146,7 +2146,7 @@ fn sandbox_policy_round_trips_workspace_write_access() {
     let core_policy = v2_policy.to_core();
     assert_eq!(
         core_policy,
-        codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
+        protocol::protocol::SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
             network_access: true,
             exclude_tmpdir_env_var: false,

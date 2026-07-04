@@ -1,7 +1,7 @@
 use chrono::Utc;
-use codex_rollout::find_thread_path_by_id_str;
-use codex_rollout_api::ARCHIVED_SESSIONS_SUBDIR;
-use codex_rollout_api::SESSIONS_SUBDIR;
+use rollout::find_thread_path_by_id_str;
+use rollout_api::ARCHIVED_SESSIONS_SUBDIR;
+use rollout_api::SESSIONS_SUBDIR;
 
 use super::LocalThreadStore;
 use super::helpers::matching_rollout_file_name;
@@ -62,9 +62,9 @@ pub(super) async fn archive_thread(
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use codex_protocol::ThreadId;
-    use codex_protocol::protocol::SessionSource;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::protocol::SessionSource;
     use tempfile::TempDir;
     use uuid::Uuid;
 
@@ -129,7 +129,7 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let active_path =
             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -140,7 +140,7 @@ mod tests {
             .mark_backfill_complete(/*last_watermark*/ None)
             .await
             .expect("backfill should be complete");
-        let mut builder = codex_state::ThreadMetadataBuilder::new(
+        let mut builder = state::ThreadMetadataBuilder::new(
             thread_id,
             active_path.clone(),
             Utc::now(),

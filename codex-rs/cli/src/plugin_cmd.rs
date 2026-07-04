@@ -2,6 +2,7 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use clap::Parser;
+use codex_utils_cli::CliConfigOverrides;
 use plugin_service::ConfiguredMarketplace;
 use plugin_service::PluginInstallRequest;
 use plugin_service::PluginsConfigInput;
@@ -12,10 +13,9 @@ use plugin_service::marketplace::MarketplaceListError;
 use plugin_service::marketplace::find_marketplace_manifest_path;
 use plugin_service_api::PluginId;
 use plugin_service_api::validate_plugin_segment;
+use std::path::PathBuf;
 use thread_service::config::Config;
 use thread_service::config::find_codex_home;
-use codex_utils_cli::CliConfigOverrides;
-use std::path::PathBuf;
 
 use crate::marketplace_cmd::MarketplaceCli;
 

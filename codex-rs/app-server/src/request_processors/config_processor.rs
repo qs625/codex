@@ -7,55 +7,56 @@ use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::outgoing_message::ConnectionRequestId;
 use crate::outgoing_message::OutgoingMessageSender;
+use app_server_protocol::AppListUpdatedNotification;
+use app_server_protocol::ClientResponsePayload;
+use app_server_protocol::ConfigBatchWriteParams;
+use app_server_protocol::ConfigReadParams;
+use app_server_protocol::ConfigReadResponse;
+use app_server_protocol::ConfigRequirements;
+use app_server_protocol::ConfigRequirementsReadResponse;
+use app_server_protocol::ConfigValueWriteParams;
+use app_server_protocol::ConfigWriteErrorCode;
+use app_server_protocol::ConfigWriteResponse;
+use app_server_protocol::ConfiguredHookHandler;
+use app_server_protocol::ConfiguredHookMatcherGroup;
+use app_server_protocol::ExperimentalFeatureEnablementSetParams;
+use app_server_protocol::ExperimentalFeatureEnablementSetResponse;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::ManagedHooksRequirements;
+use app_server_protocol::ModelProviderCapabilitiesReadResponse;
+use app_server_protocol::NetworkDomainPermission;
+use app_server_protocol::NetworkRequirements;
+use app_server_protocol::NetworkUnixSocketPermission;
+use app_server_protocol::SandboxMode;
+use app_server_protocol::ServerNotification;
 use codex_analytics::AnalyticsEventsClient;
-use codex_app_server_protocol::AppListUpdatedNotification;
-use codex_app_server_protocol::ClientResponsePayload;
-use codex_app_server_protocol::ConfigBatchWriteParams;
-use codex_app_server_protocol::ConfigReadParams;
-use codex_app_server_protocol::ConfigReadResponse;
-use codex_app_server_protocol::ConfigRequirements;
-use codex_app_server_protocol::ConfigRequirementsReadResponse;
-use codex_app_server_protocol::ConfigValueWriteParams;
-use codex_app_server_protocol::ConfigWriteErrorCode;
-use codex_app_server_protocol::ConfigWriteResponse;
-use codex_app_server_protocol::ConfiguredHookHandler;
-use codex_app_server_protocol::ConfiguredHookMatcherGroup;
-use codex_app_server_protocol::ExperimentalFeatureEnablementSetParams;
-use codex_app_server_protocol::ExperimentalFeatureEnablementSetResponse;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::ManagedHooksRequirements;
-use codex_app_server_protocol::ModelProviderCapabilitiesReadResponse;
-use codex_app_server_protocol::NetworkDomainPermission;
-use codex_app_server_protocol::NetworkRequirements;
-use codex_app_server_protocol::NetworkUnixSocketPermission;
-use codex_app_server_protocol::SandboxMode;
-use codex_app_server_protocol::ServerNotification;
 use codex_chatgpt::connectors as chatgpt_connectors;
-use codex_config_requirements::ConfigRequirementsToml;
-use codex_config_requirements::NetworkDomainPermissionToml;
-use codex_config_requirements::NetworkDomainPermissionsToml;
-use codex_config_requirements::NetworkRequirementsToml;
-use codex_config_requirements::NetworkUnixSocketPermissionToml;
-use codex_config_requirements::NetworkUnixSocketPermissionsToml;
-use codex_config_requirements::SandboxModeRequirement as CoreSandboxModeRequirement;
+use config_service::ConfigRequirementsToml;
+use config_service::NetworkDomainPermissionToml;
+use config_service::NetworkDomainPermissionsToml;
+use config_service::NetworkRequirementsToml;
+use config_service::NetworkUnixSocketPermissionToml;
+use config_service::NetworkUnixSocketPermissionsToml;
+use config_service::SandboxModeRequirement as CoreSandboxModeRequirement;
 use codex_config_types::HookEventsToml;
 use codex_config_types::HookHandlerConfig as CoreHookHandlerConfig;
 use codex_config_types::ManagedHooksRequirementsToml;
 use codex_config_types::MatcherGroup as CoreMatcherGroup;
 use codex_config_types::ResidencyRequirement as CoreResidencyRequirement;
-use plugin_service::PluginsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_features::canonical_feature_for_key;
 use codex_features::feature_for_key;
 use codex_login::AuthManager;
-use codex_model_provider::create_model_provider;
-use plugin_service_api::PluginId;
-use codex_protocol::config_types::WebSearchMode;
-use thread_service::ThreadService;
-use mcp_service as core_connectors;
 use futures::future::BoxFuture;
+use mcp_service as core_connectors;
+use model_service::create_model_provider;
+use plugin_service::PluginsManager;
+use plugin_service_api::PluginId;
+use protocol::config_types::WebSearchMode;
 use serde_json::json;
+use skill_service_api::SharedSkillServiceApi;
 use std::path::PathBuf;
+use thread_service::ThreadService;
 
 const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
     "apps",
@@ -69,8 +70,6 @@ const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
 ];
 
 pub(crate) trait ConfigRuntime: Send + Sync {
-    fn clear_skills_cache(&self);
-
     fn plugin_runtime(&self) -> plugin_service_api::SharedPluginRuntime;
 
     fn refresh_live_threads_runtime_config(
@@ -80,10 +79,6 @@ pub(crate) trait ConfigRuntime: Send + Sync {
 }
 
 impl ConfigRuntime for ThreadService {
-    fn clear_skills_cache(&self) {
-        self.skills_manager().clear_cache();
-    }
-
     fn plugin_runtime(&self) -> plugin_service_api::SharedPluginRuntime {
         ThreadService::plugin_runtime(self)
     }
@@ -105,6 +100,7 @@ pub(crate) struct ConfigRequestProcessor {
     config_manager: ConfigManager,
     auth_manager: Arc<AuthManager>,
     runtime: Arc<dyn ConfigRuntime>,
+    skill_service: SharedSkillServiceApi,
     plugins_manager: Arc<PluginsManager>,
     environment_manager: Arc<EnvironmentManager>,
     analytics_events_client: AnalyticsEventsClient,
@@ -116,6 +112,7 @@ impl ConfigRequestProcessor {
         config_manager: ConfigManager,
         auth_manager: Arc<AuthManager>,
         runtime: Arc<R>,
+        skill_service: SharedSkillServiceApi,
         plugins_manager: Arc<PluginsManager>,
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: AnalyticsEventsClient,
@@ -129,6 +126,7 @@ impl ConfigRequestProcessor {
             config_manager,
             auth_manager,
             runtime,
+            skill_service,
             plugins_manager,
             environment_manager,
             analytics_events_client,
@@ -232,7 +230,7 @@ impl ConfigRequestProcessor {
 
     pub(crate) async fn handle_config_mutation(&self) {
         self.plugins_manager.clear_cache();
-        self.runtime.clear_skills_cache();
+        self.skill_service.clear_cache();
     }
 
     async fn handle_config_mutation_result<T>(
@@ -271,8 +269,8 @@ impl ConfigRequestProcessor {
         let plugin_runtime = self.runtime.plugin_runtime();
         tokio::spawn(async move {
             let chatgpt_config = chatgpt_config_from_core(&config);
-            let mcp_auth_runtime = codex_mcp::DefaultMcpAuthRuntime;
-            let mcp_connection_runtime_factory = codex_mcp::DefaultMcpConnectionRuntimeFactory;
+            let mcp_auth_runtime = mcp_service::DefaultMcpAuthRuntime;
+            let mcp_connection_runtime_factory = mcp_service::DefaultMcpConnectionRuntimeFactory;
             let (all_connectors_result, accessible_connectors_result) = tokio::join!(
                 chatgpt_connectors::list_all_connectors_with_options(
                     &chatgpt_config,
@@ -465,13 +463,13 @@ fn map_requirements_toml_to_api(requirements: ConfigRequirementsToml) -> ConfigR
         allowed_approval_policies: requirements.allowed_approval_policies.map(|policies| {
             policies
                 .into_iter()
-                .map(codex_app_server_protocol::AskForApproval::from)
+                .map(app_server_protocol::AskForApproval::from)
                 .collect()
         }),
         allowed_approvals_reviewers: requirements.allowed_approvals_reviewers.map(|reviewers| {
             reviewers
                 .into_iter()
-                .map(codex_app_server_protocol::ApprovalsReviewer::from)
+                .map(app_server_protocol::ApprovalsReviewer::from)
                 .collect()
         }),
         allowed_sandbox_modes: requirements.allowed_sandbox_modes.map(|modes| {
@@ -584,9 +582,9 @@ fn map_sandbox_mode_requirement_to_api(mode: CoreSandboxModeRequirement) -> Opti
 
 fn map_residency_requirement_to_api(
     residency: CoreResidencyRequirement,
-) -> codex_app_server_protocol::ResidencyRequirement {
+) -> app_server_protocol::ResidencyRequirement {
     match residency {
-        CoreResidencyRequirement::Us => codex_app_server_protocol::ResidencyRequirement::Us,
+        CoreResidencyRequirement::Us => app_server_protocol::ResidencyRequirement::Us,
     }
 }
 
@@ -675,7 +673,7 @@ fn config_write_error(code: ConfigWriteErrorCode, message: impl Into<String>) ->
 #[cfg(test)]
 mod tests {
     use super::map_requirements_toml_to_api;
-    use codex_config_requirements::ConfigRequirementsToml;
+    use config_service::ConfigRequirementsToml;
     use pretty_assertions::assert_eq;
 
     #[test]

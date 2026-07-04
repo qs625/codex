@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use codex_app_server_protocol::ClientRequestSerializationScope;
+use app_server_protocol::ClientRequestSerializationScope;
 use futures::future::join_all;
 use tokio::sync::Mutex;
 use tracing::Instrument;

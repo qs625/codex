@@ -1,13 +1,13 @@
-pub use codex_hooks_api::PostCompactRequest;
-pub use codex_hooks_api::PreCompactOutcome;
-pub use codex_hooks_api::PreCompactRequest;
-pub use codex_hooks_api::StatelessHookOutcome;
-use codex_protocol::protocol::HookCompletedEvent;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookOutputEntry;
-use codex_protocol::protocol::HookOutputEntryKind;
-use codex_protocol::protocol::HookRunStatus;
-use codex_protocol::protocol::HookRunSummary;
+pub use hooks_api::PostCompactRequest;
+pub use hooks_api::PreCompactOutcome;
+pub use hooks_api::PreCompactRequest;
+pub use hooks_api::StatelessHookOutcome;
+use protocol::protocol::HookCompletedEvent;
+use protocol::protocol::HookEventName;
+use protocol::protocol::HookOutputEntry;
+use protocol::protocol::HookOutputEntryKind;
+use protocol::protocol::HookRunStatus;
+use protocol::protocol::HookRunSummary;
 
 use super::common;
 use crate::engine::CommandShell;
@@ -374,14 +374,14 @@ fn parse_completed(
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::ThreadId;
-    use codex_protocol::protocol::HookEventName;
-    use codex_protocol::protocol::HookOutputEntry;
-    use codex_protocol::protocol::HookOutputEntryKind;
-    use codex_protocol::protocol::HookRunStatus;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::protocol::HookEventName;
+    use protocol::protocol::HookOutputEntry;
+    use protocol::protocol::HookOutputEntryKind;
+    use protocol::protocol::HookRunStatus;
     use serde_json::json;
 
     use super::parse_post_completed;
@@ -556,7 +556,7 @@ mod tests {
             timeout_sec: 5,
             status_message: Some("running compact hook".to_string()),
             source_path: test_path_buf("/tmp/hooks.json").abs(),
-            source: codex_protocol::protocol::HookSource::User,
+            source: protocol::protocol::HookSource::User,
             display_order: 0,
             env: std::collections::HashMap::new(),
         }

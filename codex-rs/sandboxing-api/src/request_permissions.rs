@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use codex_protocol::request_permissions::PermissionGrantScope;
-use codex_protocol::request_permissions::RequestPermissionProfile;
-use codex_protocol::request_permissions::RequestPermissionsResponse;
+use protocol::request_permissions::PermissionGrantScope;
+use protocol::request_permissions::RequestPermissionProfile;
+use protocol::request_permissions::RequestPermissionsResponse;
 
 use crate::policy_transforms::intersect_permission_profiles;
 
@@ -43,10 +43,10 @@ pub fn normalize_request_permissions_response(
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::models::NetworkPermissions;
-    use codex_protocol::request_permissions::PermissionGrantScope;
-    use codex_protocol::request_permissions::RequestPermissionProfile;
-    use codex_protocol::request_permissions::RequestPermissionsResponse;
+    use protocol::models::NetworkPermissions;
+    use protocol::request_permissions::PermissionGrantScope;
+    use protocol::request_permissions::RequestPermissionProfile;
+    use protocol::request_permissions::RequestPermissionsResponse;
     use pretty_assertions::assert_eq;
 
     use super::normalize_request_permissions_response;

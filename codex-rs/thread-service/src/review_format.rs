@@ -1,5 +1,5 @@
-use codex_protocol::protocol::ReviewFinding;
-use codex_protocol::protocol::ReviewOutputEvent;
+use protocol::protocol::ReviewFinding;
+use protocol::protocol::ReviewOutputEvent;
 
 // Note: We keep this module UI-agnostic. It returns plain strings that
 // higher layers (e.g., TUI) may style as needed.

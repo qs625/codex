@@ -10,42 +10,22 @@ use crate::session::turn_context::TurnContext;
 use codex_analytics_api::InvocationType;
 use codex_analytics_api::SkillInvocation;
 use codex_analytics_api::build_track_events_context;
-use plugin_service_api::PluginSkillRoot;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::SkillScope;
-use codex_protocol::protocol::ThreadSkill;
-use codex_protocol::protocol::ThreadSkillKind;
-use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
-use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_protocol::request_user_input::RequestUserInputQuestion;
-use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use plugin_service_api::PluginSkillRoot;
+use protocol::protocol::EventMsg;
+use protocol::protocol::SkillScope;
+use protocol::protocol::ThreadSkill;
+use protocol::protocol::ThreadSkillKind;
+use protocol::protocol::ThreadSkillsUpdatedEvent;
+use protocol::request_user_input::RequestUserInputArgs;
+use protocol::request_user_input::RequestUserInputQuestion;
+use protocol::request_user_input::RequestUserInputResponse;
+use skill_service_api::SkillDependencyInfo;
+use skill_service_api::SkillsLoadInput;
+use skill_service_api::detect_implicit_skill_invocation_for_command;
 use tracing::warn;
 
-pub use codex_core_skills_api::SkillDependencyInfo;
-pub use codex_core_skills_api::SkillError;
-pub use codex_core_skills_api::SkillLoadOutcome;
-pub use codex_core_skills_api::SkillMetadata;
-pub use codex_core_skills_api::SkillPolicy;
-pub use codex_core_skills_api::SkillRenderReport;
-pub use codex_core_skills_api::SkillsLoadInput;
-pub use codex_core_skills_api::SkillsRuntime;
-pub use codex_core_skills_api::build_available_skills;
-pub use codex_core_skills_api::build_skill_name_counts;
-pub use codex_core_skills_api::collect_env_var_dependencies;
-pub use codex_core_skills_api::config_rules;
-pub use codex_core_skills_api::default_skill_metadata_budget;
-pub use codex_core_skills_api::detect_implicit_skill_invocation_for_command;
-pub use codex_core_skills_api::filter_skill_load_outcome_for_product;
-pub use codex_core_skills_api::injection;
-pub use codex_core_skills_api::injection::SkillInjections;
-pub use codex_core_skills_api::injection::build_skill_injections;
-pub use codex_core_skills_api::injection::collect_explicit_skill_mentions;
-pub use codex_core_skills_api::model;
-pub use codex_core_skills_api::render;
-pub use codex_core_skills_api::render::SkillRenderSideEffects;
-
-pub(crate) fn skills_load_input_from_config(
+pub(crate) fn build_skill_service_input_from_config(
     config: &Config,
     effective_skill_roots: Vec<PluginSkillRoot>,
 ) -> SkillsLoadInput {

@@ -1,12 +1,12 @@
 use crate::GuardianElicitationReview;
 use crate::guardian_elicitation_review_request;
 use crate::mcp_elicitation_response_from_guardian_decision_parts;
-use codex_mcp_types::ElicitationAction;
-use codex_mcp_types::ElicitationResponse;
-use codex_mcp_types::ElicitationReviewRequest;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::mcp::RequestId;
-use codex_protocol::protocol::ReviewDecision;
+use mcp_types::ElicitationAction;
+use mcp_types::ElicitationResponse;
+use mcp_types::ElicitationReviewRequest;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::mcp::RequestId;
+use protocol::protocol::ReviewDecision;
 use serde_json::Value;
 use serde_json::json;
 
@@ -45,7 +45,7 @@ fn form_request(meta: Option<Value>) -> ElicitationReviewRequest {
     ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
         request_id: RequestId::Integer(7),
-        elicitation: codex_protocol::approvals::ElicitationRequest::Form {
+        elicitation: protocol::approvals::ElicitationRequest::Form {
             meta,
             message: "Allow origin?".to_string(),
             requested_schema: empty_form_schema(),
@@ -127,7 +127,7 @@ fn guardian_elicitation_review_request_declines_unsupported_opt_in_shapes() {
     let url_request = ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
         request_id: RequestId::Integer(8),
-        elicitation: codex_protocol::approvals::ElicitationRequest::Url {
+        elicitation: protocol::approvals::ElicitationRequest::Url {
             meta: guardian_meta(Some(json!({}))),
             message: "Open URL".to_string(),
             url: "https://example.com".to_string(),
@@ -142,7 +142,7 @@ fn guardian_elicitation_review_request_declines_unsupported_opt_in_shapes() {
     let non_empty_schema_request = ElicitationReviewRequest {
         server_name: "browser-use".to_string(),
         request_id: RequestId::Integer(9),
-        elicitation: codex_protocol::approvals::ElicitationRequest::Form {
+        elicitation: protocol::approvals::ElicitationRequest::Form {
             meta: guardian_meta(Some(json!({}))),
             message: "Allow origin?".to_string(),
             requested_schema: json!({

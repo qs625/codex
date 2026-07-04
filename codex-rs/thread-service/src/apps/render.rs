@@ -1,8 +1,8 @@
 use codex_connectors_api::AppInfo;
 use codex_context_manager::AppsInstructions;
 use codex_context_manager::ContextualUserFragment;
-use codex_protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;
-use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
+use protocol::protocol::APPS_INSTRUCTIONS_CLOSE_TAG;
+use protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
 
 pub(crate) fn render_apps_section(connectors: &[AppInfo]) -> Option<String> {
     AppsInstructions::from_connectors(connectors).map(|instructions| instructions.render())

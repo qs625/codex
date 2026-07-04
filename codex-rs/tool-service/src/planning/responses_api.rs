@@ -9,8 +9,8 @@ use crate::ToolDefinition;
 use crate::ToolName;
 use crate::parse_dynamic_tool;
 use crate::parse_mcp_tool;
-use codex_mcp_tool_types::McpTool;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
+use mcp_types::McpTool;
+use protocol::dynamic_tools::DynamicToolSpec;
 
 pub fn dynamic_tool_to_responses_api_tool(
     tool: &DynamicToolSpec,

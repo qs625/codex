@@ -1,8 +1,8 @@
 use codex_git_info::merge_base_with_head;
-use codex_protocol::protocol::ReviewRequest;
-use codex_protocol::protocol::ReviewTarget;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_template::Template;
+use protocol::protocol::ReviewRequest;
+use protocol::protocol::ReviewTarget;
 use std::sync::LazyLock;
 
 #[derive(Clone, Debug, PartialEq)]

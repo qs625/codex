@@ -18,11 +18,10 @@ use crate::agent::AgentStatus;
 use crate::agent::SpawnAgentOptions;
 use crate::agent::agent_status_from_event;
 use crate::agent::status::is_final;
-use crate::build_available_skills;
+use crate::build_skill_service_input_from_config;
 use crate::compact;
 use crate::context_usage::build_thread_context_usage;
 use crate::context_usage::build_thread_context_usage_from_history;
-use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::event_mapping::completed_display_event_from_model_item;
 use crate::event_mapping::injected_context_item_from_response_items;
@@ -32,8 +31,6 @@ use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::realtime_conversation::RealtimeConversationManager;
 use crate::session_prefix::format_subagent_notification_message;
-use crate::skills::SkillRenderSideEffects;
-use crate::skills_load_input_from_config;
 use crate::turn_metadata::TurnMetadataState;
 use crate::turn_timing::now_unix_timestamp_ms;
 use async_channel::Receiver;
@@ -51,46 +48,24 @@ use codex_analytics_api::AppInvocation;
 use codex_analytics_api::InvocationType;
 use codex_analytics_api::SubAgentThreadStartedInput;
 use codex_analytics_api::build_track_events_context;
-use codex_api_runtime_api::SharedApiRuntimeFactory;
 use codex_auth_types::AuthEnvTelemetryInput;
 use codex_auth_types::AuthRuntime;
 use codex_auth_types::SharedAuthRuntime;
 use codex_auth_types::collect_auth_env_telemetry;
-use codex_client_identity::originator;
 use codex_code_mode_api::CodeModeRuntimeFactory;
 use codex_code_mode_api::CodeModeRuntimeService;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
-use codex_command_service_api::CommandSessionError;
-use codex_command_service_api::CommandWaitOperation;
-use codex_command_service_api::CommandWaitRequest;
-use codex_command_service_api::WriteStdinOutput;
-use codex_command_service_api::WriteStdinRequest;
-use codex_config::ManagedFeatures;
-use codex_config::hook_config_layer_stack_from_config_layer_stack;
-use codex_config::resolve_tool_suggest_config_from_layer_stack;
-use codex_exec_server_api::ExecEnvironmentProvider;
+use config_service::ManagedFeatures;
+use config_service::hook_config_layer_stack_from_config_layer_stack;
+use config_service::resolve_tool_suggest_config_from_layer_stack;
 use codex_extension_api::PromptSlot;
 use codex_features::FEATURES;
 use codex_features::Feature;
 use codex_features::unstable_features_warning_event;
 use codex_file_system::FileSystemSandboxContext;
-use codex_hooks::PreToolUseHookResult;
-use codex_hooks::record_additional_contexts;
-use codex_hooks::run_post_tool_use_hooks;
-use codex_hooks::run_pre_tool_use_hooks;
-use codex_hooks_api::HooksConfig;
-use codex_hooks_api::SharedHookRuntime;
-use codex_hooks_api::SharedHookRuntimeFactory;
-use codex_mcp_types::McpClientElicitationSupport;
-use codex_mcp_types::codex_apps_tools_cache_key;
-use codex_model_client::AttestationProvider;
-use codex_model_provider_api::SharedModelProviderAuthManager;
-use codex_model_provider_api::SharedModelProviderFactory;
-use codex_models_manager_api::RefreshStrategy;
-use codex_models_manager_api::SharedModelsManager;
 use codex_network_proxy_api::BlockedRequestObserver;
 use codex_network_proxy_api::NetworkPolicyDecider;
 use codex_network_proxy_api::NetworkProxyAuditMetadata;
@@ -98,79 +73,108 @@ use codex_network_proxy_api::NetworkProxyRuntimeFactory;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_network_proxy_api::SharedNetworkProxyRuntimeFactory;
 use codex_openai_files_api::SharedOpenAiFileUploader;
-use codex_permissions_runtime::ExecPolicyLoader;
-use codex_permissions_runtime::ExecPolicyManager;
-use codex_permissions_runtime::validate_network_policy_amendment_host;
-use codex_protocol::AgentPath;
-use codex_protocol::ThreadId;
-use codex_protocol::approvals::ExecPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyRuleAction;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::Settings;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::dynamic_tools::DynamicToolResponse;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_protocol::items::TurnItem;
-use codex_protocol::items::UserMessageItem;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::BaseInstructions;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::format_allow_prefixes;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::HasLegacyEvent;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::ItemCompletedEvent;
-use codex_protocol::protocol::ItemStartedEvent;
-use codex_protocol::protocol::ResponseItemCompletedEvent;
-use codex_protocol::protocol::ResponseItemStartedEvent;
-use codex_protocol::protocol::ReviewRequest;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::TurnContextItem;
-use codex_protocol::protocol::TurnContextNetworkItem;
-use codex_protocol::protocol::TurnEnvironmentSelection;
-use codex_protocol::protocol::W3cTraceContext;
-use codex_protocol::request_permissions::PermissionGrantScope;
-use codex_protocol::request_permissions::RequestPermissionProfile;
-use codex_protocol::request_permissions::RequestPermissionsArgs;
-use codex_protocol::request_permissions::RequestPermissionsEvent;
-use codex_protocol::request_permissions::RequestPermissionsResponse;
-use codex_protocol::request_user_input::RequestUserInputArgs;
-use codex_protocol::request_user_input::RequestUserInputResponse;
-use codex_rollout_trace_api::AgentResultTracePayload;
-use codex_rollout_trace_api::ThreadStartedTraceMetadata;
-use codex_rollout_trace_api::ThreadTraceContext;
+use permissions_service::ExecPolicyLoader;
+use permissions_service::ExecPolicyManager;
+use permissions_service::validate_network_policy_amendment_host;
 use codex_sandboxing_api::normalize_request_permissions_response;
 use codex_shell_utils::parse_command::parse_command;
-use codex_thread_store_api::CreateThreadParams;
-use codex_thread_store_api::LiveThreadFactory;
-use codex_thread_store_api::LiveThreadHandle;
-use codex_thread_store_api::ReadThreadParams;
-use codex_thread_store_api::ResumeThreadParams;
-use codex_thread_store_api::SharedLiveThread;
-use codex_thread_store_api::ThreadEventPersistenceMode;
-use codex_thread_store_api::ThreadPersistenceMetadata;
-use codex_thread_store_api::ThreadStore;
 use codex_utils_output_truncation::TruncationPolicy;
+use command_service_api::CommandSessionError;
+use command_service_api::CommandWaitOperation;
+use command_service_api::CommandWaitRequest;
+use command_service_api::WriteStdinOutput;
+use command_service_api::WriteStdinRequest;
+use exec_server_api::ExecEnvironmentProvider;
 use futures::future::BoxFuture;
 use futures::future::Shared;
 use futures::prelude::*;
+use hooks::PreToolUseHookResult;
+use hooks::record_additional_contexts;
+use hooks::run_post_tool_use_hooks;
+use hooks::run_pre_tool_use_hooks;
+use hooks_api::HooksConfig;
+use hooks_api::SharedHookRuntime;
+use hooks_api::SharedHookRuntimeFactory;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
 use mcp_service_api::McpServiceApi;
+use mcp_types::McpClientElicitationSupport;
+use mcp_types::codex_apps_tools_cache_key;
+use model_service::AttestationProvider;
+use model_service::ModelService;
+use model_service::ModelServiceRuntimeDeps;
+use model_service_api::ListModelsRequest;
+use model_service_api::ModelCatalogRefresh;
+use model_service_api::ModelSelectionPolicy;
+use model_service_api::ModelServiceApi;
+use model_service_api::ResolveDefaultModelRequest;
+use model_service_api::SharedApiRuntimeFactory;
+use model_service_api::SharedModelProviderAuthManager;
+use model_service_api::SharedModelProviderFactory;
+use protocol::AgentPath;
+use protocol::ThreadId;
+use protocol::approvals::ExecPolicyAmendment;
+use protocol::approvals::NetworkPolicyAmendment;
+use protocol::approvals::NetworkPolicyRuleAction;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::ModeKind;
+use protocol::config_types::Settings;
+use protocol::config_types::WebSearchMode;
+use protocol::dynamic_tools::DynamicToolResponse;
+use protocol::dynamic_tools::DynamicToolSpec;
+use protocol::items::TurnItem;
+use protocol::items::UserMessageItem;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::BaseInstructions;
+use protocol::models::PermissionProfile;
+use protocol::models::format_allow_prefixes;
+use protocol::openai_models::ModelInfo;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::FileChange;
+use protocol::protocol::HasLegacyEvent;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentOperation;
+use protocol::protocol::ItemCompletedEvent;
+use protocol::protocol::ItemStartedEvent;
+use protocol::protocol::ResponseItemCompletedEvent;
+use protocol::protocol::ResponseItemStartedEvent;
+use protocol::protocol::ReviewRequest;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadContextUsageUpdatedEvent;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnContextItem;
+use protocol::protocol::TurnContextNetworkItem;
+use protocol::protocol::TurnEnvironmentSelection;
+use protocol::protocol::W3cTraceContext;
+use protocol::request_permissions::PermissionGrantScope;
+use protocol::request_permissions::RequestPermissionProfile;
+use protocol::request_permissions::RequestPermissionsArgs;
+use protocol::request_permissions::RequestPermissionsEvent;
+use protocol::request_permissions::RequestPermissionsResponse;
+use protocol::request_user_input::RequestUserInputArgs;
+use protocol::request_user_input::RequestUserInputResponse;
+use rollout_trace_api::AgentResultTracePayload;
+use rollout_trace_api::ThreadStartedTraceMetadata;
+use rollout_trace_api::ThreadTraceContext;
 use serde_json::Value;
+use skill_service_api::build_available_skills;
+use skill_service_api::default_skill_metadata_budget;
+use skill_service_api::render::SkillRenderSideEffects;
+use thread_store_api::CreateThreadParams;
+use thread_store_api::LiveThreadFactory;
+use thread_store_api::LiveThreadHandle;
+use thread_store_api::ReadThreadParams;
+use thread_store_api::ResumeThreadParams;
+use thread_store_api::SharedLiveThread;
+use thread_store_api::ThreadEventPersistenceMode;
+use thread_store_api::ThreadPersistenceMetadata;
+use thread_store_api::ThreadStore;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tokio::sync::oneshot;
@@ -185,32 +189,32 @@ use tracing::info;
 use tracing::info_span;
 use tracing::instrument;
 use tracing::warn;
+use transport_client_identity::originator;
 use uuid::Uuid;
 
 #[cfg(test)]
 use crate::compact::collect_user_messages;
 use crate::thread::ThreadConfigSnapshot;
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::Config;
-use codex_config::Constrained;
-use codex_config::ConstraintResult;
-use codex_config::PermissionProfileState;
-use codex_config::StartedNetworkProxy;
-use codex_config_state::ConfigLayerStackOrdering;
+use config_service::CONFIG_TOML_FILE;
+use config_service::Config;
+use config_service::Constrained;
+use config_service::ConstraintResult;
+use config_service::PermissionProfileState;
+use config_service::StartedNetworkProxy;
+use config_service::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
 use codex_context_manager::ContextManager;
 use codex_context_manager::PreviousTurnSettingsView;
 use codex_context_manager::SettingsUpdateInput;
-use codex_model_client::ModelClient;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_protocol::config_types::ShellEnvironmentPolicy;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
+use model_service_api::ModelProviderInfo;
+use protocol::config_types::ShellEnvironmentPolicy;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
 #[cfg(test)]
-use codex_protocol::exec_output::StreamOutput;
-use codex_rollout_api::initial_history_has_prior_user_turns;
+use protocol::exec_output::StreamOutput;
+use rollout_api::initial_history_has_prior_user_turns;
 use thread_service_api::PostToolUsePayload;
-use codex_tool_types::UPDATE_GOAL_TOOL_NAME;
+use tool_service_api::UPDATE_GOAL_TOOL_NAME;
 
 mod config_lock;
 mod handlers;
@@ -235,14 +239,14 @@ use self::turn_context::TurnSkillsContext;
 #[cfg(test)]
 mod rollout_reconstruction_tests;
 
+use self::session::approval_support_impl::ApprovalStore;
 use crate::ActiveSteerTurn;
 pub(crate) use crate::SessionSettingsUpdate;
 pub use crate::SteerInputError;
 use crate::SteerableTaskKind;
 use crate::resolve_session_service_tier;
 use crate::validate_steer_input;
-use self::session::approval_support_impl::ApprovalStore;
-pub(crate) use codex_rollout_api::PreviousTurnSettings;
+pub(crate) use rollout_api::PreviousTurnSettings;
 
 fn previous_turn_settings_view(
     previous_turn_settings: Option<&PreviousTurnSettings>,
@@ -253,17 +257,8 @@ fn previous_turn_settings_view(
     })
 }
 
-#[cfg(test)]
-use crate::SkillLoadOutcome;
-#[cfg(test)]
-use crate::skills::SkillMetadata;
-use crate::agents_md::AgentsMdManager;
 use self::session::approval_review_session_impl::GuardianReviewSessionManager;
-use codex_approval_service_api::ApprovalServiceApi;
-use codex_approval_service_api::GuardianReviewDispatch;
-use codex_approval_service_api::execpolicy_network_rule_amendment;
-use codex_approval_service_api::is_guardian_reviewer_source;
-use codex_approval_service_api::routes_approval_to_guardian;
+use crate::agents_md::AgentsMdManager;
 use crate::rollout::map_session_init_error;
 use crate::runtime_shell_model as shell;
 use crate::runtime_shell_snapshot::ShellSnapshot;
@@ -282,9 +277,12 @@ use crate::stream_events_utils::handle_output_item_done;
 use crate::tasks::ReviewTask;
 use crate::turn_timing::TurnTimingState;
 use crate::turn_timing::record_turn_ttfm_metric;
+use codex_approval_service_api::ApprovalServiceApi;
+use codex_approval_service_api::GuardianReviewDispatch;
+use codex_approval_service_api::execpolicy_network_rule_amendment;
+use codex_approval_service_api::is_guardian_reviewer_source;
+use codex_approval_service_api::routes_approval_to_guardian;
 use codex_auth_types::TelemetryAuthMode;
-use codex_command_service_api::ExecCommandRunOutput;
-use codex_command_service_api::ExecCommandRunRequest;
 use codex_context_manager::ApprovedCommandPrefixSaved;
 use codex_context_manager::AppsInstructions;
 use codex_context_manager::AvailableAgentsInstructions;
@@ -298,65 +296,69 @@ use codex_context_manager::NetworkRuleSaved;
 use codex_context_manager::PermissionsInstructions;
 use codex_context_manager::PersonalitySpecInstructions;
 use codex_context_manager::UserInstructions;
-use plugin_service_api::PluginRuntime;
-use plugin_service_api::SharedPluginRuntime;
-use codex_core_skills_api::SharedSkillsRuntime;
 use codex_git_info::get_git_repo_root;
-use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
-use codex_metrics_api::THREAD_STARTED_METRIC;
-use codex_permissions_runtime::ExecPolicyUpdateError;
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::CodexErrorInfo;
-use codex_protocol::protocol::CompactedItem;
-use codex_protocol::protocol::DeprecationNoticeEvent;
-use codex_protocol::protocol::ErrorEvent;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecApprovalRequestEvent;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::McpServerRefreshConfig;
-use codex_protocol::protocol::ModelRerouteEvent;
-use codex_protocol::protocol::ModelRerouteReason;
-use codex_protocol::protocol::ModelVerification;
-use codex_protocol::protocol::ModelVerificationEvent;
-use codex_protocol::protocol::NetworkApprovalContext;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::RateLimitSnapshot;
-use codex_protocol::protocol::RequestUserInputEvent;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionConfiguredEvent;
-use codex_protocol::protocol::SessionNetworkProxyRuntime;
-use codex_protocol::protocol::StreamErrorEvent;
-use codex_protocol::protocol::Submission;
-use codex_protocol::protocol::ThreadMemoryMode;
-use codex_protocol::protocol::TokenCountEvent;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::WarningEvent;
-use codex_protocol::user_input::UserInput;
+use codex_otel::context_from_w3c_trace_context;
+use codex_otel::current_span_trace_id;
+use codex_otel::current_span_w3c_trace_context;
+use codex_otel::set_parent_from_w3c_trace_context;
+use permissions_service::ExecPolicyUpdateError;
 use codex_sandboxing::WindowsSandboxLevelExt;
 use codex_sandboxing_api::SharedSandboxRuntime;
-use codex_session_telemetry_api::SharedSessionTelemetry;
-use codex_session_telemetry_api::SharedSessionTelemetryFactory;
-use codex_tool_config::ToolEnvironmentMode;
-use codex_tool_config::ToolsConfig;
-use codex_tool_config::ToolsConfigParams;
-use codex_trace_context::context_from_w3c_trace_context;
-use codex_trace_context::current_span_trace_id;
-use codex_trace_context::current_span_w3c_trace_context;
-use codex_trace_context::set_parent_from_w3c_trace_context;
 use codex_turn_items::realtime_text_for_event;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use command_service_api::ExecCommandRunOutput;
+use command_service_api::ExecCommandRunRequest;
+use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
+use metrics_api::THREAD_STARTED_METRIC;
+use plugin_service_api::PluginRuntime;
+use plugin_service_api::SharedPluginRuntime;
+use protocol::config_types::CollaborationMode;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::ContentItem;
+use protocol::models::ResponseInputItem;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use protocol::protocol::ApplyPatchApprovalRequestEvent;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::CodexErrorInfo;
+use protocol::protocol::CompactedItem;
+use protocol::protocol::DeprecationNoticeEvent;
+use protocol::protocol::ErrorEvent;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ExecApprovalRequestEvent;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::McpServerRefreshConfig;
+use protocol::protocol::ModelRerouteEvent;
+use protocol::protocol::ModelRerouteReason;
+use protocol::protocol::ModelVerification;
+use protocol::protocol::ModelVerificationEvent;
+use protocol::protocol::NetworkApprovalContext;
+use protocol::protocol::Op;
+use protocol::protocol::RateLimitSnapshot;
+use protocol::protocol::RequestUserInputEvent;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::SessionNetworkProxyRuntime;
+use protocol::protocol::StreamErrorEvent;
+use protocol::protocol::Submission;
+use protocol::protocol::ThreadMemoryMode;
+use protocol::protocol::TokenCountEvent;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TokenUsageInfo;
+use protocol::protocol::WarningEvent;
+use protocol::user_input::UserInput;
+use session_telemetry_api::SharedSessionTelemetry;
+use session_telemetry_api::SharedSessionTelemetryFactory;
+use skill_service_api::SharedSkillServiceApi;
+#[cfg(test)]
+use skill_service_api::SkillLoadOutcome;
+use tool_config::ToolEnvironmentMode;
+use tool_config::ToolsConfig;
+use tool_config::ToolsConfigParams;
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.
@@ -393,16 +395,15 @@ pub(crate) struct CodexSpawnArgs {
         SharedMemoryToolDeveloperInstructionsProvider,
     pub(crate) hook_runtime_factory: SharedHookRuntimeFactory,
     pub(crate) sandbox_runtime: SharedSandboxRuntime,
-    pub(crate) models_manager: SharedModelsManager,
     pub(crate) environment_manager: Arc<dyn ExecEnvironmentProvider>,
-    pub(crate) skills_manager: SharedSkillsRuntime,
+    pub(crate) skill_service: SharedSkillServiceApi,
     pub(crate) plugins_manager: SharedPluginRuntime,
     pub(crate) mcp_service: Arc<dyn McpServiceApi>,
     pub(crate) mcp_auth_runtime: Arc<dyn McpAuthRuntime>,
     pub(crate) mcp_connection_runtime_factory: Arc<dyn McpConnectionRuntimeFactory>,
     pub(crate) network_proxy_runtime_factory: SharedNetworkProxyRuntimeFactory,
-    pub(crate) command_service_api: Arc<dyn codex_command_service_api::CommandServiceApi>,
-    pub(crate) extensions: Arc<codex_extension_api::ExtensionRegistry<codex_config::Config>>,
+    pub(crate) command_service_api: Arc<dyn command_service_api::CommandServiceApi>,
+    pub(crate) extensions: Arc<codex_extension_api::ExtensionRegistry<config_service::Config>>,
     pub(crate) conversation_history: InitialHistory,
     pub(crate) session_source: SessionSource,
     pub(crate) thread_source: Option<ThreadSource>,
@@ -525,10 +526,9 @@ impl Codex {
             model_provider_factory,
             api_runtime_factory,
             session_telemetry_factory,
-            models_manager,
             environment_manager,
             sandbox_runtime,
-            skills_manager,
+            skill_service,
             plugins_manager,
             mcp_service,
             mcp_auth_runtime,
@@ -579,8 +579,8 @@ impl Codex {
         let effective_skill_roots = plugins_manager
             .effective_skill_roots_for_config(&plugins_input)
             .await;
-        let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
-        let loaded_skills = skills_manager.skills_for_config(&skills_input, fs).await;
+        let skills_input = build_skill_service_input_from_config(&config, effective_skill_roots);
+        let loaded_skills = skill_service.skills_for_config(&skills_input, fs).await;
 
         for err in &loaded_skills.errors {
             error!(
@@ -611,25 +611,52 @@ impl Codex {
         };
 
         let config = Arc::new(config);
-        let refresh_strategy = if session_source.is_non_root_agent() {
-            RefreshStrategy::Offline
+        let model_service = Arc::new(ModelService::from_runtime_deps(ModelServiceRuntimeDeps {
+            codex_home: config.codex_home.to_path_buf(),
+            config_model_catalog: config.model_catalog.clone(),
+            api_runtime_factory: Arc::clone(&api_runtime_factory),
+            provider_auth_manager: provider_auth_manager.clone(),
+            model_provider_factory: Arc::clone(&model_provider_factory),
+            default_provider: Some(config.model_provider.clone()),
+            providers_by_id: config.model_providers.clone(),
+            model_metadata_overrides: config.to_models_manager_config().model_metadata_overrides,
+            attestation_provider: attestation_provider.clone(),
+        }));
+        let refresh = if session_source.is_non_root_agent() {
+            ModelCatalogRefresh::Offline
         } else {
-            RefreshStrategy::OnlineIfUncached
+            ModelCatalogRefresh::OnlineIfUncached
         };
-        if config.model.is_none() || !matches!(refresh_strategy, RefreshStrategy::Offline) {
-            let _ = models_manager.list_models(refresh_strategy).await;
+        if config.model.is_none() || !matches!(refresh, ModelCatalogRefresh::Offline) {
+            let _ = model_service
+                .list_models(ListModelsRequest {
+                    include_hidden: true,
+                    refresh,
+                })
+                .await;
         }
-        let model = models_manager
-            .get_default_model(&config.model, refresh_strategy)
-            .await;
+        let model = model_service
+            .resolve_default_model(ResolveDefaultModelRequest {
+                selection: ModelSelectionPolicy {
+                    requested_model: config.model.clone(),
+                    provider_hint: Some(config.model_provider_id.clone()),
+                    allow_default_fallback: true,
+                    refresh,
+                },
+            })
+            .await
+            .map_err(|err| CodexErr::Fatal(format!("failed to resolve default model: {err}")))?
+            .map(|preset| preset.model)
+            .unwrap_or_else(|| config.model.clone().unwrap_or_default());
 
         // Resolve base instructions for the session. Priority order:
         // 1. config.base_instructions override
         // 2. conversation history => session_meta.base_instructions
         // 3. base_instructions for current model
-        let model_info = models_manager
-            .get_model_info(model.as_str(), &config.to_models_manager_config())
-            .await;
+        let model_info = model_service
+            .get_model_info(model.as_str())
+            .await
+            .map_err(|err| CodexErr::Fatal(format!("failed to resolve model info: {err}")))?;
         let base_instructions = config
             .base_instructions
             .clone()
@@ -729,14 +756,13 @@ impl Codex {
             auth_runtime,
             provider_auth_manager,
             model_provider_factory,
-            models_manager.clone(),
             exec_policy,
             exec_policy_loader,
             tx_event.clone(),
             agent_status_tx.clone(),
             conversation_history,
             session_source_clone,
-            skills_manager,
+            skill_service,
             plugins_manager,
             mcp_service,
             mcp_auth_runtime,
@@ -744,6 +770,7 @@ impl Codex {
             api_runtime_factory,
             session_telemetry_factory,
             memory_tool_developer_instructions_provider,
+            model_service,
             hook_runtime_factory,
             sandbox_runtime,
             network_proxy_runtime_factory,
@@ -829,7 +856,7 @@ impl Codex {
     /// and does not involve the model.
     pub async fn set_thread_memory_mode(
         &self,
-        mode: codex_protocol::protocol::ThreadMemoryMode,
+        mode: protocol::protocol::ThreadMemoryMode,
     ) -> anyhow::Result<()> {
         handlers::persist_thread_memory_mode_update(&self.session, mode).await
     }
@@ -973,11 +1000,11 @@ impl Session {
         self.conversation_id.to_string()
     }
 
-    pub(crate) fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
+    pub(crate) fn tool_user_shell_type(&self) -> tool_config::ToolUserShellType {
         self.user_shell().shell_type.tool_user_shell_type()
     }
 
-    pub(crate) fn runtime_shell(&self) -> codex_command_service_api::RuntimeShell {
+    pub(crate) fn runtime_shell(&self) -> command_service_api::RuntimeShell {
         self.user_shell().as_ref().to_runtime_shell()
     }
 
@@ -1163,7 +1190,7 @@ impl Session {
             .await
     }
 
-    pub async fn list_all_mcp_tools(&self) -> Vec<codex_mcp_tool_types::ToolInfo> {
+    pub async fn list_all_mcp_tools(&self) -> Vec<mcp_types::ToolInfo> {
         let manager = self.services.mcp_connection_manager.read().await;
         manager.list_all_tools().await
     }
@@ -1195,15 +1222,12 @@ impl Session {
 
     pub(crate) async fn hard_refresh_codex_apps_tools_cache(
         &self,
-    ) -> anyhow::Result<Vec<codex_mcp_tool_types::ToolInfo>> {
+    ) -> anyhow::Result<Vec<mcp_types::ToolInfo>> {
         let manager = self.services.mcp_connection_manager.read().await;
         manager.hard_refresh_codex_apps_tools_cache().await
     }
 
-    pub(crate) async fn queue_mcp_server_refresh(
-        &self,
-        refresh_config: McpServerRefreshConfig,
-    ) {
+    pub(crate) async fn queue_mcp_server_refresh(&self, refresh_config: McpServerRefreshConfig) {
         let mut guard = self.pending_mcp_server_refresh_config.lock().await;
         *guard = Some(refresh_config);
     }
@@ -1264,7 +1288,7 @@ impl Session {
         server: &str,
         tool_name: &str,
     ) {
-        if server != codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME {
+        if server != mcp_types::CODEX_APPS_MCP_SERVER_NAME {
             return;
         }
         let metadata = self
@@ -1312,16 +1336,13 @@ impl Session {
 
     pub async fn mcp_tool_approval_is_remembered(
         &self,
-        key: &codex_mcp_types::McpToolApprovalKey,
+        key: &mcp_types::McpToolApprovalKey,
     ) -> bool {
         let store = self.services.tool_approvals.lock().await;
         matches!(store.get(key), Some(ReviewDecision::ApprovedForSession))
     }
 
-    pub async fn remember_mcp_tool_approval(
-        &self,
-        key: codex_mcp_types::McpToolApprovalKey,
-    ) {
+    pub async fn remember_mcp_tool_approval(&self, key: mcp_types::McpToolApprovalKey) {
         let mut store = self.services.tool_approvals.lock().await;
         store.put(key, ReviewDecision::ApprovedForSession);
     }
@@ -1407,7 +1428,7 @@ impl Session {
     pub(crate) async fn mcp_oauth_login_support(
         &self,
         transport: &codex_config_types::McpServerTransportConfig,
-    ) -> codex_mcp_types::McpOAuthLoginSupport {
+    ) -> mcp_types::McpOAuthLoginSupport {
         self.services
             .mcp_auth_runtime
             .oauth_login_support(transport)
@@ -1426,7 +1447,7 @@ impl Session {
 
     pub(crate) fn should_retry_mcp_oauth_without_scopes(
         &self,
-        scopes: &codex_mcp_types::ResolvedMcpOAuthScopes,
+        scopes: &mcp_types::ResolvedMcpOAuthScopes,
         error: &anyhow::Error,
     ) -> bool {
         self.services
@@ -1443,18 +1464,27 @@ impl Session {
 
     pub(crate) async fn list_spawn_agent_models(
         &self,
-    ) -> Vec<codex_protocol::openai_models::ModelPreset> {
+    ) -> Vec<protocol::openai_models::ModelPreset> {
         self.services
-            .models_manager
-            .list_models(RefreshStrategy::Offline)
+            .model_service
+            .list_models(ListModelsRequest {
+                include_hidden: true,
+                refresh: ModelCatalogRefresh::Offline,
+            })
             .await
+            .unwrap_or_default()
     }
 
-    pub(crate) async fn spawn_agent_model_info(&self, model: &str, config: &Config) -> ModelInfo {
+    pub(crate) async fn spawn_agent_model_info(
+        &self,
+        model: &str,
+        _config: &Config,
+    ) -> CodexResult<ModelInfo> {
         self.services
-            .models_manager
-            .get_model_info(model, &config.to_models_manager_config())
+            .model_service
+            .get_model_info(model)
             .await
+            .map_err(|err| CodexErr::Fatal(format!("failed to resolve model info: {err}")))
     }
 
     #[expect(
@@ -1484,7 +1514,7 @@ impl Session {
         &self,
         turn: &TurnContext,
         payload: PostToolUsePayload,
-    ) -> codex_hooks::PostToolUseOutcome {
+    ) -> hooks::PostToolUseOutcome {
         let outcome = run_post_tool_use_hooks(
             self,
             turn,
@@ -1557,12 +1587,12 @@ impl Session {
         turn: Arc<TurnContext>,
         call_id: String,
         request: ExecCommandRunRequest,
-    ) -> Result<ExecCommandRunOutput, codex_command_service_api::UnifiedExecError> {
+    ) -> Result<ExecCommandRunOutput, command_service_api::UnifiedExecError> {
         self.services
             .command_service_state
             .run_exec_command(
-                Arc::clone(self)
-                    as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                Arc::clone(self) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                Arc::clone(self) as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
                 turn as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                 call_id,
                 request,
@@ -1611,9 +1641,8 @@ impl Session {
 
     /// Builds the `x-codex-beta-features` header value for this session.
     ///
-    /// `ModelClient` is session-scoped and intentionally does not depend on the full `Config`, so
-    /// we precompute the comma-separated list of enabled experimental feature keys at session
-    /// creation time and thread it into the client.
+    /// `model-service` 创建的 session-scoped client 不直接依赖完整 `Config`，所以这里预先
+    /// 计算启用的实验特性 header，并在线程创建时传入模型 client。
     fn build_model_client_beta_features_header(config: &Config) -> Option<String> {
         let beta_features_header = FEATURES
             .iter()
@@ -1637,9 +1666,9 @@ impl Session {
     }
 
     async fn start_managed_network_proxy(
-        spec: &codex_config::NetworkProxySpec,
+        spec: &config_service::NetworkProxySpec,
         factory: &dyn NetworkProxyRuntimeFactory,
-        exec_policy: &codex_execpolicy_api::Policy,
+        exec_policy: &permissions_service_api::Policy,
         permission_profile: &PermissionProfile,
         network_policy_decider: Option<Arc<dyn NetworkPolicyDecider>>,
         blocked_request_observer: Option<Arc<dyn BlockedRequestObserver>>,
@@ -2148,7 +2177,7 @@ impl Session {
             (previous_config, new_config, config)
         };
         self.emit_config_changed_contributors(previous_config.as_ref(), new_config.as_ref());
-        self.services.skills_manager.clear_cache();
+        self.services.skill_service.clear_cache();
         self.services.plugins_manager.clear_cache();
         let hooks = build_hooks_for_config(
             config.as_ref(),
@@ -2423,13 +2452,13 @@ impl Session {
         &self,
         turn_id: &str,
         parent_thread_id: ThreadId,
-        child_agent_path: &codex_protocol::AgentPath,
+        child_agent_path: &protocol::AgentPath,
         status: AgentStatus,
     ) -> bool {
         let Some(parent_agent_path) = child_agent_path
             .as_str()
             .rsplit_once('/')
-            .and_then(|(parent, _)| codex_protocol::AgentPath::try_from(parent).ok())
+            .and_then(|(parent, _)| protocol::AgentPath::try_from(parent).ok())
         else {
             return false;
         };
@@ -2447,7 +2476,7 @@ impl Session {
             parent_agent_path,
             Vec::new(),
             message,
-            codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+            protocol::protocol::InterAgentOperation::ChildCompletion,
         )
         .with_trigger_turn(true)
         .with_thread_ids(self.conversation_id, parent_thread_id)
@@ -2620,11 +2649,7 @@ impl Session {
         .await;
     }
 
-    pub async fn emit_turn_item_completed(
-        &self,
-        turn_context: &TurnContext,
-        item: TurnItem,
-    ) {
+    pub async fn emit_turn_item_completed(&self, turn_context: &TurnContext, item: TurnItem) {
         record_turn_ttfm_metric(turn_context, &item).await;
         self.send_event(
             turn_context,
@@ -3017,13 +3042,14 @@ impl Session {
                 .approval_service
                 .review_guardian_request(GuardianReviewDispatch {
                     session: Arc::clone(self)
-                        as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                        as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
                     turn: Arc::clone(turn_context)
                         as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                     review_id: uuid::Uuid::new_v4().to_string(),
                     request,
                     retry_reason: None,
-                    approval_request_source: codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
+                    approval_request_source:
+                        codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
                     cancellation_token: Some(cancellation_token.clone()),
                 })
                 .await
@@ -3490,7 +3516,7 @@ impl Session {
             self.persist_rollout_items(&[RolloutItem::TurnContext(turn_context_item)])
                 .await;
         }
-        self.services.model_client.advance_window_generation();
+        self.services.model_client_api.advance_window_generation();
     }
 
     async fn persist_rollout_response_items(&self, items: &[ResponseItem]) {
@@ -3604,8 +3630,7 @@ impl Session {
                 .render(),
             );
         }
-        let separate_guardian_developer_message =
-            is_guardian_reviewer_source(&session_source);
+        let separate_guardian_developer_message = is_guardian_reviewer_source(&session_source);
         // Keep the guardian policy prompt out of the aggregated developer bundle so it
         // stays isolated as its own top-level developer message for guardian subagents.
         if !separate_guardian_developer_message
@@ -4203,7 +4228,7 @@ impl Session {
         guard
             .entry((sender_thread_id, receiver_thread_id))
             .or_insert_with(|| {
-                codex_command_service_api::WaitBackoffState::new(
+                command_service_api::WaitBackoffState::new(
                     duration_from_config_ms(initial_timeout_ms),
                     duration_from_config_ms(hard_cap_timeout_ms),
                 )
@@ -4386,7 +4411,10 @@ impl Session {
         // Even without an active task, interrupt handling pauses any active goal.
         self.abort_all_tasks(TurnAbortReason::Interrupted).await;
         if !had_active_turn {
-            self.services.mcp_service.cancel_startup(self.as_ref()).await;
+            self.services
+                .mcp_service
+                .cancel_startup(self.as_ref())
+                .await;
         }
     }
 
@@ -4423,7 +4451,7 @@ impl Session {
 
     pub(crate) async fn take_pending_session_start_source(
         &self,
-    ) -> Option<codex_hooks_api::SessionStartSource> {
+    ) -> Option<hooks_api::SessionStartSource> {
         let mut state = self.state.lock().await;
         state.take_pending_session_start_source()
     }
@@ -4521,7 +4549,7 @@ impl thread_service_api::SessionCommandHandle for Codex {
 impl thread_service_api::SessionStatusHandle for Codex {
     fn agent_status(
         &self,
-    ) -> impl std::future::Future<Output = codex_protocol::protocol::AgentStatus> + Send + '_ {
+    ) -> impl std::future::Future<Output = protocol::protocol::AgentStatus> + Send + '_ {
         Codex::agent_status(self)
     }
 }
@@ -4531,19 +4559,18 @@ async fn build_hooks_for_config(
     config: &Config,
     plugins_manager: &dyn PluginRuntime,
     user_shell: &crate::runtime_shell_model::Shell,
-    hook_runtime_factory: &dyn codex_hooks_api::HookRuntimeFactory,
+    hook_runtime_factory: &dyn hooks_api::HookRuntimeFactory,
 ) -> SharedHookRuntime {
     let mut hook_shell_argv = user_shell.derive_exec_args("", /*use_login_shell*/ false);
     let hook_shell_program = hook_shell_argv.remove(0);
     let _ = hook_shell_argv.pop();
     let plugins_input = config.plugins_config_input();
-    let (plugin_hook_sources, plugin_hook_load_warnings) =
-        plugins_manager
-            .plugin_hook_sources_for_config(
-                &plugins_input,
-                config.features.enabled(Feature::PluginHooks),
-            )
-            .await;
+    let (plugin_hook_sources, plugin_hook_load_warnings) = plugins_manager
+        .plugin_hook_sources_for_config(
+            &plugins_input,
+            config.features.enabled(Feature::PluginHooks),
+        )
+        .await;
 
     hook_runtime_factory.create(HooksConfig {
         legacy_notify_argv: config.notify.clone(),
@@ -4565,7 +4592,9 @@ async fn merge_plugin_agent_roles_for_config(
     agent_roles: &mut std::collections::BTreeMap<String, crate::config::AgentRoleConfig>,
     startup_warnings: &mut Vec<String>,
 ) {
-    let plugin_agent_dirs = plugins_manager.plugin_agent_dirs_for_config(plugins_input).await;
+    let plugin_agent_dirs = plugins_manager
+        .plugin_agent_dirs_for_config(plugins_input)
+        .await;
     if plugin_agent_dirs.is_empty() {
         return;
     }
@@ -4575,7 +4604,7 @@ async fn merge_plugin_agent_roles_for_config(
         .map(|agent_dir| (agent_dir.plugin_id, agent_dir.path))
         .collect::<Vec<_>>();
     let mut warnings = Vec::new();
-    if let Err(err) = codex_config::agent_roles::merge_missing_agent_roles_from_plugin_dirs(
+    if let Err(err) = config_service::agent_roles::merge_missing_agent_roles_from_plugin_dirs(
         codex_file_system::LOCAL_FS.as_ref(),
         agent_roles,
         &plugin_agent_dirs,

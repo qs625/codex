@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use codex_protocol::ThreadId;
-use codex_rollout::RolloutConfig;
-use codex_rollout::RolloutRecorder;
-use codex_rollout::find_thread_names_by_ids;
-use codex_rollout::parse_cursor;
+use protocol::ThreadId;
+use rollout::RolloutConfig;
+use rollout::RolloutRecorder;
+use rollout::find_thread_names_by_ids;
+use rollout::parse_cursor;
 
 use super::LocalThreadStore;
 use super::helpers::distinct_thread_metadata_title;
@@ -39,12 +39,12 @@ pub(super) async fn list_threads(
         })
         .transpose()?;
     let sort_key = match params.sort_key {
-        ThreadSortKey::CreatedAt => codex_rollout::ThreadSortKey::CreatedAt,
-        ThreadSortKey::UpdatedAt => codex_rollout::ThreadSortKey::UpdatedAt,
+        ThreadSortKey::CreatedAt => rollout::ThreadSortKey::CreatedAt,
+        ThreadSortKey::UpdatedAt => rollout::ThreadSortKey::UpdatedAt,
     };
     let sort_direction = match params.sort_direction {
-        SortDirection::Asc => codex_rollout::SortDirection::Asc,
-        SortDirection::Desc => codex_rollout::SortDirection::Desc,
+        SortDirection::Asc => rollout::SortDirection::Asc,
+        SortDirection::Desc => rollout::SortDirection::Desc,
     };
     let state_db = store.state_db().await;
     let rollout_config = RolloutConfig {
@@ -141,14 +141,14 @@ pub(super) async fn list_threads(
 }
 
 async fn list_rollout_threads(
-    state_db: Option<codex_rollout::StateDbHandle>,
+    state_db: Option<rollout::StateDbHandle>,
     config: &RolloutConfig,
     default_model_provider_id: &str,
     params: &ListThreadsParams,
-    cursor: Option<&codex_rollout::Cursor>,
-    sort_key: codex_rollout::ThreadSortKey,
-    sort_direction: codex_rollout::SortDirection,
-) -> ThreadStoreResult<codex_rollout::ThreadsPage> {
+    cursor: Option<&rollout::Cursor>,
+    sort_key: rollout::ThreadSortKey,
+    sort_direction: rollout::SortDirection,
+) -> ThreadStoreResult<rollout::ThreadsPage> {
     let page = if params.use_state_db_only && params.archived {
         RolloutRecorder::list_archived_threads_from_state_db(
             state_db,
@@ -218,9 +218,9 @@ async fn list_rollout_threads(
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use codex_protocol::ThreadId;
-    use codex_protocol::protocol::SessionSource;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::protocol::SessionSource;
     use std::fs;
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -276,7 +276,7 @@ mod tests {
         let rollout_path = home.path().join("rollout-title-search.jsonl");
         fs::write(&rollout_path, "").expect("placeholder rollout file");
 
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -288,7 +288,7 @@ mod tests {
             .await
             .expect("backfill should be complete");
         let created_at = Utc::now();
-        let mut builder = codex_state::ThreadMetadataBuilder::new(
+        let mut builder = state::ThreadMetadataBuilder::new(
             thread_id,
             rollout_path,
             created_at,

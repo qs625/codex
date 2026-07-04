@@ -1206,14 +1206,14 @@ async fn interrupted_turn_after_goal_budget_limited_uses_budget_message_snapshot
     chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
 
     chat.handle_server_notification(
-        codex_app_server_protocol::ServerNotification::TurnStarted(
-            codex_app_server_protocol::TurnStartedNotification {
+        app_server_protocol::ServerNotification::TurnStarted(
+            app_server_protocol::TurnStartedNotification {
                 thread_id: "thread-1".to_string(),
-                turn: codex_app_server_protocol::Turn {
+                turn: app_server_protocol::Turn {
                     id: "turn-1".to_string(),
-                    items_view: codex_app_server_protocol::TurnItemsView::Full,
+                    items_view: app_server_protocol::TurnItemsView::Full,
                     items: Vec::new(),
-                    status: codex_app_server_protocol::TurnStatus::InProgress,
+                    status: app_server_protocol::TurnStatus::InProgress,
                     error: None,
                     started_at: None,
                     completed_at: None,
@@ -1224,14 +1224,14 @@ async fn interrupted_turn_after_goal_budget_limited_uses_budget_message_snapshot
         /*replay_kind*/ None,
     );
     chat.handle_server_notification(
-        codex_app_server_protocol::ServerNotification::ThreadGoalUpdated(
-            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+        app_server_protocol::ServerNotification::ThreadGoalUpdated(
+            app_server_protocol::ThreadGoalUpdatedNotification {
                 thread_id: "thread-1".to_string(),
                 turn_id: Some("turn-1".to_string()),
-                goal: codex_app_server_protocol::ThreadGoal {
+                goal: app_server_protocol::ThreadGoal {
                     thread_id: "thread-1".to_string(),
                     objective: "Run until the token budget is limited".to_string(),
-                    status: codex_app_server_protocol::ThreadGoalStatus::BudgetLimited,
+                    status: app_server_protocol::ThreadGoalStatus::BudgetLimited,
                     token_budget: Some(10_000),
                     tokens_used: 10_500,
                     time_used_seconds: 0,
@@ -1243,14 +1243,14 @@ async fn interrupted_turn_after_goal_budget_limited_uses_budget_message_snapshot
         /*replay_kind*/ None,
     );
     chat.handle_server_notification(
-        codex_app_server_protocol::ServerNotification::TurnCompleted(
-            codex_app_server_protocol::TurnCompletedNotification {
+        app_server_protocol::ServerNotification::TurnCompleted(
+            app_server_protocol::TurnCompletedNotification {
                 thread_id: "thread-1".to_string(),
-                turn: codex_app_server_protocol::Turn {
+                turn: app_server_protocol::Turn {
                     id: "turn-1".to_string(),
-                    items_view: codex_app_server_protocol::TurnItemsView::Full,
+                    items_view: app_server_protocol::TurnItemsView::Full,
                     items: Vec::new(),
-                    status: codex_app_server_protocol::TurnStatus::Interrupted,
+                    status: app_server_protocol::TurnStatus::Interrupted,
                     error: None,
                     started_at: None,
                     completed_at: None,

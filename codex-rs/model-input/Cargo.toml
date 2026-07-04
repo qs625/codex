@@ -13,7 +13,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-utils-image = { workspace = true }
 
 [dev-dependencies]

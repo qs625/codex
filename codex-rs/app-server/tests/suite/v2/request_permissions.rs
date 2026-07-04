@@ -1,21 +1,21 @@
 use anyhow::Result;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::PermissionGrantScope;
+use app_server_protocol::PermissionsRequestApprovalResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::ServerRequestResolvedNotification;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
 use app_test_support::create_request_permissions_sse_response;
 use app_test_support::to_response;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::PermissionGrantScope;
-use codex_app_server_protocol::PermissionsRequestApprovalResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ServerRequestResolvedNotification;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::UserInput as V2UserInput;
 use tokio::time::timeout;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -90,17 +90,17 @@ async fn request_permissions_round_trip() -> Result<()> {
     assert_eq!(
         requested_file_system.entries,
         Some(vec![
-            codex_app_server_protocol::FileSystemSandboxEntry {
-                path: codex_app_server_protocol::FileSystemPath::Path {
+            app_server_protocol::FileSystemSandboxEntry {
+                path: app_server_protocol::FileSystemPath::Path {
                     path: requested_writes[0].clone(),
                 },
-                access: codex_app_server_protocol::FileSystemAccessMode::Write,
+                access: app_server_protocol::FileSystemAccessMode::Write,
             },
-            codex_app_server_protocol::FileSystemSandboxEntry {
-                path: codex_app_server_protocol::FileSystemPath::Path {
+            app_server_protocol::FileSystemSandboxEntry {
+                path: app_server_protocol::FileSystemPath::Path {
                     path: requested_writes[1].clone(),
                 },
-                access: codex_app_server_protocol::FileSystemAccessMode::Write,
+                access: app_server_protocol::FileSystemAccessMode::Write,
             },
         ])
     );
@@ -109,9 +109,9 @@ async fn request_permissions_round_trip() -> Result<()> {
     mcp.send_response(
         request_id,
         serde_json::to_value(PermissionsRequestApprovalResponse {
-            permissions: codex_app_server_protocol::GrantedPermissionProfile {
+            permissions: app_server_protocol::GrantedPermissionProfile {
                 network: None,
-                file_system: Some(codex_app_server_protocol::AdditionalFileSystemPermissions {
+                file_system: Some(app_server_protocol::AdditionalFileSystemPermissions {
                     read: None,
                     write: Some(vec![requested_writes[0].clone()]),
                     glob_scan_max_depth: None,

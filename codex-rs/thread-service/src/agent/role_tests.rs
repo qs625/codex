@@ -1,13 +1,13 @@
 use super::*;
+use crate::build_skill_service_input_from_config;
 use crate::config::AgentRoleConfig;
 use crate::config::Config;
 use crate::config::ConfigBuilder;
-use crate::skills_load_input_from_config;
+use codex_utils_absolute_path::test_support::PathExt;
 use plugin_service::PluginsManager;
 use plugin_service_api::PluginRuntime;
-use codex_core_skills::SkillsManager;
-use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
+use skill_service::SkillService;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -78,14 +78,13 @@ enabled = false
         .expect("custom role should apply");
 
     let plugins_manager = Arc::new(PluginsManager::new(home.path().to_path_buf()));
-    let skills_manager =
-        SkillsManager::new(home.path().abs(), /*bundled_skills_enabled*/ true);
+    let skill_service = SkillService::new(home.path().abs(), /*bundled_skills_enabled*/ true);
     let plugins_input = config.plugins_config_input();
     let effective_skill_roots = plugins_manager
         .effective_skill_roots_for_config(&plugins_input)
         .await;
-    let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
-    let outcome = skills_manager
+    let skills_input = build_skill_service_input_from_config(&config, effective_skill_roots);
+    let outcome = skill_service
         .skills_for_config(
             &skills_input,
             Some(Arc::clone(&codex_file_system::LOCAL_FS)),

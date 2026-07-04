@@ -7,10 +7,10 @@
 use std::fmt::Display;
 use std::sync::Arc;
 
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::SandboxPermissions;
-use codex_protocol::models::SearchToolCallParams;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::ResponseInputItem;
+use protocol::models::SandboxPermissions;
+use protocol::models::SearchToolCallParams;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use serde_json::json;

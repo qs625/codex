@@ -4,8 +4,8 @@ use codex_config_types::ConfigLayerSource;
 use codex_config_types::HookStateToml;
 use toml::Value as TomlValue;
 
-use codex_hooks_api::HookConfigLayerStack;
-use codex_hooks_api::HookConfigLayerStackOrdering;
+use hooks_api::HookConfigLayerStack;
+use hooks_api::HookConfigLayerStackOrdering;
 
 /// Build effective hook state from config layers that are allowed to override
 /// user preferences.
@@ -72,9 +72,9 @@ pub fn hook_states_from_stack(
 
 #[cfg(test)]
 mod tests {
-    use codex_config::ConfigLayerEntry;
-    use codex_config::ConfigLayerStack;
-    use codex_config::TomlValue;
+    use config_service::ConfigLayerEntry;
+    use config_service::ConfigLayerStack;
+    use config_service::TomlValue;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
@@ -101,7 +101,7 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .map(|stack| config_service::hook_config_layer_stack_from_config_layer_stack(&stack))
         .expect("config layer stack");
 
         assert_eq!(
@@ -148,7 +148,7 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .map(|stack| config_service::hook_config_layer_stack_from_config_layer_stack(&stack))
         .expect("config layer stack");
 
         assert_eq!(
@@ -188,7 +188,7 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .map(|stack| config_service::hook_config_layer_stack_from_config_layer_stack(&stack))
         .expect("config layer stack");
 
         assert_eq!(
@@ -230,7 +230,7 @@ mod tests {
             Default::default(),
             Default::default(),
         )
-        .map(|stack| codex_config::hook_config_layer_stack_from_config_layer_stack(&stack))
+        .map(|stack| config_service::hook_config_layer_stack_from_config_layer_stack(&stack))
         .expect("config layer stack");
 
         assert_eq!(

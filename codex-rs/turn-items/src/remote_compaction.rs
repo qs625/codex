@@ -2,8 +2,8 @@ use codex_context_manager::content_items_to_text;
 use codex_context_manager::estimate_response_item_model_visible_bytes;
 use codex_context_manager::insert_initial_context_before_last_real_user_or_summary;
 use codex_context_manager::is_legacy_compaction_warning_message;
-use codex_protocol::items::TurnItem;
-use codex_protocol::models::ResponseItem;
+use protocol::items::TurnItem;
+use protocol::models::ResponseItem;
 
 use crate::parse_turn_item;
 
@@ -109,9 +109,9 @@ fn is_retained_for_remote_compaction_v2(item: &ResponseItem) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::MessagePhase;
     use pretty_assertions::assert_eq;
+    use protocol::models::ContentItem;
+    use protocol::models::MessagePhase;
 
     fn message(role: &str, text: &str, phase: Option<MessagePhase>) -> ResponseItem {
         ResponseItem::Message {

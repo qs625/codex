@@ -13,11 +13,11 @@ use crate::cwd_prompt::CwdPromptAction;
 use crate::cwd_prompt::CwdPromptOutcome;
 use crate::cwd_prompt::CwdSelection;
 use crate::tui::Tui;
-use codex_protocol::ThreadId;
-use codex_state::StateRuntime;
 use codex_utils_path as path_utils;
+use protocol::ThreadId;
 use serde::Deserialize;
 use serde_json::Value;
+use state_api::StateDbRuntime;
 use tokio::io::AsyncBufReadExt;
 
 #[derive(Default)]
@@ -65,7 +65,7 @@ pub(crate) async fn resolve_session_thread_id(
 }
 
 pub(crate) async fn read_session_model(
-    state_db_ctx: Option<&StateRuntime>,
+    state_db_ctx: Option<&dyn StateDbRuntime>,
     thread_id: ThreadId,
     path: Option<&Path>,
 ) -> Option<String> {
@@ -85,7 +85,7 @@ pub(crate) async fn read_session_model(
 
 pub(crate) async fn resolve_cwd_for_resume_or_fork(
     tui: &mut Tui,
-    state_db_ctx: Option<&StateRuntime>,
+    state_db_ctx: Option<&dyn StateDbRuntime>,
     current_cwd: &Path,
     thread_id: ThreadId,
     path: Option<&Path>,
@@ -112,7 +112,7 @@ pub(crate) async fn resolve_cwd_for_resume_or_fork(
 }
 
 async fn read_session_cwd(
-    state_db_ctx: Option<&StateRuntime>,
+    state_db_ctx: Option<&dyn StateDbRuntime>,
     thread_id: ThreadId,
     path: Option<&Path>,
 ) -> Option<PathBuf> {

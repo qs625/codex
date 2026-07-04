@@ -9,8 +9,8 @@
 
 use super::*;
 use crate::chatwidget::InterruptedTurnNoticeMode;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
 
 const SIDE_RENAME_BLOCK_MESSAGE: &str = "Side conversations are ephemeral and cannot be renamed.";
 const SIDE_MAIN_THREAD_UNAVAILABLE_MESSAGE: &str =

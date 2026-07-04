@@ -1,12 +1,12 @@
-use codex_command_service_api::ExecCapturePolicy;
-use codex_command_service_api::UserShellRunRequest;
+use command_service_api::ExecCapturePolicy;
+use command_service_api::UserShellRunRequest;
 use codex_network_proxy_api::PROXY_ACTIVE_ENV_KEY;
 use codex_network_proxy_api::PROXY_ENV_KEYS;
-use codex_protocol::error::Result;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::Event;
-use codex_tool_config::UnifiedExecShellMode;
+use protocol::error::Result;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::models::PermissionProfile;
+use protocol::protocol::Event;
+use tool_config::UnifiedExecShellMode;
 #[cfg(target_os = "macos")]
 use codex_network_proxy_api::CODEX_PROXY_GIT_SSH_COMMAND_MARKER;
 #[cfg(target_os = "macos")]
@@ -36,7 +36,7 @@ pub async fn run_user_shell_command(request: UserShellRunRequest) -> Result<Exec
         tx_event,
     } = request;
 
-    let display_command = codex_command_service_api::resolve_exec_command_for_parts(
+    let display_command = command_service_api::resolve_exec_command_for_parts(
         &command,
         Some(true),
         &session_shell,
@@ -44,7 +44,7 @@ pub async fn run_user_shell_command(request: UserShellRunRequest) -> Result<Exec
         &UnifiedExecShellMode::Direct,
         /*allow_login_shell*/ true,
     )
-    .map_err(codex_protocol::error::CodexErr::InvalidRequest)?
+    .map_err(protocol::error::CodexErr::InvalidRequest)?
     .command;
 
     let mut exec_env_map = create_env(&shell_environment_policy, Some(thread_id));

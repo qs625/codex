@@ -2,17 +2,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::ReviewDecision;
-use thread_service::CodexThread;
+use protocol::ThreadId;
+use protocol::protocol::FileChange;
+use protocol::protocol::Op;
+use protocol::protocol::ReviewDecision;
 use rmcp::model::ErrorData;
 use rmcp::model::RequestId;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
+use thread_service::CodexThread;
 use tracing::error;
 
 use crate::outgoing_message::OutgoingMessageSender;

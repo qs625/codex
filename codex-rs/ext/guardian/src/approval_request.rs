@@ -1,13 +1,13 @@
 use std::path::Path;
 
 use codex_analytics_api::GuardianReviewedAction;
-use codex_protocol::approvals::GuardianAssessmentAction;
-use codex_protocol::approvals::GuardianCommandSource;
-use codex_protocol::approvals::NetworkApprovalProtocol;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::SandboxPermissions;
-use codex_protocol::request_permissions::RequestPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::approvals::GuardianAssessmentAction;
+use protocol::approvals::GuardianCommandSource;
+use protocol::approvals::NetworkApprovalProtocol;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::SandboxPermissions;
+use protocol::request_permissions::RequestPermissionProfile;
 use serde::Serialize;
 use serde_json::Value;
 

@@ -1,6 +1,6 @@
 mod thread_list_cwd_filter_tests {
     use super::super::normalize_thread_list_cwd_filters;
-    use codex_app_server_protocol::ThreadListCwdFilter;
+    use app_server_protocol::ThreadListCwdFilter;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
@@ -38,7 +38,7 @@ mod thread_list_cwd_filter_tests {
 
 mod thread_processor_behavior_tests {
     async fn forked_from_id_from_rollout(path: &Path) -> Option<String> {
-        codex_rollout::read_session_meta_line(path)
+        rollout::read_session_meta_line(path)
             .await
             .ok()
             .and_then(|meta_line| meta_line.meta.forked_from_id)
@@ -49,43 +49,43 @@ mod thread_processor_behavior_tests {
     use crate::outgoing_message::OutgoingEnvelope;
     use crate::outgoing_message::OutgoingMessage;
     use anyhow::Result;
+    use app_server_protocol::ServerRequestPayload;
+    use app_server_protocol::ThreadIdleReason;
+    use app_server_protocol::ThreadItem;
+    use app_server_protocol::ToolRequestUserInputParams;
     use chrono::DateTime;
     use chrono::Utc;
-    use codex_app_server_protocol::ServerRequestPayload;
-    use codex_app_server_protocol::ThreadIdleReason;
-    use codex_app_server_protocol::ThreadItem;
-    use codex_app_server_protocol::ToolRequestUserInputParams;
-    use codex_config_loader::LoaderOverrides;
-    use codex_config_loader::SessionThreadConfig;
-    use codex_config_loader::StaticThreadConfigLoader;
-    use codex_config_loader::ThreadConfigSource;
-    use codex_config_requirements::CloudRequirementsLoader;
-    use codex_model_provider_info::ModelProviderInfo;
-    use codex_model_provider_info::WireApi;
-    use codex_protocol::ThreadId;
-    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
-    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
-    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
-    use codex_protocol::openai_models::ReasoningEffort;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
-    use codex_protocol::protocol::AskForApproval;
-    use codex_protocol::protocol::EventMsg;
-    use codex_protocol::protocol::SandboxPolicy;
-    use codex_protocol::protocol::SessionSource;
-    use codex_protocol::protocol::SubAgentSource;
-    use codex_state::ThreadMetadataBuilder;
-    use codex_thread_store::StoredThread;
+    use config_service::LoaderOverrides;
+    use config_service::SessionThreadConfig;
+    use config_service::StaticThreadConfigLoader;
+    use config_service::ThreadConfigSource;
+    use config_service::CloudRequirementsLoader;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
+    use model_service_api::ModelProviderInfo;
+    use model_service_api::WireApi;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
+    use protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
+    use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+    use protocol::openai_models::ReasoningEffort;
+    use protocol::permissions::FileSystemAccessMode;
+    use protocol::permissions::FileSystemPath;
+    use protocol::permissions::FileSystemSandboxEntry;
+    use protocol::permissions::NetworkSandboxPolicy;
+    use protocol::protocol::AskForApproval;
+    use protocol::protocol::EventMsg;
+    use protocol::protocol::SandboxPolicy;
+    use protocol::protocol::SessionSource;
+    use protocol::protocol::SubAgentSource;
     use serde_json::json;
+    use state::ThreadMetadataBuilder;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;
+    use thread_store::StoredThread;
 
     #[test]
     fn validate_dynamic_tools_rejects_unsupported_input_schema() {
@@ -277,7 +277,7 @@ mod thread_processor_behavior_tests {
         );
         assert_eq!(
             typesafe_overrides.sandbox_mode,
-            Some(codex_protocol::config_types::SandboxMode::DangerFullAccess)
+            Some(protocol::config_types::SandboxMode::DangerFullAccess)
         );
     }
 
@@ -298,7 +298,7 @@ mod thread_processor_behavior_tests {
         let mut request_overrides = None;
         let mut typesafe_overrides = ConfigOverrides {
             approval_policy: Some(AskForApproval::OnRequest),
-            permission_profile: Some(codex_protocol::models::PermissionProfile::read_only()),
+            permission_profile: Some(protocol::models::PermissionProfile::read_only()),
             ..Default::default()
         };
 
@@ -314,7 +314,7 @@ mod thread_processor_behavior_tests {
     #[test]
     fn thread_turns_list_merges_in_progress_active_turn_before_agent_status_running() {
         let persisted_items = vec![RolloutItem::EventMsg(EventMsg::UserMessage(
-            codex_protocol::protocol::UserMessageEvent {
+            protocol::protocol::UserMessageEvent {
                 message: "persisted".to_string(),
                 images: None,
                 local_images: Vec::new(),
@@ -506,7 +506,7 @@ mod thread_processor_behavior_tests {
             cwd: PathBuf::from("/tmp"),
             cli_version: "0.0.0".to_string(),
             source: SessionSource::Cli,
-            thread_source: Some(codex_protocol::protocol::ThreadSource::User),
+            thread_source: Some(protocol::protocol::ThreadSource::User),
             agent_nickname: None,
             agent_role: None,
             agent_path: None,
@@ -560,7 +560,7 @@ mod thread_processor_behavior_tests {
                 agent_nickname: None,
                 agent_role: None,
             }),
-            thread_source: Some(codex_protocol::protocol::ThreadSource::Subagent),
+            thread_source: Some(protocol::protocol::ThreadSource::Subagent),
             agent_nickname: Some("researcher".to_string()),
             agent_role: Some("explorer".to_string()),
             agent_path: Some("/root/researcher".to_string()),
@@ -581,7 +581,7 @@ mod thread_processor_behavior_tests {
                 parent_thread_id,
                 depth: 1,
                 agent_path: Some(
-                    codex_protocol::AgentPath::from_string("/root/researcher".to_string())
+                    protocol::AgentPath::from_string("/root/researcher".to_string())
                         .expect("agent path")
                 ),
                 agent_nickname: Some("researcher".to_string()),
@@ -616,7 +616,7 @@ mod thread_processor_behavior_tests {
                 agent_nickname: None,
                 agent_role: None,
             }),
-            thread_source: Some(codex_protocol::protocol::ThreadSource::Subagent),
+            thread_source: Some(protocol::protocol::ThreadSource::Subagent),
             agent_nickname: Some("researcher".to_string()),
             agent_role: Some("explorer".to_string()),
             agent_path: Some("/root/researcher".to_string()),
@@ -634,11 +634,11 @@ mod thread_processor_behavior_tests {
 
         assert_eq!(
             thread.source,
-            codex_app_server_protocol::SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            app_server_protocol::SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
                 parent_thread_id,
                 depth: 1,
                 agent_path: Some(
-                    codex_protocol::AgentPath::from_string("/root/researcher".to_string())
+                    protocol::AgentPath::from_string("/root/researcher".to_string())
                         .expect("agent path")
                 ),
                 agent_nickname: Some("researcher".to_string()),
@@ -653,25 +653,24 @@ mod thread_processor_behavior_tests {
     #[test]
     fn requested_permissions_trust_project_uses_permission_profile_intent() {
         let cwd = test_path_buf("/tmp/project").abs();
-        let full_access_profile = codex_protocol::models::PermissionProfile::Disabled;
-        let workspace_write_profile = codex_protocol::models::PermissionProfile::workspace_write();
-        let read_only_profile = codex_protocol::models::PermissionProfile::read_only();
-        let split_write_profile =
-            codex_protocol::models::PermissionProfile::from_runtime_permissions(
-                &FileSystemSandboxPolicy::restricted(vec![
-                    FileSystemSandboxEntry {
-                        path: FileSystemPath::Path { path: cwd.clone() },
-                        access: FileSystemAccessMode::Write,
+        let full_access_profile = protocol::models::PermissionProfile::Disabled;
+        let workspace_write_profile = protocol::models::PermissionProfile::workspace_write();
+        let read_only_profile = protocol::models::PermissionProfile::read_only();
+        let split_write_profile = protocol::models::PermissionProfile::from_runtime_permissions(
+            &FileSystemSandboxPolicy::restricted(vec![
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::Path { path: cwd.clone() },
+                    access: FileSystemAccessMode::Write,
+                },
+                FileSystemSandboxEntry {
+                    path: FileSystemPath::GlobPattern {
+                        pattern: "/tmp/project/**/*.env".to_string(),
                     },
-                    FileSystemSandboxEntry {
-                        path: FileSystemPath::GlobPattern {
-                            pattern: "/tmp/project/**/*.env".to_string(),
-                        },
-                        access: FileSystemAccessMode::None,
-                    },
-                ]),
-                NetworkSandboxPolicy::Restricted,
-            );
+                    access: FileSystemAccessMode::None,
+                },
+            ]),
+            NetworkSandboxPolicy::Restricted,
+        );
 
         assert!(requested_permissions_trust_project(
             &ConfigOverrides {
@@ -878,9 +877,9 @@ mod thread_processor_behavior_tests {
             model: "gpt-5".to_string(),
             model_provider_id: "openai".to_string(),
             service_tier: Some("flex".to_string()),
-            approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
-            approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
-            permission_profile: codex_protocol::models::PermissionProfile::Disabled,
+            approval_policy: protocol::protocol::AskForApproval::OnRequest,
+            approvals_reviewer: protocol::config_types::ApprovalsReviewer::User,
+            permission_profile: protocol::models::PermissionProfile::Disabled,
             active_permission_profile: None,
             cwd,
             workspace_roots: Vec::new(),
@@ -907,7 +906,7 @@ mod thread_processor_behavior_tests {
             thread_id,
             PathBuf::from("/tmp/rollout.jsonl"),
             Utc::now(),
-            codex_protocol::protocol::SessionSource::default(),
+            protocol::protocol::SessionSource::default(),
         );
         builder.model_provider = Some("mock_provider".to_string());
         let mut metadata = builder.build("mock_provider");
@@ -1100,9 +1099,9 @@ mod thread_processor_behavior_tests {
 
     #[tokio::test]
     async fn read_summary_from_rollout_returns_empty_preview_when_no_user_message() -> Result<()> {
-        use codex_protocol::protocol::RolloutItem;
-        use codex_protocol::protocol::RolloutLine;
-        use codex_protocol::protocol::SessionMetaLine;
+        use protocol::protocol::RolloutItem;
+        use protocol::protocol::RolloutLine;
+        use protocol::protocol::SessionMetaLine;
         use std::fs;
         use std::fs::FileTimes;
 
@@ -1156,9 +1155,9 @@ mod thread_processor_behavior_tests {
 
     #[tokio::test]
     async fn read_summary_from_rollout_preserves_agent_nickname() -> Result<()> {
-        use codex_protocol::protocol::RolloutItem;
-        use codex_protocol::protocol::RolloutLine;
-        use codex_protocol::protocol::SessionMetaLine;
+        use protocol::protocol::RolloutItem;
+        use protocol::protocol::RolloutLine;
+        use protocol::protocol::SessionMetaLine;
         use std::fs;
 
         let temp_dir = TempDir::new()?;
@@ -1178,7 +1177,7 @@ mod thread_processor_behavior_tests {
                 agent_nickname: None,
                 agent_role: None,
             }),
-            thread_source: Some(codex_protocol::protocol::ThreadSource::Subagent),
+            thread_source: Some(protocol::protocol::ThreadSource::Subagent),
             agent_nickname: Some("atlas".to_string()),
             agent_role: Some("explorer".to_string()),
             model_provider: Some("test-provider".to_string()),
@@ -1206,9 +1205,9 @@ mod thread_processor_behavior_tests {
 
     #[tokio::test]
     async fn read_summary_from_rollout_preserves_forked_from_id() -> Result<()> {
-        use codex_protocol::protocol::RolloutItem;
-        use codex_protocol::protocol::RolloutLine;
-        use codex_protocol::protocol::SessionMetaLine;
+        use protocol::protocol::RolloutItem;
+        use protocol::protocol::RolloutLine;
+        use protocol::protocol::SessionMetaLine;
         use std::fs;
 
         let temp_dir = TempDir::new()?;
@@ -1328,7 +1327,7 @@ mod thread_processor_behavior_tests {
             PathBuf::from("/"),
             "0.0.0".to_string(),
             source,
-            Some(codex_protocol::protocol::ThreadSource::Subagent),
+            Some(protocol::protocol::ThreadSource::Subagent),
             Some("atlas".to_string()),
             Some("explorer".to_string()),
             Some("/root/atlas".to_string()),
@@ -1344,11 +1343,11 @@ mod thread_processor_behavior_tests {
         assert_eq!(thread.agent_role, Some("explorer".to_string()));
         assert_eq!(
             thread.source,
-            codex_app_server_protocol::SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            app_server_protocol::SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
                 parent_thread_id: ThreadId::from_string("ad7f0408-99b8-4f6e-a46f-bd0eec433370")?,
                 depth: 1,
                 agent_path: Some(
-                    codex_protocol::AgentPath::from_string("/root/atlas".to_string())
+                    protocol::AgentPath::from_string("/root/atlas".to_string())
                         .expect("agent path")
                 ),
                 agent_nickname: Some("atlas".to_string()),
@@ -1378,7 +1377,7 @@ mod thread_processor_behavior_tests {
             state.cancel_tx = Some(cancel_tx);
             state.track_current_turn_event(
                 "turn-1",
-                &EventMsg::TurnStarted(codex_protocol::protocol::TurnStartedEvent {
+                &EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
                     turn_id: "turn-1".to_string(),
                     started_at: None,
                     model_context_window: None,

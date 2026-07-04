@@ -1,5 +1,5 @@
 use codex_network_proxy_api::NetworkProxyRuntime;
-use codex_protocol::permissions::NetworkSandboxPolicy;
+use protocol::permissions::NetworkSandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -2,20 +2,20 @@ use std::path::PathBuf;
 
 use chrono::DateTime;
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_protocol::models::BaseInstructions;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::GitInfo;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::ThreadMemoryMode as MemoryMode;
-use codex_protocol::protocol::ThreadSkill;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::subscriptions::PersistedSubscription;
+use protocol::ThreadId;
+use protocol::dynamic_tools::DynamicToolSpec;
+use protocol::models::BaseInstructions;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::GitInfo;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadMemoryMode as MemoryMode;
+use protocol::protocol::ThreadSkill;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TokenUsage;
+use protocol::subscriptions::PersistedSubscription;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -642,8 +642,8 @@ pub struct ArchiveThreadParams {
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::subscriptions::PersistedSubscription;
     use pretty_assertions::assert_eq;
+    use protocol::subscriptions::PersistedSubscription;
     use serde_json::json;
 
     use super::*;

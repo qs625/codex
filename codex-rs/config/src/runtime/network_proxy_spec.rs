@@ -1,7 +1,7 @@
 use codex_config_requirements::NetworkConstraints;
 use codex_config_requirements::NetworkDomainPermissionsToml;
 use codex_config_requirements::NetworkUnixSocketPermissionsToml;
-use codex_execpolicy_api::Policy;
+use permissions_service_api::Policy;
 use codex_network_proxy_api::BlockedRequestObserver;
 use codex_network_proxy_api::NetworkDecision;
 use codex_network_proxy_api::NetworkDomainPermission;
@@ -15,7 +15,7 @@ use codex_network_proxy_api::SharedStartedNetworkProxyRuntime;
 use codex_network_proxy_api::host_and_port_from_network_addr;
 use codex_network_proxy_api::normalize_host;
 use codex_network_proxy_api::validate_policy_against_constraints;
-use codex_protocol::models::PermissionProfile;
+use protocol::models::PermissionProfile;
 use std::collections::HashSet;
 use std::sync::Arc;
 

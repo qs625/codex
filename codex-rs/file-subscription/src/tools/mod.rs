@@ -6,7 +6,7 @@ use codex_extension_api::ResponsesApiTool;
 use codex_extension_api::ToolCall;
 use codex_extension_api::ToolSpec;
 use codex_extension_api::parse_tool_input_schema;
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;

@@ -3,8 +3,8 @@
 use crate::ConfigLayerEntry;
 use crate::ConfigLayerStack;
 use crate::ConfigLayerStackOrdering;
-use codex_config_diagnostics::ConfigError;
-use codex_config_diagnostics::config_error_from_typed_toml;
+use crate::ConfigError;
+use crate::config_error_from_typed_toml;
 use codex_config_types::ConfigLayerSource;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
 use serde::de::DeserializeOwned;

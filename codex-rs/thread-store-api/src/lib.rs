@@ -2,7 +2,7 @@
 //!
 //! This crate owns the thread-store trait, error type, and DTOs. Concrete
 //! implementations such as local JSONL/state-db storage live in
-//! `codex-thread-store`.
+//! `thread-store`.
 
 mod error;
 mod live;

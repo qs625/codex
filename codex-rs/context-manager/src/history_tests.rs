@@ -1,27 +1,6 @@
 use super::*;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use codex_protocol::AgentPath;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::models::BaseInstructions;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::FunctionCallOutputBody;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::ImageDetail;
-use codex_protocol::models::LocalShellAction;
-use codex_protocol::models::LocalShellExecAction;
-use codex_protocol::models::LocalShellStatus;
-use codex_protocol::models::ReasoningItemContent;
-use codex_protocol::models::ReasoningItemReasoningSummary;
-use codex_protocol::openai_models::InputModality;
-use codex_protocol::openai_models::default_input_modalities;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::TurnContextItem;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::truncate_text;
 use image::ImageBuffer;
@@ -29,6 +8,27 @@ use image::ImageFormat;
 use image::Luma;
 use image::Rgba;
 use pretty_assertions::assert_eq;
+use protocol::AgentPath;
+use protocol::config_types::ReasoningSummary;
+use protocol::models::BaseInstructions;
+use protocol::models::ContentItem;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
+use protocol::models::FunctionCallOutputBody;
+use protocol::models::FunctionCallOutputContentItem;
+use protocol::models::FunctionCallOutputPayload;
+use protocol::models::ImageDetail;
+use protocol::models::LocalShellAction;
+use protocol::models::LocalShellExecAction;
+use protocol::models::LocalShellStatus;
+use protocol::models::ReasoningItemContent;
+use protocol::models::ReasoningItemReasoningSummary;
+use protocol::openai_models::InputModality;
+use protocol::openai_models::default_input_modalities;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentOperation;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::TurnContextItem;
 use regex_lite::Regex;
 use std::path::PathBuf;
 
@@ -155,7 +155,7 @@ fn reference_context_item() -> TurnContextItem {
         user_instructions: None,
         developer_instructions: None,
         final_output_json_schema: None,
-        truncation_policy: Some(codex_protocol::protocol::TruncationPolicy::Tokens(10_000)),
+        truncation_policy: Some(protocol::protocol::TruncationPolicy::Tokens(10_000)),
     }
 }
 

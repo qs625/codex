@@ -27,33 +27,33 @@ use crate::types::Tui;
 use crate::types::UriBasedFileOpener;
 use crate::types::WindowsToml;
 pub use codex_auth_types::ForcedChatgptWorkspaceIds;
-pub use codex_config_loader::ProjectConfig;
 pub use codex_config_types::RealtimeAudioConfig;
 pub use codex_config_types::RealtimeTransport;
 pub use codex_config_types::RealtimeWsMode;
 pub use codex_config_types::ThreadStoreToml;
+pub use codex_config_types::ProjectConfig;
 pub use codex_config_types::{AgentRoleToml, AgentsToml};
 pub type ConfigLockfileToml = codex_config_types::ConfigLockfileToml<ConfigToml>;
 use codex_features::FeaturesToml;
-pub use codex_model_provider_info::ModelOptionToml;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_model_provider_info::deserialize_model_providers;
-pub use codex_model_provider_info::validate_model_providers;
-pub use codex_model_provider_info::validate_oss_provider;
-use codex_protocol::config_types::ForcedLoginMethod;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::config_types::Verbosity;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::config_types::WebSearchToolConfig;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::AskForApproval;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_path::normalize_for_path_comparison;
+pub use model_service_api::ModelOptionToml;
+use model_service_api::ModelProviderInfo;
+use model_service_api::deserialize_model_providers;
+pub use model_service_api::validate_model_providers;
+pub use model_service_api::validate_oss_provider;
+use protocol::config_types::ForcedLoginMethod;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary;
+use protocol::config_types::SandboxMode;
+use protocol::config_types::Verbosity;
+use protocol::config_types::WebSearchMode;
+use protocol::config_types::WebSearchToolConfig;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ReasoningEffort;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::AskForApproval;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -472,8 +472,8 @@ pub struct AutoReviewToml {
     pub policy: Option<String>,
 }
 
-pub use codex_protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
-pub use codex_protocol::protocol::RealtimeVoice;
+pub use protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
+pub use protocol::protocol::RealtimeVoice;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]

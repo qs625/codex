@@ -1,11 +1,11 @@
 [package]
-name = "codex-app-server-client"
+name = "app-server-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "codex_app_server_client"
+name = "app_server_client"
 path = "src/lib.rs"
 doctest = false
 
@@ -17,19 +17,17 @@ default = []
 test-support = ["thread-service/test-support"]
 
 [dependencies]
-codex-app-server = { workspace = true }
-codex-app-server-protocol = { workspace = true }
+config-service = { workspace = true }
+app-server = { workspace = true }
+app-server-protocol = { workspace = true }
 codex-arg0 = { workspace = true }
-codex-config-loader = { workspace = true }
-codex-config-loader-remote = { workspace = true }
-codex-config-requirements = { workspace = true }
 thread-service = { workspace = true }
-codex-execpolicy-loader = { workspace = true }
+permissions-service = { workspace = true }
 codex-exec-server = { workspace = true }
 codex-feedback = { workspace = true }
 mcp-service = { workspace = true }
 codex-otel-init = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-uds = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
@@ -44,7 +42,7 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-codex-rollout = { workspace = true }
+rollout = { workspace = true }
 pretty_assertions = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

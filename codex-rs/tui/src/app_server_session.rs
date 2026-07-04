@@ -10,114 +10,114 @@ use crate::session_state::MessageHistoryMetadata;
 use crate::session_state::ThreadSessionState;
 use crate::status::StatusAccountDisplay;
 use crate::status::plan_type_display_name;
-use codex_app_server_client::AppServerClient;
-use codex_app_server_client::AppServerEvent;
-use codex_app_server_client::AppServerRequestHandle;
-use codex_app_server_client::TypedRequestError;
-use codex_app_server_protocol::Account;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ConfigBatchWriteParams;
-use codex_app_server_protocol::ConfigWriteResponse;
-use codex_app_server_protocol::ExternalAgentConfigDetectParams;
-use codex_app_server_protocol::ExternalAgentConfigDetectResponse;
-use codex_app_server_protocol::ExternalAgentConfigImportParams;
-use codex_app_server_protocol::ExternalAgentConfigImportResponse;
-use codex_app_server_protocol::ExternalAgentConfigMigrationItem;
-use codex_app_server_protocol::GetAccountParams;
-use codex_app_server_protocol::GetAccountRateLimitsResponse;
-use codex_app_server_protocol::GetAccountResponse;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::LogoutAccountResponse;
-use codex_app_server_protocol::MemoryResetResponse;
-use codex_app_server_protocol::Model as ApiModel;
-use codex_app_server_protocol::ModelListParams;
-use codex_app_server_protocol::ModelListResponse;
-use codex_app_server_protocol::PermissionProfileSelectionParams;
-use codex_app_server_protocol::RateLimitSnapshot;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ReviewDelivery;
-use codex_app_server_protocol::ReviewStartParams;
-use codex_app_server_protocol::ReviewStartResponse;
-use codex_app_server_protocol::ReviewTarget;
-use codex_app_server_protocol::SkillsListParams;
-use codex_app_server_protocol::SkillsListResponse;
-use codex_app_server_protocol::Thread;
-use codex_app_server_protocol::ThreadApproveGuardianDeniedActionParams;
-use codex_app_server_protocol::ThreadApproveGuardianDeniedActionResponse;
-use codex_app_server_protocol::ThreadBackgroundTerminalsCleanParams;
-use codex_app_server_protocol::ThreadBackgroundTerminalsCleanResponse;
-use codex_app_server_protocol::ThreadCompactStartParams;
-use codex_app_server_protocol::ThreadCompactStartResponse;
-use codex_app_server_protocol::ThreadForkParams;
-use codex_app_server_protocol::ThreadForkResponse;
-use codex_app_server_protocol::ThreadGoalClearParams;
-use codex_app_server_protocol::ThreadGoalClearResponse;
-use codex_app_server_protocol::ThreadGoalGetParams;
-use codex_app_server_protocol::ThreadGoalGetResponse;
-use codex_app_server_protocol::ThreadGoalSetParams;
-use codex_app_server_protocol::ThreadGoalSetResponse;
-use codex_app_server_protocol::ThreadGoalStatus;
-use codex_app_server_protocol::ThreadInjectItemsParams;
-use codex_app_server_protocol::ThreadInjectItemsResponse;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadListResponse;
-use codex_app_server_protocol::ThreadLoadedListParams;
-use codex_app_server_protocol::ThreadLoadedListResponse;
-use codex_app_server_protocol::ThreadMemoryMode;
-use codex_app_server_protocol::ThreadMemoryModeSetParams;
-use codex_app_server_protocol::ThreadMemoryModeSetResponse;
-use codex_app_server_protocol::ThreadMetadataGitInfoUpdateParams;
-use codex_app_server_protocol::ThreadMetadataUpdateParams;
-use codex_app_server_protocol::ThreadMetadataUpdateResponse;
-use codex_app_server_protocol::ThreadReadParams;
-use codex_app_server_protocol::ThreadReadResponse;
-use codex_app_server_protocol::ThreadRealtimeAppendAudioParams;
-use codex_app_server_protocol::ThreadRealtimeAppendAudioResponse;
-use codex_app_server_protocol::ThreadRealtimeAudioChunk;
-use codex_app_server_protocol::ThreadRealtimeStartParams;
-use codex_app_server_protocol::ThreadRealtimeStartResponse;
-use codex_app_server_protocol::ThreadRealtimeStartTransport;
-use codex_app_server_protocol::ThreadRealtimeStopParams;
-use codex_app_server_protocol::ThreadRealtimeStopResponse;
-use codex_app_server_protocol::ThreadResumeParams;
-use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadRollbackParams;
-use codex_app_server_protocol::ThreadRollbackResponse;
-use codex_app_server_protocol::ThreadSetNameParams;
-use codex_app_server_protocol::ThreadSetNameResponse;
-use codex_app_server_protocol::ThreadShellCommandParams;
-use codex_app_server_protocol::ThreadShellCommandResponse;
-use codex_app_server_protocol::ThreadSource;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::ThreadStartSource;
-use codex_app_server_protocol::ThreadUnsubscribeParams;
-use codex_app_server_protocol::ThreadUnsubscribeResponse;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnInterruptParams;
-use codex_app_server_protocol::TurnInterruptResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::TurnSteerParams;
-use codex_app_server_protocol::TurnSteerResponse;
-use codex_app_server_protocol::UserInput;
+use app_server_client::AppServerClient;
+use app_server_client::AppServerEvent;
+use app_server_client::AppServerRequestHandle;
+use app_server_client::TypedRequestError;
+use app_server_protocol::Account;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::ConfigBatchWriteParams;
+use app_server_protocol::ConfigWriteResponse;
+use app_server_protocol::ExternalAgentConfigDetectParams;
+use app_server_protocol::ExternalAgentConfigDetectResponse;
+use app_server_protocol::ExternalAgentConfigImportParams;
+use app_server_protocol::ExternalAgentConfigImportResponse;
+use app_server_protocol::ExternalAgentConfigMigrationItem;
+use app_server_protocol::GetAccountParams;
+use app_server_protocol::GetAccountRateLimitsResponse;
+use app_server_protocol::GetAccountResponse;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::LogoutAccountResponse;
+use app_server_protocol::MemoryResetResponse;
+use app_server_protocol::Model as ApiModel;
+use app_server_protocol::ModelListParams;
+use app_server_protocol::ModelListResponse;
+use app_server_protocol::PermissionProfileSelectionParams;
+use app_server_protocol::RateLimitSnapshot;
+use app_server_protocol::RequestId;
+use app_server_protocol::ReviewDelivery;
+use app_server_protocol::ReviewStartParams;
+use app_server_protocol::ReviewStartResponse;
+use app_server_protocol::ReviewTarget;
+use app_server_protocol::SkillsListParams;
+use app_server_protocol::SkillsListResponse;
+use app_server_protocol::Thread;
+use app_server_protocol::ThreadApproveGuardianDeniedActionParams;
+use app_server_protocol::ThreadApproveGuardianDeniedActionResponse;
+use app_server_protocol::ThreadBackgroundTerminalsCleanParams;
+use app_server_protocol::ThreadBackgroundTerminalsCleanResponse;
+use app_server_protocol::ThreadCompactStartParams;
+use app_server_protocol::ThreadCompactStartResponse;
+use app_server_protocol::ThreadForkParams;
+use app_server_protocol::ThreadForkResponse;
+use app_server_protocol::ThreadGoalClearParams;
+use app_server_protocol::ThreadGoalClearResponse;
+use app_server_protocol::ThreadGoalGetParams;
+use app_server_protocol::ThreadGoalGetResponse;
+use app_server_protocol::ThreadGoalSetParams;
+use app_server_protocol::ThreadGoalSetResponse;
+use app_server_protocol::ThreadGoalStatus;
+use app_server_protocol::ThreadInjectItemsParams;
+use app_server_protocol::ThreadInjectItemsResponse;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadLoadedListParams;
+use app_server_protocol::ThreadLoadedListResponse;
+use app_server_protocol::ThreadMemoryMode;
+use app_server_protocol::ThreadMemoryModeSetParams;
+use app_server_protocol::ThreadMemoryModeSetResponse;
+use app_server_protocol::ThreadMetadataGitInfoUpdateParams;
+use app_server_protocol::ThreadMetadataUpdateParams;
+use app_server_protocol::ThreadMetadataUpdateResponse;
+use app_server_protocol::ThreadReadParams;
+use app_server_protocol::ThreadReadResponse;
+use app_server_protocol::ThreadRealtimeAppendAudioParams;
+use app_server_protocol::ThreadRealtimeAppendAudioResponse;
+use app_server_protocol::ThreadRealtimeAudioChunk;
+use app_server_protocol::ThreadRealtimeStartParams;
+use app_server_protocol::ThreadRealtimeStartResponse;
+use app_server_protocol::ThreadRealtimeStartTransport;
+use app_server_protocol::ThreadRealtimeStopParams;
+use app_server_protocol::ThreadRealtimeStopResponse;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadRollbackParams;
+use app_server_protocol::ThreadRollbackResponse;
+use app_server_protocol::ThreadSetNameParams;
+use app_server_protocol::ThreadSetNameResponse;
+use app_server_protocol::ThreadShellCommandParams;
+use app_server_protocol::ThreadShellCommandResponse;
+use app_server_protocol::ThreadSource;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadStartSource;
+use app_server_protocol::ThreadUnsubscribeParams;
+use app_server_protocol::ThreadUnsubscribeResponse;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnInterruptParams;
+use app_server_protocol::TurnInterruptResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnSteerParams;
+use app_server_protocol::TurnSteerResponse;
+use app_server_protocol::UserInput;
 use codex_auth_types::AuthMode;
 use codex_auth_types::TelemetryAuthMode;
-use codex_protocol::ThreadId;
-use codex_protocol::approvals::GuardianAssessmentEvent;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ModelAvailabilityNux;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelServiceTier;
-use codex_protocol::openai_models::ModelUpgrade;
-use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use color_eyre::eyre::ContextCompat;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
+use protocol::ThreadId;
+use protocol::approvals::GuardianAssessmentEvent;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::PermissionProfile;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ModelAvailabilityNux;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelServiceTier;
+use protocol::openai_models::ModelUpgrade;
+use protocol::openai_models::ReasoningEffortPreset;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -135,7 +135,7 @@ pub(crate) struct AppServerBootstrap {
     pub(crate) account_email: Option<String>,
     pub(crate) auth_mode: Option<TelemetryAuthMode>,
     pub(crate) status_account_display: Option<StatusAccountDisplay>,
-    pub(crate) plan_type: Option<codex_protocol::account::PlanType>,
+    pub(crate) plan_type: Option<protocol::account::PlanType>,
     /// Whether the configured model provider needs OpenAI-style auth. Combined
     /// with `has_chatgpt_account` to decide if a startup rate-limit prefetch
     /// should be fired.
@@ -547,16 +547,16 @@ impl AppServerSession {
         items: Vec<UserInput>,
         cwd: PathBuf,
         approval_policy: AskForApproval,
-        approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
+        approvals_reviewer: protocol::config_types::ApprovalsReviewer,
         permission_profile: PermissionProfile,
         active_permission_profile: Option<ActivePermissionProfile>,
         workspace_roots: &[AbsolutePathBuf],
         model: String,
-        effort: Option<codex_protocol::openai_models::ReasoningEffort>,
-        summary: Option<codex_protocol::config_types::ReasoningSummary>,
+        effort: Option<protocol::openai_models::ReasoningEffort>,
+        summary: Option<protocol::config_types::ReasoningSummary>,
         service_tier: Option<Option<String>>,
-        collaboration_mode: Option<codex_protocol::config_types::CollaborationMode>,
-        personality: Option<codex_protocol::config_types::Personality>,
+        collaboration_mode: Option<protocol::config_types::CollaborationMode>,
+        personality: Option<protocol::config_types::Personality>,
         output_schema: Option<serde_json::Value>,
     ) -> Result<TurnStartResponse> {
         let request_id = self.next_request_id();
@@ -1031,7 +1031,7 @@ fn thread_realtime_start_params(
 
 pub(crate) fn status_account_display_from_auth_mode(
     auth_mode: Option<AuthMode>,
-    plan_type: Option<codex_protocol::account::PlanType>,
+    plan_type: Option<protocol::account::PlanType>,
 ) -> Option<StatusAccountDisplay> {
     match auth_mode {
         Some(AuthMode::ApiKey) => Some(StatusAccountDisplay::ApiKey),
@@ -1104,7 +1104,7 @@ fn model_preset_from_api_model(model: ApiModel) -> ModelPreset {
 
 fn approvals_reviewer_override_from_config(
     config: &Config,
-) -> Option<codex_app_server_protocol::ApprovalsReviewer> {
+) -> Option<app_server_protocol::ApprovalsReviewer> {
     Some(config.approvals_reviewer.into())
 }
 
@@ -1160,11 +1160,9 @@ fn service_tier_override_from_config(config: &Config) -> Option<Option<String>> 
 fn sandbox_mode_from_permission_profile(
     permission_profile: &PermissionProfile,
     cwd: &std::path::Path,
-) -> Option<codex_app_server_protocol::SandboxMode> {
+) -> Option<app_server_protocol::SandboxMode> {
     match permission_profile {
-        PermissionProfile::Disabled => {
-            Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
-        }
+        PermissionProfile::Disabled => Some(app_server_protocol::SandboxMode::DangerFullAccess),
         PermissionProfile::External { .. } => None,
         PermissionProfile::Managed { .. } => {
             let file_system_policy = permission_profile.file_system_sandbox_policy();
@@ -1172,11 +1170,11 @@ fn sandbox_mode_from_permission_profile(
                 permission_profile
                     .network_sandbox_policy()
                     .is_enabled()
-                    .then_some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
+                    .then_some(app_server_protocol::SandboxMode::DangerFullAccess)
             } else if file_system_policy.can_write_path_with_cwd(cwd, cwd) {
-                Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
+                Some(app_server_protocol::SandboxMode::WorkspaceWrite)
             } else {
-                Some(codex_app_server_protocol::SandboxMode::ReadOnly)
+                Some(app_server_protocol::SandboxMode::ReadOnly)
             }
         }
     }
@@ -1195,7 +1193,7 @@ fn turn_permissions_overrides(
     _workspace_roots: &[AbsolutePathBuf],
     thread_params_mode: ThreadParamsMode,
 ) -> (
-    Option<codex_app_server_protocol::SandboxPolicy>,
+    Option<app_server_protocol::SandboxPolicy>,
     Option<PermissionProfileSelectionParams>,
 ) {
     let permissions = if matches!(thread_params_mode, ThreadParamsMode::Embedded) {
@@ -1512,8 +1510,8 @@ async fn thread_session_state_from_thread_fork_response(
 }
 
 fn permission_profile_from_thread_response(
-    sandbox: &codex_app_server_protocol::SandboxPolicy,
-    permission_profile: Option<&codex_app_server_protocol::PermissionProfile>,
+    sandbox: &app_server_protocol::SandboxPolicy,
+    permission_profile: Option<&app_server_protocol::PermissionProfile>,
     cwd: &std::path::Path,
     config: &Config,
     thread_params_mode: ThreadParamsMode,
@@ -1542,13 +1540,13 @@ async fn thread_session_state_from_thread_response(
     model_provider_id: String,
     service_tier: Option<String>,
     approval_policy: AskForApproval,
-    approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
+    approvals_reviewer: protocol::config_types::ApprovalsReviewer,
     permission_profile: PermissionProfile,
     active_permission_profile: Option<ActivePermissionProfile>,
     cwd: AbsolutePathBuf,
     runtime_workspace_roots: Vec<AbsolutePathBuf>,
     instruction_source_paths: Vec<AbsolutePathBuf>,
-    reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
     config: &Config,
 ) -> Result<ThreadSessionState, String> {
     let thread_id = ThreadId::from_string(thread_id)
@@ -1602,27 +1600,27 @@ mod tests {
     use super::*;
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
-    use codex_app_server_protocol::FileSystemAccessMode;
-    use codex_app_server_protocol::FileSystemPath;
-    use codex_app_server_protocol::FileSystemSandboxEntry;
-    use codex_app_server_protocol::FileSystemSpecialPath;
-    use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-    use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
-    use codex_app_server_protocol::PermissionProfileNetworkPermissions;
-    use codex_app_server_protocol::ThreadStatus;
-    use codex_app_server_protocol::Turn;
-    use codex_app_server_protocol::TurnStatus;
-    use codex_protocol::config_types::Personality;
-    use codex_protocol::config_types::ReasoningSummary;
-    use codex_protocol::config_types::ServiceTier;
-    use codex_protocol::config_types::Verbosity;
-    use codex_protocol::config_types::WebSearchMode;
-    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
-    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
-    use codex_protocol::openai_models::ReasoningEffort;
+    use app_server_protocol::FileSystemAccessMode;
+    use app_server_protocol::FileSystemPath;
+    use app_server_protocol::FileSystemSandboxEntry;
+    use app_server_protocol::FileSystemSpecialPath;
+    use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+    use app_server_protocol::PermissionProfileFileSystemPermissions;
+    use app_server_protocol::PermissionProfileNetworkPermissions;
+    use app_server_protocol::ThreadStatus;
+    use app_server_protocol::Turn;
+    use app_server_protocol::TurnStatus;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::config_types::Personality;
+    use protocol::config_types::ReasoningSummary;
+    use protocol::config_types::ServiceTier;
+    use protocol::config_types::Verbosity;
+    use protocol::config_types::WebSearchMode;
+    use protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
+    use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+    use protocol::openai_models::ReasoningEffort;
     use tempfile::TempDir;
 
     async fn build_config(temp_dir: &TempDir) -> Config {
@@ -1751,7 +1749,7 @@ mod tests {
 
         assert_eq!(
             sandbox_policy,
-            Some(codex_app_server_protocol::SandboxPolicy::ReadOnly {
+            Some(app_server_protocol::SandboxPolicy::ReadOnly {
                 network_access: false
             })
         );
@@ -1774,7 +1772,7 @@ mod tests {
 
         assert_eq!(
             sandbox_policy,
-            Some(codex_app_server_protocol::SandboxPolicy::ReadOnly {
+            Some(app_server_protocol::SandboxPolicy::ReadOnly {
                 network_access: false
             })
         );
@@ -1871,7 +1869,7 @@ mod tests {
 
         assert_eq!(
             sandbox_mode_from_permission_profile(&permission_profile, cwd.as_path()),
-            Some(codex_app_server_protocol::SandboxMode::ReadOnly)
+            Some(app_server_protocol::SandboxMode::ReadOnly)
         );
     }
 
@@ -1902,7 +1900,7 @@ mod tests {
 
         assert_eq!(
             sandbox_mode_from_permission_profile(&permission_profile, cwd.as_path()),
-            Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
+            Some(app_server_protocol::SandboxMode::WorkspaceWrite)
         );
     }
 
@@ -2054,7 +2052,7 @@ mod tests {
         let forked_from_id = ThreadId::new();
         let read_only_profile = PermissionProfile::read_only();
         let response = ThreadResumeResponse {
-            thread: codex_app_server_protocol::Thread {
+            thread: app_server_protocol::Thread {
                 id: thread_id.to_string(),
                 session_id: ThreadId::new().to_string(),
                 forked_from_id: Some(forked_from_id.to_string()),
@@ -2067,7 +2065,7 @@ mod tests {
                 path: None,
                 cwd: test_path_buf("/tmp/project").abs(),
                 cli_version: "0.0.0".to_string(),
-                source: codex_app_server_protocol::SessionSource::Cli,
+                source: app_server_protocol::SessionSource::Cli,
                 thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
@@ -2078,16 +2076,16 @@ mod tests {
                 context_usage: None,
                 turns: vec![Turn {
                     id: "turn-1".to_string(),
-                    items_view: codex_app_server_protocol::TurnItemsView::Full,
+                    items_view: app_server_protocol::TurnItemsView::Full,
                     items: vec![
-                        codex_app_server_protocol::ThreadItem::UserMessage {
+                        app_server_protocol::ThreadItem::UserMessage {
                             id: "user-1".to_string(),
-                            content: vec![codex_app_server_protocol::UserInput::Text {
+                            content: vec![app_server_protocol::UserInput::Text {
                                 text: "hello from history".to_string(),
                                 text_elements: Vec::new(),
                             }],
                         },
-                        codex_app_server_protocol::ThreadItem::AgentMessage {
+                        app_server_protocol::ThreadItem::AgentMessage {
                             id: "assistant-1".to_string(),
                             text: "assistant reply".to_string(),
                             phase: None,
@@ -2110,8 +2108,8 @@ mod tests {
                 test_path_buf("/tmp/project/extra").abs(),
             ],
             instruction_sources: vec![test_path_buf("/tmp/project/AGENTS.md").abs()],
-            approval_policy: codex_app_server_protocol::AskForApproval::Never,
-            approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::User,
+            approval_policy: app_server_protocol::AskForApproval::Never,
+            approvals_reviewer: app_server_protocol::ApprovalsReviewer::User,
             sandbox: read_only_profile
                 .to_legacy_sandbox_policy(test_path_buf("/tmp/project").as_path())
                 .expect("read-only profile must be legacy-compatible")
@@ -2207,7 +2205,7 @@ mod tests {
 
         assert_eq!(
             permission_profile_from_thread_response(
-                &codex_app_server_protocol::SandboxPolicy::DangerFullAccess,
+                &app_server_protocol::SandboxPolicy::DangerFullAccess,
                 Some(&response_profile),
                 cwd.as_path(),
                 &config,
@@ -2242,7 +2240,7 @@ mod tests {
             "openai".to_string(),
             /*service_tier*/ None,
             AskForApproval::Never,
-            codex_protocol::config_types::ApprovalsReviewer::User,
+            protocol::config_types::ApprovalsReviewer::User,
             PermissionProfile::read_only(),
             /*active_permission_profile*/ None,
             test_path_buf("/tmp/project").abs(),
@@ -2277,7 +2275,7 @@ mod tests {
             "openai".to_string(),
             /*service_tier*/ None,
             AskForApproval::Never,
-            codex_protocol::config_types::ApprovalsReviewer::User,
+            protocol::config_types::ApprovalsReviewer::User,
             PermissionProfile::read_only(),
             /*active_permission_profile*/ None,
             test_path_buf("/tmp/project").abs(),
@@ -2296,7 +2294,7 @@ mod tests {
     fn status_account_display_from_auth_mode_uses_remapped_plan_labels() {
         let business = status_account_display_from_auth_mode(
             Some(AuthMode::Chatgpt),
-            Some(codex_protocol::account::PlanType::EnterpriseCbpUsageBased),
+            Some(protocol::account::PlanType::EnterpriseCbpUsageBased),
         );
         assert!(matches!(
             business,
@@ -2308,7 +2306,7 @@ mod tests {
 
         let team = status_account_display_from_auth_mode(
             Some(AuthMode::Chatgpt),
-            Some(codex_protocol::account::PlanType::SelfServeBusinessUsageBased),
+            Some(protocol::account::PlanType::SelfServeBusinessUsageBased),
         );
         assert!(matches!(
             team,

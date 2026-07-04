@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 codex-config-types = { workspace = true }
-codex-default-client-api = { workspace = true }
+transport-client-identity = { workspace = true }
 codex-file-system = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 schemars = { workspace = true }

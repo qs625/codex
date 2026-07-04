@@ -1,5 +1,5 @@
 use plugin_service_api::PluginHookSource;
-use codex_protocol::protocol::HookEventName;
+use protocol::protocol::HookEventName;
 
 use crate::hook_events_into_matcher_groups;
 use crate::hook_key;
@@ -45,9 +45,9 @@ mod tests {
     use codex_config_types::HookEventsToml;
     use codex_config_types::HookHandlerConfig;
     use codex_config_types::MatcherGroup;
-    use plugin_service_api::PluginId;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
+    use plugin_service_api::PluginId;
     use pretty_assertions::assert_eq;
 
     use super::*;

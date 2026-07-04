@@ -1,10 +1,10 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use codex_protocol::ThreadId;
-use codex_protocol::event_command::EventCommandEvent;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
-use codex_protocol::subscriptions::PersistedSubscription;
+use protocol::ThreadId;
+use protocol::event_command::EventCommandEvent;
+use protocol::event_driven_tool::EventDrivenToolTrigger;
+use protocol::subscriptions::PersistedSubscription;
 
 pub type SubscriptionRuntimeFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

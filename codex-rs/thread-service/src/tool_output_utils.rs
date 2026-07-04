@@ -1,8 +1,8 @@
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_tool_types::ToolName;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text;
+use protocol::exec_output::ExecToolCallOutput;
 use std::borrow::Cow;
+use tool_service_api::ToolName;
 
 pub(crate) fn flat_tool_name(tool_name: &ToolName) -> Cow<'_, str> {
     match tool_name.namespace.as_deref() {

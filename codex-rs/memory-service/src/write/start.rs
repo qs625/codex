@@ -6,9 +6,9 @@ use crate::phase1;
 use crate::phase2;
 use crate::runtime::MemoryStartupContext;
 use codex_login::AuthManager;
-use codex_protocol::ThreadId;
 use memory_service_api::MemoryStartupRuntime;
 use memory_service_api::MemoryStartupSettings;
+use protocol::ThreadId;
 use std::sync::Arc;
 use tracing::warn;
 

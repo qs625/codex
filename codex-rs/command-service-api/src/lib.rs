@@ -1,35 +1,16 @@
 mod command_contracts;
 mod command_types;
+mod process_exec_contracts;
 mod session_controller;
 mod unified_exec_error;
 
-pub use codex_process_exec::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
-pub use codex_process_exec::DEFAULT_EXEC_OUTPUT_MAX_BYTES;
-pub use codex_process_exec::ExecCapturePolicy;
-pub use codex_process_exec::ExecExpiration;
-pub use codex_process_exec::ExecExpirationOutcome;
-pub use codex_process_exec::ExecOptions;
-pub use codex_process_exec::IO_DRAIN_TIMEOUT_MS;
-pub use codex_process_exec::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
-pub use codex_process_exec::bytes_to_string_smart;
-pub use codex_process_exec::cancel_when_either;
-pub use codex_process_exec::is_likely_sandbox_denied;
+pub use codex_approval_service_api::PermissionRequestPayload;
+pub use codex_approval_service_api::ToolPermissionGrants;
 pub use command_contracts::CommandNotifyOnArg;
-pub use thread_service_api::ExecApprovalRequirement;
 pub use command_contracts::ExecCommandApprovalMode;
 pub use command_contracts::ExecCommandArgs;
 pub use command_contracts::ExecCommandRunOutput;
 pub use command_contracts::ExecCommandRunRequest;
-pub use thread_service_api::ResolvedExecCommand;
-pub use thread_service_api::RuntimeShell;
-pub use thread_service_api::RuntimeShellSnapshot;
-pub use thread_service_api::UnifiedExecApprovalKey;
-pub use thread_service_api::NetworkApprovalMode;
-pub use thread_service_api::NetworkApprovalSpec;
-pub use thread_service_api::ToolRuntimeNetworkApprovalError;
-pub use thread_service_api::ToolRuntimeNetworkApprovalHandle;
-pub use thread_service_api::ToolRuntimeNetworkApprovalTrigger;
-pub use thread_service_api::resolve_exec_command_for_parts;
 pub use command_types::CommandNotificationFilter;
 pub use command_types::CommandNotificationKind;
 pub use command_types::CommandWaitOutput;
@@ -46,10 +27,33 @@ pub use command_types::WriteStdinRequest;
 pub use command_types::clamp_yield_time;
 pub use command_types::generate_chunk_id;
 pub use command_types::resolve_max_tokens;
+pub use process_exec_contracts::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
+pub use process_exec_contracts::DEFAULT_EXEC_OUTPUT_MAX_BYTES;
+pub use process_exec_contracts::ExecCapturePolicy;
+pub use process_exec_contracts::ExecExpiration;
+pub use process_exec_contracts::ExecExpirationOutcome;
+pub use process_exec_contracts::ExecOptions;
+pub use process_exec_contracts::ExecParams;
+pub use process_exec_contracts::IO_DRAIN_TIMEOUT_MS;
+pub use process_exec_contracts::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
+pub use process_exec_contracts::bytes_to_string_smart;
+pub use process_exec_contracts::cancel_when_either;
+pub use process_exec_contracts::is_likely_sandbox_denied;
 pub use session_controller::CommandSessionController;
 pub use session_controller::CommandSessionError;
 pub use session_controller::CommandSessionFuture;
 pub use session_controller::CommandWaitOperation;
+pub use permissions_service_api::ExecApprovalRequirement;
+pub use thread_service_api::NetworkApprovalMode;
+pub use thread_service_api::NetworkApprovalSpec;
+pub use thread_service_api::ResolvedExecCommand;
+pub use thread_service_api::RuntimeShell;
+pub use thread_service_api::RuntimeShellSnapshot;
+pub use thread_service_api::ToolRuntimeNetworkApprovalError;
+pub use thread_service_api::ToolRuntimeNetworkApprovalHandle;
+pub use thread_service_api::ToolRuntimeNetworkApprovalTrigger;
+pub use thread_service_api::UnifiedExecApprovalKey;
+pub use thread_service_api::resolve_exec_command_for_parts;
 pub use unified_exec_error::UnifiedExecError;
 
 use std::collections::HashMap;
@@ -58,20 +62,19 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use async_channel::Sender;
+use codex_approval_service_api::ApprovalSessionCapability;
 pub use codex_sandboxing_api::ApplyPatchEnvironment;
 pub use codex_sandboxing_api::ResolvedApplyPatchEnvironment;
 pub use codex_sandboxing_api::ResolvedExecCommandEnvironment;
 pub use codex_sandboxing_api::ToolSandboxContext;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::ShellEnvironmentPolicy;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::protocol::Event;
-use thread_service_api::ThreadSessionCapability;
-use thread_service_api::ThreadRuntimeCapability;
+use protocol::ThreadId;
+use protocol::config_types::ShellEnvironmentPolicy;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::protocol::Event;
 pub use thread_service_api::HookToolName;
-pub use thread_service_api::PermissionRequestPayload;
-pub use thread_service_api::ToolPermissionGrants;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
 
 /// Boxed future returned by object-safe command service APIs.
 pub type CommandServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -105,6 +108,7 @@ pub trait CommandServiceSessionState: Send + Sync + 'static {
     fn run_exec_command<'a>(
         &'a self,
         session: Arc<dyn ThreadSessionCapability>,
+        approval_session: Arc<dyn ApprovalSessionCapability>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
         request: ExecCommandRunRequest,
@@ -142,6 +146,7 @@ pub trait CommandServiceApi: Send + Sync + 'static {
     fn run_exec_command<'a>(
         &'a self,
         session: Arc<dyn ThreadSessionCapability>,
+        approval_session: Arc<dyn ApprovalSessionCapability>,
         state: Arc<dyn CommandServiceSessionState>,
         turn: Arc<dyn ThreadRuntimeCapability>,
         call_id: String,
@@ -163,5 +168,5 @@ pub trait CommandServiceApi: Send + Sync + 'static {
     fn run_user_shell_command<'a>(
         &'a self,
         request: UserShellRunRequest,
-    ) -> CommandServiceFuture<'a, codex_protocol::error::Result<ExecToolCallOutput>>;
+    ) -> CommandServiceFuture<'a, protocol::error::Result<ExecToolCallOutput>>;
 }

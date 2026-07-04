@@ -10,9 +10,9 @@ use codex_exec_server::ReadResponse;
 use codex_exec_server::TerminateResponse;
 use codex_exec_server::WriteResponse;
 use codex_exec_server::WriteStatus;
-use codex_jsonrpc_types::JSONRPCMessage;
-use codex_jsonrpc_types::JSONRPCResponse;
 use common::exec_server::exec_server;
+use jsonrpc_types::JSONRPCMessage;
+use jsonrpc_types::JSONRPCResponse;
 use pretty_assertions::assert_eq;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

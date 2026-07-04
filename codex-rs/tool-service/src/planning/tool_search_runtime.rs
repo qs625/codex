@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use codex_protocol::models::SearchToolCallParams;
+use protocol::models::SearchToolCallParams;
 
 use crate::FunctionCallError;
 use crate::LoadableToolSpec;
@@ -30,7 +30,10 @@ impl ToolSearchRuntime {
         let search_index =
             ToolSearchIndex::new(entries.iter().map(|entry| entry.search_text.as_str()));
 
-        Self { entries, search_index }
+        Self {
+            entries,
+            search_index,
+        }
     }
 
     pub fn handle_search(

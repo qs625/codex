@@ -1,6 +1,6 @@
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::InterAgentCommunication;
+use protocol::models::ResponseInputItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::InterAgentCommunication;
 
 /// Typed input buffered between mailbox/user/tool events and the next model
 /// request.

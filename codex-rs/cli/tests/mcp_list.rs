@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use anyhow::Result;
-use codex_config_edit::ConfigEditsBuilder;
-use codex_config_edit::load_global_mcp_servers;
+use config_service::ConfigEditsBuilder;
+use config_service::load_global_mcp_servers;
 use codex_config_types::McpServerTransportConfig;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;

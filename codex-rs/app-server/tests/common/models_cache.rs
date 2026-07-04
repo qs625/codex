@@ -1,16 +1,16 @@
 use chrono::DateTime;
 use chrono::Utc;
-use codex_models_manager::client_version_to_whole;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::openai_models::ConfigShellToolType;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelVisibility;
-use codex_protocol::openai_models::TruncationPolicyConfig;
-use codex_protocol::openai_models::default_input_modalities;
-use thread_service::test_support::all_model_presets;
+use model_service::client_version_to_whole;
+use protocol::config_types::ReasoningSummary;
+use protocol::openai_models::ConfigShellToolType;
+use protocol::openai_models::ModelInfo;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelVisibility;
+use protocol::openai_models::TruncationPolicyConfig;
+use protocol::openai_models::default_input_modalities;
 use serde_json::json;
 use std::path::Path;
+use thread_service::test_support::all_model_presets;
 
 /// Convert a ModelPreset to ModelInfo for cache storage.
 fn preset_to_info(preset: &ModelPreset, priority: i32) -> ModelInfo {

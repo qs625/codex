@@ -1,9 +1,9 @@
-use codex_protocol::items::AgentMessageItem;
-use codex_protocol::items::TurnItem;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::ResponseItem;
 use pretty_assertions::assert_eq;
+use protocol::items::AgentMessageItem;
+use protocol::items::TurnItem;
+use protocol::models::ContentItem;
+use protocol::models::FunctionCallOutputPayload;
+use protocol::models::ResponseItem;
 use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;

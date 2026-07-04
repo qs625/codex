@@ -23,19 +23,19 @@ use codex_config_types::TuiKeymap;
 use codex_config_types::TuiNotificationSettings;
 use codex_config_types::TuiPetAnchor;
 use codex_config_types::UriBasedFileOpener;
-use codex_model_provider_info::ModelOptionToml;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_protocol::config_types::AltScreenMode;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::ForcedLoginMethod;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::Verbosity;
-use codex_protocol::config_types::WebSearchConfig;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::openai_models::ModelsResponse;
-use codex_protocol::openai_models::ReasoningEffort;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use model_service_api::ModelOptionToml;
+use model_service_api::ModelProviderInfo;
+use protocol::config_types::AltScreenMode;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::ForcedLoginMethod;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary;
+use protocol::config_types::Verbosity;
+use protocol::config_types::WebSearchConfig;
+use protocol::config_types::WebSearchMode;
+use protocol::openai_models::ModelsResponse;
+use protocol::openai_models::ReasoningEffort;
 
 use super::AgentRoleConfig;
 use super::DEFAULT_MULTI_AGENT_V2_DEFAULT_WAIT_TIMEOUT_MS;
@@ -501,7 +501,7 @@ pub struct Config {
     pub otel: OtelConfig,
 }
 
-impl codex_rollout_api::RolloutConfigView for Config {
+impl rollout_api::RolloutConfigView for Config {
     fn codex_home(&self) -> &std::path::Path {
         self.codex_home.as_path()
     }

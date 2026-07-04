@@ -1,11 +1,11 @@
 use crate::protocol::common::AuthMode;
 use codex_experimental_api_macros::ExperimentalApi;
-use codex_protocol::account::PlanType;
-use codex_protocol::account::ProviderAccount;
-use codex_protocol::protocol::CreditsSnapshot as CoreCreditsSnapshot;
-use codex_protocol::protocol::RateLimitReachedType as CoreRateLimitReachedType;
-use codex_protocol::protocol::RateLimitSnapshot as CoreRateLimitSnapshot;
-use codex_protocol::protocol::RateLimitWindow as CoreRateLimitWindow;
+use protocol::account::PlanType;
+use protocol::account::ProviderAccount;
+use protocol::protocol::CreditsSnapshot as CoreCreditsSnapshot;
+use protocol::protocol::RateLimitReachedType as CoreRateLimitReachedType;
+use protocol::protocol::RateLimitSnapshot as CoreRateLimitSnapshot;
+use protocol::protocol::RateLimitWindow as CoreRateLimitWindow;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

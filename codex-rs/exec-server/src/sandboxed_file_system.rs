@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use codex_jsonrpc_types::JSONRPCErrorError;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use jsonrpc_types::JSONRPCErrorError;
 use tokio::io;
 
 use crate::CopyOptions;

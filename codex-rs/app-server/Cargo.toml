@@ -1,11 +1,11 @@
 [package]
-name = "codex-app-server"
+name = "app-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "codex-app-server"
+name = "app-server"
 path = "src/main.rs"
 
 [[bin]]
@@ -13,7 +13,7 @@ name = "codex-app-server-test-notify-capture"
 path = "src/bin/notify_capture.rs"
 
 [lib]
-name = "codex_app_server"
+name = "app_server"
 path = "src/lib.rs"
 doctest = false
 
@@ -32,29 +32,22 @@ axum = { workspace = true, default-features = false, features = [
     "ws",
 ] }
 codex-analytics = { workspace = true }
-codex-api = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-cloud-requirements = { workspace = true }
 codex-code-mode = { workspace = true }
-codex-config-diagnostics = { workspace = true }
-codex-config-edit = { workspace = true }
-codex-config-local-loader = { workspace = true }
-codex-config-loader = { workspace = true }
-codex-config-loader-remote = { workspace = true }
-codex-config-requirements = { workspace = true }
-codex-config-state = { workspace = true }
+config-service = { workspace = true }
 codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
-codex-command-service = { workspace = true }
-codex-command-service-api = { workspace = true }
+command-service = { workspace = true }
+command-service-api = { workspace = true }
 thread-service = { workspace = true }
 plugin-service = { workspace = true }
 plugin-service-api = { workspace = true }
-codex-core-skills-api = { workspace = true }
-codex-core-skills = { workspace = true }
+skill-service-api = { workspace = true }
+skill-service = { workspace = true }
 codex-exec-server = { workspace = true }
-codex-exec-server-api = { workspace = true }
-codex-execpolicy-loader = { workspace = true }
+exec-server-api = { workspace = true }
+permissions-service = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-external-agent-migration = { workspace = true }
 codex-external-agent-sessions = { workspace = true }
@@ -64,48 +57,43 @@ codex-file-watcher = { workspace = true }
 codex-guardian = { workspace = true }
 codex-git-info = { workspace = true }
 goal-service = { workspace = true }
-codex-hooks = { workspace = true }
+hooks = { workspace = true }
 codex-otel = { workspace = true }
 codex-otel-init = { workspace = true }
 codex-shell-utils = { workspace = true }
 codex-utils-cli = { workspace = true }
 codex-utils-pty = { workspace = true }
-codex-backend-client = { workspace = true }
+openai-backend-client = { workspace = true }
 codex-file-search = { workspace = true }
 codex-chatgpt = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
 memory-service = { workspace = true }
 memory-service-api = { workspace = true }
-codex-mcp = { workspace = true }
 mcp-service = { workspace = true }
 mcp-service-api = { workspace = true }
-codex-mcp-types = { workspace = true }
-codex-model-provider = { workspace = true }
-codex-model-provider-api = { workspace = true }
-codex-model-provider-info = { workspace = true }
-codex-models-manager-api = { workspace = true }
-codex-models-manager = { workspace = true }
+mcp-types = { workspace = true }
+model-service = { workspace = true }
+model-service-api = { workspace = true }
 codex-network-proxy = { workspace = true }
 codex-openai-files = { workspace = true }
-codex-process-exec = { workspace = true }
-codex-protocol = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-app-server-transport = { workspace = true }
+protocol = { workspace = true }
+app-server-protocol = { workspace = true }
+app-server-transport = { workspace = true }
 codex-auth-types = { workspace = true }
 codex-feedback = { workspace = true }
 codex-rmcp-client = { workspace = true }
-codex-rollout = { workspace = true }
-codex-rollout-trace = { workspace = true }
+rollout = { workspace = true }
+rollout-trace = { workspace = true }
 codex-sandboxing-api = { workspace = true }
 codex-sandboxing = { workspace = true }
-codex-state-api = { workspace = true }
-codex-state = { workspace = true }
+state-api = { workspace = true }
+state = { workspace = true }
 thread-service-api = { workspace = true }
-codex-thread-store = { workspace = true }
-codex-thread-store-api = { workspace = true }
-codex-tool-config = { workspace = true }
+thread-store = { workspace = true }
+thread-store-api = { workspace = true }
+tool-config = { workspace = true }
 codex-tool-service = { workspace = true }
-codex-tool-types = { workspace = true }
+codex-tool-service-api = { workspace = true }
 codex-turn-metadata = { workspace = true }
 codex-terminal-detection = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
@@ -142,7 +130,7 @@ axum = { workspace = true, default-features = false, features = [
     "tokio",
 ] }
 base64 = { workspace = true }
-codex-config = { workspace = true }
+config-service = { workspace = true }
 thread-service = { workspace = true, features = ["test-support"] }
 codex-utils-cargo-bin = { workspace = true }
 core_test_support = { workspace = true }

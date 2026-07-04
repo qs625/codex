@@ -9,13 +9,13 @@ use codex_extension_api::ToolExecutor;
 use codex_extension_api::ToolName;
 use codex_extension_api::ToolSpec;
 use codex_extension_api::parse_tool_input_schema;
-use codex_tool_types::ResponsesApiNamespace;
-use codex_tool_types::ResponsesApiNamespaceTool;
-use codex_tool_types::default_namespace_description;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
+use tool_service_api::ResponsesApiNamespace;
+use tool_service_api::ResponsesApiNamespaceTool;
+use tool_service_api::default_namespace_description;
 
 use super::backend::DEFAULT_LIST_MAX_RESULTS;
 use super::backend::DEFAULT_READ_MAX_TOKENS;

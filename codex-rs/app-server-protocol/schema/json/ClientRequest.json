@@ -3853,7 +3853,7 @@
     "ThreadApproveGuardianDeniedActionParams": {
       "properties": {
         "event": {
-          "description": "Serialized `codex_protocol::protocol::GuardianAssessmentEvent`."
+          "description": "Serialized `protocol::protocol::GuardianAssessmentEvent`."
         },
         "threadId": {
           "type": "string"

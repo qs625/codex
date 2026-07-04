@@ -20,43 +20,36 @@ use additional_dirs::add_dir_warning_message;
 use app::App;
 pub use app::AppExitInfo;
 pub use app::ExitReason;
+use app_server_client::AppServerClient;
+use app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
+use app_server_client::InProcessAppServerClient;
+use app_server_client::InProcessClientStartArgs;
+use app_server_client::RemoteAppServerClient;
+use app_server_client::RemoteAppServerConnectArgs;
+pub use app_server_client::RemoteAppServerEndpoint;
+use app_server_protocol::Account as AppServerAccount;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::ConfigWarningNotification;
+use app_server_protocol::Thread as AppServerThread;
+use app_server_protocol::ThreadListCwdFilter;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadSortKey as AppServerThreadSortKey;
+use app_server_protocol::ThreadSourceKind;
 use app_server_session::AppServerSession;
-use codex_app_server_client::AppServerClient;
-use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
-use codex_app_server_client::InProcessAppServerClient;
-use codex_app_server_client::InProcessClientStartArgs;
-use codex_app_server_client::RemoteAppServerClient;
-use codex_app_server_client::RemoteAppServerConnectArgs;
-pub use codex_app_server_client::RemoteAppServerEndpoint;
-use codex_app_server_protocol::Account as AppServerAccount;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::Thread as AppServerThread;
-use codex_app_server_protocol::ThreadListCwdFilter;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadSortKey as AppServerThreadSortKey;
-use codex_app_server_protocol::ThreadSourceKind;
 use codex_auth_types::AuthMode as AppServerAuthMode;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
-use codex_config_diagnostics::ConfigLoadError;
-use codex_config_diagnostics::format_config_error_with_source;
-use codex_config_loader::ConfigLoadOptions;
-use codex_config_loader::LoaderOverrides;
-use codex_config_local_loader::LocalConfigLayerLoader;
-use codex_config_requirements::CloudRequirementsLoader;
+use config_service::ConfigLoadError;
+use config_service::format_config_error_with_source;
+use config_service::ConfigLoadOptions;
+use config_service::LoaderOverrides;
+use config_service::LocalConfigLayerLoader;
+use config_service::CloudRequirementsLoader;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::AuthConfig;
 use codex_login::default_client::originator;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::enforce_login_restrictions;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::AltScreenMode;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_rollout::StateDbHandle;
-use codex_rollout::state_db;
-use codex_state::log_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_existing_preserving_symlinks;
 use codex_utils_home_dir::find_codex_home;
@@ -64,6 +57,13 @@ use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
 use color_eyre::eyre::WrapErr;
 use cwd_prompt::CwdPromptAction;
+use protocol::ThreadId;
+use protocol::config_types::AltScreenMode;
+use protocol::config_types::SandboxMode;
+use protocol::config_types::WindowsSandboxLevel;
+use rollout::StateDbHandle;
+use rollout::state_db;
+use state::log_db;
 use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
@@ -79,7 +79,7 @@ use tracing_subscriber::prelude::*;
 use url::Url;
 use uuid::Uuid;
 
-pub(crate) use codex_app_server_client::legacy_core;
+pub(crate) use app_server_client::legacy_core;
 
 pub(crate) fn config_builder() -> ConfigBuilder {
     ConfigBuilder::default().config_layer_loader(Arc::new(LocalConfigLayerLoader::default()))
@@ -209,7 +209,7 @@ mod workspace_command;
 mod voice {
     use crate::app_event_sender::AppEventSender;
     use crate::legacy_core::config::Config;
-    use codex_app_server_protocol::ThreadRealtimeAudioChunk;
+    use app_server_protocol::ThreadRealtimeAudioChunk;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::AtomicU16;
@@ -328,7 +328,7 @@ async fn init_state_db_for_app_server_target(
     match app_server_target {
         AppServerTarget::Embedded => state_db::try_init(config).await.map(Some).map_err(|err| {
             std::io::Error::other(LocalStateDbStartupError::new(
-                codex_state::state_db_path(config.sqlite_home.as_path()),
+                state::state_db_path(config.sqlite_home.as_path()),
                 err.to_string(),
             ))
         }),
@@ -379,7 +379,7 @@ pub fn resolve_remote_addr(addr: &str) -> color_eyre::Result<RemoteAppServerEndp
     if let Some(socket_path) = addr.strip_prefix("unix://") {
         let socket_path = if socket_path.is_empty() {
             let codex_home = find_codex_home().wrap_err("failed to resolve CODEX_HOME")?;
-            codex_app_server_client::app_server_control_socket_path(&codex_home)
+            app_server_client::app_server_control_socket_path(&codex_home)
                 .map_err(color_eyre::Report::new)?
         } else {
             AbsolutePathBuf::relative_to_current_dir(socket_path)
@@ -441,7 +441,7 @@ async fn connect_remote_app_server(
 
 #[cfg(unix)]
 async fn maybe_probe_default_daemon_socket(codex_home: &Path) -> Option<AbsolutePathBuf> {
-    let socket_path = codex_app_server_client::app_server_control_socket_path(codex_home).ok()?;
+    let socket_path = app_server_client::app_server_control_socket_path(codex_home).ok()?;
     if !socket_path.as_path().try_exists().unwrap_or(false) {
         return None;
     }
@@ -1023,16 +1023,14 @@ pub async fn run_main(
     let effective_toml = config.config_layer_stack.effective_config();
     match effective_toml.try_into() {
         Ok(config_toml) => {
-            let personality_migration_thread_store: Arc<dyn codex_thread_store::ThreadStore> =
+            let personality_migration_thread_store: Arc<dyn thread_store::ThreadStore> =
                 match &config.experimental_thread_store {
-                    ThreadStoreConfig::Local => {
-                        Arc::new(codex_thread_store::LocalThreadStore::new(
-                            codex_thread_store::LocalThreadStoreConfig::from_config(&config),
-                            state_db.clone(),
-                        ))
-                    }
+                    ThreadStoreConfig::Local => Arc::new(thread_store::LocalThreadStore::new(
+                        thread_store::LocalThreadStoreConfig::from_config(&config),
+                        state_db.clone(),
+                    )),
                     ThreadStoreConfig::InMemory { id } => {
-                        codex_thread_store::InMemoryThreadStore::for_id(id)
+                        thread_store::InMemoryThreadStore::for_id(id)
                     }
                 };
             match crate::legacy_core::personality_migration::maybe_migrate_personality(
@@ -1847,11 +1845,11 @@ mod tests {
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
     use crate::legacy_core::config::ProjectConfig;
-    use codex_app_server_protocol::AskForApproval;
-    use codex_app_server_protocol::ClientRequest;
-    use codex_app_server_protocol::RequestId;
-    use codex_app_server_protocol::ThreadStartParams;
-    use codex_app_server_protocol::ThreadStartResponse;
+    use app_server_protocol::AskForApproval;
+    use app_server_protocol::ClientRequest;
+    use app_server_protocol::RequestId;
+    use app_server_protocol::ThreadStartParams;
+    use app_server_protocol::ThreadStartResponse;
     use pretty_assertions::assert_eq;
     use serial_test::serial;
     use tempfile::TempDir;
@@ -1942,7 +1940,7 @@ mod tests {
         assert_eq!(
             resolve_remote_addr("unix://")?,
             RemoteAppServerEndpoint::UnixSocket {
-                socket_path: codex_app_server_client::app_server_control_socket_path(&codex_home)?,
+                socket_path: app_server_client::app_server_control_socket_path(&codex_home)?,
             }
         );
         Ok(())
@@ -2002,8 +2000,7 @@ mod tests {
     #[tokio::test]
     async fn default_daemon_auto_connect_probes_socket_only() -> color_eyre::Result<()> {
         let codex_home = TempDir::new()?;
-        let socket_path =
-            codex_app_server_client::app_server_control_socket_path(codex_home.path())?;
+        let socket_path = app_server_client::app_server_control_socket_path(codex_home.path())?;
         std::fs::create_dir_all(socket_path.as_path().parent().expect("socket parent"))?;
         let _listener = tokio::net::UnixListener::bind(socket_path.as_path())?;
 
@@ -2128,17 +2125,17 @@ mod tests {
             })?;
             std::fs::create_dir_all(parent)?;
 
-            let session_meta = codex_protocol::protocol::SessionMeta {
+            let session_meta = protocol::protocol::SessionMeta {
                 id: thread_id,
                 timestamp: meta_rfc3339.to_string(),
                 cwd: cwd.to_path_buf(),
                 originator: "codex".to_string(),
                 cli_version: "0.0.0".to_string(),
-                source: codex_protocol::protocol::SessionSource::Cli,
+                source: protocol::protocol::SessionSource::Cli,
                 model_provider: Some(model_provider.to_string()),
                 ..Default::default()
             };
-            let session_meta = serde_json::to_value(codex_protocol::protocol::SessionMetaLine {
+            let session_meta = serde_json::to_value(protocol::protocol::SessionMetaLine {
                 meta: session_meta,
                 git: None,
             })?;
@@ -2214,10 +2211,9 @@ mod tests {
             &other_cwd,
         )?;
 
-        let mut app_server =
-            AppServerSession::new(codex_app_server_client::AppServerClient::InProcess(
-                start_test_embedded_app_server(config.clone()).await?,
-            ));
+        let mut app_server = AppServerSession::new(app_server_client::AppServerClient::InProcess(
+            start_test_embedded_app_server(config.clone()).await?,
+        ));
         let filter_cwd = latest_session_cwd_filter(
             /*remote_mode*/ false, /*remote_cwd_override*/ None, &config,
             /*show_all*/ false,
@@ -2381,7 +2377,7 @@ mod tests {
             std::fs::create_dir_all(rollout_dir)?;
             std::fs::write(&rollout_path, "")?;
 
-            let state_runtime = codex_state::StateRuntime::init(
+            let state_runtime = state::StateRuntime::init(
                 config.codex_home.to_path_buf(),
                 config.model_provider_id.clone(),
             )
@@ -2397,7 +2393,7 @@ mod tests {
             let created_at = chrono::DateTime::parse_from_rfc3339("2025-02-01T10:00:00Z")
                 .expect("timestamp should parse")
                 .with_timezone(&chrono::Utc);
-            let mut builder = codex_state::ThreadMetadataBuilder::new(
+            let mut builder = state::ThreadMetadataBuilder::new(
                 thread_id,
                 rollout_path.clone(),
                 created_at,
@@ -2414,7 +2410,7 @@ mod tests {
                 .map_err(std::io::Error::other)?;
 
             let mut app_server =
-                AppServerSession::new(codex_app_server_client::AppServerClient::InProcess(
+                AppServerSession::new(app_server_client::AppServerClient::InProcess(
                     start_test_embedded_app_server(config).await?,
                 ));
             let target =
@@ -2481,7 +2477,7 @@ mod tests {
 
         assert_eq!(
             startup_error.state_db_path(),
-            codex_state::state_db_path(occupied_sqlite_home.as_path()).as_path()
+            state::state_db_path(occupied_sqlite_home.as_path()).as_path()
         );
         assert!(
             startup_error
@@ -2515,7 +2511,7 @@ mod tests {
     }
     #[tokio::test]
     async fn untrusted_project_skips_trust_prompt() -> std::io::Result<()> {
-        use codex_protocol::config_types::TrustLevel;
+        use protocol::config_types::TrustLevel;
         let temp_dir = TempDir::new()?;
         let mut config = build_config(&temp_dir).await?;
         config.active_project = ProjectConfig {

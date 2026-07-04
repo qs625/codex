@@ -1,8 +1,8 @@
 use super::*;
 use chrono::TimeZone;
 use chrono::Utc;
-use codex_protocol::auth::KnownPlan;
 use pretty_assertions::assert_eq;
+use protocol::auth::KnownPlan;
 use serde::Serialize;
 
 fn fake_jwt(payload: serde_json::Value) -> String {

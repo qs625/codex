@@ -20,32 +20,32 @@ use std::sync::Arc;
 use std::thread;
 
 use anyhow::Result;
+use app_server::in_process;
+use app_server::in_process::InProcessServerEvent;
+use app_server::in_process::InProcessStartArgs;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::RequestId;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::create_mock_responses_server_repeating_assistant;
-use codex_app_server::in_process;
-use codex_app_server::in_process::InProcessServerEvent;
-use codex_app_server::in_process::InProcessStartArgs;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadListResponse;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config::CloudRequirementsLoader;
-use codex_config::LoaderOverrides;
-use codex_config::NoopThreadConfigLoader;
+use config_service::CloudRequirementsLoader;
+use config_service::LoaderOverrides;
+use config_service::NoopThreadConfigLoader;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
-use codex_protocol::protocol::SessionSource;
-use thread_service::config::ConfigBuilder;
-use codex_thread_store::InMemoryThreadStore;
 use pretty_assertions::assert_eq;
+use protocol::protocol::SessionSource;
 use tempfile::TempDir;
+use thread_service::config::ConfigBuilder;
+use thread_store::InMemoryThreadStore;
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -215,7 +215,7 @@ fn assert_no_local_persistence_artifacts(codex_home: &Path) -> Result<()> {
         "non-local thread persistence should not create archived rollout sessions"
     );
     assert!(
-        !codex_state::state_db_path(codex_home).exists(),
+        !state::state_db_path(codex_home).exists(),
         "non-local thread persistence should not create local thread sqlite"
     );
 

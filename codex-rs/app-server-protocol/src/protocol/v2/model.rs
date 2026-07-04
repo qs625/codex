@@ -1,10 +1,10 @@
 use super::shared::v2_enum_from_core;
-use codex_protocol::openai_models::InputModality;
-use codex_protocol::openai_models::ModelAvailabilityNux as CoreModelAvailabilityNux;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::openai_models::default_input_modalities;
-use codex_protocol::protocol::ModelRerouteReason as CoreModelRerouteReason;
-use codex_protocol::protocol::ModelVerification as CoreModelVerification;
+use protocol::openai_models::InputModality;
+use protocol::openai_models::ModelAvailabilityNux as CoreModelAvailabilityNux;
+use protocol::openai_models::ReasoningEffort;
+use protocol::openai_models::default_input_modalities;
+use protocol::protocol::ModelRerouteReason as CoreModelRerouteReason;
+use protocol::protocol::ModelVerification as CoreModelVerification;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

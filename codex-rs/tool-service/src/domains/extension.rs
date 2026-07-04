@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use codex_extension_api::ExtensionToolExecutor;
 use codex_extension_api::ToolOutput;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_service_api::HookToolName;
-use codex_tool_service_api::PostToolUsePayload;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolPayload;
-use codex_tool_types::ToolSpec;
 use serde_json::Value;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::HookToolName;
+use tool_service_api::PostToolUsePayload;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::ToolPayload;
+use tool_service_api::ToolSpec;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::flat_tool_name;

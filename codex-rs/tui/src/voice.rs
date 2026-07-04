@@ -1,7 +1,7 @@
 use crate::app_event_sender::AppEventSender;
 use crate::legacy_core::config::Config;
+use app_server_protocol::ThreadRealtimeAudioChunk;
 use base64::Engine;
-use codex_app_server_protocol::ThreadRealtimeAudioChunk;
 use cpal::traits::DeviceTrait;
 use cpal::traits::StreamTrait;
 use std::collections::VecDeque;

@@ -22,60 +22,60 @@ use std::time::SystemTime;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
+use app_server_protocol::AccountLoginCompletedNotification;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::CommandExecutionApprovalDecision;
+use app_server_protocol::CommandExecutionRequestApprovalParams;
+use app_server_protocol::CommandExecutionRequestApprovalResponse;
+use app_server_protocol::CommandExecutionStatus;
+use app_server_protocol::DynamicToolSpec;
+use app_server_protocol::FileChangeApprovalDecision;
+use app_server_protocol::FileChangeRequestApprovalParams;
+use app_server_protocol::FileChangeRequestApprovalResponse;
+use app_server_protocol::GetAccountRateLimitsResponse;
+use app_server_protocol::InitializeCapabilities;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::InitializeResponse;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCNotification;
+use app_server_protocol::JSONRPCRequest;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::LoginAccountResponse;
+use app_server_protocol::ModelListParams;
+use app_server_protocol::ModelListResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::SandboxPolicy;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::ThreadDecrementElicitationParams;
+use app_server_protocol::ThreadDecrementElicitationResponse;
+use app_server_protocol::ThreadIncrementElicitationParams;
+use app_server_protocol::ThreadIncrementElicitationResponse;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput as V2UserInput;
 use clap::ArgAction;
 use clap::Parser;
 use clap::Subcommand;
-use codex_app_server_protocol::AccountLoginCompletedNotification;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::CommandExecutionApprovalDecision;
-use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
-use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
-use codex_app_server_protocol::CommandExecutionStatus;
-use codex_app_server_protocol::DynamicToolSpec;
-use codex_app_server_protocol::FileChangeApprovalDecision;
-use codex_app_server_protocol::FileChangeRequestApprovalParams;
-use codex_app_server_protocol::FileChangeRequestApprovalResponse;
-use codex_app_server_protocol::GetAccountRateLimitsResponse;
-use codex_app_server_protocol::InitializeCapabilities;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::InitializeResponse;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCRequest;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::LoginAccountResponse;
-use codex_app_server_protocol::ModelListParams;
-use codex_app_server_protocol::ModelListResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::SandboxPolicy;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ThreadDecrementElicitationParams;
-use codex_app_server_protocol::ThreadDecrementElicitationResponse;
-use codex_app_server_protocol::ThreadIncrementElicitationParams;
-use codex_app_server_protocol::ThreadIncrementElicitationResponse;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadListResponse;
-use codex_app_server_protocol::ThreadResumeParams;
-use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::TurnStatus;
-use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_otel::OtelProvider;
 use codex_otel::current_span_w3c_trace_context;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::W3cTraceContext;
-use thread_service::config::Config;
 use codex_utils_cli::CliConfigOverrides;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::W3cTraceContext;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use thread_service::config::Config;
 use tracing::info_span;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -98,7 +98,7 @@ const NOTIFICATIONS_TO_OPT_OUT: &[&str] = &[
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const APP_SERVER_GRACEFUL_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
-const OTEL_SERVICE_NAME: &str = "codex-app-server-test-client";
+const OTEL_SERVICE_NAME: &str = "app-server-test-client";
 const TRACE_DISABLED_MESSAGE: &str =
     "Not enabled - enable tracing in $CODEX_HOME/config.toml to get a trace URL!";
 
@@ -149,7 +149,7 @@ enum CliCommand {
     /// Start `codex app-server` on a websocket endpoint in the background.
     ///
     /// Logs are written to:
-    ///   `/tmp/codex-app-server-test-client/`
+    ///   `/tmp/app-server-test-client/`
     Serve {
         /// WebSocket listen URL passed to `codex app-server --listen`.
         #[arg(long, default_value = "ws://127.0.0.1:4222")]
@@ -509,7 +509,7 @@ impl Drop for BackgroundAppServer {
 }
 
 fn serve(codex_bin: &Path, config_overrides: &[String], listen: &str, kill: bool) -> Result<()> {
-    let runtime_dir = PathBuf::from("/tmp/codex-app-server-test-client");
+    let runtime_dir = PathBuf::from("/tmp/app-server-test-client");
     fs::create_dir_all(&runtime_dir)
         .with_context(|| format!("failed to create runtime dir {}", runtime_dir.display()))?;
     let log_path = runtime_dir.join("app-server.log");
@@ -1226,8 +1226,8 @@ fn live_elicitation_timeout_pause(
     let workspace = workspace
         .canonicalize()
         .with_context(|| format!("failed to resolve workspace `{}`", workspace.display()))?;
-    let app_server_test_client_bin = std::env::current_exe()
-        .context("failed to resolve codex-app-server-test-client binary path")?;
+    let app_server_test_client_bin =
+        std::env::current_exe().context("failed to resolve app-server-test-client binary path")?;
     let endpoint = Endpoint::ConnectWs(websocket_url.clone());
     let mut client = CodexClient::connect(&endpoint, &[])?;
 
@@ -1444,7 +1444,7 @@ impl CodexClient {
         for override_kv in config_overrides {
             cmd.arg("--config").arg(override_kv);
         }
-        let mut codex_app_server = cmd
+        let mut app_server = cmd
             .arg("app-server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1452,18 +1452,18 @@ impl CodexClient {
             .spawn()
             .with_context(|| format!("failed to start `{codex_bin_display}` app-server"))?;
 
-        let stdin = codex_app_server
+        let stdin = app_server
             .stdin
             .take()
             .context("codex app-server stdin unavailable")?;
-        let stdout = codex_app_server
+        let stdout = app_server
             .stdout
             .take()
             .context("codex app-server stdout unavailable")?;
 
         Ok(Self {
             transport: ClientTransport::Stdio {
-                child: codex_app_server,
+                child: app_server,
                 stdin: Some(stdin),
                 stdout: BufReader::new(stdout),
             },
@@ -1493,7 +1493,7 @@ impl CodexClient {
                     if Instant::now() >= deadline {
                         return Err(err).with_context(|| {
                             format!(
-                                "failed to connect to websocket app-server at `{url}`; if no server is running, start one with `codex-app-server-test-client serve --listen {url}`"
+                                "failed to connect to websocket app-server at `{url}`; if no server is running, start one with `app-server-test-client serve --listen {url}`"
                             )
                         });
                     }
@@ -1608,7 +1608,7 @@ impl CodexClient {
         let request_id = self.request_id();
         let request = ClientRequest::LoginAccount {
             request_id: request_id.clone(),
-            params: codex_app_server_protocol::LoginAccountParams::Chatgpt {
+            params: app_server_protocol::LoginAccountParams::Chatgpt {
                 codex_streamlined_login: false,
             },
         };
@@ -1620,7 +1620,7 @@ impl CodexClient {
         let request_id = self.request_id();
         let request = ClientRequest::LoginAccount {
             request_id: request_id.clone(),
-            params: codex_app_server_protocol::LoginAccountParams::ChatgptDeviceCode,
+            params: app_server_protocol::LoginAccountParams::ChatgptDeviceCode,
         };
 
         self.send_request(request, request_id, "account/login/start")

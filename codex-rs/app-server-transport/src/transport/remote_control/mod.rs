@@ -15,10 +15,10 @@ use self::protocol::normalize_remote_control_url;
 use super::CHANNEL_CAPACITY;
 use super::TransportEvent;
 use super::next_connection_id;
-use codex_app_server_protocol::RemoteControlConnectionStatus;
-use codex_app_server_protocol::RemoteControlStatusChangedNotification;
+use app_server_protocol::RemoteControlConnectionStatus;
+use app_server_protocol::RemoteControlStatusChangedNotification;
 use codex_login::AuthManager;
-use codex_state::StateRuntime;
+use state_api::SharedStateDbRuntime;
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -134,7 +134,7 @@ impl RemoteControlHandle {
 
 pub async fn start_remote_control(
     config: RemoteControlStartConfig,
-    state_db: Option<Arc<StateRuntime>>,
+    state_db: Option<SharedStateDbRuntime>,
     auth_manager: Arc<AuthManager>,
     transport_event_tx: mpsc::Sender<TransportEvent>,
     shutdown_token: CancellationToken,

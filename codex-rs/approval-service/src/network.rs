@@ -1,35 +1,35 @@
 use std::sync::Arc;
 
 use codex_approval_service_api::ActiveNetworkApproval;
+use codex_approval_service_api::ApprovalSessionCapability;
 use codex_approval_service_api::ApprovalServiceFuture;
+use codex_approval_service_api::PermissionRequestPayload;
 use codex_approval_service_api::SessionNetworkApprovalApi;
-use thread_service_api::PermissionRequestPayload;
-use thread_service_api::NetworkApprovalSpec;
-use thread_service_api::ThreadSessionCapability;
-use thread_service_api::ThreadTurnCapability;
-use thread_service_api::ToolRuntimeNetworkApprovalError;
 use codex_guardian::GuardianNetworkAccessTrigger;
-use codex_hooks_api::PermissionRequestDecision;
 use codex_network_proxy_api::BlockedRequest;
 use codex_network_proxy_api::BlockedRequestObserver;
 use codex_network_proxy_api::NetworkDecision;
 use codex_network_proxy_api::NetworkPolicyDecider;
 use codex_network_proxy_api::NetworkPolicyRequest;
 use codex_network_proxy_api::NetworkProtocol;
-use codex_permissions_runtime::ActiveNetworkApprovalCall;
-use codex_permissions_runtime::HostApprovalKey;
-use codex_permissions_runtime::NetworkApprovalOutcome;
-use codex_permissions_runtime::NetworkApprovalRuntime;
-use codex_permissions_runtime::PendingApprovalDecision;
-use codex_permissions_runtime::PendingHostApproval;
-use codex_permissions_runtime::allows_network_approval_flow;
-use codex_permissions_runtime::permission_profile_allows_network_approval_flow;
-use codex_protocol::approvals::NetworkApprovalContext;
-use codex_protocol::approvals::NetworkApprovalProtocol;
-use codex_protocol::approvals::NetworkPolicyRuleAction;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::WarningEvent;
+use permissions_service::ActiveNetworkApprovalCall;
+use permissions_service::HostApprovalKey;
+use permissions_service::NetworkApprovalOutcome;
+use permissions_service::NetworkApprovalRuntime;
+use permissions_service::PendingApprovalDecision;
+use permissions_service::PendingHostApproval;
+use permissions_service::allows_network_approval_flow;
+use permissions_service::permission_profile_allows_network_approval_flow;
+use hooks_api::PermissionRequestDecision;
+use protocol::approvals::NetworkApprovalContext;
+use protocol::approvals::NetworkApprovalProtocol;
+use protocol::approvals::NetworkPolicyRuleAction;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::WarningEvent;
+use thread_service_api::NetworkApprovalSpec;
+use thread_service_api::ThreadTurnCapability;
+use thread_service_api::ToolRuntimeNetworkApprovalError;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -39,9 +39,9 @@ fn network_approval_outcome_to_result(
     outcome: Option<NetworkApprovalOutcome>,
 ) -> Result<(), ToolRuntimeNetworkApprovalError> {
     match outcome {
-        Some(NetworkApprovalOutcome::DeniedByUser) => {
-            Err(ToolRuntimeNetworkApprovalError::Rejected("rejected by user".to_string()))
-        }
+        Some(NetworkApprovalOutcome::DeniedByUser) => Err(
+            ToolRuntimeNetworkApprovalError::Rejected("rejected by user".to_string()),
+        ),
         Some(NetworkApprovalOutcome::DeniedByPolicy(message)) => {
             Err(ToolRuntimeNetworkApprovalError::Rejected(message))
         }
@@ -110,7 +110,11 @@ impl NetworkApprovalService {
             .await;
     }
 
-    pub async fn record_call_outcome(&self, registration_id: &str, outcome: NetworkApprovalOutcome) {
+    pub async fn record_call_outcome(
+        &self,
+        registration_id: &str,
+        outcome: NetworkApprovalOutcome,
+    ) {
         self.runtime
             .record_call_outcome(registration_id, outcome)
             .await;
@@ -120,7 +124,10 @@ impl NetworkApprovalService {
         self.runtime.finish_call_outcome(registration_id).await
     }
 
-    pub async fn finish_call(&self, registration_id: &str) -> Result<(), ToolRuntimeNetworkApprovalError> {
+    pub async fn finish_call(
+        &self,
+        registration_id: &str,
+    ) -> Result<(), ToolRuntimeNetworkApprovalError> {
         network_approval_outcome_to_result(self.finish_call_outcome(registration_id).await)
     }
 
@@ -134,7 +141,7 @@ impl NetworkApprovalService {
 
     pub async fn handle_inline_policy_request(
         &self,
-        session: Arc<dyn ThreadSessionCapability>,
+        session: Arc<dyn ApprovalSessionCapability>,
         request: NetworkPolicyRequest,
     ) -> NetworkDecision {
         const REASON_NOT_ALLOWED: &str = "not_allowed";
@@ -214,7 +221,9 @@ impl NetworkApprovalService {
         {
             match permission_request_decision {
                 PermissionRequestDecision::Allow => {
-                    pending.set_decision(PendingApprovalDecision::AllowOnce).await;
+                    pending
+                        .set_decision(PendingApprovalDecision::AllowOnce)
+                        .await;
                     self.runtime.remove_pending_approval(&key).await;
                     return NetworkDecision::Allow;
                 }
@@ -245,9 +254,10 @@ impl NetworkApprovalService {
                 review_id,
                 codex_guardian::GuardianApprovalRequest::NetworkAccess {
                     id: guardian_approval_id.clone(),
-                    turn_id: owner_call
-                        .as_ref()
-                        .map_or_else(|| turn.runtime_turn_id_str().to_string(), |call| call.turn_id.clone()),
+                    turn_id: owner_call.as_ref().map_or_else(
+                        || turn.runtime_turn_id_str().to_string(),
+                        |call| call.turn_id.clone(),
+                    ),
                     target,
                     host: request.host,
                     protocol,
@@ -315,9 +325,11 @@ impl NetworkApprovalService {
             ReviewDecision::Denied | ReviewDecision::Abort => {
                 if let Some(review_id) = guardian_review_id.as_deref() {
                     if let Some(owner_call) = owner_call.as_ref() {
-                        let message =
-                            crate::guardian::guardian_rejection_message(session.as_ref(), review_id)
-                                .await;
+                        let message = crate::guardian::guardian_rejection_message(
+                            session.as_ref(),
+                            review_id,
+                        )
+                        .await;
                         self.record_call_outcome(
                             &owner_call.registration_id,
                             NetworkApprovalOutcome::DeniedByPolicy(message),
@@ -379,15 +391,13 @@ impl SessionNetworkApprovalApi for NetworkApprovalService {
         })
     }
 
-    fn build_blocked_request_observer(
-        self: Arc<Self>,
-    ) -> Arc<dyn BlockedRequestObserver> {
+    fn build_blocked_request_observer(self: Arc<Self>) -> Arc<dyn BlockedRequestObserver> {
         build_blocked_request_observer(self)
     }
 
     fn build_network_policy_decider(
         self: Arc<Self>,
-        session: Arc<RwLock<Option<std::sync::Weak<dyn ThreadSessionCapability>>>>,
+        session: Arc<RwLock<Option<std::sync::Weak<dyn ApprovalSessionCapability>>>>,
     ) -> Arc<dyn NetworkPolicyDecider> {
         build_network_policy_decider(self, session)
     }
@@ -418,9 +428,9 @@ impl SessionNetworkApprovalApi for NetworkApprovalService {
 }
 
 async fn record_network_policy_amendment(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     turn: &dyn ThreadTurnCapability,
-    amendment: &codex_protocol::approvals::NetworkPolicyAmendment,
+    amendment: &protocol::approvals::NetworkPolicyAmendment,
     network_approval_context: &NetworkApprovalContext,
 ) {
     match session
@@ -435,7 +445,8 @@ async fn record_network_policy_amendment(
         Err(err) => {
             let message = format!("Failed to apply network policy amendment: {err}");
             warn!("{message}");
-            turn.emit_event(EventMsg::Warning(WarningEvent { message })).await;
+            turn.emit_event(EventMsg::Warning(WarningEvent { message }))
+                .await;
         }
     }
 }
@@ -454,7 +465,7 @@ pub fn build_blocked_request_observer(
 pub fn build_network_policy_decider(
     network_approval: Arc<NetworkApprovalService>,
     network_policy_decider_session: Arc<
-        RwLock<Option<std::sync::Weak<dyn ThreadSessionCapability>>>,
+        RwLock<Option<std::sync::Weak<dyn ApprovalSessionCapability>>>,
     >,
 ) -> Arc<dyn NetworkPolicyDecider> {
     Arc::new(move |request: NetworkPolicyRequest| {
@@ -469,7 +480,9 @@ pub fn build_network_policy_decider(
             else {
                 return NetworkDecision::ask("not_allowed");
             };
-            network_approval.handle_inline_policy_request(session, request).await
+            network_approval
+                .handle_inline_policy_request(session, request)
+                .await
         }
     })
 }
@@ -513,11 +526,11 @@ pub async fn begin_network_approval(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_permissions_runtime::NetworkApprovalOutcome;
-    use codex_protocol::models::SandboxPermissions;
+    use permissions_service::NetworkApprovalOutcome;
     use core_test_support::PathBufExt;
     use core_test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::models::SandboxPermissions;
 
     fn default_shell_trigger() -> GuardianNetworkAccessTrigger {
         GuardianNetworkAccessTrigger {

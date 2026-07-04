@@ -1,9 +1,9 @@
-use codex_config_edit::CONFIG_TOML_FILE;
-use codex_config_state::ConfigLayerStack;
+use config_service::CONFIG_TOML_FILE;
+use config_service::ConfigLayerStack;
 use codex_features::Feature;
-use codex_hooks::HookListEntry;
-use thread_service::config::Config;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use hooks::HookListEntry;
+use thread_service::config::Config;
 use toml::Value as TomlValue;
 
 pub fn trust_discovered_hooks(config: &mut Config) {
@@ -11,14 +11,14 @@ pub fn trust_discovered_hooks(config: &mut Config) {
         panic!("test config should allow feature update: {err}");
     }
 
-    let listed = codex_hooks::list_hooks(codex_hooks::HooksConfig {
+    let listed = hooks::list_hooks(hooks::HooksConfig {
         feature_enabled: true,
         config_layer_stack: Some(
             thread_service::config::hook_config_layer_stack_from_config_layer_stack(
                 &config.config_layer_stack,
             ),
         ),
-        ..codex_hooks::HooksConfig::default()
+        ..hooks::HooksConfig::default()
     });
     assert!(
         !listed.hooks.is_empty(),

@@ -14,14 +14,14 @@ axum = { workspace = true, default-features = false, features = [
     "tokio",
 ] }
 base64 = { workspace = true }
-codex-client = { workspace = true }
+transport-client = { workspace = true }
 codex-config-types = { workspace = true }
-codex-exec-server-api = { workspace = true }
+exec-server-api = { workspace = true }
 codex-exec-server-protocol = { workspace = true }
 codex-keyring-store = { workspace = true }
 mcp-service-api = { workspace = true }
-codex-mcp-types = { workspace = true }
-codex-protocol = { workspace = true }
+mcp-types = { workspace = true }
+protocol = { workspace = true }
 codex-utils-pty = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 bytes = { workspace = true }

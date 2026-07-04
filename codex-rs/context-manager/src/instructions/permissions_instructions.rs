@@ -1,16 +1,16 @@
 use super::ContextualUserFragment;
-use codex_execpolicy_api::Policy;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::format_allow_prefixes;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::GranularApprovalConfig;
-use codex_protocol::protocol::NetworkAccess;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::WritableRoot;
+use permissions_service_api::Policy;
 use codex_utils_template::Template;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::SandboxMode;
+use protocol::models::PermissionProfile;
+use protocol::models::format_allow_prefixes;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::GranularApprovalConfig;
+use protocol::protocol::NetworkAccess;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::WritableRoot;
 use std::path::Path;
 use std::sync::LazyLock;
 

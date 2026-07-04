@@ -21,12 +21,12 @@ use crate::events::stop::StopRequest;
 use crate::events::user_prompt_submit::UserPromptSubmitOutcome;
 use crate::events::user_prompt_submit::UserPromptSubmitRequest;
 use crate::output_spill::HookOutputSpiller;
-use codex_hooks_api::HookConfigLayerStack;
-use plugin_service_api::PluginHookSource;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::HookRunSummary;
-use codex_protocol::protocol::HookSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use hooks_api::HookConfigLayerStack;
+use plugin_service_api::PluginHookSource;
+use protocol::ThreadId;
+use protocol::protocol::HookRunSummary;
+use protocol::protocol::HookSource;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,7 @@ pub(crate) struct CommandShell {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfiguredHandler {
-    pub event_name: codex_protocol::protocol::HookEventName,
+    pub event_name: protocol::protocol::HookEventName,
     pub matcher: Option<String>,
     pub command: String,
     pub timeout_sec: u64,
@@ -60,14 +60,14 @@ impl ConfiguredHandler {
 
     fn event_name_label(&self) -> &'static str {
         match self.event_name {
-            codex_protocol::protocol::HookEventName::PreToolUse => "pre-tool-use",
-            codex_protocol::protocol::HookEventName::PermissionRequest => "permission-request",
-            codex_protocol::protocol::HookEventName::PostToolUse => "post-tool-use",
-            codex_protocol::protocol::HookEventName::PreCompact => "pre-compact",
-            codex_protocol::protocol::HookEventName::PostCompact => "post-compact",
-            codex_protocol::protocol::HookEventName::SessionStart => "session-start",
-            codex_protocol::protocol::HookEventName::UserPromptSubmit => "user-prompt-submit",
-            codex_protocol::protocol::HookEventName::Stop => "stop",
+            protocol::protocol::HookEventName::PreToolUse => "pre-tool-use",
+            protocol::protocol::HookEventName::PermissionRequest => "permission-request",
+            protocol::protocol::HookEventName::PostToolUse => "post-tool-use",
+            protocol::protocol::HookEventName::PreCompact => "pre-compact",
+            protocol::protocol::HookEventName::PostCompact => "post-compact",
+            protocol::protocol::HookEventName::SessionStart => "session-start",
+            protocol::protocol::HookEventName::UserPromptSubmit => "user-prompt-submit",
+            protocol::protocol::HookEventName::Stop => "stop",
         }
     }
 }
@@ -257,8 +257,8 @@ impl ClaudeHooksEngine {
     async fn maybe_spill_prompt_fragments(
         &self,
         session_id: ThreadId,
-        fragments: Vec<codex_protocol::items::HookPromptFragment>,
-    ) -> Vec<codex_protocol::items::HookPromptFragment> {
+        fragments: Vec<protocol::items::HookPromptFragment>,
+    ) -> Vec<protocol::items::HookPromptFragment> {
         self.output_spiller
             .maybe_spill_prompt_fragments(session_id, fragments)
             .await

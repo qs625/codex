@@ -4,8 +4,8 @@ use crate::status::StatusAccountDisplay;
 use crate::text_formatting;
 use chrono::DateTime;
 use chrono::Local;
-use codex_protocol::account::PlanType;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::account::PlanType;
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 

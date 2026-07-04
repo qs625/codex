@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
-use codex_protocol::ThreadId;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SessionConfiguredEvent;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::W3cTraceContext;
+use futures::future::BoxFuture;
+use protocol::ThreadId;
+use protocol::error::Result as CodexResult;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::Event;
+use protocol::protocol::Op;
+use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::TokenUsageInfo;
+use protocol::protocol::W3cTraceContext;
+use skill_service_api::SkillWatchPath;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::LiveThreadHandle;
 use thread_service_api::LiveThreadInfo;
@@ -16,11 +18,9 @@ use thread_service_api::LiveThreadRegistry;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::ThreadConfigSnapshot;
 use thread_service_api::ThreadRuntimeStatus;
-use thread_service_api::ThreadSkillWatchPath;
-use codex_thread_store_api::StoredThread;
-use codex_thread_store_api::StoredThreadHistory;
-use codex_thread_store_api::ThreadStoreResult;
-use futures::future::BoxFuture;
+use thread_store_api::StoredThread;
+use thread_store_api::StoredThreadHistory;
+use thread_store_api::ThreadStoreResult;
 
 /// Object-safe live thread surface consumed by app-server listener/display code.
 ///
@@ -187,7 +187,7 @@ pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
     fn thread_skill_watch_paths(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Vec<ThreadSkillWatchPath>>>;
+    ) -> BoxFuture<'_, CodexResult<Vec<SkillWatchPath>>>;
 
     fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
 }
@@ -298,7 +298,7 @@ where
     fn thread_skill_watch_paths(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Vec<ThreadSkillWatchPath>>> {
+    ) -> BoxFuture<'_, CodexResult<Vec<SkillWatchPath>>> {
         Box::pin(LiveThreadRegistry::thread_skill_watch_paths(
             self, thread_id,
         ))

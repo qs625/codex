@@ -35,13 +35,13 @@ use crate::render::renderable::Renderable;
 
 #[cfg(test)]
 use crate::app_command::AppCommand as Op;
-use codex_app_server_protocol::ToolRequestUserInputAnswer;
+use app_server_protocol::ToolRequestUserInputAnswer;
 #[cfg(test)]
-use codex_app_server_protocol::ToolRequestUserInputOption;
-use codex_app_server_protocol::ToolRequestUserInputParams;
-use codex_app_server_protocol::ToolRequestUserInputQuestion;
-use codex_app_server_protocol::ToolRequestUserInputResponse;
-use codex_protocol::user_input::TextElement;
+use app_server_protocol::ToolRequestUserInputOption;
+use app_server_protocol::ToolRequestUserInputParams;
+use app_server_protocol::ToolRequestUserInputQuestion;
+use app_server_protocol::ToolRequestUserInputResponse;
+use protocol::user_input::TextElement;
 use unicode_width::UnicodeWidthStr;
 
 const NOTES_PLACEHOLDER: &str = "Add notes";

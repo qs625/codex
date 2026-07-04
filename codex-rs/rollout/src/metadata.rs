@@ -8,21 +8,21 @@ use chrono::DateTime;
 use chrono::NaiveDateTime;
 use chrono::Timelike;
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionMetaLine;
-use codex_protocol::protocol::SessionSource;
-use codex_state::BackfillState;
-use codex_state::BackfillStats;
-use codex_state::BackfillStatus;
-use codex_state::DB_ERROR_METRIC;
-use codex_state::DB_METRIC_BACKFILL;
-use codex_state::DB_METRIC_BACKFILL_DURATION_MS;
-use codex_state::ExtractionOutcome;
-use codex_state::ThreadMetadataBuilder;
-use codex_state::apply_rollout_item;
+use protocol::ThreadId;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionMetaLine;
+use protocol::protocol::SessionSource;
+use state::BackfillState;
+use state::BackfillStats;
+use state::BackfillStatus;
+use state::DB_ERROR_METRIC;
+use state::DB_METRIC_BACKFILL;
+use state::DB_METRIC_BACKFILL_DURATION_MS;
+use state::ExtractionOutcome;
+use state::ThreadMetadataBuilder;
+use state::apply_rollout_item;
 use std::path::Path;
 use std::path::PathBuf;
 use tracing::info;
@@ -133,7 +133,7 @@ pub async fn extract_metadata_from_rollout(
 }
 
 pub(crate) async fn backfill_sessions(
-    runtime: &codex_state::StateRuntime,
+    runtime: &state::StateRuntime,
     codex_home: &Path,
     default_provider: &str,
 ) {
@@ -147,12 +147,12 @@ pub(crate) async fn backfill_sessions(
 }
 
 pub(crate) async fn backfill_sessions_with_lease(
-    runtime: &codex_state::StateRuntime,
+    runtime: &state::StateRuntime,
     codex_home: &Path,
     default_provider: &str,
     backfill_lease_seconds: i64,
 ) {
-    let timer = codex_metrics_api::start_global_timer(DB_METRIC_BACKFILL_DURATION_MS, &[]);
+    let timer = metrics_api::start_global_timer(DB_METRIC_BACKFILL_DURATION_MS, &[]);
     let backfill_state = match runtime.get_backfill_state().await {
         Ok(state) => state,
         Err(err) => {
@@ -247,7 +247,7 @@ pub(crate) async fn backfill_sessions_with_lease(
             match extract_metadata_from_rollout(&rollout.path, default_provider).await {
                 Ok(outcome) => {
                     if outcome.parse_errors > 0 {
-                        codex_metrics_api::record_global_counter(
+                        metrics_api::record_global_counter(
                             DB_ERROR_METRIC,
                             outcome.parse_errors as i64,
                             &[("stage", "backfill_sessions")],
@@ -341,12 +341,12 @@ pub(crate) async fn backfill_sessions_with_lease(
         stats.scanned, stats.upserted, stats.failed
     );
     {
-        codex_metrics_api::record_global_counter(
+        metrics_api::record_global_counter(
             DB_METRIC_BACKFILL,
             stats.upserted as i64,
             &[("status", "upserted")],
         );
-        codex_metrics_api::record_global_counter(
+        metrics_api::record_global_counter(
             DB_METRIC_BACKFILL,
             stats.failed as i64,
             &[("status", "failed")],

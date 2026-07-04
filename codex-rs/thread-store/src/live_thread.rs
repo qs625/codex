@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::ThreadMemoryMode;
-use codex_rollout::EventPersistenceMode;
-use codex_rollout::persisted_rollout_items;
+use protocol::ThreadId;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::ThreadMemoryMode;
+use rollout::EventPersistenceMode;
+use rollout::persisted_rollout_items;
 use tokio::sync::Mutex;
 use tracing::warn;
 
@@ -23,10 +23,10 @@ use crate::ThreadStore;
 use crate::ThreadStoreResult;
 use crate::UpdateThreadMetadataParams;
 use crate::thread_metadata_sync::ThreadMetadataSync;
-use codex_thread_store_api::LiveThreadFactory;
-use codex_thread_store_api::LiveThreadHandle;
-use codex_thread_store_api::SharedLiveThread;
-use codex_thread_store_api::ThreadStoreFuture;
+use thread_store_api::LiveThreadFactory;
+use thread_store_api::LiveThreadHandle;
+use thread_store_api::SharedLiveThread;
+use thread_store_api::ThreadStoreFuture;
 
 /// Handle for an active thread's persistence lifecycle.
 ///

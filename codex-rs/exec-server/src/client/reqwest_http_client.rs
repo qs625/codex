@@ -7,14 +7,14 @@
 
 use std::time::Duration;
 
-use codex_client::build_reqwest_client_with_custom_ca;
-use codex_exec_server_api::ExecRuntimeError;
-use codex_exec_server_api::HttpClient;
-use codex_exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
-use codex_jsonrpc_types::JSONRPCErrorError;
+use transport_client::build_reqwest_client_with_custom_ca;
+use exec_server_api::ExecRuntimeError;
+use exec_server_api::HttpClient;
+use exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
+use jsonrpc_types::JSONRPCErrorError;
 use reqwest::Method;
 use reqwest::Url;
 use reqwest::header::HeaderMap;

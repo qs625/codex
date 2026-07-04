@@ -1,6 +1,6 @@
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::SandboxPolicy;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::PermissionProfile;
+use protocol::protocol::SandboxPolicy;
 use std::path::Path;
 
 use crate::SandboxType;

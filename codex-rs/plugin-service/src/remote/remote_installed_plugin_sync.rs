@@ -8,12 +8,12 @@ use super::RemotePluginCatalogError;
 use super::RemotePluginScope;
 use super::RemotePluginServiceConfig;
 use super::ensure_chatgpt_auth;
-use super::fetch_installed_plugins_for_scope_with_download_url;
-use super::remote_plugin_canonical_marketplace_name;
 use super::remote_bundle;
+use super::remote_plugin_canonical_marketplace_name;
 use crate::store::PLUGINS_CACHE_DIR;
 use crate::store::PluginStore;
 use crate::store::PluginStoreError;
+use model_service_api::SharedModelServiceApi;
 use plugin_service_api::PluginId;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -81,6 +81,7 @@ pub struct RemotePluginCacheMutationGuard {
 
 pub fn maybe_start_remote_installed_plugin_bundle_sync(
     codex_home: PathBuf,
+    model_service: SharedModelServiceApi,
     config: RemotePluginServiceConfig,
     auth: Option<RemotePluginAuth>,
     on_local_cache_changed: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
@@ -96,8 +97,13 @@ pub fn maybe_start_remote_installed_plugin_bundle_sync(
     }
 
     tokio::spawn(async move {
-        let result =
-            sync_remote_installed_plugin_bundles_once(codex_home, &config, Some(&auth)).await;
+        let result = sync_remote_installed_plugin_bundles_once(
+            codex_home,
+            model_service,
+            &config,
+            Some(&auth),
+        )
+        .await;
         match result {
             Ok(outcome) => {
                 if outcome.changed_local_cache()
@@ -125,22 +131,31 @@ pub fn maybe_start_remote_installed_plugin_bundle_sync(
 
 pub async fn sync_remote_installed_plugin_bundles_once(
     codex_home: PathBuf,
+    model_service: SharedModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
 ) -> Result<RemoteInstalledPluginBundleSyncOutcome, RemoteInstalledPluginBundleSyncError> {
     let auth = ensure_chatgpt_auth(auth)?;
     let global = async {
         let scope = RemotePluginScope::Global;
-        let installed_plugins = fetch_installed_plugins_for_scope_with_download_url(
-            config, auth, scope, /*include_download_urls*/ true,
+        let installed_plugins = super::fetch_installed_plugins_for_scope_with_download_url(
+            model_service.as_ref(),
+            config,
+            auth,
+            scope,
+            /*include_download_urls*/ true,
         )
         .await?;
         Ok::<_, RemotePluginCatalogError>((scope, installed_plugins))
     };
     let workspace = async {
         let scope = RemotePluginScope::Workspace;
-        let installed_plugins = fetch_installed_plugins_for_scope_with_download_url(
-            config, auth, scope, /*include_download_urls*/ true,
+        let installed_plugins = super::fetch_installed_plugins_for_scope_with_download_url(
+            model_service.as_ref(),
+            config,
+            auth,
+            scope,
+            /*include_download_urls*/ true,
         )
         .await?;
         Ok::<_, RemotePluginCatalogError>((scope, installed_plugins))
@@ -198,7 +213,7 @@ pub async fn sync_remote_installed_plugin_bundles_once(
                 .version
                 .as_deref()
                 .map(str::trim)
-                .filter(|version| !version.is_empty());
+                .filter(|version: &&str| !version.is_empty());
             if store.active_plugin_version(&plugin_id).as_deref() == release_version {
                 continue;
             }
@@ -225,6 +240,7 @@ pub async fn sync_remote_installed_plugin_bundles_once(
             };
 
             match remote_bundle::download_and_install_remote_plugin_bundle(
+                model_service.http_client().as_ref(),
                 codex_home.clone(),
                 bundle,
             )

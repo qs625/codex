@@ -8,6 +8,7 @@ use super::sync_plugins_from_remote;
 use crate::PluginsConfigInput;
 use crate::PluginsManager;
 use crate::startup_sync::has_local_curated_plugins_snapshot;
+use model_service_api::SharedModelServiceApi;
 use tracing::info;
 use tracing::warn;
 
@@ -16,6 +17,7 @@ const STARTUP_REMOTE_PLUGIN_SYNC_PREREQUISITE_TIMEOUT: Duration = Duration::from
 
 pub(crate) fn start_startup_remote_plugin_sync_once(
     manager: Arc<PluginsManager>,
+    model_service: SharedModelServiceApi,
     codex_home: PathBuf,
     config: PluginsConfigInput,
     auth_provider: SharedRemotePluginAuthProvider,
@@ -41,6 +43,7 @@ pub(crate) fn start_startup_remote_plugin_sync_once(
         let auth = auth_provider.remote_plugin_auth().await;
         match sync_plugins_from_remote(
             &manager,
+            model_service.as_ref(),
             &config,
             auth.as_ref(),
             /*additive_only*/ true,

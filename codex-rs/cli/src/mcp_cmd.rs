@@ -5,31 +5,31 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
-use clap::ArgGroup;
 use approval_service::ApprovalService;
-use codex_config_edit::ConfigEditsBuilder;
-use codex_config_edit::load_global_mcp_servers;
+use clap::ArgGroup;
+use config_service::ConfigEditsBuilder;
+use config_service::load_global_mcp_servers;
 use codex_config_types::AppToolApproval;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
-use plugin_service::PluginsManager;
-use codex_mcp::compute_auth_statuses;
-use codex_mcp::discover_supported_scopes;
-use codex_mcp::oauth_login_support;
-use codex_mcp::should_retry_without_scopes;
-use codex_mcp_types::McpOAuthLoginSupport;
-use codex_mcp_types::ResolvedMcpOAuthScopes;
-use codex_mcp_types::resolve_oauth_scopes;
-use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::delete_oauth_tokens;
 use codex_rmcp_client::perform_oauth_login;
-use mcp_service::McpService;
-use mcp_service_api::McpServiceApi;
-use thread_service::config::Config;
-use thread_service::config::find_codex_home;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::format_env_display;
+use mcp_service::McpService;
+use mcp_service::compute_auth_statuses;
+use mcp_service::discover_supported_scopes;
+use mcp_service::oauth_login_support;
+use mcp_service::should_retry_without_scopes;
+use mcp_service_api::McpServiceApi;
+use mcp_types::McpOAuthLoginSupport;
+use mcp_types::ResolvedMcpOAuthScopes;
+use mcp_types::resolve_oauth_scopes;
+use plugin_service::PluginsManager;
+use protocol::protocol::McpAuthStatus;
+use thread_service::config::Config;
+use thread_service::config::find_codex_home;
 
 /// Subcommands:
 /// - `list`   — list configured servers (with `--json`)
@@ -496,7 +496,11 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
         .configured_servers(plugins_manager.as_ref(), &config)
         .await;
     let effective_mcp_servers = mcp_service
-        .effective_servers(plugins_manager.as_ref(), &config, /*auth_context*/ None)
+        .effective_servers(
+            plugins_manager.as_ref(),
+            &config,
+            /*auth_context*/ None,
+        )
         .await;
 
     let mut entries: Vec<_> = mcp_servers.iter().collect();

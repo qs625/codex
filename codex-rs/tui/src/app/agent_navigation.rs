@@ -22,7 +22,7 @@ use crate::multi_agents::AgentPickerThreadEntry;
 use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut;
 use crate::multi_agents::previous_agent_shortcut;
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 use ratatui::text::Span;
 use std::collections::HashMap;
 

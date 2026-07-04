@@ -93,10 +93,10 @@ fn extract_conversation_summary(
     let preview = head
         .iter()
         .filter_map(|value| {
-            serde_json::from_value::<codex_protocol::protocol::EventMsg>(value.clone()).ok()
+            serde_json::from_value::<protocol::protocol::EventMsg>(value.clone()).ok()
         })
         .find_map(|event| match event {
-            codex_protocol::protocol::EventMsg::UserMessage(user) => Some(user.message),
+            protocol::protocol::EventMsg::UserMessage(user) => Some(user.message),
             _ => None,
         })?;
 
@@ -142,35 +142,34 @@ fn map_git_info(git_info: &CoreGitInfo) -> ConversationGitInfo {
 }
 
 pub(super) fn with_thread_spawn_agent_metadata(
-    source: codex_protocol::protocol::SessionSource,
+    source: protocol::protocol::SessionSource,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
     agent_path: Option<String>,
-) -> codex_protocol::protocol::SessionSource {
+) -> protocol::protocol::SessionSource {
     if agent_nickname.is_none() && agent_role.is_none() && agent_path.is_none() {
         return source;
     }
 
-    let stored_agent_path =
-        agent_path.and_then(|path| match codex_protocol::AgentPath::try_from(path) {
-            Ok(path) => Some(path),
-            Err(err) => {
-                warn!("stored thread agent_path is invalid and will be ignored: {err}");
-                None
-            }
-        });
+    let stored_agent_path = agent_path.and_then(|path| match protocol::AgentPath::try_from(path) {
+        Ok(path) => Some(path),
+        Err(err) => {
+            warn!("stored thread agent_path is invalid and will be ignored: {err}");
+            None
+        }
+    });
 
     match source {
-        codex_protocol::protocol::SessionSource::SubAgent(
-            codex_protocol::protocol::SubAgentSource::ThreadSpawn {
+        protocol::protocol::SessionSource::SubAgent(
+            protocol::protocol::SubAgentSource::ThreadSpawn {
                 parent_thread_id,
                 depth,
                 agent_path: existing_agent_path,
                 agent_nickname: existing_agent_nickname,
                 agent_role: existing_agent_role,
             },
-        ) => codex_protocol::protocol::SessionSource::SubAgent(
-            codex_protocol::protocol::SubAgentSource::ThreadSpawn {
+        ) => protocol::protocol::SessionSource::SubAgent(
+            protocol::protocol::SubAgentSource::ThreadSpawn {
                 parent_thread_id,
                 depth,
                 agent_path: existing_agent_path.or(stored_agent_path),
@@ -183,8 +182,8 @@ pub(super) fn with_thread_spawn_agent_metadata(
 }
 
 pub(super) fn thread_response_active_permission_profile(
-    active_permission_profile: Option<codex_protocol::models::ActivePermissionProfile>,
-) -> Option<codex_app_server_protocol::ActivePermissionProfile> {
+    active_permission_profile: Option<protocol::models::ActivePermissionProfile>,
+) -> Option<app_server_protocol::ActivePermissionProfile> {
     active_permission_profile.map(Into::into)
 }
 
@@ -212,9 +211,9 @@ pub(super) fn apply_permission_profile_selection_to_config_overrides(
 }
 
 pub(super) fn thread_response_sandbox_policy(
-    permission_profile: &codex_protocol::models::PermissionProfile,
+    permission_profile: &protocol::models::PermissionProfile,
     cwd: &Path,
-) -> codex_app_server_protocol::SandboxPolicy {
+) -> app_server_protocol::SandboxPolicy {
     let file_system_policy = permission_profile.file_system_sandbox_policy();
     let sandbox_policy = codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile(
         permission_profile,

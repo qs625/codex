@@ -1,17 +1,17 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-rollout-api"
+name = "rollout-api"
 version.workspace = true
 
 [lib]
 doctest = false
-name = "codex_rollout_api"
+name = "rollout_api"
 path = "src/lib.rs"
 
 [dependencies]
 codex-context-manager = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 
 [dev-dependencies]

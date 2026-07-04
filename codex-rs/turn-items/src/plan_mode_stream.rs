@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use codex_protocol::items::AgentMessageItem;
-use codex_protocol::items::PlanItem;
-use codex_protocol::items::TurnItem;
-use codex_protocol::models::ResponseItem;
+use protocol::items::AgentMessageItem;
+use protocol::items::PlanItem;
+use protocol::items::TurnItem;
+use protocol::models::ResponseItem;
 
 use crate::assistant_stream::ProposedPlanSegment;
 use crate::assistant_stream::agent_message_text;

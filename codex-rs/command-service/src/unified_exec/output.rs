@@ -11,7 +11,7 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use codex_command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
+use command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 
 pub const DEFAULT_COMMAND_OUTPUT_DELTA_MAX_BYTES: usize = 8192;
 const DEFAULT_COMMAND_OUTPUT_BROADCAST_CAPACITY: usize = 64;

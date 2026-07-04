@@ -2,18 +2,18 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::GitInfo;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::ThreadMemoryMode;
-use codex_rollout::append_rollout_item_to_path;
-use codex_rollout::append_thread_name;
-use codex_rollout::find_archived_thread_path_by_id_str;
-use codex_rollout::find_thread_path_by_id_str;
-use codex_rollout::read_session_meta_line;
-use codex_rollout_api::ARCHIVED_SESSIONS_SUBDIR;
-use codex_state::ThreadMetadataBuilder;
+use protocol::ThreadId;
+use protocol::protocol::GitInfo;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadMemoryMode;
+use rollout::append_rollout_item_to_path;
+use rollout::append_thread_name;
+use rollout::find_archived_thread_path_by_id_str;
+use rollout::find_thread_path_by_id_str;
+use rollout::read_session_meta_line;
+use rollout_api::ARCHIVED_SESSIONS_SUBDIR;
+use state::ThreadMetadataBuilder;
 
 use super::LocalThreadStore;
 use super::helpers::git_info_from_parts;
@@ -79,7 +79,7 @@ pub(super) async fn update_thread_metadata(
     }
 
     let state_db_ctx = store.state_db().await;
-    codex_rollout::state_db::reconcile_rollout(
+    rollout::state_db::reconcile_rollout(
         state_db_ctx.as_deref(),
         resolved_rollout_path.path.as_path(),
         store.config.default_model_provider_id.as_str(),
@@ -540,7 +540,7 @@ async fn apply_thread_memory_mode(
 async fn apply_thread_subscriptions_to_rollout(
     rollout_path: &Path,
     thread_id: ThreadId,
-    subscriptions: &[codex_protocol::subscriptions::PersistedSubscription],
+    subscriptions: &[protocol::subscriptions::PersistedSubscription],
 ) -> ThreadStoreResult<()> {
     let mut session_meta =
         read_session_meta_line(rollout_path)
@@ -627,9 +627,9 @@ fn rollout_path_is_archived(store: &LocalThreadStore, path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::subscriptions::PersistedSubscription;
-    use codex_protocol::subscriptions::ScheduleSpec;
     use pretty_assertions::assert_eq;
+    use protocol::subscriptions::PersistedSubscription;
+    use protocol::subscriptions::ScheduleSpec;
     use serde_json::Value;
     use serde_json::json;
     use tempfile::TempDir;
@@ -671,7 +671,7 @@ mod tests {
             .expect("set thread name");
 
         assert_eq!(thread.name.as_deref(), Some("A sharper name"));
-        let latest_name = codex_rollout::find_thread_name_by_id(home.path(), &thread_id)
+        let latest_name = rollout::find_thread_name_by_id(home.path(), &thread_id)
             .await
             .expect("find thread name");
         assert_eq!(latest_name.as_deref(), Some("A sharper name"));
@@ -685,7 +685,7 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let path =
             write_session_file(home.path(), "2025-01-03T14-30-00", uuid).expect("session file");
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -725,7 +725,7 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let path =
             write_session_file(home.path(), "2025-01-03T18-45-00", uuid).expect("session file");
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -778,7 +778,7 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let path =
             write_session_file(home.path(), "2025-01-03T18-50-00", uuid).expect("session file");
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -829,7 +829,7 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let path =
             write_session_file(home.path(), "2025-01-03T18-30-00", uuid).expect("session file");
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             config.sqlite_home.clone(),
             config.default_model_provider_id.clone(),
         )
@@ -873,7 +873,7 @@ mod tests {
         assert_eq!(appended["payload"]["memory_mode"], "disabled");
         assert_eq!(appended["payload"]["git"]["branch"], "feature");
 
-        codex_rollout::state_db::reconcile_rollout(
+        rollout::state_db::reconcile_rollout(
             Some(runtime.as_ref()),
             path.as_path(),
             config.default_model_provider_id.as_str(),
@@ -935,7 +935,7 @@ mod tests {
     async fn update_thread_metadata_sets_git_info() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             config.sqlite_home.clone(),
             config.default_model_provider_id.clone(),
         )
@@ -978,7 +978,7 @@ mod tests {
     async fn update_thread_metadata_partially_updates_git_info() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             config.sqlite_home.clone(),
             config.default_model_provider_id.clone(),
         )
@@ -1036,7 +1036,7 @@ mod tests {
     async fn update_thread_metadata_clears_git_info_fields() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             config.sqlite_home.clone(),
             config.default_model_provider_id.clone(),
         )
@@ -1085,7 +1085,7 @@ mod tests {
         assert_eq!(appended["type"], "session_meta");
         assert_eq!(appended["payload"]["git"], json!({}));
 
-        codex_rollout::state_db::reconcile_rollout(
+        rollout::state_db::reconcile_rollout(
             Some(runtime.as_ref()),
             path.as_path(),
             config.default_model_provider_id.as_str(),
@@ -1119,7 +1119,7 @@ mod tests {
         let appended = last_rollout_item(path.as_path());
         assert_eq!(appended["type"], "session_meta");
         assert_eq!(appended["payload"].get("git"), None);
-        codex_rollout::state_db::reconcile_rollout(
+        rollout::state_db::reconcile_rollout(
             Some(runtime.as_ref()),
             path.as_path(),
             config.default_model_provider_id.as_str(),
@@ -1179,7 +1179,7 @@ mod tests {
         let appended = last_rollout_item(path.as_path());
         assert_eq!(appended["type"], "session_meta");
         assert_eq!(appended["payload"].get("git"), None);
-        codex_rollout::state_db::reconcile_rollout(
+        rollout::state_db::reconcile_rollout(
             Some(runtime.as_ref()),
             path.as_path(),
             config.default_model_provider_id.as_str(),
@@ -1239,7 +1239,7 @@ mod tests {
     async fn update_thread_metadata_applies_combined_explicit_patch() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -1277,7 +1277,7 @@ mod tests {
         assert_eq!(appended["type"], "session_meta");
         assert_eq!(appended["payload"]["memory_mode"], "disabled");
         assert_eq!(appended["payload"]["git"]["branch"], "combined");
-        let latest_name = codex_rollout::find_thread_name_by_id(home.path(), &thread_id)
+        let latest_name = rollout::find_thread_name_by_id(home.path(), &thread_id)
             .await
             .expect("find thread name");
         assert_eq!(latest_name.as_deref(), Some("Combined metadata"));
@@ -1292,7 +1292,7 @@ mod tests {
     async fn metadata_patch_applies_title_over_existing_name() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -1335,7 +1335,7 @@ mod tests {
     async fn metadata_patch_applies_latest_preview_and_first_user_message() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -1393,7 +1393,7 @@ mod tests {
     async fn observed_metadata_rejects_unknown_thread_without_rollout() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -1435,7 +1435,7 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         write_archived_session_file(home.path(), "2025-01-03T19-30-00", uuid)
             .expect("archived session file");
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -1471,7 +1471,7 @@ mod tests {
     async fn observed_metadata_normalizes_cwd_for_list_filters() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -1539,7 +1539,7 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let archived_path = write_archived_session_file(home.path(), "2025-01-03T16-00-00", uuid)
             .expect("archived session file");
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -1550,7 +1550,7 @@ mod tests {
             .mark_backfill_complete(/*last_watermark*/ None)
             .await
             .expect("backfill should be complete");
-        codex_rollout::state_db::reconcile_rollout(
+        rollout::state_db::reconcile_rollout(
             Some(runtime.as_ref()),
             archived_path.as_path(),
             config.default_model_provider_id.as_str(),
@@ -1602,7 +1602,7 @@ mod tests {
         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
         let archived_path = write_archived_session_file(home.path(), "2025-01-03T16-30-00", uuid)
             .expect("archived session file");
-        let runtime = codex_state::StateRuntime::init(
+        let runtime = state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
         )
@@ -1613,7 +1613,7 @@ mod tests {
             .mark_backfill_complete(/*last_watermark*/ None)
             .await
             .expect("backfill should be complete");
-        codex_rollout::state_db::reconcile_rollout(
+        rollout::state_db::reconcile_rollout(
             Some(runtime.as_ref()),
             archived_path.as_path(),
             config.default_model_provider_id.as_str(),

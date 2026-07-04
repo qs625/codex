@@ -1,5 +1,3 @@
-use codex_api_types::SseEventTelemetry;
-use codex_api_types::WebsocketEventTelemetry;
 use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::Result;
@@ -7,10 +5,12 @@ use codex_otel::RuntimeMetricTotals;
 use codex_otel::RuntimeMetricsSummary;
 use codex_otel::SessionTelemetry;
 use codex_otel::TelemetryAuthMode;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::SessionSource;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::protocol::SessionSource;
+use session_telemetry_api::SseEventTelemetry;
+use session_telemetry_api::WebsocketEventTelemetry;
 use std::time::Duration;
 
 #[test]

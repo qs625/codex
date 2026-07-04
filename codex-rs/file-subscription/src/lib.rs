@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use codex_extension_api::ExtensionRegistryBuilder;
 use codex_file_watcher::FileWatcher;
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 
 pub use extension::FsSubscriptionExtension;
 pub use runtime::FileSubscriptionThreadRuntime;

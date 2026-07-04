@@ -3,13 +3,13 @@
 use std::collections::HashSet;
 
 use codex_context_manager::ContextualUserFragment;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::TurnAbortedEvent;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::EventMsg;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortedEvent;
 
 use crate::truncation;
 

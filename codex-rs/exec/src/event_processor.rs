@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use codex_app_server_protocol::ServerNotification;
-use codex_protocol::protocol::SessionConfiguredEvent;
+use app_server_protocol::ServerNotification;
+use protocol::protocol::SessionConfiguredEvent;
 use thread_service::config::Config;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
-use codex_protocol::items::AgentMessageContent;
-use codex_protocol::items::AgentMessageItem;
-use codex_protocol::items::TurnItem;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::EventMsg;
 use codex_utils_stream_parser::AssistantTextStreamParser;
 use codex_utils_stream_parser::extract_proposed_plan_text;
 use codex_utils_stream_parser::strip_citations;
 use codex_utils_stream_parser::strip_proposed_plan_blocks;
+use protocol::items::AgentMessageContent;
+use protocol::items::AgentMessageItem;
+use protocol::items::TurnItem;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::EventMsg;
 
 pub use codex_utils_stream_parser::AssistantTextChunk as ParsedAssistantTextDelta;
 pub use codex_utils_stream_parser::ProposedPlanSegment;

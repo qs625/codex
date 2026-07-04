@@ -1,12 +1,12 @@
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::is_image_close_tag_text;
-use codex_protocol::models::is_image_open_tag_text;
-use codex_protocol::models::is_local_image_close_tag_text;
-use codex_protocol::models::is_local_image_open_tag_text;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::truncate_text;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::models::is_image_close_tag_text;
+use protocol::models::is_image_open_tag_text;
+use protocol::models::is_local_image_close_tag_text;
+use protocol::models::is_local_image_open_tag_text;
 
 use crate::is_contextual_user_message_content;
 

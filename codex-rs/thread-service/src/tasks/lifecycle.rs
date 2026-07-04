@@ -1,5 +1,5 @@
 use codex_extension_api::ExtensionData;
-use codex_protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortReason;
 
 use crate::session::session::Session;
 

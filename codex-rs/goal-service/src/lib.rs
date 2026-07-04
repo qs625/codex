@@ -1,19 +1,19 @@
-use codex_protocol::models::ThreadGoalUpdateEventSource;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ThreadGoal;
-use codex_protocol::protocol::ThreadGoalStatus;
-use codex_protocol::protocol::ThreadGoalUpdatedEvent;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::validate_thread_goal_objective;
-use codex_state_api::ExternalGoalPreviousStatus;
-use codex_state_api::ExternalGoalSet;
-use codex_state_api::ThreadGoalUpdate;
-use codex_state_api::protocol_goal_from_state;
-use codex_state_api::state_goal_status_from_protocol;
-use codex_state_api::thread_goal_update_response_item;
-use codex_state_api::validate_thread_goal_budget;
 use goal_service_api::GoalServiceApi;
+use protocol::models::ThreadGoalUpdateEventSource;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ThreadGoal;
+use protocol::protocol::ThreadGoalStatus;
+use protocol::protocol::ThreadGoalUpdatedEvent;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::validate_thread_goal_objective;
+use state_api::ExternalGoalPreviousStatus;
+use state_api::ExternalGoalSet;
+use state_api::ThreadGoalUpdate;
+use state_api::protocol_goal_from_state;
+use state_api::state_goal_status_from_protocol;
+use state_api::thread_goal_update_response_item;
+use state_api::validate_thread_goal_budget;
 use thread_service_api::SessionCapabilityFuture;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
@@ -55,7 +55,7 @@ impl GoalServiceApi for GoalService {
                 .insert_thread_goal(
                     session.conversation_id(),
                     objective,
-                    codex_state_api::ThreadGoalStatus::Active,
+                    state_api::ThreadGoalStatus::Active,
                     token_budget,
                 )
                 .await
@@ -171,7 +171,11 @@ impl GoalServiceApi for GoalService {
         turn: &'a dyn ThreadTurnCapability,
         turn_completed: bool,
     ) -> SessionCapabilityFuture<'a, Result<(), String>> {
-        Box::pin(async move { session.finish_turn_goal_accounting(turn, turn_completed).await })
+        Box::pin(async move {
+            session
+                .finish_turn_goal_accounting(turn, turn_completed)
+                .await
+        })
     }
 
     fn handle_goal_turn_abort<'a>(
@@ -224,7 +228,7 @@ async fn emit_goal_update(
     session: &dyn ThreadSessionCapability,
     turn: &dyn ThreadTurnCapability,
     goal: ThreadGoal,
-    previous_status: Option<codex_state_api::ThreadGoalStatus>,
+    previous_status: Option<state_api::ThreadGoalStatus>,
 ) {
     session
         .emit_event(

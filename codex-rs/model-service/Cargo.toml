@@ -1,0 +1,61 @@
+[package]
+name = "model-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Concrete model service implementation."
+
+[lib]
+name = "model_service"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+async-channel = { workspace = true }
+model-service-api = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+codex-aws-auth = { workspace = true }
+codex-auth-types = { workspace = true }
+transport-client = { workspace = true }
+transport-client-identity = { workspace = true }
+transport-client-types = { workspace = true }
+codex-feedback-api = { workspace = true }
+codex-login = { workspace = true }
+codex-realtime = { workspace = true }
+codex-collaboration-mode-templates = { workspace = true }
+codex-otel = { workspace = true }
+codex-tool-service-api = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+codex-utils-template = { workspace = true }
+bytes = { workspace = true }
+eventsource-stream = { workspace = true }
+protocol = { workspace = true }
+regex-lite = { workspace = true }
+rollout-trace-api = { workspace = true }
+session-telemetry-api = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["fs", "net", "sync", "time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+tungstenite = { workspace = true }
+url = { workspace = true }
+codex-utils-rustls-provider = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+assert_matches = { workspace = true }
+async-trait = { workspace = true }
+codex-login = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-tungstenite = { workspace = true }
+wiremock = { workspace = true }

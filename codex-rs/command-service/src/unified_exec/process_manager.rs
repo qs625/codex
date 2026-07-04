@@ -56,29 +56,29 @@ use crate::unified_exec::async_watcher::start_streaming_output;
 use crate::unified_exec::clamp_yield_time;
 use crate::unified_exec::command_notification_filter_to_protocol;
 use crate::unified_exec::generate_chunk_id;
-use codex_command_service_api::CommandSessionController;
-use codex_command_service_api::CommandSessionError;
-use codex_command_service_api::CommandSessionFuture;
-use codex_command_service_api::CommandWaitOperation;
-use codex_command_service_api::ExecCapturePolicy;
-use codex_command_service_api::ExecExpiration;
-use codex_command_service_api::ExecApprovalRequirement;
-use codex_command_service_api::ExecCommandRunOutput;
-use codex_command_service_api::ExecOptions;
-use codex_command_service_api::ToolRuntimeNetworkApprovalError;
-use codex_command_service_api::ToolRuntimeNetworkApprovalHandle;
-use codex_command_service_api::ToolRuntimeNetworkApprovalTrigger;
-use codex_hooks_api::PermissionRequestDecision;
-use codex_protocol::ThreadId;
-use codex_protocol::approvals::NetworkApprovalContext;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::SandboxErr;
-use codex_protocol::network_policy::NetworkPolicyDecisionPayload;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::ExecCommandSource;
-use codex_protocol::protocol::NetworkPolicyRuleAction;
-use codex_protocol::protocol::ReviewDecision;
-use thread_service_api::ThreadSessionCapability;
+use codex_approval_service_api::ApprovalSessionCapability;
+use command_service_api::CommandSessionController;
+use command_service_api::CommandSessionError;
+use command_service_api::CommandSessionFuture;
+use command_service_api::CommandWaitOperation;
+use command_service_api::ExecCapturePolicy;
+use command_service_api::ExecExpiration;
+use command_service_api::ExecApprovalRequirement;
+use command_service_api::ExecCommandRunOutput;
+use command_service_api::ExecOptions;
+use command_service_api::ToolRuntimeNetworkApprovalError;
+use command_service_api::ToolRuntimeNetworkApprovalHandle;
+use command_service_api::ToolRuntimeNetworkApprovalTrigger;
+use hooks_api::PermissionRequestDecision;
+use protocol::ThreadId;
+use protocol::approvals::NetworkApprovalContext;
+use protocol::error::CodexErr;
+use protocol::error::SandboxErr;
+use protocol::network_policy::NetworkPolicyDecisionPayload;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::ExecCommandSource;
+use protocol::protocol::NetworkPolicyRuleAction;
+use protocol::protocol::ReviewDecision;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
 
@@ -322,12 +322,12 @@ fn network_approval_context_from_payload(
     })
 }
 
-fn sandbox_denial_reason(_output: &codex_protocol::exec_output::ExecToolCallOutput) -> String {
+fn sandbox_denial_reason(_output: &protocol::exec_output::ExecToolCallOutput) -> String {
     "command failed; retry without sandbox?".to_string()
 }
 
 async fn reject_unapproved_decision(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     review_id: Option<&str>,
     decision: ReviewDecision,
 ) -> Result<(), ToolError> {
@@ -371,11 +371,11 @@ async fn request_unified_exec_approval(
 ) -> Result<(), ToolError> {
     if evaluate_permission_request_hooks
         && let Some(decision) = context
-            .session
+            .approval_session
             .run_permission_request_hooks(
                 context.turn.as_ref(),
                 permission_request_run_id,
-                codex_command_service_api::PermissionRequestPayload::bash(
+                command_service_api::PermissionRequestPayload::bash(
                     request.hook_command.clone(),
                     request.justification.clone(),
                 ),
@@ -392,7 +392,7 @@ async fn request_unified_exec_approval(
 
     let review_id = use_guardian.then(|| uuid::Uuid::new_v4().to_string());
     let decision = context
-        .session
+        .approval_session
         .request_unified_exec_approval(
             context.turn.as_ref(),
             context.call_id.clone(),
@@ -411,7 +411,12 @@ async fn request_unified_exec_approval(
         )
         .await;
 
-    reject_unapproved_decision(context.session.as_ref(), review_id.as_deref(), decision).await
+    reject_unapproved_decision(
+        context.approval_session.as_ref(),
+        review_id.as_deref(),
+        decision,
+    )
+    .await
 }
 
 fn fail_process_with_message(process: &UnifiedExecProcess, message: String) -> UnifiedExecError {
@@ -470,7 +475,7 @@ async fn spawn_unified_exec_process(
         attempt.sandbox,
         attempt.windows_sandbox_level,
     );
-    let command = if matches!(session_shell.shell_type, codex_tool_config::ToolUserShellType::PowerShell)
+    let command = if matches!(session_shell.shell_type, tool_config::ToolUserShellType::PowerShell)
     {
         codex_shell_utils::powershell::prefix_powershell_script_with_utf8(&command)
     } else {
@@ -1203,7 +1208,7 @@ impl UnifiedExecProcessManager {
         exec_server_env_config: Option<&ExecServerEnvConfig>,
         tty: bool,
         mut spawn_lifecycle: SpawnLifecycleHandle,
-        environment: &dyn codex_exec_server_api::ExecEnvironment,
+        environment: &dyn exec_server_api::ExecEnvironment,
     ) -> Result<UnifiedExecProcess, UnifiedExecError> {
         let inherited_fds = spawn_lifecycle.inherited_fds();
 
@@ -1243,7 +1248,7 @@ impl UnifiedExecProcessManager {
                 .as_ref()
                 .and_then(|overrides| overrides.write_roots_override.clone());
             let spawned = match request.windows_sandbox_level {
-                codex_protocol::config_types::WindowsSandboxLevel::Elevated => {
+                protocol::config_types::WindowsSandboxLevel::Elevated => {
                     codex_windows_sandbox::spawn_windows_sandbox_session_elevated(
                         policy_json.as_str(),
                         request.windows_sandbox_policy_cwd.as_path(),
@@ -1263,8 +1268,8 @@ impl UnifiedExecProcessManager {
                     )
                     .await
                 }
-                codex_protocol::config_types::WindowsSandboxLevel::RestrictedToken
-                | codex_protocol::config_types::WindowsSandboxLevel::Disabled => {
+                protocol::config_types::WindowsSandboxLevel::RestrictedToken
+                | protocol::config_types::WindowsSandboxLevel::Disabled => {
                     codex_windows_sandbox::spawn_windows_sandbox_session_legacy(
                         policy_json.as_str(),
                         request.windows_sandbox_policy_cwd.as_path(),
@@ -1371,7 +1376,7 @@ impl UnifiedExecProcessManager {
         };
         let sandbox_context = context.turn.tool_sandbox_context();
         let sandbox_runtime = context.session.sandbox_runtime();
-        let strict_auto_review = context.session.strict_auto_review_enabled_for_turn().await;
+        let strict_auto_review = context.approval_session.strict_auto_review_enabled_for_turn().await;
         let use_guardian = strict_auto_review || context.turn.routes_approval_to_guardian();
         let approval_policy = context.turn.approval_policy();
         let requirement = request.exec_approval_requirement.clone();
@@ -1479,7 +1484,7 @@ impl UnifiedExecProcessManager {
                         matches!(approval_policy, AskForApproval::OnRequest)
                             && network_approval_context.is_some()
                             && matches!(
-                                codex_permissions_runtime::default_exec_approval_requirement(
+                                permissions_service::default_exec_approval_requirement(
                                     approval_policy,
                                     &sandbox_context.file_system_sandbox_policy,
                                 ),

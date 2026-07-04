@@ -3,11 +3,11 @@ use super::HookEventName;
 use super::HookHandlerType;
 use super::HookSource;
 use super::HookTrustStatus;
-use codex_protocol::protocol::SkillDependencies as CoreSkillDependencies;
-use codex_protocol::protocol::SkillMetadata as CoreSkillMetadata;
-use codex_protocol::protocol::SkillScope as CoreSkillScope;
-use codex_protocol::protocol::SkillToolDependency as CoreSkillToolDependency;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::protocol::SkillDependencies as CoreSkillDependencies;
+use protocol::protocol::SkillMetadata as CoreSkillMetadata;
+use protocol::protocol::SkillScope as CoreSkillScope;
+use protocol::protocol::SkillToolDependency as CoreSkillToolDependency;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -662,7 +662,7 @@ impl From<CoreSkillMetadata> for SkillMetadata {
     }
 }
 
-fn skill_interface_from_core(value: codex_protocol::protocol::SkillInterface) -> SkillInterface {
+fn skill_interface_from_core(value: protocol::protocol::SkillInterface) -> SkillInterface {
     SkillInterface {
         display_name: value.display_name,
         short_description: value.short_description,

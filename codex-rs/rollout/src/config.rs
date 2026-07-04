@@ -1,3 +1,3 @@
-pub use codex_rollout_api::Config;
-pub use codex_rollout_api::RolloutConfig;
-pub use codex_rollout_api::RolloutConfigView;
+pub use rollout_api::Config;
+pub use rollout_api::RolloutConfig;
+pub use rollout_api::RolloutConfigView;

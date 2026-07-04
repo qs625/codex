@@ -195,7 +195,7 @@ pub struct CallToolResult {
 
 // === Adapter helpers ===
 //
-// These types and conversions intentionally live in `codex-protocol` so other crates can convert
+// These types and conversions intentionally live in `protocol` so other crates can convert
 // “wire-shaped” MCP JSON (typically coming from rmcp model structs serialized with serde) into our
 // TS/JsonSchema-friendly protocol types without depending on `mcp-types`.
 

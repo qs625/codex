@@ -4,7 +4,7 @@ use super::SessionTask;
 use super::SessionTaskContext;
 use crate::session::turn_context::TurnContext;
 use crate::state::TaskKind;
-use codex_protocol::user_input::UserInput;
+use protocol::user_input::UserInput;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy, Default)]

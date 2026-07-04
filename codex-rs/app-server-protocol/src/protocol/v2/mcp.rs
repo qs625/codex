@@ -1,34 +1,34 @@
 use super::shared::v2_enum_from_core;
-pub use codex_mcp_types::McpElicitationArrayType;
-pub use codex_mcp_types::McpElicitationBooleanSchema;
-pub use codex_mcp_types::McpElicitationBooleanType;
-pub use codex_mcp_types::McpElicitationConstOption;
-pub use codex_mcp_types::McpElicitationEnumSchema;
-pub use codex_mcp_types::McpElicitationLegacyTitledEnumSchema;
-pub use codex_mcp_types::McpElicitationMultiSelectEnumSchema;
-pub use codex_mcp_types::McpElicitationNumberSchema;
-pub use codex_mcp_types::McpElicitationNumberType;
-pub use codex_mcp_types::McpElicitationObjectType;
-pub use codex_mcp_types::McpElicitationPrimitiveSchema;
-pub use codex_mcp_types::McpElicitationSchema;
-pub use codex_mcp_types::McpElicitationSingleSelectEnumSchema;
-pub use codex_mcp_types::McpElicitationStringFormat;
-pub use codex_mcp_types::McpElicitationStringSchema;
-pub use codex_mcp_types::McpElicitationStringType;
-pub use codex_mcp_types::McpElicitationTitledEnumItems;
-pub use codex_mcp_types::McpElicitationTitledMultiSelectEnumSchema;
-pub use codex_mcp_types::McpElicitationTitledSingleSelectEnumSchema;
-pub use codex_mcp_types::McpElicitationUntitledEnumItems;
-pub use codex_mcp_types::McpElicitationUntitledMultiSelectEnumSchema;
-pub use codex_mcp_types::McpElicitationUntitledSingleSelectEnumSchema;
-pub use codex_mcp_types::McpServerElicitationRequest;
-pub use codex_mcp_types::McpServerElicitationRequestParams;
-use codex_protocol::items::McpToolCallError as CoreMcpToolCallError;
-use codex_protocol::mcp::CallToolResult as CoreMcpCallToolResult;
-use codex_protocol::mcp::Resource as McpResource;
-pub use codex_protocol::mcp::ResourceContent as McpResourceContent;
-use codex_protocol::mcp::ResourceTemplate as McpResourceTemplate;
-use codex_protocol::mcp::Tool as McpTool;
+pub use mcp_types::McpElicitationArrayType;
+pub use mcp_types::McpElicitationBooleanSchema;
+pub use mcp_types::McpElicitationBooleanType;
+pub use mcp_types::McpElicitationConstOption;
+pub use mcp_types::McpElicitationEnumSchema;
+pub use mcp_types::McpElicitationLegacyTitledEnumSchema;
+pub use mcp_types::McpElicitationMultiSelectEnumSchema;
+pub use mcp_types::McpElicitationNumberSchema;
+pub use mcp_types::McpElicitationNumberType;
+pub use mcp_types::McpElicitationObjectType;
+pub use mcp_types::McpElicitationPrimitiveSchema;
+pub use mcp_types::McpElicitationSchema;
+pub use mcp_types::McpElicitationSingleSelectEnumSchema;
+pub use mcp_types::McpElicitationStringFormat;
+pub use mcp_types::McpElicitationStringSchema;
+pub use mcp_types::McpElicitationStringType;
+pub use mcp_types::McpElicitationTitledEnumItems;
+pub use mcp_types::McpElicitationTitledMultiSelectEnumSchema;
+pub use mcp_types::McpElicitationTitledSingleSelectEnumSchema;
+pub use mcp_types::McpElicitationUntitledEnumItems;
+pub use mcp_types::McpElicitationUntitledMultiSelectEnumSchema;
+pub use mcp_types::McpElicitationUntitledSingleSelectEnumSchema;
+pub use mcp_types::McpServerElicitationRequest;
+pub use mcp_types::McpServerElicitationRequestParams;
+use protocol::items::McpToolCallError as CoreMcpToolCallError;
+use protocol::mcp::CallToolResult as CoreMcpCallToolResult;
+use protocol::mcp::Resource as McpResource;
+pub use protocol::mcp::ResourceContent as McpResourceContent;
+use protocol::mcp::ResourceTemplate as McpResourceTemplate;
+use protocol::mcp::Tool as McpTool;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -36,7 +36,7 @@ use serde_json::Value as JsonValue;
 use ts_rs::TS;
 
 v2_enum_from_core!(
-    pub enum McpAuthStatus from codex_protocol::protocol::McpAuthStatus {
+    pub enum McpAuthStatus from protocol::protocol::McpAuthStatus {
         Unsupported,
         NotLoggedIn,
         BearerToken,
@@ -269,11 +269,11 @@ pub enum McpServerElicitationAction {
 }
 
 impl McpServerElicitationAction {
-    pub fn to_core(self) -> codex_protocol::approvals::ElicitationAction {
+    pub fn to_core(self) -> protocol::approvals::ElicitationAction {
         match self {
-            Self::Accept => codex_protocol::approvals::ElicitationAction::Accept,
-            Self::Decline => codex_protocol::approvals::ElicitationAction::Decline,
-            Self::Cancel => codex_protocol::approvals::ElicitationAction::Cancel,
+            Self::Accept => protocol::approvals::ElicitationAction::Accept,
+            Self::Decline => protocol::approvals::ElicitationAction::Decline,
+            Self::Cancel => protocol::approvals::ElicitationAction::Cancel,
         }
     }
 }

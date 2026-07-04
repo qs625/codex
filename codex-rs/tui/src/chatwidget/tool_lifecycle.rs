@@ -78,7 +78,7 @@ impl ChatWidget {
         &mut self,
         call_id: String,
         query: String,
-        action: codex_app_server_protocol::WebSearchAction,
+        action: app_server_protocol::WebSearchAction,
     ) {
         self.flush_answer_stream_with_separator();
         let mut handled = false;
@@ -145,7 +145,7 @@ impl ChatWidget {
         };
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
-        if matches!(status, codex_app_server_protocol::PatchApplyStatus::Failed) {
+        if matches!(status, app_server_protocol::PatchApplyStatus::Failed) {
             self.add_to_history(history_cell::new_patch_apply_failure(String::new()));
         }
         // Mark that actual work was done (patch applied)
@@ -204,7 +204,7 @@ impl ChatWidget {
             (_, Some(error)) => Err(error.message),
             (Some(result), None) => {
                 let result = *result;
-                Ok(codex_protocol::mcp::CallToolResult {
+                Ok(::protocol::mcp::CallToolResult {
                     content: result.content,
                     structured_content: result.structured_content,
                     is_error: Some(false),

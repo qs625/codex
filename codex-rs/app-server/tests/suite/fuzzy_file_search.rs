@@ -1,10 +1,10 @@
 use anyhow::Result;
 use anyhow::anyhow;
+use app_server_protocol::FuzzyFileSearchSessionCompletedNotification;
+use app_server_protocol::FuzzyFileSearchSessionUpdatedNotification;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
 use app_test_support::McpProcess;
-use codex_app_server_protocol::FuzzyFileSearchSessionCompletedNotification;
-use codex_app_server_protocol::FuzzyFileSearchSessionUpdatedNotification;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::path::Path;

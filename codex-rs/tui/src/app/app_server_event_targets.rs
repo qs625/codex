@@ -1,8 +1,8 @@
 //! Thread targeting helpers for app-server requests and notifications.
 
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_protocol::ThreadId;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use protocol::ThreadId;
 
 pub(super) fn server_request_thread_id(request: &ServerRequest) -> Option<ThreadId> {
     match request {
@@ -179,16 +179,16 @@ pub(super) fn server_notification_thread_target(
 mod tests {
     use super::ServerNotificationThreadTarget;
     use super::server_notification_thread_target;
-    use codex_app_server_protocol::GuardianWarningNotification;
-    use codex_app_server_protocol::ServerNotification;
-    use codex_app_server_protocol::WarningNotification;
-    use codex_app_server_protocol::WorkflowRun;
-    use codex_app_server_protocol::WorkflowRunStatus;
-    use codex_app_server_protocol::WorkflowRunUpdatedNotification;
-    use codex_app_server_protocol::WorkflowSource;
-    use codex_app_server_protocol::WorkflowSummary;
-    use codex_protocol::ThreadId;
+    use app_server_protocol::GuardianWarningNotification;
+    use app_server_protocol::ServerNotification;
+    use app_server_protocol::WarningNotification;
+    use app_server_protocol::WorkflowRun;
+    use app_server_protocol::WorkflowRunStatus;
+    use app_server_protocol::WorkflowRunUpdatedNotification;
+    use app_server_protocol::WorkflowSource;
+    use app_server_protocol::WorkflowSummary;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
     use serde_json::json;
     use std::collections::BTreeMap;
 

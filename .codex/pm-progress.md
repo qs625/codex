@@ -17,6 +17,21 @@
 - `codex-rs/core/src/lib.rs` 只是旧包名兼容层，当前只 re-export `codex-thread-runtime`；不要把 implementation 放回 `codex-rs/core/src`。
 - `codex-rs/thread-runtime` 已承接 session/thread/turn/task/agent-control 等旧 core runtime，但它仍是过重的 owner crate，需要继续按 domain 拆分。
 - `spec/session-thread-service-architecture.md` 已记录目标架构：API 是 trait + DTO contract，Service 是 concrete implementation，Capability 是 session/thread orchestration 暴露给 domain service 的最小能力接口。
+- model 域的下一阶段收缩方向已记录在 `spec/model-service-architecture.md`：对外目标是统一到 `model-service-api` / `model-service`，把 `model-client`、`models-manager`、`model-provider` 收口为单一 model service，对上层不再暴露碎片化 manager/provider/client 概念；底层 `codex-api*` transport 栈暂不并入 model domain。
+- `model-service-api` 已新增 `ModelServiceApi` / `ModelClientApi` 公开 contract，`model-service` 已作为 concrete owner crate 进入 workspace；当前通过旧 `SharedModelsManager` 承接 list/raw catalog/get model/default model 能力，`create_client` 已能桥接构造旧 `ModelClient`，`stream_responses` / `compact` / `summarize_memories` / `create_realtime_call` 也已接到旧实现，不再保留占位错误。
+- `ResponsesModelRequest` 已扩成真正的 model 业务请求 DTO：包含 `input`、`tools`、`parallel_tool_calls`、`base_instructions`、`personality`、`output_schema`、`reasoning_summary`、`turn_metadata_header` 等字段；`ModelResponseEvent` 也已改成结构化事件枚举，直接承接旧 `ResponseEvent` 语义，不再退化成松散 metadata。
+- `app-server/src/memory_service_wiring.rs` 已开始消费 `model-service-api`：memory startup 的 model info 查询与 stage-one prompt 请求不再直接 `get_models_manager()` 或 `ModelClient::new(...)`，而是改走 `SharedModelServiceApi`。
+- `thread-service` 已开始把 `SharedModelServiceApi` 注入到 `SessionServices`：session 初始化的 list/default-model/model-info 解析，以及 review / guardian review 的部分模型目录读取，已从直接 `models_manager` 调用切到 `model_service`。
+- `thread-service/src/session/turn_context.rs` 已改为通过 `model_service` 解析 turn 级 `model_info` 和 `available_models`；`ThreadService::list_models` / `list_models_for_provider` 也已开始改走 `model_service` facade，而不是直接对外暴露 `models_manager.list_models(...)`。
+- `model-service-api` 已补上目录侧剩余能力 `list_collaboration_modes` / `refresh_if_new_etag`，`thread-service` 已切换对应调用点；`ThreadService::get_models_manager()` 目前只剩 `memory-service` 测试在用，生产代码已无直接依赖。
+- `model-service-api` 已新增 turn 级运行对象 contract：`ModelClientApi` 现在可以派生 `ModelTurnClientApi`；后者承接单 turn 的 websocket/sticky-routing/fallback transport 状态，但不把 provider/auth 的 concrete type 暴露进 API crate，避免重新形成 model provider 依赖环。
+- `thread-service/src/session/turn.rs`、`src/compact.rs`、`src/session_startup_prewarm.rs` 已切到上述 turn client contract；这些路径不再由 thread-service 直接 new 旧 `ModelClientSession`，而是统一通过 `model-service-api` 创建 session client / turn client。
+- `SessionServices` 已补入 `model_client_api: SharedModelClientApi`，session 初始化时通过 `model_service.create_client(...)` 生成；`window_generation` 的推进也已同步更新到新 contract。
+- `codex-realtime` / `thread-service/src/realtime_conversation.rs` 也已切到 `model-service-api::ModelClientApi`：realtime transport 准备、WebRTC call 创建、websocket client 构造不再直接依赖 concrete `ModelClient`。
+- review/task/turn-context 等辅助路径也已停止通过 `services.model_client.auth_manager()` 反查 auth，改为直接消费 `SessionServices.provider_auth_manager`。
+- `SessionServices` 中的 legacy `model_client` 字段已经从 production 代码删除；当前 model 域残留的主要 concrete 兼容项已经收缩到若干测试代码里的 `ModelClient::new(...)` 构造与 test-only wiring。
+- 当前 `thread-service --tests` 仍存在一批更早的测试适配问题，包括 `Session::new(...)` 参数顺序更新、test helper 类型对齐、以及若干 `session/tests.rs` 中的旧 wiring/缺失 import；这些问题超出本轮 production model-service 收口范围，但需要后续单独清理测试图。
+- `process-exec` 的主实现已经并入 `command-service`，`command-service-api` 已承接 process exec contract；`shell-utils` 仍被 app-server、protocol、permissions-runtime、mcp-server 等多方直接依赖，暂不能按 P0 直接删除。
 - `ThreadService` 已成为 thread runtime 的唯一公开 service 名称；旧 `ThreadManager` 语义正在从 runtime 与 sample 中清理。
 - `codex-thread-runtime` 的公开 helper 类型名也开始向 thread 语义收口：对外优先暴露 `ThreadRuntimeSession`、`ThreadTurnContext`、`ThreadToolDomainHost`、`ThreadWorkflowCapability`、`ThreadToolRuntimeRouter`，不再鼓励下游继续从 runtime 入口直接依赖 `Session` / `TurnContext` 等旧命名。
 - handler / workflow wiring 对应的 concrete 实现名也开始收口：`thread-runtime` 中承载 tool host 能力的 `SessionToolDomainHost` 已切成 `ThreadToolDomainHost`，workflow bridge capability 已切成 `ThreadWorkflowCapability`；相关 app-server、mcp-server、cli、core-test-support、thread-service-sample 与 runtime 自测 wiring 均已跟进。
@@ -55,6 +70,7 @@
 3. 盘点并迁出 `mcp/`、`agent/`、`goal/`、`workflow_*`、`unified_exec/`、`network_approval.rs`、`guardian/`、`plugins/`、`skills/` 等非 session/thread service implementation。
 4. 把 `SessionServices` 从平铺字段拆成迁移期 domain bundles，明确每个 bundle 的目标 owner crate 和待删除 adapter。
 5. `codex-core` / `codex-session-api` 兼容注册已删完；下一阶段集中清理 `thread-runtime` crate 内部残留的 `Session*` / `TurnContext` / `SessionTool*` 文件名与实现命名，并推动 runtime 内部 domain implementation 迁出 `thread-runtime`。
+6. thread 相关拆分稳定后，继续按 `spec/model-service-architecture.md` 推进 model 域收缩：当前目录读取路径、turn / compact / startup prewarm、realtime 主链都已切到 `model-service-api`，下一步优先删除 `SessionServices` 中残留的 concrete `model_client` 字段，并清理测试与 review/task 辅助路径中的 legacy model wiring。
 
 ## Guardrails
 
@@ -73,6 +89,9 @@
 最近已通过的关键验证包括：
 
 - `cargo check -p codex-thread-runtime --lib`
+- `cargo check -p model-service-api -p model-service`
+- `cargo check -p thread-service`
+- `cargo check -p app-server`
 - `cargo check -p codex-thread-runtime --features test-support --lib`
 - `cargo check -p codex-thread-runtime --features test-support --lib -p codex-app-server -p codex-mcp-server -p codex-cli -p core_test_support -p codex-thread-service-sample`
 - `cargo check -p codex-thread-runtime --features test-support --lib -p codex-app-server -p codex-mcp-server -p codex-cli -p core_test_support -p codex-thread-service-sample`
@@ -88,6 +107,10 @@
 - `cargo check -p codex-app-server --bin codex-app-server --tests`
 - `cargo check -p core_test_support -p codex-app-server --bin codex-app-server`
 - `cargo check -p codex-tool-handlers --lib`
+- `cargo check -p model-service-api -p model-service --lib`
+- `cargo check -p model-service-api -p model-service -p thread-service`
+- `cargo check -p model-service-api -p model-service -p codex-realtime -p thread-service`
+- `cargo check -p command-service-api -p command-service --lib`
 - `cargo test -p codex-thread-runtime dispatch_lifecycle_trace --no-fail-fast`
 - `cargo test -p codex-thread-runtime fatal_tool_error_stops_turn_and_reports_error --no-fail-fast`
 - `cargo test -p codex-thread-runtime handle_output_item_done_returns_contributed_last_agent_message --no-fail-fast`

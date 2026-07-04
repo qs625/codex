@@ -1,10 +1,10 @@
 use codex_experimental_api_macros::ExperimentalApi;
-use codex_protocol::config_types::ApprovalsReviewer as CoreApprovalsReviewer;
-use codex_protocol::config_types::SandboxMode as CoreSandboxMode;
-use codex_protocol::protocol::AskForApproval as CoreAskForApproval;
-use codex_protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
-use codex_protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfig;
-use codex_protocol::protocol::NonSteerableTurnKind as CoreNonSteerableTurnKind;
+use protocol::config_types::ApprovalsReviewer as CoreApprovalsReviewer;
+use protocol::config_types::SandboxMode as CoreSandboxMode;
+use protocol::protocol::AskForApproval as CoreAskForApproval;
+use protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
+use protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfig;
+use protocol::protocol::NonSteerableTurnKind as CoreNonSteerableTurnKind;
 use schemars::JsonSchema;
 use schemars::r#gen::SchemaGenerator;
 use schemars::schema::InstanceType;

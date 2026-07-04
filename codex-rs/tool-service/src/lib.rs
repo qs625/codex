@@ -9,20 +9,21 @@ use std::sync::Arc;
 use std::sync::Weak;
 
 use codex_approval_service_api::ApprovalServiceApi;
-use codex_command_service_api::CommandServiceApi;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_service_api::ToolDiffConsumerRequest;
-use codex_tool_service_api::ToolDispatchRequest;
-use codex_tool_service_api::ToolParallelRequest;
-use codex_tool_service_api::ToolServiceApi;
-use codex_tool_service_api::ToolServiceFuture;
-use codex_tool_service_api::ToolSpecRequest;
-use codex_tool_types::FunctionCallError;
 use codex_workflow_api::WorkflowApi;
+use command_service_api::CommandServiceApi;
 use goal_service_api::GoalServiceApi;
 use mcp_service_api::McpServiceApi;
+use permissions_service_api::PermissionsServiceApi;
 use thread_service_api::ThreadServiceApi;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolDiffConsumerRequest;
+use tool_service_api::ToolDispatchRequest;
+use tool_service_api::ToolParallelRequest;
+use tool_service_api::ToolServiceApi;
+use tool_service_api::ToolServiceFuture;
+use tool_service_api::ToolSpecRequest;
 
 use context::TypedToolSpecRequest;
 pub(crate) use planning::*;
@@ -32,6 +33,7 @@ pub struct ToolService {
     command_service_api: Arc<dyn CommandServiceApi>,
     goal_api: Arc<dyn GoalServiceApi>,
     mcp_service_api: Arc<dyn McpServiceApi>,
+    permissions_api: Arc<dyn PermissionsServiceApi>,
     workflow_api: Arc<dyn WorkflowApi>,
     thread_service_api: Weak<dyn ThreadServiceApi>,
 }
@@ -42,6 +44,7 @@ impl ToolService {
         command_service_api: Arc<dyn CommandServiceApi>,
         goal_api: Arc<dyn GoalServiceApi>,
         mcp_service_api: Arc<dyn McpServiceApi>,
+        permissions_api: Arc<dyn PermissionsServiceApi>,
         workflow_api: Arc<dyn WorkflowApi>,
         thread_service_api: Weak<dyn ThreadServiceApi>,
     ) -> Self {
@@ -50,19 +53,16 @@ impl ToolService {
             command_service_api,
             goal_api,
             mcp_service_api,
+            permissions_api,
             workflow_api,
             thread_service_api,
         }
     }
 
     fn thread_service_api(&self) -> Result<Arc<dyn ThreadServiceApi>, FunctionCallError> {
-        self.thread_service_api
-            .upgrade()
-            .ok_or_else(|| {
-                FunctionCallError::Fatal(
-                    "tool service thread service api is unavailable".to_string(),
-                )
-            })
+        self.thread_service_api.upgrade().ok_or_else(|| {
+            FunctionCallError::Fatal("tool service thread service api is unavailable".to_string())
+        })
     }
 
     fn typed_request<'a>(request: ToolSpecRequest<'a>) -> TypedToolSpecRequest<'a> {
@@ -71,7 +71,7 @@ impl ToolService {
 }
 
 impl ToolServiceApi for ToolService {
-    fn model_visible_specs(&self, request: ToolSpecRequest<'_>) -> Vec<codex_tool_types::ToolSpec> {
+    fn model_visible_specs(&self, request: ToolSpecRequest<'_>) -> Vec<tool_service_api::ToolSpec> {
         domains::model_visible_specs(self, Self::typed_request(request))
     }
 
@@ -122,7 +122,9 @@ impl ToolServiceApi for ToolService {
         let approval_api = Arc::clone(&self.approval_api);
         let command_service_api = Arc::clone(&self.command_service_api);
         let mcp_service_api = Arc::clone(&self.mcp_service_api);
+        let permissions_api = Arc::clone(&self.permissions_api);
         let session = Arc::clone(&tool_request.session);
+        let approval_session = Arc::clone(&tool_request.approval_session);
         let turn = Arc::clone(&tool_request.turn);
         let request_user_input_available_modes = tool_request
             .config
@@ -148,8 +150,7 @@ impl ToolServiceApi for ToolService {
                     domains::agent::dispatch(
                         Arc::clone(&tool_request.session_agent_jobs),
                         self.thread_service_api()?,
-                        Arc::clone(&turn)
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         call,
                     )
                     .await
@@ -157,9 +158,8 @@ impl ToolServiceApi for ToolService {
                 domains::ToolDomain::ApplyPatch => {
                     domains::apply_patch::dispatch(
                         Arc::clone(&approval_api),
-                        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-                        Arc::clone(&turn)
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        Arc::clone(&approval_session),
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         tracker,
                         call,
                     )
@@ -168,8 +168,7 @@ impl ToolServiceApi for ToolService {
                 domains::ToolDomain::CodeMode => {
                     domains::code_mode::dispatch(
                         Arc::clone(&session),
-                        Arc::clone(&turn)
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         code_mode_nested_tool_specs.unwrap_or_default(),
                         call,
                     )
@@ -180,17 +179,16 @@ impl ToolServiceApi for ToolService {
                         Arc::clone(&command_service_api),
                         Arc::clone(&tool_request.session_command_interaction),
                         Arc::clone(&session),
-                        Arc::clone(&turn)
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         call,
                     )
                     .await
                 }
                 domains::ToolDomain::Discovery => {
                     domains::discovery::dispatch(
-                        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-                        Arc::clone(&turn)
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        Arc::clone(&session)
+                            as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         &dynamic_tools,
                         mcp_tools.as_deref(),
                         deferred_mcp_tools.as_deref(),
@@ -208,8 +206,7 @@ impl ToolServiceApi for ToolService {
                 }
                 domains::ToolDomain::Function => {
                     domains::function::dispatch(
-                        Arc::clone(&turn)
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         request_user_input_available_modes,
                         dynamic_tools,
                         cancellation_token,
@@ -228,9 +225,8 @@ impl ToolServiceApi for ToolService {
                 }
                 domains::ToolDomain::Mcp => {
                     domains::mcp::dispatch(
-                        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
-                        Arc::clone(&turn)
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        Arc::clone(&approval_session),
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         mcp_service_api,
                         mcp_tools.as_deref(),
                         deferred_mcp_tools.as_deref(),
@@ -242,10 +238,12 @@ impl ToolServiceApi for ToolService {
                     domains::exec_command::dispatch(
                         Arc::clone(&approval_api),
                         Arc::clone(&command_service_api),
-                        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+                        Arc::clone(&permissions_api),
+                        Arc::clone(&approval_session),
+                        Arc::clone(&session)
+                            as Arc<dyn thread_service_api::ThreadSessionCapability>,
                         Arc::clone(&tool_request.session_command_state),
-                        Arc::clone(&turn)
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         tracker,
                         call,
                     )

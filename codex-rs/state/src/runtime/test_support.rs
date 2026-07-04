@@ -3,13 +3,13 @@ use chrono::DateTime;
 #[cfg(test)]
 use chrono::Utc;
 #[cfg(test)]
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 #[cfg(test)]
-use codex_protocol::openai_models::ReasoningEffort;
+use protocol::openai_models::ReasoningEffort;
 #[cfg(test)]
-use codex_protocol::protocol::AskForApproval;
+use protocol::protocol::AskForApproval;
 #[cfg(test)]
-use codex_protocol::protocol::SandboxPolicy;
+use protocol::protocol::SandboxPolicy;
 #[cfg(test)]
 use std::path::Path;
 #[cfg(test)]

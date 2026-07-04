@@ -1,78 +1,79 @@
-use crate::memory_usage::emit_metric_for_tool_read_parts;
 use crate::arc_monitor::monitor_action;
-use crate::session::session::approval_support_impl::permission_request_hook_payload;
+use crate::memory_usage::emit_metric_for_tool_read_parts;
 use crate::session::session::Session;
 use crate::session::session::approval_review_runtime_impl;
+use crate::session::session::approval_support_impl::permission_request_hook_payload;
 use crate::session::turn_context::TurnContext;
 use crate::tool_dispatch_trace::ToolDispatchTrace;
-use codex_approval_service_api::DeferredNetworkApproval;
-use codex_approval_service_api::GuardianReviewDispatch;
 use codex_agent_runtime::BudgetLimitSteering;
 use codex_agent_runtime::TerminalMetricEmission;
+use codex_approval_service_api::ApprovalSessionCapability;
+use codex_approval_service_api::DeferredNetworkApproval;
+use codex_approval_service_api::GuardianReviewDispatch;
+use codex_approval_service_api::PermissionRequestPayload;
+use codex_approval_service_api::ReviewAssessmentRecord;
+use codex_approval_service_api::ReviewRejectionRecord;
+use codex_approval_service_api::ReviewRuntimeError;
+use codex_approval_service_api::ReviewRuntimeOutcome;
+use codex_approval_service_api::ReviewRuntimeResult;
+use codex_approval_service_api::ToolPermissionGrants;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
-use codex_hooks::PreToolUseHookResult;
-use codex_hooks::run_permission_request_hooks;
 use codex_guardian::GuardianApprovalRequest;
-use codex_mcp_types::ElicitationResponse;
-use codex_mcp_types::ElicitationReviewerHandle;
-use codex_mcp_types::McpServerElicitationRequestParams;
-use codex_protocol::approvals::ExecPolicyAmendment;
-use codex_protocol::approvals::NetworkApprovalContext;
-use codex_protocol::approvals::NetworkPolicyAmendment;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::dynamic_tools::DynamicToolCallRequest;
-use codex_protocol::dynamic_tools::DynamicToolResponse;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::McpServerRefreshConfig;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::TerminalInteractionEvent;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::mcp::RequestId;
 use codex_sandboxing_api::ResolvedApplyPatchEnvironment;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_sandboxing_api::ToolSandboxContext;
-use codex_session_telemetry_api::SharedSessionTelemetry;
-use codex_state_api::SharedStateDbRuntime;
-use codex_state_api::ExternalGoalSet;
-use thread_service_api::ReviewAssessmentRecord;
-use thread_service_api::ReviewRuntimeError;
-use thread_service_api::ReviewRuntimeOutcome;
-use thread_service_api::ReviewRuntimeResult;
-use thread_service_api::ReviewRejectionRecord;
-use thread_service_api::PermissionRequestPayload;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_output_truncation::TruncationPolicy;
+use hooks::PreToolUseHookResult;
+use hooks::run_permission_request_hooks;
+use mcp_types::ElicitationResponse;
+use mcp_types::ElicitationReviewerHandle;
+use mcp_types::McpServerElicitationRequestParams;
+use protocol::approvals::ExecPolicyAmendment;
+use protocol::approvals::NetworkApprovalContext;
+use protocol::approvals::NetworkPolicyAmendment;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::ModeKind;
+use protocol::dynamic_tools::DynamicToolCallRequest;
+use protocol::dynamic_tools::DynamicToolResponse;
+use protocol::mcp::RequestId;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::PermissionProfile;
+use protocol::models::ResponseItem;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::EventMsg;
+use protocol::protocol::McpServerRefreshConfig;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::TerminalInteractionEvent;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TurnAbortReason;
+use session_telemetry_api::SharedSessionTelemetry;
+use state_api::ExternalGoalSet;
+use state_api::SharedStateDbRuntime;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use thread_service_api::PostToolUseHookOutcome;
 use thread_service_api::PostToolUsePayload;
 use thread_service_api::PreToolUseHookOutcome;
 use thread_service_api::PreToolUsePayload;
 use thread_service_api::SessionCapabilityFuture;
-use thread_service_api::ToolPermissionGrants;
-use thread_service_api::ThreadSessionCapability;
-use thread_service_api::ToolSessionDispatchTrace;
 use thread_service_api::ThreadDiscoveryContext;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ToolTelemetryTags;
+use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
-use codex_tool_types::ToolCallSource;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolPayload;
-use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_output_truncation::TruncationPolicy;
-use std::future::Future;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::pin::Pin;
-use std::sync::Arc;
+use thread_service_api::ToolSessionDispatchTrace;
+use thread_service_api::ToolTelemetryTags;
 use tokio::sync::oneshot;
+use tool_service_api::ToolCallSource;
+use tool_service_api::ToolName;
+use tool_service_api::ToolPayload;
 
 fn track_review_analytics_event(
     session: &Session,
@@ -123,12 +124,8 @@ impl thread_service_api::ToolRuntimeNetworkApprovalHandle for SessionToolNetwork
         &'a self,
     ) -> Pin<
         Box<
-            dyn Future<
-                    Output = Result<
-                        (),
-                        thread_service_api::ToolRuntimeNetworkApprovalError,
-                    >,
-                > + Send
+            dyn Future<Output = Result<(), thread_service_api::ToolRuntimeNetworkApprovalError>>
+                + Send
                 + 'a,
         >,
     > {
@@ -171,8 +168,8 @@ struct GuardianNetworkAccessTriggerPayload {
     tool_name: String,
     command: Vec<String>,
     cwd: AbsolutePathBuf,
-    sandbox_permissions: codex_protocol::models::SandboxPermissions,
-    additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+    sandbox_permissions: protocol::models::SandboxPermissions,
+    additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
     justification: Option<String>,
     tty: Option<bool>,
 }
@@ -191,18 +188,18 @@ enum GuardianApprovalRequestPayload {
         id: String,
         command: Vec<String>,
         cwd: AbsolutePathBuf,
-        sandbox_permissions: codex_protocol::models::SandboxPermissions,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        sandbox_permissions: protocol::models::SandboxPermissions,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
         justification: Option<String>,
     },
     #[cfg(unix)]
     Execve {
         id: String,
-        source: codex_protocol::approvals::GuardianCommandSource,
+        source: protocol::approvals::GuardianCommandSource,
         program: String,
         argv: Vec<String>,
         cwd: AbsolutePathBuf,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
     },
     ApplyPatch {
         id: String,
@@ -214,8 +211,8 @@ enum GuardianApprovalRequestPayload {
         id: String,
         command: Vec<String>,
         cwd: AbsolutePathBuf,
-        sandbox_permissions: codex_protocol::models::SandboxPermissions,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        sandbox_permissions: protocol::models::SandboxPermissions,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
         justification: Option<String>,
         tty: bool,
     },
@@ -224,7 +221,7 @@ enum GuardianApprovalRequestPayload {
         turn_id: String,
         target: String,
         host: String,
-        protocol: codex_protocol::approvals::NetworkApprovalProtocol,
+        protocol: protocol::approvals::NetworkApprovalProtocol,
         port: u16,
         trigger: Option<GuardianNetworkAccessTriggerPayload>,
     },
@@ -244,7 +241,7 @@ enum GuardianApprovalRequestPayload {
         id: String,
         turn_id: String,
         reason: Option<String>,
-        permissions: codex_protocol::request_permissions::RequestPermissionProfile,
+        permissions: protocol::request_permissions::RequestPermissionProfile,
     },
 }
 
@@ -289,7 +286,7 @@ impl ThreadTurnCapability for TurnContext {
         self.file_system_sandbox_policy()
     }
 
-    fn windows_sandbox_level(&self) -> codex_protocol::config_types::WindowsSandboxLevel {
+    fn windows_sandbox_level(&self) -> protocol::config_types::WindowsSandboxLevel {
         self.windows_sandbox_level()
     }
 
@@ -300,11 +297,11 @@ impl ThreadTurnCapability for TurnContext {
     fn resolve_apply_patch_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<ResolvedApplyPatchEnvironment>, codex_tool_types::FunctionCallError> {
+    ) -> Result<Option<ResolvedApplyPatchEnvironment>, tool_service_api::FunctionCallError> {
         self.resolve_apply_patch_environment(environment_id)
     }
 
-    fn thread_id(&self) -> codex_protocol::ThreadId {
+    fn thread_id(&self) -> protocol::ThreadId {
         self.session_arc().thread_id()
     }
 
@@ -352,7 +349,7 @@ impl ThreadTurnCapability for TurnContext {
         self.mcp_turn_metadata_value()
     }
 
-    fn mcp_sandbox_state(&self) -> codex_mcp_types::SandboxState {
+    fn mcp_sandbox_state(&self) -> mcp_types::SandboxState {
         self.mcp_sandbox_state()
     }
 
@@ -366,20 +363,23 @@ impl ThreadTurnCapability for TurnContext {
         &'a self,
         auth_snapshot: Option<&'a codex_auth_types::RequestAuthSnapshot>,
     ) -> SessionCapabilityFuture<'a, Option<Vec<codex_connectors_api::AppInfo>>> {
-        Box::pin(async move { self.cached_accessible_connectors_from_mcp_tools(auth_snapshot).await })
+        Box::pin(async move {
+            self.cached_accessible_connectors_from_mcp_tools(auth_snapshot)
+                .await
+        })
     }
 
     fn refresh_accessible_connectors_cache_from_mcp_tools(
         &self,
-        connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
-        mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        connector_auth_context: Option<&mcp_types::CodexAppsAuthContext>,
+        mcp_tools: &[mcp_types::ToolInfo],
     ) {
         self.refresh_accessible_connectors_cache_from_mcp_tools(connector_auth_context, mcp_tools);
     }
 
     fn codex_app_tool_policy(
         &self,
-        metadata: Option<&codex_mcp_types::McpToolApprovalMetadata>,
+        metadata: Option<&mcp_types::McpToolApprovalMetadata>,
         tool_name: &str,
     ) -> thread_service_api::ThreadAppToolPolicy {
         let policy = self.codex_app_tool_policy(metadata, tool_name);
@@ -402,11 +402,11 @@ impl ThreadTurnCapability for TurnContext {
     fn request_permissions<'a>(
         &'a self,
         call_id: String,
-        args: codex_protocol::request_permissions::RequestPermissionsArgs,
+        args: protocol::request_permissions::RequestPermissionsArgs,
         cancellation_token: tokio_util::sync::CancellationToken,
     ) -> SessionCapabilityFuture<
         'a,
-        Option<codex_protocol::request_permissions::RequestPermissionsResponse>,
+        Option<protocol::request_permissions::RequestPermissionsResponse>,
     > {
         Box::pin(async move {
             let session = self.session_arc();
@@ -420,12 +420,14 @@ impl ThreadTurnCapability for TurnContext {
     fn request_user_input<'a>(
         &'a self,
         call_id: String,
-        args: codex_protocol::request_user_input::RequestUserInputArgs,
-    ) -> SessionCapabilityFuture<
-        'a,
-        Option<codex_protocol::request_user_input::RequestUserInputResponse>,
-    > {
-        Box::pin(async move { self.session_arc().request_user_input(self, call_id, args).await })
+        args: protocol::request_user_input::RequestUserInputArgs,
+    ) -> SessionCapabilityFuture<'a, Option<protocol::request_user_input::RequestUserInputResponse>>
+    {
+        Box::pin(async move {
+            self.session_arc()
+                .request_user_input(self, call_id, args)
+                .await
+        })
     }
 
     fn request_dynamic_tool<'a>(
@@ -481,7 +483,7 @@ impl ThreadSessionCapability for Session {
         self
     }
 
-    fn conversation_id(&self) -> codex_protocol::ThreadId {
+    fn conversation_id(&self) -> protocol::ThreadId {
         self.conversation_id
     }
 
@@ -707,7 +709,9 @@ impl ThreadSessionCapability for Session {
             let Some(session) = session_arc(self) else {
                 return Err(invalid_session_message());
             };
-            session.apply_external_thread_goal_status(external_set).await;
+            session
+                .apply_external_thread_goal_status(external_set)
+                .await;
             Ok(())
         })
     }
@@ -735,11 +739,12 @@ impl ThreadSessionCapability for Session {
         event: EventMsg,
     ) -> SessionCapabilityFuture<'a, ()> {
         Box::pin(async move {
-        let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-            tracing::warn!("tool session capability received an unsupported turn context");
-            return;
-        };
-        self.send_event(turn, event).await;
+            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>()
+            else {
+                tracing::warn!("tool session capability received an unsupported turn context");
+                return;
+            };
+            self.send_event(turn, event).await;
         })
     }
 
@@ -749,7 +754,8 @@ impl ThreadSessionCapability for Session {
         items: Vec<ResponseItem>,
     ) -> SessionCapabilityFuture<'a, ()> {
         Box::pin(async move {
-            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
+            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>()
+            else {
                 tracing::warn!("tool session capability received an unsupported turn context");
                 return;
             };
@@ -758,510 +764,12 @@ impl ThreadSessionCapability for Session {
         })
     }
 
-    fn run_permission_request_hooks<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        permission_request_run_id: &'a str,
-        permission_request: PermissionRequestPayload,
-    ) -> SessionCapabilityFuture<'a, Option<codex_hooks_api::PermissionRequestDecision>> {
-        Box::pin(async move {
-            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-                tracing::warn!("tool session capability received an unsupported turn context");
-                return None;
-            };
-            run_permission_request_hooks(
-                self,
-                turn,
-                permission_request_run_id,
-                permission_request_hook_payload(permission_request),
-            )
-            .await
-        })
-    }
-
     fn sandbox_runtime(&self) -> SharedSandboxRuntime {
         self.sandbox_runtime()
     }
 
-    fn strict_auto_review_enabled_for_turn<'a>(&'a self) -> SessionCapabilityFuture<'a, bool> {
-        Box::pin(async move { self.strict_auto_review_enabled_for_turn().await })
-    }
-
-    fn active_turn_runtime<'a>(
-        &'a self,
-    ) -> SessionCapabilityFuture<'a, Option<Arc<dyn thread_service_api::ThreadRuntimeCapability>>>
-    {
-        Box::pin(async move {
-            let active_turn = self.active_turn.lock().await;
-            active_turn
-                .as_ref()
-                .and_then(|turn| turn.tasks.first())
-                .map(|(_, task)| {
-                    Arc::clone(&task.turn_context)
-                        as Arc<dyn thread_service_api::ThreadRuntimeCapability>
-                })
-        })
-    }
-
-    fn take_review_rejection<'a>(
-        &'a self,
-        review_id: &'a str,
-    ) -> SessionCapabilityFuture<'a, Option<ReviewRejectionRecord>> {
-        Box::pin(async move {
-            self.services
-                .guardian_rejections
-                .lock()
-                .await
-                .remove(review_id)
-                .map(|rejection| ReviewRejectionRecord {
-                    rationale: rejection.rationale,
-                    source: rejection.source,
-                })
-        })
-    }
-
-    fn set_review_rejection<'a>(
-        &'a self,
-        review_id: String,
-        rejection: Option<ReviewRejectionRecord>,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            let mut rejections = self.services.guardian_rejections.lock().await;
-            match rejection {
-                Some(rejection) => {
-                    rejections.insert(
-                        review_id,
-                        codex_guardian::GuardianRejection {
-                            rationale: rejection.rationale,
-                            source: rejection.source,
-                        },
-                    );
-                }
-                None => {
-                    rejections.remove(&review_id);
-                }
-            }
-        })
-    }
-
-    fn track_review_analytics<'a>(
-        &'a self,
-        tracking: codex_analytics_api::GuardianReviewTrackContext,
-        result: codex_analytics_api::GuardianReviewAnalyticsResult,
-        completed_at_ms: u64,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            track_review_analytics_event(self, &tracking, result, completed_at_ms);
-        })
-    }
-
-    fn run_review_session<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        request: serde_json::Value,
-        retry_reason: Option<String>,
-    ) -> SessionCapabilityFuture<'a, ReviewRuntimeResult> {
-        Box::pin(async move {
-            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-                tracing::warn!("{}", invalid_turn_message());
-                return ReviewRuntimeResult {
-                    outcome: ReviewRuntimeOutcome::Error(
-                        ReviewRuntimeError::Cancelled,
-                    ),
-                    analytics_result: codex_analytics_api::GuardianReviewAnalyticsResult::without_session(),
-                };
-            };
-            let Ok(request) = serde_json::from_value::<GuardianApprovalRequestPayload>(request)
-            else {
-                tracing::warn!("tool session capability received an invalid guardian approval request");
-                return ReviewRuntimeResult {
-                    outcome: ReviewRuntimeOutcome::Error(
-                        ReviewRuntimeError::PromptBuild {
-                            message: "invalid guardian approval request".to_string(),
-                        },
-                    ),
-                    analytics_result: codex_analytics_api::GuardianReviewAnalyticsResult::without_session(),
-                };
-            };
-            let request = match request {
-                GuardianApprovalRequestPayload::Shell {
-                    id,
-                    command,
-                    cwd,
-                    sandbox_permissions,
-                    additional_permissions,
-                    justification,
-                } => GuardianApprovalRequest::Shell {
-                    id,
-                    command,
-                    cwd,
-                    sandbox_permissions,
-                    additional_permissions,
-                    justification,
-                },
-                #[cfg(unix)]
-                GuardianApprovalRequestPayload::Execve {
-                    id,
-                    source,
-                    program,
-                    argv,
-                    cwd,
-                    additional_permissions,
-                } => GuardianApprovalRequest::Execve {
-                    id,
-                    source,
-                    program,
-                    argv,
-                    cwd,
-                    additional_permissions,
-                },
-                GuardianApprovalRequestPayload::ApplyPatch {
-                    id,
-                    cwd,
-                    files,
-                    patch,
-                } => GuardianApprovalRequest::ApplyPatch {
-                    id,
-                    cwd,
-                    files,
-                    patch,
-                },
-                GuardianApprovalRequestPayload::ExecCommand {
-                    id,
-                    command,
-                    cwd,
-                    sandbox_permissions,
-                    additional_permissions,
-                    justification,
-                    tty,
-                } => GuardianApprovalRequest::ExecCommand {
-                    id,
-                    command,
-                    cwd,
-                    sandbox_permissions,
-                    additional_permissions,
-                    justification,
-                    tty,
-                },
-                GuardianApprovalRequestPayload::NetworkAccess {
-                    id,
-                    turn_id,
-                    target,
-                    host,
-                    protocol,
-                    port,
-                    trigger,
-                } => GuardianApprovalRequest::NetworkAccess {
-                    id,
-                    turn_id,
-                    target,
-                    host,
-                    protocol,
-                    port,
-                    trigger: trigger.map(|trigger| codex_guardian::GuardianNetworkAccessTrigger {
-                        call_id: trigger.call_id,
-                        tool_name: trigger.tool_name,
-                        command: trigger.command,
-                        cwd: trigger.cwd,
-                        sandbox_permissions: trigger.sandbox_permissions,
-                        additional_permissions: trigger.additional_permissions,
-                        justification: trigger.justification,
-                        tty: trigger.tty,
-                    }),
-                },
-                GuardianApprovalRequestPayload::McpToolCall {
-                    id,
-                    server,
-                    tool_name,
-                    arguments,
-                    connector_id,
-                    connector_name,
-                    connector_description,
-                    tool_title,
-                    tool_description,
-                    annotations,
-                } => GuardianApprovalRequest::McpToolCall {
-                    id,
-                    server,
-                    tool_name,
-                    arguments,
-                    connector_id,
-                    connector_name,
-                    connector_description,
-                    tool_title,
-                    tool_description,
-                    annotations: annotations.map(|annotations| codex_guardian::GuardianMcpAnnotations {
-                        destructive_hint: annotations.destructive_hint,
-                        open_world_hint: annotations.open_world_hint,
-                        read_only_hint: annotations.read_only_hint,
-                    }),
-                },
-                GuardianApprovalRequestPayload::RequestPermissions {
-                    id,
-                    turn_id,
-                    reason,
-                    permissions,
-                } => GuardianApprovalRequest::RequestPermissions {
-                    id,
-                    turn_id,
-                    reason,
-                    permissions,
-                },
-            };
-            let session = turn.session_arc();
-            let turn = turn.self_arc();
-            let (outcome, analytics_result) =
-                approval_review_runtime_impl::run_review_session(session, turn, request, retry_reason, codex_guardian::guardian_output_schema(), None).await;
-            let outcome = match outcome {
-                approval_review_runtime_impl::GuardianReviewOutcome::Completed(assessment) => {
-                    ReviewRuntimeOutcome::Completed(ReviewAssessmentRecord {
-                        risk_level: assessment.risk_level,
-                        user_authorization: assessment.user_authorization,
-                        outcome: assessment.outcome,
-                        rationale: assessment.rationale,
-                    })
-                }
-                approval_review_runtime_impl::GuardianReviewOutcome::Error(error) => {
-                    let error = match error {
-                        approval_review_runtime_impl::GuardianReviewError::PromptBuild { message } => {
-                            ReviewRuntimeError::PromptBuild { message }
-                        }
-                        approval_review_runtime_impl::GuardianReviewError::Session { message } => {
-                            ReviewRuntimeError::Session { message }
-                        }
-                        approval_review_runtime_impl::GuardianReviewError::Parse { message } => {
-                            ReviewRuntimeError::Parse { message }
-                        }
-                        approval_review_runtime_impl::GuardianReviewError::Timeout => {
-                            ReviewRuntimeError::Timeout
-                        }
-                        approval_review_runtime_impl::GuardianReviewError::Cancelled => {
-                            ReviewRuntimeError::Cancelled
-                        }
-                    };
-                    ReviewRuntimeOutcome::Error(error)
-                }
-            };
-            ReviewRuntimeResult {
-                outcome,
-                analytics_result,
-            }
-        })
-    }
-
-    fn record_review_non_rejection<'a>(
-        &'a self,
-        turn_id: &'a str,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            let Some(session) = self.self_weak.get().and_then(std::sync::Weak::upgrade) else {
-                tracing::warn!("tool session capability lost owning session while recording guardian non-denial");
-                return;
-            };
-            session
-                .services
-                .guardian_rejection_circuit_breaker
-                .lock()
-                .await
-                .record_non_denial(turn_id);
-        })
-    }
-
-    fn record_review_rejection<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        turn_id: &'a str,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-                tracing::warn!("{}", invalid_turn_message());
-                return;
-            };
-            let session = turn.session_arc();
-            let turn = turn.self_arc();
-            let action = session
-                .services
-                .guardian_rejection_circuit_breaker
-                .lock()
-                .await
-                .record_denial(turn_id);
-            let codex_guardian::GuardianRejectionCircuitBreakerAction::InterruptTurn {
-                consecutive_denials,
-                recent_denials,
-            } = action
-            else {
-                return;
-            };
-
-            if session.turn_context_for_sub_id(turn_id).await.is_none() {
-                return;
-            }
-
-            session
-                .send_event(
-                    turn.as_ref(),
-                    EventMsg::GuardianWarning(codex_protocol::protocol::WarningEvent {
-                        message: format!(
-                            "Automatic approval review rejected too many approval requests for this turn ({consecutive_denials} consecutive, {recent_denials} in the last {} reviews); interrupting the turn.",
-                            codex_guardian::AUTO_REVIEW_DENIAL_WINDOW_SIZE
-                        ),
-                    }),
-                )
-                .await;
-
-            let runtime_handle = session.services.runtime_handle.clone();
-            let session = Arc::clone(&session);
-            let turn_id = turn_id.to_string();
-            let _abort_task = runtime_handle.spawn(async move {
-                session
-                    .abort_turn_if_active(&turn_id, codex_protocol::protocol::TurnAbortReason::Interrupted)
-                    .await;
-            });
-        })
-    }
-
-    fn request_command_approval<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        call_id: String,
-        approval_id: Option<String>,
-        command: Vec<String>,
-        cwd: AbsolutePathBuf,
-        reason: Option<String>,
-        network_approval_context: Option<NetworkApprovalContext>,
-        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
-        available_decisions: Option<Vec<codex_protocol::protocol::ReviewDecision>>,
-    ) -> SessionCapabilityFuture<'a, codex_protocol::protocol::ReviewDecision> {
-        Box::pin(async move {
-            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-                tracing::warn!("{}", invalid_turn_message());
-                return codex_protocol::protocol::ReviewDecision::Abort;
-            };
-            Session::request_command_approval(
-                self,
-                turn,
-                call_id,
-                approval_id,
-                command,
-                cwd,
-                reason,
-                network_approval_context,
-                proposed_execpolicy_amendment,
-                additional_permissions,
-                available_decisions,
-            )
-            .await
-        })
-    }
-
-    fn request_patch_approval<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        call_id: String,
-        changes: std::collections::HashMap<std::path::PathBuf, codex_protocol::protocol::FileChange>,
-        reason: Option<String>,
-        grant_root: Option<std::path::PathBuf>,
-    ) -> SessionCapabilityFuture<'a, codex_protocol::protocol::ReviewDecision> {
-        Box::pin(async move {
-            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>() else {
-                tracing::warn!("{}", invalid_turn_message());
-                return codex_protocol::protocol::ReviewDecision::Abort;
-            };
-            let rx_approve = Session::request_patch_approval(
-                self,
-                turn,
-                call_id,
-                changes,
-                reason,
-                grant_root,
-            )
-                .await;
-            rx_approve.await.unwrap_or_default()
-        })
-    }
-
-    fn cached_approval_decision<'a>(
-        &'a self,
-        key: String,
-    ) -> SessionCapabilityFuture<'a, Option<codex_protocol::protocol::ReviewDecision>> {
-        Box::pin(async move {
-            let store = self.services.tool_approvals.lock().await;
-            store.get(&key)
-        })
-    }
-
-    fn cache_approval_decision<'a>(
-        &'a self,
-        keys: Vec<String>,
-        decision: codex_protocol::protocol::ReviewDecision,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            if !matches!(decision, codex_protocol::protocol::ReviewDecision::ApprovedForSession) {
-                return;
-            }
-            let mut store = self.services.tool_approvals.lock().await;
-            for key in keys {
-                store.put(key, codex_protocol::protocol::ReviewDecision::ApprovedForSession);
-            }
-        })
-    }
-
-    fn record_approval_request_telemetry<'a>(
-        &'a self,
-        tool_name: &'a str,
-        decision: &'a codex_protocol::protocol::ReviewDecision,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            self.services.session_telemetry.counter(
-                "codex.approval.requested",
-                /*inc*/ 1,
-                &[
-                    ("tool", tool_name),
-                    ("approved", decision.to_opaque_string()),
-                ],
-            );
-        })
-    }
-
-    fn persist_network_policy_amendment<'a>(
-        &'a self,
-        amendment: &'a NetworkPolicyAmendment,
-        network_approval_context: &'a NetworkApprovalContext,
-    ) -> SessionCapabilityFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            self.persist_network_policy_amendment(amendment, network_approval_context)
-                .await
-                .map_err(|err| err.to_string())
-        })
-    }
-
-    fn record_network_policy_amendment_message<'a>(
-        &'a self,
-        turn: &'a dyn ThreadTurnCapability,
-        amendment: &'a NetworkPolicyAmendment,
-    ) -> SessionCapabilityFuture<'a, ()> {
-        Box::pin(async move {
-            let Some(turn) = turn_context(turn) else {
-                tracing::warn!("{}", invalid_turn_message());
-                return;
-            };
-            self.record_network_policy_amendment_message(&turn.sub_id, amendment)
-                .await;
-        })
-    }
-
     fn subscribe_out_of_band_elicitation_pause_state(&self) -> tokio::sync::watch::Receiver<bool> {
         self.subscribe_out_of_band_elicitation_pause_state()
-    }
-
-    fn tool_permission_grants<'a>(&'a self) -> SessionCapabilityFuture<'a, ToolPermissionGrants> {
-        Box::pin(async move {
-            ToolPermissionGrants {
-                session: self.granted_session_permissions().await,
-                turn: self.granted_turn_permissions().await,
-            }
-        })
     }
 
     fn request_mcp_server_elicitation<'a>(
@@ -1275,7 +783,8 @@ impl ThreadSessionCapability for Session {
                 tracing::warn!("{}", invalid_turn_message());
                 return None;
             };
-            self.request_mcp_server_elicitation(turn, request_id, params).await
+            self.request_mcp_server_elicitation(turn, request_id, params)
+                .await
         })
     }
 
@@ -1319,7 +828,10 @@ impl ThreadSessionCapability for Session {
     fn configured_mcp_servers<'a>(
         &'a self,
     ) -> SessionCapabilityFuture<'a, HashMap<String, codex_config_types::McpServerConfig>> {
-        Box::pin(async move { self.configured_mcp_servers(self.get_config().await.as_ref()).await })
+        Box::pin(async move {
+            self.configured_mcp_servers(self.get_config().await.as_ref())
+                .await
+        })
     }
 
     fn mcp_dependency_prompted<'a>(&'a self) -> SessionCapabilityFuture<'a, HashSet<String>> {
@@ -1336,7 +848,7 @@ impl ThreadSessionCapability for Session {
     fn notify_user_input_response<'a>(
         &'a self,
         sub_id: &'a str,
-        response: codex_protocol::request_user_input::RequestUserInputResponse,
+        response: protocol::request_user_input::RequestUserInputResponse,
     ) -> SessionCapabilityFuture<'a, ()> {
         Box::pin(async move { self.notify_user_input_response(sub_id, response).await })
     }
@@ -1344,7 +856,7 @@ impl ThreadSessionCapability for Session {
     fn mcp_oauth_login_support<'a>(
         &'a self,
         transport: &'a codex_config_types::McpServerTransportConfig,
-    ) -> SessionCapabilityFuture<'a, codex_mcp_types::McpOAuthLoginSupport> {
+    ) -> SessionCapabilityFuture<'a, mcp_types::McpOAuthLoginSupport> {
         Box::pin(async move { self.mcp_oauth_login_support(transport).await })
     }
 
@@ -1371,7 +883,7 @@ impl ThreadSessionCapability for Session {
 
     fn should_retry_mcp_oauth_without_scopes(
         &self,
-        scopes: &codex_mcp_types::ResolvedMcpOAuthScopes,
+        scopes: &mcp_types::ResolvedMcpOAuthScopes,
         error: &anyhow::Error,
     ) -> bool {
         self.should_retry_mcp_oauth_without_scopes(scopes, error)
@@ -1419,7 +931,7 @@ impl ThreadSessionCapability for Session {
 
     fn hard_refresh_codex_apps_tools_cache<'a>(
         &'a self,
-    ) -> SessionCapabilityFuture<'a, Result<Vec<codex_mcp_tool_types::ToolInfo>, String>> {
+    ) -> SessionCapabilityFuture<'a, Result<Vec<mcp_types::ToolInfo>, String>> {
         Box::pin(async move {
             self.hard_refresh_codex_apps_tools_cache()
                 .await
@@ -1433,20 +945,26 @@ impl ThreadSessionCapability for Session {
         tool: &'a str,
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
-    ) -> SessionCapabilityFuture<'a, Result<codex_protocol::mcp::CallToolResult, String>> {
+    ) -> SessionCapabilityFuture<'a, Result<protocol::mcp::CallToolResult, String>> {
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
-            mcp_service_api::McpToolRuntime::call_tool(manager.as_ref(), server, tool, arguments, meta)
-                .await
-                .map_err(|error| format!("tool call error: {error:?}"))
+            mcp_service_api::McpToolRuntime::call_tool(
+                manager.as_ref(),
+                server,
+                tool,
+                arguments,
+                meta,
+            )
+            .await
+            .map_err(|error| format!("tool call error: {error:?}"))
         })
     }
 
     fn list_mcp_resources<'a>(
         &'a self,
         server: &'a str,
-        params: Option<codex_protocol::mcp::PaginatedRequestParams>,
-    ) -> SessionCapabilityFuture<'a, Result<codex_protocol::mcp::ListResourcesResult, String>> {
+        params: Option<protocol::mcp::PaginatedRequestParams>,
+    ) -> SessionCapabilityFuture<'a, Result<protocol::mcp::ListResourcesResult, String>> {
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager
@@ -1458,7 +976,7 @@ impl ThreadSessionCapability for Session {
 
     fn list_all_mcp_resources(
         &self,
-    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<codex_protocol::mcp::Resource>>> {
+    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<protocol::mcp::Resource>>> {
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager.list_all_resources().await
@@ -1468,11 +986,9 @@ impl ThreadSessionCapability for Session {
     fn list_mcp_resource_templates<'a>(
         &'a self,
         server: &'a str,
-        params: Option<codex_protocol::mcp::PaginatedRequestParams>,
-    ) -> SessionCapabilityFuture<
-        'a,
-        Result<codex_protocol::mcp::ListResourceTemplatesResult, String>,
-    > {
+        params: Option<protocol::mcp::PaginatedRequestParams>,
+    ) -> SessionCapabilityFuture<'a, Result<protocol::mcp::ListResourceTemplatesResult, String>>
+    {
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager
@@ -1484,7 +1000,7 @@ impl ThreadSessionCapability for Session {
 
     fn list_all_mcp_resource_templates(
         &self,
-    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<codex_protocol::mcp::ResourceTemplate>>> {
+    ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<protocol::mcp::ResourceTemplate>>> {
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager.list_all_resource_templates().await
@@ -1494,8 +1010,8 @@ impl ThreadSessionCapability for Session {
     fn read_mcp_resource<'a>(
         &'a self,
         server: &'a str,
-        params: codex_protocol::mcp::ReadResourceRequestParams,
-    ) -> SessionCapabilityFuture<'a, Result<codex_protocol::mcp::ReadResourceResult, String>> {
+        params: protocol::mcp::ReadResourceRequestParams,
+    ) -> SessionCapabilityFuture<'a, Result<protocol::mcp::ReadResourceResult, String>> {
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager
@@ -1505,9 +1021,7 @@ impl ThreadSessionCapability for Session {
         })
     }
 
-    fn list_all_mcp_tools<'a>(
-        &'a self,
-    ) -> SessionCapabilityFuture<'a, Vec<codex_mcp_tool_types::ToolInfo>> {
+    fn list_all_mcp_tools<'a>(&'a self) -> SessionCapabilityFuture<'a, Vec<mcp_types::ToolInfo>> {
         Box::pin(async move { self.list_all_mcp_tools().await })
     }
 
@@ -1592,14 +1106,14 @@ impl ThreadSessionCapability for Session {
 
     fn mcp_tool_approval_is_remembered<'a>(
         &'a self,
-        key: &'a codex_mcp_types::McpToolApprovalKey,
+        key: &'a mcp_types::McpToolApprovalKey,
     ) -> SessionCapabilityFuture<'a, bool> {
         Box::pin(async move { self.mcp_tool_approval_is_remembered(key).await })
     }
 
     fn remember_mcp_tool_approval<'a>(
         &'a self,
-        key: codex_mcp_types::McpToolApprovalKey,
+        key: mcp_types::McpToolApprovalKey,
     ) -> SessionCapabilityFuture<'a, ()> {
         Box::pin(async move { self.remember_mcp_tool_approval(key).await })
     }
@@ -1731,89 +1245,8 @@ impl ThreadSessionCapability for Session {
                 tracing::warn!("{}", invalid_turn_message());
                 return;
             };
-            self.send_event(turn, EventMsg::TerminalInteraction(event)).await;
-        })
-    }
-
-    fn request_unified_exec_approval<'a>(
-        &'a self,
-        turn: &'a dyn thread_service_api::ThreadRuntimeCapability,
-        call_id: String,
-        command: Vec<String>,
-        cwd: AbsolutePathBuf,
-        reason: Option<String>,
-        sandbox_permissions: codex_protocol::models::SandboxPermissions,
-        tty: bool,
-        network_approval_context: Option<NetworkApprovalContext>,
-        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
-        additional_permissions: Option<AdditionalPermissionProfile>,
-        cache_keys: Vec<thread_service_api::UnifiedExecApprovalKey>,
-    ) -> SessionCapabilityFuture<'a, ReviewDecision> {
-        Box::pin(async move {
-            let Some(turn) = turn_context(turn) else {
-                tracing::warn!("{}", invalid_turn_message());
-                return ReviewDecision::Denied;
-            };
-            let strict_auto_review = self.strict_auto_review_enabled_for_turn().await;
-            let review_with_guardian = turn.routes_approval_to_guardian() || strict_auto_review;
-
-            if review_with_guardian {
-                let Some(session) = session_arc(self) else {
-                    tracing::warn!("{}", invalid_session_message());
-                    return ReviewDecision::Denied;
-                };
-                return self
-                    .services
-                    .approval_service
-                    .review_guardian_request(GuardianReviewDispatch {
-                        session: session as Arc<dyn thread_service_api::ThreadSessionCapability>,
-                        turn: turn.self_arc()
-                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
-                        review_id: uuid::Uuid::new_v4().to_string(),
-                        request: codex_guardian::GuardianApprovalRequest::ExecCommand {
-                            id: call_id,
-                            command,
-                            cwd,
-                            sandbox_permissions,
-                            additional_permissions,
-                            justification: reason.clone(),
-                            tty,
-                        },
-                        retry_reason: reason,
-                        approval_request_source: codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
-                        cancellation_token: None,
-                    })
-                    .await
-                    .decision;
-            }
-
-            let Some(session) = session_arc(self) else {
-                tracing::warn!("{}", invalid_session_message());
-                return ReviewDecision::Denied;
-            };
-            let turn = turn.self_arc();
-            crate::session::session::approval_support_impl::with_cached_approval(
-                &self.services,
-                "unified_exec",
-                cache_keys,
-                || async move {
-                    session
-                        .request_command_approval(
-                            turn.as_ref(),
-                            call_id,
-                            /*approval_id*/ None,
-                            command,
-                            cwd,
-                            reason,
-                            network_approval_context,
-                            proposed_execpolicy_amendment,
-                            additional_permissions,
-                            /*available_decisions*/ None,
-                        )
-                        .await
-                },
-            )
-            .await
+            self.send_event(turn, EventMsg::TerminalInteraction(event))
+                .await;
         })
     }
 
@@ -1909,7 +1342,7 @@ impl ThreadSessionCapability for Session {
     fn emit_turn_item_started<'a>(
         &'a self,
         turn: &'a dyn ThreadTurnCapability,
-        item: &'a codex_protocol::items::TurnItem,
+        item: &'a protocol::items::TurnItem,
     ) -> SessionCapabilityFuture<'a, ()> {
         Box::pin(async move {
             let Some(turn) = turn_context(turn) else {
@@ -1923,7 +1356,7 @@ impl ThreadSessionCapability for Session {
     fn emit_turn_item_completed<'a>(
         &'a self,
         turn: &'a dyn ThreadTurnCapability,
-        item: codex_protocol::items::TurnItem,
+        item: protocol::items::TurnItem,
     ) -> SessionCapabilityFuture<'a, ()> {
         Box::pin(async move {
             let Some(turn) = turn_context(turn) else {
@@ -1935,15 +1368,619 @@ impl ThreadSessionCapability for Session {
     }
 }
 
-impl codex_command_service_api::SessionCommandInteractionCaller for Session {
+impl ApprovalSessionCapability for Session {
+    fn run_permission_request_hooks<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        permission_request_run_id: &'a str,
+        permission_request: PermissionRequestPayload,
+    ) -> SessionCapabilityFuture<'a, Option<hooks_api::PermissionRequestDecision>> {
+        Box::pin(async move {
+            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>()
+            else {
+                tracing::warn!("tool session capability received an unsupported turn context");
+                return None;
+            };
+            run_permission_request_hooks(
+                self,
+                turn,
+                permission_request_run_id,
+                permission_request_hook_payload(permission_request),
+            )
+            .await
+        })
+    }
+
+    fn strict_auto_review_enabled_for_turn<'a>(&'a self) -> SessionCapabilityFuture<'a, bool> {
+        Box::pin(async move { self.strict_auto_review_enabled_for_turn().await })
+    }
+
+    fn active_turn_runtime<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, Option<Arc<dyn thread_service_api::ThreadRuntimeCapability>>>
+    {
+        Box::pin(async move {
+            let active_turn = self.active_turn.lock().await;
+            active_turn
+                .as_ref()
+                .and_then(|turn| turn.tasks.first())
+                .map(|(_, task)| {
+                    Arc::clone(&task.turn_context)
+                        as Arc<dyn thread_service_api::ThreadRuntimeCapability>
+                })
+        })
+    }
+
+    fn take_review_rejection<'a>(
+        &'a self,
+        review_id: &'a str,
+    ) -> SessionCapabilityFuture<'a, Option<ReviewRejectionRecord>> {
+        Box::pin(async move {
+            self.services
+                .guardian_rejections
+                .lock()
+                .await
+                .remove(review_id)
+                .map(|rejection| ReviewRejectionRecord {
+                    rationale: rejection.rationale,
+                    source: rejection.source,
+                })
+        })
+    }
+
+    fn set_review_rejection<'a>(
+        &'a self,
+        review_id: String,
+        rejection: Option<ReviewRejectionRecord>,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        Box::pin(async move {
+            let mut rejections = self.services.guardian_rejections.lock().await;
+            match rejection {
+                Some(rejection) => {
+                    rejections.insert(
+                        review_id,
+                        codex_guardian::GuardianRejection {
+                            rationale: rejection.rationale,
+                            source: rejection.source,
+                        },
+                    );
+                }
+                None => {
+                    rejections.remove(&review_id);
+                }
+            }
+        })
+    }
+
+    fn track_review_analytics<'a>(
+        &'a self,
+        tracking: codex_analytics_api::GuardianReviewTrackContext,
+        result: codex_analytics_api::GuardianReviewAnalyticsResult,
+        completed_at_ms: u64,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        Box::pin(async move {
+            track_review_analytics_event(self, &tracking, result, completed_at_ms);
+        })
+    }
+
+    fn run_review_session<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        request: serde_json::Value,
+        retry_reason: Option<String>,
+    ) -> SessionCapabilityFuture<'a, ReviewRuntimeResult> {
+        Box::pin(async move {
+            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>()
+            else {
+                tracing::warn!("{}", invalid_turn_message());
+                return ReviewRuntimeResult {
+                    outcome: ReviewRuntimeOutcome::Error(ReviewRuntimeError::Cancelled),
+                    analytics_result:
+                        codex_analytics_api::GuardianReviewAnalyticsResult::without_session(),
+                };
+            };
+            let Ok(request) = serde_json::from_value::<GuardianApprovalRequestPayload>(request)
+            else {
+                tracing::warn!(
+                    "tool session capability received an invalid guardian approval request"
+                );
+                return ReviewRuntimeResult {
+                    outcome: ReviewRuntimeOutcome::Error(ReviewRuntimeError::PromptBuild {
+                        message: "invalid guardian approval request".to_string(),
+                    }),
+                    analytics_result:
+                        codex_analytics_api::GuardianReviewAnalyticsResult::without_session(),
+                };
+            };
+            let request = match request {
+                GuardianApprovalRequestPayload::Shell {
+                    id,
+                    command,
+                    cwd,
+                    sandbox_permissions,
+                    additional_permissions,
+                    justification,
+                } => GuardianApprovalRequest::Shell {
+                    id,
+                    command,
+                    cwd,
+                    sandbox_permissions,
+                    additional_permissions,
+                    justification,
+                },
+                #[cfg(unix)]
+                GuardianApprovalRequestPayload::Execve {
+                    id,
+                    source,
+                    program,
+                    argv,
+                    cwd,
+                    additional_permissions,
+                } => GuardianApprovalRequest::Execve {
+                    id,
+                    source,
+                    program,
+                    argv,
+                    cwd,
+                    additional_permissions,
+                },
+                GuardianApprovalRequestPayload::ApplyPatch {
+                    id,
+                    cwd,
+                    files,
+                    patch,
+                } => GuardianApprovalRequest::ApplyPatch {
+                    id,
+                    cwd,
+                    files,
+                    patch,
+                },
+                GuardianApprovalRequestPayload::ExecCommand {
+                    id,
+                    command,
+                    cwd,
+                    sandbox_permissions,
+                    additional_permissions,
+                    justification,
+                    tty,
+                } => GuardianApprovalRequest::ExecCommand {
+                    id,
+                    command,
+                    cwd,
+                    sandbox_permissions,
+                    additional_permissions,
+                    justification,
+                    tty,
+                },
+                GuardianApprovalRequestPayload::NetworkAccess {
+                    id,
+                    turn_id,
+                    target,
+                    host,
+                    protocol,
+                    port,
+                    trigger,
+                } => GuardianApprovalRequest::NetworkAccess {
+                    id,
+                    turn_id,
+                    target,
+                    host,
+                    protocol,
+                    port,
+                    trigger: trigger.map(|trigger| codex_guardian::GuardianNetworkAccessTrigger {
+                        call_id: trigger.call_id,
+                        tool_name: trigger.tool_name,
+                        command: trigger.command,
+                        cwd: trigger.cwd,
+                        sandbox_permissions: trigger.sandbox_permissions,
+                        additional_permissions: trigger.additional_permissions,
+                        justification: trigger.justification,
+                        tty: trigger.tty,
+                    }),
+                },
+                GuardianApprovalRequestPayload::McpToolCall {
+                    id,
+                    server,
+                    tool_name,
+                    arguments,
+                    connector_id,
+                    connector_name,
+                    connector_description,
+                    tool_title,
+                    tool_description,
+                    annotations,
+                } => GuardianApprovalRequest::McpToolCall {
+                    id,
+                    server,
+                    tool_name,
+                    arguments,
+                    connector_id,
+                    connector_name,
+                    connector_description,
+                    tool_title,
+                    tool_description,
+                    annotations: annotations.map(|annotations| {
+                        codex_guardian::GuardianMcpAnnotations {
+                            destructive_hint: annotations.destructive_hint,
+                            open_world_hint: annotations.open_world_hint,
+                            read_only_hint: annotations.read_only_hint,
+                        }
+                    }),
+                },
+                GuardianApprovalRequestPayload::RequestPermissions {
+                    id,
+                    turn_id,
+                    reason,
+                    permissions,
+                } => GuardianApprovalRequest::RequestPermissions {
+                    id,
+                    turn_id,
+                    reason,
+                    permissions,
+                },
+            };
+            let session = turn.session_arc();
+            let turn = turn.self_arc();
+            let (outcome, analytics_result) = approval_review_runtime_impl::run_review_session(
+                session,
+                turn,
+                request,
+                retry_reason,
+                codex_guardian::guardian_output_schema(),
+                None,
+            )
+            .await;
+            let outcome = match outcome {
+                approval_review_runtime_impl::GuardianReviewOutcome::Completed(assessment) => {
+                    ReviewRuntimeOutcome::Completed(ReviewAssessmentRecord {
+                        risk_level: assessment.risk_level,
+                        user_authorization: assessment.user_authorization,
+                        outcome: assessment.outcome,
+                        rationale: assessment.rationale,
+                    })
+                }
+                approval_review_runtime_impl::GuardianReviewOutcome::Error(error) => {
+                    let error = match error {
+                        approval_review_runtime_impl::GuardianReviewError::PromptBuild {
+                            message,
+                        } => ReviewRuntimeError::PromptBuild { message },
+                        approval_review_runtime_impl::GuardianReviewError::Session { message } => {
+                            ReviewRuntimeError::Session { message }
+                        }
+                        approval_review_runtime_impl::GuardianReviewError::Parse { message } => {
+                            ReviewRuntimeError::Parse { message }
+                        }
+                        approval_review_runtime_impl::GuardianReviewError::Timeout => {
+                            ReviewRuntimeError::Timeout
+                        }
+                        approval_review_runtime_impl::GuardianReviewError::Cancelled => {
+                            ReviewRuntimeError::Cancelled
+                        }
+                    };
+                    ReviewRuntimeOutcome::Error(error)
+                }
+            };
+            ReviewRuntimeResult {
+                outcome,
+                analytics_result,
+            }
+        })
+    }
+
+    fn record_review_non_rejection<'a>(
+        &'a self,
+        turn_id: &'a str,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        Box::pin(async move {
+            let Some(session) = self.self_weak.get().and_then(std::sync::Weak::upgrade) else {
+                tracing::warn!(
+                    "tool session capability lost owning session while recording guardian non-denial"
+                );
+                return;
+            };
+            session
+                .services
+                .guardian_rejection_circuit_breaker
+                .lock()
+                .await
+                .record_non_denial(turn_id);
+        })
+    }
+
+    fn record_review_rejection<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        turn_id: &'a str,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        Box::pin(async move {
+            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>()
+            else {
+                tracing::warn!("{}", invalid_turn_message());
+                return;
+            };
+            let session = turn.session_arc();
+            let turn = turn.self_arc();
+            let action = session
+                .services
+                .guardian_rejection_circuit_breaker
+                .lock()
+                .await
+                .record_denial(turn_id);
+            let codex_guardian::GuardianRejectionCircuitBreakerAction::InterruptTurn {
+                consecutive_denials,
+                recent_denials,
+            } = action
+            else {
+                return;
+            };
+
+            if session.turn_context_for_sub_id(turn_id).await.is_none() {
+                return;
+            }
+
+            session
+                .send_event(
+                    turn.as_ref(),
+                    EventMsg::GuardianWarning(protocol::protocol::WarningEvent {
+                        message: format!(
+                            "Automatic approval review rejected too many approval requests for this turn ({consecutive_denials} consecutive, {recent_denials} in the last {} reviews); interrupting the turn.",
+                            codex_guardian::AUTO_REVIEW_DENIAL_WINDOW_SIZE
+                        ),
+                    }),
+                )
+                .await;
+
+            let runtime_handle = session.services.runtime_handle.clone();
+            let session = Arc::clone(&session);
+            let turn_id = turn_id.to_string();
+            let _abort_task = runtime_handle.spawn(async move {
+                session
+                    .abort_turn_if_active(
+                        &turn_id,
+                        protocol::protocol::TurnAbortReason::Interrupted,
+                    )
+                    .await;
+            });
+        })
+    }
+
+    fn request_command_approval<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        call_id: String,
+        approval_id: Option<String>,
+        command: Vec<String>,
+        cwd: AbsolutePathBuf,
+        reason: Option<String>,
+        network_approval_context: Option<NetworkApprovalContext>,
+        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
+        available_decisions: Option<Vec<protocol::protocol::ReviewDecision>>,
+    ) -> SessionCapabilityFuture<'a, protocol::protocol::ReviewDecision> {
+        Box::pin(async move {
+            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>()
+            else {
+                tracing::warn!("{}", invalid_turn_message());
+                return protocol::protocol::ReviewDecision::Abort;
+            };
+            Session::request_command_approval(
+                self,
+                turn,
+                call_id,
+                approval_id,
+                command,
+                cwd,
+                reason,
+                network_approval_context,
+                proposed_execpolicy_amendment,
+                additional_permissions,
+                available_decisions,
+            )
+            .await
+        })
+    }
+
+    fn request_patch_approval<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        call_id: String,
+        changes: std::collections::HashMap<std::path::PathBuf, protocol::protocol::FileChange>,
+        reason: Option<String>,
+        grant_root: Option<std::path::PathBuf>,
+    ) -> SessionCapabilityFuture<'a, protocol::protocol::ReviewDecision> {
+        Box::pin(async move {
+            let Some(turn) = ThreadTurnCapability::as_any(turn).downcast_ref::<TurnContext>()
+            else {
+                tracing::warn!("{}", invalid_turn_message());
+                return protocol::protocol::ReviewDecision::Abort;
+            };
+            let rx_approve =
+                Session::request_patch_approval(self, turn, call_id, changes, reason, grant_root)
+                    .await;
+            rx_approve.await.unwrap_or_default()
+        })
+    }
+
+    fn cached_approval_decision<'a>(
+        &'a self,
+        key: String,
+    ) -> SessionCapabilityFuture<'a, Option<protocol::protocol::ReviewDecision>> {
+        Box::pin(async move {
+            let store = self.services.tool_approvals.lock().await;
+            store.get(&key)
+        })
+    }
+
+    fn cache_approval_decision<'a>(
+        &'a self,
+        keys: Vec<String>,
+        decision: protocol::protocol::ReviewDecision,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        Box::pin(async move {
+            if !matches!(
+                decision,
+                protocol::protocol::ReviewDecision::ApprovedForSession
+            ) {
+                return;
+            }
+            let mut store = self.services.tool_approvals.lock().await;
+            for key in keys {
+                store.put(key, protocol::protocol::ReviewDecision::ApprovedForSession);
+            }
+        })
+    }
+
+    fn record_approval_request_telemetry<'a>(
+        &'a self,
+        tool_name: &'a str,
+        decision: &'a protocol::protocol::ReviewDecision,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        Box::pin(async move {
+            self.services.session_telemetry.counter(
+                "codex.approval.requested",
+                /*inc*/ 1,
+                &[
+                    ("tool", tool_name),
+                    ("approved", decision.to_opaque_string()),
+                ],
+            );
+        })
+    }
+
+    fn persist_network_policy_amendment<'a>(
+        &'a self,
+        amendment: &'a NetworkPolicyAmendment,
+        network_approval_context: &'a NetworkApprovalContext,
+    ) -> SessionCapabilityFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.persist_network_policy_amendment(amendment, network_approval_context)
+                .await
+                .map_err(|err| err.to_string())
+        })
+    }
+
+    fn record_network_policy_amendment_message<'a>(
+        &'a self,
+        turn: &'a dyn ThreadTurnCapability,
+        amendment: &'a NetworkPolicyAmendment,
+    ) -> SessionCapabilityFuture<'a, ()> {
+        Box::pin(async move {
+            let Some(turn) = turn_context(turn) else {
+                tracing::warn!("{}", invalid_turn_message());
+                return;
+            };
+            self.record_network_policy_amendment_message(&turn.sub_id, amendment)
+                .await;
+        })
+    }
+
+    fn tool_permission_grants<'a>(&'a self) -> SessionCapabilityFuture<'a, ToolPermissionGrants> {
+        Box::pin(async move {
+            ToolPermissionGrants {
+                session: self.granted_session_permissions().await,
+                turn: self.granted_turn_permissions().await,
+            }
+        })
+    }
+
+    fn request_unified_exec_approval<'a>(
+        &'a self,
+        turn: &'a dyn thread_service_api::ThreadRuntimeCapability,
+        call_id: String,
+        command: Vec<String>,
+        cwd: AbsolutePathBuf,
+        reason: Option<String>,
+        sandbox_permissions: protocol::models::SandboxPermissions,
+        tty: bool,
+        network_approval_context: Option<NetworkApprovalContext>,
+        proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+        additional_permissions: Option<AdditionalPermissionProfile>,
+        cache_keys: Vec<thread_service_api::UnifiedExecApprovalKey>,
+    ) -> SessionCapabilityFuture<'a, ReviewDecision> {
+        Box::pin(async move {
+            let Some(turn) = turn_context(turn) else {
+                tracing::warn!("{}", invalid_turn_message());
+                return ReviewDecision::Denied;
+            };
+            let strict_auto_review = self.strict_auto_review_enabled_for_turn().await;
+            let review_with_guardian = turn.routes_approval_to_guardian() || strict_auto_review;
+
+            if review_with_guardian {
+                let Some(session) = session_arc(self) else {
+                    tracing::warn!("{}", invalid_session_message());
+                    return ReviewDecision::Denied;
+                };
+                return self
+                    .services
+                    .approval_service
+                    .review_guardian_request(GuardianReviewDispatch {
+                        session: session
+                            as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
+                        turn: turn.self_arc()
+                            as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        review_id: uuid::Uuid::new_v4().to_string(),
+                        request: codex_guardian::GuardianApprovalRequest::ExecCommand {
+                            id: call_id,
+                            command,
+                            cwd,
+                            sandbox_permissions,
+                            additional_permissions,
+                            justification: reason.clone(),
+                            tty,
+                        },
+                        retry_reason: reason,
+                        approval_request_source:
+                            codex_analytics_api::GuardianApprovalRequestSource::MainTurn,
+                        cancellation_token: None,
+                    })
+                    .await
+                    .decision;
+            }
+
+            let Some(session) = session_arc(self) else {
+                tracing::warn!("{}", invalid_session_message());
+                return ReviewDecision::Denied;
+            };
+            let turn = turn.self_arc();
+            crate::session::session::approval_support_impl::with_cached_approval(
+                &self.services,
+                "unified_exec",
+                cache_keys,
+                || async move {
+                    session
+                        .request_command_approval(
+                            turn.as_ref(),
+                            call_id,
+                            /*approval_id*/ None,
+                            command,
+                            cwd,
+                            reason,
+                            network_approval_context,
+                            proposed_execpolicy_amendment,
+                            additional_permissions,
+                            /*available_decisions*/ None,
+                        )
+                        .await
+                },
+            )
+            .await
+        })
+    }
+
+    fn conversation_id(&self) -> protocol::ThreadId {
+        self.conversation_id
+    }
+}
+
+impl command_service_api::SessionCommandInteractionCaller for Session {
     fn begin_command_wait<'a>(
         &'a self,
-        request: codex_command_service_api::CommandWaitRequest,
-    ) -> codex_command_service_api::CommandServiceFuture<
+        request: command_service_api::CommandWaitRequest,
+    ) -> command_service_api::CommandServiceFuture<
         'a,
         Result<
-            Box<dyn codex_command_service_api::CommandWaitOperation>,
-            codex_command_service_api::CommandSessionError,
+            Box<dyn command_service_api::CommandWaitOperation>,
+            command_service_api::CommandSessionError,
         >,
     > {
         Box::pin(async move { Session::begin_command_wait(self, request).await })
@@ -1951,13 +1988,10 @@ impl codex_command_service_api::SessionCommandInteractionCaller for Session {
 
     fn write_command_stdin<'a>(
         &'a self,
-        request: codex_command_service_api::WriteStdinRequest<'a>,
-    ) -> codex_command_service_api::CommandServiceFuture<
+        request: command_service_api::WriteStdinRequest<'a>,
+    ) -> command_service_api::CommandServiceFuture<
         'a,
-        Result<
-            codex_command_service_api::WriteStdinOutput,
-            codex_command_service_api::CommandSessionError,
-        >,
+        Result<command_service_api::WriteStdinOutput, command_service_api::CommandSessionError>,
     > {
         Box::pin(async move { Session::write_command_stdin(self, request).await })
     }

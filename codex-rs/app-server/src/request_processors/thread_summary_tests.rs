@@ -59,7 +59,7 @@ fn extract_conversation_summary_prefers_plain_user_messages() -> Result<()> {
         model_provider: "test-provider".to_string(),
         cwd: PathBuf::from("/"),
         cli_version: "0.0.0".to_string(),
-        source: codex_protocol::protocol::SessionSource::VSCode,
+        source: protocol::protocol::SessionSource::VSCode,
         git_info: None,
     };
 

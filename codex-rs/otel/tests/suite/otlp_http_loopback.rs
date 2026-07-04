@@ -7,7 +7,7 @@ use codex_otel::OtelSettings;
 use codex_otel::Result;
 use codex_otel::current_span_w3c_trace_context;
 use codex_otel::set_parent_from_w3c_trace_context;
-use codex_protocol::protocol::W3cTraceContext;
+use protocol::protocol::W3cTraceContext;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::Read as _;

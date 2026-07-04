@@ -8,16 +8,16 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use app_server_protocol::CollaborationModeListParams;
+use app_server_protocol::CollaborationModeListResponse;
+use app_server_protocol::CollaborationModeMask;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
-use codex_app_server_protocol::CollaborationModeListParams;
-use codex_app_server_protocol::CollaborationModeListResponse;
-use codex_app_server_protocol::CollaborationModeMask;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
-use thread_service::test_support::builtin_collaboration_mode_presets;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
+use thread_service::test_support::builtin_collaboration_mode_presets;
 use tokio::time::timeout;
 
 // Bazel CI can spend tens of seconds starting app-server subprocesses or

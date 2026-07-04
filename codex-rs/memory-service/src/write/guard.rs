@@ -1,9 +1,9 @@
-use codex_backend_client::Client as BackendClient;
+use openai_backend_client::Client as BackendClient;
 use codex_login::AuthManager;
 use codex_login::default_client::get_codex_user_agent;
-use codex_protocol::protocol::RateLimitSnapshot;
-use codex_protocol::protocol::RateLimitWindow;
 use memory_service_api::MemoryStartupSettings;
+use protocol::protocol::RateLimitSnapshot;
+use protocol::protocol::RateLimitWindow;
 use tracing::info;
 use tracing::warn;
 

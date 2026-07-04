@@ -2,9 +2,9 @@ use super::*;
 use crate::session::tests::make_session_and_context;
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::UserShellCommand;
-use codex_protocol::exec_output::StreamOutput;
-use codex_protocol::models::ContentItem;
 use pretty_assertions::assert_eq;
+use protocol::exec_output::StreamOutput;
+use protocol::models::ContentItem;
 use std::time::Duration;
 
 #[test]

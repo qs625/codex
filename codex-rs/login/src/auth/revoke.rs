@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::time::Duration;
 
 use codex_auth_types::AuthMode as ApiAuthMode;
-use codex_client::CodexHttpClient;
+use transport_client::CodexHttpClient;
 
 use super::manager::CLIENT_ID;
 use super::manager::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;

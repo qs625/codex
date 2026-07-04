@@ -1,15 +1,15 @@
 use std::path::Path;
 
-use codex_execpolicy_api::Policy;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Personality;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::TurnContextItem;
+use permissions_service_api::Policy;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::CollaborationMode;
+use protocol::config_types::Personality;
+use protocol::models::ContentItem;
+use protocol::models::PermissionProfile;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ModelInfo;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::TurnContextItem;
 
 use crate::CollaborationModeInstructions;
 use crate::ContextualUserFragment;

@@ -9,27 +9,28 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing::warn;
 
-use crate::client::ModelClientSession;
 use crate::client_common::PromptBuildParams;
 use crate::client_common::build_prompt;
 use crate::session::INITIAL_SUBMIT_ID;
 use crate::session::session::Session;
 use crate::session::turn::built_tools;
-use codex_metrics_api::STARTUP_PREWARM_AGE_AT_FIRST_TURN_METRIC;
-use codex_metrics_api::STARTUP_PREWARM_DURATION_METRIC;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::models::BaseInstructions;
-use codex_session_telemetry_api::SharedSessionTelemetry;
+use metrics_api::STARTUP_PREWARM_AGE_AT_FIRST_TURN_METRIC;
+use metrics_api::STARTUP_PREWARM_DURATION_METRIC;
+use model_service_api::OwnedModelTurnClientApi;
+use model_service_api::TurnModelRequest;
+use protocol::error::Result as CodexResult;
+use protocol::models::BaseInstructions;
+use session_telemetry_api::SharedSessionTelemetry;
 
 pub(crate) struct SessionStartupPrewarmHandle {
-    task: JoinHandle<CodexResult<ModelClientSession>>,
+    task: JoinHandle<CodexResult<OwnedModelTurnClientApi>>,
     started_at: Instant,
     timeout: Duration,
 }
 
 pub(crate) enum SessionStartupPrewarmResolution {
     Cancelled,
-    Ready(Box<ModelClientSession>),
+    Ready(OwnedModelTurnClientApi),
     Unavailable {
         status: &'static str,
         prewarm_duration: Option<Duration>,
@@ -38,7 +39,7 @@ pub(crate) enum SessionStartupPrewarmResolution {
 
 impl SessionStartupPrewarmHandle {
     pub(crate) fn new(
-        task: JoinHandle<CodexResult<ModelClientSession>>,
+        task: JoinHandle<CodexResult<OwnedModelTurnClientApi>>,
         started_at: Instant,
         timeout: Duration,
     ) -> Self {
@@ -148,13 +149,11 @@ impl SessionStartupPrewarmHandle {
     }
 
     fn resolution_from_join_result(
-        result: std::result::Result<CodexResult<ModelClientSession>, tokio::task::JoinError>,
+        result: std::result::Result<CodexResult<OwnedModelTurnClientApi>, tokio::task::JoinError>,
         started_at: Instant,
     ) -> SessionStartupPrewarmResolution {
         match result {
-            Ok(Ok(prewarmed_session)) => {
-                SessionStartupPrewarmResolution::Ready(Box::new(prewarmed_session))
-            }
+            Ok(Ok(prewarmed_session)) => SessionStartupPrewarmResolution::Ready(prewarmed_session),
             Ok(Err(err)) => {
                 warn!("startup websocket prewarm setup failed: {err:#}");
                 SessionStartupPrewarmResolution::Unavailable {
@@ -222,7 +221,7 @@ impl Session {
 async fn schedule_startup_prewarm_inner(
     session: Arc<Session>,
     base_instructions: String,
-) -> CodexResult<ModelClientSession> {
+) -> CodexResult<OwnedModelTurnClientApi> {
     let prewarm_started_at = Instant::now();
     let startup_turn_context = session
         .new_default_turn_with_sub_id(INITIAL_SUBMIT_ID.to_owned())
@@ -277,19 +276,48 @@ async fn schedule_startup_prewarm_inner(
     let startup_turn_metadata_header = startup_turn_context
         .turn_metadata_state
         .current_header_value();
-    let mut client_session = session.services.model_client.new_session();
+    let model_client_api = crate::session::turn::model_client_api_for_turn(
+        session.as_ref(),
+        startup_turn_context.as_ref(),
+    )
+    .await
+    .map_err(|err| {
+        protocol::error::CodexErr::Fatal(format!(
+            "failed to resolve startup prewarm model client api: {err}"
+        ))
+    })?;
+    let mut client_session = model_client_api.create_turn_client().await.map_err(|err| {
+        protocol::error::CodexErr::Fatal(format!(
+            "failed to create startup prewarm model client: {err}"
+        ))
+    })?;
     let websocket_warmup_started_at = Instant::now();
     client_session
-        .prewarm_websocket(
-            &startup_prompt,
-            &startup_turn_context.model_info,
-            &startup_turn_context.session_telemetry,
-            startup_turn_context.reasoning_effort,
-            startup_turn_context.reasoning_summary,
-            startup_turn_context.config.service_tier.clone(),
-            startup_turn_metadata_header.as_deref(),
-        )
-        .await?;
+        .prewarm_websocket(TurnModelRequest {
+            request: model_service_api::ResponsesModelRequest {
+                input: startup_prompt.input.clone(),
+                tools: startup_prompt.tools.clone(),
+                parallel_tool_calls: startup_prompt.parallel_tool_calls,
+                base_instructions: startup_prompt.base_instructions.clone(),
+                personality: startup_prompt.personality,
+                output_schema: startup_prompt.output_schema.clone(),
+                output_schema_strict: startup_prompt.output_schema_strict,
+                model: Some(startup_turn_context.model_info.slug.clone()),
+                reasoning_effort: startup_turn_context.reasoning_effort,
+                reasoning_summary: startup_turn_context.reasoning_summary,
+                service_tier: crate::session::turn::model_service_tier(
+                    startup_turn_context.config.service_tier.as_deref(),
+                ),
+                verbosity: None,
+                turn_metadata_header: startup_turn_metadata_header.clone(),
+            },
+            model_info: startup_turn_context.model_info.clone(),
+            session_telemetry: startup_turn_context.session_telemetry.clone(),
+            turn_metadata_header: startup_turn_metadata_header,
+            inference_trace: rollout_trace_api::InferenceTraceContext::disabled(),
+        })
+        .await
+        .map_err(|err| protocol::error::CodexErr::Stream(err.to_string(), None))?;
     startup_turn_context.session_telemetry.record_startup_phase(
         "startup_prewarm_websocket_warmup",
         websocket_warmup_started_at.elapsed(),

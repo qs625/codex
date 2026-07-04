@@ -12,9 +12,9 @@ use std::sync::mpsc;
 
 use anyhow::Context;
 use anyhow::Result;
+use app_server_protocol::AskForApproval;
 use clap::ArgAction;
 use clap::Parser;
-use codex_app_server_protocol::AskForApproval;
 
 use crate::client::AppServerClient;
 use crate::client::build_thread_resume_params;

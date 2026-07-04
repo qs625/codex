@@ -1,6 +1,6 @@
-use codex_protocol::protocol::TurnContextItem;
-use codex_protocol::protocol::TurnContextNetworkItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::protocol::TurnContextItem;
+use protocol::protocol::TurnContextNetworkItem;
 
 use super::ContextualUserFragment;
 
@@ -208,8 +208,8 @@ impl EnvironmentContext {
 
 impl ContextualUserFragment for EnvironmentContext {
     const ROLE: &'static str = "user";
-    const START_MARKER: &'static str = codex_protocol::protocol::ENVIRONMENT_CONTEXT_OPEN_TAG;
-    const END_MARKER: &'static str = codex_protocol::protocol::ENVIRONMENT_CONTEXT_CLOSE_TAG;
+    const START_MARKER: &'static str = protocol::protocol::ENVIRONMENT_CONTEXT_OPEN_TAG;
+    const END_MARKER: &'static str = protocol::protocol::ENVIRONMENT_CONTEXT_CLOSE_TAG;
 
     fn body(&self) -> String {
         let mut lines = Vec::new();

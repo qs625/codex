@@ -1302,7 +1302,7 @@ impl Config {
     }
 
     pub fn bundled_skills_enabled(&self) -> bool {
-        codex_core_skills_api::bundled_skills_enabled_from_stack(
+        skill_service_api::bundled_skills_enabled_from_stack(
             &skill_config_layer_stack_from_config_layer_stack(&self.config_layer_stack),
         )
     }

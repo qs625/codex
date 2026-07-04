@@ -13,6 +13,7 @@ use codex_cloud_tasks_client::TaskStatus;
 use codex_git_info::current_branch_name;
 use codex_git_info::default_branch_name;
 use codex_login::default_client::get_codex_user_agent;
+use model_service_api::auth_provider_from_auth_snapshot;
 use owo_colors::OwoColorize;
 use owo_colors::Stream;
 use std::cmp::Ordering;
@@ -94,7 +95,7 @@ async fn init_backend(user_agent_suffix: &str) -> anyhow::Result<BackendContext>
         std::process::exit(1);
     }
 
-    let auth_provider = codex_model_provider::auth_provider_from_auth(&auth);
+    let auth_provider = auth_provider_from_auth_snapshot(&auth.request_auth_snapshot());
     http = http.with_auth_provider(auth_provider);
     if let Some(acc) = auth.get_account_id() {
         append_error_log(format!("auth: set ChatGPT-Account-Id header: {acc}"));

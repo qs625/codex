@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::build_test_model_service;
 use pretty_assertions::assert_eq;
 use std::io::Write;
 use std::path::Path;
@@ -154,9 +155,16 @@ async fn run_sync_with_transport_overrides(
     let git_binary = git_binary.into();
     let api_base_url = api_base_url.into();
     let backup_archive_api_url = backup_archive_api_url.into();
+    let http_client = build_test_model_service(
+        codex_home.as_path(),
+        "https://chatgpt.com/backend-api/",
+        /*auth*/ None,
+    )
+    .http_client();
     tokio::task::spawn_blocking(move || {
         sync_openai_plugins_repo_with_transport_overrides(
             codex_home.as_path(),
+            http_client,
             &git_binary,
             &api_base_url,
             &backup_archive_api_url,
@@ -171,8 +179,14 @@ async fn run_http_sync(
     api_base_url: impl Into<String>,
 ) -> Result<String, String> {
     let api_base_url = api_base_url.into();
+    let http_client = build_test_model_service(
+        codex_home.as_path(),
+        "https://chatgpt.com/backend-api/",
+        /*auth*/ None,
+    )
+    .http_client();
     tokio::task::spawn_blocking(move || {
-        sync_openai_plugins_repo_via_http(codex_home.as_path(), &api_base_url)
+        sync_openai_plugins_repo_via_http(codex_home.as_path(), http_client, &api_base_url)
     })
     .await
     .expect("sync task should join")
@@ -291,6 +305,8 @@ exit 1
 
     let synced_sha = sync_openai_plugins_repo_with_transport_overrides(
         tmp.path(),
+        build_test_model_service(tmp.path(), "https://chatgpt.com/backend-api/", None)
+            .http_client(),
         git_path.to_str().expect("utf8 path"),
         "http://127.0.0.1:9",
         "http://127.0.0.1:9/backend-api/plugins/export/curated",

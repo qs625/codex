@@ -108,10 +108,7 @@ pub trait WorkflowApi: Send + Sync + 'static {
         args: WorkflowStartArgs,
     ) -> WorkflowRunFuture<'a>;
 
-    fn workflow_status<'a>(
-        &'a self,
-        args: WorkflowStatusArgs,
-    ) -> WorkflowRunFuture<'a>;
+    fn workflow_status<'a>(&'a self, args: WorkflowStatusArgs) -> WorkflowRunFuture<'a>;
 
     fn resume_workflow<'a>(
         &'a self,
@@ -157,10 +154,7 @@ where
         self.as_ref().start_workflow(context, args)
     }
 
-    fn workflow_status<'a>(
-        &'a self,
-        args: WorkflowStatusArgs,
-    ) -> WorkflowRunFuture<'a> {
+    fn workflow_status<'a>(&'a self, args: WorkflowStatusArgs) -> WorkflowRunFuture<'a> {
         self.as_ref().workflow_status(args)
     }
 

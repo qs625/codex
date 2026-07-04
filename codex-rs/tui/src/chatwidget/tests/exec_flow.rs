@@ -118,7 +118,7 @@ async fn exec_approval_uses_approval_id_when_present() {
             assert_eq!(id, "approval-subcommand");
             assert_matches!(
                 decision,
-                codex_app_server_protocol::CommandExecutionApprovalDecision::Accept
+                app_server_protocol::CommandExecutionApprovalDecision::Accept
             );
             found = true;
             break;
@@ -1509,7 +1509,7 @@ async fn apply_patch_approval_sends_op_with_call_id() {
             assert_eq!(id, "call-999");
             assert_matches!(
                 decision,
-                codex_app_server_protocol::FileChangeApprovalDecision::Accept
+                app_server_protocol::FileChangeApprovalDecision::Accept
             );
             found = true;
             break;
@@ -1561,7 +1561,7 @@ async fn apply_patch_full_flow_integration_like() {
             assert_eq!(id, "call-1");
             assert_matches!(
                 decision,
-                codex_app_server_protocol::FileChangeApprovalDecision::Accept
+                app_server_protocol::FileChangeApprovalDecision::Accept
             );
         }
         other => panic!("unexpected op forwarded: {other:?}"),

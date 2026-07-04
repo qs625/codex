@@ -1,4 +1,5 @@
 use super::*;
+use crate::OPENAI_BUNDLED_MARKETPLACE_NAME;
 use crate::PluginInstallRequest;
 use crate::PluginsManager;
 use crate::startup_sync::curated_plugins_repo_path;
@@ -8,12 +9,11 @@ use crate::test_support::write_curated_plugin;
 use crate::test_support::write_curated_plugin_sha_with as write_curated_plugin_sha;
 use crate::test_support::write_file;
 use crate::test_support::write_openai_curated_marketplace;
-use crate::OPENAI_BUNDLED_MARKETPLACE_NAME;
-use codex_tool_types::DiscoverablePluginInfo;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use plugin_service_api::TOOL_SUGGEST_DISCOVERABLE_PLUGIN_ALLOWLIST;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
+use tool_service_api::DiscoverablePluginInfo;
 use tracing::Level;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_test::internal::MockWriter;
@@ -277,7 +277,10 @@ async fn list_tool_suggest_discoverable_plugins_omits_installed_curated_plugins(
     let codex_home = tempdir().expect("tempdir should succeed");
     let curated_root = curated_plugins_repo_path(codex_home.path());
     write_openai_curated_marketplace(&curated_root, &["slack"]);
-    write_curated_plugin_sha(codex_home.path(), crate::test_support::TEST_CURATED_PLUGIN_SHA);
+    write_curated_plugin_sha(
+        codex_home.path(),
+        crate::test_support::TEST_CURATED_PLUGIN_SHA,
+    );
     write_file(
         &codex_home.path().join("config.toml"),
         r#"[features]

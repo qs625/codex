@@ -10,43 +10,43 @@
 
 use std::path::PathBuf;
 
-use codex_app_server_protocol::AddCreditsNudgeCreditType;
-use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
-use codex_app_server_protocol::AppInfo;
-use codex_app_server_protocol::MarketplaceAddResponse;
-use codex_app_server_protocol::MarketplaceRemoveResponse;
-use codex_app_server_protocol::MarketplaceUpgradeResponse;
-use codex_app_server_protocol::McpServerStatus;
-use codex_app_server_protocol::McpServerStatusDetail;
-use codex_app_server_protocol::PluginInstallResponse;
-use codex_app_server_protocol::PluginListResponse;
-use codex_app_server_protocol::PluginReadParams;
-use codex_app_server_protocol::PluginReadResponse;
-use codex_app_server_protocol::PluginUninstallResponse;
-use codex_app_server_protocol::RateLimitSnapshot;
-use codex_app_server_protocol::SkillsListResponse;
-use codex_app_server_protocol::ThreadGoalStatus;
+use app_server_protocol::AddCreditsNudgeCreditType;
+use app_server_protocol::AddCreditsNudgeEmailStatus;
+use app_server_protocol::AppInfo;
+use app_server_protocol::MarketplaceAddResponse;
+use app_server_protocol::MarketplaceRemoveResponse;
+use app_server_protocol::MarketplaceUpgradeResponse;
+use app_server_protocol::McpServerStatus;
+use app_server_protocol::McpServerStatusDetail;
+use app_server_protocol::PluginInstallResponse;
+use app_server_protocol::PluginListResponse;
+use app_server_protocol::PluginReadParams;
+use app_server_protocol::PluginReadResponse;
+use app_server_protocol::PluginUninstallResponse;
+use app_server_protocol::RateLimitSnapshot;
+use app_server_protocol::SkillsListResponse;
+use app_server_protocol::ThreadGoalStatus;
 use codex_file_search::FileMatch;
-use codex_protocol::ThreadId;
-use codex_protocol::openai_models::ModelPreset;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_approval_presets::ApprovalPreset;
+use protocol::ThreadId;
+use protocol::openai_models::ModelPreset;
 
 use crate::app_command::AppCommand;
 use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
-use codex_app_server_protocol::AskForApproval;
+use app_server_protocol::AskForApproval;
 use codex_features::Feature;
-use plugin_service_api::PluginCapabilitySummary;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::CollaborationModeMask;
-use codex_protocol::config_types::Personality;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ReasoningEffort;
 use codex_realtime_webrtc::RealtimeWebrtcEvent;
 use codex_realtime_webrtc::RealtimeWebrtcSessionHandle;
+use plugin_service_api::PluginCapabilitySummary;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::CollaborationModeMask;
+use protocol::config_types::Personality;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ReasoningEffort;
 
 use crate::history_cell::HistoryCell;
 
@@ -374,7 +374,7 @@ pub(crate) enum AppEvent {
     /// Result of fetching lifecycle hook inventory.
     HooksLoaded {
         cwd: PathBuf,
-        result: Result<codex_app_server_protocol::HooksListResponse, String>,
+        result: Result<app_server_protocol::HooksListResponse, String>,
     },
 
     /// Open the prompt for adding a marketplace source.

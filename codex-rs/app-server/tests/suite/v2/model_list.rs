@@ -1,27 +1,27 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::Model;
+use app_server_protocol::ModelListParams;
+use app_server_protocol::ModelListResponse;
+use app_server_protocol::ModelServiceTier;
+use app_server_protocol::ModelUpgradeInfo;
+use app_server_protocol::ReasoningEffortOption;
+use app_server_protocol::RequestId;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
 use app_test_support::write_models_cache;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::Model;
-use codex_app_server_protocol::ModelListParams;
-use codex_app_server_protocol::ModelListResponse;
-use codex_app_server_protocol::ModelServiceTier;
-use codex_app_server_protocol::ModelUpgradeInfo;
-use codex_app_server_protocol::ReasoningEffortOption;
-use codex_app_server_protocol::RequestId;
-use codex_config::types::AuthCredentialsStoreMode;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelsResponse;
-use codex_protocol::openai_models::ReasoningEffort;
+use config_service::types::AuthCredentialsStoreMode;
 use core_test_support::responses::mount_models_once;
 use pretty_assertions::assert_eq;
+use protocol::openai_models::ModelInfo;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelsResponse;
+use protocol::openai_models::ReasoningEffort;
 use serde_json::json;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -199,7 +199,7 @@ env_key = "CORP_API_KEY"
                 description: "当前配置的默认 reasoning".to_string(),
             }],
             default_reasoning_effort: ReasoningEffort::High,
-            input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            input_modalities: protocol::openai_models::default_input_modalities(),
             context_window: None,
             max_context_window: None,
             auto_compact_token_limit: None,
@@ -323,7 +323,7 @@ ak = "test-key"
             hidden: false,
             supported_reasoning_efforts: Vec::new(),
             default_reasoning_effort: ReasoningEffort::None,
-            input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            input_modalities: protocol::openai_models::default_input_modalities(),
             context_window: Some(128_000),
             max_context_window: Some(256_000),
             auto_compact_token_limit: Some(90_000),
@@ -456,7 +456,7 @@ env_key = "CORP_API_KEY"
                 description: "当前配置的默认 reasoning".to_string(),
             }],
             default_reasoning_effort: ReasoningEffort::Medium,
-            input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            input_modalities: protocol::openai_models::default_input_modalities(),
             context_window: None,
             max_context_window: None,
             auto_compact_token_limit: None,
@@ -660,7 +660,7 @@ openai_base_url = "{server_uri}/v1"
                 description: "当前配置的默认 reasoning".to_string(),
             }],
             default_reasoning_effort: ReasoningEffort::Medium,
-            input_modalities: codex_protocol::openai_models::default_input_modalities(),
+            input_modalities: protocol::openai_models::default_input_modalities(),
             context_window: None,
             max_context_window: None,
             auto_compact_token_limit: None,

@@ -8,9 +8,9 @@ use tokio::sync::watch;
 use crate::PendingInputItem;
 
 #[cfg(test)]
-use codex_protocol::AgentPath;
+use protocol::AgentPath;
 #[cfg(test)]
-use codex_protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentCommunication;
 
 pub struct Mailbox {
     tx: mpsc::UnboundedSender<PendingInputItem>,
@@ -119,7 +119,7 @@ mod tests {
             recipient,
             Vec::new(),
             content.to_string(),
-            codex_protocol::protocol::InterAgentOperation::Unknown,
+            protocol::protocol::InterAgentOperation::Unknown,
         )
         .with_trigger_turn(trigger_turn)
     }

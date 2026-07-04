@@ -14,12 +14,12 @@ workspace = true
 
 [dependencies]
 chrono = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
-codex-app-server-protocol = { workspace = true }
+app-server-protocol = { workspace = true }
 tempfile = { workspace = true }

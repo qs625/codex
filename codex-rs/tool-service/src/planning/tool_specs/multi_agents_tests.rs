@@ -1,11 +1,11 @@
 use super::*;
 use crate::JsonSchemaPrimitiveType;
 use crate::JsonSchemaType;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelServiceTier;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::openai_models::ReasoningEffortPreset;
 use pretty_assertions::assert_eq;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelServiceTier;
+use protocol::openai_models::ReasoningEffort;
+use protocol::openai_models::ReasoningEffortPreset;
 use serde_json::json;
 
 fn model_preset(id: &str, show_in_picker: bool) -> ModelPreset {

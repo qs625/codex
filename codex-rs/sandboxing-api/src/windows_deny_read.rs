@@ -1,8 +1,8 @@
-use codex_permissions_runtime::ReadDenyMatcher;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
+use permissions_service::ReadDenyMatcher;
+use protocol::permissions::FileSystemAccessMode;
+use protocol::permissions::FileSystemPath;
+use protocol::permissions::FileSystemSandboxEntry;
+use protocol::permissions::FileSystemSandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashSet;
 use std::path::Path;
@@ -189,10 +189,10 @@ fn effective_glob_scan_max_depth(
 mod tests {
     use super::glob_scan_plan;
     use super::resolve_windows_deny_read_paths;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSandboxPolicy;
+    use protocol::permissions::FileSystemAccessMode;
+    use protocol::permissions::FileSystemPath;
+    use protocol::permissions::FileSystemSandboxEntry;
+    use protocol::permissions::FileSystemSandboxPolicy;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::collections::HashSet;

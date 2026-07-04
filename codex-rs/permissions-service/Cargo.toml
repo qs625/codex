@@ -1,0 +1,35 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "permissions-service"
+version.workspace = true
+
+[lib]
+name = "permissions_service"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+permissions-service-api = { workspace = true }
+anyhow = { workspace = true }
+codex-config-state = { workspace = true }
+codex-config-types = { workspace = true }
+codex-network-proxy-api = { workspace = true }
+codex-shell-utils = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+globset = { workspace = true }
+multimap = { workspace = true }
+shlex = { workspace = true }
+starlark = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "fs"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+protocol = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

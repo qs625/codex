@@ -12,10 +12,11 @@
 
 use std::path::PathBuf;
 
-use codex_api_auth::auth_provider_from_auth_snapshot;
 use codex_auth_types::RequestAuthSnapshot;
 use codex_openai_files_api::OpenAiFileUploadAuth;
 use codex_openai_files_api::OpenAiFileUploader;
+use model_service_api::AuthProvider;
+use model_service_api::auth_provider_from_auth_snapshot;
 use serde_json::Value as JsonValue;
 
 /// Resolves user-provided Apps SDK file argument paths before upload.
@@ -168,7 +169,7 @@ async fn build_uploaded_local_argument_value(
 }
 
 struct ApiProviderOpenAiFileUploadAuth<'a> {
-    auth: &'a dyn codex_api_provider::AuthProvider,
+    auth: &'a dyn AuthProvider,
 }
 
 impl OpenAiFileUploadAuth for ApiProviderOpenAiFileUploadAuth<'_> {

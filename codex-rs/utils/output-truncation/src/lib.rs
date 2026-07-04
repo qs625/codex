@@ -1,13 +1,13 @@
-//! Helpers for truncating tool and exec output using [`TruncationPolicy`](codex_protocol::protocol::TruncationPolicy).
+//! Helpers for truncating tool and exec output using [`TruncationPolicy`](protocol::protocol::TruncationPolicy).
 
-use codex_protocol::models::FunctionCallOutputContentItem;
 pub use codex_utils_string::approx_bytes_for_tokens;
 pub use codex_utils_string::approx_token_count;
 pub use codex_utils_string::approx_tokens_from_byte_count;
 use codex_utils_string::truncate_middle_chars;
 use codex_utils_string::truncate_middle_with_token_budget;
+use protocol::models::FunctionCallOutputContentItem;
 
-pub use codex_protocol::protocol::TruncationPolicy;
+pub use protocol::protocol::TruncationPolicy;
 
 pub fn formatted_truncate_text(content: &str, policy: TruncationPolicy) -> String {
     if content.len() <= policy.byte_budget() {

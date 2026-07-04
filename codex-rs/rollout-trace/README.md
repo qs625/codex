@@ -122,7 +122,7 @@ codex debug trace-reduce <trace-bundle>
 ```
 
 By default this writes `<trace-bundle>/state.json`. Rust callers can also call
-`codex_rollout_trace::replay_bundle` directly.
+`rollout_trace::replay_bundle` directly.
 
 ## Raw Evidence vs Reduced Graph
 

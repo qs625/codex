@@ -11,21 +11,21 @@ pub(crate) fn session_source_cli<T>() -> T
 where
     T: DeserializeOwned,
 {
-    from_app_server_wire(codex_app_server_protocol::SessionSource::Cli)
+    from_app_server_wire(app_server_protocol::SessionSource::Cli)
 }
 
 pub(crate) fn skill_scope_user<T>() -> T
 where
     T: DeserializeOwned,
 {
-    from_app_server_wire(codex_app_server_protocol::SkillScope::User)
+    from_app_server_wire(app_server_protocol::SkillScope::User)
 }
 
 pub(crate) fn skill_scope_repo<T>() -> T
 where
     T: DeserializeOwned,
 {
-    from_app_server_wire(codex_app_server_protocol::SkillScope::Repo)
+    from_app_server_wire(app_server_protocol::SkillScope::Repo)
 }
 
 fn from_app_server_wire<T>(value: impl Serialize) -> T

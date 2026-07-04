@@ -6,19 +6,19 @@ use codex_code_mode_api::CodeModeRuntimeService;
 use codex_code_mode_api::CodeModeToolKind;
 use codex_code_mode_api::CodeModeTurnHost;
 use codex_code_mode_api::CodeModeTurnWorker;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::ResponseInputItem;
+use protocol::models::FunctionCallOutputPayload;
+use protocol::models::ResponseInputItem;
 use serde_json::Value as JsonValue;
 use tokio_util::sync::CancellationToken;
 
 use crate::SharedTurnDiffTracker;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolCallSource;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolPayload;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolCallSource;
+use tool_service_api::ToolName;
+use tool_service_api::ToolPayload;
 
 pub(crate) const PUBLIC_TOOL_NAME: &str = codex_code_mode_api::PUBLIC_TOOL_NAME;
 
@@ -204,9 +204,9 @@ fn build_freeform_tool_payload(
 mod tests {
     use super::build_nested_tool_payload;
     use codex_code_mode_api::CodeModeToolKind;
-    use codex_tool_types::ToolName;
-    use codex_tool_types::ToolPayload;
     use serde_json::json;
+    use tool_service_api::ToolName;
+    use tool_service_api::ToolPayload;
 
     #[test]
     fn build_nested_tool_payload_uses_function_kind() {

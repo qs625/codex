@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
-use codex_protocol::user_input::UserInput;
+use protocol::user_input::UserInput;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use uuid::Uuid;
@@ -13,22 +13,22 @@ use crate::state::TaskKind;
 use crate::tool_output_utils::format_exec_output_str;
 use crate::turn_timing::now_unix_timestamp_ms;
 use crate::user_shell_command::user_shell_command_record_item;
-use codex_command_service_api::UserShellRunRequest;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::exec_output::StreamOutput;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecCommandBeginEvent;
-use codex_protocol::protocol::ExecCommandEndEvent;
-use codex_protocol::protocol::ExecCommandSource;
-use codex_protocol::protocol::ExecCommandStatus;
-use codex_protocol::protocol::TurnStartedEvent;
 use codex_shell_utils::parse_command::parse_command;
+use command_service_api::UserShellRunRequest;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::exec_output::StreamOutput;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ExecCommandBeginEvent;
+use protocol::protocol::ExecCommandEndEvent;
+use protocol::protocol::ExecCommandSource;
+use protocol::protocol::ExecCommandStatus;
+use protocol::protocol::TurnStartedEvent;
 
 use super::SessionTask;
 use super::SessionTaskContext;
 use crate::session::session::Session;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
+use protocol::models::ResponseInputItem;
+use protocol::models::ResponseItem;
 
 const USER_SHELL_TIMEOUT_MS: u64 = 60 * 60 * 1000; // 1 hour
 

@@ -5,9 +5,9 @@ use similar::TextDiff;
 use std::sync::OnceLock;
 
 use crate::responses::ResponsesRequest;
-use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
-use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
-use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
+use protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
+use protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
+use protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ContextSnapshotRenderMode {

@@ -1,12 +1,12 @@
 [package]
-name = "codex-jsonrpc-types"
+name = "jsonrpc-types"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Lightweight JSON-RPC message and error types shared by Codex transports."
 
 [lib]
-name = "codex_jsonrpc_types"
+name = "jsonrpc_types"
 path = "src/lib.rs"
 doctest = false
 
@@ -14,7 +14,7 @@ doctest = false
 workspace = true
 
 [dependencies]
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

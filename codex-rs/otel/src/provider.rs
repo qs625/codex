@@ -83,7 +83,7 @@ impl OtelProvider {
         if !log_enabled && !trace_enabled && !metrics_enabled {
             // Tracestate propagation is process-global; clear it when these
             // settings do not install an active provider.
-            codex_trace_context::set_tracestate_entries(BTreeMap::new())?;
+            crate::trace_context::set_tracestate_entries(BTreeMap::new())?;
             debug!("No OTEL exporter enabled in settings.");
             return Ok(None);
         }
@@ -95,7 +95,7 @@ impl OtelProvider {
         if trace_enabled {
             crate::config::validate_span_attributes(&settings.span_attributes)?;
         }
-        codex_trace_context::validate_tracestate_entries(&settings.tracestate)?;
+        crate::trace_context::validate_tracestate_entries(&settings.tracestate)?;
 
         let metrics = if matches!(metric_exporter, OtelExporter::None) {
             None
@@ -132,7 +132,7 @@ impl OtelProvider {
             .as_ref()
             .map(|provider| provider.tracer(settings.service_name.clone()));
 
-        codex_trace_context::set_tracestate_entries(settings.tracestate.clone())?;
+        crate::trace_context::set_tracestate_entries(settings.tracestate.clone())?;
         if let Some(provider) = tracer_provider.clone() {
             global::set_tracer_provider(provider);
             global::set_text_map_propagator(TraceContextPropagator::new());

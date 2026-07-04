@@ -30,17 +30,17 @@ use std::time::Duration;
 use anyhow::Result;
 use anyhow::anyhow;
 use codex_config_types::McpServerEnvVar;
-use codex_exec_server_api::ExecBackend;
-use codex_exec_server_api::ExecProcess;
 use codex_exec_server_protocol::ExecEnvPolicy;
 use codex_exec_server_protocol::ExecParams;
-use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 #[cfg(unix)]
 use codex_utils_pty::process_group::kill_process_group;
 #[cfg(unix)]
 use codex_utils_pty::process_group::terminate_process_group;
+use exec_server_api::ExecBackend;
+use exec_server_api::ExecProcess;
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use protocol::config_types::ShellEnvironmentPolicyInherit;
 use rmcp::service::RoleClient;
 use rmcp::service::RxJsonRpcMessage;
 use rmcp::service::TxJsonRpcMessage;
@@ -584,9 +584,9 @@ impl ExecutorStdioServerLauncher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::config_types::EnvironmentVariablePattern;
-    use codex_protocol::config_types::ShellEnvironmentPolicy;
-    use codex_protocol::shell_environment;
+    use protocol::config_types::EnvironmentVariablePattern;
+    use protocol::config_types::ShellEnvironmentPolicy;
+    use protocol::shell_environment;
 
     #[test]
     fn remote_env_policy_uses_core_env_without_remote_source_vars() {

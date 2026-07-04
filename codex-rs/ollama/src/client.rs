@@ -12,12 +12,12 @@ use crate::pull::PullEvent;
 use crate::pull::PullProgressReporter;
 use crate::url::base_url_to_host_root;
 use crate::url::is_openai_compatible_base_url;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
+use model_service_api::ModelProviderInfo;
+use model_service_api::OLLAMA_OSS_PROVIDER_ID;
 #[cfg(test)]
-use codex_model_provider_info::WireApi;
+use model_service_api::WireApi;
 #[cfg(test)]
-use codex_model_provider_info::create_oss_provider_with_base_url;
+use model_service_api::create_oss_provider_with_base_url;
 
 const OLLAMA_CONNECTION_ERROR: &str = "No running Ollama server detected. Start it with: `ollama serve` (after installing). Install instructions: https://github.com/ollama/ollama?tab=readme-ov-file#ollama";
 
@@ -267,9 +267,7 @@ mod tests {
     // Happy-path tests using a mock HTTP server; skip if sandbox network is disabled.
     #[tokio::test]
     async fn test_fetch_models_happy_path() {
-        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
-            .is_ok()
-        {
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
             tracing::info!(
                 "{} is set; skipping test_fetch_models_happy_path",
                 thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
@@ -300,9 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_version() {
-        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
-            .is_ok()
-        {
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
             tracing::info!(
                 "{} is set; skipping test_fetch_version",
                 thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
@@ -338,9 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_server_happy_path_openai_compat_and_native() {
-        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
-            .is_ok()
-        {
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
             tracing::info!(
                 "{} set; skipping test_probe_server_happy_path_openai_compat_and_native",
                 thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
@@ -377,9 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_from_oss_provider_ok_when_server_running() {
-        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
-            .is_ok()
-        {
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
             tracing::info!(
                 "{} set; skipping test_try_from_oss_provider_ok_when_server_running",
                 thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR
@@ -403,9 +395,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_from_oss_provider_err_when_server_missing() {
-        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR)
-            .is_ok()
-        {
+        if std::env::var(thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok() {
             tracing::info!(
                 "{} set; skipping test_try_from_oss_provider_err_when_server_missing",
                 thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR

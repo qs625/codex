@@ -1,6 +1,6 @@
 use crate::status::format_tokens_compact;
-use codex_app_server_protocol::ThreadGoal;
-use codex_app_server_protocol::ThreadGoalStatus;
+use app_server_protocol::ThreadGoal;
+use app_server_protocol::ThreadGoalStatus;
 
 pub(crate) fn format_goal_elapsed_seconds(seconds: i64) -> String {
     let seconds = seconds.max(0) as u64;
@@ -58,8 +58,8 @@ pub(crate) fn goal_usage_summary(goal: &ThreadGoal) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::ThreadGoal;
-    use codex_app_server_protocol::ThreadGoalStatus;
+    use app_server_protocol::ThreadGoal;
+    use app_server_protocol::ThreadGoalStatus;
     use pretty_assertions::assert_eq;
 
     #[test]

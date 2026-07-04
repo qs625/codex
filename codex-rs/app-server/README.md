@@ -1,4 +1,4 @@
-# codex-app-server
+# app-server
 
 `codex app-server` is the interface Codex uses to power rich interfaces such as the [Codex VS Code extension](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt).
 
@@ -1963,5 +1963,5 @@ For server-initiated request payloads, annotate the field the same way so schema
 5. Verify the protocol crate:
 
    ```bash
-   cargo test -p codex-app-server-protocol
+   cargo test -p app-server-protocol
    ```

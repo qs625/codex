@@ -393,12 +393,10 @@ async fn queued_bare_rename_drains_next_input_after_name_update() {
     );
 
     chat.handle_server_notification(
-        ServerNotification::ThreadNameUpdated(
-            codex_app_server_protocol::ThreadNameUpdatedNotification {
-                thread_id: thread_id.to_string(),
-                thread_name: Some("Queued rename".to_string()),
-            },
-        ),
+        ServerNotification::ThreadNameUpdated(app_server_protocol::ThreadNameUpdatedNotification {
+            thread_id: thread_id.to_string(),
+            thread_name: Some("Queued rename".to_string()),
+        }),
         /*replay_kind*/ None,
     );
 
@@ -467,12 +465,10 @@ async fn queued_inline_rename_does_not_drain_again_before_turn_started() {
     );
 
     chat.handle_server_notification(
-        ServerNotification::ThreadNameUpdated(
-            codex_app_server_protocol::ThreadNameUpdatedNotification {
-                thread_id: thread_id.to_string(),
-                thread_name: Some("Queued rename".to_string()),
-            },
-        ),
+        ServerNotification::ThreadNameUpdated(app_server_protocol::ThreadNameUpdatedNotification {
+            thread_id: thread_id.to_string(),
+            thread_name: Some("Queued rename".to_string()),
+        }),
         /*replay_kind*/ None,
     );
 
@@ -1504,22 +1500,20 @@ async fn active_goal_without_follow_up_suppresses_agent_turn_complete_notificati
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
     chat.handle_server_notification(
-        ServerNotification::ThreadGoalUpdated(
-            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+        ServerNotification::ThreadGoalUpdated(app_server_protocol::ThreadGoalUpdatedNotification {
+            thread_id: "thread-1".to_string(),
+            turn_id: None,
+            goal: app_server_protocol::ThreadGoal {
                 thread_id: "thread-1".to_string(),
-                turn_id: None,
-                goal: codex_app_server_protocol::ThreadGoal {
-                    thread_id: "thread-1".to_string(),
-                    objective: "finish the benchmark".to_string(),
-                    status: codex_app_server_protocol::ThreadGoalStatus::Active,
-                    token_budget: None,
-                    tokens_used: 0,
-                    time_used_seconds: 0,
-                    created_at: 1,
-                    updated_at: 1,
-                },
+                objective: "finish the benchmark".to_string(),
+                status: app_server_protocol::ThreadGoalStatus::Active,
+                token_budget: None,
+                tokens_used: 0,
+                time_used_seconds: 0,
+                created_at: 1,
+                updated_at: 1,
             },
-        ),
+        }),
         /*replay_kind*/ None,
     );
 

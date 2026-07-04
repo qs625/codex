@@ -1,5 +1,5 @@
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::ThreadMemoryMode;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::ThreadMemoryMode;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;

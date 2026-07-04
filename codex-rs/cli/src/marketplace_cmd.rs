@@ -2,6 +2,7 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use clap::Parser;
+use codex_utils_cli::CliConfigOverrides;
 use plugin_service::PluginMarketplaceUpgradeOutcome;
 use plugin_service::PluginsManager;
 use plugin_service::installed_marketplaces::marketplace_install_root;
@@ -13,7 +14,6 @@ use plugin_service::marketplace_remove::remove_marketplace;
 use plugin_service_api::validate_plugin_segment;
 use thread_service::config::Config;
 use thread_service::config::find_codex_home;
-use codex_utils_cli::CliConfigOverrides;
 
 #[derive(Debug, Parser)]
 #[command(bin_name = "codex plugin marketplace")]

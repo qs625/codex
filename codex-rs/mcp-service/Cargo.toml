@@ -18,45 +18,51 @@ test-support = []
 [dependencies]
 anyhow = { workspace = true }
 async-channel = { workspace = true }
+codex-async-utils = { workspace = true }
 codex-analytics-api = { workspace = true }
 codex-approval-service-api = { workspace = true }
-codex-api-auth = { workspace = true }
-codex-api-provider = { workspace = true }
 codex-auth-types = { workspace = true }
-codex-client-identity = { workspace = true }
-codex-config = { workspace = true }
-codex-config-edit = { workspace = true }
-codex-config-requirements = { workspace = true }
+transport-client-identity = { workspace = true }
+config-service = { workspace = true }
 codex-config-types = { workspace = true }
 codex-connectors-api = { workspace = true }
-codex-core-skills-api = { workspace = true }
+skill-service-api = { workspace = true }
 plugin-service-api = { workspace = true }
-codex-exec-server-api = { workspace = true }
+exec-server-api = { workspace = true }
 codex-features = { workspace = true }
 codex-guardian = { workspace = true }
 mcp-service-api = { workspace = true }
-codex-mcp-tool-types = { workspace = true }
-codex-mcp-types = { workspace = true }
+mcp-types = { workspace = true }
+model-service-api = { workspace = true }
 codex-openai-files-api = { workspace = true }
-codex-protocol = { workspace = true }
-codex-tool-config = { workspace = true }
-codex-tool-types = { workspace = true }
-codex-hooks-api = { workspace = true }
+protocol = { workspace = true }
+tool-config = { workspace = true }
+codex-tool-service-api = { workspace = true }
+hooks-api = { workspace = true }
+metrics-api = { workspace = true }
+codex-rmcp-client = { workspace = true }
 thread-service-api = { workspace = true }
 codex-utils-string = { workspace = true }
+futures = { workspace = true }
 http = { workspace = true }
+regex-lite = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "schemars", "server"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+sha1 = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-codex-config = { workspace = true, features = ["test-support"] }
-codex-models-manager = { workspace = true }
+config-service = { workspace = true, features = ["test-support"] }
+model-service = { workspace = true }
 codex-openai-files = { workspace = true }
 pretty_assertions = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = ["base64", "macros", "schemars", "server"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 toml = { workspace = true }

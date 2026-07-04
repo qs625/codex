@@ -1,9 +1,9 @@
 use crate::state::SessionServices;
-use codex_protocol::protocol::ReviewDecision;
 use futures::Future;
+use protocol::protocol::ReviewDecision;
 use serde::Serialize;
 
-pub(crate) use thread_service_api::PermissionRequestPayload;
+pub(crate) use codex_approval_service_api::PermissionRequestPayload;
 
 #[derive(Clone, Default, Debug)]
 pub(crate) struct ApprovalStore {
@@ -31,8 +31,8 @@ impl ApprovalStore {
 
 pub(crate) fn permission_request_hook_payload(
     payload: PermissionRequestPayload,
-) -> codex_hooks::PermissionRequestHookPayload {
-    codex_hooks::PermissionRequestHookPayload {
+) -> hooks::PermissionRequestHookPayload {
+    hooks::PermissionRequestHookPayload {
         tool_name: payload.tool_name.name().to_string(),
         matcher_aliases: payload.tool_name.matcher_aliases().to_vec(),
         tool_input: payload.tool_input,

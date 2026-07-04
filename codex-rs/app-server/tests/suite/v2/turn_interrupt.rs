@@ -1,27 +1,27 @@
 #![cfg(unix)]
 
 use anyhow::Result;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCNotification;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::ServerRequestResolvedNotification;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnInterruptParams;
+use app_server_protocol::TurnInterruptResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::create_shell_command_sse_response;
 use app_test_support::to_response;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ServerRequestResolvedNotification;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnCompletedNotification;
-use codex_app_server_protocol::TurnInterruptParams;
-use codex_app_server_protocol::TurnInterruptResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::TurnStatus;
-use codex_app_server_protocol::UserInput as V2UserInput;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
@@ -258,7 +258,7 @@ async fn turn_interrupt_resolves_pending_command_approval_request() -> Result<()
                 text_elements: Vec::new(),
             }],
             cwd: Some(working_directory),
-            approval_policy: Some(codex_app_server_protocol::AskForApproval::UnlessTrusted),
+            approval_policy: Some(app_server_protocol::AskForApproval::UnlessTrusted),
             ..Default::default()
         })
         .await?;

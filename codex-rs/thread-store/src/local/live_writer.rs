@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::ThreadMemoryMode;
-use codex_rollout::RolloutConfig;
-use codex_rollout::RolloutRecorder;
-use codex_rollout::RolloutRecorderParams;
+use protocol::ThreadId;
+use protocol::protocol::ThreadMemoryMode;
+use rollout::RolloutConfig;
+use rollout::RolloutRecorder;
+use rollout::RolloutRecorderParams;
 use tracing::warn;
 
 use super::LocalThreadStore;

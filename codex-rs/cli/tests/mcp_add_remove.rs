@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use codex_config_edit::load_global_mcp_servers;
+use config_service::load_global_mcp_servers;
 use codex_config_types::McpServerTransportConfig;
 use predicates::str::contains;
 use pretty_assertions::assert_eq;

@@ -17,7 +17,7 @@ use crate::protocol::common::EXPERIMENTAL_CLIENT_METHODS;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
-use codex_protocol::protocol::RolloutLine;
+use protocol::protocol::RolloutLine;
 use schemars::JsonSchema;
 use schemars::schema_for;
 use serde::Serialize;
@@ -222,13 +222,10 @@ pub fn generate_json_with_experimental(out_dir: &Path, experimental_api: bool) -
     if !experimental_api {
         filter_experimental_schema(&mut bundle)?;
     }
-    write_pretty_json(
-        out_dir.join("codex_app_server_protocol.schemas.json"),
-        &bundle,
-    )?;
+    write_pretty_json(out_dir.join("app_server_protocol.schemas.json"), &bundle)?;
     let flat_v2_bundle = build_flat_v2_schema(&bundle)?;
     write_pretty_json(
-        out_dir.join("codex_app_server_protocol.v2.schemas.json"),
+        out_dir.join("app_server_protocol.v2.schemas.json"),
         &flat_v2_bundle,
     )?;
 
@@ -2892,8 +2889,7 @@ permissionProfile?: PermissionProfile | null};
         );
         assert_eq!(output_dir.join("EventMsg.json").exists(), false);
 
-        let bundle_json =
-            fs::read_to_string(output_dir.join("codex_app_server_protocol.schemas.json"))?;
+        let bundle_json = fs::read_to_string(output_dir.join("app_server_protocol.schemas.json"))?;
         assert_eq!(bundle_json.contains("mockExperimentalField"), false);
         assert_eq!(bundle_json.contains("additionalPermissions"), false);
         assert_eq!(bundle_json.contains("MockExperimentalMethodParams"), false);
@@ -2902,7 +2898,7 @@ permissionProfile?: PermissionProfile | null};
             false
         );
         let flat_v2_bundle_json =
-            fs::read_to_string(output_dir.join("codex_app_server_protocol.v2.schemas.json"))?;
+            fs::read_to_string(output_dir.join("app_server_protocol.v2.schemas.json"))?;
         assert_eq!(flat_v2_bundle_json.contains("mockExperimentalField"), false);
         assert_eq!(flat_v2_bundle_json.contains("additionalPermissions"), false);
         assert_eq!(
@@ -2919,7 +2915,7 @@ permissionProfile?: PermissionProfile | null};
             true
         );
         let flat_v2_bundle =
-            read_json_value(&output_dir.join("codex_app_server_protocol.v2.schemas.json"))?;
+            read_json_value(&output_dir.join("app_server_protocol.v2.schemas.json"))?;
         let definitions = flat_v2_bundle["definitions"]
             .as_object()
             .expect("flat v2 bundle should include definitions");

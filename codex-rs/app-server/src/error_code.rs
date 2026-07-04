@@ -1,4 +1,4 @@
-use codex_app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::JSONRPCErrorError;
 
 pub(crate) const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 pub(crate) const METHOD_NOT_FOUND_ERROR_CODE: i64 = -32601;

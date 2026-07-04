@@ -1,14 +1,14 @@
 use crate::runtime_shell_detect::detect_shell_type;
 use crate::runtime_shell_snapshot::ShellSnapshot;
-use codex_command_service_api::RuntimeShell;
-use codex_command_service_api::RuntimeShellSnapshot;
 use codex_shell_utils::resolve_executable_in_path;
-use codex_tool_config::ToolUserShellType;
+use command_service_api::RuntimeShell;
+use command_service_api::RuntimeShellSnapshot;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::watch;
+use tool_config::ToolUserShellType;
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum ShellType {

@@ -3,6 +3,27 @@ use anyhow::bail;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 
+use app_server_protocol::Account;
+use app_server_protocol::CancelLoginAccountParams;
+use app_server_protocol::CancelLoginAccountResponse;
+use app_server_protocol::CancelLoginAccountStatus;
+use app_server_protocol::ChatgptAuthTokensRefreshReason;
+use app_server_protocol::ChatgptAuthTokensRefreshResponse;
+use app_server_protocol::GetAccountParams;
+use app_server_protocol::GetAccountResponse;
+use app_server_protocol::GetAuthStatusParams;
+use app_server_protocol::GetAuthStatusResponse;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::JSONRPCNotification;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::LoginAccountResponse;
+use app_server_protocol::LogoutAccountResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnStatus;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::ChatGptIdTokenClaims;
 use app_test_support::encode_id_token;
@@ -10,34 +31,13 @@ use app_test_support::write_chatgpt_auth;
 use app_test_support::write_models_cache;
 use chrono::Duration as ChronoDuration;
 use chrono::Utc;
-use codex_app_server_protocol::Account;
-use codex_app_server_protocol::CancelLoginAccountParams;
-use codex_app_server_protocol::CancelLoginAccountResponse;
-use codex_app_server_protocol::CancelLoginAccountStatus;
-use codex_app_server_protocol::ChatgptAuthTokensRefreshReason;
-use codex_app_server_protocol::ChatgptAuthTokensRefreshResponse;
-use codex_app_server_protocol::GetAccountParams;
-use codex_app_server_protocol::GetAccountResponse;
-use codex_app_server_protocol::GetAuthStatusParams;
-use codex_app_server_protocol::GetAuthStatusResponse;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::LoginAccountResponse;
-use codex_app_server_protocol::LogoutAccountResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::TurnCompletedNotification;
-use codex_app_server_protocol::TurnStatus;
 use codex_auth_types::AuthMode;
-use codex_config::types::AuthCredentialsStoreMode;
+use config_service::types::AuthCredentialsStoreMode;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_login::login_with_api_key;
-use codex_protocol::account::PlanType as AccountPlanType;
 use core_test_support::responses;
 use pretty_assertions::assert_eq;
+use protocol::account::PlanType as AccountPlanType;
 use serde_json::json;
 use serial_test::serial;
 use std::path::Path;
@@ -491,7 +491,7 @@ async fn external_auth_refreshes_on_unauthorized() -> Result<()> {
     .await??;
 
     let thread_req = mcp
-        .send_thread_start_request(codex_app_server_protocol::ThreadStartParams {
+        .send_thread_start_request(app_server_protocol::ThreadStartParams {
             model: Some("mock-model".to_string()),
             ..Default::default()
         })
@@ -501,12 +501,12 @@ async fn external_auth_refreshes_on_unauthorized() -> Result<()> {
         mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
     )
     .await??;
-    let thread = to_response::<codex_app_server_protocol::ThreadStartResponse>(thread_resp)?;
+    let thread = to_response::<app_server_protocol::ThreadStartResponse>(thread_resp)?;
 
     let turn_req = mcp
-        .send_turn_start_request(codex_app_server_protocol::TurnStartParams {
+        .send_turn_start_request(app_server_protocol::TurnStartParams {
             thread_id: thread.thread.id,
-            input: vec![codex_app_server_protocol::UserInput::Text {
+            input: vec![app_server_protocol::UserInput::Text {
                 text: "Hello".to_string(),
                 text_elements: Vec::new(),
             }],
@@ -597,7 +597,7 @@ async fn external_auth_refresh_error_fails_turn() -> Result<()> {
     .await??;
 
     let thread_req = mcp
-        .send_thread_start_request(codex_app_server_protocol::ThreadStartParams {
+        .send_thread_start_request(app_server_protocol::ThreadStartParams {
             model: Some("mock-model".to_string()),
             ..Default::default()
         })
@@ -607,12 +607,12 @@ async fn external_auth_refresh_error_fails_turn() -> Result<()> {
         mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
     )
     .await??;
-    let thread = to_response::<codex_app_server_protocol::ThreadStartResponse>(thread_resp)?;
+    let thread = to_response::<app_server_protocol::ThreadStartResponse>(thread_resp)?;
 
     let turn_req = mcp
-        .send_turn_start_request(codex_app_server_protocol::TurnStartParams {
+        .send_turn_start_request(app_server_protocol::TurnStartParams {
             thread_id: thread.thread.id.clone(),
-            input: vec![codex_app_server_protocol::UserInput::Text {
+            input: vec![app_server_protocol::UserInput::Text {
                 text: "Hello".to_string(),
                 text_elements: Vec::new(),
             }],
@@ -719,7 +719,7 @@ async fn external_auth_refresh_mismatched_workspace_fails_turn() -> Result<()> {
     .await??;
 
     let thread_req = mcp
-        .send_thread_start_request(codex_app_server_protocol::ThreadStartParams {
+        .send_thread_start_request(app_server_protocol::ThreadStartParams {
             model: Some("mock-model".to_string()),
             ..Default::default()
         })
@@ -729,12 +729,12 @@ async fn external_auth_refresh_mismatched_workspace_fails_turn() -> Result<()> {
         mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
     )
     .await??;
-    let thread = to_response::<codex_app_server_protocol::ThreadStartResponse>(thread_resp)?;
+    let thread = to_response::<app_server_protocol::ThreadStartResponse>(thread_resp)?;
 
     let turn_req = mcp
-        .send_turn_start_request(codex_app_server_protocol::TurnStartParams {
+        .send_turn_start_request(app_server_protocol::TurnStartParams {
             thread_id: thread.thread.id.clone(),
-            input: vec![codex_app_server_protocol::UserInput::Text {
+            input: vec![app_server_protocol::UserInput::Text {
                 text: "Hello".to_string(),
                 text_elements: Vec::new(),
             }],
@@ -834,7 +834,7 @@ async fn external_auth_refresh_invalid_access_token_fails_turn() -> Result<()> {
     .await??;
 
     let thread_req = mcp
-        .send_thread_start_request(codex_app_server_protocol::ThreadStartParams {
+        .send_thread_start_request(app_server_protocol::ThreadStartParams {
             model: Some("mock-model".to_string()),
             ..Default::default()
         })
@@ -844,12 +844,12 @@ async fn external_auth_refresh_invalid_access_token_fails_turn() -> Result<()> {
         mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
     )
     .await??;
-    let thread = to_response::<codex_app_server_protocol::ThreadStartResponse>(thread_resp)?;
+    let thread = to_response::<app_server_protocol::ThreadStartResponse>(thread_resp)?;
 
     let turn_req = mcp
-        .send_turn_start_request(codex_app_server_protocol::TurnStartParams {
+        .send_turn_start_request(app_server_protocol::TurnStartParams {
             thread_id: thread.thread.id.clone(),
-            input: vec![codex_app_server_protocol::UserInput::Text {
+            input: vec![app_server_protocol::UserInput::Text {
                 text: "Hello".to_string(),
                 text_elements: Vec::new(),
             }],

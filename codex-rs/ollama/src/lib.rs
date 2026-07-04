@@ -4,7 +4,7 @@ mod pull;
 mod url;
 
 pub use client::OllamaClient;
-use codex_model_provider_info::ModelProviderInfo;
+use model_service_api::ModelProviderInfo;
 pub use pull::CliProgressReporter;
 pub use pull::PullEvent;
 pub use pull::PullProgressReporter;

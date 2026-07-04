@@ -10,17 +10,17 @@ use crate::session::tests::test_tool_inputs;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::TurnItemContributionFuture;
 use codex_extension_api::TurnItemContributor;
-use codex_protocol::error::CodexErr;
-use codex_protocol::items::AgentMessageContent;
-use codex_protocol::items::TurnItem;
-use codex_protocol::memory_citation::MemoryCitation;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ResponseItem;
-use thread_service_api::TurnDiffTracker;
 use codex_utils_absolute_path::test_support::PathExt;
 use pretty_assertions::assert_eq;
+use protocol::error::CodexErr;
+use protocol::items::AgentMessageContent;
+use protocol::items::TurnItem;
+use protocol::memory_citation::MemoryCitation;
+use protocol::models::ContentItem;
+use protocol::models::MessagePhase;
+use protocol::models::ResponseItem;
 use std::sync::Arc;
+use thread_service_api::TurnDiffTracker;
 use tokio_util::sync::CancellationToken;
 
 fn assistant_output_text(text: &str) -> ResponseItem {
@@ -62,7 +62,7 @@ async fn handle_non_tool_response_item_strips_citations_from_assistant_message()
         .content
         .iter()
         .map(|entry| match entry {
-            codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
+            protocol::items::AgentMessageContent::Text { text } => text.as_str(),
         })
         .collect::<String>();
     assert_eq!(text, "hello world");
@@ -168,7 +168,7 @@ async fn handle_non_tool_response_item_runs_turn_item_contributors_only_when_req
         .content
         .iter()
         .map(|entry| match entry {
-            codex_protocol::items::AgentMessageContent::Text { text } => text.as_str(),
+            protocol::items::AgentMessageContent::Text { text } => text.as_str(),
         })
         .collect::<String>();
     assert_eq!(text, "hello world");

@@ -1,61 +1,61 @@
-pub use codex_config::AgentCapabilityAllowlist;
-pub use codex_config::AgentRoleConfig;
-pub use codex_config::AgentRoleSource;
-pub use codex_config::CONFIG_TOML_FILE;
-pub use codex_config::Config;
-pub use codex_config::ConfigBuilder;
-pub use codex_config::ConfigLayerStack;
-pub use codex_config::ConfigLoadOptions;
-pub use codex_config::ConfigOverrides;
-pub use codex_config::Constrained;
-pub use codex_config::ConstraintError;
-pub use codex_config::ConstraintResult;
-pub use codex_config::EffectiveSessionConfigOverlay;
-pub use codex_config::GhostSnapshotConfig;
-pub use codex_config::LoaderOverrides;
-pub use codex_config::ManagedFeatures;
-pub use codex_config::MultiAgentV2Config;
-pub use codex_config::NetworkProxyAuditMetadata;
-pub use codex_config::NetworkProxySpec;
-pub use codex_config::PermissionProfileState;
-pub use codex_config::Permissions;
-pub use codex_config::ProjectConfig;
-pub use codex_config::RealtimeAudioConfig;
-pub use codex_config::RealtimeConfig;
-pub use codex_config::SessionConfigOverlay;
-pub use codex_config::StartedNetworkProxy;
-pub use codex_config::TerminalResizeReflowConfig;
-pub use codex_config::TerminalResizeReflowMaxRows;
-pub use codex_config::ThreadStoreConfig;
-pub use codex_config::build_effective_session_config_from_session_overlay;
-pub use codex_config::build_per_turn_config_from_session_overlay;
-pub use codex_config::deserialize_config_toml_with_base;
-pub use codex_config::find_codex_home;
-pub use codex_config::hook_config_layer_stack_from_config_layer_stack;
-pub use codex_config::load_config_as_toml_with_cli_and_load_options;
-pub use codex_config::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
-pub use codex_config::load_config_as_toml_with_cli_and_loader_overrides;
-pub use codex_config::load_config_as_toml_with_cli_overrides;
-pub use codex_config::log_dir;
-pub use codex_config::plugin_config_layer_stack_from_config_layer_stack;
-pub use codex_config::resolve_oss_provider;
-pub use codex_config::resolve_profile_v2_config_path;
-pub use codex_config::resolve_web_search_mode_for_turn;
-pub use codex_config::set_default_oss_provider;
-pub use codex_config::set_project_trust_level;
-pub use codex_config::skill_config_layer_stack_from_config_layer_stack;
-pub use codex_config::validate_feature_requirements_for_config_toml;
+pub use config_service::AgentCapabilityAllowlist;
+pub use config_service::AgentRoleConfig;
+pub use config_service::AgentRoleSource;
+pub use config_service::CONFIG_TOML_FILE;
+pub use config_service::Config;
+pub use config_service::ConfigBuilder;
+pub use config_service::ConfigLayerStack;
+pub use config_service::ConfigLoadOptions;
+pub use config_service::ConfigOverrides;
+pub use config_service::Constrained;
+pub use config_service::ConstraintError;
+pub use config_service::ConstraintResult;
+pub use config_service::EffectiveSessionConfigOverlay;
+pub use config_service::GhostSnapshotConfig;
+pub use config_service::LoaderOverrides;
+pub use config_service::ManagedFeatures;
+pub use config_service::MultiAgentV2Config;
+pub use config_service::NetworkProxyAuditMetadata;
+pub use config_service::NetworkProxySpec;
+pub use config_service::PermissionProfileState;
+pub use config_service::Permissions;
+pub use config_service::ProjectConfig;
+pub use config_service::RealtimeAudioConfig;
+pub use config_service::RealtimeConfig;
+pub use config_service::SessionConfigOverlay;
+pub use config_service::StartedNetworkProxy;
+pub use config_service::TerminalResizeReflowConfig;
+pub use config_service::TerminalResizeReflowMaxRows;
+pub use config_service::ThreadStoreConfig;
+pub use config_service::build_effective_session_config_from_session_overlay;
+pub use config_service::build_per_turn_config_from_session_overlay;
+pub use config_service::deserialize_config_toml_with_base;
+pub use config_service::find_codex_home;
+pub use config_service::hook_config_layer_stack_from_config_layer_stack;
+pub use config_service::load_config_as_toml_with_cli_and_load_options;
+pub use config_service::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
+pub use config_service::load_config_as_toml_with_cli_and_loader_overrides;
+pub use config_service::load_config_as_toml_with_cli_overrides;
+pub use config_service::log_dir;
+pub use config_service::plugin_config_layer_stack_from_config_layer_stack;
+pub use config_service::resolve_oss_provider;
+pub use config_service::resolve_profile_v2_config_path;
+pub use config_service::resolve_web_search_mode_for_turn;
+pub use config_service::set_default_oss_provider;
+pub use config_service::set_project_trust_level;
+pub use config_service::skill_config_layer_stack_from_config_layer_stack;
+pub use config_service::validate_feature_requirements_for_config_toml;
 
 pub mod edit {
-    pub use codex_config::edit::*;
+    pub use config_service::edit::*;
 }
 
 pub mod schema {
-    pub use codex_config::schema::*;
+    pub use config_service::schema::*;
 }
 
 pub(crate) mod agent_roles {
-    pub(crate) use codex_config::agent_roles::*;
+    pub(crate) use config_service::agent_roles::*;
 }
 
 #[cfg(test)]

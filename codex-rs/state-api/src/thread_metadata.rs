@@ -1,12 +1,12 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::ThreadSource;
+use protocol::ThreadId;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadSource;
 use serde::Serialize;
 use std::path::PathBuf;
 

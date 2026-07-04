@@ -1,8 +1,8 @@
 use crate::session::session::Session;
-use codex_thread_store_api::ListThreadsParams;
-use codex_thread_store_api::SortDirection;
-use codex_thread_store_api::StoredThread;
-use codex_thread_store_api::ThreadSortKey;
+use thread_store_api::ListThreadsParams;
+use thread_store_api::SortDirection;
+use thread_store_api::StoredThread;
+use thread_store_api::ThreadSortKey;
 use tracing::warn;
 
 pub(crate) use codex_realtime::REALTIME_TURN_TOKEN_BUDGET;

@@ -18,10 +18,10 @@ use crate::protocol::v2::ThreadItem;
 use crate::protocol::v2::UserInput;
 use crate::protocol::v2::WebSearchAction;
 use crate::protocol::v2::assistant_message_thread_item;
-use codex_protocol::items::AgentMessageContent as CoreAgentMessageContent;
-use codex_protocol::items::TurnItem as CoreTurnItem;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::InterAgentOperation;
+use protocol::items::AgentMessageContent as CoreAgentMessageContent;
+use protocol::items::TurnItem as CoreTurnItem;
+use protocol::protocol::EventMsg;
+use protocol::protocol::InterAgentOperation;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProjectedEventItem {
@@ -287,9 +287,7 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
     }
 }
 
-fn command_wait_thread_item(
-    event: &codex_protocol::protocol::CommandWaitDisplayEvent,
-) -> ThreadItem {
+fn command_wait_thread_item(event: &protocol::protocol::CommandWaitDisplayEvent) -> ThreadItem {
     ThreadItem::CommandWait {
         id: event.id.clone(),
         command_id: event.command_id.clone(),
@@ -307,14 +305,14 @@ mod tests {
     use super::*;
     use crate::protocol::v2::CommandWaitNotificationKind;
     use crate::protocol::v2::CommandWaitStatus;
-    use codex_protocol::ThreadId;
-    use codex_protocol::models::WorkflowRunProgressEvent;
-    use codex_protocol::models::WorkflowRunProgressKind;
-    use codex_protocol::protocol::CommandExecutionNotificationDisplayEvent;
-    use codex_protocol::protocol::CommandWaitDisplayEvent;
-    use codex_protocol::protocol::CommandWriteStdinDisplayEvent;
-    use codex_protocol::protocol::WorkflowRunProgressDisplayEvent;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::models::WorkflowRunProgressEvent;
+    use protocol::models::WorkflowRunProgressKind;
+    use protocol::protocol::CommandExecutionNotificationDisplayEvent;
+    use protocol::protocol::CommandWaitDisplayEvent;
+    use protocol::protocol::CommandWriteStdinDisplayEvent;
+    use protocol::protocol::WorkflowRunProgressDisplayEvent;
 
     #[test]
     fn command_wait_completed_projects_without_response_item() {
@@ -323,8 +321,8 @@ mod tests {
             turn_id: "turn-1".to_string(),
             id: "wait-1".to_string(),
             command_id: "cmd-1".to_string(),
-            status: codex_protocol::models::CommandWaitStatus::Completed,
-            notification: Some(codex_protocol::models::CommandWaitNotificationKind::Exit),
+            status: protocol::models::CommandWaitStatus::Completed,
+            notification: Some(protocol::models::CommandWaitNotificationKind::Exit),
             exit_code: Some(0),
             wall_time_seconds: 1.25,
             wait_timeout_ms: 250,
@@ -388,7 +386,7 @@ mod tests {
                 turn_id: "turn-1".to_string(),
                 id: "notify-1".to_string(),
                 command_item_id: "cmd-item-1".to_string(),
-                kind: codex_protocol::models::CommandExecutionNotificationKind::Exit,
+                kind: protocol::models::CommandExecutionNotificationKind::Exit,
                 message: "Command exited".to_string(),
                 output: Some("done".to_string()),
                 exit_code: Some(0),

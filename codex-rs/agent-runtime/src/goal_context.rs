@@ -1,8 +1,8 @@
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::protocol::ThreadGoal;
 use codex_utils_template::Template;
+use protocol::config_types::ModeKind;
+use protocol::models::ContentItem;
+use protocol::models::ResponseInputItem;
+use protocol::protocol::ThreadGoal;
 use std::sync::LazyLock;
 
 static CONTINUATION_PROMPT_TEMPLATE: LazyLock<Template> =
@@ -137,12 +137,12 @@ mod tests {
     use super::goal_context_input_item;
     use super::objective_updated_prompt;
     use super::should_ignore_goal_for_mode;
-    use codex_protocol::ThreadId;
-    use codex_protocol::config_types::ModeKind;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::ResponseInputItem;
-    use codex_protocol::protocol::ThreadGoal;
-    use codex_protocol::protocol::ThreadGoalStatus;
+    use protocol::ThreadId;
+    use protocol::config_types::ModeKind;
+    use protocol::models::ContentItem;
+    use protocol::models::ResponseInputItem;
+    use protocol::protocol::ThreadGoal;
+    use protocol::protocol::ThreadGoalStatus;
 
     #[test]
     fn goal_continuation_is_ignored_only_in_plan_mode() {

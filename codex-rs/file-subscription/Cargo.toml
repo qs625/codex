@@ -17,8 +17,8 @@ chrono = { workspace = true }
 chrono-tz = "0.10.4"
 codex-extension-api = { workspace = true }
 codex-file-watcher = { workspace = true }
-codex-protocol = { workspace = true }
-codex-thread-store = { workspace = true }
+protocol = { workspace = true }
+thread-store = { workspace = true }
 codex-utils-pty = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

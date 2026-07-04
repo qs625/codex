@@ -1,9 +1,9 @@
-use codex_protocol::AgentPath;
-use codex_protocol::ThreadId;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
+use protocol::AgentPath;
+use protocol::ThreadId;
+use protocol::error::CodexErr;
+use protocol::error::Result;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
 use rand::prelude::IndexedRandom;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -229,8 +229,8 @@ impl AgentRegistry {
             } else {
                 active_agents.used_agent_nicknames.clear();
                 active_agents.nickname_reset_count += 1;
-                codex_metrics_api::record_global_counter(
-                    codex_metrics_api::MULTI_AGENT_NICKNAME_POOL_RESET_METRIC,
+                metrics_api::record_global_counter(
+                    metrics_api::MULTI_AGENT_NICKNAME_POOL_RESET_METRIC,
                     /*inc*/ 1,
                     &[],
                 );

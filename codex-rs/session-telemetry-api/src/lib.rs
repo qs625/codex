@@ -4,22 +4,24 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use codex_api_types::ResponseEvent;
-use codex_api_types::SseEventTelemetry;
-use codex_api_types::WebsocketEventTelemetry;
 use codex_auth_types::AuthEnvTelemetryMetadata;
 use codex_auth_types::TelemetryAuthMode;
-use codex_metrics_api::MetricsSink;
-use codex_metrics_api::RuntimeMetricsSummary;
-use codex_metrics_api::ToolDecisionSource;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::user_input::UserInput;
+use metrics_api::MetricsSink;
+use metrics_api::RuntimeMetricsSummary;
+use metrics_api::ToolDecisionSource;
+use protocol::ThreadId;
+use protocol::config_types::ReasoningSummary;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::ModelVerification;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::RateLimitSnapshot;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionSource;
+use protocol::protocol::TokenUsage;
+use protocol::user_input::UserInput;
+use serde_json::Value;
 use tracing::Span;
 
 /// Shared session telemetry handle used by runtime crates that should not depend on the concrete
@@ -31,6 +33,109 @@ pub type SharedSessionTelemetryFactory = Arc<dyn SessionTelemetryFactory>;
 
 /// Drop guard returned by session telemetry timers.
 pub type SessionTelemetryTimer = Box<dyn SessionTelemetryTimerHandle>;
+
+/// Transport-neutral summary of a single SSE poll used by telemetry sinks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SseEventTelemetry {
+    pub kind: Option<String>,
+    pub success: bool,
+    pub error_message: Option<String>,
+}
+
+impl SseEventTelemetry {
+    pub fn succeeded(kind: impl Into<String>) -> Self {
+        Self {
+            kind: Some(kind.into()),
+            success: true,
+            error_message: None,
+        }
+    }
+
+    pub fn failed(kind: Option<String>, error_message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            success: false,
+            error_message: Some(error_message.into()),
+        }
+    }
+}
+
+/// Transport-neutral summary of a single Responses WebSocket poll used by telemetry sinks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WebsocketEventTelemetry {
+    pub kind: Option<String>,
+    pub success: bool,
+    pub error_message: Option<String>,
+    /// Parsed JSON payload for text events. Telemetry uses this to extract
+    /// Responses API timing metrics without depending on tungstenite.
+    pub payload: Option<Value>,
+}
+
+impl WebsocketEventTelemetry {
+    pub fn succeeded(kind: Option<String>, payload: Option<Value>) -> Self {
+        Self {
+            kind,
+            success: true,
+            error_message: None,
+            payload,
+        }
+    }
+
+    pub fn failed(
+        kind: Option<String>,
+        error_message: impl Into<String>,
+        payload: Option<Value>,
+    ) -> Self {
+        Self {
+            kind,
+            success: false,
+            error_message: Some(error_message.into()),
+            payload,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ResponseEvent {
+    Created,
+    OutputItemDone(ResponseItem),
+    OutputItemAdded(ResponseItem),
+    /// Emitted when the server includes `OpenAI-Model` on the stream response.
+    /// This can differ from the requested model when backend safety routing applies.
+    ServerModel(String),
+    /// Emitted when the server recommends additional account verification.
+    ModelVerifications(Vec<ModelVerification>),
+    /// Emitted when `X-Reasoning-Included: true` is present on the response,
+    /// meaning the server already accounted for past reasoning tokens and the
+    /// client should not re-estimate them.
+    ServerReasoningIncluded(bool),
+    Completed {
+        response_id: String,
+        token_usage: Option<TokenUsage>,
+        /// Did the model affirmatively end its turn? Some providers do not set this,
+        /// so we rely on fallback logic when this is `None`.
+        end_turn: Option<bool>,
+    },
+    OutputTextDelta(String),
+    ToolCallInputDelta {
+        item_id: String,
+        call_id: Option<String>,
+        delta: String,
+    },
+    ReasoningSummaryDelta {
+        delta: String,
+        summary_index: i64,
+    },
+    ReasoningContentDelta {
+        delta: String,
+        content_index: i64,
+    },
+    ReasoningSummaryPartAdded {
+        summary_index: i64,
+    },
+    RateLimits(RateLimitSnapshot),
+    ModelsEtag(String),
+}
 
 /// Input used by composition roots or session runtimes to create a session telemetry handle.
 #[derive(Debug, Clone)]

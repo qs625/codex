@@ -1,0 +1,53 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "skill-service"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "skill_service"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+remote-http = [
+    "codex-auth-types",
+    "transport-client-types",
+    "http",
+    "model-service-api",
+    "zip",
+]
+
+[dependencies]
+anyhow = { workspace = true }
+codex-auth-types = { workspace = true, optional = true }
+transport-client-types = { workspace = true, optional = true }
+skill-service-api = { workspace = true }
+codex-config-types = { workspace = true }
+codex-file-system = { workspace = true }
+http = { workspace = true, optional = true }
+model-service-api = { workspace = true, optional = true }
+metrics-api = { workspace = true }
+plugin-service-api = { workspace = true }
+protocol = { workspace = true }
+codex-skills = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+codex-utils-home-dir = { workspace = true }
+codex-utils-output-truncation = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+shlex = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "rt"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+zip = { workspace = true, optional = true }
+
+[dev-dependencies]
+config-service = { workspace = true }
+dunce = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }

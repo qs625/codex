@@ -5,15 +5,15 @@ use crate::linux_run_main::install_bwrap_signal_forwarders;
 #[cfg(test)]
 use crate::linux_run_main::wait_for_bwrap_child;
 #[cfg(test)]
-use codex_protocol::models::PermissionProfile;
-#[cfg(test)]
-use codex_protocol::protocol::FileSystemSandboxPolicy;
-#[cfg(test)]
-use codex_protocol::protocol::NetworkSandboxPolicy;
-#[cfg(test)]
 use codex_utils_absolute_path::AbsolutePathBuf;
 #[cfg(test)]
 use pretty_assertions::assert_eq;
+#[cfg(test)]
+use protocol::models::PermissionProfile;
+#[cfg(test)]
+use protocol::protocol::FileSystemSandboxPolicy;
+#[cfg(test)]
+use protocol::protocol::NetworkSandboxPolicy;
 
 fn read_only_permission_profile() -> PermissionProfile {
     PermissionProfile::read_only()
@@ -214,17 +214,17 @@ fn split_only_filesystem_policy_requires_direct_runtime_enforcement() {
     std::fs::create_dir_all(&docs).expect("create docs");
     let docs = AbsolutePathBuf::from_absolute_path(&docs).expect("absolute docs");
     let policy = FileSystemSandboxPolicy::restricted(vec![
-        codex_protocol::permissions::FileSystemSandboxEntry {
-            path: codex_protocol::permissions::FileSystemPath::Special {
-                value: codex_protocol::permissions::FileSystemSpecialPath::project_roots(
+        protocol::permissions::FileSystemSandboxEntry {
+            path: protocol::permissions::FileSystemPath::Special {
+                value: protocol::permissions::FileSystemSpecialPath::project_roots(
                     /*subpath*/ None,
                 ),
             },
-            access: codex_protocol::permissions::FileSystemAccessMode::Write,
+            access: protocol::permissions::FileSystemAccessMode::Write,
         },
-        codex_protocol::permissions::FileSystemSandboxEntry {
-            path: codex_protocol::permissions::FileSystemPath::Path { path: docs },
-            access: codex_protocol::permissions::FileSystemAccessMode::Read,
+        protocol::permissions::FileSystemSandboxEntry {
+            path: protocol::permissions::FileSystemPath::Path { path: docs },
+            access: protocol::permissions::FileSystemAccessMode::Read,
         },
     ]);
 
@@ -240,15 +240,15 @@ fn root_write_read_only_carveout_requires_direct_runtime_enforcement() {
     std::fs::create_dir_all(&docs).expect("create docs");
     let docs = AbsolutePathBuf::from_absolute_path(&docs).expect("absolute docs");
     let policy = FileSystemSandboxPolicy::restricted(vec![
-        codex_protocol::permissions::FileSystemSandboxEntry {
-            path: codex_protocol::permissions::FileSystemPath::Special {
-                value: codex_protocol::permissions::FileSystemSpecialPath::Root,
+        protocol::permissions::FileSystemSandboxEntry {
+            path: protocol::permissions::FileSystemPath::Special {
+                value: protocol::permissions::FileSystemSpecialPath::Root,
             },
-            access: codex_protocol::permissions::FileSystemAccessMode::Write,
+            access: protocol::permissions::FileSystemAccessMode::Write,
         },
-        codex_protocol::permissions::FileSystemSandboxEntry {
-            path: codex_protocol::permissions::FileSystemPath::Path { path: docs },
-            access: codex_protocol::permissions::FileSystemAccessMode::Read,
+        protocol::permissions::FileSystemSandboxEntry {
+            path: protocol::permissions::FileSystemPath::Path { path: docs },
+            access: protocol::permissions::FileSystemAccessMode::Read,
         },
     ]);
 
@@ -549,15 +549,15 @@ fn resolve_permission_profile_preserves_direct_runtime_profile() {
     std::fs::create_dir_all(&docs).expect("create docs");
     let docs = AbsolutePathBuf::from_absolute_path(&docs).expect("absolute docs");
     let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
-        codex_protocol::permissions::FileSystemSandboxEntry {
-            path: codex_protocol::permissions::FileSystemPath::Special {
-                value: codex_protocol::permissions::FileSystemSpecialPath::Root,
+        protocol::permissions::FileSystemSandboxEntry {
+            path: protocol::permissions::FileSystemPath::Special {
+                value: protocol::permissions::FileSystemSpecialPath::Root,
             },
-            access: codex_protocol::permissions::FileSystemAccessMode::Read,
+            access: protocol::permissions::FileSystemAccessMode::Read,
         },
-        codex_protocol::permissions::FileSystemSandboxEntry {
-            path: codex_protocol::permissions::FileSystemPath::Path { path: docs },
-            access: codex_protocol::permissions::FileSystemAccessMode::Write,
+        protocol::permissions::FileSystemSandboxEntry {
+            path: protocol::permissions::FileSystemPath::Path { path: docs },
+            access: protocol::permissions::FileSystemAccessMode::Write,
         },
     ]);
     let permission_profile = PermissionProfile::from_runtime_permissions(
@@ -603,15 +603,15 @@ fn legacy_landlock_rejects_split_only_filesystem_policies() {
     std::fs::create_dir_all(&docs).expect("create docs");
     let docs = AbsolutePathBuf::from_absolute_path(&docs).expect("absolute docs");
     let policy = FileSystemSandboxPolicy::restricted(vec![
-        codex_protocol::permissions::FileSystemSandboxEntry {
-            path: codex_protocol::permissions::FileSystemPath::Special {
-                value: codex_protocol::permissions::FileSystemSpecialPath::Root,
+        protocol::permissions::FileSystemSandboxEntry {
+            path: protocol::permissions::FileSystemPath::Special {
+                value: protocol::permissions::FileSystemSpecialPath::Root,
             },
-            access: codex_protocol::permissions::FileSystemAccessMode::Read,
+            access: protocol::permissions::FileSystemAccessMode::Read,
         },
-        codex_protocol::permissions::FileSystemSandboxEntry {
-            path: codex_protocol::permissions::FileSystemPath::Path { path: docs },
-            access: codex_protocol::permissions::FileSystemAccessMode::Write,
+        protocol::permissions::FileSystemSandboxEntry {
+            path: protocol::permissions::FileSystemPath::Path { path: docs },
+            access: protocol::permissions::FileSystemAccessMode::Write,
         },
     ]);
 

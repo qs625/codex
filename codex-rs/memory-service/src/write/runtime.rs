@@ -1,13 +1,13 @@
 use codex_otel::Timer;
-use codex_protocol::ThreadId;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::user_input::UserInput;
-use codex_state::StateRuntime;
 use memory_service_api::MemoryConsolidationAgent;
 use memory_service_api::MemoryStartupRuntime;
 use memory_service_api::StageOnePromptRequest;
 use memory_service_api::StageOneRequestContext;
+use protocol::ThreadId;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::TokenUsage;
+use protocol::user_input::UserInput;
+use state_api::SharedStateDbRuntime;
 use std::sync::Arc;
 
 pub(crate) struct MemoryStartupContext {
@@ -24,7 +24,7 @@ impl MemoryStartupContext {
         self.thread_id
     }
 
-    pub(crate) fn state_db(&self) -> Option<Arc<StateRuntime>> {
+    pub(crate) fn state_db(&self) -> Option<SharedStateDbRuntime> {
         self.runtime.state_db()
     }
 

@@ -2,9 +2,9 @@ use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::transport::RemoteControlHandle;
 use crate::transport::RemoteControlUnavailable;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::RemoteControlDisableResponse;
-use codex_app_server_protocol::RemoteControlEnableResponse;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::RemoteControlDisableResponse;
+use app_server_protocol::RemoteControlEnableResponse;
 
 #[derive(Clone)]
 pub(crate) struct RemoteControlRequestProcessor {

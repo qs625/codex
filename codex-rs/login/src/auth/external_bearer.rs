@@ -3,7 +3,7 @@ use super::manager::ExternalAuthRefreshContext;
 use super::manager::ExternalAuthTokens;
 use async_trait::async_trait;
 use codex_auth_types::AuthMode;
-use codex_protocol::config_types::ModelProviderAuthInfo;
+use protocol::config_types::ModelProviderAuthInfo;
 use std::fmt;
 use std::io;
 use std::path::Path;

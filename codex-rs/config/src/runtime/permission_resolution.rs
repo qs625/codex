@@ -79,19 +79,19 @@ pub(super) fn apply_managed_filesystem_constraints(
 ) {
     for deny_read in &filesystem_constraints.deny_read {
         let deny_entry = if deny_read.contains_glob() {
-            codex_protocol::permissions::FileSystemSandboxEntry {
-                path: codex_protocol::permissions::FileSystemPath::GlobPattern {
+            protocol::permissions::FileSystemSandboxEntry {
+                path: protocol::permissions::FileSystemPath::GlobPattern {
                     pattern: deny_read.as_str().to_string(),
                 },
-                access: codex_protocol::permissions::FileSystemAccessMode::None,
+                access: protocol::permissions::FileSystemAccessMode::None,
             }
         } else {
             let Ok(path) = AbsolutePathBuf::try_from(deny_read.as_str()) else {
                 continue;
             };
-            codex_protocol::permissions::FileSystemSandboxEntry {
-                path: codex_protocol::permissions::FileSystemPath::Path { path },
-                access: codex_protocol::permissions::FileSystemAccessMode::None,
+            protocol::permissions::FileSystemSandboxEntry {
+                path: protocol::permissions::FileSystemPath::Path { path },
+                access: protocol::permissions::FileSystemAccessMode::None,
             }
         };
         if !file_system_sandbox_policy

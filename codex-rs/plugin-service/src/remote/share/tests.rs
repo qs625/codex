@@ -1,10 +1,10 @@
 use super::super::RemotePluginAuth;
 use super::*;
 use codex_login::CodexAuth;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use plugin_service_api::PluginAuthPolicy;
 use plugin_service_api::PluginInstallPolicy;
 use plugin_service_api::PluginInterface;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -22,6 +22,8 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 use wiremock::matchers::query_param;
 use wiremock::matchers::query_param_is_missing;
+
+use crate::test_support::build_test_model_service;
 
 fn test_config(server: &MockServer) -> RemotePluginServiceConfig {
     RemotePluginServiceConfig {
@@ -181,6 +183,11 @@ async fn save_remote_plugin_share_creates_workspace_plugin() {
     let server = MockServer::start().await;
     let config = test_config(&server);
     let auth = test_auth();
+    let model_service = build_test_model_service(
+        codex_home.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
 
     Mock::given(method("POST"))
         .and(path("/backend-api/public/plugins/workspace/upload-url"))
@@ -237,6 +244,7 @@ async fn save_remote_plugin_share_creates_workspace_plugin() {
         .await;
 
     let result = save_remote_plugin_share(
+        model_service.as_ref(),
         &config,
         Some(&auth),
         codex_home.path(),
@@ -345,6 +353,11 @@ async fn save_remote_plugin_share_updates_existing_workspace_plugin() {
     let server = MockServer::start().await;
     let config = test_config(&server);
     let auth = test_auth();
+    let model_service = build_test_model_service(
+        codex_home.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
 
     Mock::given(method("POST"))
         .and(path("/backend-api/public/plugins/workspace/upload-url"))
@@ -382,6 +395,7 @@ async fn save_remote_plugin_share_updates_existing_workspace_plugin() {
         .await;
 
     let result = save_remote_plugin_share(
+        model_service.as_ref(),
         &config,
         Some(&auth),
         codex_home.path(),
@@ -406,6 +420,12 @@ async fn update_remote_plugin_share_targets_updates_targets() {
     let server = MockServer::start().await;
     let config = test_config(&server);
     let auth = test_auth();
+    let temp_dir = TempDir::new().unwrap();
+    let model_service = build_test_model_service(
+        temp_dir.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
 
     Mock::given(method("PUT"))
         .and(path("/backend-api/ps/plugins/plugins_123/shares"))
@@ -453,6 +473,7 @@ async fn update_remote_plugin_share_targets_updates_targets() {
         .await;
 
     let result = update_remote_plugin_share_targets(
+        model_service.as_ref(),
         &config,
         Some(&auth),
         "plugins_123",
@@ -504,6 +525,11 @@ async fn list_remote_plugin_shares_fetches_created_workspace_plugins() {
     let server = MockServer::start().await;
     let config = test_config(&server);
     let auth = test_auth();
+    let model_service = build_test_model_service(
+        codex_home.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
 
     Mock::given(method("GET"))
         .and(path("/backend-api/ps/plugins/workspace/created"))
@@ -584,9 +610,10 @@ async fn list_remote_plugin_shares_fetches_created_workspace_plugins() {
         .mount(&server)
         .await;
 
-    let result = list_remote_plugin_shares(&config, Some(&auth), codex_home.path())
-        .await
-        .unwrap();
+    let result =
+        list_remote_plugin_shares(model_service.as_ref(), &config, Some(&auth), codex_home.path())
+            .await
+            .unwrap();
 
     assert_eq!(
         result,
@@ -680,6 +707,11 @@ async fn delete_remote_plugin_share_deletes_workspace_plugin() {
     let server = MockServer::start().await;
     let config = test_config(&server);
     let auth = test_auth();
+    let model_service = build_test_model_service(
+        codex_home.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
 
     Mock::given(method("DELETE"))
         .and(path("/backend-api/public/plugins/workspace/plugins_123"))
@@ -690,9 +722,15 @@ async fn delete_remote_plugin_share_deletes_workspace_plugin() {
         .mount(&server)
         .await;
 
-    delete_remote_plugin_share(&config, Some(&auth), codex_home.path(), "plugins_123")
-        .await
-        .unwrap();
+    delete_remote_plugin_share(
+        model_service.as_ref(),
+        &config,
+        Some(&auth),
+        codex_home.path(),
+        "plugins_123",
+    )
+    .await
+    .unwrap();
     assert_eq!(
         local_paths::load_plugin_share_local_paths(codex_home.path()).unwrap(),
         BTreeMap::new()

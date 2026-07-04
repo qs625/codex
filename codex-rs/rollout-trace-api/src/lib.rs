@@ -1,7 +1,7 @@
 //! Lightweight rollout trace schema and hot-path writer API.
 //!
 //! Runtime crates use this API to record raw trace events without depending on
-//! the replay/reducer implementation in `codex-rollout-trace`.
+//! the replay/reducer implementation in `rollout-trace`.
 
 pub mod bundle;
 mod code_cell;

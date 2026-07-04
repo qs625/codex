@@ -5,14 +5,14 @@ use anyhow::Context;
 use chrono::DateTime;
 use clap::Parser;
 use clap::ValueEnum;
-use codex_state::LogQuery;
-use codex_state::LogRow;
-use codex_state::StateRuntime;
 use dirs::home_dir;
 use owo_colors::OwoColorize;
+use state::LogQuery;
+use state::LogRow;
+use state::StateRuntime;
 
 #[derive(Debug, Parser)]
-#[command(name = "codex-state-logs")]
+#[command(name = "state-logs")]
 #[command(about = "Tail Codex logs from the dedicated logs SQLite database with simple filters")]
 struct Args {
     /// Path to CODEX_HOME. Defaults to $CODEX_HOME or ~/.codex.
@@ -136,7 +136,7 @@ fn resolve_db_path(args: &Args) -> anyhow::Result<PathBuf> {
     }
 
     let codex_home = args.codex_home.clone().unwrap_or_else(default_codex_home);
-    Ok(codex_state::logs_db_path(codex_home.as_path()))
+    Ok(state::logs_db_path(codex_home.as_path()))
 }
 
 fn default_codex_home() -> PathBuf {
@@ -401,14 +401,14 @@ mod tests {
 
     #[test]
     fn log_level_rejects_aliases_and_unknown_values() {
-        assert!(Args::try_parse_from(["codex-state-logs", "--level", "warning"]).is_err());
-        assert!(Args::try_parse_from(["codex-state-logs", "--level", "err"]).is_err());
-        assert!(Args::try_parse_from(["codex-state-logs", "--level", "warn,error"]).is_err());
+        assert!(Args::try_parse_from(["state-logs", "--level", "warning"]).is_err());
+        assert!(Args::try_parse_from(["state-logs", "--level", "err"]).is_err());
+        assert!(Args::try_parse_from(["state-logs", "--level", "warn,error"]).is_err());
     }
 
     #[test]
     fn log_level_accepts_canonical_values_case_insensitively() {
-        let args = Args::try_parse_from(["codex-state-logs", "--level", "WARN"])
+        let args = Args::try_parse_from(["state-logs", "--level", "WARN"])
             .expect("parse uppercase log level");
 
         assert_eq!(args.level, Some(LogLevelThreshold::Warn));

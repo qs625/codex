@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub use codex_config_types::validate_otel_span_attributes as validate_span_attributes;
-pub use codex_metrics_api::StatsigMetricsSettings;
 use codex_utils_absolute_path::AbsolutePathBuf;
+pub use metrics_api::StatsigMetricsSettings;
 
 pub(crate) const STATSIG_OTLP_HTTP_ENDPOINT: &str = "https://ab.chatgpt.com/otlp/v1/metrics";
 pub(crate) const STATSIG_API_KEY_HEADER: &str = "statsig-api-key";

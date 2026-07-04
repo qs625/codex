@@ -9,8 +9,8 @@ use chrono::TimeZone;
 use chrono::Timelike;
 use chrono::Utc;
 use chrono_tz::Tz;
-use codex_protocol::subscriptions::ScheduleSpec;
-use codex_protocol::subscriptions::ScheduleWeekday;
+use protocol::subscriptions::ScheduleSpec;
+use protocol::subscriptions::ScheduleWeekday;
 
 #[derive(Clone, Debug)]
 pub(crate) enum CompiledSchedule {
@@ -235,9 +235,9 @@ fn weekday_number_from_monday(weekday: &ScheduleWeekday) -> u32 {
 mod tests {
     use chrono::DateTime;
     use chrono::Utc;
-    use codex_protocol::subscriptions::ScheduleSpec;
-    use codex_protocol::subscriptions::ScheduleWeekday;
     use pretty_assertions::assert_eq;
+    use protocol::subscriptions::ScheduleSpec;
+    use protocol::subscriptions::ScheduleWeekday;
 
     use super::CompiledSchedule;
 

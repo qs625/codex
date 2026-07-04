@@ -2,5 +2,5 @@ load("//:defs.bzl", "codex_rust_crate")
 
 codex_rust_crate(
     name = "session-telemetry-api",
-    crate_name = "codex_session_telemetry_api",
+    crate_name = "session_telemetry_api",
 )

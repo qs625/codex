@@ -1,5 +1,7 @@
 use super::turn_context::image_generation_tool_auth_allowed;
 use super::*;
+use model_service_api::ListModelsRequest;
+use model_service_api::ModelCatalogRefresh;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 
@@ -15,11 +17,14 @@ pub(super) async fn spawn_review_thread(
         .review_model
         .clone()
         .unwrap_or_else(|| parent_turn_context.model_info.slug.clone());
-    let review_model_info = sess
-        .services
-        .models_manager
-        .get_model_info(&model, &config.to_models_manager_config())
-        .await;
+    let review_model_info = sess.services.model_service.get_model_info(&model).await;
+    let review_model_info = match review_model_info {
+        Ok(model_info) => model_info,
+        Err(err) => {
+            tracing::warn!(error = %err, model, "failed to resolve review model info");
+            return;
+        }
+    };
     // For reviews, disable web_search and view_image regardless of global settings.
     let mut review_features = sess.features.clone();
     let _ = review_features.disable(Feature::WebSearchRequest);
@@ -31,9 +36,13 @@ pub(super) async fn spawn_review_thread(
         model_info: &review_model_info,
         available_models: &sess
             .services
-            .models_manager
-            .list_models(RefreshStrategy::OnlineIfUncached)
-            .await,
+            .model_service
+            .list_models(ListModelsRequest {
+                include_hidden: true,
+                refresh: ModelCatalogRefresh::OnlineIfUncached,
+            })
+            .await
+            .unwrap_or_default(),
         features: &review_features,
         image_generation_tool_auth_allowed: image_generation_tool_auth_allowed(
             parent_turn_context.auth_runtime.as_deref(),

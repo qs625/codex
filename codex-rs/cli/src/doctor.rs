@@ -28,9 +28,6 @@ use std::time::Instant;
 
 use anyhow::Context;
 use clap::Parser;
-use codex_api::ApiError;
-use codex_api::ResponsesWebsocketClient;
-use codex_api::is_azure_responses_provider;
 use codex_arg0::Arg0DispatchPaths;
 use codex_config_types::CONFIG_TOML_FILE;
 use codex_config_types::McpServerConfig;
@@ -46,21 +43,24 @@ use codex_login::OPENAI_API_KEY_ENV_VAR;
 use codex_login::default_client::build_reqwest_client;
 use codex_login::default_client::default_headers;
 use codex_login::load_auth_dot_json;
-use codex_model_provider::create_model_provider;
-use codex_protocol::protocol::AskForApproval;
 use codex_terminal_detection::Multiplexer;
 use codex_terminal_detection::TerminalInfo;
 use codex_terminal_detection::TerminalName;
 use codex_terminal_detection::terminal_info;
-use thread_service::config::Config;
-use thread_service::config::ConfigOverrides;
-use thread_service::config::find_codex_home;
 use codex_tui::Cli as TuiCli;
 use codex_utils_cli::CliConfigOverrides;
 use http::HeaderMap;
 use http::HeaderValue;
+use model_service::ResponsesWebsocketClient;
+use model_service::create_model_provider;
+use model_service_api::ApiError;
+use model_service_api::is_azure_responses_provider;
+use protocol::protocol::AskForApproval;
 use serde::Serialize;
 use supports_color::Stream;
+use thread_service::config::Config;
+use thread_service::config::ConfigOverrides;
+use thread_service::config::find_codex_home;
 
 mod background;
 mod output;
@@ -483,7 +483,7 @@ fn config_overrides_from_interactive(
         interactive.approval_policy.map(Into::into)
     };
     let sandbox_mode = if interactive.dangerously_bypass_approvals_and_sandbox {
-        Some(codex_protocol::config_types::SandboxMode::DangerFullAccess)
+        Some(protocol::config_types::SandboxMode::DangerFullAccess)
     } else {
         interactive.sandbox_mode.map(Into::into)
     };
@@ -1938,8 +1938,8 @@ async fn state_check(config: &Config) -> DoctorCheck {
     path_readiness(&mut details, "CODEX_HOME", &config.codex_home);
     path_readiness(&mut details, "log dir", &config.log_dir);
     path_readiness(&mut details, "sqlite home", &config.sqlite_home);
-    let state_db = codex_state::state_db_path(&config.sqlite_home);
-    let log_db = codex_state::logs_db_path(&config.sqlite_home);
+    let state_db = state::state_db_path(&config.sqlite_home);
+    let log_db = state::logs_db_path(&config.sqlite_home);
     path_readiness(&mut details, "state DB", &state_db);
     path_readiness(&mut details, "log DB", &log_db);
     let mut integrity_failures = Vec::new();
@@ -1977,7 +1977,7 @@ async fn sqlite_integrity_detail(
         return;
     }
 
-    match codex_state::sqlite_integrity_check(path).await {
+    match state::sqlite_integrity_check(path).await {
         Ok(rows) if rows.iter().all(|row| row == "ok") => {
             details.push(format!("{label} integrity: ok"));
         }
@@ -2877,8 +2877,8 @@ mod tests {
     use std::sync::Mutex;
 
     use clap::Parser;
-    use codex_protocol::config_types::SandboxMode;
     use pretty_assertions::assert_eq;
+    use protocol::config_types::SandboxMode;
 
     use super::*;
 

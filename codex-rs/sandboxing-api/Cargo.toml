@@ -14,13 +14,13 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-codex-exec-server-api = { workspace = true }
-codex-execpolicy-api = { workspace = true }
+exec-server-api = { workspace = true }
+permissions-service-api = { workspace = true }
 codex-file-system = { workspace = true }
 codex-network-proxy-api = { workspace = true }
-codex-permissions-runtime = { workspace = true }
-codex-protocol = { workspace = true }
-codex-session-telemetry-api = { workspace = true }
+permissions-service = { workspace = true }
+protocol = { workspace = true }
+session-telemetry-api = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-path = { workspace = true }
 dunce = { workspace = true }

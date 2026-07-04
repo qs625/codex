@@ -2,8 +2,8 @@ use super::*;
 use crate::error_code::method_not_found;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use tokio::sync::OnceCell;
 
 const THREAD_LIST_DEFAULT_LIMIT: usize = 25;
@@ -153,7 +153,7 @@ pub(crate) trait ThreadProcessorThreadRuntime: Send + Sync {
         &'a self,
         config: Config,
         initial_history: InitialHistory,
-        session_source: codex_protocol::protocol::SessionSource,
+        session_source: protocol::protocol::SessionSource,
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>>;
 
@@ -162,7 +162,7 @@ pub(crate) trait ThreadProcessorThreadRuntime: Send + Sync {
         snapshot: ForkSnapshot,
         config: Config,
         history: InitialHistory,
-        thread_source: Option<codex_protocol::protocol::ThreadSource>,
+        thread_source: Option<protocol::protocol::ThreadSource>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>>;
@@ -218,7 +218,7 @@ impl ThreadProcessorThreadRuntime for ThreadService {
         &'a self,
         config: Config,
         initial_history: InitialHistory,
-        session_source: codex_protocol::protocol::SessionSource,
+        session_source: protocol::protocol::SessionSource,
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>> {
         Box::pin(async move {
@@ -239,7 +239,7 @@ impl ThreadProcessorThreadRuntime for ThreadService {
         snapshot: ForkSnapshot,
         config: Config,
         history: InitialHistory,
-        thread_source: Option<codex_protocol::protocol::ThreadSource>,
+        thread_source: Option<protocol::protocol::ThreadSource>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>> {
@@ -261,7 +261,7 @@ impl ThreadProcessorThreadRuntime for ThreadService {
 
 fn thread_config_snapshot_sandbox_policy(
     config_snapshot: &ThreadConfigSnapshot,
-) -> codex_protocol::protocol::SandboxPolicy {
+) -> protocol::protocol::SandboxPolicy {
     let file_system_sandbox_policy = config_snapshot
         .permission_profile
         .file_system_sandbox_policy();
@@ -350,7 +350,7 @@ fn collect_resume_override_mismatches(
         }
     }
     if let Some(requested_review_policy) = request.approvals_reviewer.as_ref() {
-        let active_review_policy: codex_app_server_protocol::ApprovalsReviewer =
+        let active_review_policy: app_server_protocol::ApprovalsReviewer =
             config_snapshot.approvals_reviewer.into();
         if requested_review_policy != &active_review_policy {
             mismatch_details.push(format!(
@@ -364,16 +364,16 @@ fn collect_resume_override_mismatches(
             (requested_sandbox, &active_sandbox),
             (
                 SandboxMode::ReadOnly,
-                codex_protocol::protocol::SandboxPolicy::ReadOnly { .. }
+                protocol::protocol::SandboxPolicy::ReadOnly { .. }
             ) | (
                 SandboxMode::WorkspaceWrite,
-                codex_protocol::protocol::SandboxPolicy::WorkspaceWrite { .. }
+                protocol::protocol::SandboxPolicy::WorkspaceWrite { .. }
             ) | (
                 SandboxMode::DangerFullAccess,
-                codex_protocol::protocol::SandboxPolicy::DangerFullAccess
+                protocol::protocol::SandboxPolicy::DangerFullAccess
             ) | (
                 SandboxMode::DangerFullAccess,
-                codex_protocol::protocol::SandboxPolicy::ExternalSandbox { .. }
+                protocol::protocol::SandboxPolicy::ExternalSandbox { .. }
             )
         );
         if !sandbox_matches {
@@ -433,9 +433,9 @@ fn merge_persisted_resume_metadata(
     }
 
     if typesafe_overrides.approval_policy.is_none()
-        && let Some(approval_policy) = parse_persisted_enum::<
-            codex_protocol::protocol::AskForApproval,
-        >(&persisted_metadata.approval_mode)
+        && let Some(approval_policy) = parse_persisted_enum::<protocol::protocol::AskForApproval>(
+            &persisted_metadata.approval_mode,
+        )
     {
         typesafe_overrides.approval_policy = Some(approval_policy);
     }
@@ -444,26 +444,27 @@ fn merge_persisted_resume_metadata(
         && typesafe_overrides.permission_profile.is_none()
         && typesafe_overrides.default_permissions.is_none()
     {
-        typesafe_overrides.sandbox_mode = parse_persisted_enum::<
-            codex_protocol::config_types::SandboxMode,
-        >(&persisted_metadata.sandbox_policy)
-        .or_else(|| {
-            parse_persisted_enum::<codex_protocol::protocol::SandboxPolicy>(
+        typesafe_overrides.sandbox_mode =
+            parse_persisted_enum::<protocol::config_types::SandboxMode>(
                 &persisted_metadata.sandbox_policy,
             )
-            .map(|sandbox_policy| match sandbox_policy {
-                codex_protocol::protocol::SandboxPolicy::ReadOnly { .. } => {
-                    codex_protocol::config_types::SandboxMode::ReadOnly
-                }
-                codex_protocol::protocol::SandboxPolicy::WorkspaceWrite { .. } => {
-                    codex_protocol::config_types::SandboxMode::WorkspaceWrite
-                }
-                codex_protocol::protocol::SandboxPolicy::DangerFullAccess
-                | codex_protocol::protocol::SandboxPolicy::ExternalSandbox { .. } => {
-                    codex_protocol::config_types::SandboxMode::DangerFullAccess
-                }
-            })
-        });
+            .or_else(|| {
+                parse_persisted_enum::<protocol::protocol::SandboxPolicy>(
+                    &persisted_metadata.sandbox_policy,
+                )
+                .map(|sandbox_policy| match sandbox_policy {
+                    protocol::protocol::SandboxPolicy::ReadOnly { .. } => {
+                        protocol::config_types::SandboxMode::ReadOnly
+                    }
+                    protocol::protocol::SandboxPolicy::WorkspaceWrite { .. } => {
+                        protocol::config_types::SandboxMode::WorkspaceWrite
+                    }
+                    protocol::protocol::SandboxPolicy::DangerFullAccess
+                    | protocol::protocol::SandboxPolicy::ExternalSandbox { .. } => {
+                        protocol::config_types::SandboxMode::DangerFullAccess
+                    }
+                })
+            });
     }
 }
 
@@ -619,7 +620,7 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
             ));
         }
 
-        if let Err(err) = codex_tool_types::parse_tool_input_schema(&tool.input_schema) {
+        if let Err(err) = tool_service_api::parse_tool_input_schema(&tool.input_schema) {
             return Err(format!(
                 "dynamic tool input schema is not supported for {name}: {err}"
             ));
@@ -1235,7 +1236,7 @@ impl ThreadRequestProcessor {
     async fn request_trace_context(
         &self,
         request_id: &ConnectionRequestId,
-    ) -> Option<codex_protocol::protocol::W3cTraceContext> {
+    ) -> Option<protocol::protocol::W3cTraceContext> {
         self.outgoing.request_trace_context(request_id).await
     }
 
@@ -1311,8 +1312,8 @@ impl ThreadRequestProcessor {
         config_overrides: Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: ConfigOverrides,
         dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
-        session_start_source: Option<codex_app_server_protocol::ThreadStartSource>,
-        thread_source: Option<codex_protocol::protocol::ThreadSource>,
+        session_start_source: Option<app_server_protocol::ThreadStartSource>,
+        thread_source: Option<protocol::protocol::ThreadSource>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
         service_name: Option<String>,
         request_trace: Option<W3cTraceContext>,
@@ -1419,10 +1420,10 @@ impl ThreadRequestProcessor {
             .start_thread_with_options(StartThreadOptions {
                 config,
                 initial_history: match session_start_source
-                    .unwrap_or(codex_app_server_protocol::ThreadStartSource::Startup)
+                    .unwrap_or(app_server_protocol::ThreadStartSource::Startup)
                 {
-                    codex_app_server_protocol::ThreadStartSource::Startup => InitialHistory::New,
-                    codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
+                    app_server_protocol::ThreadStartSource::Startup => InitialHistory::New,
+                    app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
                 },
                 session_source: None,
                 thread_source,
@@ -1607,8 +1608,8 @@ impl ThreadRequestProcessor {
         service_tier: Option<Option<String>>,
         cwd: Option<String>,
         runtime_workspace_roots: Option<Vec<PathBuf>>,
-        approval_policy: Option<codex_app_server_protocol::AskForApproval>,
-        approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
+        approval_policy: Option<app_server_protocol::AskForApproval>,
+        approvals_reviewer: Option<app_server_protocol::ApprovalsReviewer>,
         sandbox: Option<SandboxMode>,
         permissions: Option<PermissionProfileSelectionParams>,
         base_instructions: Option<String>,
@@ -1621,10 +1622,9 @@ impl ThreadRequestProcessor {
             service_tier,
             cwd: cwd.map(PathBuf::from),
             workspace_roots: runtime_workspace_roots,
-            approval_policy: approval_policy
-                .map(codex_app_server_protocol::AskForApproval::to_core),
+            approval_policy: approval_policy.map(app_server_protocol::AskForApproval::to_core),
             approvals_reviewer: approvals_reviewer
-                .map(codex_app_server_protocol::ApprovalsReviewer::to_core),
+                .map(app_server_protocol::ApprovalsReviewer::to_core),
             sandbox_mode: sandbox.map(SandboxMode::to_core),
             codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
             main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
@@ -2751,11 +2751,11 @@ impl ThreadRequestProcessor {
         loop {
             let page = self
                 .thread_store
-                .list_threads(codex_thread_store::ListThreadsParams {
+                .list_threads(thread_store::ListThreadsParams {
                     page_size: THREAD_LIST_MAX_LIMIT,
                     cursor,
-                    sort_key: codex_thread_store::ThreadSortKey::UpdatedAt,
-                    sort_direction: codex_thread_store::SortDirection::Desc,
+                    sort_key: thread_store::ThreadSortKey::UpdatedAt,
+                    sort_direction: thread_store::SortDirection::Desc,
                     allowed_sources: Vec::new(),
                     model_providers: Some(Vec::new()),
                     cwd_filters: None,
@@ -4472,7 +4472,7 @@ fn apply_thread_usage_from_rollout_items(thread: &mut Thread, rollout_items: &[R
 
 fn stored_thread_session_source_with_agent_metadata(
     thread: &StoredThread,
-) -> codex_protocol::protocol::SessionSource {
+) -> protocol::protocol::SessionSource {
     with_thread_spawn_agent_metadata(
         thread.source.clone(),
         thread.agent_nickname.clone(),
@@ -4485,7 +4485,7 @@ pub(crate) fn thread_from_stored_thread(
     thread: StoredThread,
     fallback_provider: &str,
     fallback_cwd: &AbsolutePathBuf,
-) -> (Thread, Option<codex_thread_store::StoredThreadHistory>) {
+) -> (Thread, Option<thread_store::StoredThreadHistory>) {
     let source = stored_thread_session_source_with_agent_metadata(&thread);
     let path = thread.rollout_path;
     let git_info = thread.git_info.map(|info| ApiGitInfo {
@@ -4662,7 +4662,7 @@ fn summary_from_state_db_metadata(
     cwd: PathBuf,
     cli_version: String,
     source: String,
-    _thread_source: Option<codex_protocol::protocol::ThreadSource>,
+    _thread_source: Option<protocol::protocol::ThreadSource>,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
     agent_path: Option<String>,
@@ -4673,7 +4673,7 @@ fn summary_from_state_db_metadata(
     let preview = preview.or(first_user_message).unwrap_or_default();
     let source = serde_json::from_str(&source)
         .or_else(|_| serde_json::from_value(serde_json::Value::String(source.clone())))
-        .unwrap_or(codex_protocol::protocol::SessionSource::Unknown);
+        .unwrap_or(protocol::protocol::SessionSource::Unknown);
     let source = with_thread_spawn_agent_metadata(source, agent_nickname, agent_role, agent_path);
     let git_info = if git_sha.is_none() && git_branch.is_none() && git_origin_url.is_none() {
         None
@@ -4729,7 +4729,7 @@ fn preview_from_rollout_items(items: &[RolloutItem]) -> String {
     items
         .iter()
         .find_map(|item| match item {
-            RolloutItem::EventMsg(codex_protocol::protocol::EventMsg::UserMessage(user)) => {
+            RolloutItem::EventMsg(protocol::protocol::EventMsg::UserMessage(user)) => {
                 Some(user.message.clone())
             }
             _ => None,
@@ -4745,8 +4745,8 @@ fn requested_permissions_trust_project(overrides: &ConfigOverrides, cwd: &Path) 
     if matches!(
         overrides.sandbox_mode,
         Some(
-            codex_protocol::config_types::SandboxMode::WorkspaceWrite
-                | codex_protocol::config_types::SandboxMode::DangerFullAccess
+            protocol::config_types::SandboxMode::WorkspaceWrite
+                | protocol::config_types::SandboxMode::DangerFullAccess
         )
     ) {
         return true;
@@ -4768,13 +4768,13 @@ fn requested_permissions_trust_project(overrides: &ConfigOverrides, cwd: &Path) 
 }
 
 fn permission_profile_trusts_project(
-    profile: &codex_protocol::models::PermissionProfile,
+    profile: &protocol::models::PermissionProfile,
     cwd: &Path,
 ) -> bool {
     match profile {
-        codex_protocol::models::PermissionProfile::Disabled
-        | codex_protocol::models::PermissionProfile::External { .. } => true,
-        codex_protocol::models::PermissionProfile::Managed { .. } => profile
+        protocol::models::PermissionProfile::Disabled
+        | protocol::models::PermissionProfile::External { .. } => true,
+        protocol::models::PermissionProfile::Managed { .. } => profile
             .file_system_sandbox_policy()
             .can_write_path_with_cwd(cwd, cwd),
     }

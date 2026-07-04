@@ -1,6 +1,6 @@
-use codex_state_api::ExternalGoalPreviousStatus;
-use codex_state_api::ThreadGoal;
-use codex_state_api::ThreadGoalStatus;
+use state_api::ExternalGoalPreviousStatus;
+use state_api::ThreadGoal;
+use state_api::ThreadGoalStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExternalGoalStatusAction {
@@ -104,8 +104,8 @@ pub fn external_goal_mutation_plan(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use codex_protocol::ThreadId;
-    use codex_state_api::ExternalGoalPreviousGoal;
+    use protocol::ThreadId;
+    use state_api::ExternalGoalPreviousGoal;
 
     fn goal(goal_id: &str, objective: &str, status: ThreadGoalStatus) -> ThreadGoal {
         ThreadGoal {

@@ -5,8 +5,8 @@ use crate::collect_code_mode_exec_prompt_tool_definitions;
 use crate::create_image_generation_tool;
 use crate::create_web_search_tool;
 use crate::default_namespace_description;
-use codex_tool_config::ToolsConfig;
 use std::collections::BTreeMap;
+use tool_config::ToolsConfig;
 
 /// Pure code-mode planning result derived from model-visible nested tool specs.
 pub struct CodeModeExecPlan {

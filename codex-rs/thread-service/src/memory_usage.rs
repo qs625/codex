@@ -1,14 +1,14 @@
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tool_output_utils::flat_tool_name;
-use codex_command_service_api::ExecCommandArgs;
-use codex_command_service_api::resolve_exec_command_for_parts;
-use codex_protocol::parse_command::ParsedCommand;
 use codex_shell_utils::is_safe_command::is_known_safe_command;
 use codex_shell_utils::parse_command::parse_command;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolPayload;
+use command_service_api::ExecCommandArgs;
+use command_service_api::resolve_exec_command_for_parts;
+use protocol::parse_command::ParsedCommand;
 use std::path::PathBuf;
+use tool_service_api::ToolName;
+use tool_service_api::ToolPayload;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MemoriesUsageKind {

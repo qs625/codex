@@ -3,8 +3,8 @@ use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-use codex_jsonrpc_types::JSONRPCErrorError;
-use codex_jsonrpc_types::RequestId;
+use jsonrpc_types::JSONRPCErrorError;
+use jsonrpc_types::RequestId;
 use serde_json::to_value;
 use std::collections::HashSet;
 use tokio::sync::Mutex;

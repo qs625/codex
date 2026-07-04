@@ -1,11 +1,11 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-protocol"
+name = "protocol"
 version.workspace = true
 
 [lib]
-name = "codex_protocol"
+name = "protocol"
 path = "src/lib.rs"
 doctest = false
 
@@ -39,6 +39,6 @@ seccompiler = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-codex-execpolicy = { workspace = true }
+permissions-service-api = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

@@ -3,30 +3,30 @@ use std::path::PathBuf;
 
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::HookAdditionalContext;
-use codex_hooks_api::PermissionRequestDecision;
-use codex_hooks_api::PermissionRequestOutcome;
-use codex_hooks_api::PermissionRequestRequest;
-use codex_hooks_api::PostToolUseOutcome;
-use codex_hooks_api::PostToolUseRequest;
-use codex_hooks_api::PreToolUseOutcome;
-use codex_hooks_api::PreToolUseRequest;
-use codex_hooks_api::SessionStartOutcome;
-use codex_hooks_api::SessionStartSource;
-use codex_hooks_api::SharedHookRuntime;
-use codex_hooks_api::UserPromptSubmitOutcome;
-use codex_hooks_api::UserPromptSubmitRequest;
-use codex_protocol::items::TurnItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::HookCompletedEvent;
-use codex_protocol::protocol::HookRunSummary;
-use codex_protocol::user_input::UserInput;
-use thread_service_api::PendingInputItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use hooks_api::PermissionRequestDecision;
+use hooks_api::PermissionRequestOutcome;
+use hooks_api::PermissionRequestRequest;
+use hooks_api::PostToolUseOutcome;
+use hooks_api::PostToolUseRequest;
+use hooks_api::PreToolUseOutcome;
+use hooks_api::PreToolUseRequest;
+use hooks_api::SessionStartOutcome;
+use hooks_api::SessionStartSource;
+use hooks_api::SharedHookRuntime;
+use hooks_api::UserPromptSubmitOutcome;
+use hooks_api::UserPromptSubmitRequest;
+use protocol::items::TurnItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::HookCompletedEvent;
+use protocol::protocol::HookRunSummary;
+use protocol::user_input::UserInput;
 use serde_json::Value;
+use thread_service_api::PendingInputItem;
 
 pub struct HookRuntimeContext {
-    pub session_id: codex_protocol::ThreadId,
+    pub session_id: protocol::ThreadId,
     pub turn_id: String,
     pub cwd: AbsolutePathBuf,
     pub transcript_path: Option<PathBuf>,
@@ -47,7 +47,7 @@ pub trait HookRuntimeTurn: Send + Sync {
     fn approval_policy(&self) -> AskForApproval;
 }
 
-/// Host interface used by `codex-hooks` to run hook flows without depending on
+/// Host interface used by `hooks` to run hook flows without depending on
 /// a concrete session runtime.
 ///
 /// Implementations own the runtime side effects for their domain: event
@@ -57,7 +57,7 @@ pub trait HookRuntimeTurn: Send + Sync {
 pub trait HookRuntimeHost: Send + Sync {
     type Turn: HookRuntimeTurn;
 
-    fn session_id(&self) -> codex_protocol::ThreadId;
+    fn session_id(&self) -> protocol::ThreadId;
     fn hooks(&self) -> SharedHookRuntime;
     fn take_pending_session_start_source(
         &self,
@@ -176,7 +176,7 @@ where
     };
 
     let context = hook_runtime_context(host, turn).await;
-    let request = codex_hooks_api::SessionStartRequest {
+    let request = hooks_api::SessionStartRequest {
         session_id: context.session_id,
         cwd: context.cwd,
         transcript_path: context.transcript_path,
@@ -337,7 +337,7 @@ where
     H: HookRuntimeHost,
 {
     let context = hook_runtime_context(host, turn).await;
-    let request = codex_hooks_api::PreCompactRequest {
+    let request = hooks_api::PreCompactRequest {
         session_id: context.session_id,
         turn_id: context.turn_id,
         cwd: context.cwd,
@@ -378,7 +378,7 @@ where
     H: HookRuntimeHost,
 {
     let context = hook_runtime_context(host, turn).await;
-    let request = codex_hooks_api::PostCompactRequest {
+    let request = hooks_api::PostCompactRequest {
         session_id: context.session_id,
         turn_id: context.turn_id,
         cwd: context.cwd,
@@ -609,8 +609,8 @@ fn compaction_trigger_label(value: codex_analytics_api::CompactionTrigger) -> &'
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::models::ContentItem;
     use pretty_assertions::assert_eq;
+    use protocol::models::ContentItem;
 
     use super::additional_context_messages;
 
@@ -626,7 +626,7 @@ mod tests {
             messages
                 .iter()
                 .map(|message| match message {
-                    codex_protocol::models::ResponseItem::Message { role, content, .. } => {
+                    protocol::models::ResponseItem::Message { role, content, .. } => {
                         let text = content
                             .iter()
                             .map(|item| match item {

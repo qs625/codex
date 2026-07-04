@@ -1,7 +1,7 @@
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::ThreadSkill;
+use protocol::protocol::EventMsg;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::ThreadSkill;
 
 pub fn merge_thread_skills(
     mut current: Vec<ThreadSkill>,
@@ -47,10 +47,10 @@ pub fn initial_thread_skills(initial_history: &InitialHistory) -> Vec<ThreadSkil
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::ThreadId;
-    use codex_protocol::protocol::ResumedHistory;
-    use codex_protocol::protocol::ThreadSkillKind;
-    use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
+    use protocol::ThreadId;
+    use protocol::protocol::ResumedHistory;
+    use protocol::protocol::ThreadSkillKind;
+    use protocol::protocol::ThreadSkillsUpdatedEvent;
 
     fn thread_skill(name: &str, path: &str, kind: ThreadSkillKind) -> ThreadSkill {
         ThreadSkill {

@@ -1,22 +1,23 @@
 pub use codex_config_types::RequirementSource;
 pub use codex_config_types::ResidencyRequirement;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_config_permissions::FilesystemConstraints;
+use codex_config_permissions::PermissionsRequirementsToml;
+use permissions_service_api::NetworkConstraints;
+use permissions_service_api::NetworkRequirementsToml;
+use permissions_service_api::RemoteSandboxConfigToml;
+use permissions_service_api::RequirementsExecPolicy;
+use permissions_service_api::RequirementsExecPolicyToml;
+use permissions_service_api::SandboxModeRequirement;
+use permissions_service_api::sandbox_mode_requirement_for_permission_profile;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::WebSearchMode;
+use protocol::models::PermissionProfile;
+use protocol::protocol::AskForApproval;
 use serde::Deserialize;
-use serde::Serialize;
-use serde::de::Error as _;
-use serde::de::value::Error as ValueDeserializerError;
-use serde::de::value::StrDeserializer;
 use std::collections::BTreeMap;
 use std::fmt;
 use wildmatch::WildMatchPattern;
 
-use crate::requirements_exec_policy::RequirementsExecPolicy;
-use crate::requirements_exec_policy::RequirementsExecPolicyToml;
 use codex_config_types::AppToolApproval;
 use codex_config_types::Constrained;
 use codex_config_types::ConstraintError;
@@ -134,389 +135,6 @@ impl PluginRequirementsToml {
     pub fn is_empty(&self) -> bool {
         self.mcp_servers.as_ref().is_none_or(BTreeMap::is_empty)
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
-pub struct NetworkDomainPermissionsToml {
-    #[serde(flatten)]
-    pub entries: BTreeMap<String, NetworkDomainPermissionToml>,
-}
-
-impl NetworkDomainPermissionsToml {
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn allowed_domains(&self) -> Option<Vec<String>> {
-        let allowed_domains: Vec<String> = self
-            .entries
-            .iter()
-            .filter(|(_, permission)| matches!(permission, NetworkDomainPermissionToml::Allow))
-            .map(|(pattern, _)| pattern.clone())
-            .collect();
-        (!allowed_domains.is_empty()).then_some(allowed_domains)
-    }
-
-    pub fn denied_domains(&self) -> Option<Vec<String>> {
-        let denied_domains: Vec<String> = self
-            .entries
-            .iter()
-            .filter(|(_, permission)| matches!(permission, NetworkDomainPermissionToml::Deny))
-            .map(|(pattern, _)| pattern.clone())
-            .collect();
-        (!denied_domains.is_empty()).then_some(denied_domains)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub enum NetworkDomainPermissionToml {
-    Allow,
-    Deny,
-}
-
-impl std::fmt::Display for NetworkDomainPermissionToml {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let permission = match self {
-            Self::Allow => "allow",
-            Self::Deny => "deny",
-        };
-        f.write_str(permission)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
-pub struct NetworkUnixSocketPermissionsToml {
-    #[serde(flatten)]
-    pub entries: BTreeMap<String, NetworkUnixSocketPermissionToml>,
-}
-
-impl NetworkUnixSocketPermissionsToml {
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn allow_unix_sockets(&self) -> Vec<String> {
-        self.entries
-            .iter()
-            .filter(|(_, permission)| matches!(permission, NetworkUnixSocketPermissionToml::Allow))
-            .map(|(path, _)| path.clone())
-            .collect()
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub enum NetworkUnixSocketPermissionToml {
-    Allow,
-    None,
-}
-
-impl std::fmt::Display for NetworkUnixSocketPermissionToml {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let permission = match self {
-            Self::Allow => "allow",
-            Self::None => "none",
-        };
-        f.write_str(permission)
-    }
-}
-
-#[derive(Serialize, Debug, Clone, Default, PartialEq, Eq)]
-pub struct NetworkRequirementsToml {
-    pub enabled: Option<bool>,
-    pub http_port: Option<u16>,
-    pub socks_port: Option<u16>,
-    pub allow_upstream_proxy: Option<bool>,
-    pub dangerously_allow_non_loopback_proxy: Option<bool>,
-    pub dangerously_allow_all_unix_sockets: Option<bool>,
-    pub domains: Option<NetworkDomainPermissionsToml>,
-    /// When true, only managed `allowed_domains` are respected while managed
-    /// network enforcement is active. User allowlist entries are ignored.
-    pub managed_allowed_domains_only: Option<bool>,
-    pub unix_sockets: Option<NetworkUnixSocketPermissionsToml>,
-    pub allow_local_binding: Option<bool>,
-}
-
-#[derive(Deserialize)]
-struct RawNetworkRequirementsToml {
-    enabled: Option<bool>,
-    http_port: Option<u16>,
-    socks_port: Option<u16>,
-    allow_upstream_proxy: Option<bool>,
-    dangerously_allow_non_loopback_proxy: Option<bool>,
-    dangerously_allow_all_unix_sockets: Option<bool>,
-    domains: Option<NetworkDomainPermissionsToml>,
-    #[serde(default)]
-    allowed_domains: Option<Vec<String>>,
-    /// When true, only managed `allowed_domains` are respected while managed
-    /// network enforcement is active. User allowlist entries are ignored.
-    managed_allowed_domains_only: Option<bool>,
-    #[serde(default)]
-    denied_domains: Option<Vec<String>>,
-    unix_sockets: Option<NetworkUnixSocketPermissionsToml>,
-    #[serde(default)]
-    allow_unix_sockets: Option<Vec<String>>,
-    allow_local_binding: Option<bool>,
-}
-
-impl<'de> Deserialize<'de> for NetworkRequirementsToml {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = RawNetworkRequirementsToml::deserialize(deserializer)?;
-        let RawNetworkRequirementsToml {
-            enabled,
-            http_port,
-            socks_port,
-            allow_upstream_proxy,
-            dangerously_allow_non_loopback_proxy,
-            dangerously_allow_all_unix_sockets,
-            domains,
-            allowed_domains,
-            managed_allowed_domains_only,
-            denied_domains,
-            unix_sockets,
-            allow_unix_sockets,
-            allow_local_binding,
-        } = raw;
-
-        if domains.is_some() && (allowed_domains.is_some() || denied_domains.is_some()) {
-            return Err(D::Error::custom(
-                "`experimental_network.domains` cannot be combined with legacy `allowed_domains` or `denied_domains`",
-            ));
-        }
-
-        if unix_sockets.is_some() && allow_unix_sockets.is_some() {
-            return Err(D::Error::custom(
-                "`experimental_network.unix_sockets` cannot be combined with legacy `allow_unix_sockets`",
-            ));
-        }
-
-        Ok(Self {
-            enabled,
-            http_port,
-            socks_port,
-            allow_upstream_proxy,
-            dangerously_allow_non_loopback_proxy,
-            dangerously_allow_all_unix_sockets,
-            domains: domains
-                .or_else(|| legacy_domain_permissions_from_lists(allowed_domains, denied_domains)),
-            managed_allowed_domains_only,
-            unix_sockets: unix_sockets
-                .or_else(|| legacy_unix_socket_permissions_from_list(allow_unix_sockets)),
-            allow_local_binding,
-        })
-    }
-}
-
-/// Legacy list normalization is intentionally lossy: explicit empty legacy
-/// lists are treated as unset when converted to the canonical network
-/// permission shape.
-fn legacy_domain_permissions_from_lists(
-    allowed_domains: Option<Vec<String>>,
-    denied_domains: Option<Vec<String>>,
-) -> Option<NetworkDomainPermissionsToml> {
-    let mut entries = BTreeMap::new();
-
-    for pattern in allowed_domains.unwrap_or_default() {
-        entries.insert(pattern, NetworkDomainPermissionToml::Allow);
-    }
-
-    for pattern in denied_domains.unwrap_or_default() {
-        entries.insert(pattern, NetworkDomainPermissionToml::Deny);
-    }
-
-    (!entries.is_empty()).then_some(NetworkDomainPermissionsToml { entries })
-}
-
-fn legacy_unix_socket_permissions_from_list(
-    allow_unix_sockets: Option<Vec<String>>,
-) -> Option<NetworkUnixSocketPermissionsToml> {
-    let entries = allow_unix_sockets
-        .unwrap_or_default()
-        .into_iter()
-        .map(|path| (path, NetworkUnixSocketPermissionToml::Allow))
-        .collect::<BTreeMap<_, _>>();
-
-    (!entries.is_empty()).then_some(NetworkUnixSocketPermissionsToml { entries })
-}
-
-/// Normalized network constraints derived from requirements TOML.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct NetworkConstraints {
-    pub enabled: Option<bool>,
-    pub http_port: Option<u16>,
-    pub socks_port: Option<u16>,
-    pub allow_upstream_proxy: Option<bool>,
-    pub dangerously_allow_non_loopback_proxy: Option<bool>,
-    pub dangerously_allow_all_unix_sockets: Option<bool>,
-    pub domains: Option<NetworkDomainPermissionsToml>,
-    /// When true, only managed `allowed_domains` are respected while managed
-    /// network enforcement is active. User allowlist entries are ignored.
-    pub managed_allowed_domains_only: Option<bool>,
-    pub unix_sockets: Option<NetworkUnixSocketPermissionsToml>,
-    pub allow_local_binding: Option<bool>,
-}
-
-impl<'de> Deserialize<'de> for NetworkConstraints {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let requirements = NetworkRequirementsToml::deserialize(deserializer)?;
-        Ok(requirements.into())
-    }
-}
-
-impl From<NetworkRequirementsToml> for NetworkConstraints {
-    fn from(value: NetworkRequirementsToml) -> Self {
-        let NetworkRequirementsToml {
-            enabled,
-            http_port,
-            socks_port,
-            allow_upstream_proxy,
-            dangerously_allow_non_loopback_proxy,
-            dangerously_allow_all_unix_sockets,
-            domains,
-            managed_allowed_domains_only,
-            unix_sockets,
-            allow_local_binding,
-        } = value;
-        Self {
-            enabled,
-            http_port,
-            socks_port,
-            allow_upstream_proxy,
-            dangerously_allow_non_loopback_proxy,
-            dangerously_allow_all_unix_sockets,
-            domains,
-            managed_allowed_domains_only,
-            unix_sockets,
-            allow_local_binding,
-        }
-    }
-}
-
-#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
-pub struct FilesystemRequirementsToml {
-    pub deny_read: Option<Vec<FilesystemDenyReadPattern>>,
-}
-
-#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
-pub struct PermissionsRequirementsToml {
-    pub filesystem: Option<FilesystemRequirementsToml>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FilesystemConstraints {
-    pub deny_read: Vec<FilesystemDenyReadPattern>,
-}
-
-impl From<PermissionsRequirementsToml> for FilesystemConstraints {
-    fn from(value: PermissionsRequirementsToml) -> Self {
-        let deny_read = value
-            .filesystem
-            .and_then(|filesystem| filesystem.deny_read)
-            .unwrap_or_default();
-        Self { deny_read }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-#[serde(transparent)]
-pub struct FilesystemDenyReadPattern(String);
-
-impl FilesystemDenyReadPattern {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn contains_glob(&self) -> bool {
-        self.0.chars().any(is_glob_metacharacter)
-    }
-
-    pub fn from_input(input: &str) -> Result<Self, String> {
-        if !input.chars().any(is_glob_metacharacter) {
-            let path = deserialize_absolute_path(input)?;
-            return Ok(Self(path.to_string_lossy().into_owned()));
-        }
-
-        let (directory_prefix, suffix) = split_glob_pattern(input);
-        let normalized_prefix = if directory_prefix.is_empty() {
-            deserialize_absolute_path(".")?
-        } else {
-            deserialize_absolute_path(directory_prefix)?
-        };
-        let normalized_prefix = normalized_prefix.to_string_lossy();
-        let normalized = if suffix.is_empty() {
-            normalized_prefix.into_owned()
-        } else if normalized_prefix == "/" {
-            format!("/{suffix}")
-        } else {
-            format!("{normalized_prefix}/{suffix}")
-        };
-        Ok(Self(normalized))
-    }
-}
-
-impl From<AbsolutePathBuf> for FilesystemDenyReadPattern {
-    fn from(value: AbsolutePathBuf) -> Self {
-        Self(value.to_string_lossy().into_owned())
-    }
-}
-
-impl<'de> Deserialize<'de> for FilesystemDenyReadPattern {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let input = String::deserialize(deserializer)?;
-        Self::from_input(&input).map_err(D::Error::custom)
-    }
-}
-
-fn deserialize_absolute_path(input: &str) -> Result<AbsolutePathBuf, String> {
-    AbsolutePathBuf::deserialize(StrDeserializer::<ValueDeserializerError>::new(input))
-        .map_err(|err| err.to_string())
-}
-
-fn split_glob_pattern(input: &str) -> (&str, &str) {
-    let Some(first_glob) = input.find(is_glob_metacharacter) else {
-        return ("", input);
-    };
-    let separator_index = input[..first_glob]
-        .char_indices()
-        .rev()
-        .find(|(_, ch)| is_path_separator(*ch))
-        .map(|(index, _)| index);
-
-    match separator_index {
-        Some(0) => ("/", &input[1..]),
-        Some(index)
-            if cfg!(windows)
-                && index == 2
-                && input.as_bytes().get(1) == Some(&b':')
-                && input.as_bytes().get(2).is_some() =>
-        {
-            (&input[..=index], &input[index + 1..])
-        }
-        Some(index) => (&input[..index], &input[index + 1..]),
-        None => ("", input),
-    }
-}
-
-fn is_path_separator(ch: char) -> bool {
-    if cfg!(windows) {
-        ch == '/' || ch == '\\'
-    } else {
-        ch == '/'
-    }
-}
-
-fn is_glob_metacharacter(ch: char) -> bool {
-    matches!(ch, '*' | '?' | '[')
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -672,12 +290,6 @@ pub struct ConfigRequirementsToml {
     pub network: Option<NetworkRequirementsToml>,
     pub permissions: Option<PermissionsRequirementsToml>,
     pub guardian_policy_config: Option<String>,
-}
-
-#[derive(Deserialize, Debug, Clone, PartialEq)]
-pub struct RemoteSandboxConfigToml {
-    pub hostname_patterns: Vec<String>,
-    pub allowed_sandbox_modes: Vec<SandboxModeRequirement>,
 }
 
 /// Value paired with the requirement source it came from, for better error
@@ -847,33 +459,6 @@ fn hostname_matches_any_pattern(hostname: &str, patterns: &[String]) -> bool {
             .map(|pattern| WildMatchPattern::<'*', '?'>::new_case_insensitive(&pattern))
             .is_some_and(|pattern| pattern.matches(hostname))
     })
-}
-
-/// Currently, `external-sandbox` is not supported in config.toml, but it is
-/// supported through programmatic use.
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
-pub enum SandboxModeRequirement {
-    #[serde(rename = "read-only")]
-    ReadOnly,
-
-    #[serde(rename = "workspace-write")]
-    WorkspaceWrite,
-
-    #[serde(rename = "danger-full-access")]
-    DangerFullAccess,
-
-    #[serde(rename = "external-sandbox")]
-    ExternalSandbox,
-}
-
-impl From<SandboxMode> for SandboxModeRequirement {
-    fn from(mode: SandboxMode) -> Self {
-        match mode {
-            SandboxMode::ReadOnly => SandboxModeRequirement::ReadOnly,
-            SandboxMode::WorkspaceWrite => SandboxModeRequirement::WorkspaceWrite,
-            SandboxMode::DangerFullAccess => SandboxModeRequirement::DangerFullAccess,
-        }
-    }
 }
 
 impl ConfigRequirementsToml {
@@ -1187,42 +772,20 @@ impl TryFrom<ConfigRequirementsWithSources> for ConfigRequirements {
     }
 }
 
-pub fn sandbox_mode_requirement_for_permission_profile(
-    permission_profile: &PermissionProfile,
-) -> SandboxModeRequirement {
-    match permission_profile {
-        PermissionProfile::Disabled => SandboxModeRequirement::DangerFullAccess,
-        PermissionProfile::External { .. } => SandboxModeRequirement::ExternalSandbox,
-        PermissionProfile::Managed { .. } => {
-            let file_system_policy = permission_profile.file_system_sandbox_policy();
-            if file_system_policy.has_full_disk_write_access() {
-                SandboxModeRequirement::DangerFullAccess
-            } else if file_system_policy
-                .entries
-                .iter()
-                .any(|entry| entry.access.can_write())
-            {
-                SandboxModeRequirement::WorkspaceWrite
-            } else {
-                SandboxModeRequirement::ReadOnly
-            }
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use anyhow::Result;
     use codex_config_types::HookEventsToml;
-    use codex_execpolicy_api::Decision;
-    use codex_execpolicy_api::Evaluation;
-    use codex_execpolicy_api::RuleMatch;
-    use codex_protocol::protocol::NetworkAccess;
-    use codex_protocol::protocol::SandboxPolicy;
+    use permissions_service_api::Decision;
+    use permissions_service_api::Evaluation;
+    use permissions_service_api::RuleMatch;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use codex_utils_absolute_path::AbsolutePathBufGuard;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::NetworkAccess;
+    use protocol::protocol::SandboxPolicy;
     use toml::from_str;
 
     fn tokens(cmd: &[&str]) -> Vec<String> {

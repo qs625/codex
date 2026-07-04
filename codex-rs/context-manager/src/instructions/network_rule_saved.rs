@@ -1,6 +1,6 @@
 use super::ContextualUserFragment;
-use codex_protocol::approvals::NetworkPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyRuleAction;
+use protocol::approvals::NetworkPolicyAmendment;
+use protocol::approvals::NetworkPolicyRuleAction;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetworkRuleSaved {

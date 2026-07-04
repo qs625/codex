@@ -48,7 +48,7 @@ pub fn new_approval_decision_cell(
     actor: ApprovalDecisionActor,
 ) -> Box<dyn HistoryCell> {
     use ReviewDecision::*;
-    use codex_protocol::approvals::NetworkPolicyRuleAction;
+    use protocol::approvals::NetworkPolicyRuleAction;
 
     let (symbol, summary): (Span<'static>, Vec<Span<'static>>) = match decision {
         Approved => match subject {

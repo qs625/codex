@@ -1,24 +1,24 @@
 use std::sync::Arc;
 
-pub use codex_approval_service_api::GUARDIAN_REVIEWER_NAME;
-pub use codex_approval_service_api::is_guardian_reviewer_source;
-pub use codex_approval_service_api::routes_approval_to_guardian;
 use codex_analytics_api::GuardianApprovalRequestSource;
 use codex_analytics_api::GuardianReviewAnalyticsResult;
 use codex_analytics_api::GuardianReviewDecision;
 use codex_analytics_api::GuardianReviewFailureReason;
 use codex_analytics_api::GuardianReviewTerminalStatus;
 use codex_analytics_api::GuardianReviewTrackContext;
+use codex_approval_service_api::ApprovalSessionCapability;
+pub use codex_approval_service_api::GUARDIAN_REVIEWER_NAME;
+use codex_approval_service_api::ReviewRejectionRecord;
+use codex_approval_service_api::ReviewRuntimeError;
+use codex_approval_service_api::ReviewRuntimeOutcome;
+pub use codex_approval_service_api::is_guardian_reviewer_source;
+pub use codex_approval_service_api::routes_approval_to_guardian;
 use codex_guardian::GuardianApprovalRequest;
 use codex_guardian::guardian_assessment_action;
 use codex_guardian::guardian_request_target_item_id;
 use codex_guardian::guardian_request_turn_id;
 use codex_guardian::guardian_reviewed_action;
-use thread_service_api::ReviewRejectionRecord;
-use thread_service_api::ReviewRuntimeError;
-use thread_service_api::ReviewRuntimeOutcome;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 
 #[derive(serde::Serialize)]
@@ -28,27 +28,27 @@ enum GuardianApprovalRequestPayload {
         id: String,
         command: Vec<String>,
         cwd: codex_utils_absolute_path::AbsolutePathBuf,
-        sandbox_permissions: codex_protocol::models::SandboxPermissions,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        sandbox_permissions: protocol::models::SandboxPermissions,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
         justification: Option<String>,
     },
     ExecCommand {
         id: String,
         command: Vec<String>,
         cwd: codex_utils_absolute_path::AbsolutePathBuf,
-        sandbox_permissions: codex_protocol::models::SandboxPermissions,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        sandbox_permissions: protocol::models::SandboxPermissions,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
         justification: Option<String>,
         tty: bool,
     },
     #[cfg(unix)]
     Execve {
         id: String,
-        source: codex_protocol::approvals::GuardianCommandSource,
+        source: protocol::approvals::GuardianCommandSource,
         program: String,
         argv: Vec<String>,
         cwd: codex_utils_absolute_path::AbsolutePathBuf,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
     },
     ApplyPatch {
         id: String,
@@ -61,7 +61,7 @@ enum GuardianApprovalRequestPayload {
         turn_id: String,
         target: String,
         host: String,
-        protocol: codex_protocol::approvals::NetworkApprovalProtocol,
+        protocol: protocol::approvals::NetworkApprovalProtocol,
         port: u16,
         trigger: Option<codex_guardian::GuardianNetworkAccessTrigger>,
     },
@@ -81,7 +81,7 @@ enum GuardianApprovalRequestPayload {
         id: String,
         turn_id: String,
         reason: Option<String>,
-        permissions: codex_protocol::request_permissions::RequestPermissionProfile,
+        permissions: protocol::request_permissions::RequestPermissionProfile,
     },
 }
 
@@ -90,12 +90,14 @@ pub fn new_guardian_review_id() -> String {
 }
 
 pub async fn guardian_rejection_message(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     review_id: &str,
 ) -> String {
     let rejection = session.take_review_rejection(review_id).await;
     codex_approval_service_api::guardian_rejection_message_from_rationale(
-        rejection.as_ref().map(|rejection| rejection.rationale.as_str()),
+        rejection
+            .as_ref()
+            .map(|rejection| rejection.rationale.as_str()),
     )
 }
 
@@ -108,12 +110,12 @@ pub fn guardian_timeout_message() -> String {
 }
 
 pub async fn review_approval_request(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     turn: &dyn ThreadTurnCapability,
     review_id: String,
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
-) -> codex_protocol::protocol::ReviewDecision {
+) -> protocol::protocol::ReviewDecision {
     run_guardian_review(
         session,
         turn,
@@ -126,13 +128,13 @@ pub async fn review_approval_request(
 }
 
 pub async fn review_approval_request_with_source(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     turn: &dyn ThreadTurnCapability,
     review_id: String,
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
-) -> codex_protocol::protocol::ReviewDecision {
+) -> protocol::protocol::ReviewDecision {
     run_guardian_review(
         session,
         turn,
@@ -145,26 +147,26 @@ pub async fn review_approval_request_with_source(
 }
 
 pub fn spawn_approval_request_review(
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     review_id: String,
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
     cancel_token: tokio_util::sync::CancellationToken,
-) -> tokio::sync::oneshot::Receiver<codex_protocol::protocol::ReviewDecision> {
+) -> tokio::sync::oneshot::Receiver<protocol::protocol::ReviewDecision> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
         else {
-            let _ = tx.send(codex_protocol::protocol::ReviewDecision::Denied);
+            let _ = tx.send(protocol::protocol::ReviewDecision::Denied);
             return;
         };
         let decision = runtime.block_on(async move {
             tokio::select! {
-                _ = cancel_token.cancelled() => codex_protocol::protocol::ReviewDecision::Abort,
+                _ = cancel_token.cancelled() => protocol::protocol::ReviewDecision::Abort,
                 decision = run_guardian_review(
                     session.as_ref(),
                     turn.as_ref(),
@@ -181,18 +183,19 @@ pub fn spawn_approval_request_review(
 }
 
 async fn run_guardian_review(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     turn: &dyn ThreadTurnCapability,
     review_id: String,
     request: GuardianApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
-) -> codex_protocol::protocol::ReviewDecision {
+) -> protocol::protocol::ReviewDecision {
     let target_item_id = guardian_request_target_item_id(&request).map(str::to_string);
-    let assessment_turn_id = guardian_request_turn_id(&request, turn.runtime_turn_id_str()).to_string();
+    let assessment_turn_id =
+        guardian_request_turn_id(&request, turn.runtime_turn_id_str()).to_string();
     let action_summary = guardian_assessment_action(&request);
     let review_tracking = GuardianReviewTrackContext::new(
-        session.conversation_id().to_string(),
+        ApprovalSessionCapability::conversation_id(session).to_string(),
         assessment_turn_id.clone(),
         review_id.clone(),
         target_item_id.clone(),
@@ -202,14 +205,14 @@ async fn run_guardian_review(
     );
     let started_at_ms: i64 = review_tracking.started_at_ms.try_into().unwrap_or_default();
 
-    turn.emit_event(codex_protocol::protocol::EventMsg::GuardianAssessment(
-        codex_protocol::protocol::GuardianAssessmentEvent {
+    turn.emit_event(protocol::protocol::EventMsg::GuardianAssessment(
+        protocol::protocol::GuardianAssessmentEvent {
             id: review_id.clone(),
             target_item_id: target_item_id.clone(),
             turn_id: assessment_turn_id.clone(),
             started_at_ms,
             completed_at_ms: None,
-            status: codex_protocol::protocol::GuardianAssessmentStatus::InProgress,
+            status: protocol::protocol::GuardianAssessmentStatus::InProgress,
             risk_level: None,
             user_authorization: None,
             rationale: None,
@@ -252,7 +255,7 @@ async fn run_guardian_review(
         ReviewRuntimeOutcome::Completed(assessment) => {
             let approved = matches!(
                 assessment.outcome,
-                codex_protocol::protocol::GuardianAssessmentOutcome::Allow
+                protocol::protocol::GuardianAssessmentOutcome::Allow
             );
             session
                 .track_review_analytics(
@@ -280,37 +283,37 @@ async fn run_guardian_review(
 
             let verdict = if approved { "approved" } else { "denied" };
             let user_authorization = match assessment.user_authorization {
-                codex_protocol::protocol::GuardianUserAuthorization::Unknown => "unknown",
-                codex_protocol::protocol::GuardianUserAuthorization::Low => "low",
-                codex_protocol::protocol::GuardianUserAuthorization::Medium => "medium",
-                codex_protocol::protocol::GuardianUserAuthorization::High => "high",
+                protocol::protocol::GuardianUserAuthorization::Unknown => "unknown",
+                protocol::protocol::GuardianUserAuthorization::Low => "low",
+                protocol::protocol::GuardianUserAuthorization::Medium => "medium",
+                protocol::protocol::GuardianUserAuthorization::High => "high",
             };
             let warning = format!(
                 "Automatic approval review {verdict} (risk: {}, authorization: {user_authorization}): {}",
                 guardian_risk_level_str(assessment.risk_level),
                 assessment.rationale
             );
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianWarning(
-                codex_protocol::protocol::WarningEvent { message: warning },
+            turn.emit_event(protocol::protocol::EventMsg::GuardianWarning(
+                protocol::protocol::WarningEvent { message: warning },
             ))
             .await;
 
             let status = if approved {
-                codex_protocol::protocol::GuardianAssessmentStatus::Approved
+                protocol::protocol::GuardianAssessmentStatus::Approved
             } else {
-                codex_protocol::protocol::GuardianAssessmentStatus::Denied
+                protocol::protocol::GuardianAssessmentStatus::Denied
             };
             session
                 .set_review_rejection(
                     review_id.clone(),
                     (!approved).then_some(ReviewRejectionRecord {
                         rationale: assessment.rationale.clone(),
-                        source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        source: protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     }),
                 )
                 .await;
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianAssessment(
-                codex_protocol::protocol::GuardianAssessmentEvent {
+            turn.emit_event(protocol::protocol::EventMsg::GuardianAssessment(
+                protocol::protocol::GuardianAssessmentEvent {
                     id: review_id,
                     target_item_id,
                     turn_id: assessment_turn_id.clone(),
@@ -321,7 +324,7 @@ async fn run_guardian_review(
                     user_authorization: Some(assessment.user_authorization),
                     rationale: Some(assessment.rationale.clone()),
                     decision_source: Some(
-                        codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     ),
                     action: action_summary,
                 },
@@ -329,11 +332,15 @@ async fn run_guardian_review(
             .await;
 
             if approved {
-                session.record_review_non_rejection(&assessment_turn_id).await;
-                codex_protocol::protocol::ReviewDecision::Approved
+                session
+                    .record_review_non_rejection(&assessment_turn_id)
+                    .await;
+                protocol::protocol::ReviewDecision::Approved
             } else {
-                session.record_review_rejection(turn, &assessment_turn_id).await;
-                codex_protocol::protocol::ReviewDecision::Denied
+                session
+                    .record_review_rejection(turn, &assessment_turn_id)
+                    .await;
+                protocol::protocol::ReviewDecision::Denied
             }
         }
         ReviewRuntimeOutcome::Error(error) => {
@@ -359,19 +366,19 @@ async fn run_guardian_review(
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_guardian_runtime_error(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     turn: &dyn ThreadTurnCapability,
     review_tracking: GuardianReviewTrackContext,
     review_id: String,
     target_item_id: Option<String>,
     assessment_turn_id: String,
     started_at_ms: i64,
-    action_summary: codex_protocol::approvals::GuardianAssessmentAction,
+    action_summary: protocol::approvals::GuardianAssessmentAction,
     completed_at_ms: i64,
     completed_at_ms_u64: u64,
     analytics_result: GuardianReviewAnalyticsResult,
     error: ReviewRuntimeError,
-) -> codex_protocol::protocol::ReviewDecision {
+) -> protocol::protocol::ReviewDecision {
     match error {
         ReviewRuntimeError::Timeout => {
             let rationale =
@@ -389,32 +396,34 @@ async fn handle_guardian_runtime_error(
                     completed_at_ms_u64,
                 )
                 .await;
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianWarning(
-                codex_protocol::protocol::WarningEvent {
+            turn.emit_event(protocol::protocol::EventMsg::GuardianWarning(
+                protocol::protocol::WarningEvent {
                     message: rationale.clone(),
                 },
             ))
             .await;
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianAssessment(
-                codex_protocol::protocol::GuardianAssessmentEvent {
+            turn.emit_event(protocol::protocol::EventMsg::GuardianAssessment(
+                protocol::protocol::GuardianAssessmentEvent {
                     id: review_id,
                     target_item_id,
                     turn_id: assessment_turn_id.clone(),
                     started_at_ms,
                     completed_at_ms: Some(completed_at_ms),
-                    status: codex_protocol::protocol::GuardianAssessmentStatus::TimedOut,
+                    status: protocol::protocol::GuardianAssessmentStatus::TimedOut,
                     risk_level: None,
                     user_authorization: None,
                     rationale: Some(rationale),
                     decision_source: Some(
-                        codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     ),
                     action: action_summary,
                 },
             ))
             .await;
-            session.record_review_non_rejection(&assessment_turn_id).await;
-            codex_protocol::protocol::ReviewDecision::TimedOut
+            session
+                .record_review_non_rejection(&assessment_turn_id)
+                .await;
+            protocol::protocol::ReviewDecision::TimedOut
         }
         ReviewRuntimeError::Cancelled => {
             session
@@ -429,26 +438,28 @@ async fn handle_guardian_runtime_error(
                     completed_at_ms_u64,
                 )
                 .await;
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianAssessment(
-                codex_protocol::protocol::GuardianAssessmentEvent {
+            turn.emit_event(protocol::protocol::EventMsg::GuardianAssessment(
+                protocol::protocol::GuardianAssessmentEvent {
                     id: review_id,
                     target_item_id,
                     turn_id: assessment_turn_id.clone(),
                     started_at_ms,
                     completed_at_ms: Some(completed_at_ms),
-                    status: codex_protocol::protocol::GuardianAssessmentStatus::Aborted,
+                    status: protocol::protocol::GuardianAssessmentStatus::Aborted,
                     risk_level: None,
                     user_authorization: None,
                     rationale: None,
                     decision_source: Some(
-                        codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     ),
                     action: action_summary,
                 },
             ))
             .await;
-            session.record_review_non_rejection(&assessment_turn_id).await;
-            codex_protocol::protocol::ReviewDecision::Abort
+            session
+                .record_review_non_rejection(&assessment_turn_id)
+                .await;
+            protocol::protocol::ReviewDecision::Abort
         }
         ReviewRuntimeError::PromptBuild { message } => {
             let rationale = format!("Automatic approval review failed: {message}");
@@ -467,8 +478,8 @@ async fn handle_guardian_runtime_error(
             let warning = format!(
                 "Automatic approval review denied (risk: high, authorization: unknown): {rationale}"
             );
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianWarning(
-                codex_protocol::protocol::WarningEvent { message: warning },
+            turn.emit_event(protocol::protocol::EventMsg::GuardianWarning(
+                protocol::protocol::WarningEvent { message: warning },
             ))
             .await;
             session
@@ -476,32 +487,34 @@ async fn handle_guardian_runtime_error(
                     review_id.clone(),
                     Some(ReviewRejectionRecord {
                         rationale: rationale.clone(),
-                        source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        source: protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     }),
                 )
                 .await;
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianAssessment(
-                codex_protocol::protocol::GuardianAssessmentEvent {
+            turn.emit_event(protocol::protocol::EventMsg::GuardianAssessment(
+                protocol::protocol::GuardianAssessmentEvent {
                     id: review_id,
                     target_item_id,
                     turn_id: assessment_turn_id.clone(),
                     started_at_ms,
                     completed_at_ms: Some(completed_at_ms),
-                    status: codex_protocol::protocol::GuardianAssessmentStatus::Denied,
-                    risk_level: Some(codex_protocol::protocol::GuardianRiskLevel::High),
+                    status: protocol::protocol::GuardianAssessmentStatus::Denied,
+                    risk_level: Some(protocol::protocol::GuardianRiskLevel::High),
                     user_authorization: Some(
-                        codex_protocol::protocol::GuardianUserAuthorization::Unknown,
+                        protocol::protocol::GuardianUserAuthorization::Unknown,
                     ),
                     rationale: Some(rationale),
                     decision_source: Some(
-                        codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     ),
                     action: action_summary,
                 },
             ))
             .await;
-            session.record_review_non_rejection(&assessment_turn_id).await;
-            codex_protocol::protocol::ReviewDecision::Denied
+            session
+                .record_review_non_rejection(&assessment_turn_id)
+                .await;
+            protocol::protocol::ReviewDecision::Denied
         }
         ReviewRuntimeError::Session { message } => {
             let rationale = format!("Automatic approval review failed: {message}");
@@ -520,8 +533,8 @@ async fn handle_guardian_runtime_error(
             let warning = format!(
                 "Automatic approval review denied (risk: high, authorization: unknown): {rationale}"
             );
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianWarning(
-                codex_protocol::protocol::WarningEvent { message: warning },
+            turn.emit_event(protocol::protocol::EventMsg::GuardianWarning(
+                protocol::protocol::WarningEvent { message: warning },
             ))
             .await;
             session
@@ -529,32 +542,34 @@ async fn handle_guardian_runtime_error(
                     review_id.clone(),
                     Some(ReviewRejectionRecord {
                         rationale: rationale.clone(),
-                        source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        source: protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     }),
                 )
                 .await;
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianAssessment(
-                codex_protocol::protocol::GuardianAssessmentEvent {
+            turn.emit_event(protocol::protocol::EventMsg::GuardianAssessment(
+                protocol::protocol::GuardianAssessmentEvent {
                     id: review_id,
                     target_item_id,
                     turn_id: assessment_turn_id.clone(),
                     started_at_ms,
                     completed_at_ms: Some(completed_at_ms),
-                    status: codex_protocol::protocol::GuardianAssessmentStatus::Denied,
-                    risk_level: Some(codex_protocol::protocol::GuardianRiskLevel::High),
+                    status: protocol::protocol::GuardianAssessmentStatus::Denied,
+                    risk_level: Some(protocol::protocol::GuardianRiskLevel::High),
                     user_authorization: Some(
-                        codex_protocol::protocol::GuardianUserAuthorization::Unknown,
+                        protocol::protocol::GuardianUserAuthorization::Unknown,
                     ),
                     rationale: Some(rationale),
                     decision_source: Some(
-                        codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     ),
                     action: action_summary,
                 },
             ))
             .await;
-            session.record_review_non_rejection(&assessment_turn_id).await;
-            codex_protocol::protocol::ReviewDecision::Denied
+            session
+                .record_review_non_rejection(&assessment_turn_id)
+                .await;
+            protocol::protocol::ReviewDecision::Denied
         }
         ReviewRuntimeError::Parse { message } => {
             let rationale = format!("Automatic approval review failed: {message}");
@@ -573,8 +588,8 @@ async fn handle_guardian_runtime_error(
             let warning = format!(
                 "Automatic approval review denied (risk: high, authorization: unknown): {rationale}"
             );
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianWarning(
-                codex_protocol::protocol::WarningEvent { message: warning },
+            turn.emit_event(protocol::protocol::EventMsg::GuardianWarning(
+                protocol::protocol::WarningEvent { message: warning },
             ))
             .await;
             session
@@ -582,42 +597,44 @@ async fn handle_guardian_runtime_error(
                     review_id.clone(),
                     Some(ReviewRejectionRecord {
                         rationale: rationale.clone(),
-                        source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        source: protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     }),
                 )
                 .await;
-            turn.emit_event(codex_protocol::protocol::EventMsg::GuardianAssessment(
-                codex_protocol::protocol::GuardianAssessmentEvent {
+            turn.emit_event(protocol::protocol::EventMsg::GuardianAssessment(
+                protocol::protocol::GuardianAssessmentEvent {
                     id: review_id,
                     target_item_id,
                     turn_id: assessment_turn_id.clone(),
                     started_at_ms,
                     completed_at_ms: Some(completed_at_ms),
-                    status: codex_protocol::protocol::GuardianAssessmentStatus::Denied,
-                    risk_level: Some(codex_protocol::protocol::GuardianRiskLevel::High),
+                    status: protocol::protocol::GuardianAssessmentStatus::Denied,
+                    risk_level: Some(protocol::protocol::GuardianRiskLevel::High),
                     user_authorization: Some(
-                        codex_protocol::protocol::GuardianUserAuthorization::Unknown,
+                        protocol::protocol::GuardianUserAuthorization::Unknown,
                     ),
                     rationale: Some(rationale),
                     decision_source: Some(
-                        codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                        protocol::protocol::GuardianAssessmentDecisionSource::Agent,
                     ),
                     action: action_summary,
                 },
             ))
             .await;
-            session.record_review_non_rejection(&assessment_turn_id).await;
-            codex_protocol::protocol::ReviewDecision::Denied
+            session
+                .record_review_non_rejection(&assessment_turn_id)
+                .await;
+            protocol::protocol::ReviewDecision::Denied
         }
     }
 }
 
-fn guardian_risk_level_str(level: codex_protocol::protocol::GuardianRiskLevel) -> &'static str {
+fn guardian_risk_level_str(level: protocol::protocol::GuardianRiskLevel) -> &'static str {
     match level {
-        codex_protocol::protocol::GuardianRiskLevel::Low => "low",
-        codex_protocol::protocol::GuardianRiskLevel::Medium => "medium",
-        codex_protocol::protocol::GuardianRiskLevel::High => "high",
-        codex_protocol::protocol::GuardianRiskLevel::Critical => "critical",
+        protocol::protocol::GuardianRiskLevel::Low => "low",
+        protocol::protocol::GuardianRiskLevel::Medium => "medium",
+        protocol::protocol::GuardianRiskLevel::High => "high",
+        protocol::protocol::GuardianRiskLevel::Critical => "critical",
     }
 }
 

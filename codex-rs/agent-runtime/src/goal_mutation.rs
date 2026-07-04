@@ -1,15 +1,15 @@
 use std::future::Future;
 
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::ThreadGoal;
-use codex_protocol::protocol::ThreadGoalStatus;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::validate_thread_goal_objective;
-use codex_state_api::SharedStateDbRuntime;
-use codex_state_api::ThreadGoalAccountingMode;
-use codex_state_api::protocol_goal_from_state;
-use codex_state_api::state_goal_status_from_protocol;
-use codex_state_api::validate_thread_goal_budget;
+use protocol::ThreadId;
+use protocol::protocol::ThreadGoal;
+use protocol::protocol::ThreadGoalStatus;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::validate_thread_goal_objective;
+use state_api::SharedStateDbRuntime;
+use state_api::ThreadGoalAccountingMode;
+use state_api::protocol_goal_from_state;
+use state_api::state_goal_status_from_protocol;
+use state_api::validate_thread_goal_budget;
 
 use crate::TerminalMetricEmission;
 use crate::create_thread_goal_mutation_plan;
@@ -56,8 +56,8 @@ pub trait ThreadGoalMutationHost: Send + Sync {
 
     fn emit_goal_terminal_metrics_if_status_changed(
         &self,
-        previous_status: Option<codex_state_api::ThreadGoalStatus>,
-        goal: &codex_state_api::ThreadGoal,
+        previous_status: Option<state_api::ThreadGoalStatus>,
+        goal: &state_api::ThreadGoal,
     );
 
     fn reset_budget_limit_reported_goal(&self) -> impl Future<Output = ()> + Send;
@@ -86,7 +86,7 @@ pub trait ThreadGoalMutationHost: Send + Sync {
         &self,
         turn_context: &Self::Turn,
         goal: ThreadGoal,
-        previous_status: Option<codex_state_api::ThreadGoalStatus>,
+        previous_status: Option<state_api::ThreadGoalStatus>,
     ) -> impl Future<Output = ()> + Send;
 
     fn maybe_notify_parent_of_final_status(&self) -> impl Future<Output = ()> + Send;
@@ -135,7 +135,7 @@ where
             state_db
                 .update_thread_goal(
                     thread_id,
-                    codex_state_api::ThreadGoalUpdate {
+                    state_api::ThreadGoalUpdate {
                         objective: Some(objective.to_string()),
                         status: status.map(state_goal_status_from_protocol),
                         token_budget,
@@ -154,7 +154,7 @@ where
                     objective,
                     status
                         .map(state_goal_status_from_protocol)
-                        .unwrap_or(codex_state_api::ThreadGoalStatus::Active),
+                        .unwrap_or(state_api::ThreadGoalStatus::Active),
                     token_budget.flatten(),
                 )
                 .await?
@@ -167,7 +167,7 @@ where
         state_db
             .update_thread_goal(
                 thread_id,
-                codex_state_api::ThreadGoalUpdate {
+                state_api::ThreadGoalUpdate {
                     objective: None,
                     status,
                     token_budget,
@@ -247,7 +247,7 @@ where
         .insert_thread_goal(
             thread_id,
             objective,
-            codex_state_api::ThreadGoalStatus::Active,
+            state_api::ThreadGoalStatus::Active,
             token_budget,
         )
         .await?

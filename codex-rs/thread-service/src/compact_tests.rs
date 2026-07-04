@@ -1,6 +1,6 @@
 use super::*;
-use codex_protocol::models::ContentItem;
 use pretty_assertions::assert_eq;
+use protocol::models::ContentItem;
 
 async fn process_compacted_history_with_test_session(
     compacted_history: Vec<ResponseItem>,

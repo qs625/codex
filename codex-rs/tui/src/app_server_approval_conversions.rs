@@ -6,11 +6,11 @@
 //! submission.
 
 use crate::diff_model::FileChange;
-use codex_app_server_protocol::AdditionalNetworkPermissions;
-use codex_app_server_protocol::FileUpdateChange;
-use codex_app_server_protocol::GrantedPermissionProfile;
-use codex_app_server_protocol::PatchChangeKind;
-use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
+use app_server_protocol::AdditionalNetworkPermissions;
+use app_server_protocol::FileUpdateChange;
+use app_server_protocol::GrantedPermissionProfile;
+use app_server_protocol::PatchChangeKind;
+use protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -54,11 +54,11 @@ mod tests {
     use super::file_update_changes_to_display;
     use super::granted_permission_profile_from_request;
     use crate::diff_model::FileChange;
-    use codex_app_server_protocol::FileUpdateChange;
-    use codex_app_server_protocol::PatchChangeKind;
-    use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
+    use app_server_protocol::FileUpdateChange;
+    use app_server_protocol::PatchChangeKind;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -87,11 +87,11 @@ mod tests {
     fn converts_request_permissions_into_granted_permissions() {
         assert_eq!(
             granted_permission_profile_from_request(CoreRequestPermissionProfile::from(
-                codex_app_server_protocol::RequestPermissionProfile {
-                    network: Some(codex_app_server_protocol::AdditionalNetworkPermissions {
+                app_server_protocol::RequestPermissionProfile {
+                    network: Some(app_server_protocol::AdditionalNetworkPermissions {
                         enabled: Some(true),
                     }),
-                    file_system: Some(codex_app_server_protocol::AdditionalFileSystemPermissions {
+                    file_system: Some(app_server_protocol::AdditionalFileSystemPermissions {
                         read: Some(vec![absolute_path("/tmp/read-only")]),
                         write: Some(vec![absolute_path("/tmp/write")]),
                         glob_scan_max_depth: None,
@@ -99,26 +99,26 @@ mod tests {
                     }),
                 }
             )),
-            codex_app_server_protocol::GrantedPermissionProfile {
-                network: Some(codex_app_server_protocol::AdditionalNetworkPermissions {
+            app_server_protocol::GrantedPermissionProfile {
+                network: Some(app_server_protocol::AdditionalNetworkPermissions {
                     enabled: Some(true),
                 }),
-                file_system: Some(codex_app_server_protocol::AdditionalFileSystemPermissions {
+                file_system: Some(app_server_protocol::AdditionalFileSystemPermissions {
                     read: Some(vec![absolute_path("/tmp/read-only")]),
                     write: Some(vec![absolute_path("/tmp/write")]),
                     glob_scan_max_depth: None,
                     entries: Some(vec![
-                        codex_app_server_protocol::FileSystemSandboxEntry {
-                            path: codex_app_server_protocol::FileSystemPath::Path {
+                        app_server_protocol::FileSystemSandboxEntry {
+                            path: app_server_protocol::FileSystemPath::Path {
                                 path: absolute_path("/tmp/read-only"),
                             },
-                            access: codex_app_server_protocol::FileSystemAccessMode::Read,
+                            access: app_server_protocol::FileSystemAccessMode::Read,
                         },
-                        codex_app_server_protocol::FileSystemSandboxEntry {
-                            path: codex_app_server_protocol::FileSystemPath::Path {
+                        app_server_protocol::FileSystemSandboxEntry {
+                            path: app_server_protocol::FileSystemPath::Path {
                                 path: absolute_path("/tmp/write"),
                             },
-                            access: codex_app_server_protocol::FileSystemAccessMode::Write,
+                            access: app_server_protocol::FileSystemAccessMode::Write,
                         },
                     ]),
                 }),
@@ -130,32 +130,32 @@ mod tests {
     fn converts_request_permissions_into_canonical_granted_permissions() {
         assert_eq!(
             granted_permission_profile_from_request(CoreRequestPermissionProfile::from(
-                codex_app_server_protocol::RequestPermissionProfile {
+                app_server_protocol::RequestPermissionProfile {
                     network: None,
-                    file_system: Some(codex_app_server_protocol::AdditionalFileSystemPermissions {
+                    file_system: Some(app_server_protocol::AdditionalFileSystemPermissions {
                         read: None,
                         write: None,
                         glob_scan_max_depth: None,
-                        entries: Some(vec![codex_app_server_protocol::FileSystemSandboxEntry {
-                            path: codex_app_server_protocol::FileSystemPath::Special {
-                                value: codex_app_server_protocol::FileSystemSpecialPath::Root,
+                        entries: Some(vec![app_server_protocol::FileSystemSandboxEntry {
+                            path: app_server_protocol::FileSystemPath::Special {
+                                value: app_server_protocol::FileSystemSpecialPath::Root,
                             },
-                            access: codex_app_server_protocol::FileSystemAccessMode::Write,
+                            access: app_server_protocol::FileSystemAccessMode::Write,
                         }]),
                     }),
                 }
             )),
-            codex_app_server_protocol::GrantedPermissionProfile {
+            app_server_protocol::GrantedPermissionProfile {
                 network: None,
-                file_system: Some(codex_app_server_protocol::AdditionalFileSystemPermissions {
+                file_system: Some(app_server_protocol::AdditionalFileSystemPermissions {
                     read: None,
                     write: None,
                     glob_scan_max_depth: None,
-                    entries: Some(vec![codex_app_server_protocol::FileSystemSandboxEntry {
-                        path: codex_app_server_protocol::FileSystemPath::Special {
-                            value: codex_app_server_protocol::FileSystemSpecialPath::Root,
+                    entries: Some(vec![app_server_protocol::FileSystemSandboxEntry {
+                        path: app_server_protocol::FileSystemPath::Special {
+                            value: app_server_protocol::FileSystemSpecialPath::Root,
                         },
-                        access: codex_app_server_protocol::FileSystemAccessMode::Write,
+                        access: app_server_protocol::FileSystemAccessMode::Write,
                     },]),
                 }),
             }

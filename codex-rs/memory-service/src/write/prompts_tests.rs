@@ -1,5 +1,5 @@
 use super::*;
-use codex_models_manager::model_info::model_info_from_slug;
+use model_service::model_info::model_info_from_slug;
 use tempfile::tempdir;
 
 #[test]

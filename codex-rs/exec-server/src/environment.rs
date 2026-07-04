@@ -17,13 +17,13 @@ use crate::local_file_system::LocalFileSystem;
 use crate::local_process::LocalProcess;
 use crate::remote_file_system::RemoteFileSystem;
 use crate::remote_process::RemoteProcess;
-use codex_exec_server_api::ExecBackend;
-use codex_exec_server_api::ExecEnvironment;
-use codex_exec_server_api::ExecEnvironmentProvider;
-use codex_exec_server_api::HttpClient;
-pub use codex_exec_server_api::LOCAL_ENVIRONMENT_ID;
-pub use codex_exec_server_api::REMOTE_ENVIRONMENT_ID;
 use codex_file_system::ExecutorFileSystem;
+use exec_server_api::ExecBackend;
+use exec_server_api::ExecEnvironment;
+use exec_server_api::ExecEnvironmentProvider;
+use exec_server_api::HttpClient;
+pub use exec_server_api::LOCAL_ENVIRONMENT_ID;
+pub use exec_server_api::REMOTE_ENVIRONMENT_ID;
 
 pub const CODEX_EXEC_SERVER_URL_ENV_VAR: &str = "CODEX_EXEC_SERVER_URL";
 
@@ -896,9 +896,9 @@ mod tests {
         )
         .expect("absolute current exe");
         let sandbox = crate::FileSystemSandboxContext::from_permission_profile(
-            codex_protocol::models::PermissionProfile::from_runtime_permissions(
-                &codex_protocol::permissions::FileSystemSandboxPolicy::restricted(Vec::new()),
-                codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
+            protocol::models::PermissionProfile::from_runtime_permissions(
+                &protocol::permissions::FileSystemSandboxPolicy::restricted(Vec::new()),
+                protocol::permissions::NetworkSandboxPolicy::Restricted,
             ),
         );
 

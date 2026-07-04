@@ -1,5 +1,5 @@
-use codex_core_skills::model::SkillMetadata;
 use codex_utils_fuzzy_match::fuzzy_match;
+use skill_service::model::SkillMetadata;
 
 use crate::text_formatting::truncate_text;
 

@@ -11,14 +11,14 @@ use std::time::Instant;
 
 use anyhow::Result;
 use anyhow::anyhow;
-use codex_client::build_reqwest_client_with_custom_ca;
+use transport_client::build_reqwest_client_with_custom_ca;
 use codex_config_types::McpServerEnvVar;
-use codex_exec_server_api::HttpClient;
-use codex_mcp_types::ElicitationAction;
-use codex_mcp_types::ElicitationResponse;
+use exec_server_api::HttpClient;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use mcp_service_api::SharedMcpAuthHeaderProvider;
+use mcp_types::ElicitationAction;
+use mcp_types::ElicitationResponse;
 use oauth2::TokenResponse;
 use reqwest::header::AUTHORIZATION;
 use reqwest::header::HeaderMap;

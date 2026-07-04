@@ -4,27 +4,27 @@ use super::PlanModeStreamState;
 use super::ProposedPlanSegment;
 use super::last_assistant_message_from_item;
 use super::parse_turn_item;
-use codex_protocol::AgentPath;
-use codex_protocol::event_command::EventCommandEvent;
-use codex_protocol::event_command::EventCommandEventKind;
-use codex_protocol::event_driven_tool::EventDrivenToolTrigger;
-use codex_protocol::items::AgentMessageContent;
-use codex_protocol::items::AgentMessageItem;
-use codex_protocol::items::HookPromptFragment;
-use codex_protocol::items::TurnItem;
-use codex_protocol::items::WebSearchItem;
-use codex_protocol::items::build_hook_prompt_message;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::ReasoningItemContent;
-use codex_protocol::models::ReasoningItemReasoningSummary;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::models::WebSearchAction;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::user_input::UserInput;
 use pretty_assertions::assert_eq;
+use protocol::AgentPath;
+use protocol::event_command::EventCommandEvent;
+use protocol::event_command::EventCommandEventKind;
+use protocol::event_driven_tool::EventDrivenToolTrigger;
+use protocol::items::AgentMessageContent;
+use protocol::items::AgentMessageItem;
+use protocol::items::HookPromptFragment;
+use protocol::items::TurnItem;
+use protocol::items::WebSearchItem;
+use protocol::items::build_hook_prompt_message;
+use protocol::models::ContentItem;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
+use protocol::models::ReasoningItemContent;
+use protocol::models::ReasoningItemReasoningSummary;
+use protocol::models::ResponseItem;
+use protocol::models::WebSearchAction;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentOperation;
+use protocol::user_input::UserInput;
 
 #[test]
 fn assistant_message_stream_parsers_can_be_seeded_from_output_item_added_text() {
@@ -279,7 +279,7 @@ fn parses_user_message_with_text_and_two_images() {
 #[test]
 fn skips_local_image_label_text() {
     let image_url = "data:image/png;base64,abc".to_string();
-    let label = codex_protocol::models::local_image_open_tag_text(/*label_number*/ 1);
+    let label = protocol::models::local_image_open_tag_text(/*label_number*/ 1);
     let user_text = "Please review this image.".to_string();
 
     let item = ResponseItem::Message {
@@ -475,7 +475,7 @@ fn keeps_inter_agent_json_assistant_message_as_agent_message() {
 #[test]
 fn skips_unnamed_image_label_text() {
     let image_url = "data:image/png;base64,abc".to_string();
-    let label = codex_protocol::models::image_open_tag_text();
+    let label = protocol::models::image_open_tag_text();
     let user_text = "Please review this image.".to_string();
 
     let item = ResponseItem::Message {
@@ -488,7 +488,7 @@ fn skips_unnamed_image_label_text() {
                 detail: Some(DEFAULT_IMAGE_DETAIL),
             },
             ContentItem::InputText {
-                text: codex_protocol::models::image_close_tag_text(),
+                text: protocol::models::image_close_tag_text(),
             },
             ContentItem::InputText {
                 text: user_text.clone(),

@@ -14,8 +14,8 @@ use ratatui::text::Line;
 use super::InputResult;
 use crate::bottom_pane::LocalImageAttachment;
 use crate::bottom_pane::textarea::TextArea;
-use codex_protocol::models::local_image_label_text;
-use codex_protocol::user_input::TextElement;
+use protocol::models::local_image_label_text;
+use protocol::user_input::TextElement;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct AttachedImage {

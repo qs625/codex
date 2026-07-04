@@ -29,10 +29,10 @@ use crate::telemetry::DbKind;
 use crate::telemetry::DbTelemetry;
 use chrono::DateTime;
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_protocol::protocol::RolloutItem;
 use log::LevelFilter;
+use protocol::ThreadId;
+use protocol::dynamic_tools::DynamicToolSpec;
+use protocol::protocol::RolloutItem;
 use serde_json::Value;
 use sqlx::ConnectOptions;
 use sqlx::QueryBuilder;
@@ -66,10 +66,10 @@ mod remote_control;
 mod test_support;
 mod threads;
 
-pub use codex_state_api::ThreadGoalAccountingMode;
-pub use codex_state_api::ThreadGoalAccountingOutcome;
-pub use codex_state_api::ThreadGoalUpdate;
 pub use remote_control::RemoteControlEnrollmentRecord;
+pub use state_api::ThreadGoalAccountingMode;
+pub use state_api::ThreadGoalAccountingOutcome;
+pub use state_api::ThreadGoalUpdate;
 pub use threads::ThreadFilterOptions;
 
 // "Partition" is the retained-log-content bucket we cap at 10 MiB:

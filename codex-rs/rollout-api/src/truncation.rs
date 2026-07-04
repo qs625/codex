@@ -2,10 +2,10 @@
 
 use codex_context_manager::is_real_user_message_boundary;
 use codex_context_manager::is_user_turn_boundary;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::RolloutItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::EventMsg;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::RolloutItem;
 
 pub fn initial_history_has_prior_user_turns(conversation_history: &InitialHistory) -> bool {
     conversation_history.scan_rollout_items(rollout_item_is_user_turn_boundary)

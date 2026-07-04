@@ -1,9 +1,9 @@
 use crate::manifest::PluginManifest;
 use crate::manifest::load_plugin_manifest;
-use plugin_service_api::PluginId;
-use plugin_service_api::validate_plugin_segment;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use plugin_service_api::PluginId;
 use plugin_service_api::find_plugin_manifest_path;
+use plugin_service_api::validate_plugin_segment;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use std::fs;

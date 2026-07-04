@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_config_edit::CONFIG_TOML_FILE;
 use crate::PluginsManager;
 use crate::startup_sync::curated_plugins_repo_path;
+use config_service::CONFIG_TOML_FILE;
 use codex_login::CodexAuth;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
@@ -19,6 +19,7 @@ use crate::RemotePluginAuth;
 use crate::RemotePluginAuthFuture;
 use crate::RemotePluginAuthProvider;
 use crate::test_support::TEST_CURATED_PLUGIN_CACHE_VERSION;
+use crate::test_support::build_test_model_service;
 use crate::test_support::load_plugins_config;
 use crate::test_support::write_curated_plugin_sha;
 use crate::test_support::write_file;
@@ -74,12 +75,18 @@ enabled = false
         .mount(&server)
         .await;
 
-    let mut config = load_plugins_config(tmp.path());
+    let mut config = load_plugins_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
     let manager = Arc::new(PluginsManager::new(tmp.path().to_path_buf()));
+    let model_service = build_test_model_service(
+        tmp.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
 
     start_startup_remote_plugin_sync_once(
         Arc::clone(&manager),
+        model_service,
         tmp.path().to_path_buf(),
         config,
         Arc::new(TestRemotePluginAuthProvider {

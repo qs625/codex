@@ -19,20 +19,8 @@ use codex_approval_service_api::ApplyPatchApprovalDispatch;
 use codex_approval_service_api::ApplyPatchApprovalKey;
 use codex_approval_service_api::ApplyPatchApprovalRequest;
 use codex_approval_service_api::ApprovalServiceApi;
-use codex_command_service_api::is_likely_sandbox_denied;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::SandboxErr;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::exec_output::StreamOutput;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::FileSystemPermissions;
-use codex_protocol::models::SandboxPermissions;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::PatchApplyUpdatedEvent;
-use codex_protocol::protocol::TurnDiffEvent;
+use codex_approval_service_api::ApprovalSessionCapability;
+use codex_approval_service_api::PermissionRequestPayload;
 use codex_sandboxing_api::ApplyPatchEnvironment;
 use codex_sandboxing_api::ResolvedApplyPatchEnvironment;
 use codex_sandboxing_api::SandboxType;
@@ -42,22 +30,34 @@ use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_polic
 use codex_sandboxing_api::policy_transforms::effective_permission_profile;
 use codex_sandboxing_api::policy_transforms::merge_permission_profiles;
 use codex_sandboxing_api::policy_transforms::normalize_additional_permissions;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use command_service_api::is_likely_sandbox_denied;
+use protocol::error::CodexErr;
+use protocol::error::SandboxErr;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::exec_output::StreamOutput;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::FileSystemPermissions;
+use protocol::models::SandboxPermissions;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::EventMsg;
+use protocol::protocol::FileChange;
+use protocol::protocol::PatchApplyUpdatedEvent;
+use protocol::protocol::TurnDiffEvent;
 use thread_service_api::HookToolName as ThreadHookToolName;
-use thread_service_api::PermissionRequestPayload;
 use thread_service_api::SharedToolTurnDiffTracker;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_service_api::HookToolName;
-use codex_tool_service_api::PostToolUsePayload;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolOutput;
-use codex_tool_types::ToolPayload;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::HookToolName;
+use tool_service_api::PostToolUsePayload;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::ToolOutput;
+use tool_service_api::ToolPayload;
 
 use crate::context::TypedToolSpecRequest;
 use crate::event_support::ToolEmitter;
@@ -93,14 +93,14 @@ impl ApplyPatchEnvironment for RuntimeApplyPatchEnvironmentAdapter {
 }
 
 struct SessionToolEventHost<'a> {
-    session: &'a dyn ThreadSessionCapability,
+    session: &'a dyn ApprovalSessionCapability,
     turn: &'a dyn ThreadRuntimeCapability,
     turn_diff_tracker: Option<&'a SharedToolTurnDiffTracker>,
 }
 
 impl<'a> SessionToolEventHost<'a> {
     fn new(
-        session: &'a dyn ThreadSessionCapability,
+        session: &'a dyn ApprovalSessionCapability,
         turn: &'a dyn ThreadRuntimeCapability,
         turn_diff_tracker: Option<&'a SharedToolTurnDiffTracker>,
     ) -> Self {
@@ -113,7 +113,7 @@ impl<'a> SessionToolEventHost<'a> {
 }
 
 impl ToolEventHost for SessionToolEventHost<'_> {
-    fn thread_id(&self) -> codex_protocol::ThreadId {
+    fn thread_id(&self) -> protocol::ThreadId {
         self.turn.thread_id()
     }
 
@@ -155,7 +155,10 @@ impl ToolEventHost for SessionToolEventHost<'_> {
         };
         if should_emit_turn_diff {
             self.session
-                .emit_event(self.turn, EventMsg::TurnDiff(TurnDiffEvent { unified_diff }))
+                .emit_event(
+                    self.turn,
+                    EventMsg::TurnDiff(TurnDiffEvent { unified_diff }),
+                )
                 .await;
         }
     }
@@ -185,7 +188,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 
 pub(crate) async fn dispatch(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     tracker: SharedToolTurnDiffTracker,
     call: ToolCall,
@@ -215,7 +218,7 @@ pub(crate) async fn dispatch(
 
 async fn dispatch_apply_patch(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     tracker: SharedToolTurnDiffTracker,
     call: &ToolCall,
@@ -342,7 +345,7 @@ impl ApplyPatchArgumentDiffConsumer {
 
 pub(crate) async fn intercept_apply_patch(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     tracker: Option<&SharedToolTurnDiffTracker>,
     command: &[String],
@@ -389,7 +392,7 @@ pub(crate) async fn intercept_apply_patch(
 
 async fn execute_verified_apply_patch(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     tracker: Option<&SharedToolTurnDiffTracker>,
     call_id: &str,
@@ -450,7 +453,7 @@ async fn execute_verified_apply_patch(
 
 async fn run_apply_patch_request(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call_id: &str,
     req: &ApplyPatchRequest,
@@ -462,7 +465,7 @@ async fn run_apply_patch_request(
     let mut already_approved = false;
 
     match &req.exec_approval_requirement {
-        codex_permissions_runtime::ExecApprovalRequirement::Skip { .. } => {
+        command_service_api::ExecApprovalRequirement::Skip { .. } => {
             if strict_auto_review {
                 request_apply_patch_approval(
                     Arc::clone(&approval_api),
@@ -476,10 +479,10 @@ async fn run_apply_patch_request(
                 already_approved = true;
             }
         }
-        codex_permissions_runtime::ExecApprovalRequirement::Forbidden { reason } => {
+        command_service_api::ExecApprovalRequirement::Forbidden { reason } => {
             return Err(ToolError::Rejected(reason.clone()));
         }
-        codex_permissions_runtime::ExecApprovalRequirement::NeedsApproval { reason, .. } => {
+        command_service_api::ExecApprovalRequirement::NeedsApproval { reason, .. } => {
             if !strict_auto_review
                 && let Some(decision) = session
                     .run_permission_request_hooks(
@@ -493,10 +496,10 @@ async fn run_apply_patch_request(
                     .await
             {
                 match decision {
-                    codex_hooks_api::PermissionRequestDecision::Allow => {
+                    hooks_api::PermissionRequestDecision::Allow => {
                         already_approved = true;
                     }
-                    codex_hooks_api::PermissionRequestDecision::Deny { message } => {
+                    hooks_api::PermissionRequestDecision::Deny { message } => {
                         return Err(ToolError::Rejected(message));
                     }
                 }
@@ -571,7 +574,7 @@ async fn run_apply_patch_request(
 
 async fn request_apply_patch_approval(
     approval_api: Arc<dyn ApprovalServiceApi>,
-    session: Arc<dyn ThreadSessionCapability>,
+    session: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call_id: &str,
     req: &ApplyPatchRequest,
@@ -683,7 +686,7 @@ fn apply_patch_approval_keys(
 }
 
 async fn effective_patch_permissions(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     turn: &dyn ThreadRuntimeCapability,
     action: &ApplyPatchAction,
     cwd: &AbsolutePathBuf,

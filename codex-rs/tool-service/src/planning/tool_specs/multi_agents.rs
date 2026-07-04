@@ -1,7 +1,7 @@
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
 use crate::ToolSpec;
-use codex_protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelPreset;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;

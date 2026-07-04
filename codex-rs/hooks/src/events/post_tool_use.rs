@@ -1,11 +1,11 @@
-pub use codex_hooks_api::PostToolUseOutcome;
-pub use codex_hooks_api::PostToolUseRequest;
-use codex_protocol::protocol::HookCompletedEvent;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookOutputEntry;
-use codex_protocol::protocol::HookOutputEntryKind;
-use codex_protocol::protocol::HookRunStatus;
-use codex_protocol::protocol::HookRunSummary;
+pub use hooks_api::PostToolUseOutcome;
+pub use hooks_api::PostToolUseRequest;
+use protocol::protocol::HookCompletedEvent;
+use protocol::protocol::HookEventName;
+use protocol::protocol::HookOutputEntry;
+use protocol::protocol::HookOutputEntryKind;
+use protocol::protocol::HookRunStatus;
+use protocol::protocol::HookRunSummary;
 
 use super::common;
 use crate::engine::CommandShell;
@@ -287,14 +287,14 @@ fn serialization_failure_outcome(hook_events: Vec<HookCompletedEvent>) -> PostTo
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::ThreadId;
-    use codex_protocol::protocol::HookEventName;
-    use codex_protocol::protocol::HookOutputEntry;
-    use codex_protocol::protocol::HookOutputEntryKind;
-    use codex_protocol::protocol::HookRunStatus;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::protocol::HookEventName;
+    use protocol::protocol::HookOutputEntry;
+    use protocol::protocol::HookOutputEntryKind;
+    use protocol::protocol::HookRunStatus;
     use serde_json::json;
 
     use super::PostToolUseHandlerData;
@@ -522,7 +522,7 @@ mod tests {
             timeout_sec: 5,
             status_message: Some("running post tool use hook".to_string()),
             source_path: test_path_buf("/tmp/hooks.json").abs(),
-            source: codex_protocol::protocol::HookSource::User,
+            source: protocol::protocol::HookSource::User,
             display_order: 0,
             env: std::collections::HashMap::new(),
         }

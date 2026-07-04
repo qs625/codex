@@ -1,11 +1,11 @@
 use crate::MEMORY_TOOL_DEVELOPER_INSTRUCTIONS_SUMMARY_TOKEN_LIMIT;
 use crate::memory_root;
-use memory_service_api::MemoryReadFuture;
-use memory_service_api::MemoryToolDeveloperInstructionsProvider;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::truncate_text;
 use codex_utils_template::Template;
+use memory_service_api::MemoryReadFuture;
+use memory_service_api::MemoryToolDeveloperInstructionsProvider;
 use std::sync::LazyLock;
 use tokio::fs;
 

@@ -1,19 +1,19 @@
 use anyhow::Context;
 use anyhow::Result;
+use app_server_protocol::FsChangedNotification;
+use app_server_protocol::FsCopyParams;
+use app_server_protocol::FsGetMetadataResponse;
+use app_server_protocol::FsReadDirectoryEntry;
+use app_server_protocol::FsReadFileResponse;
+use app_server_protocol::FsUnwatchParams;
+use app_server_protocol::FsWatchResponse;
+use app_server_protocol::FsWriteFileParams;
+use app_server_protocol::JSONRPCNotification;
+use app_server_protocol::RequestId;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use codex_app_server_protocol::FsChangedNotification;
-use codex_app_server_protocol::FsCopyParams;
-use codex_app_server_protocol::FsGetMetadataResponse;
-use codex_app_server_protocol::FsReadDirectoryEntry;
-use codex_app_server_protocol::FsReadFileResponse;
-use codex_app_server_protocol::FsUnwatchParams;
-use codex_app_server_protocol::FsWatchResponse;
-use codex_app_server_protocol::FsWriteFileParams;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::RequestId;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -73,7 +73,7 @@ async fn fs_get_metadata_returns_only_used_fields() -> Result<()> {
 
     let mut mcp = initialized_mcp(&codex_home).await?;
     let request_id = mcp
-        .send_fs_get_metadata_request(codex_app_server_protocol::FsGetMetadataParams {
+        .send_fs_get_metadata_request(app_server_protocol::FsGetMetadataParams {
             path: absolute_path(file_path.clone()),
         })
         .await?;
@@ -130,7 +130,7 @@ async fn fs_get_metadata_reports_symlink() -> Result<()> {
 
     let mut mcp = initialized_mcp(&codex_home).await?;
     let request_id = mcp
-        .send_fs_get_metadata_request(codex_app_server_protocol::FsGetMetadataParams {
+        .send_fs_get_metadata_request(app_server_protocol::FsGetMetadataParams {
             path: absolute_path(symlink_path),
         })
         .await?;
@@ -161,7 +161,7 @@ async fn fs_methods_cover_current_fs_utils_surface() -> Result<()> {
     let mut mcp = initialized_mcp(&codex_home).await?;
 
     let create_directory_request_id = mcp
-        .send_fs_create_directory_request(codex_app_server_protocol::FsCreateDirectoryParams {
+        .send_fs_create_directory_request(app_server_protocol::FsCreateDirectoryParams {
             path: absolute_path(nested_dir.clone()),
             recursive: None,
         })
@@ -197,7 +197,7 @@ async fn fs_methods_cover_current_fs_utils_surface() -> Result<()> {
     .await??;
 
     let read_request_id = mcp
-        .send_fs_read_file_request(codex_app_server_protocol::FsReadFileParams {
+        .send_fs_read_file_request(app_server_protocol::FsReadFileParams {
             path: absolute_path(nested_file.clone()),
         })
         .await?;
@@ -250,7 +250,7 @@ async fn fs_methods_cover_current_fs_utils_surface() -> Result<()> {
     );
 
     let read_directory_request_id = mcp
-        .send_fs_read_directory_request(codex_app_server_protocol::FsReadDirectoryParams {
+        .send_fs_read_directory_request(app_server_protocol::FsReadDirectoryParams {
             path: absolute_path(source_dir.clone()),
         })
         .await?;
@@ -260,8 +260,7 @@ async fn fs_methods_cover_current_fs_utils_surface() -> Result<()> {
     )
     .await??;
     let mut entries =
-        to_response::<codex_app_server_protocol::FsReadDirectoryResponse>(readdir_response)?
-            .entries;
+        to_response::<app_server_protocol::FsReadDirectoryResponse>(readdir_response)?.entries;
     entries.sort_by(|left, right| left.file_name.cmp(&right.file_name));
     assert_eq!(
         entries,
@@ -280,7 +279,7 @@ async fn fs_methods_cover_current_fs_utils_surface() -> Result<()> {
     );
 
     let remove_request_id = mcp
-        .send_fs_remove_request(codex_app_server_protocol::FsRemoveParams {
+        .send_fs_remove_request(app_server_protocol::FsRemoveParams {
             path: absolute_path(copied_dir.clone()),
             recursive: None,
             force: None,
@@ -320,7 +319,7 @@ async fn fs_write_file_accepts_base64_bytes() -> Result<()> {
     assert_eq!(std::fs::read(&file_path)?, bytes);
 
     let read_request_id = mcp
-        .send_fs_read_file_request(codex_app_server_protocol::FsReadFileParams {
+        .send_fs_read_file_request(app_server_protocol::FsReadFileParams {
             path: absolute_path(file_path),
         })
         .await?;
@@ -665,7 +664,7 @@ async fn fs_watch_directory_reports_changed_child_paths_and_unwatch_stops_notifi
     let mut mcp = initialized_mcp(&codex_home).await?;
     let watch_id = "watch-git-dir".to_string();
     let watch_request_id = mcp
-        .send_fs_watch_request(codex_app_server_protocol::FsWatchParams {
+        .send_fs_watch_request(app_server_protocol::FsWatchParams {
             watch_id: watch_id.clone(),
             path: absolute_path(git_dir.clone()),
         })
@@ -733,7 +732,7 @@ async fn fs_watch_file_reports_atomic_replace_events() -> Result<()> {
     let mut mcp = initialized_mcp(&codex_home).await?;
     let watch_id = "watch-head".to_string();
     let watch_request_id = mcp
-        .send_fs_watch_request(codex_app_server_protocol::FsWatchParams {
+        .send_fs_watch_request(app_server_protocol::FsWatchParams {
             watch_id: watch_id.clone(),
             path: absolute_path(head_path.clone()),
         })
@@ -772,7 +771,7 @@ async fn fs_watch_allows_missing_file_targets() -> Result<()> {
     let mut mcp = initialized_mcp(&codex_home).await?;
     let watch_id = "watch-fetch-head".to_string();
     let watch_request_id = mcp
-        .send_fs_watch_request(codex_app_server_protocol::FsWatchParams {
+        .send_fs_watch_request(app_server_protocol::FsWatchParams {
             watch_id: watch_id.clone(),
             path: absolute_path(fetch_head.clone()),
         })

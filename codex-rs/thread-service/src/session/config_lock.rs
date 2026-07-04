@@ -9,7 +9,7 @@ use codex_config_toml::ConfigLockReplayOptions;
 use codex_config_toml::config_toml::ConfigToml;
 use codex_config_toml::validate_config_lock_replay;
 use codex_config_types::ConfigLockfileToml;
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 
 use super::SessionConfiguration;
 

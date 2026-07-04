@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use codex_model_provider_api::ModelProviderAuthFuture;
-use codex_model_provider_api::ModelProviderAuthManager;
-use codex_model_provider_api::ModelProviderAuthRecoveryError;
-use codex_model_provider_api::ModelProviderUnauthorizedRecovery;
-use codex_model_provider_api::ModelProviderUnauthorizedRecoveryStepResult;
-use codex_model_provider_api::ProviderAccountError;
-use codex_model_provider_api::SharedModelProviderAuthManager;
-use codex_protocol::account::ProviderAccount;
+use model_service_api::ModelProviderAuthFuture;
+use model_service_api::ModelProviderAuthManager;
+use model_service_api::ModelProviderAuthRecoveryError;
+use model_service_api::ModelProviderUnauthorizedRecovery;
+use model_service_api::ModelProviderUnauthorizedRecoveryStepResult;
+use model_service_api::ProviderAccountError;
+use model_service_api::SharedModelProviderAuthManager;
+use protocol::account::ProviderAccount;
 
 use crate::auth::AuthManager;
 use crate::auth::CodexAuth;

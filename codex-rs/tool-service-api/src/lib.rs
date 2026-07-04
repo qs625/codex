@@ -1,31 +1,94 @@
+mod extension_data;
+mod extension_tools;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Weak;
 
-use codex_command_service_api::CommandServiceSessionState;
-use codex_command_service_api::SessionCommandInteractionCaller;
-use codex_extension_api::ExtensionData;
-use codex_extension_api::ToolContributor;
-use codex_mcp_tool_types::ToolInfo;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::protocol::EventMsg;
-use thread_service_api::SharedToolTurnDiffTracker;
+use codex_approval_service_api::ApprovalSessionCapability;
+use command_service_api::CommandServiceSessionState;
+use command_service_api::SessionCommandInteractionCaller;
+use mcp_types::ToolInfo;
+use protocol::dynamic_tools::DynamicToolSpec;
+use protocol::models::ResponseInputItem;
+use protocol::protocol::EventMsg;
 use thread_service_api::SessionAgentJobCaller;
+use thread_service_api::SharedToolTurnDiffTracker;
+use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
-use thread_service_api::ThreadRuntimeCapability;
-use codex_tool_config::ToolsConfig;
-use codex_tool_types::DiscoverableTool;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolCallSource;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolOutput;
-use codex_tool_types::ToolPayload;
-use codex_tool_types::ToolSpec;
 use tokio_util::sync::CancellationToken;
+use tool_config::ToolsConfig;
+
+pub use extension_data::ExtensionData;
+pub use extension_tools::ExtensionToolExecutor;
+pub use extension_tools::ExtensionToolOutput;
+pub use protocol::ToolName;
+pub use tool_types::AdditionalProperties;
+pub use tool_types::DiscoverablePluginInfo;
+pub use tool_types::DiscoverableTool;
+pub use tool_types::DiscoverableToolAction;
+pub use tool_types::DiscoverableToolType;
+pub use tool_types::FreeformTool;
+pub use tool_types::FreeformToolFormat;
+pub use tool_types::FunctionCallError;
+pub use tool_types::JsonSchema;
+pub use tool_types::JsonSchemaPrimitiveType;
+pub use tool_types::JsonSchemaType;
+pub use tool_types::JsonToolOutput;
+pub use tool_types::LoadableToolSpec;
+pub use tool_types::REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE;
+pub use tool_types::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
+pub use tool_types::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
+pub use tool_types::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
+pub use tool_types::RequestPluginInstallArgs;
+pub use tool_types::RequestPluginInstallElicitationForm;
+pub use tool_types::RequestPluginInstallElicitationRequest;
+pub use tool_types::RequestPluginInstallElicitationSchema;
+pub use tool_types::RequestPluginInstallEntry;
+pub use tool_types::RequestPluginInstallMeta;
+pub use tool_types::RequestPluginInstallResult;
+pub use tool_types::ResponsesApiNamespace;
+pub use tool_types::ResponsesApiNamespaceTool;
+pub use tool_types::ResponsesApiTool;
+pub use tool_types::ResponsesApiWebSearchFilters;
+pub use tool_types::ResponsesApiWebSearchUserLocation;
+pub use tool_types::TOOL_SEARCH_DEFAULT_LIMIT;
+pub use tool_types::TOOL_SEARCH_TOOL_NAME;
+pub use tool_types::ToolCall;
+pub use tool_types::ToolCallSource;
+pub use tool_types::ToolExecutor;
+pub use tool_types::ToolExecutorFuture;
+pub use tool_types::ToolExposure;
+pub use tool_types::ToolInvocationMetadata;
+pub use tool_types::ToolOutput;
+pub use tool_types::ToolPayload;
+pub use tool_types::ToolSearchEntry;
+pub use tool_types::ToolSearchInfo;
+pub use tool_types::ToolSearchOutput;
+pub use tool_types::ToolSearchSourceInfo;
+pub use tool_types::ToolSpec;
+pub use tool_types::UPDATE_GOAL_TOOL_NAME;
+pub use tool_types::all_requested_connectors_picked_up;
+pub use tool_types::build_request_plugin_install_elicitation_request;
+pub use tool_types::coalesce_loadable_tool_specs;
+pub use tool_types::collect_request_plugin_install_entries;
+pub use tool_types::create_tools_json_for_responses_api;
+pub use tool_types::default_namespace_description;
+pub use tool_types::filter_request_plugin_install_discoverable_tools_for_client;
+pub use tool_types::parse_tool_input_schema;
+pub use tool_types::verified_connector_install_completed;
+
+/// Extension contribution that exposes native tools owned by a feature.
+pub trait ToolContributor: Send + Sync {
+    /// Returns the native tools visible for the supplied extension stores.
+    fn tools(
+        &self,
+        session_store: &ExtensionData,
+        thread_store: &ExtensionData,
+    ) -> Vec<Arc<dyn ExtensionToolExecutor>>;
+}
 
 /// Boxed future returned by object-safe tool service APIs.
 pub type ToolServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -152,6 +215,7 @@ pub struct ToolSpecRequest<'a> {
     pub config: &'a ToolsConfig,
     pub session_capability: Weak<dyn ThreadSessionCapability>,
     pub session: Arc<dyn ThreadSessionCapability>,
+    pub approval_session: Arc<dyn ApprovalSessionCapability>,
     pub session_command_state: Arc<dyn CommandServiceSessionState>,
     pub session_command_interaction: Arc<dyn SessionCommandInteractionCaller>,
     pub session_agent_jobs: Arc<dyn SessionAgentJobCaller>,
@@ -213,12 +277,12 @@ where
         turn: &dyn ThreadTurnCapability,
         call_id: String,
         diff: &str,
-    ) -> Option<codex_protocol::protocol::EventMsg> {
+    ) -> Option<protocol::protocol::EventMsg> {
         let turn = turn.as_any().downcast_ref::<Turn>()?;
         self.inner.consume_diff(turn, call_id, diff)
     }
 
-    fn finish(&mut self) -> Result<Option<codex_protocol::protocol::EventMsg>, FunctionCallError> {
+    fn finish(&mut self) -> Result<Option<protocol::protocol::EventMsg>, FunctionCallError> {
         self.inner.finish()
     }
 }

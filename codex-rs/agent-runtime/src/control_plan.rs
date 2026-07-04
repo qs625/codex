@@ -2,15 +2,15 @@ use crate::AgentMetadata;
 use crate::AgentMode;
 use crate::SpawnAgentForkMode;
 use crate::SpawnReservation;
-use codex_protocol::AgentPath;
-use codex_protocol::ThreadId;
-use codex_protocol::error::CodexErr;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::TurnEnvironmentSelection;
-use codex_protocol::user_input::UserInput;
+use protocol::AgentPath;
+use protocol::ThreadId;
+use protocol::error::CodexErr;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::Op;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::protocol::TurnEnvironmentSelection;
+use protocol::user_input::UserInput;
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -107,7 +107,7 @@ pub fn agent_nickname_candidates(configured_candidates: Option<&[String]>) -> Ve
 pub fn prepare_thread_spawn_plan(
     reservation: &mut SpawnReservation,
     input: ThreadSpawnPlanInput<'_>,
-) -> codex_protocol::error::Result<(SessionSource, AgentMetadata)> {
+) -> protocol::error::Result<(SessionSource, AgentMetadata)> {
     let ThreadSpawnPlanInput {
         parent_thread_id,
         depth,

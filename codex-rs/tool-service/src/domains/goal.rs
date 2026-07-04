@@ -6,19 +6,19 @@ use crate::planning::ToolSpec;
 use crate::planning::create_create_goal_tool;
 use crate::planning::create_get_goal_tool;
 use crate::planning::create_update_goal_tool;
-use codex_protocol::protocol::ThreadGoal;
-use codex_protocol::protocol::ThreadGoalStatus;
-use thread_service_api::ThreadSessionCapability;
-use thread_service_api::ThreadTurnCapability;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::UPDATE_GOAL_TOOL_NAME;
 use goal_service_api::GoalServiceApi;
+use protocol::protocol::ThreadGoal;
+use protocol::protocol::ThreadGoalStatus;
 use serde::Deserialize;
 use serde::Serialize;
+use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadTurnCapability;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::UPDATE_GOAL_TOOL_NAME;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
@@ -221,12 +221,12 @@ mod tests {
     use std::any::Any;
     use std::sync::Mutex;
 
-    use codex_protocol::ThreadId;
-    use codex_protocol::models::ResponseInputItem;
+    use protocol::ThreadId;
+    use protocol::models::ResponseInputItem;
     use thread_service_api::SessionCapabilityFuture;
     use thread_service_api::ThreadCapability;
     use thread_service_api::ThreadSessionCapability;
-    use codex_tool_types::ToolOutput;
+    use tool_service_api::ToolOutput;
 
     struct MockTurn;
     struct MockSession;
@@ -254,7 +254,7 @@ mod tests {
 
         fn require_persisted_state_db<'a>(
             &'a self,
-        ) -> SessionCapabilityFuture<'a, Result<codex_state_api::SharedStateDbRuntime, String>> {
+        ) -> SessionCapabilityFuture<'a, Result<state_api::SharedStateDbRuntime, String>> {
             Box::pin(async { unreachable!("mock goal api should handle state db access") })
         }
     }
@@ -329,7 +329,7 @@ mod tests {
         ToolCall {
             call_id: call_id.to_string(),
             tool_name: ToolName::plain(tool_name),
-            payload: codex_tool_types::ToolPayload::Function {
+            payload: tool_service_api::ToolPayload::Function {
                 arguments: arguments.to_string(),
             },
         }

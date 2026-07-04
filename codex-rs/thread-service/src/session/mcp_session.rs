@@ -1,21 +1,21 @@
 use super::*;
 use codex_config_types::McpServerConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
-use codex_mcp_types::ElicitationAction;
-use codex_mcp_types::ElicitationReviewFuture;
-use codex_mcp_types::ElicitationReviewRequest;
-use codex_mcp_types::ElicitationResponse;
-use codex_mcp_types::ElicitationReviewer;
-use codex_mcp_types::ElicitationReviewerHandle;
-use codex_mcp_types::McpServerElicitationRequestParams;
-use codex_mcp_types::codex_apps_tools_cache_key;
-use codex_mcp_types::effective_mcp_servers_from_configured;
-use codex_mcp_types::host_owned_codex_apps_enabled;
 use mcp_service_api::McpConnectionRuntimeStartRequest;
-use codex_protocol::approvals::ElicitationRequestEvent;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::McpServerRefreshConfig;
-use codex_protocol::mcp::RequestId;
+use mcp_types::ElicitationAction;
+use mcp_types::ElicitationResponse;
+use mcp_types::ElicitationReviewFuture;
+use mcp_types::ElicitationReviewRequest;
+use mcp_types::ElicitationReviewer;
+use mcp_types::ElicitationReviewerHandle;
+use mcp_types::McpServerElicitationRequestParams;
+use mcp_types::codex_apps_tools_cache_key;
+use mcp_types::effective_mcp_servers_from_configured;
+use mcp_types::host_owned_codex_apps_enabled;
+use protocol::approvals::ElicitationRequestEvent;
+use protocol::mcp::RequestId;
+use protocol::protocol::EventMsg;
+use protocol::protocol::McpServerRefreshConfig;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -74,7 +74,7 @@ impl Session {
 
         let server_name = params.server_name.clone();
         let request = match params.request {
-            codex_mcp_types::McpServerElicitationRequest::Form {
+            mcp_types::McpServerElicitationRequest::Form {
                 meta,
                 message,
                 requested_schema,
@@ -88,18 +88,18 @@ impl Session {
                         return None;
                     }
                 };
-                codex_protocol::approvals::ElicitationRequest::Form {
+                protocol::approvals::ElicitationRequest::Form {
                     meta,
                     message,
                     requested_schema,
                 }
             }
-            codex_mcp_types::McpServerElicitationRequest::Url {
+            mcp_types::McpServerElicitationRequest::Url {
                 meta,
                 message,
                 url,
                 elicitation_id,
-            } => codex_protocol::approvals::ElicitationRequest::Url {
+            } => protocol::approvals::ElicitationRequest::Url {
                 meta,
                 message,
                 url,
@@ -245,28 +245,29 @@ impl Session {
             .services
             .mcp_service
             .start_connection_runtime(
-            self.services.mcp_connection_runtime_factory.as_ref(),
-            McpConnectionRuntimeStartRequest {
-                mcp_servers,
-                store_mode,
-                auth_entries: auth_statuses,
-                approval_policy: turn_context.approval_policy.clone(),
-                submit_id: turn_context.sub_id.clone(),
-                tx_event: self.get_tx_event(),
-                initial_permission_profile: turn_context.permission_profile().clone(),
-                runtime_environment: mcp_runtime_environment,
-                codex_home: config.codex_home.to_path_buf(),
-                codex_apps_tools_cache_key: codex_apps_tools_cache_key(auth_context.as_ref()),
-                host_owned_codex_apps_enabled,
-                client_elicitation_support: mcp_config.client_elicitation_support,
-                tool_plugin_provenance,
-                codex_apps_auth_provider: self.services.mcp_service.codex_apps_auth_provider(
-                    auth_snapshot.as_ref(),
-                ),
-                elicitation_reviewer,
-            },
-        )
-        .await;
+                self.services.mcp_connection_runtime_factory.as_ref(),
+                McpConnectionRuntimeStartRequest {
+                    mcp_servers,
+                    store_mode,
+                    auth_entries: auth_statuses,
+                    approval_policy: turn_context.approval_policy.clone(),
+                    submit_id: turn_context.sub_id.clone(),
+                    tx_event: self.get_tx_event(),
+                    initial_permission_profile: turn_context.permission_profile().clone(),
+                    runtime_environment: mcp_runtime_environment,
+                    codex_home: config.codex_home.to_path_buf(),
+                    codex_apps_tools_cache_key: codex_apps_tools_cache_key(auth_context.as_ref()),
+                    host_owned_codex_apps_enabled,
+                    client_elicitation_support: mcp_config.client_elicitation_support,
+                    tool_plugin_provenance,
+                    codex_apps_auth_provider: self
+                        .services
+                        .mcp_service
+                        .codex_apps_auth_provider(auth_snapshot.as_ref()),
+                    elicitation_reviewer,
+                },
+            )
+            .await;
         let refreshed_manager = refreshed_runtime.runtime;
         let cancel_token = refreshed_runtime.startup_cancellation_token;
         {
@@ -303,23 +304,23 @@ impl Session {
             mcp_oauth_credentials_store_mode,
         } = refresh_config;
 
-        let mcp_servers = match serde_json::from_value::<HashMap<String, McpServerConfig>>(mcp_servers)
-        {
-            Ok(servers) => servers,
-            Err(err) => {
-                tracing::warn!("failed to parse MCP server refresh config: {err}");
-                return;
-            }
-        };
-        let store_mode =
-            match serde_json::from_value::<OAuthCredentialsStoreMode>(mcp_oauth_credentials_store_mode)
-            {
-                Ok(mode) => mode,
+        let mcp_servers =
+            match serde_json::from_value::<HashMap<String, McpServerConfig>>(mcp_servers) {
+                Ok(servers) => servers,
                 Err(err) => {
-                    tracing::warn!("failed to parse MCP OAuth refresh config: {err}");
+                    tracing::warn!("failed to parse MCP server refresh config: {err}");
                     return;
                 }
             };
+        let store_mode = match serde_json::from_value::<OAuthCredentialsStoreMode>(
+            mcp_oauth_credentials_store_mode,
+        ) {
+            Ok(mode) => mode,
+            Err(err) => {
+                tracing::warn!("failed to parse MCP OAuth refresh config: {err}");
+                return;
+            }
+        };
 
         self.refresh_mcp_servers_now(turn_context, mcp_servers, store_mode, elicitation_reviewer)
             .await;
@@ -357,7 +358,7 @@ async fn review_guardian_mcp_elicitation(
         .services
         .mcp_service
         .review_guardian_elicitation(
-            Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>,
+            Arc::clone(&session) as Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
             Arc::clone(&turn_context) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
             request,
         )

@@ -1,7 +1,7 @@
 use super::*;
 use anyhow::Result;
-use codex_protocol::protocol::TurnAbortReason;
 use pretty_assertions::assert_eq;
+use protocol::protocol::TurnAbortReason;
 use serde_json::json;
 
 #[test]

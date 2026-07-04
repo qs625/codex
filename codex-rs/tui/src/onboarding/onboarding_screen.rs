@@ -10,17 +10,17 @@
 //! editing a non-empty API-key field, while control/alt chords remain available
 //! as explicit exit shortcuts.
 
-use codex_app_server_client::AppServerEvent;
-use codex_app_server_client::AppServerRequestHandle;
-use codex_app_server_protocol::ServerNotification;
+use app_server_client::AppServerEvent;
+use app_server_client::AppServerRequestHandle;
+use app_server_protocol::ServerNotification;
 use codex_exec_server::LOCAL_FS;
 use codex_git_info::resolve_root_git_project_for_trust;
-#[cfg(target_os = "windows")]
-use codex_protocol::config_types::WindowsSandboxLevel;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
+#[cfg(target_os = "windows")]
+use protocol::config_types::WindowsSandboxLevel;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
@@ -28,7 +28,7 @@ use ratatui::style::Color;
 use ratatui::widgets::Clear;
 use ratatui::widgets::WidgetRef;
 
-use codex_protocol::config_types::ForcedLoginMethod;
+use protocol::config_types::ForcedLoginMethod;
 
 use crate::LoginStatus;
 use crate::app_server_session::AppServerSession;

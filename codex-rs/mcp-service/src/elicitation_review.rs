@@ -1,21 +1,21 @@
 use codex_guardian::GuardianApprovalRequest;
-use codex_mcp_types::ElicitationAction;
-use codex_mcp_types::ElicitationResponse;
-use codex_mcp_types::ElicitationReviewRequest;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::mcp_approval_meta::APPROVAL_KIND_KEY as MCP_ELICITATION_APPROVAL_KIND_KEY;
-use codex_protocol::mcp_approval_meta::APPROVAL_KIND_MCP_TOOL_CALL as MCP_ELICITATION_APPROVAL_KIND_MCP_TOOL_CALL;
-use codex_protocol::mcp_approval_meta::APPROVALS_REVIEWER_KEY as MCP_ELICITATION_APPROVALS_REVIEWER_KEY;
-use codex_protocol::mcp_approval_meta::CONNECTOR_DESCRIPTION_KEY as MCP_ELICITATION_CONNECTOR_DESCRIPTION_KEY;
-use codex_protocol::mcp_approval_meta::CONNECTOR_ID_KEY as MCP_ELICITATION_CONNECTOR_ID_KEY;
-use codex_protocol::mcp_approval_meta::CONNECTOR_NAME_KEY as MCP_ELICITATION_CONNECTOR_NAME_KEY;
-use codex_protocol::mcp_approval_meta::REQUEST_TYPE_APPROVAL_REQUEST as MCP_ELICITATION_REQUEST_TYPE_APPROVAL_REQUEST;
-use codex_protocol::mcp_approval_meta::REQUEST_TYPE_KEY as MCP_ELICITATION_REQUEST_TYPE_KEY;
-use codex_protocol::mcp_approval_meta::TOOL_DESCRIPTION_KEY as MCP_ELICITATION_TOOL_DESCRIPTION_KEY;
-use codex_protocol::mcp_approval_meta::TOOL_NAME_KEY as MCP_ELICITATION_TOOL_NAME_KEY;
-use codex_protocol::mcp_approval_meta::TOOL_PARAMS_KEY as MCP_ELICITATION_TOOL_PARAMS_KEY;
-use codex_protocol::mcp_approval_meta::TOOL_TITLE_KEY as MCP_ELICITATION_TOOL_TITLE_KEY;
-use codex_protocol::protocol::ReviewDecision;
+use mcp_types::ElicitationAction;
+use mcp_types::ElicitationResponse;
+use mcp_types::ElicitationReviewRequest;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::mcp_approval_meta::APPROVAL_KIND_KEY as MCP_ELICITATION_APPROVAL_KIND_KEY;
+use protocol::mcp_approval_meta::APPROVAL_KIND_MCP_TOOL_CALL as MCP_ELICITATION_APPROVAL_KIND_MCP_TOOL_CALL;
+use protocol::mcp_approval_meta::APPROVALS_REVIEWER_KEY as MCP_ELICITATION_APPROVALS_REVIEWER_KEY;
+use protocol::mcp_approval_meta::CONNECTOR_DESCRIPTION_KEY as MCP_ELICITATION_CONNECTOR_DESCRIPTION_KEY;
+use protocol::mcp_approval_meta::CONNECTOR_ID_KEY as MCP_ELICITATION_CONNECTOR_ID_KEY;
+use protocol::mcp_approval_meta::CONNECTOR_NAME_KEY as MCP_ELICITATION_CONNECTOR_NAME_KEY;
+use protocol::mcp_approval_meta::REQUEST_TYPE_APPROVAL_REQUEST as MCP_ELICITATION_REQUEST_TYPE_APPROVAL_REQUEST;
+use protocol::mcp_approval_meta::REQUEST_TYPE_KEY as MCP_ELICITATION_REQUEST_TYPE_KEY;
+use protocol::mcp_approval_meta::TOOL_DESCRIPTION_KEY as MCP_ELICITATION_TOOL_DESCRIPTION_KEY;
+use protocol::mcp_approval_meta::TOOL_NAME_KEY as MCP_ELICITATION_TOOL_NAME_KEY;
+use protocol::mcp_approval_meta::TOOL_PARAMS_KEY as MCP_ELICITATION_TOOL_PARAMS_KEY;
+use protocol::mcp_approval_meta::TOOL_TITLE_KEY as MCP_ELICITATION_TOOL_TITLE_KEY;
+use protocol::protocol::ReviewDecision;
 use serde_json::Map;
 use serde_json::Value;
 
@@ -32,12 +32,12 @@ pub fn guardian_elicitation_review_request(
     request: &ElicitationReviewRequest,
 ) -> GuardianElicitationReview {
     let (meta, requested_schema) = match &request.elicitation {
-        codex_protocol::approvals::ElicitationRequest::Form {
+        protocol::approvals::ElicitationRequest::Form {
             meta,
             requested_schema,
             ..
         } => (meta, Some(requested_schema)),
-        codex_protocol::approvals::ElicitationRequest::Url { meta, .. } => {
+        protocol::approvals::ElicitationRequest::Url { meta, .. } => {
             return if meta_requests_approval_request(meta) {
                 GuardianElicitationReview::Decline(
                     "guardian MCP elicitation review only supports form elicitations",
@@ -84,27 +84,25 @@ pub fn guardian_elicitation_review_request(
         None => Some(Value::Object(Map::new())),
     };
 
-    GuardianElicitationReview::ApprovalRequest(Box::new(
-        GuardianApprovalRequest::McpToolCall {
-            id: format!(
-                "mcp_elicitation:{}:{}",
-                request.server_name,
-                mcp_elicitation_request_id(&request.request_id)
-            ),
-            server: request.server_name.clone(),
-            tool_name,
-            arguments,
-            connector_id: metadata_owned_string(meta, MCP_ELICITATION_CONNECTOR_ID_KEY),
-            connector_name: metadata_owned_string(meta, MCP_ELICITATION_CONNECTOR_NAME_KEY),
-            connector_description: metadata_owned_string(
-                meta,
-                MCP_ELICITATION_CONNECTOR_DESCRIPTION_KEY,
-            ),
-            tool_title: metadata_owned_string(meta, MCP_ELICITATION_TOOL_TITLE_KEY),
-            tool_description: metadata_owned_string(meta, MCP_ELICITATION_TOOL_DESCRIPTION_KEY),
-            annotations: None,
-        },
-    ))
+    GuardianElicitationReview::ApprovalRequest(Box::new(GuardianApprovalRequest::McpToolCall {
+        id: format!(
+            "mcp_elicitation:{}:{}",
+            request.server_name,
+            mcp_elicitation_request_id(&request.request_id)
+        ),
+        server: request.server_name.clone(),
+        tool_name,
+        arguments,
+        connector_id: metadata_owned_string(meta, MCP_ELICITATION_CONNECTOR_ID_KEY),
+        connector_name: metadata_owned_string(meta, MCP_ELICITATION_CONNECTOR_NAME_KEY),
+        connector_description: metadata_owned_string(
+            meta,
+            MCP_ELICITATION_CONNECTOR_DESCRIPTION_KEY,
+        ),
+        tool_title: metadata_owned_string(meta, MCP_ELICITATION_TOOL_TITLE_KEY),
+        tool_description: metadata_owned_string(meta, MCP_ELICITATION_TOOL_DESCRIPTION_KEY),
+        annotations: None,
+    }))
 }
 
 pub fn mcp_elicitation_response_from_guardian_decision_parts(
@@ -124,7 +122,8 @@ pub fn mcp_elicitation_response_from_guardian_decision_parts(
             denial_message.unwrap_or_else(|| "Guardian denied this request.".to_string()),
         ),
         ReviewDecision::TimedOut => mcp_elicitation_decline_with_message(
-            denial_message.unwrap_or_else(|| "Guardian timed out reviewing this request.".to_string()),
+            denial_message
+                .unwrap_or_else(|| "Guardian timed out reviewing this request.".to_string()),
         ),
         ReviewDecision::Abort => ElicitationResponse {
             action: ElicitationAction::Cancel,
@@ -134,10 +133,10 @@ pub fn mcp_elicitation_response_from_guardian_decision_parts(
     }
 }
 
-pub fn mcp_elicitation_request_id(id: &codex_protocol::mcp::RequestId) -> String {
+pub fn mcp_elicitation_request_id(id: &protocol::mcp::RequestId) -> String {
     match id {
-        codex_protocol::mcp::RequestId::String(value) => value.to_string(),
-        codex_protocol::mcp::RequestId::Integer(value) => value.to_string(),
+        protocol::mcp::RequestId::String(value) => value.to_string(),
+        protocol::mcp::RequestId::Integer(value) => value.to_string(),
     }
 }
 

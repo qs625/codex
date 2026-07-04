@@ -1,8 +1,8 @@
 //! Compatibility projections from the canonical permission profile model into
 //! legacy shapes still required by older or remote app-server APIs.
 
-use codex_protocol::models::PermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::models::PermissionProfile;
 use std::path::Path;
 
 pub(crate) fn legacy_compatible_permission_profile(
@@ -44,13 +44,13 @@ pub(crate) fn legacy_compatible_permission_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::FileSystemAccessMode;
-    use codex_app_server_protocol::FileSystemPath;
-    use codex_app_server_protocol::FileSystemSandboxEntry;
-    use codex_app_server_protocol::FileSystemSpecialPath;
-    use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-    use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
-    use codex_app_server_protocol::PermissionProfileNetworkPermissions;
+    use app_server_protocol::FileSystemAccessMode;
+    use app_server_protocol::FileSystemPath;
+    use app_server_protocol::FileSystemSandboxEntry;
+    use app_server_protocol::FileSystemSpecialPath;
+    use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+    use app_server_protocol::PermissionProfileFileSystemPermissions;
+    use app_server_protocol::PermissionProfileNetworkPermissions;
     use pretty_assertions::assert_eq;
 
     #[test]

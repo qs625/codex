@@ -10,7 +10,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
-codex-app-server-protocol.workspace = true
+app-server-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

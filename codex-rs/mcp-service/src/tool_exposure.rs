@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
-use codex_config::Config;
+use config_service::Config;
 use codex_connectors_api::AppInfo;
 use codex_features::Feature;
-use codex_mcp_tool_types::ToolInfo as McpToolInfo;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_tool_config::ToolsConfig;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::ToolInfo as McpToolInfo;
+use tool_config::ToolsConfig;
 
 use crate::codex_app_tool_is_enabled;
 
@@ -95,18 +95,18 @@ fn filter_codex_apps_mcp_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_config::ConfigBuilder;
+    use config_service::ConfigBuilder;
     use codex_features::Features;
-    use codex_mcp_tool_types::McpTool;
-    use codex_models_manager::test_support::construct_model_info_offline_for_tests;
-    use codex_protocol::config_types::WebSearchMode;
-    use codex_protocol::config_types::WindowsSandboxLevel;
-    use codex_protocol::models::PermissionProfile;
-    use codex_protocol::protocol::SessionSource;
-    use codex_tool_config::ToolsConfigParams;
+    use mcp_types::McpTool;
+    use model_service::test_support::construct_model_info_offline_for_tests;
     use pretty_assertions::assert_eq;
+    use protocol::config_types::WebSearchMode;
+    use protocol::config_types::WindowsSandboxLevel;
+    use protocol::models::PermissionProfile;
+    use protocol::protocol::SessionSource;
     use std::collections::HashSet;
     use tempfile::tempdir;
+    use tool_config::ToolsConfigParams;
 
     fn make_connector(id: &str, name: &str) -> AppInfo {
         AppInfo {

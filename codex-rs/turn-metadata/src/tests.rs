@@ -1,13 +1,13 @@
 use super::*;
 
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::ThreadSource;
 use codex_sandboxing_api::sandbox_tag;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::ThreadSource;
 use serde_json::Value;
 use std::collections::HashMap;
 use tempfile::TempDir;

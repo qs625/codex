@@ -1,4 +1,4 @@
-use codex_protocol::models::WebSearchAction;
+use protocol::models::WebSearchAction;
 
 pub fn web_search_action_detail(action: &WebSearchAction) -> String {
     codex_turn_items::web_search_action_detail(action)

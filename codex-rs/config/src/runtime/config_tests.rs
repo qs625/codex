@@ -8,99 +8,99 @@ use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::edit::apply_blocking;
 use assert_matches::assert_matches;
-use codex_config::ConfigLayerEntry;
-use codex_config::ProfileV2Name;
-use codex_config::RequirementSource;
-use codex_config::config_toml::AgentRoleToml;
-use codex_config::config_toml::AgentsToml;
-use codex_config::config_toml::AutoReviewToml;
-use codex_config::config_toml::ConfigToml;
-use codex_config::config_toml::RealtimeConfig;
-use codex_config::config_toml::RealtimeToml;
-use codex_config::config_toml::RealtimeTransport;
-use codex_config::config_toml::RealtimeWsMode;
-use codex_config::config_toml::RealtimeWsVersion;
-use codex_config::config_toml::ToolsToml;
-use codex_config::permissions_toml::FilesystemPermissionToml;
-use codex_config::permissions_toml::FilesystemPermissionsToml;
-use codex_config::permissions_toml::NetworkDomainPermissionToml;
-use codex_config::permissions_toml::NetworkDomainPermissionsToml;
-use codex_config::permissions_toml::NetworkToml;
-use codex_config::permissions_toml::PermissionProfileToml;
-use codex_config::permissions_toml::PermissionsToml;
-use codex_config::permissions_toml::WorkspaceRootsToml;
-use codex_config::profile_toml::ConfigProfile;
-use codex_config::types::AltScreenMode;
-use codex_config::types::AppToolApproval;
-use codex_config::types::ApprovalsReviewer;
-use codex_config::types::BundledSkillsConfig;
-use codex_config::types::FeedbackConfigToml;
-use codex_config::types::History;
-use codex_config::types::HistoryPersistence;
-use codex_config::types::McpServerEnvVar;
-use codex_config::types::McpServerOAuthConfig;
-use codex_config::types::McpServerToolConfig;
-use codex_config::types::McpServerTransportConfig;
-use codex_config::types::MemoriesConfig;
-use codex_config::types::MemoriesToml;
-use codex_config::types::ModelAvailabilityNuxConfig;
-use codex_config::types::Notice;
-use codex_config::types::NotificationCondition;
-use codex_config::types::NotificationMethod;
-use codex_config::types::Notifications;
-use codex_config::types::OtelConfig;
-use codex_config::types::OtelConfigToml;
-use codex_config::types::OtelExporterKind;
-use codex_config::types::SandboxWorkspaceWrite;
-use codex_config::types::SessionPickerViewMode;
-use codex_config::types::SkillsConfig;
-use codex_config::types::ToolSuggestDisabledTool;
-use codex_config::types::ToolSuggestDiscoverableType;
-use codex_config::types::Tui;
-use codex_config::types::TuiKeymap;
-use codex_config::types::TuiNotificationSettings;
-use codex_config::types::TuiPetAnchor;
-use codex_config::types::WindowsSandboxModeToml;
-use codex_config::types::WindowsToml;
-use codex_config_edit::load_global_mcp_servers;
-use codex_config_loader::ProjectConfig;
-use codex_config_local_loader::load_config_layers_state;
+use config_service::ConfigLayerEntry;
+use config_service::ProfileV2Name;
+use config_service::RequirementSource;
+use config_service::config_toml::AgentRoleToml;
+use config_service::config_toml::AgentsToml;
+use config_service::config_toml::AutoReviewToml;
+use config_service::config_toml::ConfigToml;
+use config_service::config_toml::RealtimeConfig;
+use config_service::config_toml::RealtimeToml;
+use config_service::config_toml::RealtimeTransport;
+use config_service::config_toml::RealtimeWsMode;
+use config_service::config_toml::RealtimeWsVersion;
+use config_service::config_toml::ToolsToml;
+use config_service::permissions_toml::FilesystemPermissionToml;
+use config_service::permissions_toml::FilesystemPermissionsToml;
+use config_service::permissions_toml::NetworkDomainPermissionToml;
+use config_service::permissions_toml::NetworkDomainPermissionsToml;
+use config_service::permissions_toml::NetworkToml;
+use config_service::permissions_toml::PermissionProfileToml;
+use config_service::permissions_toml::PermissionsToml;
+use config_service::permissions_toml::WorkspaceRootsToml;
+use config_service::profile_toml::ConfigProfile;
+use config_service::types::AltScreenMode;
+use config_service::types::AppToolApproval;
+use config_service::types::ApprovalsReviewer;
+use config_service::types::BundledSkillsConfig;
+use config_service::types::FeedbackConfigToml;
+use config_service::types::History;
+use config_service::types::HistoryPersistence;
+use config_service::types::McpServerEnvVar;
+use config_service::types::McpServerOAuthConfig;
+use config_service::types::McpServerToolConfig;
+use config_service::types::McpServerTransportConfig;
+use config_service::types::MemoriesConfig;
+use config_service::types::MemoriesToml;
+use config_service::types::ModelAvailabilityNuxConfig;
+use config_service::types::Notice;
+use config_service::types::NotificationCondition;
+use config_service::types::NotificationMethod;
+use config_service::types::Notifications;
+use config_service::types::OtelConfig;
+use config_service::types::OtelConfigToml;
+use config_service::types::OtelExporterKind;
+use config_service::types::SandboxWorkspaceWrite;
+use config_service::types::SessionPickerViewMode;
+use config_service::types::SkillsConfig;
+use config_service::types::ToolSuggestDisabledTool;
+use config_service::types::ToolSuggestDiscoverableType;
+use config_service::types::Tui;
+use config_service::types::TuiKeymap;
+use config_service::types::TuiNotificationSettings;
+use config_service::types::TuiPetAnchor;
+use config_service::types::WindowsSandboxModeToml;
+use config_service::types::WindowsToml;
+use crate::editing::load_global_mcp_servers;
+use crate::loader::ProjectConfig;
+use crate::local_loader::load_config_layers_state;
 use codex_config_types::RealtimeAudioConfig;
+use codex_features::Feature;
+use codex_features::FeaturesToml;
+use codex_file_system::LOCAL_FS;
+use model_service::bundled_models_response;
+use model_service_api::LMSTUDIO_OSS_PROVIDER_ID;
+use model_service_api::ModelProviderInfo;
+use model_service_api::OLLAMA_OSS_PROVIDER_ID;
+use model_service_api::WireApi;
+use plugin_service_api::LoadedPlugin;
 use plugin_service_api::PluginLoadOutcome;
 use plugin_service_api::PluginRuntime;
 use plugin_service_api::PluginRuntimeFuture;
 use plugin_service_api::PluginsConfigInput;
 use plugin_service_api::ToolSuggestDiscoverablePlugin;
-use codex_features::Feature;
-use codex_features::FeaturesToml;
-use codex_file_system::LOCAL_FS;
-use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
-use codex_model_provider_info::WireApi;
-use codex_models_manager::bundled_models_response;
-use plugin_service_api::LoadedPlugin;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::config_types::ShellEnvironmentPolicy;
-use codex_protocol::config_types::Verbosity;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
-use codex_protocol::models::ManagedFileSystemPermissions;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::SandboxEnforcement;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::FileSystemSpecialPath;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::NetworkAccess;
-use codex_protocol::protocol::RealtimeVoice;
-use codex_protocol::protocol::SandboxPolicy;
+use protocol::config_types::ReasoningSummary;
+use protocol::config_types::ServiceTier;
+use protocol::config_types::ShellEnvironmentPolicy;
+use protocol::config_types::Verbosity;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+use protocol::models::ManagedFileSystemPermissions;
+use protocol::models::PermissionProfile;
+use protocol::models::SandboxEnforcement;
+use protocol::openai_models::ReasoningEffort;
+use protocol::permissions::FileSystemAccessMode;
+use protocol::permissions::FileSystemPath;
+use protocol::permissions::FileSystemSandboxEntry;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::FileSystemSpecialPath;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::NetworkAccess;
+use protocol::protocol::RealtimeVoice;
+use protocol::protocol::SandboxPolicy;
 use serde::Deserialize;
 use tempfile::tempdir;
 
@@ -1191,8 +1191,8 @@ async fn experimental_network_requirements_enable_proxy_without_feature() -> std
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                network: Some(codex_config::NetworkRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
+                network: Some(config_service::NetworkRequirementsToml {
                     enabled: Some(true),
                     ..Default::default()
                 }),
@@ -1621,14 +1621,14 @@ async fn managed_unrestricted_permission_profile_still_enables_network_requireme
         .collect();
     let mut requirements = config.config_layer_stack.requirements().clone();
     requirements.network = Some(Sourced::new(
-        codex_config::NetworkConstraints {
+        config_service::NetworkConstraints {
             enabled: Some(true),
             ..Default::default()
         },
         RequirementSource::CloudRequirements,
     ));
     let mut requirements_toml = config.config_layer_stack.requirements_toml().clone();
-    requirements_toml.network = Some(codex_config::NetworkRequirementsToml {
+    requirements_toml.network = Some(config_service::NetworkRequirementsToml {
         enabled: Some(true),
         ..Default::default()
     });
@@ -3535,7 +3535,7 @@ fn filter_plugin_mcp_servers_by_allowlist_enforces_plugin_and_identity_rules() {
     let requirements = Sourced::new(
         BTreeMap::from([(
             "sample@test".to_string(),
-            codex_config::PluginRequirementsToml {
+            config_service::PluginRequirementsToml {
                 mcp_servers: Some(BTreeMap::from([
                     (
                         MATCHED_SERVER.to_string(),
@@ -3585,7 +3585,7 @@ fn filter_plugin_mcp_servers_by_allowlist_blocks_unlisted_plugin() {
     let requirements = Sourced::new(
         BTreeMap::from([(
             "other@test".to_string(),
-            codex_config::PluginRequirementsToml {
+            config_service::PluginRequirementsToml {
                 mcp_servers: Some(BTreeMap::from([(
                     "server-a".to_string(),
                     McpServerRequirement {
@@ -3659,11 +3659,11 @@ async fn rebuild_preserving_session_layers_refreshes_requirements() -> std::io::
             },
         ),
     ]);
-    let requirements_toml = codex_config::ConfigRequirementsToml {
+    let requirements_toml = config_service::ConfigRequirementsToml {
         mcp_servers: Some(mcp_requirements.clone()),
         ..Default::default()
     };
-    let requirements = codex_config::ConfigRequirements {
+    let requirements = config_service::ConfigRequirements {
         mcp_servers: Some(Sourced::new(mcp_requirements, RequirementSource::Unknown)),
         ..Default::default()
     };
@@ -3967,10 +3967,10 @@ enabled = true
 "#,
     )?;
 
-    let requirements = codex_config::ConfigRequirementsToml {
+    let requirements = config_service::ConfigRequirementsToml {
         plugins: Some(BTreeMap::from([(
             "sample@test".to_string(),
-            codex_config::PluginRequirementsToml {
+            config_service::PluginRequirementsToml {
                 mcp_servers: Some(BTreeMap::from([(
                     "sample".to_string(),
                     McpServerRequirement {
@@ -4055,7 +4055,7 @@ enabled = true
 "#,
     )?;
 
-    let requirements = codex_config::ConfigRequirementsToml {
+    let requirements = config_service::ConfigRequirementsToml {
         mcp_servers: Some(BTreeMap::new()),
         ..Default::default()
     };
@@ -4675,7 +4675,7 @@ async fn managed_config_overrides_oauth_store_mode() -> anyhow::Result<()> {
         &Vec::new(),
         overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
     let cfg =
@@ -4811,7 +4811,7 @@ async fn managed_config_wins_over_cli_overrides() -> anyhow::Result<()> {
         &[("model".to_string(), TomlValue::String("cli".to_string()))],
         overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -5018,14 +5018,14 @@ async fn to_mcp_config_preserves_auth_elicitation_feature_from_config() -> std::
     let mcp_config = config.to_mcp_config(&plugin_runtime).await;
     assert_eq!(
         mcp_config.client_elicitation_support,
-        codex_mcp_types::McpClientElicitationSupport::Disabled
+        mcp_types::McpClientElicitationSupport::Disabled
     );
 
     let _ = config.features.enable(Feature::AuthElicitation);
     let mcp_config = config.to_mcp_config(&plugin_runtime).await;
     assert_eq!(
         mcp_config.client_elicitation_support,
-        codex_mcp_types::McpClientElicitationSupport::AuthElicitation
+        mcp_types::McpClientElicitationSupport::AuthElicitation
     );
 
     Ok(())
@@ -6268,7 +6268,7 @@ async fn load_config_uses_requirements_guardian_policy_config() -> std::io::Resu
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        codex_config::ConfigRequirementsToml {
+        config_service::ConfigRequirementsToml {
             guardian_policy_config: Some(
                 "  Use the workspace-managed guardian policy.  ".to_string(),
             ),
@@ -6349,7 +6349,7 @@ async fn requirements_guardian_policy_beats_auto_review() -> std::io::Result<()>
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        codex_config::ConfigRequirementsToml {
+        config_service::ConfigRequirementsToml {
             guardian_policy_config: Some("Use the managed guardian policy.".to_string()),
             ..Default::default()
         },
@@ -6413,7 +6413,7 @@ async fn load_config_ignores_empty_requirements_guardian_policy_config() -> std:
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        codex_config::ConfigRequirementsToml {
+        config_service::ConfigRequirementsToml {
             guardian_policy_config: Some("   ".to_string()),
             ..Default::default()
         },
@@ -6545,8 +6545,8 @@ config_file = "./agents/researcher.toml"
 "#,
     )
     .expect("agent role layer config should parse");
-    let config_layer_stack = codex_config::ConfigLayerStack::new(
-        vec![codex_config::ConfigLayerEntry::new(
+    let config_layer_stack = config_service::ConfigLayerStack::new(
+        vec![config_service::ConfigLayerEntry::new(
             codex_config_types::ConfigLayerSource::User {
                 file: codex_home.path().join(CONFIG_TOML_FILE).abs(),
                 profile: None,
@@ -6554,7 +6554,7 @@ config_file = "./agents/researcher.toml"
             layer_config,
         )],
         Default::default(),
-        codex_config::ConfigRequirementsToml::default(),
+        config_service::ConfigRequirementsToml::default(),
     )
     .map_err(std::io::Error::other)?;
 
@@ -8286,7 +8286,7 @@ async fn trace_exporter_defaults_to_none_when_log_exporter_is_set() -> std::io::
         exporter: Some(OtelExporterKind::OtlpHttp {
             endpoint: "http://localhost:14318/v1/logs".to_string(),
             headers: HashMap::new(),
-            protocol: codex_config::types::OtelHttpProtocol::Binary,
+            protocol: config_service::types::OtelHttpProtocol::Binary,
             tls: None,
         }),
         metrics_exporter: Some(OtelExporterKind::None),
@@ -9038,12 +9038,12 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
 {
     let fixture = create_test_fixture()?;
 
-    let requirements_toml = codex_config::ConfigRequirementsToml {
+    let requirements_toml = config_service::ConfigRequirementsToml {
         allowed_approval_policies: None,
         allowed_approvals_reviewers: None,
         allowed_sandbox_modes: None,
         remote_sandbox_config: None,
-        allowed_web_search_modes: Some(vec![codex_config::WebSearchModeRequirement::Cached]),
+        allowed_web_search_modes: Some(vec![config_service::WebSearchModeRequirement::Cached]),
         allow_managed_hooks_only: None,
         feature_requirements: None,
         hooks: None,
@@ -9056,7 +9056,7 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
         permissions: None,
         guardian_policy_config: None,
     };
-    let requirement_source = codex_config::RequirementSource::Unknown;
+    let requirement_source = config_service::RequirementSource::Unknown;
     let requirement_source_for_error = requirement_source.clone();
     let allowed = vec![WebSearchMode::Disabled, WebSearchMode::Cached];
     let constrained = Constrained::new(WebSearchMode::Cached, move |candidate| {
@@ -9071,15 +9071,15 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
             })
         }
     })?;
-    let requirements = codex_config::ConfigRequirements {
-        web_search_mode: codex_config::ConstrainedWithSource::new(
+    let requirements = config_service::ConfigRequirements {
+        web_search_mode: config_service::ConstrainedWithSource::new(
             constrained,
             Some(requirement_source),
         ),
         ..Default::default()
     };
     let config_layer_stack =
-        codex_config::ConfigLayerStack::new(Vec::new(), requirements, requirements_toml)
+        config_service::ConfigLayerStack::new(Vec::new(), requirements, requirements_toml)
             .expect("config layer stack");
 
     let config = Config::load_config_with_layer_stack(
@@ -9111,7 +9111,7 @@ fn test_set_project_trusted_writes_explicit_tables() -> anyhow::Result<()> {
     let project_dir = Path::new("/some/path");
     let mut doc = toml_edit::DocumentMut::new();
 
-    codex_config_edit::set_project_trust_level_in_document(
+    crate::editing::set_project_trust_level_in_document(
         &mut doc,
         project_dir,
         TrustLevel::Trusted,
@@ -9155,7 +9155,7 @@ fn test_set_project_trusted_converts_inline_to_explicit() -> anyhow::Result<()> 
     let mut doc = initial.parse::<toml_edit::DocumentMut>()?;
 
     // Run the function; it should convert to explicit tables and set trusted
-    codex_config_edit::set_project_trust_level_in_document(
+    crate::editing::set_project_trust_level_in_document(
         &mut doc,
         project_dir,
         TrustLevel::Trusted,
@@ -9186,7 +9186,7 @@ model = "foo""#;
 
     // Approve a new directory
     let new_project = Path::new("/Users/mbolin/code/codex2");
-    codex_config_edit::set_project_trust_level_in_document(
+    crate::editing::set_project_trust_level_in_document(
         &mut doc,
         new_project,
         TrustLevel::Trusted,
@@ -9196,7 +9196,7 @@ model = "foo""#;
 
     // Since we created the [projects] table as part of migration, it is kept implicit.
     // Expect explicit per-project tables, preserving prior entries and appending the new one.
-    let new_project_key = codex_config_loader::project_trust_key(new_project);
+    let new_project_key = crate::loader::project_trust_key(new_project);
     let expected = format!(
         r#"toplevel = "baz"
 model = "foo"
@@ -9792,8 +9792,8 @@ async fn requirements_disallowing_default_sandbox_falls_back_to_required_default
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
+            Ok(Some(config_service::ConfigRequirementsToml {
+                allowed_sandbox_modes: Some(vec![config_service::SandboxModeRequirement::ReadOnly]),
                 ..Default::default()
             }))
         }))
@@ -9815,10 +9815,10 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
 "#,
     )?;
 
-    let requirements = codex_config::ConfigRequirementsToml {
+    let requirements = config_service::ConfigRequirementsToml {
         allowed_approval_policies: None,
         allowed_approvals_reviewers: None,
-        allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
+        allowed_sandbox_modes: Some(vec![config_service::SandboxModeRequirement::ReadOnly]),
         remote_sandbox_config: None,
         allowed_web_search_modes: None,
         allow_managed_hooks_only: None,
@@ -9853,8 +9853,8 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
 async fn permission_profile_override_falls_back_when_disallowed_by_requirements()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
-    let requirements = codex_config::ConfigRequirementsToml {
-        allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
+    let requirements = config_service::ConfigRequirementsToml {
+        allowed_sandbox_modes: Some(vec![config_service::SandboxModeRequirement::ReadOnly]),
         ..Default::default()
     };
 
@@ -9883,8 +9883,8 @@ async fn permission_profile_override_falls_back_when_disallowed_by_requirements(
 #[tokio::test]
 async fn active_profile_is_cleared_when_requirements_force_fallback() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
-    let requirements = codex_config::ConfigRequirementsToml {
-        allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
+    let requirements = config_service::ConfigRequirementsToml {
+        allowed_sandbox_modes: Some(vec![config_service::SandboxModeRequirement::ReadOnly]),
         ..Default::default()
     };
 
@@ -10008,9 +10008,9 @@ async fn requirements_web_search_mode_overrides_danger_full_access_default() -> 
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
                 allowed_web_search_modes: Some(vec![
-                    codex_config::WebSearchModeRequirement::Cached,
+                    config_service::WebSearchModeRequirement::Cached,
                 ]),
                 ..Default::default()
             }))
@@ -10049,7 +10049,7 @@ trust_level = "untrusted"
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(workspace.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
                 allowed_approval_policies: Some(vec![AskForApproval::OnRequest]),
                 ..Default::default()
             }))
@@ -10078,7 +10078,7 @@ async fn explicit_approval_policy_falls_back_when_disallowed_by_requirements() -
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
                 allowed_approval_policies: Some(vec![AskForApproval::OnRequest]),
                 ..Default::default()
             }))
@@ -10099,8 +10099,8 @@ async fn feature_requirements_normalize_effective_feature_values() -> std::io::R
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                feature_requirements: Some(codex_config::FeatureRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
+                feature_requirements: Some(config_service::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
                         ("shell_tool".to_string(), false),
@@ -10133,8 +10133,8 @@ async fn feature_requirements_auto_review_disables_guardian_approval() -> std::i
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                feature_requirements: Some(codex_config::FeatureRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
+                feature_requirements: Some(config_service::FeatureRequirementsToml {
                     entries: BTreeMap::from([("auto_review".to_string(), false)]),
                 }),
                 ..Default::default()
@@ -10155,8 +10155,8 @@ async fn browser_feature_requirements_are_valid() -> std::io::Result<()> {
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                feature_requirements: Some(codex_config::FeatureRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
+                feature_requirements: Some(config_service::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("in_app_browser".to_string(), false),
                         ("browser_use".to_string(), false),
@@ -10261,8 +10261,8 @@ shell_tool = true
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                feature_requirements: Some(codex_config::FeatureRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
+                feature_requirements: Some(config_service::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
                         ("shell_tool".to_string(), false),
@@ -10411,7 +10411,7 @@ async fn requirements_disallowing_default_approvals_reviewer_falls_back_to_requi
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -10437,7 +10437,7 @@ async fn root_approvals_reviewer_falls_back_when_disallowed_by_requirements() ->
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -10474,7 +10474,7 @@ approvals_reviewer = "user"
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -10500,7 +10500,7 @@ async fn approvals_reviewer_preserves_valid_user_choice_when_allowed_by_requirem
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
                 allowed_approvals_reviewers: Some(vec![
                     ApprovalsReviewer::User,
                     ApprovalsReviewer::AutoReview,
@@ -10996,8 +10996,8 @@ async fn feature_requirements_normalize_runtime_feature_mutations() -> std::io::
     let mut config = ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                feature_requirements: Some(codex_config::FeatureRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
+                feature_requirements: Some(config_service::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
                         ("shell_tool".to_string(), false),
@@ -11032,8 +11032,8 @@ async fn feature_requirements_warn_on_collab_legacy_alias() -> std::io::Result<(
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                feature_requirements: Some(codex_config::FeatureRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
+                feature_requirements: Some(config_service::FeatureRequirementsToml {
                     entries: BTreeMap::from([("collab".to_string(), true)]),
                 }),
                 ..Default::default()
@@ -11062,8 +11062,8 @@ async fn feature_requirements_warn_and_ignore_unknown_feature() -> std::io::Resu
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
-                feature_requirements: Some(codex_config::FeatureRequirementsToml {
+            Ok(Some(config_service::ConfigRequirementsToml {
+                feature_requirements: Some(config_service::FeatureRequirementsToml {
                     entries: BTreeMap::from([("made_up_feature".to_string(), true)]),
                 }),
                 ..Default::default()

@@ -1,21 +1,21 @@
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ThreadGoal;
-use codex_app_server_protocol::ThreadHistoryBuilder;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnError;
+use app_server_protocol::RequestId;
+use app_server_protocol::ThreadGoal;
+use app_server_protocol::ThreadHistoryBuilder;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnError;
 use codex_file_watcher::WatchRegistration;
-use codex_protocol::SessionId;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
-use codex_rollout::state_db::StateDbHandle;
-use thread_service_api::ThreadConfigSnapshot;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::SessionId;
+use protocol::ThreadId;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
+use rollout::state_db::StateDbHandle;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+use thread_service_api::ThreadConfigSnapshot;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -29,7 +29,7 @@ pub(crate) struct PendingThreadResumeRequest {
     pub(crate) history_items: Vec<RolloutItem>,
     pub(crate) config_snapshot: ThreadConfigSnapshot,
     pub(crate) instruction_sources: Vec<AbsolutePathBuf>,
-    pub(crate) thread_summary: codex_app_server_protocol::Thread,
+    pub(crate) thread_summary: app_server_protocol::Thread,
     pub(crate) emit_thread_goal_update: bool,
     pub(crate) thread_goal_state_db: Option<StateDbHandle>,
     pub(crate) include_turns: bool,
@@ -39,11 +39,11 @@ pub(crate) struct PendingThreadResumeRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::TurnStatus;
-    use codex_protocol::config_types::ModeKind;
-    use codex_protocol::protocol::TurnCompleteEvent;
-    use codex_protocol::protocol::TurnStartedEvent;
+    use app_server_protocol::TurnStatus;
     use pretty_assertions::assert_eq;
+    use protocol::config_types::ModeKind;
+    use protocol::protocol::TurnCompleteEvent;
+    use protocol::protocol::TurnStartedEvent;
 
     #[test]
     fn active_in_progress_turn_snapshot_ignores_finished_fallback() {

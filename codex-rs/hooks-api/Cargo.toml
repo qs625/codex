@@ -1,12 +1,12 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-hooks-api"
+name = "hooks-api"
 version.workspace = true
 
 [lib]
 doctest = false
-name = "codex_hooks_api"
+name = "hooks_api"
 path = "src/lib.rs"
 
 [lints]
@@ -16,7 +16,7 @@ workspace = true
 chrono = { workspace = true, features = ["serde"] }
 codex-config-types = { workspace = true }
 plugin-service-api = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

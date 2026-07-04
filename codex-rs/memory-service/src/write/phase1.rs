@@ -5,23 +5,25 @@ use crate::metrics::MEMORY_PHASE_ONE_OUTPUT;
 use crate::metrics::MEMORY_PHASE_ONE_TOKEN_USAGE;
 use crate::runtime::MemoryStartupContext;
 use codex_config_types::MemoriesConfig;
-use codex_protocol::error::CodexErr;
-use codex_protocol::models::BaseInstructions;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::TokenUsage;
-use codex_rollout::INTERACTIVE_SESSION_SOURCES;
-use codex_rollout::RolloutRecorder;
-use codex_rollout::should_persist_response_item_for_memories;
 use codex_secrets::redact_secrets;
 use futures::StreamExt;
 use memory_service_api::MemoryStartupSettings;
 use memory_service_api::StageOnePromptRequest;
 use memory_service_api::StageOneRequestContext;
+use protocol::error::CodexErr;
+use protocol::models::BaseInstructions;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::TokenUsage;
+use rollout::INTERACTIVE_SESSION_SOURCES;
+use rollout::RolloutRecorder;
+use rollout::should_persist_response_item_for_memories;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
+use state_api::Stage1JobClaim;
+use state_api::Stage1StartupClaimParams;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
@@ -149,7 +151,7 @@ pub fn output_schema() -> Value {
 async fn claim_startup_jobs(
     context: &MemoryStartupContext,
     memories_config: &MemoriesConfig,
-) -> Option<Vec<codex_state::Stage1JobClaim>> {
+) -> Option<Vec<Stage1JobClaim>> {
     let Some(state_db) = context.state_db() else {
         // This should not happen.
         warn!("state db unavailable while claiming phase-1 startup jobs; skipping");
@@ -164,12 +166,12 @@ async fn claim_startup_jobs(
     match state_db
         .claim_stage1_jobs_for_startup(
             context.thread_id(),
-            codex_state::Stage1StartupClaimParams {
+            &Stage1StartupClaimParams {
                 scan_limit: crate::stage_one::THREAD_SCAN_LIMIT,
                 max_claimed: memories_config.max_rollouts_per_startup,
                 max_age_days: memories_config.max_rollout_age_days,
                 min_rollout_idle_hours: memories_config.min_rollout_idle_hours,
-                allowed_sources: allowed_sources.as_slice(),
+                allowed_sources,
                 lease_seconds: crate::stage_one::JOB_LEASE_SECONDS,
             },
         )
@@ -200,7 +202,7 @@ async fn build_request_context(
 async fn run_jobs(
     context: Arc<MemoryStartupContext>,
     settings: Arc<MemoryStartupSettings>,
-    claimed_candidates: Vec<codex_state::Stage1JobClaim>,
+    claimed_candidates: Vec<Stage1JobClaim>,
     stage_one_context: StageOneRequestContext,
 ) -> Vec<JobResult> {
     futures::stream::iter(claimed_candidates.into_iter())
@@ -229,7 +231,7 @@ mod job {
     pub(crate) async fn run(
         context: &MemoryStartupContext,
         settings: &MemoryStartupSettings,
-        claim: codex_state::Stage1JobClaim,
+        claim: Stage1JobClaim,
         stage_one_context: &StageOneRequestContext,
     ) -> JobResult {
         let claimed_thread = claim.thread;
@@ -330,7 +332,7 @@ mod job {
 
         pub(crate) async fn failed(
             context: &MemoryStartupContext,
-            thread_id: codex_protocol::ThreadId,
+            thread_id: protocol::ThreadId,
             ownership_token: &str,
             reason: &str,
         ) {
@@ -349,7 +351,7 @@ mod job {
 
         pub(crate) async fn no_output(
             context: &MemoryStartupContext,
-            thread_id: codex_protocol::ThreadId,
+            thread_id: protocol::ThreadId,
             ownership_token: &str,
         ) -> JobOutcome {
             let Some(state_db) = context.state_db() else {
@@ -369,7 +371,7 @@ mod job {
 
         pub(crate) async fn success(
             context: &MemoryStartupContext,
-            thread_id: codex_protocol::ThreadId,
+            thread_id: protocol::ThreadId,
             ownership_token: &str,
             source_updated_at: i64,
             raw_memory: &str,
@@ -402,7 +404,7 @@ mod job {
     /// Serializes filtered stage-1 memory items for prompt inclusion.
     pub(super) fn serialize_filtered_rollout_response_items(
         items: &[RolloutItem],
-    ) -> codex_protocol::error::Result<String> {
+    ) -> protocol::error::Result<String> {
         let filtered = items
             .iter()
             .filter_map(|item| {
@@ -723,8 +725,8 @@ mod tests {
             job::serialize_filtered_rollout_response_items(&[RolloutItem::ResponseItem(
                 ResponseItem::FunctionCallOutput {
                     call_id: "call_123".to_string(),
-                    output: codex_protocol::models::FunctionCallOutputPayload {
-                        body: codex_protocol::models::FunctionCallOutputBody::Text(
+                    output: protocol::models::FunctionCallOutputPayload {
+                        body: protocol::models::FunctionCallOutputBody::Text(
                             r#"{"token":"sk-abcdefghijklmnopqrstuvwxyz123456"}"#.to_string(),
                         ),
                         success: Some(true),

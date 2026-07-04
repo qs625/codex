@@ -6,8 +6,7 @@ license.workspace = true
 description = "OpenAI file upload runtime helpers for Codex."
 
 [dependencies]
-codex-api-provider = { workspace = true }
-codex-client = { workspace = true }
+transport-client = { workspace = true }
 codex-openai-files-api = { workspace = true }
 http = { workspace = true }
 reqwest = { workspace = true, features = ["json", "stream"] }
@@ -15,7 +14,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
-tokio-util = { workspace = true, features = ["io"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

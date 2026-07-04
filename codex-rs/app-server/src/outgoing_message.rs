@@ -5,19 +5,19 @@ use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use app_server_protocol::ClientResponsePayload;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::RequestId;
+use app_server_protocol::Result;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::ServerRequestPayload;
+use app_server_protocol::ServerResponse;
 use codex_analytics::AnalyticsEventsClient;
-use codex_app_server_protocol::ClientResponsePayload;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::Result;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ServerRequestPayload;
-use codex_app_server_protocol::ServerResponse;
 use codex_otel::span_w3c_trace_context;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::W3cTraceContext;
-use codex_protocol::request_permissions::RequestPermissionsResponse;
+use protocol::ThreadId;
+use protocol::protocol::W3cTraceContext;
+use protocol::request_permissions::RequestPermissionsResponse;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -27,14 +27,14 @@ use tracing::warn;
 
 use crate::error_code::internal_error;
 use crate::server_request_error::TURN_TRANSITION_PENDING_REQUEST_ERROR_REASON;
-pub(crate) use codex_app_server_transport::ConnectionId;
-pub(crate) use codex_app_server_transport::OutgoingError;
-pub(crate) use codex_app_server_transport::OutgoingMessage;
-pub(crate) use codex_app_server_transport::OutgoingResponse;
-pub(crate) use codex_app_server_transport::QueuedOutgoingMessage;
+pub(crate) use app_server_transport::ConnectionId;
+pub(crate) use app_server_transport::OutgoingError;
+pub(crate) use app_server_transport::OutgoingMessage;
+pub(crate) use app_server_transport::OutgoingResponse;
+pub(crate) use app_server_transport::QueuedOutgoingMessage;
 
 #[cfg(test)]
-use codex_protocol::account::PlanType;
+use protocol::account::PlanType;
 
 pub(crate) type ClientRequestResult = std::result::Result<Result, JSONRPCErrorError>;
 
@@ -696,27 +696,27 @@ fn now_unix_timestamp_ms() -> u64 {
 mod tests {
     use std::time::Duration;
 
-    use codex_app_server_protocol::AccountLoginCompletedNotification;
-    use codex_app_server_protocol::AccountRateLimitsUpdatedNotification;
-    use codex_app_server_protocol::AccountUpdatedNotification;
-    use codex_app_server_protocol::ApplyPatchApprovalParams;
-    use codex_app_server_protocol::CommandExecutionApprovalDecision;
-    use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
-    use codex_app_server_protocol::ConfigWarningNotification;
-    use codex_app_server_protocol::DynamicToolCallParams;
-    use codex_app_server_protocol::FileChangeRequestApprovalParams;
-    use codex_app_server_protocol::GuardianWarningNotification;
-    use codex_app_server_protocol::ModelRerouteReason;
-    use codex_app_server_protocol::ModelReroutedNotification;
-    use codex_app_server_protocol::ModelVerification;
-    use codex_app_server_protocol::ModelVerificationNotification;
-    use codex_app_server_protocol::RateLimitSnapshot;
-    use codex_app_server_protocol::RateLimitWindow;
-    use codex_app_server_protocol::ServerResponse;
-    use codex_app_server_protocol::ToolRequestUserInputParams;
+    use app_server_protocol::AccountLoginCompletedNotification;
+    use app_server_protocol::AccountRateLimitsUpdatedNotification;
+    use app_server_protocol::AccountUpdatedNotification;
+    use app_server_protocol::ApplyPatchApprovalParams;
+    use app_server_protocol::CommandExecutionApprovalDecision;
+    use app_server_protocol::CommandExecutionRequestApprovalParams;
+    use app_server_protocol::ConfigWarningNotification;
+    use app_server_protocol::DynamicToolCallParams;
+    use app_server_protocol::FileChangeRequestApprovalParams;
+    use app_server_protocol::GuardianWarningNotification;
+    use app_server_protocol::ModelRerouteReason;
+    use app_server_protocol::ModelReroutedNotification;
+    use app_server_protocol::ModelVerification;
+    use app_server_protocol::ModelVerificationNotification;
+    use app_server_protocol::RateLimitSnapshot;
+    use app_server_protocol::RateLimitWindow;
+    use app_server_protocol::ServerResponse;
+    use app_server_protocol::ToolRequestUserInputParams;
     use codex_auth_types::AuthMode;
-    use codex_protocol::ThreadId;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
     use serde_json::json;
     use std::sync::Arc;
     use tokio::time::timeout;
@@ -993,9 +993,7 @@ mod tests {
         outgoing
             .send_response(
                 request_id.clone(),
-                ClientResponsePayload::ThreadArchive(
-                    codex_app_server_protocol::ThreadArchiveResponse {},
-                ),
+                ClientResponsePayload::ThreadArchive(app_server_protocol::ThreadArchiveResponse {}),
             )
             .await;
 
@@ -1043,9 +1041,7 @@ mod tests {
         outgoing
             .send_response(
                 request_id,
-                ClientResponsePayload::ThreadArchive(
-                    codex_app_server_protocol::ThreadArchiveResponse {},
-                ),
+                ClientResponsePayload::ThreadArchive(app_server_protocol::ThreadArchiveResponse {}),
             )
             .await;
 

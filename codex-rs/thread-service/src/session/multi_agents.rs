@@ -1,6 +1,6 @@
 use crate::session::turn_context::TurnContext;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
 
 pub(super) fn usage_hint_text<'a>(
     turn_context: &'a TurnContext,

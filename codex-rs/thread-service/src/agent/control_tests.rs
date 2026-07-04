@@ -18,31 +18,31 @@ use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::SubagentNotification;
 use codex_features::Feature;
 use codex_login::CodexAuth;
-use codex_protocol::AgentPath;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::ErrorEvent;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::TurnAbortedEvent;
-use codex_protocol::protocol::TurnCompleteEvent;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::user_input::UserInput;
-use codex_state_api::ThreadGoalStatus as StateThreadGoalStatus;
-use codex_thread_store::LocalThreadStore;
-use codex_thread_store::LocalThreadStoreConfig;
-use codex_thread_store_api::ArchiveThreadParams;
-use codex_thread_store_api::ThreadStore;
 use goal_service::GoalService;
 use goal_service_api::GoalServiceApi;
 use pretty_assertions::assert_eq;
+use protocol::AgentPath;
+use protocol::config_types::ModeKind;
+use protocol::models::ContentItem;
+use protocol::models::MessagePhase;
+use protocol::models::ResponseItem;
+use protocol::protocol::ErrorEvent;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortedEvent;
+use protocol::protocol::TurnCompleteEvent;
+use protocol::protocol::TurnStartedEvent;
+use protocol::user_input::UserInput;
+use state_api::ThreadGoalStatus as StateThreadGoalStatus;
 use tempfile::TempDir;
+use thread_store::LocalThreadStore;
+use thread_store::LocalThreadStoreConfig;
+use thread_store_api::ArchiveThreadParams;
+use thread_store_api::ThreadStore;
 use tokio::time::Duration;
 use tokio::time::sleep;
 use tokio::time::timeout;
@@ -306,7 +306,7 @@ fn count_captured_child_completions(
                         if communication.author == *child_agent_path
                             && communication.recipient == *parent_agent_path
                             && communication.operation
-                                == codex_protocol::protocol::InterAgentOperation::ChildCompletion
+                                == protocol::protocol::InterAgentOperation::ChildCompletion
                 )
         })
         .count()
@@ -534,7 +534,7 @@ async fn send_inter_agent_communication_without_turn_queues_message_without_trig
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         "hello from tests".to_string(),
-        codex_protocol::protocol::InterAgentOperation::Unknown,
+        protocol::protocol::InterAgentOperation::Unknown,
     )
     .with_trigger_turn(false);
 
@@ -705,7 +705,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         "parent trigger message".to_string(),
-        codex_protocol::protocol::InterAgentOperation::Unknown,
+        protocol::protocol::InterAgentOperation::Unknown,
     );
     parent_thread
         .codex
@@ -909,7 +909,7 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         "queued message".to_string(),
-        codex_protocol::protocol::InterAgentOperation::Unknown,
+        protocol::protocol::InterAgentOperation::Unknown,
     )
     .with_trigger_turn(false);
     let queued_turn_context = parent_thread.codex.session.new_default_turn().await;
@@ -930,7 +930,7 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         AgentPath::try_from("/root/worker").expect("agent path"),
         Vec::new(),
         "triggered context".to_string(),
-        codex_protocol::protocol::InterAgentOperation::Unknown,
+        protocol::protocol::InterAgentOperation::Unknown,
     );
     let triggered_turn_context = parent_thread.codex.session.new_default_turn().await;
     parent_thread
@@ -1390,7 +1390,7 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
             AgentPath::root(),
             Vec::new(),
             "done".to_string(),
-            codex_protocol::protocol::InterAgentOperation::Unknown,
+            protocol::protocol::InterAgentOperation::Unknown,
         )
     ));
     assert!(!has_subagent_notification(&root_history_items));
@@ -1509,7 +1509,7 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         worker_path.clone(),
         Vec::new(),
         "queued parent update".to_string(),
-        codex_protocol::protocol::InterAgentOperation::Unknown,
+        protocol::protocol::InterAgentOperation::Unknown,
     )
     .with_trigger_turn(false);
     worker_thread
@@ -1732,10 +1732,10 @@ async fn goal_post_turn_state_continues_despite_live_direct_child() {
         AgentPath::root(),
         Vec::new(),
         "child complete".to_string(),
-        codex_protocol::protocol::InterAgentOperation::ChildCompletion,
+        protocol::protocol::InterAgentOperation::ChildCompletion,
     )
     .with_thread_ids(child_thread_id, parent_thread_id)
-    .with_status(codex_protocol::protocol::AgentStatus::Completed(Some(
+    .with_status(protocol::protocol::AgentStatus::Completed(Some(
         "child done".to_string(),
     )));
     let pending_child_completion = PendingInputItem::from(child_completion);

@@ -10,13 +10,13 @@
 use crate::message_processor::ConnectionSessionState;
 use crate::outgoing_message::ConnectionId;
 use crate::transport::AppServerTransport;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::JSONRPCRequest;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::JSONRPCRequest;
 use codex_otel::set_parent_from_context;
 use codex_otel::set_parent_from_w3c_trace_context;
 use codex_otel::traceparent_context_from_env;
-use codex_protocol::protocol::W3cTraceContext;
+use protocol::protocol::W3cTraceContext;
 use tracing::Span;
 use tracing::field;
 use tracing::info_span;

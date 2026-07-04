@@ -1,23 +1,23 @@
 //! Adapter between session tool capability calls and rollout-trace events.
 //!
-//! `codex-rollout-trace` owns the event schema and writer behavior. This module
+//! `rollout-trace` owns the event schema and writer behavior. This module
 //! keeps session-owned trace construction next to the session capability
 //! implementation instead of making the tool service own rollout details.
 
-use codex_protocol::ThreadId;
-use codex_rollout_trace_api::ExecutionStatus;
-use codex_rollout_trace_api::ThreadTraceContext;
-use codex_rollout_trace_api::ToolDispatchInvocation;
-use codex_rollout_trace_api::ToolDispatchPayload;
-use codex_rollout_trace_api::ToolDispatchRequester;
-use codex_rollout_trace_api::ToolDispatchResult;
-use codex_rollout_trace_api::ToolDispatchTraceContext;
+use protocol::ThreadId;
+use rollout_trace_api::ExecutionStatus;
+use rollout_trace_api::ThreadTraceContext;
+use rollout_trace_api::ToolDispatchInvocation;
+use rollout_trace_api::ToolDispatchPayload;
+use rollout_trace_api::ToolDispatchRequester;
+use rollout_trace_api::ToolDispatchResult;
+use rollout_trace_api::ToolDispatchTraceContext;
 use thread_service_api::ToolSessionDispatchTrace;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCallSource;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolOutput;
-use codex_tool_types::ToolPayload;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCallSource;
+use tool_service_api::ToolName;
+use tool_service_api::ToolOutput;
+use tool_service_api::ToolPayload;
 
 /// Keeps tool dispatch trace lifecycle paired with the session-owned rollout trace.
 pub struct ToolDispatchTrace {

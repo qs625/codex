@@ -1,12 +1,12 @@
 use codex_auth_types::RequestAuthSnapshot;
 use codex_connectors_api::AppInfo;
-use codex_mcp_tool_types::ToolInfo;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp_types::MCP_TOOL_CODEX_APPS_META_KEY;
-use codex_mcp_types::McpToolApprovalMetadata;
-use codex_mcp_types::mcp_app_resource_uri_from_tool_meta;
-use codex_mcp_types::openai_file_input_params_for_server;
 use mcp_service_api::McpAppUsageMetadata;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::MCP_TOOL_CODEX_APPS_META_KEY;
+use mcp_types::McpToolApprovalMetadata;
+use mcp_types::ToolInfo;
+use mcp_types::mcp_app_resource_uri_from_tool_meta;
+use mcp_types::openai_file_input_params_for_server;
 
 /// Host capabilities needed to look up MCP tool metadata.
 ///
@@ -130,8 +130,8 @@ mod tests {
     use codex_auth_types::AuthMode;
     use codex_auth_types::BearerRequestAuthSnapshot;
     use codex_auth_types::RequestAuthSnapshot;
-    use codex_mcp_tool_types::McpTool;
-    use codex_mcp_tool_types::ToolAnnotations;
+    use mcp_types::McpTool;
+    use mcp_types::ToolAnnotations;
     use pretty_assertions::assert_eq;
     use std::sync::Mutex;
 

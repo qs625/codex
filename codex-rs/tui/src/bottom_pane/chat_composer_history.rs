@@ -19,8 +19,8 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::MentionBinding;
 use crate::mention_codec::decode_history_mentions;
-use codex_protocol::ThreadId;
-use codex_protocol::user_input::TextElement;
+use protocol::ThreadId;
+use protocol::user_input::TextElement;
 
 /// A composer history entry that can rehydrate draft state.
 #[derive(Debug, Clone, PartialEq)]

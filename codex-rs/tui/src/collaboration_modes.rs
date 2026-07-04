@@ -1,6 +1,6 @@
-use codex_models_manager::collaboration_mode_presets::builtin_collaboration_mode_presets;
-use codex_protocol::config_types::CollaborationModeMask;
-use codex_protocol::config_types::ModeKind;
+use model_service::builtin_collaboration_mode_presets;
+use protocol::config_types::CollaborationModeMask;
+use protocol::config_types::ModeKind;
 
 use crate::model_catalog::ModelCatalog;
 

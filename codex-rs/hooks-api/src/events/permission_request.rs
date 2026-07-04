@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::HookCompletedEvent;
+use protocol::ThreadId;
+use protocol::protocol::HookCompletedEvent;
 use serde_json::Value;
 
 #[derive(Debug, Clone)]

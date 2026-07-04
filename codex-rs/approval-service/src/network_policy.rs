@@ -1,10 +1,10 @@
-use codex_execpolicy_api::Decision as ExecPolicyDecision;
-use codex_execpolicy_api::NetworkRuleProtocol as ExecPolicyNetworkRuleProtocol;
-use codex_protocol::approvals::NetworkApprovalContext;
-use codex_protocol::approvals::NetworkApprovalProtocol;
-use codex_protocol::approvals::NetworkPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyRuleAction;
-use codex_protocol::network_policy::NetworkPolicyDecisionPayload;
+use permissions_service_api::Decision as ExecPolicyDecision;
+use permissions_service_api::NetworkRuleProtocol as ExecPolicyNetworkRuleProtocol;
+use protocol::approvals::NetworkApprovalContext;
+use protocol::approvals::NetworkApprovalProtocol;
+use protocol::approvals::NetworkPolicyAmendment;
+use protocol::approvals::NetworkPolicyRuleAction;
+use protocol::network_policy::NetworkPolicyDecisionPayload;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecPolicyNetworkRuleAmendment {

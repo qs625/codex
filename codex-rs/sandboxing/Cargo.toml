@@ -14,14 +14,14 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-codex-client-identity = { workspace = true }
-codex-config = { workspace = true }
+transport-client-identity = { workspace = true }
+config-service = { workspace = true }
 codex-config-toml = { workspace = true }
 codex-config-types = { workspace = true }
 codex-features = { workspace = true }
-codex-metrics-api = { workspace = true }
+metrics-api = { workspace = true }
 codex-network-proxy-api = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-string = { workspace = true }
@@ -39,7 +39,7 @@ codex-windows-sandbox = { package = "codex-windows-sandbox", path = "../windows-
 
 [dev-dependencies]
 async-trait = { workspace = true }
-codex-config = { workspace = true }
+config-service = { workspace = true }
 codex-network-proxy = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

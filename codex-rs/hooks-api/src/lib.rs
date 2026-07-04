@@ -11,7 +11,7 @@ mod list;
 mod runtime;
 mod types;
 
-use codex_protocol::protocol::HookEventName;
+use protocol::protocol::HookEventName;
 
 pub use config_layers::HookConfigLayerEntry;
 pub use config_layers::HookConfigLayerStack;

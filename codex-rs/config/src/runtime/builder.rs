@@ -22,7 +22,7 @@ fn missing_config_layer_loader_error() -> std::io::Error {
 #[cfg(any(test, feature = "test-support"))]
 fn default_config_layer_loader_for_tests() -> Option<Arc<dyn ConfigLayerLoader>> {
     Some(Arc::new(
-        codex_config_local_loader::LocalConfigLayerLoader::default(),
+        crate::loader::LocalConfigLayerLoader::default(),
     ))
 }
 
@@ -305,7 +305,7 @@ impl Config {
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
             client_elicitation_support:
-                codex_mcp_types::McpClientElicitationSupport::from_auth_elicitation_enabled(
+                mcp_types::McpClientElicitationSupport::from_auth_elicitation_enabled(
                     self.features.enabled(Feature::AuthElicitation),
                 ),
             configured_mcp_servers,

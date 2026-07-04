@@ -9,8 +9,8 @@
 use std::path::Path;
 
 use codex_install_context::InstallContext;
-use thread_service::config::Config;
 use serde::Deserialize;
+use thread_service::config::Config;
 
 use super::CheckStatus;
 use super::DoctorCheck;

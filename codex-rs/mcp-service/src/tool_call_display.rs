@@ -1,16 +1,16 @@
 use std::time::Duration;
 
-use codex_mcp_types::MCP_RESULT_TELEMETRY_SERVER_USER_FLOW_SPAN_ATTR;
-use codex_mcp_types::MCP_RESULT_TELEMETRY_TARGET_ID_SPAN_ATTR;
-use codex_mcp_types::mcp_tool_call_result_span_telemetry;
-use codex_mcp_types::mcp_tool_call_server_fields;
-use codex_protocol::items::McpToolCallError;
-use codex_protocol::items::McpToolCallItem;
-use codex_protocol::items::McpToolCallStatus;
-use codex_protocol::items::TurnItem;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::protocol::McpInvocation;
 use codex_utils_string::sanitize_metric_tag_value;
+use mcp_types::MCP_RESULT_TELEMETRY_SERVER_USER_FLOW_SPAN_ATTR;
+use mcp_types::MCP_RESULT_TELEMETRY_TARGET_ID_SPAN_ATTR;
+use mcp_types::mcp_tool_call_result_span_telemetry;
+use mcp_types::mcp_tool_call_server_fields;
+use protocol::items::McpToolCallError;
+use protocol::items::McpToolCallItem;
+use protocol::items::McpToolCallStatus;
+use protocol::items::TurnItem;
+use protocol::mcp::CallToolResult;
+use protocol::protocol::McpInvocation;
 use serde_json::Value as JsonValue;
 use tracing::Span;
 use tracing::field::Empty;
@@ -173,7 +173,7 @@ pub fn build_mcp_tool_call_completed_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_mcp_types::MCP_RESULT_TELEMETRY_TARGET_ID_MAX_CHARS;
+    use mcp_types::MCP_RESULT_TELEMETRY_TARGET_ID_MAX_CHARS;
     use tracing::Instrument;
     use tracing::Level;
     use tracing_subscriber::fmt::format::FmtSpan;

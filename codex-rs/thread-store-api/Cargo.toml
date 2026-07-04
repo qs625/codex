@@ -1,11 +1,11 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-thread-store-api"
+name = "thread-store-api"
 version.workspace = true
 
 [lib]
-name = "codex_thread_store_api"
+name = "thread_store_api"
 path = "src/lib.rs"
 doctest = false
 
@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

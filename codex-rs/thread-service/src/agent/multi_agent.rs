@@ -17,34 +17,34 @@ use codex_agent_runtime::WaitAgentToolResult;
 use codex_agent_runtime::is_final;
 use codex_agent_runtime::render_input_preview;
 use codex_agent_runtime::wait_agent_result_from_message;
-use codex_protocol::AgentPath;
-use codex_protocol::ThreadId;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::CollabAgentInteractionBeginEvent;
-use codex_protocol::protocol::CollabAgentInteractionEndEvent;
-use codex_protocol::protocol::CollabAgentRef;
-use codex_protocol::protocol::CollabAgentSpawnBeginEvent;
-use codex_protocol::protocol::CollabAgentSpawnEndEvent;
-use codex_protocol::protocol::CollabAgentStatusEntry;
-use codex_protocol::protocol::CollabCloseBeginEvent;
-use codex_protocol::protocol::CollabCloseEndEvent;
-use codex_protocol::protocol::CollabListAgentsBeginEvent;
-use codex_protocol::protocol::CollabListAgentsEndEvent;
-use codex_protocol::protocol::CollabListedAgent;
-use codex_protocol::protocol::CollabWaitingBeginEvent;
-use codex_protocol::protocol::CollabWaitingEndEvent;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::InterAgentOperation;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use thread_service_api::PendingInputItem;
-use codex_tool_types::FunctionCallError;
+use protocol::AgentPath;
+use protocol::ThreadId;
+use protocol::models::ResponseItem;
+use protocol::protocol::CollabAgentInteractionBeginEvent;
+use protocol::protocol::CollabAgentInteractionEndEvent;
+use protocol::protocol::CollabAgentRef;
+use protocol::protocol::CollabAgentSpawnBeginEvent;
+use protocol::protocol::CollabAgentSpawnEndEvent;
+use protocol::protocol::CollabAgentStatusEntry;
+use protocol::protocol::CollabCloseBeginEvent;
+use protocol::protocol::CollabCloseEndEvent;
+use protocol::protocol::CollabListAgentsBeginEvent;
+use protocol::protocol::CollabListAgentsEndEvent;
+use protocol::protocol::CollabListedAgent;
+use protocol::protocol::CollabWaitingBeginEvent;
+use protocol::protocol::CollabWaitingEndEvent;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentOperation;
+use protocol::protocol::Op;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use thread_service_api::PendingInputItem;
 use tokio::sync::watch;
+use tool_service_api::FunctionCallError;
 
 pub(crate) async fn spawn_agent_tool(
     session: Arc<Session>,
@@ -52,22 +52,25 @@ pub(crate) async fn spawn_agent_tool(
     call_id: String,
     request: SpawnAgentToolRequest,
 ) -> Result<SpawnAgentToolResult, FunctionCallError> {
-            let prompt = message_content(request.message.clone())?;
-            session.send_event(
-                turn.as_ref(),
-                CollabAgentSpawnBeginEvent {
-                    call_id: call_id.clone(),
-                    started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id: session.thread_id(),
-                    sender_agent_path: session.current_agent_path_for_turn(turn.as_ref()).to_string(),
-                    prompt,
-                    model: request.model.clone().unwrap_or_default(),
-                    reasoning_effort: request.reasoning_effort.unwrap_or_default(),
-                }
-                .into(),
-            )
-            .await;
-            handle_spawn_agent_request(session, turn, call_id, request).await
+    let prompt = message_content(request.message.clone())?;
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabAgentSpawnBeginEvent {
+                call_id: call_id.clone(),
+                started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id: session.thread_id(),
+                sender_agent_path: session
+                    .current_agent_path_for_turn(turn.as_ref())
+                    .to_string(),
+                prompt,
+                model: request.model.clone().unwrap_or_default(),
+                reasoning_effort: request.reasoning_effort.unwrap_or_default(),
+            }
+            .into(),
+        )
+        .await;
+    handle_spawn_agent_request(session, turn, call_id, request).await
 }
 
 pub(crate) async fn followup_task_tool(
@@ -77,90 +80,88 @@ pub(crate) async fn followup_task_tool(
     target: String,
     message: String,
 ) -> Result<(), FunctionCallError> {
-            let prompt = message_content(message)?;
-            let sender_thread_id = session.thread_id();
-            let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref());
-            let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
-            let receiver_agent = session.agent_metadata(receiver_thread_id);
-            reject_root_agent(
-                receiver_agent.agent_path.as_ref(),
-                "Tasks can't be assigned to the root agent",
-            )?;
-            let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
-                FunctionCallError::RespondToModel(
-                    "target agent is missing an agent_path".to_string(),
-                )
-            })?;
-            let receiver_agent_path_string = receiver_agent_path.to_string();
-            session.send_event(
-                turn.as_ref(),
-                CollabAgentInteractionBeginEvent {
-                    call_id: call_id.clone(),
-                    started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id,
-                    sender_agent_path: sender_agent_path.to_string(),
-                    receiver_thread_id,
-                    receiver_agent_path: receiver_agent_path_string.clone(),
-                    prompt: prompt.clone(),
-                }
-                .into(),
-            )
-            .await;
-            let receiver_is_direct_child =
-                is_direct_child(&sender_agent_path, &receiver_agent_path);
-            let receiver_will_send_completion =
-                receiver_agent.agent_mode != crate::agent::AgentMode::Management;
-            if receiver_is_direct_child && receiver_will_send_completion {
-                session.mark_direct_child_completion_pending(receiver_thread_id)
-                    .await;
+    let prompt = message_content(message)?;
+    let sender_thread_id = session.thread_id();
+    let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref());
+    let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
+    let receiver_agent = session.agent_metadata(receiver_thread_id);
+    reject_root_agent(
+        receiver_agent.agent_path.as_ref(),
+        "Tasks can't be assigned to the root agent",
+    )?;
+    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
+        FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
+    })?;
+    let receiver_agent_path_string = receiver_agent_path.to_string();
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabAgentInteractionBeginEvent {
+                call_id: call_id.clone(),
+                started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id,
+                sender_agent_path: sender_agent_path.to_string(),
+                receiver_thread_id,
+                receiver_agent_path: receiver_agent_path_string.clone(),
+                prompt: prompt.clone(),
             }
+            .into(),
+        )
+        .await;
+    let receiver_is_direct_child = is_direct_child(&sender_agent_path, &receiver_agent_path);
+    let receiver_will_send_completion =
+        receiver_agent.agent_mode != crate::agent::AgentMode::Management;
+    if receiver_is_direct_child && receiver_will_send_completion {
+        session
+            .mark_direct_child_completion_pending(receiver_thread_id)
+            .await;
+    }
 
-            let communication = InterAgentCommunication::new(
-                sender_agent_path.clone(),
-                receiver_agent_path,
-                Vec::new(),
-                prompt.clone(),
-                InterAgentOperation::FollowupTask,
-            )
-            .with_thread_ids(sender_thread_id, receiver_thread_id);
-            let result = session
-                .send_inter_agent_communication(
-                    receiver_thread_id,
-                    communication.with_trigger_turn(true),
-                )
-                .await
-                .map_err(|err| collab_agent_error(receiver_thread_id, err));
-            let status = session.agent_status(receiver_thread_id).await;
-            session.send_event(
-                turn.as_ref(),
-                CollabAgentInteractionEndEvent {
-                    call_id,
-                    completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id,
-                    sender_agent_path: sender_agent_path.to_string(),
-                    receiver_thread_id,
-                    receiver_agent_path: receiver_agent_path_string,
-                    receiver_agent_nickname: receiver_agent.agent_nickname,
-                    receiver_agent_role: receiver_agent.agent_role,
-                    prompt,
-                    status,
-                }
-                .into(),
-            )
-            .await;
-            if let Err(err) = result {
-                if receiver_is_direct_child
-                    && receiver_will_send_completion
-                    && session
-                        .mark_direct_child_completion_received(receiver_thread_id)
-                        .await
-                {
-                    session.maybe_notify_parent_of_final_status_for_current_source()
-                        .await;
-                }
-                return Err(err);
+    let communication = InterAgentCommunication::new(
+        sender_agent_path.clone(),
+        receiver_agent_path,
+        Vec::new(),
+        prompt.clone(),
+        InterAgentOperation::FollowupTask,
+    )
+    .with_thread_ids(sender_thread_id, receiver_thread_id);
+    let result = session
+        .send_inter_agent_communication(receiver_thread_id, communication.with_trigger_turn(true))
+        .await
+        .map_err(|err| collab_agent_error(receiver_thread_id, err));
+    let status = session.agent_status(receiver_thread_id).await;
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabAgentInteractionEndEvent {
+                call_id,
+                completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id,
+                sender_agent_path: sender_agent_path.to_string(),
+                receiver_thread_id,
+                receiver_agent_path: receiver_agent_path_string,
+                receiver_agent_nickname: receiver_agent.agent_nickname,
+                receiver_agent_role: receiver_agent.agent_role,
+                prompt,
+                status,
             }
-            Ok(())
+            .into(),
+        )
+        .await;
+    if let Err(err) = result {
+        if receiver_is_direct_child
+            && receiver_will_send_completion
+            && session
+                .mark_direct_child_completion_received(receiver_thread_id)
+                .await
+        {
+            session
+                .maybe_notify_parent_of_final_status_for_current_source()
+                .await;
+        }
+        return Err(err);
+    }
+    Ok(())
 }
 
 pub(crate) async fn wait_agent_tool(
@@ -169,169 +170,171 @@ pub(crate) async fn wait_agent_tool(
     call_id: String,
     target: String,
 ) -> Result<WaitAgentToolResult, FunctionCallError> {
-            let sender_thread_id = session.thread_id();
-            let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
-            let receiver_agent = session.agent_metadata(receiver_thread_id);
-            reject_root_agent(
-                receiver_agent.agent_path.as_ref(),
-                "root is not a spawned agent",
-            )?;
-            let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
-                FunctionCallError::RespondToModel(
-                    "target agent is missing an agent_path".to_string(),
-                )
-            })?;
-            let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref());
-            let (initial_timeout_ms, hard_cap_timeout_ms) = turn.default_wait_agent_timeouts();
-            let current_timeout = session
-                .wait_agent_current_window(
-                    sender_thread_id,
-                    receiver_thread_id,
-                    initial_timeout_ms,
-                    hard_cap_timeout_ms,
-                )
-                .await;
-            session.send_event(
-                turn.as_ref(),
-                CollabWaitingBeginEvent {
-                    call_id: call_id.clone(),
-                    started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id,
-                    sender_agent_path: sender_agent_path.to_string(),
-                    receiver_thread_ids: vec![receiver_thread_id],
-                    receiver_agents: vec![CollabAgentRef {
-                        thread_id: receiver_thread_id,
-                        agent_path: Some(receiver_agent_path.to_string()),
-                        agent_nickname: receiver_agent.agent_nickname.clone(),
-                        agent_role: receiver_agent.agent_role.clone(),
-                    }],
-                    timeout_ms: duration_to_ms(current_timeout),
-                }
-                .into(),
-            )
-            .await;
-
-            let started = Instant::now();
-            let mailbox_seq_rx = session.subscribe_mailbox_seq();
-            let snapshot_status = session.agent_status(receiver_thread_id).await;
-            let agent_name = receiver_agent_path.to_string();
-            let current_timeout_ms = duration_to_ms(current_timeout);
-            let result = if let Some(message) = session
-                .find_pending_input(|item| {
-                    matching_communication(item, receiver_thread_id, &receiver_agent_path)
-                })
-                .await
-            {
-                build_wait_result(
-                    target,
-                    agent_name,
-                    WaitAgentReason::PendingMessage,
-                    message.status.clone().unwrap_or(snapshot_status),
-                    Some(message),
-                    started,
-                    initial_timeout_ms,
-                    current_timeout_ms,
-                    hard_cap_timeout_ms,
-                )
-            } else if is_final(&snapshot_status) {
-                build_wait_result(
-                    target,
-                    agent_name,
-                    WaitAgentReason::FinalStatus,
-                    snapshot_status,
-                    None,
-                    started,
-                    initial_timeout_ms,
-                    current_timeout_ms,
-                    hard_cap_timeout_ms,
-                )
-            } else {
-                let mut status_rx = session
-                    .subscribe_agent_status(receiver_thread_id)
-                    .await
-                    .map_err(|err| collab_agent_error(receiver_thread_id, err))?;
-                let initial_status = status_rx.borrow_and_update().clone();
-                if let Some(message) = session
-                    .find_pending_input(|item| {
-                        matching_communication(item, receiver_thread_id, &receiver_agent_path)
-                    })
-                    .await
-                {
-                    build_wait_result(
-                        target,
-                        agent_name,
-                        WaitAgentReason::MailboxMessage,
-                        message.status.clone().unwrap_or(initial_status),
-                        Some(message),
-                        started,
-                        initial_timeout_ms,
-                        current_timeout_ms,
-                        hard_cap_timeout_ms,
-                    )
-                } else if is_final(&initial_status) {
-                    build_wait_result(
-                        target,
-                        agent_name,
-                        WaitAgentReason::FinalStatus,
-                        initial_status,
-                        None,
-                        started,
-                        initial_timeout_ms,
-                        current_timeout_ms,
-                        hard_cap_timeout_ms,
-                    )
-                } else {
-                    wait_for_update(
-                        &session,
-                        receiver_thread_id,
-                        receiver_agent_path.clone(),
-                        mailbox_seq_rx,
-                        status_rx,
-                        current_timeout,
-                        WaitAgentContext {
-                            target,
-                            agent_name,
-                            started,
-                            initial_timeout_ms,
-                            current_timeout_ms,
-                            hard_cap_timeout_ms,
-                        },
-                    )
-                    .await
-                }
-            };
-            if result.timed_out {
-                session.advance_wait_agent_backoff(sender_thread_id, receiver_thread_id)
-                    .await;
-            } else {
-                session.reset_wait_agent_backoff(sender_thread_id, receiver_thread_id)
-                    .await;
+    let sender_thread_id = session.thread_id();
+    let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
+    let receiver_agent = session.agent_metadata(receiver_thread_id);
+    reject_root_agent(
+        receiver_agent.agent_path.as_ref(),
+        "root is not a spawned agent",
+    )?;
+    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
+        FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
+    })?;
+    let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref());
+    let (initial_timeout_ms, hard_cap_timeout_ms) = turn.default_wait_agent_timeouts();
+    let current_timeout = session
+        .wait_agent_current_window(
+            sender_thread_id,
+            receiver_thread_id,
+            initial_timeout_ms,
+            hard_cap_timeout_ms,
+        )
+        .await;
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabWaitingBeginEvent {
+                call_id: call_id.clone(),
+                started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id,
+                sender_agent_path: sender_agent_path.to_string(),
+                receiver_thread_ids: vec![receiver_thread_id],
+                receiver_agents: vec![CollabAgentRef {
+                    thread_id: receiver_thread_id,
+                    agent_path: Some(receiver_agent_path.to_string()),
+                    agent_nickname: receiver_agent.agent_nickname.clone(),
+                    agent_role: receiver_agent.agent_role.clone(),
+                }],
+                timeout_ms: duration_to_ms(current_timeout),
             }
+            .into(),
+        )
+        .await;
 
-            let mut statuses = HashMap::new();
-            statuses.insert(receiver_thread_id, result.status.clone());
-            session.send_event(
-                turn.as_ref(),
-                CollabWaitingEndEvent {
-                    call_id,
-                    completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id,
-                    sender_agent_path: sender_agent_path.to_string(),
-                    timeout_ms: duration_to_ms(current_timeout),
-                    agent_statuses: vec![CollabAgentStatusEntry {
-                        thread_id: receiver_thread_id,
-                        agent_path: Some(receiver_agent_path.to_string()),
-                        agent_nickname: receiver_agent.agent_nickname,
-                        agent_role: receiver_agent.agent_role,
-                        status: result.status.clone(),
-                    }],
-                    statuses,
-                }
-                .into(),
+    let started = Instant::now();
+    let mailbox_seq_rx = session.subscribe_mailbox_seq();
+    let snapshot_status = session.agent_status(receiver_thread_id).await;
+    let agent_name = receiver_agent_path.to_string();
+    let current_timeout_ms = duration_to_ms(current_timeout);
+    let result = if let Some(message) = session
+        .find_pending_input(|item| {
+            matching_communication(item, receiver_thread_id, &receiver_agent_path)
+        })
+        .await
+    {
+        build_wait_result(
+            target,
+            agent_name,
+            WaitAgentReason::PendingMessage,
+            message.status.clone().unwrap_or(snapshot_status),
+            Some(message),
+            started,
+            initial_timeout_ms,
+            current_timeout_ms,
+            hard_cap_timeout_ms,
+        )
+    } else if is_final(&snapshot_status) {
+        build_wait_result(
+            target,
+            agent_name,
+            WaitAgentReason::FinalStatus,
+            snapshot_status,
+            None,
+            started,
+            initial_timeout_ms,
+            current_timeout_ms,
+            hard_cap_timeout_ms,
+        )
+    } else {
+        let mut status_rx = session
+            .subscribe_agent_status(receiver_thread_id)
+            .await
+            .map_err(|err| collab_agent_error(receiver_thread_id, err))?;
+        let initial_status = status_rx.borrow_and_update().clone();
+        if let Some(message) = session
+            .find_pending_input(|item| {
+                matching_communication(item, receiver_thread_id, &receiver_agent_path)
+            })
+            .await
+        {
+            build_wait_result(
+                target,
+                agent_name,
+                WaitAgentReason::MailboxMessage,
+                message.status.clone().unwrap_or(initial_status),
+                Some(message),
+                started,
+                initial_timeout_ms,
+                current_timeout_ms,
+                hard_cap_timeout_ms,
             )
+        } else if is_final(&initial_status) {
+            build_wait_result(
+                target,
+                agent_name,
+                WaitAgentReason::FinalStatus,
+                initial_status,
+                None,
+                started,
+                initial_timeout_ms,
+                current_timeout_ms,
+                hard_cap_timeout_ms,
+            )
+        } else {
+            wait_for_update(
+                &session,
+                receiver_thread_id,
+                receiver_agent_path.clone(),
+                mailbox_seq_rx,
+                status_rx,
+                current_timeout,
+                WaitAgentContext {
+                    target,
+                    agent_name,
+                    started,
+                    initial_timeout_ms,
+                    current_timeout_ms,
+                    hard_cap_timeout_ms,
+                },
+            )
+            .await
+        }
+    };
+    if result.timed_out {
+        session
+            .advance_wait_agent_backoff(sender_thread_id, receiver_thread_id)
             .await;
+    } else {
+        session
+            .reset_wait_agent_backoff(sender_thread_id, receiver_thread_id)
+            .await;
+    }
 
-            Ok(result)
+    let mut statuses = HashMap::new();
+    statuses.insert(receiver_thread_id, result.status.clone());
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabWaitingEndEvent {
+                call_id,
+                completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id,
+                sender_agent_path: sender_agent_path.to_string(),
+                timeout_ms: duration_to_ms(current_timeout),
+                agent_statuses: vec![CollabAgentStatusEntry {
+                    thread_id: receiver_thread_id,
+                    agent_path: Some(receiver_agent_path.to_string()),
+                    agent_nickname: receiver_agent.agent_nickname,
+                    agent_role: receiver_agent.agent_role,
+                    status: result.status.clone(),
+                }],
+                statuses,
+            }
+            .into(),
+        )
+        .await;
+
+    Ok(result)
 }
 
 pub(crate) async fn close_agent_tool(
@@ -340,66 +343,68 @@ pub(crate) async fn close_agent_tool(
     call_id: String,
     target: String,
 ) -> Result<CloseAgentToolResult, FunctionCallError> {
-            let sender_thread_id = session.thread_id();
-            let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref());
-            let agent_id = resolve_agent_target(&session, &turn, &target).await?;
-            let receiver_agent = session.agent_metadata(agent_id);
-            reject_root_agent(
-                receiver_agent.agent_path.as_ref(),
-                "root is not a spawned agent",
-            )?;
-            let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
-                FunctionCallError::RespondToModel(
-                    "target agent is missing an agent_path".to_string(),
-                )
-            })?;
-            let receiver_is_direct_child =
-                is_direct_child(&sender_agent_path, &receiver_agent_path);
-            session.send_event(
-                turn.as_ref(),
-                CollabCloseBeginEvent {
-                    call_id: call_id.clone(),
-                    started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id,
-                    sender_agent_path: sender_agent_path.to_string(),
-                    receiver_thread_id: agent_id,
-                    receiver_agent_path: receiver_agent_path.to_string(),
-                }
-                .into(),
-            )
-            .await;
-            let status = session.agent_status(agent_id).await;
-            let result = session
-                .close_agent(agent_id)
-                .await
-                .map_err(|err| collab_agent_error(agent_id, err));
-            session.send_event(
-                turn.as_ref(),
-                CollabCloseEndEvent {
-                    call_id,
-                    completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id,
-                    sender_agent_path: sender_agent_path.to_string(),
-                    receiver_thread_id: agent_id,
-                    receiver_agent_path: receiver_agent_path.to_string(),
-                    receiver_agent_nickname: receiver_agent.agent_nickname,
-                    receiver_agent_role: receiver_agent.agent_role,
-                    status: status.clone(),
-                }
-                .into(),
-            )
-            .await;
-            result?;
-            if receiver_is_direct_child
-                && session.clear_direct_child_completion_pending(agent_id).await
-            {
-                session.maybe_notify_parent_of_final_status_for_current_source()
-                    .await;
+    let sender_thread_id = session.thread_id();
+    let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref());
+    let agent_id = resolve_agent_target(&session, &turn, &target).await?;
+    let receiver_agent = session.agent_metadata(agent_id);
+    reject_root_agent(
+        receiver_agent.agent_path.as_ref(),
+        "root is not a spawned agent",
+    )?;
+    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
+        FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
+    })?;
+    let receiver_is_direct_child = is_direct_child(&sender_agent_path, &receiver_agent_path);
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabCloseBeginEvent {
+                call_id: call_id.clone(),
+                started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id,
+                sender_agent_path: sender_agent_path.to_string(),
+                receiver_thread_id: agent_id,
+                receiver_agent_path: receiver_agent_path.to_string(),
             }
+            .into(),
+        )
+        .await;
+    let status = session.agent_status(agent_id).await;
+    let result = session
+        .close_agent(agent_id)
+        .await
+        .map_err(|err| collab_agent_error(agent_id, err));
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabCloseEndEvent {
+                call_id,
+                completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id,
+                sender_agent_path: sender_agent_path.to_string(),
+                receiver_thread_id: agent_id,
+                receiver_agent_path: receiver_agent_path.to_string(),
+                receiver_agent_nickname: receiver_agent.agent_nickname,
+                receiver_agent_role: receiver_agent.agent_role,
+                status: status.clone(),
+            }
+            .into(),
+        )
+        .await;
+    result?;
+    if receiver_is_direct_child
+        && session
+            .clear_direct_child_completion_pending(agent_id)
+            .await
+    {
+        session
+            .maybe_notify_parent_of_final_status_for_current_source()
+            .await;
+    }
 
-            Ok(CloseAgentToolResult {
-                previous_status: status,
-            })
+    Ok(CloseAgentToolResult {
+        previous_status: status,
+    })
 }
 
 pub(crate) async fn list_agents_tool(
@@ -408,54 +413,58 @@ pub(crate) async fn list_agents_tool(
     call_id: String,
     path_prefix: Option<String>,
 ) -> Result<ListAgentsToolResult, FunctionCallError> {
-            let sender_thread_id = session.thread_id();
-            let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref()).to_string();
-            session.send_event(
-                turn.as_ref(),
-                CollabListAgentsBeginEvent {
-                    call_id: call_id.clone(),
-                    started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id,
-                    sender_agent_path: sender_agent_path.clone(),
-                    path_prefix: path_prefix.clone(),
-                }
-                .into(),
-            )
-            .await;
-            session.register_session_root_for_turn(turn.as_ref());
-            let agents = session
-                .list_agents_for_turn(turn.as_ref(), path_prefix.as_deref())
-                .await
-                .map_err(collab_spawn_error);
-            let listed_agents = agents.as_ref().map_or_else(
-                |_| Vec::new(),
-                |agents| {
-                    agents
-                        .iter()
-                        .map(|agent| CollabListedAgent {
-                            agent_path: agent.agent_name.clone(),
-                            status: agent.agent_status.clone(),
-                            last_task_message: agent.last_task_message.clone(),
-                        })
-                        .collect()
-                },
-            );
-            session.send_event(
-                turn.as_ref(),
-                CollabListAgentsEndEvent {
-                    call_id,
-                    completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id,
-                    sender_agent_path,
-                    path_prefix,
-                    success: agents.is_ok(),
-                    agents: listed_agents,
-                }
-                .into(),
-            )
-            .await;
+    let sender_thread_id = session.thread_id();
+    let sender_agent_path = session
+        .current_agent_path_for_turn(turn.as_ref())
+        .to_string();
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabListAgentsBeginEvent {
+                call_id: call_id.clone(),
+                started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id,
+                sender_agent_path: sender_agent_path.clone(),
+                path_prefix: path_prefix.clone(),
+            }
+            .into(),
+        )
+        .await;
+    session.register_session_root_for_turn(turn.as_ref());
+    let agents = session
+        .list_agents_for_turn(turn.as_ref(), path_prefix.as_deref())
+        .await
+        .map_err(collab_spawn_error);
+    let listed_agents = agents.as_ref().map_or_else(
+        |_| Vec::new(),
+        |agents| {
+            agents
+                .iter()
+                .map(|agent| CollabListedAgent {
+                    agent_path: agent.agent_name.clone(),
+                    status: agent.agent_status.clone(),
+                    last_task_message: agent.last_task_message.clone(),
+                })
+                .collect()
+        },
+    );
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabListAgentsEndEvent {
+                call_id,
+                completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id,
+                sender_agent_path,
+                path_prefix,
+                success: agents.is_ok(),
+                agents: listed_agents,
+            }
+            .into(),
+        )
+        .await;
 
-            Ok(ListAgentsToolResult { agents: agents? })
+    Ok(ListAgentsToolResult { agents: agents? })
 }
 
 fn matching_communication(
@@ -828,36 +837,37 @@ async fn handle_spawn_agent_request(
         role_name,
         Some(request.task_name.clone()),
     )?;
-    let result = Box::pin(session.spawn_agent_with_metadata(
-        config,
-        match (spawn_source.get_agent_path(), initial_operation) {
-            (Some(recipient), Op::UserInput { items, .. })
-                if items.iter().all(|item| {
-                    matches!(item, codex_protocol::user_input::UserInput::Text { .. })
-                }) =>
-            {
-                Op::InterAgentCommunication {
-                    communication: InterAgentCommunication::new(
-                        current_agent_path.clone(),
-                        recipient,
-                        Vec::new(),
-                        prompt.clone(),
-                        InterAgentOperation::SpawnAgent,
-                    ),
+    let result =
+        Box::pin(session.spawn_agent_with_metadata(
+            config,
+            match (spawn_source.get_agent_path(), initial_operation) {
+                (Some(recipient), Op::UserInput { items, .. })
+                    if items.iter().all(|item| {
+                        matches!(item, protocol::user_input::UserInput::Text { .. })
+                    }) =>
+                {
+                    Op::InterAgentCommunication {
+                        communication: InterAgentCommunication::new(
+                            current_agent_path.clone(),
+                            recipient,
+                            Vec::new(),
+                            prompt.clone(),
+                            InterAgentOperation::SpawnAgent,
+                        ),
+                    }
                 }
-            }
-            (_, initial_operation) => initial_operation,
-        },
-        Some(spawn_source),
-        SpawnAgentOptions {
-            fork_parent_spawn_call_id: request.fork_mode.as_ref().map(|_| call_id.clone()),
-            fork_mode: request.fork_mode,
-            environments: Some(turn.spawn_agent_environment_selections(request.cwd.as_ref())),
-            agent_mode: request.agent_mode.unwrap_or_default(),
-        },
-    ))
-    .await
-    .map_err(collab_spawn_error);
+                (_, initial_operation) => initial_operation,
+            },
+            Some(spawn_source),
+            SpawnAgentOptions {
+                fork_parent_spawn_call_id: request.fork_mode.as_ref().map(|_| call_id.clone()),
+                fork_mode: request.fork_mode,
+                environments: Some(turn.spawn_agent_environment_selections(request.cwd.as_ref())),
+                agent_mode: request.agent_mode.unwrap_or_default(),
+            },
+        ))
+        .await
+        .map_err(collab_spawn_error);
     let (new_thread_id, new_agent_metadata, status) = match &result {
         Ok(spawned_agent) => (
             Some(spawned_agent.thread_id),

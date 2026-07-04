@@ -1,13 +1,5 @@
 use std::collections::HashMap;
 
-use codex_jsonrpc_types::JSONRPCErrorError;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::FileSystemSpecialPath;
-use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_sandboxing::SandboxManager;
 use codex_sandboxing_api::SandboxCommand;
 use codex_sandboxing_api::SandboxExecRequest;
@@ -15,6 +7,14 @@ use codex_sandboxing_api::SandboxTransformRequest;
 use codex_sandboxing_api::SandboxablePreference;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_preserving_symlinks;
+use jsonrpc_types::JSONRPCErrorError;
+use protocol::models::PermissionProfile;
+use protocol::permissions::FileSystemAccessMode;
+use protocol::permissions::FileSystemPath;
+use protocol::permissions::FileSystemSandboxEntry;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::FileSystemSpecialPath;
+use protocol::permissions::NetworkSandboxPolicy;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
@@ -316,15 +316,15 @@ mod tests {
     use std::collections::HashMap;
     use std::ffi::OsString;
 
-    use codex_protocol::models::PermissionProfile;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSandboxPolicy;
-    use codex_protocol::permissions::FileSystemSpecialPath;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+    use protocol::models::PermissionProfile;
+    use protocol::permissions::FileSystemAccessMode;
+    use protocol::permissions::FileSystemPath;
+    use protocol::permissions::FileSystemSandboxEntry;
+    use protocol::permissions::FileSystemSandboxPolicy;
+    use protocol::permissions::FileSystemSpecialPath;
+    use protocol::permissions::NetworkSandboxPolicy;
 
     use crate::ExecServerRuntimePaths;
 

@@ -9,7 +9,7 @@ workspace = true
 
 [dependencies]
 codex-lmstudio = { workspace = true }
-codex-model-provider-info = { workspace = true }
+model-service-api = { workspace = true }
 codex-ollama = { workspace = true }
 
 [lib]

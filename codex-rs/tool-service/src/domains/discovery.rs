@@ -20,29 +20,18 @@ use crate::planning::dynamic_tool_to_responses_api_tool;
 use crate::planning::filter_request_plugin_install_discoverable_tools_for_client;
 use crate::planning::mcp_tool_to_deferred_responses_api_tool;
 use crate::planning::mcp_tool_to_responses_api_tool;
-use codex_config_edit::ConfigEdit;
-use codex_config_edit::ConfigEditsBuilder;
+use config_service::ConfigEdit;
+use config_service::ConfigEditsBuilder;
 use codex_config_types::ToolSuggestDisabledTool;
-use codex_mcp_tool_types::ToolInfo;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp_types::ElicitationAction;
-use codex_mcp_types::ElicitationResponse;
-use codex_mcp_types::McpElicitationObjectType;
-use codex_mcp_types::McpElicitationSchema;
-use codex_mcp_types::McpServerElicitationRequest;
-use codex_mcp_types::McpServerElicitationRequestParams;
-use codex_protocol::mcp::RequestId;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
-use codex_tool_types::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
-use codex_tool_types::RequestPluginInstallElicitationRequest;
-use codex_tool_types::RequestPluginInstallElicitationSchema;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::all_requested_connectors_picked_up;
-use codex_tool_types::verified_connector_install_completed;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::ElicitationAction;
+use mcp_types::ElicitationResponse;
+use mcp_types::McpElicitationObjectType;
+use mcp_types::McpElicitationSchema;
+use mcp_types::McpServerElicitationRequest;
+use mcp_types::McpServerElicitationRequestParams;
+use mcp_types::ToolInfo;
+use protocol::mcp::RequestId;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -52,6 +41,17 @@ use std::sync::Arc;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
+use tool_service_api::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;
+use tool_service_api::RequestPluginInstallElicitationRequest;
+use tool_service_api::RequestPluginInstallElicitationSchema;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::all_requested_connectors_picked_up;
+use tool_service_api::verified_connector_install_completed;
 use tracing::warn;
 
 use crate::context::TypedToolSpecRequest;
@@ -104,7 +104,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 pub(crate) async fn dispatch(
     session: Arc<dyn ThreadSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
-    dynamic_tools: &[codex_protocol::dynamic_tools::DynamicToolSpec],
+    dynamic_tools: &[protocol::dynamic_tools::DynamicToolSpec],
     mcp_tools: Option<&[ToolInfo]>,
     deferred_mcp_tools: Option<&[ToolInfo]>,
     discoverable_tools: Option<&[DiscoverableTool]>,
@@ -125,7 +125,7 @@ pub(crate) async fn dispatch(
 }
 
 fn dispatch_tool_search(
-    dynamic_tools: &[codex_protocol::dynamic_tools::DynamicToolSpec],
+    dynamic_tools: &[protocol::dynamic_tools::DynamicToolSpec],
     mcp_tools: Option<&[ToolInfo]>,
     deferred_mcp_tools: Option<&[ToolInfo]>,
     call: ToolCall,
@@ -136,7 +136,7 @@ fn dispatch_tool_search(
         deferred_mcp_tools,
     ));
     let arguments = match &call.payload {
-        codex_tool_types::ToolPayload::ToolSearch { arguments } => arguments.clone(),
+        tool_service_api::ToolPayload::ToolSearch { arguments } => arguments.clone(),
         _ => {
             return Err(FunctionCallError::Fatal(format!(
                 "{TOOL_SEARCH_TOOL_NAME} handler received unsupported payload"
@@ -197,8 +197,7 @@ async fn dispatch_request_plugin_install(
         .as_ref()
         .is_some_and(|response| response.action == ElicitationAction::Accept);
     let completed = if user_confirmed {
-        complete_request_plugin_install_if_ready(session.as_ref(), turn.as_ref(), &tool)
-            .await
+        complete_request_plugin_install_if_ready(session.as_ref(), turn.as_ref(), &tool).await
     } else {
         false
     };
@@ -259,7 +258,8 @@ async fn maybe_persist_disabled_install_request(
         return;
     }
 
-    if let Err(err) = persist_disabled_install_request(&turn.discovery_context().home_root, tool).await
+    if let Err(err) =
+        persist_disabled_install_request(&turn.discovery_context().home_root, tool).await
     {
         warn!(
             error = %err,
@@ -335,7 +335,9 @@ async fn complete_request_plugin_install_if_ready(
         }
         DiscoverableTool::Plugin(plugin) => {
             session.reload_user_config_layer().await;
-            let completed = session.configured_plugin_installed(plugin.id.as_str()).await;
+            let completed = session
+                .configured_plugin_installed(plugin.id.as_str())
+                .await;
             let _ = refresh_missing_requested_connectors(
                 session,
                 turn,
@@ -363,10 +365,9 @@ async fn refresh_missing_requested_connectors(
     let accessible_connectors = turn
         .cached_accessible_connectors_from_mcp_tools(auth_snapshot)
         .await;
-    if accessible_connectors
-        .as_ref()
-        .is_some_and(|connectors| all_requested_connectors_picked_up(expected_connector_ids, connectors))
-    {
+    if accessible_connectors.as_ref().is_some_and(|connectors| {
+        all_requested_connectors_picked_up(expected_connector_ids, connectors)
+    }) {
         return accessible_connectors;
     }
 
@@ -427,7 +428,7 @@ fn search_infos(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSearchInfo> {
 }
 
 fn search_infos_from_parts(
-    dynamic_tools: &[codex_protocol::dynamic_tools::DynamicToolSpec],
+    dynamic_tools: &[protocol::dynamic_tools::DynamicToolSpec],
     mcp_tools: Option<&[ToolInfo]>,
     deferred_mcp_tools: Option<&[ToolInfo]>,
 ) -> Vec<ToolSearchInfo> {
@@ -464,7 +465,7 @@ fn search_infos_from_parts(
     infos
 }
 
-fn dynamic_tool_to_spec(tool: &codex_protocol::dynamic_tools::DynamicToolSpec) -> Option<ToolSpec> {
+fn dynamic_tool_to_spec(tool: &protocol::dynamic_tools::DynamicToolSpec) -> Option<ToolSpec> {
     let output_tool = dynamic_tool_to_responses_api_tool(tool).ok()?;
     Some(match tool.namespace.as_ref() {
         Some(namespace) => ToolSpec::Namespace(ResponsesApiNamespace {
@@ -476,7 +477,7 @@ fn dynamic_tool_to_spec(tool: &codex_protocol::dynamic_tools::DynamicToolSpec) -
     })
 }
 
-fn build_dynamic_search_text(tool: &codex_protocol::dynamic_tools::DynamicToolSpec) -> String {
+fn build_dynamic_search_text(tool: &protocol::dynamic_tools::DynamicToolSpec) -> String {
     match tool.namespace.as_deref() {
         Some(namespace) => format!("{namespace} {} {}", tool.name, tool.description),
         None => format!("{} {}", tool.name, tool.description),

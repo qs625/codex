@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use codex_exec_server_api::ExecRuntimeError;
+use exec_server_api::ExecRuntimeError;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use tokio::sync::watch;

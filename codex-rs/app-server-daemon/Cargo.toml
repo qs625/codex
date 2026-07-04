@@ -1,11 +1,11 @@
 [package]
-name = "codex-app-server-daemon"
+name = "app-server-daemon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "codex_app_server_daemon"
+name = "app_server_daemon"
 path = "src/lib.rs"
 doctest = false
 
@@ -14,8 +14,8 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-codex-app-server-protocol = { workspace = true }
-codex-app-server-transport = { workspace = true }
+app-server-protocol = { workspace = true }
+app-server-transport = { workspace = true }
 codex-utils-home-dir = { workspace = true }
 codex-uds = { workspace = true }
 futures = { workspace = true }

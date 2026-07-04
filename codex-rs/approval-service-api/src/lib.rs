@@ -1,39 +1,48 @@
-use std::collections::HashMap;
 use std::any::Any;
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Weak;
 use std::sync::Arc;
+use std::sync::Weak;
 
-use codex_execpolicy_api::Decision as ExecPolicyDecision;
-use codex_execpolicy_api::NetworkRuleProtocol as ExecPolicyNetworkRuleProtocol;
 use codex_analytics_api::GuardianApprovalRequestSource;
+use permissions_service_api::Decision as ExecPolicyDecision;
+use permissions_service_api::NetworkRuleProtocol as ExecPolicyNetworkRuleProtocol;
 use codex_guardian::GuardianApprovalRequest;
 use codex_guardian::GuardianNetworkAccessTrigger;
 use codex_network_proxy_api::BlockedRequestObserver;
 use codex_network_proxy_api::NetworkPolicyDecider;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::approvals::ExecPolicyAmendment;
-use codex_protocol::approvals::NetworkApprovalContext;
-use codex_protocol::approvals::NetworkPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyRuleAction;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::SandboxPermissions;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::SessionSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::approvals::ExecPolicyAmendment;
+use protocol::approvals::NetworkApprovalContext;
+use protocol::approvals::NetworkPolicyAmendment;
+use protocol::approvals::NetworkPolicyRuleAction;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::SandboxPermissions;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::FileChange;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::SessionSource;
+mod session_contracts;
 use thread_service_api::NetworkApprovalMode;
 use thread_service_api::NetworkApprovalSpec;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ToolRuntimeNetworkApprovalError;
 
 /// Boxed future returned by object-safe approval service APIs.
 pub type ApprovalServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub type ApprovalServiceFutureStatic<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+pub use session_contracts::ApprovalSessionCapability;
+pub use session_contracts::ApprovalSessionFuture;
+pub use session_contracts::PermissionRequestPayload;
+pub use session_contracts::ReviewAssessmentRecord;
+pub use session_contracts::ReviewRejectionRecord;
+pub use session_contracts::ReviewRuntimeError;
+pub use session_contracts::ReviewRuntimeOutcome;
+pub use session_contracts::ReviewRuntimeResult;
+pub use session_contracts::ToolPermissionGrants;
 
 pub const GUARDIAN_REVIEWER_NAME: &str = "guardian";
 const GUARDIAN_REJECTION_INSTRUCTIONS: &str = concat!(
@@ -62,7 +71,7 @@ pub fn routes_approval_to_guardian(
 pub fn is_guardian_reviewer_source(session_source: &SessionSource) -> bool {
     matches!(
         session_source,
-        SessionSource::SubAgent(codex_protocol::protocol::SubAgentSource::Other(name))
+        SessionSource::SubAgent(protocol::protocol::SubAgentSource::Other(name))
             if name == GUARDIAN_REVIEWER_NAME
     )
 }
@@ -70,16 +79,16 @@ pub fn is_guardian_reviewer_source(session_source: &SessionSource) -> bool {
 pub fn guardian_rejection_message_from_rationale(rationale: Option<&str>) -> String {
     let rejection = rationale
         .filter(|rationale| !rationale.trim().is_empty())
-        .map(|rationale| thread_service_api::ReviewRejectionRecord {
+        .map(|rationale| ReviewRejectionRecord {
             rationale: rationale.to_string(),
-            source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+            source: protocol::protocol::GuardianAssessmentDecisionSource::Agent,
         })
-        .unwrap_or_else(|| thread_service_api::ReviewRejectionRecord {
+        .unwrap_or_else(|| ReviewRejectionRecord {
             rationale: "No rationale provided.".to_string(),
-            source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+            source: protocol::protocol::GuardianAssessmentDecisionSource::Agent,
         });
     match rejection.source {
-        codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent => format!(
+        protocol::protocol::GuardianAssessmentDecisionSource::Agent => format!(
             "This action was rejected due to unacceptable risk.\nReason: {}\n{}",
             rejection.rationale.trim(),
             GUARDIAN_REJECTION_INSTRUCTIONS
@@ -104,16 +113,12 @@ pub fn execpolicy_network_rule_amendment(
     host: &str,
 ) -> ExecPolicyNetworkRuleAmendment {
     let protocol = match network_approval_context.protocol {
-        codex_protocol::approvals::NetworkApprovalProtocol::Http => {
-            ExecPolicyNetworkRuleProtocol::Http
-        }
-        codex_protocol::approvals::NetworkApprovalProtocol::Https => {
-            ExecPolicyNetworkRuleProtocol::Https
-        }
-        codex_protocol::approvals::NetworkApprovalProtocol::Socks5Tcp => {
+        protocol::approvals::NetworkApprovalProtocol::Http => ExecPolicyNetworkRuleProtocol::Http,
+        protocol::approvals::NetworkApprovalProtocol::Https => ExecPolicyNetworkRuleProtocol::Https,
+        protocol::approvals::NetworkApprovalProtocol::Socks5Tcp => {
             ExecPolicyNetworkRuleProtocol::Socks5Tcp
         }
-        codex_protocol::approvals::NetworkApprovalProtocol::Socks5Udp => {
+        protocol::approvals::NetworkApprovalProtocol::Socks5Udp => {
             ExecPolicyNetworkRuleProtocol::Socks5Udp
         }
     };
@@ -122,10 +127,10 @@ pub fn execpolicy_network_rule_amendment(
         NetworkPolicyRuleAction::Deny => (ExecPolicyDecision::Forbidden, "Deny"),
     };
     let protocol_label = match network_approval_context.protocol {
-        codex_protocol::approvals::NetworkApprovalProtocol::Http => "http",
-        codex_protocol::approvals::NetworkApprovalProtocol::Https => "https_connect",
-        codex_protocol::approvals::NetworkApprovalProtocol::Socks5Tcp => "socks5_tcp",
-        codex_protocol::approvals::NetworkApprovalProtocol::Socks5Udp => "socks5_udp",
+        protocol::approvals::NetworkApprovalProtocol::Http => "http",
+        protocol::approvals::NetworkApprovalProtocol::Https => "https_connect",
+        protocol::approvals::NetworkApprovalProtocol::Socks5Tcp => "socks5_tcp",
+        protocol::approvals::NetworkApprovalProtocol::Socks5Udp => "socks5_udp",
     };
     let justification = format!("{action_verb} {protocol_label} access to {host}");
 
@@ -145,13 +150,11 @@ pub trait SessionNetworkApprovalApi: Send + Sync + 'static {
         other: Arc<dyn SessionNetworkApprovalApi>,
     ) -> ApprovalServiceFuture<'_, ()>;
 
-    fn build_blocked_request_observer(
-        self: Arc<Self>,
-    ) -> Arc<dyn BlockedRequestObserver>;
+    fn build_blocked_request_observer(self: Arc<Self>) -> Arc<dyn BlockedRequestObserver>;
 
     fn build_network_policy_decider(
         self: Arc<Self>,
-        session: Arc<tokio::sync::RwLock<Option<Weak<dyn ThreadSessionCapability>>>>,
+        session: Arc<tokio::sync::RwLock<Option<Weak<dyn ApprovalSessionCapability>>>>,
     ) -> Arc<dyn NetworkPolicyDecider>;
 
     fn begin_network_approval(
@@ -273,7 +276,7 @@ pub struct ApplyPatchApprovalRequest {
 
 /// Apply-patch approval request routed through the approval service.
 pub struct ApplyPatchApprovalDispatch {
-    pub session: Arc<dyn ThreadSessionCapability>,
+    pub session: Arc<dyn ApprovalSessionCapability>,
     pub turn: Arc<dyn ThreadRuntimeCapability>,
     pub call_id: String,
     pub approval_keys: Vec<ApplyPatchApprovalKey>,
@@ -284,7 +287,7 @@ pub struct ApplyPatchApprovalDispatch {
 }
 
 pub struct ExecCommandApprovalDispatch {
-    pub session: Arc<dyn ThreadSessionCapability>,
+    pub session: Arc<dyn ApprovalSessionCapability>,
     pub turn: Arc<dyn ThreadRuntimeCapability>,
     pub call_id: String,
     pub command: Vec<String>,
@@ -301,7 +304,7 @@ pub struct ExecCommandApprovalDispatch {
 }
 
 pub struct GuardianReviewDispatch {
-    pub session: Arc<dyn ThreadSessionCapability>,
+    pub session: Arc<dyn ApprovalSessionCapability>,
     pub turn: Arc<dyn ThreadRuntimeCapability>,
     pub review_id: String,
     pub request: GuardianApprovalRequest,
@@ -345,12 +348,6 @@ pub struct ExecCommandApprovalKey {
 /// reaching into thread/session runtime types for approval orchestration.
 pub trait ApprovalServiceApi: Send + Sync + 'static {
     fn create_session_network_approval(&self) -> Arc<dyn SessionNetworkApprovalApi>;
-
-    fn create_exec_approval_requirement<'a>(
-        &'a self,
-        exec_policy: &'a codex_execpolicy_api::Policy,
-        request: codex_permissions_runtime::ExecPolicyApprovalRequest<'a>,
-    ) -> ApprovalServiceFuture<'a, codex_command_service_api::ExecApprovalRequirement>;
 
     fn request_apply_patch_approval(
         &self,

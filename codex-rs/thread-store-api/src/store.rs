@@ -1,4 +1,4 @@
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 use std::any::Any;
 
 use crate::AppendThreadItemsParams;

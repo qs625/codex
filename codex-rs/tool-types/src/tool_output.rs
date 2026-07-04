@@ -1,9 +1,9 @@
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::FunctionCallOutputBody;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::FunctionCallOutputPayload;
-use codex_protocol::models::ResponseInputItem;
 use codex_utils_string::take_bytes_at_char_boundary;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
+use protocol::models::FunctionCallOutputBody;
+use protocol::models::FunctionCallOutputContentItem;
+use protocol::models::FunctionCallOutputPayload;
+use protocol::models::ResponseInputItem;
 use serde_json::Value as JsonValue;
 
 use crate::LoadableToolSpec;
@@ -119,7 +119,7 @@ impl ToolOutput for JsonToolOutput {
     }
 }
 
-impl ToolOutput for codex_protocol::mcp::CallToolResult {
+impl ToolOutput for protocol::mcp::CallToolResult {
     fn log_preview(&self) -> String {
         let output = self.as_function_call_output_payload();
         let preview = output.body.to_text().unwrap_or_else(|| output.to_string());
@@ -191,11 +191,11 @@ fn response_input_to_code_mode_result(response: ResponseInputItem) -> JsonValue 
             &content
                 .into_iter()
                 .map(|item| match item {
-                    codex_protocol::models::ContentItem::InputText { text }
-                    | codex_protocol::models::ContentItem::OutputText { text } => {
+                    protocol::models::ContentItem::InputText { text }
+                    | protocol::models::ContentItem::OutputText { text } => {
                         FunctionCallOutputContentItem::InputText { text }
                     }
-                    codex_protocol::models::ContentItem::InputImage { image_url, detail } => {
+                    protocol::models::ContentItem::InputImage { image_url, detail } => {
                         FunctionCallOutputContentItem::InputImage {
                             image_url,
                             detail: detail.or(Some(DEFAULT_IMAGE_DETAIL)),
@@ -285,7 +285,7 @@ mod tests {
     use super::*;
     use crate::JsonSchema;
     use crate::ResponsesApiTool;
-    use codex_protocol::models::SearchToolCallParams;
+    use protocol::models::SearchToolCallParams;
 
     #[test]
     fn tool_search_payloads_roundtrip_as_tool_search_outputs() {

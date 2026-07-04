@@ -1,9 +1,10 @@
 use super::*;
-use codex_default_client::build_reqwest_client;
+use transport_client_types::Request;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use reqwest::RequestBuilder;
+use http::Method;
+use model_service_api::ModelServiceApi;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde::Serialize;
@@ -140,6 +141,7 @@ struct RemotePluginShareUpdateTargetsResponse {
 }
 
 pub async fn save_remote_plugin_share(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     codex_home: &Path,
@@ -157,6 +159,7 @@ pub async fn save_remote_plugin_share(
     .await
     .map_err(RemotePluginCatalogError::ArchiveJoin)??;
     let upload = create_workspace_plugin_upload(
+        model_service,
         config,
         auth,
         &filename,
@@ -167,11 +170,12 @@ pub async fn save_remote_plugin_share(
     let etag = upload
         .etag
         .ok_or(RemotePluginCatalogError::MissingUploadEtag)?;
-    put_workspace_plugin_upload(&upload.upload_url, archive_bytes).await?;
+    put_workspace_plugin_upload(model_service, &upload.upload_url, archive_bytes).await?;
     let share_targets = access_policy.share_targets;
     let share_targets =
         ensure_unlisted_workspace_target(auth, access_policy.discoverability, share_targets)?;
     let response = finalize_workspace_plugin_upload(
+        model_service,
         config,
         auth,
         remote_plugin_id,
@@ -207,19 +211,25 @@ pub async fn save_remote_plugin_share(
 }
 
 pub async fn list_remote_plugin_shares(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     codex_home: &Path,
 ) -> Result<Vec<RemotePluginShareSummary>, RemotePluginCatalogError> {
     let auth = ensure_chatgpt_auth(auth)?;
-    let created_plugins = fetch_created_workspace_plugins(config, auth).await?;
+    let created_plugins = fetch_created_workspace_plugins(model_service, config, auth).await?;
     if created_plugins.is_empty() {
         return Ok(Vec::new());
     }
 
-    let installed_by_id =
-        fetch_installed_plugins_for_scope(config, auth, RemotePluginScope::Workspace)
-            .await?
+    let installed_by_id = fetch_installed_plugins_for_scope_with_download_url(
+        model_service,
+        config,
+        auth,
+        RemotePluginScope::Workspace,
+        /*include_download_urls*/ false,
+    )
+    .await?
             .into_iter()
             .map(|plugin| (plugin.plugin.id.clone(), plugin))
             .collect::<BTreeMap<_, _>>();
@@ -275,6 +285,7 @@ pub fn load_plugin_share_remote_ids_by_local_path(
 }
 
 pub async fn delete_remote_plugin_share(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     codex_home: &Path,
@@ -283,9 +294,14 @@ pub async fn delete_remote_plugin_share(
     let auth = ensure_chatgpt_auth(auth)?;
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
     let url = format!("{base_url}/public/plugins/workspace/{remote_plugin_id}");
-    let client = build_reqwest_client();
-    let request = authenticated_request(client.delete(&url), auth)?;
-    send_and_expect_status(request, &url, &[StatusCode::NO_CONTENT]).await?;
+    let request = authenticated_provider_request(Method::DELETE, url.clone(), auth)?;
+    send_and_expect_status_with_model_service(
+        model_service,
+        request,
+        &url,
+        &[StatusCode::NO_CONTENT],
+    )
+    .await?;
     if let Err(err) = local_paths::remove_plugin_share_local_path(codex_home, remote_plugin_id) {
         warn!(
             remote_plugin_id = %remote_plugin_id,
@@ -296,6 +312,7 @@ pub async fn delete_remote_plugin_share(
 }
 
 pub async fn update_remote_plugin_share_targets(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     remote_plugin_id: &str,
@@ -316,14 +333,13 @@ pub async fn update_remote_plugin_share_targets(
             .unwrap_or_default();
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
     let url = format!("{base_url}/ps/plugins/{remote_plugin_id}/shares");
-    let client = build_reqwest_client();
-    let request = authenticated_request(client.put(&url), auth)?.json(
-        &RemotePluginShareUpdateTargetsRequest {
-            discoverability,
-            targets,
-        },
-    );
-    let response: RemotePluginShareUpdateTargetsResponse = send_and_decode(request, &url).await?;
+    let mut request = authenticated_provider_request(Method::PUT, url.clone(), auth)?;
+    request.request = request.request.with_json(&RemotePluginShareUpdateTargetsRequest {
+        discoverability,
+        targets,
+    });
+    let response: RemotePluginShareUpdateTargetsResponse =
+        send_and_decode_with_model_service(model_service, request, &url).await?;
     Ok(RemotePluginShareUpdateTargetsResult {
         principals: response.principals,
         discoverability: response.discoverability,
@@ -358,14 +374,20 @@ fn ensure_unlisted_workspace_target(
 }
 
 async fn fetch_created_workspace_plugins(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
 ) -> Result<Vec<RemotePluginDirectoryItem>, RemotePluginCatalogError> {
     let mut plugins = Vec::new();
     let mut page_token = None;
     loop {
-        let response =
-            get_created_workspace_plugins_page(config, auth, page_token.as_deref()).await?;
+        let response = get_created_workspace_plugins_page(
+            model_service,
+            config,
+            auth,
+            page_token.as_deref(),
+        )
+        .await?;
         plugins.extend(response.plugins);
         let Some(next_page_token) = response.pagination.next_page_token else {
             break;
@@ -376,22 +398,28 @@ async fn fetch_created_workspace_plugins(
 }
 
 async fn get_created_workspace_plugins_page(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     page_token: Option<&str>,
 ) -> Result<RemotePluginListResponse, RemotePluginCatalogError> {
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
-    let url = format!("{base_url}/ps/plugins/workspace/created");
-    let client = build_reqwest_client();
-    let mut request = authenticated_request(client.get(&url), auth)?;
-    request = request.query(&[("limit", REMOTE_PLUGIN_LIST_PAGE_LIMIT)]);
-    if let Some(page_token) = page_token {
-        request = request.query(&[("pageToken", page_token)]);
+    let mut url = url::Url::parse(&format!("{base_url}/ps/plugins/workspace/created"))
+        .map_err(RemotePluginCatalogError::InvalidBaseUrl)?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("limit", &REMOTE_PLUGIN_LIST_PAGE_LIMIT.to_string());
+        if let Some(page_token) = page_token {
+            query.append_pair("pageToken", page_token);
+        }
     }
-    send_and_decode(request, &url).await
+    let url = url.to_string();
+    let request = authenticated_provider_get_request(url.clone(), auth)?;
+    send_and_decode_with_model_service(model_service, request, &url).await
 }
 
 async fn create_workspace_plugin_upload(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     filename: &str,
@@ -400,38 +428,44 @@ async fn create_workspace_plugin_upload(
 ) -> Result<RemoteWorkspacePluginUploadUrlResponse, RemotePluginCatalogError> {
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
     let url = format!("{base_url}/public/plugins/workspace/upload-url");
-    let client = build_reqwest_client();
-    let request = authenticated_request(client.post(&url), auth)?.json(
-        &RemoteWorkspacePluginUploadUrlRequest {
+    let mut request = authenticated_provider_request(Method::POST, url.clone(), auth)?;
+    request.request = request
+        .request
+        .with_json(&RemoteWorkspacePluginUploadUrlRequest {
             filename,
             mime_type: "application/gzip",
             size_bytes,
             plugin_id: remote_plugin_id,
-        },
-    );
-    send_and_decode(request, &url).await
+        });
+    send_and_decode_with_model_service(model_service, request, &url).await
 }
 
 async fn put_workspace_plugin_upload(
+    model_service: &dyn ModelServiceApi,
     upload_url: &str,
     archive_bytes: Vec<u8>,
 ) -> Result<(), RemotePluginCatalogError> {
-    let client = build_reqwest_client();
-    let request = client
-        .put(upload_url)
-        .timeout(REMOTE_PLUGIN_CATALOG_TIMEOUT)
-        .header("x-ms-blob-type", "BlockBlob")
-        .header("Content-Type", "application/gzip")
-        .body(archive_bytes);
-    let response = request
-        .send()
+    let mut request = Request::new(Method::PUT, upload_url.to_string());
+    request.timeout = Some(REMOTE_PLUGIN_CATALOG_TIMEOUT);
+    request.headers.insert(
+        http::header::HeaderName::from_static("x-ms-blob-type"),
+        http::header::HeaderValue::from_static("BlockBlob"),
+    );
+    request.headers.insert(
+        http::header::CONTENT_TYPE,
+        http::header::HeaderValue::from_static("application/gzip"),
+    );
+    request = request.with_raw_body(archive_bytes);
+    let response = model_service
+        .http_client()
+        .execute(request)
         .await
-        .map_err(|source| RemotePluginCatalogError::Request {
+        .map_err(|source| RemotePluginCatalogError::ServiceRequest {
             url: "workspace plugin upload URL".to_string(),
-            source,
+            message: source.to_string(),
         })?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let status = response.status;
+    let body = String::from_utf8(response.body.to_vec()).unwrap_or_default();
     if ![StatusCode::OK, StatusCode::CREATED].contains(&status) {
         return Err(RemotePluginCatalogError::UnexpectedStatus {
             url: "workspace plugin upload URL".to_string(),
@@ -443,6 +477,7 @@ async fn put_workspace_plugin_upload(
 }
 
 async fn finalize_workspace_plugin_upload(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     remote_plugin_id: Option<&str>,
@@ -454,9 +489,9 @@ async fn finalize_workspace_plugin_upload(
     } else {
         format!("{base_url}/public/plugins/workspace")
     };
-    let client = build_reqwest_client();
-    let request = authenticated_request(client.post(&url), auth)?.json(&body);
-    send_and_decode(request, &url).await
+    let mut request = authenticated_provider_request(Method::POST, url.clone(), auth)?;
+    request.request = request.request.with_json(&body);
+    send_and_decode_with_model_service(model_service, request, &url).await
 }
 
 fn archive_filename(plugin_path: &Path) -> Result<String, RemotePluginCatalogError> {
@@ -612,20 +647,21 @@ impl fmt::Display for ArchiveSizeLimitExceeded {
 
 impl std::error::Error for ArchiveSizeLimitExceeded {}
 
-async fn send_and_expect_status(
-    request: RequestBuilder,
+async fn send_and_expect_status_with_model_service(
+    model_service: &dyn ModelServiceApi,
+    request: ProviderHttpRequest,
     url_for_error: &str,
     expected_statuses: &[StatusCode],
 ) -> Result<(), RemotePluginCatalogError> {
-    let response = request
-        .send()
+    let response = model_service
+        .execute_provider_http(request)
         .await
-        .map_err(|source| RemotePluginCatalogError::Request {
+        .map_err(|source| RemotePluginCatalogError::ServiceRequest {
             url: url_for_error.to_string(),
-            source,
+            message: source.to_string(),
         })?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let status = response.status;
+    let body = String::from_utf8(response.body.to_vec()).unwrap_or_default();
     if !expected_statuses.contains(&status) {
         return Err(RemotePluginCatalogError::UnexpectedStatus {
             url: url_for_error.to_string(),

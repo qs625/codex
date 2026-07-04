@@ -8,11 +8,11 @@ use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ToolContributor;
 use codex_features::Feature;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use memory_service::LocalMemoriesBackend;
 use memory_service::build_memory_tool_developer_instructions;
 use memory_service::memory_extension_tools;
-use memory_service::LocalMemoriesBackend;
 use thread_service::config::Config;
-use codex_utils_absolute_path::AbsolutePathBuf;
 
 /// Contributes Codex memory read-path prompt context and memory read tools.
 #[derive(Clone, Copy, Debug, Default)]

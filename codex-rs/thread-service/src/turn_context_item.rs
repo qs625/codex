@@ -1,17 +1,17 @@
 use std::path::PathBuf;
 
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::TruncationPolicy;
-use codex_protocol::protocol::TurnContextItem;
-use codex_protocol::protocol::TurnContextNetworkItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::config_types::CollaborationMode;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ReasoningEffort;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::TruncationPolicy;
+use protocol::protocol::TurnContextItem;
+use protocol::protocol::TurnContextNetworkItem;
 use serde_json::Value;
 
 /// Fully materialized data needed to project a runtime turn context into the
@@ -88,10 +88,10 @@ fn non_legacy_file_system_sandbox_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::config_types::ModeKind;
-    use codex_protocol::config_types::Settings;
-    use codex_protocol::models::SandboxEnforcement;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use protocol::config_types::ModeKind;
+    use protocol::config_types::Settings;
+    use protocol::models::SandboxEnforcement;
+    use protocol::permissions::NetworkSandboxPolicy;
 
     fn cwd() -> AbsolutePathBuf {
         AbsolutePathBuf::from_absolute_path("/tmp/project").expect("absolute test path")

@@ -15,11 +15,11 @@ doctest = false
 [dependencies]
 codex-agent-roles = { workspace = true }
 codex-connectors-api = { workspace = true }
-codex-core-skills-api = { workspace = true }
-codex-execpolicy-api = { workspace = true }
-codex-mcp-types = { workspace = true }
+skill-service-api = { workspace = true }
+permissions-service-api = { workspace = true }
+mcp-types = { workspace = true }
 plugin-service-api = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-image = { workspace = true }
 codex-utils-output-truncation = { workspace = true }

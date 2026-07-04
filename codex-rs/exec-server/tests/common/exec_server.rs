@@ -5,12 +5,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use codex_jsonrpc_types::JSONRPCMessage;
-use codex_jsonrpc_types::JSONRPCNotification;
-use codex_jsonrpc_types::JSONRPCRequest;
-use codex_jsonrpc_types::RequestId;
 use futures::SinkExt;
 use futures::StreamExt;
+use jsonrpc_types::JSONRPCMessage;
+use jsonrpc_types::JSONRPCNotification;
+use jsonrpc_types::JSONRPCRequest;
+use jsonrpc_types::RequestId;
 use tempfile::TempDir;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;

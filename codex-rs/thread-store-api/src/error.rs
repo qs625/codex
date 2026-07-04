@@ -1,4 +1,4 @@
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 use std::fmt;
 
 /// Result type returned by thread-store operations.

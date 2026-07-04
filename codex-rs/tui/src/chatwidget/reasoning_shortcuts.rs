@@ -12,9 +12,9 @@
 //! next shortcut moves to the nearest supported effort in the requested
 //! direction.
 
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use ::protocol::config_types::ModeKind;
+use ::protocol::openai_models::ModelPreset;
+use ::protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crossterm::event::KeyEvent;
 use strum::IntoEnumIterator;
 

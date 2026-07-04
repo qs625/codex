@@ -9,10 +9,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::TokenUsage;
 use http::HeaderMap;
 use http::HeaderValue;
+use protocol::models::ResponseItem;
+use protocol::protocol::TokenUsage;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
@@ -387,9 +387,9 @@ fn append_with_context_best_effort(
 mod tests {
     use std::sync::Arc;
 
-    use codex_protocol::models::ReasoningItemContent;
-    use codex_protocol::models::ReasoningItemReasoningSummary;
     use pretty_assertions::assert_eq;
+    use protocol::models::ReasoningItemContent;
+    use protocol::models::ReasoningItemReasoningSummary;
     use serde_json::json;
     use tempfile::TempDir;
 

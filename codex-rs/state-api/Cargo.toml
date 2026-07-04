@@ -1,13 +1,17 @@
 [package]
-name = "codex-state-api"
+name = "state-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "state_api"
+path = "src/lib.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 strum = { workspace = true, features = ["derive"] }

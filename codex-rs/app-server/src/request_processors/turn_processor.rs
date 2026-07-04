@@ -3,9 +3,10 @@ use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
 use crate::memory_service_wiring::MemoryServiceHost;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
+use futures::future::BoxFuture;
+use model_service_api::SharedModelServiceApi;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::LiveThreadRegistry;
-use futures::future::BoxFuture;
 
 pub(crate) trait TurnProcessorRuntime: Send + Sync {
     fn validate_environment_selections(
@@ -33,7 +34,7 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         &'a self,
         thread_id: ThreadId,
         op: Op,
-        trace: Option<codex_protocol::protocol::W3cTraceContext>,
+        trace: Option<protocol::protocol::W3cTraceContext>,
     ) -> BoxFuture<'a, CodexResult<String>>;
 
     fn inject_thread_conversation_items<'a>(
@@ -71,7 +72,7 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         &'a self,
         parent_thread_id: ThreadId,
         config: Config,
-        trace: Option<codex_protocol::protocol::W3cTraceContext>,
+        trace: Option<protocol::protocol::W3cTraceContext>,
     ) -> BoxFuture<'a, CodexResult<DetachedReviewThread>>;
 }
 
@@ -116,7 +117,7 @@ impl TurnProcessorRuntime for ThreadService {
         &'a self,
         thread_id: ThreadId,
         op: Op,
-        trace: Option<codex_protocol::protocol::W3cTraceContext>,
+        trace: Option<protocol::protocol::W3cTraceContext>,
     ) -> BoxFuture<'a, CodexResult<String>> {
         Box::pin(LiveThreadRegistry::send_op_with_trace(
             self, thread_id, op, trace,
@@ -183,7 +184,7 @@ impl TurnProcessorRuntime for ThreadService {
         &'a self,
         parent_thread_id: ThreadId,
         config: Config,
-        trace: Option<codex_protocol::protocol::W3cTraceContext>,
+        trace: Option<protocol::protocol::W3cTraceContext>,
     ) -> BoxFuture<'a, CodexResult<DetachedReviewThread>> {
         Box::pin(async move {
             let new_thread = ThreadService::fork_live_thread_from_current_history(
@@ -210,6 +211,7 @@ pub(crate) struct TurnRequestProcessor {
     turn_runtime: Arc<dyn TurnProcessorRuntime>,
     live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
+    model_service: SharedModelServiceApi,
     outgoing: Arc<OutgoingMessageSender>,
     analytics_events_client: AnalyticsEventsClient,
     arg0_paths: Arg0DispatchPaths,
@@ -242,6 +244,7 @@ impl TurnRequestProcessor {
     pub(crate) fn new(
         auth_manager: Arc<AuthManager>,
         thread_service: Arc<ThreadService>,
+        model_service: SharedModelServiceApi,
         outgoing: Arc<OutgoingMessageSender>,
         analytics_events_client: AnalyticsEventsClient,
         arg0_paths: Arg0DispatchPaths,
@@ -259,6 +262,7 @@ impl TurnRequestProcessor {
             turn_runtime: thread_service.clone(),
             live_threads: thread_service.clone(),
             memory_startup_host: thread_service,
+            model_service,
             outgoing,
             analytics_events_client,
             arg0_paths,
@@ -486,7 +490,7 @@ impl TurnRequestProcessor {
     async fn request_trace_context(
         &self,
         request_id: &ConnectionRequestId,
-    ) -> Option<codex_protocol::protocol::W3cTraceContext> {
+    ) -> Option<protocol::protocol::W3cTraceContext> {
         self.outgoing.request_trace_context(request_id).await
     }
 
@@ -611,7 +615,7 @@ impl TurnRequestProcessor {
         let approval_policy = params.approval_policy.map(AskForApproval::to_core);
         let approvals_reviewer = params
             .approvals_reviewer
-            .map(codex_app_server_protocol::ApprovalsReviewer::to_core);
+            .map(app_server_protocol::ApprovalsReviewer::to_core);
         let sandbox_policy = params.sandbox_policy.map(|p| p.to_core());
         let (permission_profile, active_permission_profile, profile_workspace_roots) =
             if let Some(permissions) = params.permissions {
@@ -784,14 +788,17 @@ impl TurnRequestProcessor {
                     }
                     err => internal_error(format!("failed to load thread config: {err}")),
                 })?;
-            let runtime = Arc::new(crate::memory_service_wiring::AppServerMemoryStartupAdapter::new(
-                self.memory_startup_host.clone(),
-                Arc::clone(&self.auth_manager),
-                thread_id,
-                config_snapshot.clone(),
-                Arc::clone(&thread_config),
-                self.state_db.clone(),
-            ));
+            let runtime = Arc::new(
+                crate::memory_service_wiring::AppServerMemoryStartupAdapter::new(
+                    self.memory_startup_host.clone(),
+                    self.model_service.clone(),
+                    Arc::clone(&self.auth_manager),
+                    thread_id,
+                    config_snapshot.clone(),
+                    Arc::clone(&thread_config),
+                    self.state_db.clone(),
+                ),
+            );
             let settings = crate::memory_service_wiring::build_memory_startup_settings(
                 thread_config.as_ref(),
                 config_snapshot.session_source,
@@ -945,11 +952,11 @@ impl TurnRequestProcessor {
                     ),
                     SteerInputError::ActiveTurnNotSteerable { turn_kind } => {
                         let (message, turn_steer_error) = match turn_kind {
-                            codex_protocol::protocol::NonSteerableTurnKind::Review => (
+                            protocol::protocol::NonSteerableTurnKind::Review => (
                                 "cannot steer a review turn".to_string(),
                                 TurnSteerRequestError::NonSteerableReview,
                             ),
-                            codex_protocol::protocol::NonSteerableTurnKind::Compact => (
+                            protocol::protocol::NonSteerableTurnKind::Compact => (
                                 "cannot steer a compact turn".to_string(),
                                 TurnSteerRequestError::NonSteerableCompact,
                             ),

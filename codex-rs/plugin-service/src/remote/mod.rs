@@ -1,6 +1,3 @@
-use codex_auth_types::RequestAuthSnapshot;
-use codex_config_edit::PluginConfigEdit;
-use codex_config_edit::apply_user_plugin_config_edits;
 use crate::PluginsConfigInput;
 use crate::PluginsManager;
 use crate::configured_plugins_from_stack;
@@ -15,17 +12,26 @@ use crate::startup_sync::curated_plugins_repo_path;
 use crate::store::PLUGINS_CACHE_DIR;
 use crate::store::PluginStore;
 use crate::store::PluginStoreError;
-use codex_default_client::build_reqwest_client;
-use plugin_service_api::PluginId;
-use plugin_service_api::PluginIdError;
+use transport_client_types::Request;
+use codex_auth_types::RequestAuthSnapshot;
+use config_service::PluginConfigEdit;
+use config_service::apply_user_plugin_config_edits;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use http::Method;
+use model_service_api::ModelSelectionPolicy;
+use model_service_api::ModelServiceApi;
+use model_service_api::OPENAI_PROVIDER_ID;
+use model_service_api::ProviderHttpRequest;
+use model_service_api::SharedHttpClientApi;
+use model_service_api::SharedModelServiceApi;
 use plugin_service_api::PluginAuthPolicy;
 use plugin_service_api::PluginAvailability;
+use plugin_service_api::PluginId;
+use plugin_service_api::PluginIdError;
 use plugin_service_api::PluginInstallPolicy;
 use plugin_service_api::PluginInterface;
 use plugin_service_api::SkillInterface;
-use codex_protocol::protocol::Product;
-use codex_utils_absolute_path::AbsolutePathBuf;
-use reqwest::RequestBuilder;
+use protocol::protocol::Product;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -44,15 +50,12 @@ use url::Url;
 
 pub mod curated_startup_sync;
 pub mod remote_bundle;
-pub mod remote_legacy;
 pub mod startup_remote_sync;
 
 mod remote_installed_plugin_sync;
 mod share;
 #[cfg(test)]
 mod sync_tests;
-#[cfg(test)]
-mod test_support;
 
 pub use remote_installed_plugin_sync::RemoteInstalledPluginBundleSyncError;
 pub use remote_installed_plugin_sync::RemoteInstalledPluginBundleSyncOutcome;
@@ -92,6 +95,8 @@ pub const REMOTE_WORKSPACE_SHARED_WITH_ME_UNLISTED_MARKETPLACE_DISPLAY_NAME: &st
 
 const REMOTE_PLUGIN_CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
 const REMOTE_PLUGIN_LIST_PAGE_LIMIT: u32 = 200;
+const REMOTE_PLUGIN_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+const REMOTE_FEATURED_PLUGIN_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REMOTE_DEFAULT_PROMPT_LEN: usize = 128;
 const INVALID_REMOTE_PLUGIN_ID_MESSAGE: &str =
     "invalid remote plugin id: only ASCII letters, digits, `_`, `-`, and `~` are allowed";
@@ -168,6 +173,52 @@ pub struct RemotePluginSyncResult {
     pub uninstalled_plugin_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RemotePluginStatusSummary {
+    pub name: String,
+    #[serde(default = "default_remote_marketplace_name")]
+    pub marketplace_name: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RemotePluginFetchError {
+    #[error("chatgpt authentication required to sync remote plugins")]
+    AuthRequired,
+
+    #[error(
+        "chatgpt authentication required to sync remote plugins; api key auth is not supported"
+    )]
+    UnsupportedAuthMode,
+
+    #[error("failed to read auth token for remote plugin sync: {0}")]
+    AuthToken(#[source] std::io::Error),
+
+    #[error("failed to send remote plugin sync request to {url}: {source}")]
+    Request {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[error("failed to send remote plugin sync request to {url}: {message}")]
+    ServiceRequest { url: String, message: String },
+
+    #[error("remote plugin sync request to {url} failed with status {status}: {body}")]
+    UnexpectedStatus {
+        url: String,
+        status: reqwest::StatusCode,
+        body: String,
+    },
+
+    #[error("failed to parse remote plugin sync response from {url}: {source}")]
+    Decode {
+        url: String,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum PluginRemoteSyncError {
     #[error("chatgpt authentication required to sync remote plugins")]
@@ -187,6 +238,9 @@ pub enum PluginRemoteSyncError {
         #[source]
         source: reqwest::Error,
     },
+
+    #[error("failed to send remote plugin sync request to {url}: {message}")]
+    ServiceRequest { url: String, message: String },
 
     #[error("remote plugin sync request to {url} failed with status {status}: {body}")]
     UnexpectedStatus {
@@ -233,19 +287,22 @@ impl PluginRemoteSyncError {
     }
 }
 
-impl From<remote_legacy::RemotePluginFetchError> for PluginRemoteSyncError {
-    fn from(value: remote_legacy::RemotePluginFetchError) -> Self {
+impl From<RemotePluginFetchError> for PluginRemoteSyncError {
+    fn from(value: RemotePluginFetchError) -> Self {
         match value {
-            remote_legacy::RemotePluginFetchError::AuthRequired => Self::AuthRequired,
-            remote_legacy::RemotePluginFetchError::UnsupportedAuthMode => Self::UnsupportedAuthMode,
-            remote_legacy::RemotePluginFetchError::AuthToken(source) => Self::AuthToken(source),
-            remote_legacy::RemotePluginFetchError::Request { url, source } => {
+            RemotePluginFetchError::AuthRequired => Self::AuthRequired,
+            RemotePluginFetchError::UnsupportedAuthMode => Self::UnsupportedAuthMode,
+            RemotePluginFetchError::AuthToken(source) => Self::AuthToken(source),
+            RemotePluginFetchError::Request { url, source } => {
                 Self::Request { url, source }
             }
-            remote_legacy::RemotePluginFetchError::UnexpectedStatus { url, status, body } => {
+            RemotePluginFetchError::ServiceRequest { url, message } => {
+                Self::ServiceRequest { url, message }
+            }
+            RemotePluginFetchError::UnexpectedStatus { url, status, body } => {
                 Self::UnexpectedStatus { url, status, body }
             }
-            remote_legacy::RemotePluginFetchError::Decode { url, source } => {
+            RemotePluginFetchError::Decode { url, source } => {
                 Self::Decode { url, source }
             }
         }
@@ -264,8 +321,97 @@ fn remote_plugin_service_config(config: &PluginsConfigInput) -> RemotePluginServ
     }
 }
 
+fn default_remote_marketplace_name() -> String {
+    crate::OPENAI_CURATED_MARKETPLACE_NAME.to_string()
+}
+
+pub async fn fetch_remote_plugin_status_with_model_service(
+    model_service: &dyn ModelServiceApi,
+    config: &RemotePluginServiceConfig,
+    auth: Option<&RemotePluginAuth>,
+) -> Result<Vec<RemotePluginStatusSummary>, RemotePluginFetchError> {
+    let Some(auth) = auth else {
+        return Err(RemotePluginFetchError::AuthRequired);
+    };
+    if !auth.uses_codex_backend() {
+        return Err(RemotePluginFetchError::UnsupportedAuthMode);
+    }
+
+    let base_url = config.chatgpt_base_url.trim_end_matches('/');
+    let url = format!("{base_url}/plugins/list");
+    let mut request = Request::new(Method::GET, url.clone());
+    request.timeout = Some(REMOTE_PLUGIN_FETCH_TIMEOUT);
+    let request = ProviderHttpRequest {
+        selection: ModelSelectionPolicy {
+            provider_hint: Some(OPENAI_PROVIDER_ID.to_string()),
+            ..Default::default()
+        },
+        auth: Some(auth.request_auth_snapshot().clone()),
+        request,
+    };
+
+    let response = model_service.execute_provider_http(request).await.map_err(|source| {
+        RemotePluginFetchError::ServiceRequest {
+            url: url.clone(),
+            message: source.to_string(),
+        }
+    })?;
+    let status = response.status;
+    let body = String::from_utf8(response.body.to_vec()).unwrap_or_default();
+    if !status.is_success() {
+        return Err(RemotePluginFetchError::UnexpectedStatus { url, status, body });
+    }
+
+    serde_json::from_str(&body).map_err(|source| RemotePluginFetchError::Decode {
+        url: url.clone(),
+        source,
+    })
+}
+
+async fn fetch_remote_featured_plugin_ids_with_model_service(
+    model_service: &dyn ModelServiceApi,
+    config: &RemotePluginServiceConfig,
+    auth: Option<&RemotePluginAuth>,
+    product: Option<Product>,
+) -> Result<Vec<String>, RemotePluginFetchError> {
+    let base_url = config.chatgpt_base_url.trim_end_matches('/');
+    let platform = product.unwrap_or(Product::Codex).to_app_platform();
+    let url = format!("{base_url}/plugins/featured?platform={platform}");
+
+    let mut request = Request::new(Method::GET, url.clone());
+    request.timeout = Some(REMOTE_FEATURED_PLUGIN_FETCH_TIMEOUT);
+    let request = ProviderHttpRequest {
+        selection: ModelSelectionPolicy {
+            provider_hint: Some(OPENAI_PROVIDER_ID.to_string()),
+            ..Default::default()
+        },
+        auth: auth
+            .filter(|auth| auth.uses_codex_backend())
+            .map(|auth| auth.request_auth_snapshot().clone()),
+        request,
+    };
+
+    let response = model_service.execute_provider_http(request).await.map_err(|source| {
+        RemotePluginFetchError::ServiceRequest {
+            url: url.clone(),
+            message: source.to_string(),
+        }
+    })?;
+    let status = response.status;
+    let body = String::from_utf8(response.body.to_vec()).unwrap_or_default();
+    if !status.is_success() {
+        return Err(RemotePluginFetchError::UnexpectedStatus { url, status, body });
+    }
+
+    serde_json::from_str(&body).map_err(|source| RemotePluginFetchError::Decode {
+        url: url.clone(),
+        source,
+    })
+}
+
 pub fn maybe_start_plugin_startup_tasks_for_config(
     manager: Arc<PluginsManager>,
+    model_service: SharedModelServiceApi,
     config: &PluginsConfigInput,
     auth_provider: SharedRemotePluginAuthProvider,
     on_effective_plugins_changed: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
@@ -275,9 +421,10 @@ pub fn maybe_start_plugin_startup_tasks_for_config(
         return;
     }
 
-    start_curated_repo_sync(Arc::clone(&manager));
+    start_curated_repo_sync(Arc::clone(&manager), model_service.http_client());
     startup_remote_sync::start_startup_remote_plugin_sync_once(
         Arc::clone(&manager),
+        Arc::clone(&model_service),
         manager.codex_home().to_path_buf(),
         config.clone(),
         auth_provider.clone(),
@@ -286,16 +433,19 @@ pub fn maybe_start_plugin_startup_tasks_for_config(
     let config_for_remote_sync = config.clone();
     let manager_for_remote_sync = Arc::clone(&manager);
     let auth_provider_for_remote_sync = auth_provider.clone();
+    let model_service_for_remote_sync = Arc::clone(&model_service);
     tokio::spawn(async move {
         let auth = auth_provider_for_remote_sync.remote_plugin_auth().await;
         maybe_start_remote_installed_plugins_cache_refresh(
             Arc::clone(&manager_for_remote_sync),
+            Arc::clone(&model_service_for_remote_sync),
             &config_for_remote_sync,
             auth.clone(),
             on_effective_plugins_changed.clone(),
         );
         maybe_start_remote_installed_plugin_bundle_sync_for_config(
             manager_for_remote_sync,
+            Arc::clone(&model_service_for_remote_sync),
             &config_for_remote_sync,
             auth,
             on_effective_plugins_changed,
@@ -303,11 +453,17 @@ pub fn maybe_start_plugin_startup_tasks_for_config(
     });
 
     let config = config.clone();
+    let model_service_for_featured = Arc::clone(&model_service);
     tokio::spawn(async move {
         let auth = auth_provider.remote_plugin_auth().await;
         if let Err(err) =
-            featured_plugin_ids_for_config(&config, auth.as_ref(), manager.restriction_product())
-                .await
+            featured_plugin_ids_for_config_with_model_service(
+                model_service_for_featured.as_ref(),
+                &config,
+                auth.as_ref(),
+                manager.restriction_product(),
+            )
+            .await
         {
             warn!(
                 error = %err,
@@ -319,6 +475,7 @@ pub fn maybe_start_plugin_startup_tasks_for_config(
 
 pub fn maybe_start_plugin_list_background_tasks_for_config(
     manager: Arc<PluginsManager>,
+    model_service: SharedModelServiceApi,
     config: &PluginsConfigInput,
     auth: Option<RemotePluginAuth>,
     roots: &[AbsolutePathBuf],
@@ -327,12 +484,14 @@ pub fn maybe_start_plugin_list_background_tasks_for_config(
     manager.maybe_start_plugin_list_background_tasks_for_config(roots);
     maybe_start_remote_installed_plugins_cache_refresh(
         Arc::clone(&manager),
+        Arc::clone(&model_service),
         config,
         auth.clone(),
         on_effective_plugins_changed.clone(),
     );
     maybe_start_remote_installed_plugin_bundle_sync_for_config(
         manager,
+        model_service,
         config,
         auth,
         on_effective_plugins_changed,
@@ -341,12 +500,14 @@ pub fn maybe_start_plugin_list_background_tasks_for_config(
 
 pub fn maybe_start_remote_installed_plugins_cache_refresh(
     manager: Arc<PluginsManager>,
+    model_service: SharedModelServiceApi,
     config: &PluginsConfigInput,
     auth: Option<RemotePluginAuth>,
     on_effective_plugins_changed: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
 ) {
     maybe_start_remote_installed_plugins_cache_refresh_with_notify(
         manager,
+        model_service,
         config,
         auth,
         RemoteInstalledPluginsCacheRefreshNotify::IfCacheChanged,
@@ -356,12 +517,14 @@ pub fn maybe_start_remote_installed_plugins_cache_refresh(
 
 pub fn maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
     manager: Arc<PluginsManager>,
+    model_service: SharedModelServiceApi,
     config: &PluginsConfigInput,
     auth: Option<RemotePluginAuth>,
     on_effective_plugins_changed: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
 ) {
     maybe_start_remote_installed_plugins_cache_refresh_with_notify(
         manager,
+        model_service,
         config,
         auth,
         RemoteInstalledPluginsCacheRefreshNotify::AfterSuccessfulRefresh,
@@ -371,6 +534,7 @@ pub fn maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
 
 fn maybe_start_remote_installed_plugins_cache_refresh_with_notify(
     manager: Arc<PluginsManager>,
+    model_service: SharedModelServiceApi,
     config: &PluginsConfigInput,
     auth: Option<RemotePluginAuth>,
     notify: RemoteInstalledPluginsCacheRefreshNotify,
@@ -383,7 +547,8 @@ fn maybe_start_remote_installed_plugins_cache_refresh_with_notify(
     let service_config = remote_plugin_service_config(config);
     tokio::spawn(async move {
         let installed_plugins =
-            fetch_remote_installed_plugins(&service_config, auth.as_ref()).await;
+            fetch_remote_installed_plugins(model_service.as_ref(), &service_config, auth.as_ref())
+                .await;
         match installed_plugins {
             Ok(installed_plugins) => {
                 let changed = manager.replace_remote_installed_plugins_cache(installed_plugins);
@@ -420,6 +585,7 @@ fn maybe_start_remote_installed_plugins_cache_refresh_with_notify(
 
 fn maybe_start_remote_installed_plugin_bundle_sync_for_config(
     manager: Arc<PluginsManager>,
+    model_service: SharedModelServiceApi,
     config: &PluginsConfigInput,
     auth: Option<RemotePluginAuth>,
     on_effective_plugins_changed: Option<Arc<dyn Fn() + Send + Sync + 'static>>,
@@ -431,9 +597,11 @@ fn maybe_start_remote_installed_plugin_bundle_sync_for_config(
     let config_for_refresh = config.clone();
     let auth_for_refresh = auth.clone();
     let manager_for_refresh = Arc::clone(&manager);
+    let model_service_for_refresh = Arc::clone(&model_service);
     let on_local_cache_changed = Arc::new(move || {
         maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
             Arc::clone(&manager_for_refresh),
+            Arc::clone(&model_service_for_refresh),
             &config_for_refresh,
             auth_for_refresh.clone(),
             on_effective_plugins_changed.clone(),
@@ -442,22 +610,25 @@ fn maybe_start_remote_installed_plugin_bundle_sync_for_config(
 
     maybe_start_remote_installed_plugin_bundle_sync(
         manager.codex_home().to_path_buf(),
+        model_service,
         remote_plugin_service_config(config),
         auth,
         Some(on_local_cache_changed),
     );
 }
 
-pub async fn featured_plugin_ids_for_config(
+pub async fn featured_plugin_ids_for_config_with_model_service(
+    model_service: &dyn ModelServiceApi,
     config: &PluginsConfigInput,
     auth: Option<&RemotePluginAuth>,
     product: Option<Product>,
-) -> Result<Vec<String>, remote_legacy::RemotePluginFetchError> {
+) -> Result<Vec<String>, RemotePluginFetchError> {
     if !config.plugins_enabled {
         return Ok(Vec::new());
     }
 
-    remote_legacy::fetch_remote_featured_plugin_ids(
+    fetch_remote_featured_plugin_ids_with_model_service(
+        model_service,
         &remote_plugin_service_config(config),
         auth,
         product,
@@ -465,7 +636,7 @@ pub async fn featured_plugin_ids_for_config(
     .await
 }
 
-fn start_curated_repo_sync(manager: Arc<PluginsManager>) {
+fn start_curated_repo_sync(manager: Arc<PluginsManager>, http_client: SharedHttpClientApi) {
     if CURATED_REPO_SYNC_STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -473,7 +644,7 @@ fn start_curated_repo_sync(manager: Arc<PluginsManager>) {
     if let Err(err) = std::thread::Builder::new()
         .name("plugins-curated-repo-sync".to_string())
         .spawn(
-            move || match curated_startup_sync::sync_openai_plugins_repo(codex_home.as_path()) {
+            move || match curated_startup_sync::sync_openai_plugins_repo(codex_home.as_path(), http_client) {
                 Ok(curated_plugin_version) => {
                     let configured_curated_plugin_ids =
                         configured_curated_plugin_ids_from_codex_home(codex_home.as_path());
@@ -508,6 +679,7 @@ fn start_curated_repo_sync(manager: Arc<PluginsManager>) {
 
 pub async fn sync_plugins_from_remote(
     manager: &PluginsManager,
+    model_service: &dyn ModelServiceApi,
     config: &PluginsConfigInput,
     auth: Option<&RemotePluginAuth>,
     additive_only: bool,
@@ -517,10 +689,13 @@ pub async fn sync_plugins_from_remote(
     }
 
     info!("starting remote plugin sync");
-    let remote_plugins =
-        remote_legacy::fetch_remote_plugin_status(&remote_plugin_service_config(config), auth)
-            .await
-            .map_err(PluginRemoteSyncError::from)?;
+    let remote_plugins = fetch_remote_plugin_status_with_model_service(
+        model_service,
+        &remote_plugin_service_config(config),
+        auth,
+    )
+    .await
+    .map_err(PluginRemoteSyncError::from)?;
     let configured_plugins = configured_plugins_from_stack(&config.config_layer_stack);
     let curated_marketplace_root = curated_plugins_repo_path(manager.codex_home());
     let curated_marketplace_path = AbsolutePathBuf::try_from(
@@ -537,12 +712,9 @@ pub async fn sync_plugins_from_remote(
 
     let marketplace_name = curated_marketplace.name.clone();
     let curated_plugin_version =
-        crate::startup_sync::read_curated_plugins_sha(manager.codex_home())
-            .ok_or_else(|| {
-                PluginStoreError::Invalid(
-                    "local curated marketplace sha is not available".to_string(),
-                )
-            })?;
+        crate::startup_sync::read_curated_plugins_sha(manager.codex_home()).ok_or_else(|| {
+            PluginStoreError::Invalid("local curated marketplace sha is not available".to_string())
+        })?;
     let cache_plugin_version = curated_plugin_cache_version(&curated_plugin_version);
     let store = manager.plugin_store();
     let mut local_plugins = Vec::<(
@@ -825,6 +997,9 @@ pub enum RemotePluginCatalogError {
         source: reqwest::Error,
     },
 
+    #[error("failed to send remote plugin catalog request to {url}: {message}")]
+    ServiceRequest { url: String, message: String },
+
     #[error("remote plugin catalog request to {url} failed with status {status}: {body}")]
     UnexpectedStatus {
         url: String,
@@ -1089,6 +1264,7 @@ struct RemotePluginMutationResponse {
 }
 
 pub async fn fetch_remote_marketplaces(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     sources: &[RemoteMarketplaceSource],
@@ -1102,7 +1278,15 @@ pub async fn fetch_remote_marketplaces(
         )
     });
     let workspace_installed_plugins = if needs_workspace_installed {
-        Some(fetch_installed_plugins_for_scope(config, auth, RemotePluginScope::Workspace).await?)
+        Some(
+            fetch_installed_plugins_for_scope(
+                model_service,
+                config,
+                auth,
+                RemotePluginScope::Workspace,
+            )
+            .await?,
+        )
     } else {
         None
     };
@@ -1112,8 +1296,8 @@ pub async fn fetch_remote_marketplaces(
             RemoteMarketplaceSource::Global => {
                 let scope = RemotePluginScope::Global;
                 let (directory_plugins, installed_plugins) = tokio::try_join!(
-                    fetch_directory_plugins_for_scope(config, auth, scope),
-                    fetch_installed_plugins_for_scope(config, auth, scope),
+                    fetch_directory_plugins_for_scope(model_service, config, auth, scope),
+                    fetch_installed_plugins_for_scope(model_service, config, auth, scope),
                 )?;
                 if let Some(marketplace) = build_remote_marketplace(
                     scope.marketplace_name(),
@@ -1128,7 +1312,7 @@ pub async fn fetch_remote_marketplaces(
             RemoteMarketplaceSource::WorkspaceDirectory => {
                 let scope = RemotePluginScope::Workspace;
                 let directory_plugins =
-                    fetch_directory_plugins_for_scope(config, auth, scope).await?;
+                    fetch_directory_plugins_for_scope(model_service, config, auth, scope).await?;
                 if let Some(marketplace) = build_remote_marketplace(
                     scope.marketplace_name(),
                     scope.marketplace_display_name(),
@@ -1143,7 +1327,8 @@ pub async fn fetch_remote_marketplaces(
                 // The shared endpoint is the source of truth for plugins explicitly shared
                 // with the user. Installed unlisted plugins that are not returned there are
                 // link-installed and stay in the separate unlisted bucket.
-                let shared_plugins = fetch_shared_workspace_plugins(config, auth).await?;
+                let shared_plugins =
+                    fetch_shared_workspace_plugins(model_service, config, auth).await?;
                 let shared_plugin_ids = shared_plugins
                     .iter()
                     .map(|plugin| plugin.id.clone())
@@ -1258,18 +1443,21 @@ fn build_remote_marketplace(
 }
 
 pub async fn fetch_remote_installed_plugins(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
 ) -> Result<Vec<RemoteInstalledPlugin>, RemotePluginCatalogError> {
     let auth = ensure_chatgpt_auth(auth)?;
     let global = async {
         let scope = RemotePluginScope::Global;
-        let installed_plugins = fetch_installed_plugins_for_scope(config, auth, scope).await?;
+        let installed_plugins =
+            fetch_installed_plugins_for_scope(model_service, config, auth, scope).await?;
         Ok::<_, RemotePluginCatalogError>((scope, installed_plugins))
     };
     let workspace = async {
         let scope = RemotePluginScope::Workspace;
-        let installed_plugins = fetch_installed_plugins_for_scope(config, auth, scope).await?;
+        let installed_plugins =
+            fetch_installed_plugins_for_scope(model_service, config, auth, scope).await?;
         Ok::<_, RemotePluginCatalogError>((scope, installed_plugins))
     };
 
@@ -1288,12 +1476,14 @@ pub async fn fetch_remote_installed_plugins(
 }
 
 pub async fn fetch_remote_plugin_detail(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     marketplace_name: &str,
     plugin_id: &str,
 ) -> Result<RemotePluginDetail, RemotePluginCatalogError> {
     fetch_remote_plugin_detail_with_download_url_option(
+        model_service,
         config,
         auth,
         marketplace_name,
@@ -1304,25 +1494,27 @@ pub async fn fetch_remote_plugin_detail(
 }
 
 pub async fn fetch_remote_plugin_share_context(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     plugin_id: &str,
 ) -> Result<Option<RemotePluginShareContext>, RemotePluginCatalogError> {
     let auth = ensure_chatgpt_auth(auth)?;
-    let plugin = fetch_plugin_detail(
-        config, auth, plugin_id, /*include_download_urls*/ false,
-    )
-    .await?;
+    let plugin =
+        fetch_plugin_detail(model_service, config, auth, plugin_id, /*include_download_urls*/ false)
+            .await?;
     remote_plugin_share_context(&plugin)
 }
 
 pub async fn fetch_remote_plugin_detail_with_download_urls(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     marketplace_name: &str,
     plugin_id: &str,
 ) -> Result<RemotePluginDetail, RemotePluginCatalogError> {
     fetch_remote_plugin_detail_with_download_url_option(
+        model_service,
         config,
         auth,
         marketplace_name,
@@ -1333,6 +1525,7 @@ pub async fn fetch_remote_plugin_detail_with_download_urls(
 }
 
 pub async fn fetch_remote_plugin_skill_detail(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     marketplace_name: &str,
@@ -1347,9 +1540,9 @@ pub async fn fetch_remote_plugin_skill_detail(
     }
 
     let url = remote_plugin_skill_detail_url(config, plugin_id, skill_name)?;
-    let client = build_reqwest_client();
-    let request = authenticated_request(client.get(&url), auth)?;
-    let response: RemotePluginSkillDetailResponse = send_and_decode(request, &url).await?;
+    let request = authenticated_provider_get_request(url.clone(), auth)?;
+    let response: RemotePluginSkillDetailResponse =
+        send_and_decode_with_model_service(model_service, request, &url).await?;
     if response.plugin_id != plugin_id {
         return Err(RemotePluginCatalogError::UnexpectedPluginId {
             expected: plugin_id.to_string(),
@@ -1369,6 +1562,7 @@ pub async fn fetch_remote_plugin_skill_detail(
 }
 
 async fn fetch_remote_plugin_detail_with_download_url_option(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     _marketplace_name: &str,
@@ -1376,17 +1570,28 @@ async fn fetch_remote_plugin_detail_with_download_url_option(
     include_download_urls: bool,
 ) -> Result<RemotePluginDetail, RemotePluginCatalogError> {
     let auth = ensure_chatgpt_auth(auth)?;
-    let plugin = fetch_plugin_detail(config, auth, plugin_id, include_download_urls).await?;
+    let plugin =
+        fetch_plugin_detail(model_service, config, auth, plugin_id, include_download_urls).await?;
     let scope = plugin.scope;
     let marketplace_name = remote_plugin_canonical_marketplace_name(&plugin)?.to_string();
     // Remote plugin IDs uniquely identify remote plugins, so the caller-provided
     // marketplace name is not validated here. The backend detail response is the
     // source of truth for the plugin's actual scope/marketplace.
 
-    build_remote_plugin_detail(config, auth, scope, marketplace_name, plugin_id, plugin).await
+    build_remote_plugin_detail(
+        model_service,
+        config,
+        auth,
+        scope,
+        marketplace_name,
+        plugin_id,
+        plugin,
+    )
+    .await
 }
 
 async fn build_remote_plugin_detail(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     scope: RemotePluginScope,
@@ -1394,7 +1599,7 @@ async fn build_remote_plugin_detail(
     plugin_id: &str,
     plugin: RemotePluginDirectoryItem,
 ) -> Result<RemotePluginDetail, RemotePluginCatalogError> {
-    let installed_plugin = fetch_installed_plugins_for_scope(config, auth, scope)
+    let installed_plugin = fetch_installed_plugins_for_scope(model_service, config, auth, scope)
         .await?
         .into_iter()
         .find(|installed_plugin| installed_plugin.plugin.id == plugin_id);
@@ -1437,6 +1642,7 @@ async fn build_remote_plugin_detail(
 }
 
 pub async fn install_remote_plugin(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     _marketplace_name: &str,
@@ -1448,9 +1654,9 @@ pub async fn install_remote_plugin(
 
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
     let url = format!("{base_url}/ps/plugins/{plugin_id}/install");
-    let client = build_reqwest_client();
-    let request = authenticated_request(client.post(&url), auth)?;
-    let response: RemotePluginMutationResponse = send_and_decode(request, &url).await?;
+    let request = authenticated_provider_request(Method::POST, url.clone(), auth)?;
+    let response: RemotePluginMutationResponse =
+        send_and_decode_with_model_service(model_service, request, &url).await?;
     if response.id != plugin_id {
         return Err(RemotePluginCatalogError::UnexpectedPluginId {
             expected: plugin_id.to_string(),
@@ -1469,24 +1675,24 @@ pub async fn install_remote_plugin(
 }
 
 pub async fn uninstall_remote_plugin(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     codex_home: PathBuf,
     plugin_id: &str,
 ) -> Result<(), RemotePluginCatalogError> {
     let auth = ensure_chatgpt_auth(auth)?;
-    let plugin = fetch_plugin_detail(
-        config, auth, plugin_id, /*include_download_urls*/ false,
-    )
-    .await?;
+    let plugin =
+        fetch_plugin_detail(model_service, config, auth, plugin_id, /*include_download_urls*/ false)
+            .await?;
     let marketplace_name = remote_plugin_canonical_marketplace_name(&plugin)?.to_string();
     let plugin_name = plugin.name;
 
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
     let url = format!("{base_url}/plugins/{plugin_id}/uninstall");
-    let client = build_reqwest_client();
-    let request = authenticated_request(client.post(&url), auth)?;
-    let response: RemotePluginMutationResponse = send_and_decode(request, &url).await?;
+    let request = authenticated_provider_request(Method::POST, url.clone(), auth)?;
+    let response: RemotePluginMutationResponse =
+        send_and_decode_with_model_service(model_service, request, &url).await?;
     if response.id != plugin_id {
         return Err(RemotePluginCatalogError::UnexpectedPluginId {
             expected: plugin_id.to_string(),
@@ -1719,6 +1925,7 @@ fn normalize_remote_default_prompt(prompt: &str) -> Option<Vec<String>> {
 }
 
 async fn fetch_directory_plugins_for_scope(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     scope: RemotePluginScope,
@@ -1726,8 +1933,14 @@ async fn fetch_directory_plugins_for_scope(
     let mut plugins = Vec::new();
     let mut page_token = None;
     loop {
-        let response =
-            get_remote_plugin_list_page(config, auth, scope, page_token.as_deref()).await?;
+        let response = get_remote_plugin_list_page(
+            model_service,
+            config,
+            auth,
+            scope,
+            page_token.as_deref(),
+        )
+        .await?;
         plugins.extend(response.plugins);
         let Some(next_page_token) = response.pagination.next_page_token else {
             break;
@@ -1738,14 +1951,20 @@ async fn fetch_directory_plugins_for_scope(
 }
 
 async fn fetch_shared_workspace_plugins(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
 ) -> Result<Vec<RemotePluginDirectoryItem>, RemotePluginCatalogError> {
     let mut plugins = Vec::new();
     let mut page_token = None;
     loop {
-        let response =
-            get_remote_shared_workspace_plugins_page(config, auth, page_token.as_deref()).await?;
+        let response = get_remote_shared_workspace_plugins_page(
+            model_service,
+            config,
+            auth,
+            page_token.as_deref(),
+        )
+        .await?;
         plugins.extend(response.plugins);
         let Some(next_page_token) = response.pagination.next_page_token else {
             break;
@@ -1756,17 +1975,23 @@ async fn fetch_shared_workspace_plugins(
 }
 
 async fn fetch_installed_plugins_for_scope(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     scope: RemotePluginScope,
 ) -> Result<Vec<RemotePluginInstalledItem>, RemotePluginCatalogError> {
     fetch_installed_plugins_for_scope_with_download_url(
-        config, auth, scope, /*include_download_urls*/ false,
+        model_service,
+        config,
+        auth,
+        scope,
+        /*include_download_urls*/ false,
     )
     .await
 }
 
 async fn fetch_installed_plugins_for_scope_with_download_url(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     scope: RemotePluginScope,
@@ -1776,6 +2001,7 @@ async fn fetch_installed_plugins_for_scope_with_download_url(
     let mut page_token = None;
     loop {
         let response = get_remote_plugin_installed_page(
+            model_service,
             config,
             auth,
             scope,
@@ -1793,40 +2019,51 @@ async fn fetch_installed_plugins_for_scope_with_download_url(
 }
 
 async fn get_remote_plugin_list_page(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     scope: RemotePluginScope,
     page_token: Option<&str>,
 ) -> Result<RemotePluginListResponse, RemotePluginCatalogError> {
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
-    let url = format!("{base_url}/ps/plugins/list");
-    let client = build_reqwest_client();
-    let mut request = authenticated_request(client.get(&url), auth)?;
-    request = request.query(&[("scope", scope.api_value())]);
-    request = request.query(&[("limit", REMOTE_PLUGIN_LIST_PAGE_LIMIT)]);
-    if let Some(page_token) = page_token {
-        request = request.query(&[("pageToken", page_token)]);
+    let mut url = Url::parse(&format!("{base_url}/ps/plugins/list"))
+        .map_err(RemotePluginCatalogError::InvalidBaseUrl)?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("scope", scope.api_value());
+        query.append_pair("limit", &REMOTE_PLUGIN_LIST_PAGE_LIMIT.to_string());
+        if let Some(page_token) = page_token {
+            query.append_pair("pageToken", page_token);
+        }
     }
-    send_and_decode(request, &url).await
+    let url = url.to_string();
+    let request = authenticated_provider_get_request(url.clone(), auth)?;
+    send_and_decode_with_model_service(model_service, request, &url).await
 }
 
 async fn get_remote_shared_workspace_plugins_page(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     page_token: Option<&str>,
 ) -> Result<RemotePluginListResponse, RemotePluginCatalogError> {
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
-    let url = format!("{base_url}/ps/plugins/workspace/shared");
-    let client = build_reqwest_client();
-    let mut request = authenticated_request(client.get(&url), auth)?;
-    request = request.query(&[("limit", REMOTE_PLUGIN_LIST_PAGE_LIMIT)]);
-    if let Some(page_token) = page_token {
-        request = request.query(&[("pageToken", page_token)]);
+    let mut url = Url::parse(&format!("{base_url}/ps/plugins/workspace/shared"))
+        .map_err(RemotePluginCatalogError::InvalidBaseUrl)?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("limit", &REMOTE_PLUGIN_LIST_PAGE_LIMIT.to_string());
+        if let Some(page_token) = page_token {
+            query.append_pair("pageToken", page_token);
+        }
     }
-    send_and_decode(request, &url).await
+    let url = url.to_string();
+    let request = authenticated_provider_get_request(url.clone(), auth)?;
+    send_and_decode_with_model_service(model_service, request, &url).await
 }
 
 async fn get_remote_plugin_installed_page(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     scope: RemotePluginScope,
@@ -1834,33 +2071,40 @@ async fn get_remote_plugin_installed_page(
     include_download_urls: bool,
 ) -> Result<RemotePluginInstalledResponse, RemotePluginCatalogError> {
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
-    let url = format!("{base_url}/ps/plugins/installed");
-    let client = build_reqwest_client();
-    let mut request = authenticated_request(client.get(&url), auth)?;
-    request = request.query(&[("scope", scope.api_value())]);
-    if include_download_urls {
-        request = request.query(&[("includeDownloadUrls", true)]);
+    let mut url = Url::parse(&format!("{base_url}/ps/plugins/installed"))
+        .map_err(RemotePluginCatalogError::InvalidBaseUrl)?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("scope", scope.api_value());
+        if include_download_urls {
+            query.append_pair("includeDownloadUrls", "true");
+        }
+        if let Some(page_token) = page_token {
+            query.append_pair("pageToken", page_token);
+        }
     }
-    if let Some(page_token) = page_token {
-        request = request.query(&[("pageToken", page_token)]);
-    }
-    send_and_decode(request, &url).await
+    let url = url.to_string();
+    let request = authenticated_provider_get_request(url.clone(), auth)?;
+    send_and_decode_with_model_service(model_service, request, &url).await
 }
 
 async fn fetch_plugin_detail(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: &RemotePluginAuth,
     plugin_id: &str,
     include_download_urls: bool,
 ) -> Result<RemotePluginDirectoryItem, RemotePluginCatalogError> {
     let base_url = config.chatgpt_base_url.trim_end_matches('/');
-    let url = format!("{base_url}/ps/plugins/{plugin_id}");
-    let client = build_reqwest_client();
-    let mut request = authenticated_request(client.get(&url), auth)?;
+    let mut url = Url::parse(&format!("{base_url}/ps/plugins/{plugin_id}"))
+        .map_err(RemotePluginCatalogError::InvalidBaseUrl)?;
     if include_download_urls {
-        request = request.query(&[("includeDownloadUrls", true)]);
+        url.query_pairs_mut()
+            .append_pair("includeDownloadUrls", "true");
     }
-    send_and_decode(request, &url).await
+    let url = url.to_string();
+    let request = authenticated_provider_get_request(url.clone(), auth)?;
+    send_and_decode_with_model_service(model_service, request, &url).await
 }
 
 fn remote_plugin_skill_detail_url(
@@ -1896,29 +2140,44 @@ fn ensure_chatgpt_auth(
     Ok(auth)
 }
 
-fn authenticated_request(
-    request: RequestBuilder,
+fn authenticated_provider_request(
+    method: Method,
+    url: String,
     auth: &RemotePluginAuth,
-) -> Result<RequestBuilder, RemotePluginCatalogError> {
-    Ok(request.timeout(REMOTE_PLUGIN_CATALOG_TIMEOUT).headers(
-        codex_api_auth::auth_provider_from_auth_snapshot(auth.request_auth_snapshot())
-            .to_auth_headers(),
-    ))
+) -> Result<ProviderHttpRequest, RemotePluginCatalogError> {
+    let mut request = Request::new(method, url);
+    request.timeout = Some(REMOTE_PLUGIN_CATALOG_TIMEOUT);
+    Ok(ProviderHttpRequest {
+        selection: ModelSelectionPolicy {
+            provider_hint: Some(OPENAI_PROVIDER_ID.to_string()),
+            ..Default::default()
+        },
+        auth: Some(auth.request_auth_snapshot().clone()),
+        request,
+    })
 }
 
-async fn send_and_decode<T: for<'de> Deserialize<'de>>(
-    request: RequestBuilder,
+fn authenticated_provider_get_request(
+    url: String,
+    auth: &RemotePluginAuth,
+) -> Result<ProviderHttpRequest, RemotePluginCatalogError> {
+    authenticated_provider_request(Method::GET, url, auth)
+}
+
+async fn send_and_decode_with_model_service<T: for<'de> Deserialize<'de>>(
+    model_service: &dyn ModelServiceApi,
+    request: ProviderHttpRequest,
     url: &str,
 ) -> Result<T, RemotePluginCatalogError> {
-    let response = request
-        .send()
+    let response = model_service
+        .execute_provider_http(request)
         .await
-        .map_err(|source| RemotePluginCatalogError::Request {
+        .map_err(|source| RemotePluginCatalogError::ServiceRequest {
             url: url.to_string(),
-            source,
+            message: source.to_string(),
         })?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
+    let status = response.status;
+    let body = String::from_utf8(response.body.to_vec()).unwrap_or_default();
     if !status.is_success() {
         return Err(RemotePluginCatalogError::UnexpectedStatus {
             url: url.to_string(),

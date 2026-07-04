@@ -1,30 +1,20 @@
-use codex_protocol::ThreadId;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
-#[cfg(not(any(test, feature = "test-support")))]
-use codex_state_api::SharedStateDbRuntime;
-use codex_state_api::StateDbRuntime;
-use codex_state_api::ThreadMetadata;
 use codex_utils_path::normalize_for_path_comparison;
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::Arc;
+use protocol::ThreadId;
+use protocol::dynamic_tools::DynamicToolSpec;
+use state_api::SharedStateDbRuntime;
+use state_api::StateDbRuntime;
+use state_api::ThreadMetadata;
 use tracing::warn;
 
 #[cfg(test)]
 use crate::config::Config;
 
-#[cfg(any(test, feature = "test-support"))]
-pub type StateDbHandle = Arc<codex_state::StateRuntime>;
-
-#[cfg(not(any(test, feature = "test-support")))]
 pub type StateDbHandle = SharedStateDbRuntime;
 
 #[cfg(test)]
 pub async fn init_state_db(config: &Config) -> Option<StateDbHandle> {
-    match codex_state::StateRuntime::init(
-        config.sqlite_home.clone(),
-        config.model_provider_id.clone(),
-    )
-    .await
+    match state::StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
+        .await
     {
         Ok(runtime) => {
             let runtime: StateDbHandle = runtime;

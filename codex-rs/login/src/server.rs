@@ -37,7 +37,7 @@ use crate::token_data::parse_chatgpt_jwt_claims;
 use base64::Engine;
 use chrono::Utc;
 use codex_auth_types::AuthMode;
-use codex_client::build_reqwest_client_with_custom_ca;
+use transport_client::build_reqwest_client_with_custom_ca;
 use codex_config_types::AuthCredentialsStoreMode;
 use codex_utils_template::Template;
 use rand::RngCore;

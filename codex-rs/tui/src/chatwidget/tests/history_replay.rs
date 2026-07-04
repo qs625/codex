@@ -1,13 +1,13 @@
 use super::*;
-use codex_app_server_protocol::FileSystemAccessMode;
-use codex_app_server_protocol::FileSystemPath;
-use codex_app_server_protocol::FileSystemSandboxEntry;
-use codex_app_server_protocol::FileSystemSpecialPath;
-use codex_app_server_protocol::NetworkAccess;
-use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
-use codex_app_server_protocol::PermissionProfileNetworkPermissions;
-use codex_app_server_protocol::SandboxPolicy;
+use app_server_protocol::FileSystemAccessMode;
+use app_server_protocol::FileSystemPath;
+use app_server_protocol::FileSystemSandboxEntry;
+use app_server_protocol::FileSystemSpecialPath;
+use app_server_protocol::NetworkAccess;
+use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use app_server_protocol::PermissionProfileFileSystemPermissions;
+use app_server_protocol::PermissionProfileNetworkPermissions;
+use app_server_protocol::SandboxPolicy;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -685,7 +685,7 @@ async fn replayed_retryable_app_server_error_keeps_turn_running() {
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
@@ -839,7 +839,7 @@ async fn replayed_event_driven_tool_call_does_not_emit_history_cells() {
                 "path": "/tmp/build.log",
                 "label": "build",
             }),
-            status: codex_app_server_protocol::DynamicToolCallStatus::Completed,
+            status: app_server_protocol::DynamicToolCallStatus::Completed,
             output: Some(serde_json::Value::String("subscribed".to_string())),
         },
         "turn-1".to_string(),
@@ -859,7 +859,7 @@ async fn live_reasoning_summary_is_not_rendered_twice_when_item_completes() {
             thread_id: "thread-1".to_string(),
             turn: AppServerTurn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: AppServerTurnStatus::InProgress,
                 error: None,
@@ -928,7 +928,7 @@ async fn replayed_in_progress_turn_marks_task_running() {
     chat.replay_thread_turns(
         vec![AppServerTurn {
             id: "turn-1".to_string(),
-            items_view: codex_app_server_protocol::TurnItemsView::Full,
+            items_view: app_server_protocol::TurnItemsView::Full,
             items: Vec::new(),
             status: AppServerTurnStatus::InProgress,
             error: None,

@@ -1,21 +1,21 @@
 use crate::can_request_original_image_detail;
 use codex_features::Feature;
 use codex_features::Features;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::TUI_VISIBLE_COLLABORATION_MODES;
-use codex_protocol::config_types::WebSearchConfig;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ApplyPatchToolType;
-use codex_protocol::openai_models::ConfigShellToolType;
-use codex_protocol::openai_models::InputModality;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::WebSearchToolType;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::config_types::ModeKind;
+use protocol::config_types::TUI_VISIBLE_COLLABORATION_MODES;
+use protocol::config_types::WebSearchConfig;
+use protocol::config_types::WebSearchMode;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ApplyPatchToolType;
+use protocol::openai_models::ConfigShellToolType;
+use protocol::openai_models::InputModality;
+use protocol::openai_models::ModelInfo;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::WebSearchToolType;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

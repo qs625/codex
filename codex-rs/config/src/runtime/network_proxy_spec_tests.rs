@@ -1,12 +1,12 @@
 use super::*;
-use codex_config::NetworkDomainPermissionToml;
-use codex_config::NetworkDomainPermissionsToml;
+use config_service::NetworkDomainPermissionToml;
+use config_service::NetworkDomainPermissionsToml;
 use codex_network_proxy_api::NetworkDomainPermission;
-use codex_protocol::models::ManagedFileSystemPermissions;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::SandboxPolicy;
 use pretty_assertions::assert_eq;
+use protocol::models::ManagedFileSystemPermissions;
+use protocol::models::PermissionProfile;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::SandboxPolicy;
 
 fn permission_profile_for_sandbox_policy(sandbox_policy: &SandboxPolicy) -> PermissionProfile {
     PermissionProfile::from_legacy_sandbox_policy(sandbox_policy)

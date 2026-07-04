@@ -1,12 +1,12 @@
 use super::*;
-use codex_protocol::ThreadId;
-use codex_protocol::models::ReasoningItemReasoningSummary;
-use codex_protocol::protocol::AgentMessageEvent;
-use codex_protocol::protocol::ResumedHistory;
-use codex_protocol::protocol::TurnCompleteEvent;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::protocol::UserMessageEvent;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::models::ReasoningItemReasoningSummary;
+use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::ResumedHistory;
+use protocol::protocol::TurnCompleteEvent;
+use protocol::protocol::TurnStartedEvent;
+use protocol::protocol::UserMessageEvent;
 
 fn user_msg(text: &str) -> ResponseItem {
     ResponseItem::Message {

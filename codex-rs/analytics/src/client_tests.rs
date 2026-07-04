@@ -8,30 +8,30 @@ use crate::events::SkillInvocationEventRequest;
 use crate::events::TrackEventRequest;
 use crate::facts::AnalyticsFact;
 use crate::facts::InvocationType;
-use codex_app_server_protocol::ApprovalsReviewer as AppServerApprovalsReviewer;
-use codex_app_server_protocol::AskForApproval as AppServerAskForApproval;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ClientResponsePayload;
-use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
-use codex_app_server_protocol::SessionSource as AppServerSessionSource;
-use codex_app_server_protocol::Thread;
-use codex_app_server_protocol::ThreadArchiveParams;
-use codex_app_server_protocol::ThreadArchiveResponse;
-use codex_app_server_protocol::ThreadForkResponse;
-use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::ThreadStatus as AppServerThreadStatus;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::TurnStatus as AppServerTurnStatus;
-use codex_app_server_protocol::TurnSteerParams;
-use codex_app_server_protocol::TurnSteerResponse;
-use codex_protocol::models::PermissionProfile as CorePermissionProfile;
+use app_server_protocol::ApprovalsReviewer as AppServerApprovalsReviewer;
+use app_server_protocol::AskForApproval as AppServerAskForApproval;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::ClientResponsePayload;
+use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use app_server_protocol::RequestId;
+use app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
+use app_server_protocol::SessionSource as AppServerSessionSource;
+use app_server_protocol::Thread;
+use app_server_protocol::ThreadArchiveParams;
+use app_server_protocol::ThreadArchiveResponse;
+use app_server_protocol::ThreadForkResponse;
+use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadStatus as AppServerThreadStatus;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnStatus as AppServerTurnStatus;
+use app_server_protocol::TurnSteerParams;
+use app_server_protocol::TurnSteerResponse;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::test_path_buf;
+use protocol::models::PermissionProfile as CorePermissionProfile;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -207,7 +207,7 @@ fn sample_turn_start_response() -> ClientResponsePayload {
     ClientResponsePayload::TurnStart(TurnStartResponse {
         turn: Turn {
             id: "turn-1".to_string(),
-            items_view: codex_app_server_protocol::TurnItemsView::Full,
+            items_view: app_server_protocol::TurnItemsView::Full,
             items: Vec::new(),
             status: AppServerTurnStatus::InProgress,
             error: None,

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use codex_exec_server_api::ExecEnvironment;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::models::SandboxPermissions;
-use codex_tool_config::ToolUserShellType;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use exec_server_api::ExecEnvironment;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::models::SandboxPermissions;
 use serde::Deserialize;
-use thread_service_api::ExecApprovalRequirement;
+use permissions_service_api::ExecApprovalRequirement;
+use tool_config::ToolUserShellType;
 
 use crate::CommandNotificationFilter;
 

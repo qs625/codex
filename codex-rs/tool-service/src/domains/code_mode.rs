@@ -15,20 +15,20 @@ use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
 use codex_code_mode_api::parse_exec_source;
-use codex_command_service_api::resolve_max_tokens;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use thread_service_api::ThreadSessionCapability;
-use thread_service_api::ThreadRuntimeCapability;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolPayload;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text_content_items_with_policy;
 use codex_utils_output_truncation::truncate_function_output_items_with_policy;
+use command_service_api::resolve_max_tokens;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
 use serde::Deserialize;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::ToolPayload;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
@@ -229,11 +229,9 @@ async fn handle_runtime_response(
             session.code_mode_replace_stored_values(stored_values).await;
             let success = error_text.is_none();
             if let Some(error_text) = error_text {
-                content_items.push(
-                    codex_protocol::models::FunctionCallOutputContentItem::InputText {
-                        text: format!("Script error:\n{error_text}"),
-                    },
-                );
+                content_items.push(protocol::models::FunctionCallOutputContentItem::InputText {
+                    text: format!("Script error:\n{error_text}"),
+                });
             }
             content_items = truncate_code_mode_result(content_items, max_output_tokens);
             prepend_script_status(&mut content_items, &script_status, started_at.elapsed());
@@ -247,12 +245,9 @@ async fn handle_runtime_response(
 
 fn sanitize_runtime_image_detail(
     turn: &dyn ThreadRuntimeCapability,
-    items: &mut [codex_protocol::models::FunctionCallOutputContentItem],
+    items: &mut [protocol::models::FunctionCallOutputContentItem],
 ) {
-    codex_tool_config::sanitize_original_image_detail(
-        turn.can_request_original_image_detail(),
-        items,
-    );
+    tool_config::sanitize_original_image_detail(turn.can_request_original_image_detail(), items);
 }
 
 fn format_script_status(response: &RuntimeResponse) -> String {
@@ -272,7 +267,7 @@ fn format_script_status(response: &RuntimeResponse) -> String {
 }
 
 fn prepend_script_status(
-    content_items: &mut Vec<codex_protocol::models::FunctionCallOutputContentItem>,
+    content_items: &mut Vec<protocol::models::FunctionCallOutputContentItem>,
     status: &str,
     wall_time: Duration,
 ) {
@@ -280,20 +275,20 @@ fn prepend_script_status(
     let header = format!("{status}\nWall time {wall_time_seconds:.1} seconds\nOutput:\n");
     content_items.insert(
         0,
-        codex_protocol::models::FunctionCallOutputContentItem::InputText { text: header },
+        protocol::models::FunctionCallOutputContentItem::InputText { text: header },
     );
 }
 
 fn truncate_code_mode_result(
-    items: Vec<codex_protocol::models::FunctionCallOutputContentItem>,
+    items: Vec<protocol::models::FunctionCallOutputContentItem>,
     max_output_tokens: Option<usize>,
-) -> Vec<codex_protocol::models::FunctionCallOutputContentItem> {
+) -> Vec<protocol::models::FunctionCallOutputContentItem> {
     let max_output_tokens = resolve_max_tokens(max_output_tokens);
     let policy = TruncationPolicy::Tokens(max_output_tokens);
     if items.iter().all(|item| {
         matches!(
             item,
-            codex_protocol::models::FunctionCallOutputContentItem::InputText { .. }
+            protocol::models::FunctionCallOutputContentItem::InputText { .. }
         )
     }) {
         let (truncated_items, _) =
@@ -313,15 +308,15 @@ fn runtime_cell_id(response: &RuntimeResponse) -> &str {
 
 fn into_function_call_output_content_items(
     content_items: Vec<CodeModeContentItem>,
-) -> Vec<codex_protocol::models::FunctionCallOutputContentItem> {
+) -> Vec<protocol::models::FunctionCallOutputContentItem> {
     content_items
         .into_iter()
         .map(|item| match item {
             CodeModeContentItem::InputText { text } => {
-                codex_protocol::models::FunctionCallOutputContentItem::InputText { text }
+                protocol::models::FunctionCallOutputContentItem::InputText { text }
             }
             CodeModeContentItem::InputImage { image_url, detail } => {
-                codex_protocol::models::FunctionCallOutputContentItem::InputImage {
+                protocol::models::FunctionCallOutputContentItem::InputImage {
                     image_url,
                     detail: detail
                         .map(code_mode_image_detail_into_protocol)
@@ -334,11 +329,11 @@ fn into_function_call_output_content_items(
 
 fn code_mode_image_detail_into_protocol(
     value: CodeModeImageDetail,
-) -> codex_protocol::models::ImageDetail {
+) -> protocol::models::ImageDetail {
     match value {
-        CodeModeImageDetail::Auto => codex_protocol::models::ImageDetail::Auto,
-        CodeModeImageDetail::Low => codex_protocol::models::ImageDetail::Low,
-        CodeModeImageDetail::High => codex_protocol::models::ImageDetail::High,
-        CodeModeImageDetail::Original => codex_protocol::models::ImageDetail::Original,
+        CodeModeImageDetail::Auto => protocol::models::ImageDetail::Auto,
+        CodeModeImageDetail::Low => protocol::models::ImageDetail::Low,
+        CodeModeImageDetail::High => protocol::models::ImageDetail::High,
+        CodeModeImageDetail::Original => protocol::models::ImageDetail::Original,
     }
 }

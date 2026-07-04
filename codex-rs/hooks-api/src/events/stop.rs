@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use codex_protocol::ThreadId;
-use codex_protocol::items::HookPromptFragment;
-use codex_protocol::protocol::HookCompletedEvent;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::ThreadId;
+use protocol::items::HookPromptFragment;
+use protocol::protocol::HookCompletedEvent;
 
 #[derive(Debug, Clone)]
 pub struct StopRequest {

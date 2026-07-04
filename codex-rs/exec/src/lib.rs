@@ -10,88 +10,63 @@ mod event_processor_with_human_output;
 pub(crate) mod event_processor_with_jsonl_output;
 pub(crate) mod exec_events;
 
+use app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
+use app_server_client::EnvironmentManager;
+use app_server_client::ExecServerRuntimePaths;
+use app_server_client::InProcessAppServerClient;
+use app_server_client::InProcessClientStartArgs;
+use app_server_client::InProcessServerEvent;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::ConfigWarningNotification;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::McpServerElicitationAction;
+use app_server_protocol::McpServerElicitationRequestResponse;
+use app_server_protocol::PermissionProfileSelectionParams;
+use app_server_protocol::RequestId;
+use app_server_protocol::ReviewStartParams;
+use app_server_protocol::ReviewStartResponse;
+use app_server_protocol::ReviewTarget as ApiReviewTarget;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::Thread as AppServerThread;
+use app_server_protocol::ThreadItem as AppServerThreadItem;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadReadParams;
+use app_server_protocol::ThreadReadResponse;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadSortKey;
+use app_server_protocol::ThreadSourceKind;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadUnsubscribeParams;
+use app_server_protocol::ThreadUnsubscribeResponse;
+use app_server_protocol::TurnInterruptParams;
+use app_server_protocol::TurnInterruptResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnStartedNotification;
 pub use cli::Cli;
 pub use cli::Command;
 pub use cli::ReviewArgs;
-use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
-use codex_app_server_client::EnvironmentManager;
-use codex_app_server_client::ExecServerRuntimePaths;
-use codex_app_server_client::InProcessAppServerClient;
-use codex_app_server_client::InProcessClientStartArgs;
-use codex_app_server_client::InProcessServerEvent;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::McpServerElicitationAction;
-use codex_app_server_protocol::McpServerElicitationRequestResponse;
-use codex_app_server_protocol::PermissionProfileSelectionParams;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ReviewStartParams;
-use codex_app_server_protocol::ReviewStartResponse;
-use codex_app_server_protocol::ReviewTarget as ApiReviewTarget;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::Thread as AppServerThread;
-use codex_app_server_protocol::ThreadItem as AppServerThreadItem;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadListResponse;
-use codex_app_server_protocol::ThreadReadParams;
-use codex_app_server_protocol::ThreadReadResponse;
-use codex_app_server_protocol::ThreadResumeParams;
-use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadSortKey;
-use codex_app_server_protocol::ThreadSourceKind;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::ThreadUnsubscribeParams;
-use codex_app_server_protocol::ThreadUnsubscribeResponse;
-use codex_app_server_protocol::TurnInterruptParams;
-use codex_app_server_protocol::TurnInterruptResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::TurnStartedNotification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
-use codex_config_diagnostics::ConfigLoadError;
-use codex_config_diagnostics::format_config_error_with_source;
-use codex_config_loader::ConfigLoadOptions;
-use codex_config_loader::LoaderOverrides;
-use codex_config_local_loader::LocalConfigLayerLoader;
-use codex_execpolicy_loader::check_execpolicy_for_warnings;
-use codex_execpolicy_loader::format_exec_policy_error_with_source;
+use config_service::ConfigLoadError;
+use config_service::format_config_error_with_source;
+use config_service::ConfigLoadOptions;
+use config_service::LoaderOverrides;
+use config_service::LocalConfigLayerLoader;
+use permissions_service::check_execpolicy_for_warnings;
+use permissions_service::format_exec_policy_error_with_source;
 use codex_feedback::CodexFeedback;
 use codex_git_info::get_git_repo_root;
 use codex_login::AuthConfig;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::default_client::set_default_originator;
 use codex_login::enforce_login_restrictions;
-use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
-use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_otel::set_parent_from_context;
 use codex_otel::traceparent_context_from_env;
-use codex_protocol::SessionId;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::ReviewRequest;
-use codex_protocol::protocol::ReviewTarget;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::SessionConfiguredEvent;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::user_input::UserInput;
-use codex_rollout::StateDbHandle;
-use codex_rollout::find_thread_meta_by_name_str;
-use thread_service::config::Config;
-use thread_service::config::ConfigBuilder;
-use thread_service::config::ConfigOverrides;
-use thread_service::config::find_codex_home;
-use thread_service::config::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
-use thread_service::config::resolve_oss_provider;
-use thread_service::config::resolve_profile_v2_config_path;
-use thread_service::path_utils;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::canonicalize_existing_preserving_symlinks;
 use codex_utils_cli::SharedCliOptions;
@@ -134,6 +109,23 @@ pub use exec_events::TurnFailedEvent;
 pub use exec_events::TurnStartedEvent;
 pub use exec_events::Usage;
 pub use exec_events::WebSearchItem;
+use model_service_api::LMSTUDIO_OSS_PROVIDER_ID;
+use model_service_api::OLLAMA_OSS_PROVIDER_ID;
+use protocol::SessionId;
+use protocol::ThreadId;
+use protocol::config_types::SandboxMode;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::PermissionProfile;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::ReviewRequest;
+use protocol::protocol::ReviewTarget;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::RolloutLine;
+use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::SessionSource;
+use protocol::user_input::UserInput;
+use rollout::StateDbHandle;
+use rollout::find_thread_meta_by_name_str;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::IsTerminal;
@@ -142,6 +134,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use supports_color::Stream;
+use thread_service::config::Config;
+use thread_service::config::ConfigBuilder;
+use thread_service::config::ConfigOverrides;
+use thread_service::config::find_codex_home;
+use thread_service::config::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
+use thread_service::config::resolve_oss_provider;
+use thread_service::config::resolve_profile_v2_config_path;
+use thread_service::path_utils;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 use tracing::error;
@@ -534,7 +534,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         arg0_paths.codex_self_exe.clone(),
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
-    let state_db = codex_rollout::state_db::init(&config).await;
+    let state_db = rollout::state_db::init(&config).await;
     let environment_manager = if run_loader_overrides.ignore_user_config {
         EnvironmentManager::from_env(local_runtime_paths).await?
     } else {
@@ -636,8 +636,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     let (initial_operation, prompt_summary) = match (command.as_ref(), prompt, images) {
         (Some(ExecCommand::Review(review_cli)), _, _) => {
             let review_request = build_review_request(review_cli)?;
-            let summary =
-                thread_service::review_prompts::user_facing_hint(&review_request.target);
+            let summary = thread_service::review_prompts::user_facing_hint(&review_request.target);
             (InitialOperation::Review { review_request }, summary)
         }
         (Some(ExecCommand::Resume(args)), root_prompt, imgs) => {
@@ -913,8 +912,8 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                     && payload.turn.id == task_id
                     && matches!(
                         payload.turn.status,
-                        codex_app_server_protocol::TurnStatus::Failed
-                            | codex_app_server_protocol::TurnStatus::Interrupted
+                        app_server_protocol::TurnStatus::Failed
+                            | app_server_protocol::TurnStatus::Interrupted
                     )
                 {
                     error_seen = true;
@@ -1043,11 +1042,9 @@ fn permissions_selection_from_active_profile(
 fn sandbox_mode_from_permission_profile(
     permission_profile: &PermissionProfile,
     cwd: &Path,
-) -> Option<codex_app_server_protocol::SandboxMode> {
+) -> Option<app_server_protocol::SandboxMode> {
     match permission_profile {
-        PermissionProfile::Disabled => {
-            Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
-        }
+        PermissionProfile::Disabled => Some(app_server_protocol::SandboxMode::DangerFullAccess),
         PermissionProfile::External { .. } => None,
         PermissionProfile::Managed { .. } => {
             let file_system_policy = permission_profile.file_system_sandbox_policy();
@@ -1055,11 +1052,11 @@ fn sandbox_mode_from_permission_profile(
                 permission_profile
                     .network_sandbox_policy()
                     .is_enabled()
-                    .then_some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
+                    .then_some(app_server_protocol::SandboxMode::DangerFullAccess)
             } else if file_system_policy.can_write_path_with_cwd(cwd, cwd) {
-                Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
+                Some(app_server_protocol::SandboxMode::WorkspaceWrite)
             } else {
-                Some(codex_app_server_protocol::SandboxMode::ReadOnly)
+                Some(app_server_protocol::SandboxMode::ReadOnly)
             }
         }
     }
@@ -1074,7 +1071,7 @@ fn config_request_overrides_from_config(config: &Config) -> Option<HashMap<Strin
 
 fn approvals_reviewer_override_from_config(
     config: &Config,
-) -> Option<codex_app_server_protocol::ApprovalsReviewer> {
+) -> Option<app_server_protocol::ApprovalsReviewer> {
     Some(config.approvals_reviewer.into())
 }
 
@@ -1167,11 +1164,11 @@ fn session_configured_from_thread_response(
     model_provider_id: String,
     service_tier: Option<String>,
     approval_policy: AskForApproval,
-    approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
+    approvals_reviewer: protocol::config_types::ApprovalsReviewer,
     permission_profile: PermissionProfile,
-    active_permission_profile: Option<codex_protocol::models::ActivePermissionProfile>,
+    active_permission_profile: Option<protocol::models::ActivePermissionProfile>,
     cwd: AbsolutePathBuf,
-    reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
 ) -> Result<SessionConfiguredEvent, String> {
     let session_id = SessionId::from_string(session_id)
         .map_err(|err| format!("session id `{session_id}` is invalid: {err}"))?;

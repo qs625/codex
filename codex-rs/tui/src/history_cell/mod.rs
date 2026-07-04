@@ -46,39 +46,39 @@ use crate::version::CODEX_CLI_VERSION;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::McpAuthStatus;
+use app_server_protocol::McpServerStatus;
+use app_server_protocol::McpServerStatusDetail;
+use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use app_server_protocol::PermissionProfileFileSystemPermissions;
+use app_server_protocol::PermissionProfileNetworkPermissions;
+use app_server_protocol::ToolRequestUserInputAnswer;
+use app_server_protocol::ToolRequestUserInputQuestion;
+use app_server_protocol::WebSearchAction;
 use base64::Engine;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::McpAuthStatus;
-use codex_app_server_protocol::McpServerStatus;
-use codex_app_server_protocol::McpServerStatusDetail;
-use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
-use codex_app_server_protocol::PermissionProfileNetworkPermissions;
-use codex_app_server_protocol::ToolRequestUserInputAnswer;
-use codex_app_server_protocol::ToolRequestUserInputQuestion;
-use codex_app_server_protocol::WebSearchAction;
 use codex_config_types::McpServerTransportConfig;
-#[cfg(test)]
-use codex_mcp::qualified_mcp_tool_name_prefix;
-use codex_metrics_api::RuntimeMetricsSummary;
-use codex_protocol::account::PlanType;
-use codex_protocol::approvals::ExecPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyAmendment;
-#[cfg(test)]
-use codex_protocol::mcp::Resource;
-#[cfg(test)]
-use codex_protocol::mcp::ResourceTemplate;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::local_image_label_text;
-use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use codex_protocol::plan_tool::PlanItemArg;
-use codex_protocol::plan_tool::StepStatus;
-use codex_protocol::plan_tool::UpdatePlanArgs;
-use codex_protocol::user_input::TextElement;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::format_env_display;
 use image::DynamicImage;
 use image::ImageReader;
+#[cfg(test)]
+use mcp_service::qualified_mcp_tool_name_prefix;
+use metrics_api::RuntimeMetricsSummary;
+use protocol::account::PlanType;
+use protocol::approvals::ExecPolicyAmendment;
+use protocol::approvals::NetworkPolicyAmendment;
+#[cfg(test)]
+use protocol::mcp::Resource;
+#[cfg(test)]
+use protocol::mcp::ResourceTemplate;
+use protocol::models::PermissionProfile;
+use protocol::models::local_image_label_text;
+use protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use protocol::plan_tool::PlanItemArg;
+use protocol::plan_tool::StepStatus;
+use protocol::plan_tool::UpdatePlanArgs;
+use protocol::user_input::TextElement;
 use ratatui::prelude::*;
 use ratatui::style::Color;
 use ratatui::style::Modifier;

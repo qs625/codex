@@ -15,18 +15,19 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
-codex-backend-client = { workspace = true }
+openai-backend-client = { workspace = true }
 codex-config-types = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
 codex-git-baseline = { workspace = true }
 codex-login = { workspace = true, features = ["model-provider-auth"] }
 codex-otel = { workspace = true }
-codex-protocol = { workspace = true }
-codex-rollout = { workspace = true }
+protocol = { workspace = true }
+rollout = { workspace = true }
 codex-secrets = { workspace = true }
-codex-state = { workspace = true }
-codex-tool-types = { workspace = true }
+state = { workspace = true }
+state-api = { workspace = true }
+codex-tool-service-api = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
 codex-utils-template = { workspace = true }
@@ -46,10 +47,9 @@ tracing = { workspace = true, features = ["log"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
 
 [dev-dependencies]
-codex-api = { workspace = true }
-codex-models-manager = { workspace = true }
-codex-rollout-trace = { workspace = true }
-codex-session-telemetry-api = { workspace = true }
+model-service = { workspace = true }
+rollout-trace = { workspace = true }
+session-telemetry-api = { workspace = true }
 codex-turn-metadata = { workspace = true }
 core_test_support = { workspace = true }
 pretty_assertions = { workspace = true }

@@ -1,4 +1,4 @@
-use codex_protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelPreset;
 use std::convert::Infallible;
 
 #[derive(Debug, Clone)]

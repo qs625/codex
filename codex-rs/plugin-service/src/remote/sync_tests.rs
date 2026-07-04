@@ -1,13 +1,13 @@
 use std::fs;
 
-use codex_config_edit::CONFIG_TOML_FILE;
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
 use crate::PluginsManager;
 use crate::startup_sync::curated_plugins_repo_path;
 use crate::store::PluginStoreError;
+use config_service::CONFIG_TOML_FILE;
 use codex_login::CodexAuth;
-use codex_protocol::protocol::Product;
 use pretty_assertions::assert_eq;
+use protocol::protocol::Product;
 use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::ResponseTemplate;
@@ -18,9 +18,10 @@ use wiremock::matchers::query_param;
 
 use crate::PluginRemoteSyncError;
 use crate::RemotePluginAuth;
-use crate::RemotePluginSyncResult;
-use crate::featured_plugin_ids_for_config;
+use crate::featured_plugin_ids_for_config_with_model_service;
+use crate::remote::RemotePluginSyncResult;
 use crate::sync_plugins_from_remote;
+use crate::test_support::build_test_model_service;
 use crate::test_support::TEST_CURATED_PLUGIN_CACHE_VERSION;
 use crate::test_support::load_plugins_config;
 use crate::test_support::write_curated_plugin_sha;
@@ -48,11 +49,22 @@ plugins = false
 "#,
     );
 
-    let config = load_plugins_config(tmp.path());
+    let config = load_plugins_config(tmp.path(), tmp.path()).await;
     let manager = PluginsManager::new(tmp.path().to_path_buf());
-    let outcome = sync_plugins_from_remote(&manager, &config, /*auth*/ None, false)
-        .await
-        .unwrap();
+    let model_service = build_test_model_service(
+        tmp.path(),
+        &config.chatgpt_base_url,
+        /*auth*/ None,
+    );
+    let outcome = sync_plugins_from_remote(
+        &manager,
+        model_service.as_ref(),
+        &config,
+        /*auth*/ None,
+        false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome, RemotePluginSyncResult::default());
 }
@@ -108,11 +120,22 @@ enabled = true
         .mount(&server)
         .await;
 
-    let mut config = load_plugins_config(tmp.path());
+    let mut config = load_plugins_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
     let manager = PluginsManager::new(tmp.path().to_path_buf());
+    let model_service = build_test_model_service(
+        tmp.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
     let result =
-        sync_plugins_from_remote(&manager, &config, Some(&test_remote_plugin_auth()), false)
+        sync_plugins_from_remote(
+            &manager,
+            model_service.as_ref(),
+            &config,
+            Some(&test_remote_plugin_auth()),
+            false,
+        )
             .await
             .unwrap();
 
@@ -151,7 +174,7 @@ enabled = true
     assert!(!config.contains(r#"[plugins."gmail@openai-curated"]"#));
     assert!(!config.contains(r#"[plugins."calendar@openai-curated"]"#));
 
-    let synced_config = load_plugins_config(tmp.path());
+    let synced_config = load_plugins_config(tmp.path(), tmp.path()).await;
     let curated_marketplace = manager
         .list_marketplaces_for_config(&synced_config, &[])
         .unwrap()
@@ -224,11 +247,22 @@ enabled = true
         .mount(&server)
         .await;
 
-    let mut config = load_plugins_config(tmp.path());
+    let mut config = load_plugins_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
     let manager = PluginsManager::new(tmp.path().to_path_buf());
+    let model_service = build_test_model_service(
+        tmp.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
     let result =
-        sync_plugins_from_remote(&manager, &config, Some(&test_remote_plugin_auth()), true)
+        sync_plugins_from_remote(
+            &manager,
+            model_service.as_ref(),
+            &config,
+            Some(&test_remote_plugin_auth()),
+            true,
+        )
             .await
             .unwrap();
 
@@ -292,11 +326,22 @@ enabled = false
         .mount(&server)
         .await;
 
-    let mut config = load_plugins_config(tmp.path());
+    let mut config = load_plugins_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
     let manager = PluginsManager::new(tmp.path().to_path_buf());
+    let model_service = build_test_model_service(
+        tmp.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
     let result =
-        sync_plugins_from_remote(&manager, &config, Some(&test_remote_plugin_auth()), false)
+        sync_plugins_from_remote(
+            &manager,
+            model_service.as_ref(),
+            &config,
+            Some(&test_remote_plugin_auth()),
+            false,
+        )
             .await
             .unwrap();
 
@@ -351,10 +396,21 @@ enabled = false
         .mount(&server)
         .await;
 
-    let mut config = load_plugins_config(tmp.path());
+    let mut config = load_plugins_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
     let manager = PluginsManager::new(tmp.path().to_path_buf());
-    let err = sync_plugins_from_remote(&manager, &config, Some(&test_remote_plugin_auth()), false)
+    let model_service = build_test_model_service(
+        tmp.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
+    let err = sync_plugins_from_remote(
+        &manager,
+        model_service.as_ref(),
+        &config,
+        Some(&test_remote_plugin_auth()),
+        false,
+    )
         .await
         .unwrap_err();
 
@@ -435,11 +491,22 @@ plugins = true
         .mount(&server)
         .await;
 
-    let mut config = load_plugins_config(tmp.path());
+    let mut config = load_plugins_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
     let manager = PluginsManager::new(tmp.path().to_path_buf());
+    let model_service = build_test_model_service(
+        tmp.path(),
+        &config.chatgpt_base_url,
+        Some(CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+    );
     let result =
-        sync_plugins_from_remote(&manager, &config, Some(&test_remote_plugin_auth()), false)
+        sync_plugins_from_remote(
+            &manager,
+            model_service.as_ref(),
+            &config,
+            Some(&test_remote_plugin_auth()),
+            false,
+        )
             .await
             .unwrap();
 
@@ -481,9 +548,11 @@ plugins = true
         .mount(&server)
         .await;
 
-    let mut config = load_plugins_config(tmp.path());
+    let mut config = load_plugins_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
-    let featured_plugin_ids = featured_plugin_ids_for_config(
+    let model_service = build_test_model_service(tmp.path(), &config.chatgpt_base_url, None);
+    let featured_plugin_ids_via_model_service = featured_plugin_ids_for_config_with_model_service(
+        model_service.as_ref(),
         &config,
         Some(&test_remote_plugin_auth()),
         Some(Product::Chatgpt),
@@ -491,7 +560,7 @@ plugins = true
     .await
     .unwrap();
 
-    assert_eq!(featured_plugin_ids, vec!["chat-plugin".to_string()]);
+    assert_eq!(featured_plugin_ids_via_model_service, vec!["chat-plugin".to_string()]);
 }
 
 #[tokio::test]
@@ -512,13 +581,17 @@ plugins = true
         .mount(&server)
         .await;
 
-    let mut config = load_plugins_config(tmp.path());
+    let mut config = load_plugins_config(tmp.path(), tmp.path()).await;
     config.chatgpt_base_url = format!("{}/backend-api/", server.uri());
-    let featured_plugin_ids = featured_plugin_ids_for_config(
-        &config, /*auth*/ None, /*restriction_product*/ None,
+    let model_service = build_test_model_service(tmp.path(), &config.chatgpt_base_url, None);
+    let featured_plugin_ids_via_model_service = featured_plugin_ids_for_config_with_model_service(
+        model_service.as_ref(),
+        &config,
+        /*auth*/ None,
+        /*restriction_product*/ None,
     )
     .await
     .unwrap();
 
-    assert_eq!(featured_plugin_ids, vec!["codex-plugin".to_string()]);
+    assert_eq!(featured_plugin_ids_via_model_service, vec!["codex-plugin".to_string()]);
 }

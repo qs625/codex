@@ -3,8 +3,8 @@ use crate::JsonSchema;
 use crate::request_user_input_available_modes;
 use codex_features::Feature;
 use codex_features::Features;
-use codex_protocol::config_types::ModeKind;
 use pretty_assertions::assert_eq;
+use protocol::config_types::ModeKind;
 use std::collections::BTreeMap;
 
 fn default_mode_enabled_available_modes() -> Vec<ModeKind> {

@@ -109,6 +109,24 @@ pub use ui::TuiPetAnchor;
 pub use ui::UriBasedFileOpener;
 pub use ui::WindowsSandboxModeToml;
 pub use ui::WindowsToml;
+use protocol::config_types::TrustLevel;
+
+/// Project-local trust decision loaded from the `[projects]` config map.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ProjectConfig {
+    pub trust_level: Option<TrustLevel>,
+}
+
+impl ProjectConfig {
+    pub fn is_trusted(&self) -> bool {
+        matches!(self.trust_level, Some(TrustLevel::Trusted))
+    }
+
+    pub fn is_untrusted(&self) -> bool {
+        matches!(self.trust_level, Some(TrustLevel::Untrusted))
+    }
+}
 
 /// Identifies a configuration layer and its precedence in the merged config stack.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]

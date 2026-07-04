@@ -6,8 +6,8 @@ use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::edit::ConfigEdit;
 use crate::legacy_core::config::edit::ConfigEditsBuilder;
 use crate::tui;
-use codex_app_server_protocol::ExternalAgentConfigDetectParams;
-use codex_app_server_protocol::ExternalAgentConfigMigrationItem;
+use app_server_protocol::ExternalAgentConfigDetectParams;
+use app_server_protocol::ExternalAgentConfigMigrationItem;
 use codex_features::Feature;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
@@ -102,7 +102,7 @@ fn external_agent_config_migration_success_message(
     items: &[ExternalAgentConfigMigrationItem],
 ) -> String {
     if items.iter().any(|item| {
-        item.item_type == codex_app_server_protocol::ExternalAgentConfigMigrationItemType::Plugins
+        item.item_type == app_server_protocol::ExternalAgentConfigMigrationItemType::Plugins
     }) {
         "External config migration completed. Plugin migration is still in progress and may take a few minutes."
             .to_string()
@@ -374,7 +374,7 @@ pub(crate) async fn handle_external_agent_config_migration_prompt_if_needed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_app_server_protocol::ExternalAgentConfigMigrationItemType;
+    use app_server_protocol::ExternalAgentConfigMigrationItemType;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
     use tempfile::tempdir;

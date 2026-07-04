@@ -1,20 +1,20 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::openai_models::ReasoningEffort;
+use protocol::ThreadId;
+use protocol::openai_models::ReasoningEffort;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 use std::path::PathBuf;
 
-pub use codex_state_api::Anchor;
-pub use codex_state_api::BackfillStats;
-pub use codex_state_api::ExtractionOutcome;
-pub use codex_state_api::SortDirection;
-pub use codex_state_api::SortKey;
-pub use codex_state_api::ThreadMetadata;
-pub use codex_state_api::ThreadMetadataBuilder;
-pub use codex_state_api::ThreadsPage;
+pub use state_api::Anchor;
+pub use state_api::BackfillStats;
+pub use state_api::ExtractionOutcome;
+pub use state_api::SortDirection;
+pub use state_api::SortKey;
+pub use state_api::ThreadMetadata;
+pub use state_api::ThreadMetadataBuilder;
+pub use state_api::ThreadsPage;
 
 #[derive(Debug)]
 pub(crate) struct ThreadRow {
@@ -179,9 +179,9 @@ mod tests {
     use super::ThreadRow;
     use chrono::DateTime;
     use chrono::Utc;
-    use codex_protocol::ThreadId;
-    use codex_protocol::openai_models::ReasoningEffort;
     use pretty_assertions::assert_eq;
+    use protocol::ThreadId;
+    use protocol::openai_models::ReasoningEffort;
     use std::path::PathBuf;
 
     fn thread_row(reasoning_effort: Option<&str>) -> ThreadRow {

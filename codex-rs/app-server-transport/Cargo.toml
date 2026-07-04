@@ -1,11 +1,11 @@
 [package]
-name = "codex-app-server-transport"
+name = "app-server-transport"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "codex_app_server_transport"
+name = "app_server_transport"
 path = "src/lib.rs"
 doctest = false
 
@@ -22,12 +22,12 @@ axum = { workspace = true, default-features = false, features = [
 ] }
 base64 = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
-codex-api-auth = { workspace = true }
-codex-api-provider = { workspace = true }
-codex-app-server-protocol = { workspace = true }
+app-server-protocol = { workspace = true }
 codex-auth-types = { workspace = true }
 codex-login = { workspace = true }
-codex-state = { workspace = true }
+model-service-api = { workspace = true }
+state = { workspace = true }
+state-api = { workspace = true }
 codex-uds = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-backoff = { workspace = true }
@@ -56,6 +56,7 @@ uuid = { workspace = true, features = ["serde", "v7"] }
 
 [dev-dependencies]
 chrono = { workspace = true }
+transport-client = { workspace = true }
 codex-config-types = { workspace = true }
 thread-service = { workspace = true, features = ["test-support"] }
 pretty_assertions = { workspace = true }

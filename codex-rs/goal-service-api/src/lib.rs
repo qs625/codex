@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use codex_protocol::protocol::ThreadGoal;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_state_api::ExternalGoalSet;
+use protocol::protocol::ThreadGoal;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TurnAbortReason;
+use state_api::ExternalGoalSet;
 use thread_service_api::SessionCapabilityFuture;
 use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;

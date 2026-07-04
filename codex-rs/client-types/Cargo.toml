@@ -1,12 +1,12 @@
 [package]
-name = "codex-client-types"
+name = "transport-client-types"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Lightweight Codex HTTP client request, error, and retry types."
 
 [lib]
-name = "codex_client_types"
+name = "transport_client_types"
 path = "src/lib.rs"
 doctest = false
 

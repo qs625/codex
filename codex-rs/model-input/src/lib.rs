@@ -1,15 +1,15 @@
 use std::path::Path;
 
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::image_close_tag_text;
-use codex_protocol::models::image_open_tag_text;
-use codex_protocol::models::local_image_open_tag_text;
-use codex_protocol::user_input::UserInput;
 use codex_utils_image::ImageProcessingError;
 use codex_utils_image::PromptImageMode;
 use codex_utils_image::load_for_prompt_bytes;
+use protocol::models::ContentItem;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
+use protocol::models::ResponseInputItem;
+use protocol::models::image_close_tag_text;
+use protocol::models::image_open_tag_text;
+use protocol::models::local_image_open_tag_text;
+use protocol::user_input::UserInput;
 
 pub fn response_input_item_from_user_input(items: Vec<UserInput>) -> ResponseInputItem {
     let mut image_index = 0;
@@ -136,14 +136,14 @@ fn unsupported_image_error_placeholder(path: &Path, mime: &str) -> ContentItem {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use codex_protocol::models::ContentItem;
-    use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-    use codex_protocol::models::ResponseInputItem;
-    use codex_protocol::models::image_close_tag_text;
-    use codex_protocol::models::image_open_tag_text;
-    use codex_protocol::models::local_image_open_tag_text;
-    use codex_protocol::user_input::UserInput;
     use pretty_assertions::assert_eq;
+    use protocol::models::ContentItem;
+    use protocol::models::DEFAULT_IMAGE_DETAIL;
+    use protocol::models::ResponseInputItem;
+    use protocol::models::image_close_tag_text;
+    use protocol::models::image_open_tag_text;
+    use protocol::models::local_image_open_tag_text;
+    use protocol::user_input::UserInput;
     use tempfile::tempdir;
 
     #[test]

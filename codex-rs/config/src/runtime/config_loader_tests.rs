@@ -2,36 +2,36 @@ use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::config::ConfigOverrides;
 use crate::config::ConstraintError;
-use codex_config::CloudRequirementsLoadError;
-use codex_config::CloudRequirementsLoader;
-use codex_config::ConfigError;
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::ConfigLoadError;
-use codex_config::ConfigRequirements;
-use codex_config::ConfigRequirementsToml;
-use codex_config::ConfigRequirementsWithSources;
-use codex_config::FilesystemDenyReadPattern;
-use codex_config::LoaderOverrides;
-use codex_config::RequirementSource;
-use codex_config::SessionThreadConfig;
-use codex_config::StaticThreadConfigLoader;
-use codex_config::ThreadConfigSource;
-use codex_config::config_error_from_ignored_toml_fields;
-use codex_config::config_error_from_toml;
-use codex_config::config_toml::ConfigToml;
-use codex_config::loader::load_config_layers_state;
-use codex_config::loader::load_requirements_toml;
-use codex_config_loader::ProjectConfig;
+use config_service::CloudRequirementsLoadError;
+use config_service::CloudRequirementsLoader;
+use config_service::ConfigError;
+use config_service::ConfigLayerEntry;
+use config_service::ConfigLayerStackOrdering;
+use config_service::ConfigLoadError;
+use config_service::ConfigRequirements;
+use config_service::ConfigRequirementsToml;
+use config_service::ConfigRequirementsWithSources;
+use config_service::FilesystemDenyReadPattern;
+use config_service::LoaderOverrides;
+use config_service::RequirementSource;
+use config_service::SessionThreadConfig;
+use config_service::StaticThreadConfigLoader;
+use config_service::ThreadConfigSource;
+use config_service::config_error_from_ignored_toml_fields;
+use config_service::config_error_from_toml;
+use config_service::config_toml::ConfigToml;
+use config_service::loader::load_config_layers_state;
+use config_service::loader::load_requirements_toml;
+use crate::loader::ProjectConfig;
 use codex_config_types::ConfigLayerSource;
 use codex_file_system::LOCAL_FS;
-use codex_protocol::config_types::TrustLevel;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
+use protocol::config_types::TrustLevel;
+use protocol::config_types::WebSearchMode;
+use protocol::models::PermissionProfile;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::SandboxPolicy;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
@@ -147,7 +147,7 @@ invalid = ["#;
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await
     .expect_err("expected error");
@@ -179,7 +179,7 @@ invalid = ["#,
             ..Default::default()
         },
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -210,7 +210,7 @@ async fn ignore_rules_marks_config_stack_for_exec_policy_rule_skip() -> std::io:
             ..Default::default()
         },
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -236,7 +236,7 @@ invalid = ["#;
         &[] as &[(String, TomlValue)],
         overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await
     .expect_err("expected error");
@@ -265,7 +265,7 @@ async fn returns_config_error_for_schema_error_in_user_config() {
     let config_error = config_error_from_io(&err);
     let _guard = codex_utils_absolute_path::AbsolutePathBufGuard::new(tmp.path());
     let expected_config_error =
-        codex_config::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
+        config_service::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
             .expect("schema error");
     assert_eq!(config_error, &expected_config_error);
 }
@@ -288,7 +288,7 @@ async fn top_level_allow_managed_hooks_only_in_user_config_does_not_enable_requi
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -323,7 +323,7 @@ command = "python3 /tmp/user-hook.py"
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -489,7 +489,7 @@ collaboration_modes = "true""#;
     std::fs::write(&config_path, contents).expect("write config");
 
     let _guard = codex_utils_absolute_path::AbsolutePathBufGuard::new(tmp.path());
-    let error = codex_config::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
+    let error = config_service::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
         .expect("schema error");
 
     let value_line = contents.lines().nth(1).expect("value line");
@@ -533,7 +533,7 @@ extra = true
         &[] as &[(String, TomlValue)],
         overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await
     .expect("load config");
@@ -567,7 +567,7 @@ async fn returns_empty_when_all_layers_missing() {
         &[] as &[(String, TomlValue)],
         overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await
     .expect("load layers");
@@ -644,7 +644,7 @@ approval_policy = "on-failure"
         &[] as &[(String, TomlValue)],
         overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await
     .expect("load layers");
@@ -787,7 +787,7 @@ flag = false
         &[] as &[(String, TomlValue)],
         overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await
     .expect("load config");
@@ -890,7 +890,7 @@ allowed_sandbox_modes = ["read-only"]
         &[] as &[(String, TomlValue)],
         loader_overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -959,7 +959,7 @@ allowed_approval_policies = ["never"]
         &[] as &[(String, TomlValue)],
         loader_overrides,
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1016,14 +1016,14 @@ personality = true
             .allowed_web_search_modes
             .as_deref()
             .cloned(),
-        Some(vec![codex_config::WebSearchModeRequirement::Cached])
+        Some(vec![config_service::WebSearchModeRequirement::Cached])
     );
     assert_eq!(
         config_requirements_toml
             .feature_requirements
             .as_ref()
             .map(|requirements| requirements.value.clone()),
-        Some(codex_config::FeatureRequirementsToml {
+        Some(config_service::FeatureRequirementsToml {
             entries: BTreeMap::from([("personality".to_string(), true)]),
         })
     );
@@ -1062,14 +1062,14 @@ personality = true
     );
     assert_eq!(
         config_requirements.enforce_residency.value(),
-        Some(codex_config::ResidencyRequirement::Us)
+        Some(config_service::ResidencyRequirement::Us)
     );
     assert_eq!(
         config_requirements
             .feature_requirements
             .as_ref()
             .map(|requirements| requirements.value.clone()),
-        Some(codex_config::FeatureRequirementsToml {
+        Some(config_service::FeatureRequirementsToml {
             entries: BTreeMap::from([("personality".to_string(), true)]),
         })
     );
@@ -1117,7 +1117,7 @@ allowed_approval_policies = ["on-request"]
                 guardian_policy_config: None,
             }))
         }),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1393,7 +1393,7 @@ async fn load_config_layers_includes_cloud_requirements() -> anyhow::Result<()> 
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         cloud_requirements,
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1485,13 +1485,13 @@ async fn load_config_layers_includes_cloud_hook_requirements() -> anyhow::Result
     let cwd = AbsolutePathBuf::from_absolute_path(tmp.path())?;
 
     let requirements = ConfigRequirementsToml {
-        hooks: Some(codex_config::ManagedHooksRequirementsToml {
+        hooks: Some(config_service::ManagedHooksRequirementsToml {
             managed_dir: Some(managed_dir.clone()),
             windows_managed_dir: None,
-            hooks: codex_config::HookEventsToml {
-                pre_tool_use: vec![codex_config::MatcherGroup {
+            hooks: config_service::HookEventsToml {
+                pre_tool_use: vec![config_service::MatcherGroup {
                     matcher: Some("^Bash$".to_string()),
-                    hooks: vec![codex_config::HookHandlerConfig::Command {
+                    hooks: vec![config_service::HookHandlerConfig::Command {
                         command: format!("python3 {}/pre.py", managed_dir.display()),
                         command_windows: None,
                         timeout_sec: Some(10),
@@ -1514,7 +1514,7 @@ async fn load_config_layers_includes_cloud_hook_requirements() -> anyhow::Result
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         cloud_requirements,
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1555,15 +1555,15 @@ async fn load_config_layers_applies_matching_remote_sandbox_config() -> anyhow::
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         cloud_requirements,
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
     assert_eq!(
         layers.requirements_toml().allowed_sandbox_modes,
         Some(vec![
-            codex_config::SandboxModeRequirement::ReadOnly,
-            codex_config::SandboxModeRequirement::WorkspaceWrite,
+            config_service::SandboxModeRequirement::ReadOnly,
+            config_service::SandboxModeRequirement::WorkspaceWrite,
         ])
     );
     assert!(
@@ -1594,12 +1594,12 @@ async fn load_config_layers_fails_when_cloud_requirements_loader_fails() -> anyh
         LoaderOverrides::default(),
         CloudRequirementsLoader::new(async {
             Err(CloudRequirementsLoadError::new(
-                codex_config::CloudRequirementsLoadErrorCode::RequestFailed,
+                config_service::CloudRequirementsLoadErrorCode::RequestFailed,
                 /*status_code*/ None,
                 "cloud requirements failed",
             ))
         }),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await
     .expect_err("cloud requirements failure should fail closed");
@@ -1649,7 +1649,7 @@ async fn project_layers_prefer_closest_cwd() -> std::io::Result<()> {
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1732,7 +1732,7 @@ async fn linked_worktree_project_layers_keep_worktree_config_but_use_root_repo_h
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1814,7 +1814,7 @@ async fn linked_worktree_project_layers_use_root_repo_hooks_without_worktree_con
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -1885,7 +1885,7 @@ async fn nested_project_root_markers_do_not_redirect_regular_repo_hooks() -> std
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -2073,7 +2073,7 @@ async fn project_layer_is_added_when_dot_codex_exists_without_config_toml() -> s
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -2114,7 +2114,7 @@ async fn codex_home_is_not_loaded_as_project_layer_from_home_dir() -> std::io::R
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -2180,7 +2180,7 @@ async fn codex_home_within_project_tree_is_not_double_loaded() -> std::io::Resul
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -2256,7 +2256,7 @@ profile = "ignored"
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
     let project_layers_untrusted: Vec<_> = layers_untrusted
@@ -2303,7 +2303,7 @@ profile = "ignored"
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
     let project_layers_unknown: Vec<_> = layers_unknown
@@ -2391,7 +2391,7 @@ wire_api = "responses"
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -2492,7 +2492,7 @@ async fn project_trust_does_not_match_configured_alias_for_canonical_cwd() -> st
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -2658,7 +2658,7 @@ async fn invalid_project_config_ignored_when_untrusted_or_unknown() -> std::io::
             &[] as &[(String, TomlValue)],
             LoaderOverrides::default(),
             CloudRequirementsLoader::default(),
-            &codex_config::NoopThreadConfigLoader,
+            &config_service::NoopThreadConfigLoader,
         )
         .await?;
         let project_layers: Vec<_> = layers
@@ -2727,7 +2727,7 @@ async fn project_layer_without_config_toml_is_disabled_when_untrusted_or_unknown
             &[] as &[(String, TomlValue)],
             LoaderOverrides::default(),
             CloudRequirementsLoader::default(),
-            &codex_config::NoopThreadConfigLoader,
+            &config_service::NoopThreadConfigLoader,
         )
         .await?;
         let project_layers: Vec<_> = layers
@@ -2788,7 +2788,7 @@ async fn cli_overrides_with_relative_paths_do_not_break_trust_check() -> std::io
         &cli_overrides,
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -2834,7 +2834,7 @@ async fn project_root_markers_supports_alternate_markers() -> std::io::Result<()
         &[] as &[(String, TomlValue)],
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
-        &codex_config::NoopThreadConfigLoader,
+        &config_service::NoopThreadConfigLoader,
     )
     .await?;
 
@@ -2865,21 +2865,21 @@ async fn project_root_markers_supports_alternate_markers() -> std::io::Result<()
 
 mod requirements_exec_policy_tests {
     use crate::exec_policy::load_exec_policy;
-    use codex_config::ConfigLayerEntry;
-    use codex_config::ConfigLayerStack;
-    use codex_config::ConfigRequirements;
-    use codex_config::ConfigRequirementsToml;
-    use codex_config::ConfigRequirementsWithSources;
-    use codex_config::RequirementSource;
-    use codex_config::RequirementsExecPolicyDecisionToml;
-    use codex_config::RequirementsExecPolicyParseError;
-    use codex_config::RequirementsExecPolicyPatternTokenToml;
-    use codex_config::RequirementsExecPolicyPrefixRuleToml;
-    use codex_config::RequirementsExecPolicyToml;
+    use config_service::ConfigLayerEntry;
+    use config_service::ConfigLayerStack;
+    use config_service::ConfigRequirements;
+    use config_service::ConfigRequirementsToml;
+    use config_service::ConfigRequirementsWithSources;
+    use config_service::RequirementSource;
+    use config_service::RequirementsExecPolicyDecisionToml;
+    use config_service::RequirementsExecPolicyParseError;
+    use config_service::RequirementsExecPolicyPatternTokenToml;
+    use config_service::RequirementsExecPolicyPrefixRuleToml;
+    use config_service::RequirementsExecPolicyToml;
     use codex_config_types::ConfigLayerSource;
-    use codex_execpolicy_api::Decision;
-    use codex_execpolicy_api::Evaluation;
-    use codex_execpolicy_api::RuleMatch;
+    use permissions_service_api::Decision;
+    use permissions_service_api::Evaluation;
+    use permissions_service_api::RuleMatch;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::path::Path;

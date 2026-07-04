@@ -4,9 +4,9 @@ mod common;
 
 use codex_exec_server::InitializeParams;
 use codex_exec_server::InitializeResponse;
-use codex_jsonrpc_types::JSONRPCMessage;
-use codex_jsonrpc_types::JSONRPCResponse;
 use common::exec_server::exec_server;
+use jsonrpc_types::JSONRPCMessage;
+use jsonrpc_types::JSONRPCResponse;
 use pretty_assertions::assert_eq;
 use uuid::Uuid;
 

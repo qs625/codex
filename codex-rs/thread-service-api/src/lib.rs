@@ -1,6 +1,6 @@
 //! Core-independent live thread operation API.
 //!
-//! `codex-thread-store-api` owns persisted thread storage. This crate is the
+//! `thread-store-api` owns persisted thread storage. This crate is the
 //! unified public API surface for live thread runtime access, including the
 //! previous session-facing traits that are now treated as part of the thread
 //! runtime boundary.
@@ -18,39 +18,40 @@ use std::sync::MutexGuard;
 
 use codex_config_types::ConstraintResult;
 use codex_features::Feature;
-use codex_protocol::SessionId;
-use codex_protocol::ThreadId;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionConfiguredEvent;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::W3cTraceContext;
-use codex_state_api::ExternalGoalSet;
-use codex_state_api::SharedStateDbRuntime;
-use codex_thread_store_api::StoredThread;
-use codex_thread_store_api::StoredThreadHistory;
-use codex_thread_store_api::ThreadStoreResult;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::SessionId;
+use protocol::ThreadId;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::CollaborationMode;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::error::Result as CodexResult;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::PermissionProfile;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::Event;
+use protocol::protocol::Op;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TokenUsageInfo;
+use protocol::protocol::W3cTraceContext;
+use skill_service_api::SkillWatchPath;
+use state_api::ExternalGoalSet;
+use state_api::SharedStateDbRuntime;
+use thread_store_api::StoredThread;
+use thread_store_api::StoredThreadHistory;
+use thread_store_api::ThreadStoreResult;
 use tokio::sync::watch;
 
-pub use session_contracts::*;
 pub use exec_runtime::*;
+pub use session_contracts::*;
 pub use turn_diff_tracker::TurnDiffTracker;
 
 /// Live thread configuration data needed by clients and persisted metadata paths.
@@ -173,13 +174,6 @@ pub struct ThreadShutdownReport {
     pub completed: Vec<ThreadId>,
     pub submit_failed: Vec<ThreadId>,
     pub timed_out: Vec<ThreadId>,
-}
-
-/// File-system path watched for skill changes for one live thread.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ThreadSkillWatchPath {
-    pub path: PathBuf,
-    pub recursive: bool,
 }
 
 #[derive(Default)]
@@ -310,7 +304,7 @@ pub trait LiveThreadInspectionRuntime: Send + Sync {
 /// Source for optional persistent thread state runtime owned by the live thread manager.
 ///
 /// Consumers that need spawn-edge or thread metadata persistence should depend
-/// on the `codex-state-api` trait returned here instead of reaching through a
+/// on the `state-api` trait returned here instead of reaching through a
 /// concrete live thread handle to find the state database implementation.
 pub trait LiveThreadStateRuntimeSource: Send + Sync {
     fn thread_state_runtime(&self) -> Option<SharedStateDbRuntime>;
@@ -522,7 +516,7 @@ pub trait LiveThreadRegistry: Send + Sync {
     fn thread_skill_watch_paths(
         &self,
         thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<Vec<ThreadSkillWatchPath>>> + Send + '_;
+    ) -> impl Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_;
 
     /// Return the complete token usage snapshot for a specific live thread.
     fn thread_token_usage_info(

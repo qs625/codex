@@ -1705,7 +1705,7 @@ impl std::fmt::Display for FunctionCallOutputPayload {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use codex_execpolicy::Policy;
+    use permissions_service_api::Policy;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -2220,7 +2220,7 @@ mod tests {
             exec_policy
                 .add_prefix_rule(
                     &[format!("tool-{i:03}"), "x".repeat(500)],
-                    codex_execpolicy::Decision::Allow,
+                    permissions_service_api::Decision::Allow,
                 )
                 .expect("add rule");
         }

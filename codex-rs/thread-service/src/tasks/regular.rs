@@ -6,9 +6,9 @@ use crate::session::turn::run_turn;
 use crate::session::turn_context::TurnContext;
 use crate::session_startup_prewarm::SessionStartupPrewarmResolution;
 use crate::state::TaskKind;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::user_input::UserInput;
+use protocol::protocol::EventMsg;
+use protocol::protocol::TurnStartedEvent;
+use protocol::user_input::UserInput;
 use tracing::Instrument;
 use tracing::trace_span;
 
@@ -64,7 +64,7 @@ impl SessionTask for RegularTask {
             SessionStartupPrewarmResolution::Cancelled => return None,
             SessionStartupPrewarmResolution::Unavailable { .. } => None,
             SessionStartupPrewarmResolution::Ready(prewarmed_client_session) => {
-                Some(*prewarmed_client_session)
+                Some(prewarmed_client_session)
             }
         };
         let mut next_input = input;

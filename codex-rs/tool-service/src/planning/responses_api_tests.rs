@@ -8,9 +8,9 @@ use super::tool_definition_to_responses_api_tool;
 use crate::JsonSchema;
 use crate::ToolDefinition;
 use crate::ToolName;
-use codex_mcp_tool_types::McpTool;
-use codex_protocol::dynamic_tools::DynamicToolSpec;
+use mcp_types::McpTool;
 use pretty_assertions::assert_eq;
+use protocol::dynamic_tools::DynamicToolSpec;
 use serde_json::json;
 use std::collections::BTreeMap;
 

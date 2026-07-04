@@ -1,7 +1,7 @@
 [package]
 edition.workspace = true
 license.workspace = true
-name = "codex-command-service-api"
+name = "command-service-api"
 version.workspace = true
 
 [lib]
@@ -13,22 +13,23 @@ workspace = true
 
 [dependencies]
 async-channel = { workspace = true }
-codex-process-exec = { workspace = true }
-codex-exec-server-api = { workspace = true }
+chardetng = { workspace = true }
+codex-approval-service-api = { workspace = true }
+exec-server-api = { workspace = true }
 codex-file-system = { workspace = true }
-codex-hooks-api = { workspace = true }
+hooks-api = { workspace = true }
 codex-network-proxy-api = { workspace = true }
-codex-permissions-runtime = { workspace = true }
-codex-protocol = { workspace = true }
+permissions-service-api = { workspace = true }
+protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
-codex-session-telemetry-api = { workspace = true }
+session-telemetry-api = { workspace = true }
 thread-service-api = { workspace = true }
-codex-tool-config = { workspace = true }
-codex-tool-types = { workspace = true }
+tool-config = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-output-truncation = { workspace = true }
+encoding_rs = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }

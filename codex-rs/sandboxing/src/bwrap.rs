@@ -1,5 +1,5 @@
 use crate::policy_transforms::should_require_platform_sandbox;
-use codex_protocol::models::PermissionProfile;
+use protocol::models::PermissionProfile;
 use std::io::ErrorKind;
 use std::io::Read;
 use std::os::fd::AsRawFd;

@@ -14,20 +14,20 @@ use crate::planning::create_wait_agent_tool_v2;
 use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::SpawnAgentToolRequest;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolPayload;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
+use protocol::openai_models::ReasoningEffort;
 use serde::Deserialize;
 use serde::Serialize;
 use thread_service_api::SessionAgentJobCaller;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadServiceApi;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::ToolPayload;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
@@ -359,10 +359,10 @@ where
 mod tests {
     use super::*;
 
-    use codex_protocol::AgentPath;
-    use codex_protocol::ThreadId;
-    use codex_protocol::protocol::SessionSource;
-    use codex_protocol::protocol::SubAgentSource;
+    use protocol::AgentPath;
+    use protocol::ThreadId;
+    use protocol::protocol::SessionSource;
+    use protocol::protocol::SubAgentSource;
     use thread_service::test_support;
 
     #[tokio::test]

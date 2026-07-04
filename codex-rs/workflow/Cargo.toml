@@ -8,9 +8,10 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-codex-protocol = { workspace = true }
-codex-session-telemetry-api = { workspace = true }
-codex-tool-types = { workspace = true }
+protocol = { workspace = true }
+session-telemetry-api = { workspace = true }
+codex-tool-service-api = { workspace = true }
+tool-types = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 thread-service-api = { workspace = true }
 codex-workflow-api = { workspace = true }

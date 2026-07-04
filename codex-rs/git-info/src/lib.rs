@@ -1,11 +1,17 @@
+mod apply;
 mod branch;
 mod errors;
 mod info;
 mod object_id;
 mod operations;
 
+pub use apply::ApplyGitRequest;
+pub use apply::ApplyGitResult;
+pub use apply::apply_git_patch;
+pub use apply::extract_paths_from_patch;
+pub use apply::parse_git_apply_output;
+pub use apply::stage_paths;
 pub use branch::merge_base_with_head;
-pub use codex_protocol::protocol::GitSha;
 pub use errors::GitToolingError;
 pub use info::CommitLogEntry;
 pub use info::GitDiffToRemote;
@@ -24,6 +30,7 @@ pub use info::local_git_branches;
 pub use info::recent_commits;
 pub use info::resolve_root_git_project_for_trust;
 pub use object_id::git_blob_oid;
+pub use protocol::protocol::GitSha;
 
 #[cfg(test)]
 #[path = "integration_tests.rs"]

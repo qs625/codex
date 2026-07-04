@@ -1,4 +1,4 @@
-use codex_protocol::models::PermissionProfile;
+use protocol::models::PermissionProfile;
 use std::path::PathBuf;
 
 /// Returns a warning describing why `--add-dir` entries will be ignored for the
@@ -46,15 +46,15 @@ fn format_warning(additional_dirs: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::add_dir_warning_message;
-    use codex_app_server_protocol::FileSystemAccessMode;
-    use codex_app_server_protocol::FileSystemPath;
-    use codex_app_server_protocol::FileSystemSandboxEntry;
-    use codex_app_server_protocol::FileSystemSpecialPath;
-    use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-    use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
-    use codex_app_server_protocol::PermissionProfileNetworkPermissions;
-    use codex_protocol::models::PermissionProfile;
+    use app_server_protocol::FileSystemAccessMode;
+    use app_server_protocol::FileSystemPath;
+    use app_server_protocol::FileSystemSandboxEntry;
+    use app_server_protocol::FileSystemSpecialPath;
+    use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+    use app_server_protocol::PermissionProfileFileSystemPermissions;
+    use app_server_protocol::PermissionProfileNetworkPermissions;
     use pretty_assertions::assert_eq;
+    use protocol::models::PermissionProfile;
     use std::path::Path;
     use std::path::PathBuf;
 

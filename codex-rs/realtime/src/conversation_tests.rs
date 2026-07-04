@@ -6,11 +6,11 @@ use super::realtime_text_from_handoff_request;
 use super::wrap_realtime_delegation_input;
 use async_channel::bounded;
 use codex_login::CodexAuth;
-use codex_model_provider_info::CHATGPT_CODEX_BASE_URL;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_protocol::protocol::RealtimeHandoffRequested;
-use codex_protocol::protocol::RealtimeTranscriptEntry;
+use model_service_api::CHATGPT_CODEX_BASE_URL;
+use model_service_api::ModelProviderInfo;
 use pretty_assertions::assert_eq;
+use protocol::protocol::RealtimeHandoffRequested;
+use protocol::protocol::RealtimeTranscriptEntry;
 
 #[test]
 fn prefers_handoff_input_transcript_over_active_transcript() {

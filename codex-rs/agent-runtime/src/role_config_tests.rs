@@ -2,16 +2,16 @@ use crate::AGENT_TYPE_UNAVAILABLE_ERROR;
 use crate::apply_role_to_config;
 use codex_agent_roles::AgentCapabilityAllowlist;
 use codex_agent_roles::AgentRoleConfig;
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::Config;
-use codex_config::ConfigBuilder;
-use codex_config::ConfigLayerStackOrdering;
-use codex_config::ConfigOverrides;
+use config_service::CONFIG_TOML_FILE;
+use config_service::Config;
+use config_service::ConfigBuilder;
+use config_service::ConfigLayerStackOrdering;
+use config_service::ConfigOverrides;
 use codex_config_types::ConfigLayerSource;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::Verbosity;
-use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
+use protocol::config_types::ReasoningSummary;
+use protocol::config_types::Verbosity;
+use protocol::openai_models::ReasoningEffort;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use toml::Value as TomlValue;
@@ -612,7 +612,7 @@ model_reasoning_effort = "high"
 #[tokio::test]
 #[cfg(not(windows))]
 async fn apply_role_does_not_materialize_default_sandbox_workspace_write_fields() {
-    use codex_protocol::protocol::SandboxPolicy;
+    use protocol::protocol::SandboxPolicy;
     let (home, mut config) = test_config_with_cli_overrides(vec![
         (
             "sandbox_mode".to_string(),

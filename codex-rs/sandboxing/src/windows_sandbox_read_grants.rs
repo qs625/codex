@@ -1,7 +1,7 @@
 use crate::run_setup_refresh_with_extra_read_roots;
 use anyhow::Result;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::protocol::SandboxPolicy;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;

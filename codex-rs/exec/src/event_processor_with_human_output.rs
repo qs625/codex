@@ -1,20 +1,20 @@
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
-use codex_app_server_protocol::CommandExecutionStatus;
-use codex_app_server_protocol::McpToolCallStatus;
-use codex_app_server_protocol::PatchApplyStatus;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadTokenUsage;
-use codex_app_server_protocol::TurnStatus;
-use codex_model_provider_info::WireApi;
-use codex_protocol::num_format::format_with_separators;
-use codex_protocol::protocol::SessionConfiguredEvent;
-use thread_service::config::Config;
+use app_server_protocol::CommandExecutionStatus;
+use app_server_protocol::McpToolCallStatus;
+use app_server_protocol::PatchApplyStatus;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadTokenUsage;
+use app_server_protocol::TurnStatus;
 use codex_utils_sandbox_summary::summarize_permission_profile;
+use model_service_api::WireApi;
 use owo_colors::OwoColorize;
 use owo_colors::Style;
+use protocol::num_format::format_with_separators;
+use protocol::protocol::SessionConfiguredEvent;
+use thread_service::config::Config;
 
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
@@ -343,13 +343,13 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 }
                 for step in notification.plan {
                     match step.status {
-                        codex_app_server_protocol::TurnPlanStepStatus::Completed => {
+                        app_server_protocol::TurnPlanStepStatus::Completed => {
                             eprintln!("  {} {}", "✓".style(self.green), step.step);
                         }
-                        codex_app_server_protocol::TurnPlanStepStatus::InProgress => {
+                        app_server_protocol::TurnPlanStepStatus::InProgress => {
                             eprintln!("  {} {}", "→".style(self.cyan), step.step);
                         }
-                        codex_app_server_protocol::TurnPlanStepStatus::Pending => {
+                        app_server_protocol::TurnPlanStepStatus::Pending => {
                             eprintln!(
                                 "  {} {}",
                                 "•".style(self.dimmed),

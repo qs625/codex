@@ -1,9 +1,8 @@
-use std::collections::HashSet;
-
 use codex_context_manager::AvailablePluginsInstructions;
-use codex_protocol::user_input::UserInput;
+use codex_context_manager::ContextualUserFragment;
 use plugin_service_api::PluginCapabilitySummary;
 use pretty_assertions::assert_eq;
+use protocol::user_input::UserInput;
 
 use super::collect_explicit_plugin_mentions;
 use super::render_explicit_plugin_instructions;
@@ -108,7 +107,10 @@ fn collect_explicit_plugin_mentions_ignores_dollar_linked_plugin_mentions() {
 
 #[test]
 fn render_plugins_section_returns_none_for_empty_plugins() {
-    assert_eq!(AvailablePluginsInstructions::from_plugins(&[]).map(|v| v.render()), None);
+    assert_eq!(
+        AvailablePluginsInstructions::from_plugins(&[]).map(|v| v.render()),
+        None
+    );
 }
 
 #[test]

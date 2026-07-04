@@ -1,7 +1,7 @@
 use super::ContextualUserFragment;
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::protocol::COLLABORATION_MODE_CLOSE_TAG;
-use codex_protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
+use protocol::config_types::CollaborationMode;
+use protocol::protocol::COLLABORATION_MODE_CLOSE_TAG;
+use protocol::protocol::COLLABORATION_MODE_OPEN_TAG;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollaborationModeInstructions {

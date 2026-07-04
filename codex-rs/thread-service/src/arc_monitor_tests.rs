@@ -15,12 +15,12 @@ use wiremock::matchers::path;
 use super::*;
 use crate::session::tests::make_session_and_context;
 use codex_context_manager::ContextualUserFragment;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::LocalShellAction;
-use codex_protocol::models::LocalShellExecAction;
-use codex_protocol::models::LocalShellStatus;
-use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ResponseItem;
+use protocol::models::ContentItem;
+use protocol::models::LocalShellAction;
+use protocol::models::LocalShellExecAction;
+use protocol::models::LocalShellStatus;
+use protocol::models::MessagePhase;
+use protocol::models::ResponseItem;
 
 struct EnvVarGuard {
     key: &'static str,

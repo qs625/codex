@@ -1,1 +1,1 @@
-pub use codex_state_api::DirectionalThreadSpawnEdgeStatus;
+pub use state_api::DirectionalThreadSpawnEdgeStatus;

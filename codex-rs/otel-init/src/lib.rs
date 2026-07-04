@@ -1,10 +1,10 @@
 use std::error::Error;
 use std::path::Path;
 
+use transport_client_identity::originator;
 use codex_config_types::OtelConfig;
 use codex_config_types::OtelExporterKind as Kind;
 use codex_config_types::OtelHttpProtocol as Protocol;
-use codex_default_client_api::originator;
 use codex_otel::OtelExporter;
 use codex_otel::OtelHttpProtocol;
 use codex_otel::OtelProvider;
@@ -124,6 +124,6 @@ pub fn install_sqlite_telemetry(otel: Option<&OtelProvider>, originator: &str) {
         return;
     };
     let telemetry =
-        codex_rollout::sqlite_telemetry_recorder(std::sync::Arc::new(metrics.clone()), originator);
-    let _ = codex_state::install_process_db_telemetry(telemetry);
+        rollout::sqlite_telemetry_recorder(std::sync::Arc::new(metrics.clone()), originator);
+    let _ = state::install_process_db_telemetry(telemetry);
 }

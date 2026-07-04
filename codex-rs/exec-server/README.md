@@ -16,7 +16,7 @@ filesystem operations and `codex-linux-sandbox`.
 
 ## Transport
 
-The server speaks the shared `codex-app-server-protocol` message envelope on
+The server speaks the shared `app-server-protocol` message envelope on
 the wire.
 
 The CLI entrypoint supports:

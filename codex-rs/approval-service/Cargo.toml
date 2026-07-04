@@ -15,16 +15,16 @@ workspace = true
 [dependencies]
 codex-approval-service-api = { workspace = true }
 codex-analytics-api = { workspace = true }
-codex-command-service-api = { workspace = true }
-codex-execpolicy-api = { workspace = true }
+command-service-api = { workspace = true }
+permissions-service-api = { workspace = true }
 codex-guardian = { workspace = true }
 codex-network-proxy-api = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 thread-service-api = { workspace = true }
-codex-hooks-api = { workspace = true }
-codex-permissions-runtime = { workspace = true }
+hooks-api = { workspace = true }
+permissions-service = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

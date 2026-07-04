@@ -1,8 +1,5 @@
 use super::*;
 use codex_otel::set_parent_from_w3c_trace_context;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::test_path_buf;
 use opentelemetry::trace::TraceContextExt;
@@ -10,6 +7,9 @@ use opentelemetry::trace::TraceId;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use pretty_assertions::assert_eq;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use std::io;
 use std::io::Write;
 use std::sync::Arc;
@@ -88,7 +88,7 @@ fn exec_root_span_can_be_parented_from_trace_context() {
     let subscriber = test_tracing_subscriber();
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    let parent = codex_protocol::protocol::W3cTraceContext {
+    let parent = protocol::protocol::W3cTraceContext {
         traceparent: Some("00-00000000000000000000000000000077-0000000000000088-01".into()),
         tracestate: Some("vendor=value".into()),
     };
@@ -312,11 +312,11 @@ fn turn_items_for_thread_returns_matching_turn_items() {
         model_provider: "openai".to_string(),
         created_at: 0,
         updated_at: 0,
-        status: codex_app_server_protocol::ThreadStatus::Complete,
+        status: app_server_protocol::ThreadStatus::Complete,
         path: None,
         cwd: test_path_buf("/tmp/project").abs(),
         cli_version: "0.0.0-test".to_string(),
-        source: codex_app_server_protocol::SessionSource::Exec,
+        source: app_server_protocol::SessionSource::Exec,
         thread_source: None,
         agent_nickname: None,
         agent_role: None,
@@ -326,29 +326,29 @@ fn turn_items_for_thread_returns_matching_turn_items() {
         token_usage: None,
         context_usage: None,
         turns: vec![
-            codex_app_server_protocol::Turn {
+            app_server_protocol::Turn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: vec![AppServerThreadItem::AgentMessage {
                     id: "msg-1".to_string(),
                     text: "hello".to_string(),
                     phase: None,
                     memory_citation: None,
                 }],
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,
             },
-            codex_app_server_protocol::Turn {
+            app_server_protocol::Turn {
                 id: "turn-2".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: vec![AppServerThreadItem::Plan {
                     id: "plan-1".to_string(),
                     text: "ship it".to_string(),
                 }],
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: None,
@@ -372,13 +372,13 @@ fn turn_items_for_thread_returns_matching_turn_items() {
 #[test]
 fn should_backfill_turn_completed_items_skips_ephemeral_threads() {
     let notification =
-        ServerNotification::TurnCompleted(codex_app_server_protocol::TurnCompletedNotification {
+        ServerNotification::TurnCompleted(app_server_protocol::TurnCompletedNotification {
             thread_id: "thread-1".to_string(),
-            turn: codex_app_server_protocol::Turn {
+            turn: app_server_protocol::Turn {
                 id: "turn-1".to_string(),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: None,
@@ -429,7 +429,7 @@ async fn thread_start_params_include_review_policy_when_review_policy_is_manual_
 
     assert_eq!(
         params.approvals_reviewer,
-        Some(codex_app_server_protocol::ApprovalsReviewer::User)
+        Some(app_server_protocol::ApprovalsReviewer::User)
     );
     assert_eq!(params.sandbox, None);
     assert_eq!(
@@ -457,7 +457,7 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
 
     assert_eq!(
         params.approvals_reviewer,
-        Some(codex_app_server_protocol::ApprovalsReviewer::AutoReview)
+        Some(app_server_protocol::ApprovalsReviewer::AutoReview)
     );
 }
 
@@ -494,12 +494,12 @@ async fn thread_lifecycle_params_include_legacy_sandbox_when_no_active_profile()
     assert_eq!(config.permissions.active_permission_profile(), None);
     assert_eq!(
         start_params.sandbox,
-        Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
+        Some(app_server_protocol::SandboxMode::DangerFullAccess)
     );
     assert_eq!(start_params.permissions, None);
     assert_eq!(
         resume_params.sandbox,
-        Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
+        Some(app_server_protocol::SandboxMode::DangerFullAccess)
     );
     assert_eq!(resume_params.permissions, None);
 }
@@ -551,7 +551,7 @@ async fn session_configured_from_thread_response_uses_permission_profile_from_re
 
 fn sample_thread_start_response() -> ThreadStartResponse {
     ThreadStartResponse {
-        thread: codex_app_server_protocol::Thread {
+        thread: app_server_protocol::Thread {
             id: "67e55044-10b1-426f-9247-bb680e5fe0c8".to_string(),
             session_id: "67e55044-10b1-426f-9247-bb680e5fe0c7".to_string(),
             forked_from_id: None,
@@ -560,11 +560,11 @@ fn sample_thread_start_response() -> ThreadStartResponse {
             model_provider: "openai".to_string(),
             created_at: 0,
             updated_at: 0,
-            status: codex_app_server_protocol::ThreadStatus::Complete,
+            status: app_server_protocol::ThreadStatus::Complete,
             path: Some(PathBuf::from("/tmp/rollout.jsonl")),
             cwd: test_path_buf("/tmp").abs(),
             cli_version: "0.0.0".to_string(),
-            source: codex_app_server_protocol::SessionSource::Cli,
+            source: app_server_protocol::SessionSource::Cli,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -581,9 +581,9 @@ fn sample_thread_start_response() -> ThreadStartResponse {
         cwd: test_path_buf("/tmp").abs(),
         runtime_workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),
-        approval_policy: codex_app_server_protocol::AskForApproval::OnRequest,
-        approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::AutoReview,
-        sandbox: codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
+        approval_policy: app_server_protocol::AskForApproval::OnRequest,
+        approvals_reviewer: app_server_protocol::ApprovalsReviewer::AutoReview,
+        sandbox: app_server_protocol::SandboxPolicy::WorkspaceWrite {
             writable_roots: vec![],
             network_access: false,
             exclude_tmpdir_env_var: false,

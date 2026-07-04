@@ -42,7 +42,7 @@ pub use windows_sandbox_read_grants::grant_read_root_non_elevated;
 
 #[cfg(not(target_os = "linux"))]
 pub fn system_bwrap_warning(
-    _permission_profile: &codex_protocol::models::PermissionProfile,
+    _permission_profile: &protocol::models::PermissionProfile,
 ) -> Option<String> {
     None
 }

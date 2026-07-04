@@ -1,4 +1,4 @@
-use codex_protocol::exec_output::ExecToolCallOutput;
+use protocol::exec_output::ExecToolCallOutput;
 
 #[derive(Debug)]
 pub enum UnifiedExecError {

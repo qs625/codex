@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use codex_mcp_types::ElicitationAction;
-use codex_mcp_types::ElicitationResponse;
+use mcp_types::ElicitationAction;
+use mcp_types::ElicitationResponse;
 use rmcp::RoleClient;
 use rmcp::model::ClientInfo;
 use rmcp::model::ClientResult;

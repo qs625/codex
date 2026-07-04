@@ -8,18 +8,18 @@ use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use codex_exec_server_api::ExecProcess;
-use codex_exec_server_api::StartedExecProcess;
+use exec_server_api::ExecProcess;
+use exec_server_api::StartedExecProcess;
 use codex_exec_server_protocol::ReadResponse as ExecReadResponse;
 use codex_exec_server_protocol::WriteStatus;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::exec_output::StreamOutput;
-use codex_protocol::protocol::TruncationPolicy;
+use protocol::exec_output::ExecToolCallOutput;
+use protocol::exec_output::StreamOutput;
+use protocol::protocol::TruncationPolicy;
 use codex_sandboxing_api::SandboxType;
 use codex_utils_output_truncation::formatted_truncate_text;
 use codex_utils_pty::ExecCommandSession;
 use codex_utils_pty::SpawnedPty;
-use codex_process_exec::is_likely_sandbox_denied;
+use command_service_api::is_likely_sandbox_denied;
 
 use super::DEFAULT_COMMAND_OUTPUT_MAX_TOKENS;
 use super::ProcessState;

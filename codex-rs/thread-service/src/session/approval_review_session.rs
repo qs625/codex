@@ -19,21 +19,21 @@ use codex_guardian::build_guardian_prompt_items_from_entries;
 use codex_guardian::collect_guardian_transcript_entries;
 use codex_guardian::guardian_policy_prompt;
 use codex_guardian::guardian_policy_prompt_with_config;
-use codex_model_provider_info::ModelProviderInfo;
 use codex_network_proxy_api::NetworkProxyConfig;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use model_service_api::ModelProviderInfo;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::Event;
+use protocol::protocol::Op;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SubAgentSource;
+use protocol::protocol::TokenUsage;
+use protocol::user_input::UserInput;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -134,8 +134,7 @@ impl GuardianReviewSessionHost for Session {
         run_codex_thread_interactive(
             spawn_config,
             self.services.auth_runtime.clone(),
-            self.services.model_client.auth_manager(),
-            self.services.models_manager.clone(),
+            self.services.provider_auth_manager.clone(),
             Arc::clone(&request.parent_session),
             Arc::clone(&request.parent_turn),
             cancel_token,
@@ -190,12 +189,15 @@ impl GuardianReviewSessionHost for Session {
     async fn model_info(&self, request: &Self::Request) -> GuardianReviewModelInfo {
         let model_info = self
             .services
-            .models_manager
-            .get_model_info(
-                request.model.as_str(),
-                &request.spawn_config.to_models_manager_config(),
-            )
-            .await;
+            .model_service
+            .get_model_info(request.model.as_str())
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to resolve guardian review model info for {}: {err}",
+                    request.model
+                )
+            });
         GuardianReviewModelInfo {
             supports_reasoning_summaries: model_info.supports_reasoning_summaries,
             default_reasoning_level: model_info.default_reasoning_level,
@@ -283,8 +285,8 @@ impl GuardianReviewSessionHost for Session {
                 if event_matches_turn(&event, expected_turn_id)
                     && matches!(
                         event.msg,
-                        codex_protocol::protocol::EventMsg::TurnAborted(_)
-                            | codex_protocol::protocol::EventMsg::TurnComplete(_)
+                        protocol::protocol::EventMsg::TurnAborted(_)
+                            | protocol::protocol::EventMsg::TurnComplete(_)
                     )
                 {
                     return Ok::<(), anyhow::Error>(());
@@ -328,7 +330,7 @@ pub(crate) fn build_guardian_review_session_config(
     parent_config: &Config,
     live_network_config: Option<NetworkProxyConfig>,
     active_model: &str,
-    reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
 ) -> anyhow::Result<Config> {
     let mut guardian_config = parent_config.clone();
     guardian_config.model = Some(active_model.to_string());
@@ -404,10 +406,10 @@ fn event_matches_turn(event: &Event, expected_turn_id: &str) -> bool {
     }
 
     match &event.msg {
-        codex_protocol::protocol::EventMsg::TurnComplete(turn_complete) => {
+        protocol::protocol::EventMsg::TurnComplete(turn_complete) => {
             turn_complete.turn_id == expected_turn_id
         }
-        codex_protocol::protocol::EventMsg::TurnAborted(turn_aborted) => {
+        protocol::protocol::EventMsg::TurnAborted(turn_aborted) => {
             turn_aborted.turn_id.as_deref() == Some(expected_turn_id)
         }
         _ => true,
@@ -490,8 +492,8 @@ mod tests {
         let turn_id = "turn-1";
         let event = Event {
             id: turn_id.to_string(),
-            msg: codex_protocol::protocol::EventMsg::TurnComplete(
-                codex_protocol::protocol::TurnCompleteEvent {
+            msg: protocol::protocol::EventMsg::TurnComplete(
+                protocol::protocol::TurnCompleteEvent {
                     turn_id: turn_id.to_string(),
                     last_agent_message: None,
                     completed_at: None,

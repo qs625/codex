@@ -15,12 +15,12 @@ use codex_git_info::get_git_remote_urls_assume_git_repo;
 use codex_git_info::get_git_repo_root;
 use codex_git_info::get_has_changes;
 use codex_git_info::get_head_commit_hash;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use codex_protocol::protocol::ThreadSource;
 use codex_sandboxing_api::permission_profile_sandbox_tag;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use protocol::protocol::ThreadSource;
 
 const MODEL_KEY: &str = "model";
 const REASONING_EFFORT_KEY: &str = "reasoning_effort";

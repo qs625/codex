@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use codex_feedback::DOCTOR_REPORT_ATTACHMENT_FILENAME;
 use codex_feedback::FeedbackAttachment;
-use thread_service::config::Config;
 use serde_json::Value;
+use thread_service::config::Config;
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::warn;

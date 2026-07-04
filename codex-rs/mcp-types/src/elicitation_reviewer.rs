@@ -4,8 +4,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use codex_protocol::approvals::ElicitationRequest;
-use codex_protocol::mcp::RequestId;
+use protocol::approvals::ElicitationRequest;
+use protocol::mcp::RequestId;
 
 use crate::ElicitationResponse;
 

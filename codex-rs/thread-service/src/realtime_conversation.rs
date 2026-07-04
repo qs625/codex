@@ -1,30 +1,30 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use codex_api_provider::Provider as ApiProvider;
-use codex_api_types::RealtimeEventParser;
-use codex_api_types::RealtimeSessionConfig;
-use codex_api_types::RealtimeSessionMode;
 use codex_config_types::RealtimeWsMode;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::protocol::CodexErrorInfo;
-use codex_protocol::protocol::ConversationAudioParams;
-use codex_protocol::protocol::ConversationStartParams;
-use codex_protocol::protocol::ConversationStartTransport;
-use codex_protocol::protocol::ConversationTextParams;
-use codex_protocol::protocol::ErrorEvent;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RealtimeConversationClosedEvent;
-use codex_protocol::protocol::RealtimeConversationRealtimeEvent;
-use codex_protocol::protocol::RealtimeConversationSdpEvent;
-use codex_protocol::protocol::RealtimeConversationStartedEvent;
-use codex_protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
-use codex_protocol::protocol::RealtimeEvent;
-use codex_protocol::protocol::RealtimeOutputModality;
-use codex_protocol::protocol::RealtimeVoice;
 use http::HeaderMap;
+use model_service_api::Provider as ApiProvider;
+use model_service_api::RealtimeEventParser;
+use model_service_api::RealtimeSessionConfig;
+use model_service_api::RealtimeSessionMode;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
+use protocol::protocol::CodexErrorInfo;
+use protocol::protocol::ConversationAudioParams;
+use protocol::protocol::ConversationStartParams;
+use protocol::protocol::ConversationStartTransport;
+use protocol::protocol::ConversationTextParams;
+use protocol::protocol::ErrorEvent;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RealtimeConversationClosedEvent;
+use protocol::protocol::RealtimeConversationRealtimeEvent;
+use protocol::protocol::RealtimeConversationSdpEvent;
+use protocol::protocol::RealtimeConversationStartedEvent;
+use protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
+use protocol::protocol::RealtimeEvent;
+use protocol::protocol::RealtimeOutputModality;
+use protocol::protocol::RealtimeVoice;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
@@ -39,14 +39,12 @@ pub(crate) use codex_realtime::REALTIME_USER_TEXT_PREFIX;
 pub(crate) use codex_realtime::RealtimeConversationManager;
 use codex_realtime::RealtimeStart;
 use codex_realtime::RealtimeStartOutput;
-use codex_realtime::build_realtime_api_provider;
 use codex_realtime::default_realtime_voice;
 pub(crate) use codex_realtime::prefix_realtime_v2_text;
 use codex_realtime::prepare_realtime_backend_prompt;
-use codex_realtime::realtime_api_key;
 use codex_realtime::realtime_delegation_from_handoff;
-use codex_realtime::realtime_request_headers;
 use codex_realtime::validate_realtime_voice;
+use model_service_api::PrepareRealtimeTransportRequest;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RealtimeConversationEnd {
@@ -103,20 +101,10 @@ async fn prepare_realtime_start(
     sess: &Arc<Session>,
     params: ConversationStartParams,
 ) -> CodexResult<PreparedRealtimeConversationStart> {
-    let provider = sess.provider().await;
-    let auth_manager = sess.services.model_client.auth_manager().ok_or_else(|| {
-        CodexErr::InvalidRequest("realtime conversation requires model provider auth".to_string())
-    })?;
-    let auth = auth_manager.auth().await;
     let config = sess.get_config().await;
     let transport = params
         .transport
         .unwrap_or(ConversationStartTransport::Websocket);
-    let api_provider = build_realtime_api_provider(
-        &provider,
-        auth.as_ref(),
-        config.experimental_realtime_ws_base_url.as_deref(),
-    )?;
     let version = config.realtime.version;
     let session_config = build_realtime_session_config(
         sess,
@@ -127,22 +115,19 @@ async fn prepare_realtime_start(
     )
     .await?;
     let requested_realtime_session_id = session_config.session_id.clone();
-    let extra_headers = match transport {
-        ConversationStartTransport::Websocket => {
-            let realtime_api_key = realtime_api_key(auth.as_ref(), &provider)?;
-            realtime_request_headers(
-                requested_realtime_session_id.as_deref(),
-                Some(realtime_api_key.as_str()),
-            )?
-        }
-        ConversationStartTransport::Webrtc { .. } => realtime_request_headers(
-            requested_realtime_session_id.as_deref(),
-            /*api_key*/ None,
-        )?,
-    };
+    let prepared_transport = sess
+        .services
+        .model_client_api
+        .prepare_realtime_transport(PrepareRealtimeTransportRequest {
+            requested_realtime_session_id: requested_realtime_session_id.clone(),
+            websocket_base_url: config.experimental_realtime_ws_base_url.clone(),
+            include_api_key_header: matches!(transport, ConversationStartTransport::Websocket),
+        })
+        .await
+        .map_err(|err| CodexErr::InvalidRequest(err.to_string()))?;
     Ok(PreparedRealtimeConversationStart {
-        api_provider,
-        extra_headers,
+        api_provider: prepared_transport.api_provider,
+        extra_headers: prepared_transport.extra_headers,
         requested_realtime_session_id,
         version,
         session_config,
@@ -234,7 +219,7 @@ async fn handle_start_inner(
         api_provider,
         extra_headers,
         session_config,
-        model_client: sess.services.model_client.clone(),
+        model_client: Arc::clone(&sess.services.model_client_api),
         sdp,
     };
     let start_output = sess.conversation.start(start).await?;

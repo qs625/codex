@@ -1,12 +1,12 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::InterAgentCommunication;
-use codex_tool_types::FunctionCallError;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::InterAgentCommunication;
 use serde::Serialize;
+use tool_service_api::FunctionCallError;
 
 use crate::AgentMode;
 use crate::ListedAgent;
@@ -219,13 +219,13 @@ pub fn wait_agent_result_from_message(
     }
 }
 
-fn operation_name(operation: codex_protocol::protocol::InterAgentOperation) -> &'static str {
+fn operation_name(operation: protocol::protocol::InterAgentOperation) -> &'static str {
     match operation {
-        codex_protocol::protocol::InterAgentOperation::Unknown => "unknown",
-        codex_protocol::protocol::InterAgentOperation::SpawnAgent => "spawn_agent",
-        codex_protocol::protocol::InterAgentOperation::SendMessage => "send_message",
-        codex_protocol::protocol::InterAgentOperation::FollowupTask => "followup_task",
-        codex_protocol::protocol::InterAgentOperation::ChildCompletion => "child_completion",
+        protocol::protocol::InterAgentOperation::Unknown => "unknown",
+        protocol::protocol::InterAgentOperation::SpawnAgent => "spawn_agent",
+        protocol::protocol::InterAgentOperation::SendMessage => "send_message",
+        protocol::protocol::InterAgentOperation::FollowupTask => "followup_task",
+        protocol::protocol::InterAgentOperation::ChildCompletion => "child_completion",
     }
 }
 

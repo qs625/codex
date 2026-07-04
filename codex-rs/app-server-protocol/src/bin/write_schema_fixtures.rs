@@ -26,10 +26,10 @@ fn main() -> Result<()> {
         .schema_root
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("schema"));
 
-    codex_app_server_protocol::write_schema_fixtures_with_options(
+    app_server_protocol::write_schema_fixtures_with_options(
         &schema_root,
         args.prettier.as_deref(),
-        codex_app_server_protocol::SchemaFixtureOptions {
+        app_server_protocol::SchemaFixtureOptions {
             experimental_api: args.experimental,
         },
     )

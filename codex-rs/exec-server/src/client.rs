@@ -7,9 +7,9 @@ use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
-use codex_jsonrpc_types::JSONRPCNotification;
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use jsonrpc_types::JSONRPCNotification;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
@@ -77,9 +77,9 @@ use crate::protocol::WriteResponse;
 use crate::rpc::RpcCallError;
 use crate::rpc::RpcClient;
 use crate::rpc::RpcClientEvent;
-use codex_exec_server_api::ExecRuntimeError;
-use codex_exec_server_api::HttpClient;
-use codex_exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
+use exec_server_api::ExecRuntimeError;
+use exec_server_api::HttpClient;
+use exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
 
 pub(crate) mod http_client;
 
@@ -903,9 +903,9 @@ async fn handle_server_notification(
 
 #[cfg(test)]
 mod tests {
-    use codex_jsonrpc_types::JSONRPCMessage;
-    use codex_jsonrpc_types::JSONRPCNotification;
-    use codex_jsonrpc_types::JSONRPCResponse;
+    use jsonrpc_types::JSONRPCMessage;
+    use jsonrpc_types::JSONRPCNotification;
+    use jsonrpc_types::JSONRPCResponse;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     #[cfg(unix)]

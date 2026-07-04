@@ -667,7 +667,7 @@ mod windows_impl {
 mod stub {
     use anyhow::Result;
     use anyhow::bail;
-    use codex_protocol::protocol::SandboxPolicy;
+    use protocol::protocol::SandboxPolicy;
     use std::collections::HashMap;
     use std::path::Path;
 

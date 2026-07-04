@@ -10,8 +10,6 @@ use chrono::Utc;
 pub use codex_agent_identity_api::AgentIdentityKey;
 pub use codex_agent_identity_api::AgentTaskAuthorizationTarget;
 pub use codex_agent_identity_api::authorization_header_for_agent_task;
-use codex_protocol::auth::PlanType as AuthPlanType;
-use codex_protocol::protocol::SessionSource;
 use crypto_box::SecretKey as Curve25519SecretKey;
 use ed25519_dalek::Signer as _;
 use ed25519_dalek::SigningKey;
@@ -24,6 +22,8 @@ use jsonwebtoken::Validation;
 use jsonwebtoken::decode;
 use jsonwebtoken::decode_header;
 use jsonwebtoken::jwk::JwkSet;
+use protocol::auth::PlanType as AuthPlanType;
+use protocol::protocol::SessionSource;
 use rand::TryRngCore;
 use rand::rngs::OsRng;
 use serde::Deserialize;
@@ -34,7 +34,7 @@ use sha2::Sha512;
 
 const AGENT_TASK_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(30);
 const AGENT_IDENTITY_JWKS_TIMEOUT: Duration = Duration::from_secs(10);
-const AGENT_IDENTITY_JWT_AUDIENCE: &str = "codex-app-server";
+const AGENT_IDENTITY_JWT_AUDIENCE: &str = "app-server";
 const AGENT_IDENTITY_JWT_ISSUER: &str = "https://chatgpt.com/codex-backend/agent-identity";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -343,7 +343,7 @@ mod tests {
     use jsonwebtoken::Header;
     use pretty_assertions::assert_eq;
 
-    use codex_protocol::auth::KnownPlan;
+    use protocol::auth::KnownPlan;
 
     use super::*;
 

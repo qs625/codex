@@ -14,10 +14,10 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use anyhow::bail;
-use codex_protocol::ThreadId;
-use codex_rollout_api::SESSIONS_SUBDIR;
-use codex_session_telemetry_api::SharedSessionTelemetry;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::ThreadId;
+use rollout_api::SESSIONS_SUBDIR;
+use session_telemetry_api::SharedSessionTelemetry;
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::watch;
@@ -568,7 +568,7 @@ async fn find_active_rollout_path_for_snapshot<T>(
     state_db: Option<&T>,
 ) -> Result<Option<PathBuf>>
 where
-    T: codex_state_api::StateDbRuntime + ?Sized,
+    T: state_api::StateDbRuntime + ?Sized,
 {
     if let Some(state_db) = state_db
         && let Ok(thread_id) = ThreadId::from_string(session_id)

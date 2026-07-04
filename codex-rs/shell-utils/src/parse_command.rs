@@ -3,7 +3,7 @@ use crate::bash::try_parse_shell;
 use crate::bash::try_parse_word_only_commands_sequence;
 use crate::powershell::extract_powershell_command;
 pub use crate::shlex_join;
-use codex_protocol::parse_command::ParsedCommand;
+use protocol::parse_command::ParsedCommand;
 use shlex::split as shlex_split;
 use std::path::PathBuf;
 

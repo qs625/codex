@@ -22,23 +22,23 @@ use crate::onboarding::mark_url_hyperlink;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::tui::FrameRequester;
-use codex_app_server_protocol::MarketplaceAddResponse;
-use codex_app_server_protocol::MarketplaceRemoveResponse;
-use codex_app_server_protocol::MarketplaceUpgradeResponse;
-use codex_app_server_protocol::PluginDetail;
-use codex_app_server_protocol::PluginInstallPolicy;
-use codex_app_server_protocol::PluginInstallResponse;
-use codex_app_server_protocol::PluginListResponse;
-use codex_app_server_protocol::PluginMarketplaceEntry;
-use codex_app_server_protocol::PluginReadResponse;
-use codex_app_server_protocol::PluginSummary;
-use codex_app_server_protocol::PluginUninstallResponse;
-use plugin_service::OPENAI_CURATED_MARKETPLACE_NAME;
+use app_server_protocol::MarketplaceAddResponse;
+use app_server_protocol::MarketplaceRemoveResponse;
+use app_server_protocol::MarketplaceUpgradeResponse;
+use app_server_protocol::PluginDetail;
+use app_server_protocol::PluginInstallPolicy;
+use app_server_protocol::PluginInstallResponse;
+use app_server_protocol::PluginListResponse;
+use app_server_protocol::PluginMarketplaceEntry;
+use app_server_protocol::PluginReadResponse;
+use app_server_protocol::PluginSummary;
+use app_server_protocol::PluginUninstallResponse;
 use codex_features::Feature;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use plugin_service::OPENAI_CURATED_MARKETPLACE_NAME;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
@@ -1835,7 +1835,7 @@ impl ChatWidget {
                     });
                     tx.send(AppEvent::FetchPluginDetail {
                         cwd: cwd.clone(),
-                        params: codex_app_server_protocol::PluginReadParams {
+                        params: app_server_protocol::PluginReadParams {
                             marketplace_path: Some(marketplace_path.clone()),
                             remote_marketplace_name: None,
                             plugin_name: plugin_name.clone(),
@@ -2165,7 +2165,7 @@ fn plugin_hook_summary(plugin: &PluginDetail) -> String {
     if plugin.hooks.is_empty() {
         "No plugin hooks.".to_string()
     } else {
-        let mut event_counts = Vec::<(codex_app_server_protocol::HookEventName, usize)>::new();
+        let mut event_counts = Vec::<(app_server_protocol::HookEventName, usize)>::new();
         for hook in &plugin.hooks {
             if let Some((_, handler_count)) = event_counts
                 .iter_mut()

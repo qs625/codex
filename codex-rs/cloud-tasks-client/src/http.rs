@@ -13,12 +13,11 @@ use crate::TurnAttempt;
 use crate::api::TaskText;
 use chrono::DateTime;
 use chrono::Utc;
-
-use codex_api_provider::SharedAuthProvider;
-use codex_backend_client as backend;
-use codex_backend_client::CodeTaskDetailsResponseExt;
-use codex_git_utils::ApplyGitRequest;
-use codex_git_utils::apply_git_patch;
+use openai_backend_client as backend;
+use openai_backend_client::CodeTaskDetailsResponseExt;
+use codex_git_info::ApplyGitRequest;
+use codex_git_info::apply_git_patch;
+use model_service_api::SharedAuthProvider;
 
 #[derive(Clone)]
 pub struct HttpClient {

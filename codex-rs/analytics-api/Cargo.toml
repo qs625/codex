@@ -14,5 +14,5 @@ workspace = true
 
 [dependencies]
 plugin-service-api = { workspace = true }
-codex-protocol = { workspace = true }
+protocol = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

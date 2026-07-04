@@ -1,14 +1,14 @@
 use super::*;
 
 use super::tests::make_session_and_context;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::CompactedItem;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::ResumedHistory;
-use codex_protocol::protocol::TurnCompleteEvent;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::protocol::UserMessageEvent;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::protocol::CompactedItem;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::ResumedHistory;
+use protocol::protocol::TurnCompleteEvent;
+use protocol::protocol::TurnStartedEvent;
+use protocol::protocol::UserMessageEvent;
 use std::path::PathBuf;
 
 fn turn_context_item(

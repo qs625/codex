@@ -69,86 +69,86 @@ use crate::facts::TurnTokenUsageFact;
 use crate::reducer::AnalyticsReducer;
 use crate::reducer::normalize_path_for_skill_id;
 use crate::reducer::skill_id_for_local_skill;
-use codex_app_server_protocol::ApprovalsReviewer as AppServerApprovalsReviewer;
-use codex_app_server_protocol::AskForApproval as AppServerAskForApproval;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ClientResponsePayload;
-use codex_app_server_protocol::CodexErrorInfo;
-use codex_app_server_protocol::CollabAgentTool;
-use codex_app_server_protocol::CollabAgentToolCallStatus;
-use codex_app_server_protocol::CommandAction;
-use codex_app_server_protocol::CommandExecutionApprovalDecision;
-use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
-use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
-use codex_app_server_protocol::CommandExecutionSource;
-use codex_app_server_protocol::CommandExecutionStatus;
-use codex_app_server_protocol::DynamicToolCallStatus;
-use codex_app_server_protocol::GuardianApprovalReview;
-use codex_app_server_protocol::GuardianApprovalReviewAction;
-use codex_app_server_protocol::GuardianApprovalReviewStatus;
-use codex_app_server_protocol::GuardianCommandSource as AppServerGuardianCommandSource;
-use codex_app_server_protocol::InitializeCapabilities;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::ItemCompletedNotification;
-use codex_app_server_protocol::ItemGuardianApprovalReviewCompletedNotification;
-use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::McpToolCallStatus;
-use codex_app_server_protocol::NonSteerableTurnKind;
-use codex_app_server_protocol::PatchApplyStatus;
-use codex_app_server_protocol::PermissionsRequestApprovalParams;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::RequestPermissionProfile;
-use codex_app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ServerResponse;
-use codex_app_server_protocol::SessionSource as AppServerSessionSource;
-use codex_app_server_protocol::Thread;
-use codex_app_server_protocol::ThreadArchiveParams;
-use codex_app_server_protocol::ThreadArchiveResponse;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadSource as AppServerThreadSource;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::ThreadStatus as AppServerThreadStatus;
-use codex_app_server_protocol::Turn;
-use codex_app_server_protocol::TurnCompletedNotification;
-use codex_app_server_protocol::TurnDiffUpdatedNotification;
-use codex_app_server_protocol::TurnError as AppServerTurnError;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartedNotification;
-use codex_app_server_protocol::TurnStatus as AppServerTurnStatus;
-use codex_app_server_protocol::TurnSteerParams;
-use codex_app_server_protocol::TurnSteerResponse;
-use codex_app_server_protocol::UserInput;
+use app_server_protocol::ApprovalsReviewer as AppServerApprovalsReviewer;
+use app_server_protocol::AskForApproval as AppServerAskForApproval;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::ClientResponsePayload;
+use app_server_protocol::CodexErrorInfo;
+use app_server_protocol::CollabAgentTool;
+use app_server_protocol::CollabAgentToolCallStatus;
+use app_server_protocol::CommandAction;
+use app_server_protocol::CommandExecutionApprovalDecision;
+use app_server_protocol::CommandExecutionRequestApprovalParams;
+use app_server_protocol::CommandExecutionRequestApprovalResponse;
+use app_server_protocol::CommandExecutionSource;
+use app_server_protocol::CommandExecutionStatus;
+use app_server_protocol::DynamicToolCallStatus;
+use app_server_protocol::GuardianApprovalReview;
+use app_server_protocol::GuardianApprovalReviewAction;
+use app_server_protocol::GuardianApprovalReviewStatus;
+use app_server_protocol::GuardianCommandSource as AppServerGuardianCommandSource;
+use app_server_protocol::InitializeCapabilities;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::ItemCompletedNotification;
+use app_server_protocol::ItemGuardianApprovalReviewCompletedNotification;
+use app_server_protocol::ItemStartedNotification;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::McpToolCallStatus;
+use app_server_protocol::NonSteerableTurnKind;
+use app_server_protocol::PatchApplyStatus;
+use app_server_protocol::PermissionsRequestApprovalParams;
+use app_server_protocol::RequestId;
+use app_server_protocol::RequestPermissionProfile;
+use app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::ServerResponse;
+use app_server_protocol::SessionSource as AppServerSessionSource;
+use app_server_protocol::Thread;
+use app_server_protocol::ThreadArchiveParams;
+use app_server_protocol::ThreadArchiveResponse;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadSource as AppServerThreadSource;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadStatus as AppServerThreadStatus;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnDiffUpdatedNotification;
+use app_server_protocol::TurnError as AppServerTurnError;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartedNotification;
+use app_server_protocol::TurnStatus as AppServerTurnStatus;
+use app_server_protocol::TurnSteerParams;
+use app_server_protocol::TurnSteerResponse;
+use app_server_protocol::UserInput;
 use codex_login::default_client::DEFAULT_ORIGINATOR;
 use codex_login::default_client::originator;
+use codex_utils_absolute_path::test_support::PathBufExt;
+use codex_utils_absolute_path::test_support::test_path_buf;
 use plugin_service_api::AppConnectorId;
 use plugin_service_api::PluginCapabilitySummary;
 use plugin_service_api::PluginId;
 use plugin_service_api::PluginTelemetryMetadata;
-use codex_protocol::approvals::NetworkApprovalProtocol;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
-use codex_protocol::models::PermissionProfile as CorePermissionProfile;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookRunStatus;
-use codex_protocol::protocol::HookSource;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
-use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
-use codex_protocol::request_permissions::RequestPermissionsResponse as CoreRequestPermissionsResponse;
-use codex_utils_absolute_path::test_support::PathBufExt;
-use codex_utils_absolute_path::test_support::test_path_buf;
 use pretty_assertions::assert_eq;
+use protocol::approvals::NetworkApprovalProtocol;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::ModeKind;
+use protocol::models::NetworkPermissions as CoreNetworkPermissions;
+use protocol::models::PermissionProfile as CorePermissionProfile;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::HookEventName;
+use protocol::protocol::HookRunStatus;
+use protocol::protocol::HookSource;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TokenUsage;
+use protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
+use protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
+use protocol::request_permissions::RequestPermissionsResponse as CoreRequestPermissionsResponse;
 use serde_json::json;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -292,10 +292,10 @@ fn sample_turn_start_request(thread_id: &str, request_id: i64) -> ClientRequest 
 }
 
 fn sample_turn_start_response(turn_id: &str) -> ClientResponsePayload {
-    ClientResponsePayload::TurnStart(codex_app_server_protocol::TurnStartResponse {
+    ClientResponsePayload::TurnStart(app_server_protocol::TurnStartResponse {
         turn: Turn {
             id: turn_id.to_string(),
-            items_view: codex_app_server_protocol::TurnItemsView::Full,
+            items_view: app_server_protocol::TurnItemsView::Full,
             items: vec![],
             status: AppServerTurnStatus::InProgress,
             error: None,
@@ -311,7 +311,7 @@ fn sample_turn_started_notification(thread_id: &str, turn_id: &str) -> ServerNot
         thread_id: thread_id.to_string(),
         turn: Turn {
             id: turn_id.to_string(),
-            items_view: codex_app_server_protocol::TurnItemsView::Full,
+            items_view: app_server_protocol::TurnItemsView::Full,
             items: vec![],
             status: AppServerTurnStatus::InProgress,
             error: None,
@@ -340,13 +340,13 @@ fn sample_turn_completed_notification(
     thread_id: &str,
     turn_id: &str,
     status: AppServerTurnStatus,
-    codex_error_info: Option<codex_app_server_protocol::CodexErrorInfo>,
+    codex_error_info: Option<app_server_protocol::CodexErrorInfo>,
 ) -> ServerNotification {
     ServerNotification::TurnCompleted(TurnCompletedNotification {
         thread_id: thread_id.to_string(),
         turn: Turn {
             id: turn_id.to_string(),
-            items_view: codex_app_server_protocol::TurnItemsView::Full,
+            items_view: app_server_protocol::TurnItemsView::Full,
             items: vec![],
             status,
             error: codex_error_info.map(|codex_error_info| AppServerTurnError {
@@ -830,7 +830,7 @@ fn sample_permissions_approval_request(request_id: i64) -> ServerRequest {
             cwd: test_path_buf("/tmp").abs(),
             reason: Some("need network".to_string()),
             permissions: RequestPermissionProfile {
-                network: Some(codex_app_server_protocol::AdditionalNetworkPermissions {
+                network: Some(app_server_protocol::AdditionalNetworkPermissions {
                     enabled: Some(true),
                 }),
                 file_system: None,
@@ -863,7 +863,7 @@ fn sample_guardian_review_completed(
             completed_at_ms: 1_042,
             review_id: review_id.to_string(),
             target_item_id: target_item_id.map(str::to_string),
-            decision_source: codex_app_server_protocol::AutoReviewDecisionSource::Agent,
+            decision_source: app_server_protocol::AutoReviewDecisionSource::Agent,
             review: GuardianApprovalReview {
                 status,
                 risk_level: None,
@@ -1702,9 +1702,8 @@ async fn unrelated_client_responses_are_ignored_by_reducer() {
 async fn compaction_event_ingests_custom_fact() {
     let mut reducer = AnalyticsReducer::default();
     let mut events = Vec::new();
-    let parent_thread_id =
-        codex_protocol::ThreadId::from_string("22222222-2222-2222-2222-222222222222")
-            .expect("valid parent thread id");
+    let parent_thread_id = protocol::ThreadId::from_string("22222222-2222-2222-2222-222222222222")
+        .expect("valid parent thread id");
 
     reducer
         .ingest(
@@ -2434,9 +2433,8 @@ fn subagent_thread_started_review_serializes_expected_shape() {
 
 #[test]
 fn subagent_thread_started_thread_spawn_serializes_parent_thread_id() {
-    let parent_thread_id =
-        codex_protocol::ThreadId::from_string("11111111-1111-1111-1111-111111111111")
-            .expect("valid thread id");
+    let parent_thread_id = protocol::ThreadId::from_string("11111111-1111-1111-1111-111111111111")
+        .expect("valid thread id");
     let event = TrackEventRequest::ThreadInitialized(subagent_thread_started_event_request(
         SubAgentThreadStartedInput {
             thread_id: "thread-spawn".to_string(),
@@ -2575,9 +2573,8 @@ async fn subagent_thread_started_publishes_without_initialize() {
 async fn subagent_thread_started_inherits_parent_connection_for_new_thread() {
     let mut reducer = AnalyticsReducer::default();
     let mut events = Vec::new();
-    let parent_thread_id =
-        codex_protocol::ThreadId::from_string("44444444-4444-4444-4444-444444444444")
-            .expect("valid parent thread id");
+    let parent_thread_id = protocol::ThreadId::from_string("44444444-4444-4444-4444-444444444444")
+        .expect("valid parent thread id");
     let parent_thread_id_string = parent_thread_id.to_string();
 
     reducer
@@ -2999,7 +2996,7 @@ async fn reducer_ingests_skill_invoked_fact() {
                 tracking,
                 invocations: vec![SkillInvocation {
                     skill_name: "doc".to_string(),
-                    skill_scope: codex_protocol::protocol::SkillScope::User,
+                    skill_scope: protocol::protocol::SkillScope::User,
                     skill_path,
                     plugin_id: None,
                     invocation_type: InvocationType::Explicit,
@@ -3048,7 +3045,7 @@ async fn reducer_includes_plugin_id_for_plugin_skill_invocations() {
                 tracking,
                 invocations: vec![SkillInvocation {
                     skill_name: "sample:doc".to_string(),
-                    skill_scope: codex_protocol::protocol::SkillScope::User,
+                    skill_scope: protocol::protocol::SkillScope::User,
                     skill_path,
                     plugin_id: Some("sample@test".to_string()),
                     invocation_type: InvocationType::Explicit,
@@ -3940,7 +3937,7 @@ async fn turn_lifecycle_emits_failed_turn_event() {
                 "thread-2",
                 "turn-2",
                 AppServerTurnStatus::Failed,
-                Some(codex_app_server_protocol::CodexErrorInfo::BadRequest),
+                Some(app_server_protocol::CodexErrorInfo::BadRequest),
             ))),
             &mut out,
         )

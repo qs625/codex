@@ -8,30 +8,30 @@ use std::time::Instant;
 
 use async_channel::unbounded;
 use codex_auth_types::RequestAuthSnapshot;
-use codex_client_identity::originator;
-use codex_config::Config;
+use transport_client_identity::originator;
+use config_service::Config;
 use codex_config_types::ToolSuggestDiscoverableType;
+use codex_connectors_api::AppInfo;
 use codex_connectors_api::ConnectorDirectoryCacheContext;
 use codex_connectors_api::ConnectorDirectoryCacheKey;
-use codex_connectors_api::AppInfo;
-use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_features::Feature;
-use codex_mcp_tool_types::ToolInfo;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp_types::CodexAppsAuthContext;
-use codex_mcp_types::ToolPluginProvenance;
-use codex_mcp_types::codex_apps_tools_cache_key;
-use codex_mcp_types::host_owned_codex_apps_enabled;
-use codex_mcp_types::tool_plugin_provenance;
-use codex_mcp_types::with_codex_apps_mcp;
-use codex_protocol::models::PermissionProfile;
-use codex_tool_types::DiscoverablePluginInfo;
-use codex_tool_types::DiscoverableTool;
+use exec_server_api::ExecEnvironmentProvider;
 use mcp_service_api::McpAuthRuntime;
 use mcp_service_api::McpConnectionRuntime;
 use mcp_service_api::McpConnectionRuntimeFactory;
 use mcp_service_api::McpConnectionRuntimeStartRequest;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::CodexAppsAuthContext;
+use mcp_types::ToolInfo;
+use mcp_types::ToolPluginProvenance;
+use mcp_types::codex_apps_tools_cache_key;
+use mcp_types::host_owned_codex_apps_enabled;
+use mcp_types::tool_plugin_provenance;
+use mcp_types::with_codex_apps_mcp;
 use plugin_service_api::PluginRuntime;
+use protocol::models::PermissionProfile;
+use tool_service_api::DiscoverablePluginInfo;
+use tool_service_api::DiscoverableTool;
 use tracing::warn;
 
 use crate::codex_apps_auth_context;
@@ -426,7 +426,9 @@ async fn tool_suggest_connector_ids(
     plugin_runtime: &dyn PluginRuntime,
 ) -> HashSet<String> {
     let plugins_input = config.plugins_config_input();
-    let mut connector_ids = plugin_runtime.connector_ids_for_config(&plugins_input).await;
+    let mut connector_ids = plugin_runtime
+        .connector_ids_for_config(&plugins_input)
+        .await;
     connector_ids.extend(
         config
             .tool_suggest
@@ -539,12 +541,12 @@ pub fn with_app_plugin_sources(
 
 #[cfg(test)]
 mod tests {
-    use codex_config::ConfigBuilder;
+    use config_service::ConfigBuilder;
     use codex_connectors_api::metadata::connector_install_url;
     use codex_connectors_api::metadata::sanitize_name;
     use codex_features::Feature;
-    use codex_mcp_tool_types::McpTool;
-    use codex_mcp_tool_types::ToolAnnotations;
+    use mcp_types::McpTool;
+    use mcp_types::ToolAnnotations;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
 

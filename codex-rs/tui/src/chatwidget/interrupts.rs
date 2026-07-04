@@ -5,11 +5,11 @@ use std::collections::VecDeque;
 use crate::app::app_server_requests::ResolvedAppServerRequest;
 use crate::approval_events::ApplyPatchApprovalRequestEvent;
 use crate::approval_events::ExecApprovalRequestEvent;
-use codex_app_server_protocol::McpServerElicitationRequestParams;
-use codex_app_server_protocol::RequestId as AppServerRequestId;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ToolRequestUserInputParams;
-use codex_protocol::request_permissions::RequestPermissionsEvent;
+use ::protocol::request_permissions::RequestPermissionsEvent;
+use app_server_protocol::McpServerElicitationRequestParams;
+use app_server_protocol::RequestId as AppServerRequestId;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ToolRequestUserInputParams;
 
 use super::ChatWidget;
 
@@ -138,9 +138,9 @@ impl QueuedInterrupt {
 #[cfg(test)]
 mod tests {
     use crate::approval_events::ExecApprovalRequestEvent;
-    use codex_app_server_protocol::CommandExecutionSource;
-    use codex_app_server_protocol::CommandExecutionStatus;
-    use codex_app_server_protocol::ThreadItem;
+    use app_server_protocol::CommandExecutionSource;
+    use app_server_protocol::CommandExecutionStatus;
+    use app_server_protocol::ThreadItem;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
 

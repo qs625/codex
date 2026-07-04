@@ -1,8 +1,8 @@
 //! OSS provider utilities shared between TUI and exec.
 
-use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
+use model_service_api::LMSTUDIO_OSS_PROVIDER_ID;
+use model_service_api::ModelProviderInfo;
+use model_service_api::OLLAMA_OSS_PROVIDER_ID;
 use std::collections::HashMap;
 
 /// Returns the default model for a given OSS provider.

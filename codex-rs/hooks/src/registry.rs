@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use codex_hooks_api::HookFuture;
-use codex_hooks_api::HookListOutcome;
-use codex_hooks_api::HookPayload;
-use codex_hooks_api::HookResponse;
-use codex_hooks_api::HookRuntime;
-use codex_hooks_api::HookRuntimeFactory;
-use codex_hooks_api::HooksConfig;
-use codex_hooks_api::SharedHookRuntime;
+use hooks_api::HookFuture;
+use hooks_api::HookListOutcome;
+use hooks_api::HookPayload;
+use hooks_api::HookResponse;
+use hooks_api::HookRuntime;
+use hooks_api::HookRuntimeFactory;
+use hooks_api::HooksConfig;
+use hooks_api::SharedHookRuntime;
 use tokio::process::Command;
 
 use crate::engine::ClaudeHooksEngine;
@@ -28,8 +28,8 @@ use crate::events::stop::StopOutcome;
 use crate::events::stop::StopRequest;
 use crate::events::user_prompt_submit::UserPromptSubmitOutcome;
 use crate::events::user_prompt_submit::UserPromptSubmitRequest;
-use codex_hooks_api::Hook;
-use codex_hooks_api::HookEvent;
+use hooks_api::Hook;
+use hooks_api::HookEvent;
 
 #[derive(Clone)]
 pub struct Hooks {
@@ -96,28 +96,28 @@ impl Hooks {
     pub fn preview_session_start(
         &self,
         request: &SessionStartRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         self.engine.preview_session_start(request)
     }
 
     pub fn preview_pre_tool_use(
         &self,
         request: &PreToolUseRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         self.engine.preview_pre_tool_use(request)
     }
 
     pub fn preview_permission_request(
         &self,
         request: &PermissionRequestRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         self.engine.preview_permission_request(request)
     }
 
     pub fn preview_post_tool_use(
         &self,
         request: &PostToolUseRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         self.engine.preview_post_tool_use(request)
     }
 
@@ -147,7 +147,7 @@ impl Hooks {
     pub fn preview_pre_compact(
         &self,
         request: &PreCompactRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         self.engine.preview_pre_compact(request)
     }
 
@@ -158,7 +158,7 @@ impl Hooks {
     pub fn preview_post_compact(
         &self,
         request: &PostCompactRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         self.engine.preview_post_compact(request)
     }
 
@@ -169,7 +169,7 @@ impl Hooks {
     pub fn preview_user_prompt_submit(
         &self,
         request: &UserPromptSubmitRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         self.engine.preview_user_prompt_submit(request)
     }
 
@@ -180,10 +180,7 @@ impl Hooks {
         self.engine.run_user_prompt_submit(request).await
     }
 
-    pub fn preview_stop(
-        &self,
-        request: &StopRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    pub fn preview_stop(&self, request: &StopRequest) -> Vec<protocol::protocol::HookRunSummary> {
         self.engine.preview_stop(request)
     }
 
@@ -204,53 +201,53 @@ impl HookRuntime for Hooks {
     fn preview_session_start(
         &self,
         request: &SessionStartRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         Hooks::preview_session_start(self, request)
     }
 
     fn preview_pre_tool_use(
         &self,
         request: &PreToolUseRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         Hooks::preview_pre_tool_use(self, request)
     }
 
     fn preview_permission_request(
         &self,
         request: &PermissionRequestRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         Hooks::preview_permission_request(self, request)
     }
 
     fn preview_post_tool_use(
         &self,
         request: &PostToolUseRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         Hooks::preview_post_tool_use(self, request)
     }
 
     fn preview_pre_compact(
         &self,
         request: &PreCompactRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         Hooks::preview_pre_compact(self, request)
     }
 
     fn preview_post_compact(
         &self,
         request: &PostCompactRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         Hooks::preview_post_compact(self, request)
     }
 
     fn preview_user_prompt_submit(
         &self,
         request: &UserPromptSubmitRequest,
-    ) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    ) -> Vec<protocol::protocol::HookRunSummary> {
         Hooks::preview_user_prompt_submit(self, request)
     }
 
-    fn preview_stop(&self, request: &StopRequest) -> Vec<codex_protocol::protocol::HookRunSummary> {
+    fn preview_stop(&self, request: &StopRequest) -> Vec<protocol::protocol::HookRunSummary> {
         Hooks::preview_stop(self, request)
     }
 

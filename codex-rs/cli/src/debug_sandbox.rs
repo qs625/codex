@@ -6,24 +6,24 @@ mod seatbelt;
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use codex_command_service::create_env;
-use codex_config_loader::LoaderOverrides;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::permissions::NetworkSandboxPolicy;
+use config_service::LoaderOverrides;
 use codex_sandboxing::landlock::allow_network_for_proxy;
 use codex_sandboxing::landlock::create_linux_sandbox_command_args_for_permission_profile;
 #[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
 #[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::create_seatbelt_command_args;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_cli::CliConfigOverrides;
+use command_service::create_env;
+use protocol::config_types::SandboxMode;
+use protocol::permissions::NetworkSandboxPolicy;
 use thread_service::config::Config;
 use thread_service::config::ConfigOverrides;
 use thread_service::config::NetworkProxyAuditMetadata;
 #[cfg(target_os = "macos")]
 use thread_service::spawn::CODEX_SANDBOX_ENV_VAR;
 use thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
-use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_cli::CliConfigOverrides;
 use tokio::process::Child;
 use tokio::process::Command as TokioCommand;
 use toml::Value as TomlValue;
@@ -343,10 +343,10 @@ async fn run_command_under_windows_session(
     sandbox_policy_cwd: AbsolutePathBuf,
     env: std::collections::HashMap<String, String>,
 ) -> ! {
-    use codex_protocol::config_types::WindowsSandboxLevel;
     use codex_sandboxing::WindowsSandboxLevelExt;
     use codex_windows_sandbox::spawn_windows_sandbox_session_elevated;
     use codex_windows_sandbox::spawn_windows_sandbox_session_legacy;
+    use protocol::config_types::WindowsSandboxLevel;
 
     let sandbox_policy = config
         .permissions
@@ -968,8 +968,8 @@ mod tests {
             .permissions
             .permission_profile()
             .file_system_sandbox_policy();
-        let expected = codex_protocol::models::PermissionProfile::workspace_write()
-            .file_system_sandbox_policy();
+        let expected =
+            protocol::models::PermissionProfile::workspace_write().file_system_sandbox_policy();
         assert!(
             expected
                 .entries
@@ -1010,8 +1010,8 @@ mod tests {
             .permissions
             .permission_profile()
             .file_system_sandbox_policy();
-        let expected = codex_protocol::models::PermissionProfile::workspace_write()
-            .file_system_sandbox_policy();
+        let expected =
+            protocol::models::PermissionProfile::workspace_write().file_system_sandbox_policy();
         assert!(
             expected
                 .entries

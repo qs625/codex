@@ -1,31 +1,31 @@
 use anyhow::Result;
+use app_server_protocol::ItemCompletedNotification;
+use app_server_protocol::ItemStartedNotification;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCNotification;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ReviewDelivery;
+use app_server_protocol::ReviewStartParams;
+use app_server_protocol::ReviewStartResponse;
+use app_server_protocol::ReviewTarget;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadStartedNotification;
+use app_server_protocol::ThreadStatusChangedNotification;
+use app_server_protocol::TurnItemsView;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::create_mock_responses_server_sequence;
 use app_test_support::create_shell_command_sse_response;
 use app_test_support::to_response;
-use codex_app_server_protocol::ItemCompletedNotification;
-use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ReviewDelivery;
-use codex_app_server_protocol::ReviewStartParams;
-use codex_app_server_protocol::ReviewStartResponse;
-use codex_app_server_protocol::ReviewTarget;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::ThreadStartedNotification;
-use codex_app_server_protocol::ThreadStatusChangedNotification;
-use codex_app_server_protocol::TurnItemsView;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStatus;
-use codex_app_server_protocol::UserInput as V2UserInput;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
@@ -236,7 +236,7 @@ async fn review_start_exec_approval_item_id_matches_command_execution_item() -> 
 
     mcp.send_response(
         request_id,
-        serde_json::json!({ "decision": codex_protocol::protocol::ReviewDecision::Approved }),
+        serde_json::json!({ "decision": protocol::protocol::ReviewDecision::Approved }),
     )
     .await?;
     timeout(

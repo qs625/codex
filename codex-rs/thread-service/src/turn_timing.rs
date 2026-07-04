@@ -3,10 +3,10 @@ use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use codex_metrics_api::TURN_TTFM_DURATION_METRIC;
-use codex_protocol::items::TurnItem;
-use codex_protocol::models::ResponseItem;
 use codex_turn_items::raw_assistant_output_text_from_item;
+use metrics_api::TURN_TTFM_DURATION_METRIC;
+use protocol::items::TurnItem;
+use protocol::models::ResponseItem;
 use tokio::sync::Mutex;
 
 use crate::client_common::ResponseEvent;
@@ -173,15 +173,13 @@ fn response_item_records_turn_ttft(item: &ResponseItem) -> bool {
             summary, content, ..
         } => {
             summary.iter().any(|entry| match entry {
-                codex_protocol::models::ReasoningItemReasoningSummary::SummaryText { text } => {
+                protocol::models::ReasoningItemReasoningSummary::SummaryText { text } => {
                     !text.is_empty()
                 }
             }) || content.as_ref().is_some_and(|entries| {
                 entries.iter().any(|entry| match entry {
-                    codex_protocol::models::ReasoningItemContent::ReasoningText { text }
-                    | codex_protocol::models::ReasoningItemContent::Text { text } => {
-                        !text.is_empty()
-                    }
+                    protocol::models::ReasoningItemContent::ReasoningText { text }
+                    | protocol::models::ReasoningItemContent::Text { text } => !text.is_empty(),
                 })
             })
         }

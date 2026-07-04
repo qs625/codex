@@ -1,8 +1,8 @@
-use codex_app_server_protocol::DynamicToolCallOutputContentItem;
-use codex_app_server_protocol::DynamicToolCallResponse;
-use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
-use codex_protocol::dynamic_tools::DynamicToolResponse as CoreDynamicToolResponse;
-use codex_protocol::protocol::Op;
+use app_server_protocol::DynamicToolCallOutputContentItem;
+use app_server_protocol::DynamicToolCallResponse;
+use protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
+use protocol::dynamic_tools::DynamicToolResponse as CoreDynamicToolResponse;
+use protocol::protocol::Op;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::error;

@@ -1,7 +1,7 @@
 use codex_config_types::AppToolApproval;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::AskForApproval;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::models::PermissionProfile;
+use protocol::protocol::AskForApproval;
 
 /// Request context used to decide whether an MCP permission prompt can be
 /// resolved without surfacing a user prompt.
@@ -38,12 +38,12 @@ pub fn mcp_permission_prompt_is_auto_approved(
 mod tests {
     use super::*;
     use codex_config_types::AppToolApproval;
-    use codex_protocol::config_types::ApprovalsReviewer;
-    use codex_protocol::models::ManagedFileSystemPermissions;
-    use codex_protocol::models::PermissionProfile;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
-    use codex_protocol::protocol::AskForApproval;
-    use codex_protocol::protocol::GranularApprovalConfig;
+    use protocol::config_types::ApprovalsReviewer;
+    use protocol::models::ManagedFileSystemPermissions;
+    use protocol::models::PermissionProfile;
+    use protocol::permissions::NetworkSandboxPolicy;
+    use protocol::protocol::AskForApproval;
+    use protocol::protocol::GranularApprovalConfig;
 
     #[test]
     fn auto_approval_honors_unrestricted_managed_profiles() {

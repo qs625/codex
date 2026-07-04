@@ -13,38 +13,38 @@ use std::time::Duration;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
-use codex_config_requirements::CloudRequirementsLoader;
+use config_service::CloudRequirementsLoader;
 use codex_extension_api::empty_extension_registry;
 use codex_file_system::CreateDirectoryOptions;
 use codex_file_system::ExecutorFileSystem;
 use codex_file_system::RemoveOptions;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_model_provider_info::built_in_model_providers;
-use codex_models_manager::bundled_models_response;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ModelsResponse;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionConfiguredEvent;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::TurnEnvironmentSelection;
-use codex_protocol::user_input::UserInput;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use futures::future::BoxFuture;
+use model_service::bundled_models_response;
+use model_service_api::ModelProviderInfo;
+use model_service_api::built_in_model_providers;
+use protocol::config_types::ServiceTier;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ModelsResponse;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::EventMsg;
+use protocol::protocol::Op;
+use protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::SessionSource;
+use protocol::protocol::TurnEnvironmentSelection;
+use protocol::user_input::UserInput;
+use serde_json::Value;
+use tempfile::TempDir;
 use thread_service::CodexThread;
 use thread_service::ThreadService;
 use thread_service::config::Config;
 use thread_service::resolve_installation_id;
 use thread_service::runtime_shell_model::Shell;
 use thread_service::runtime_shell_model::get_shell_by_model_provided_path;
-use codex_utils_absolute_path::AbsolutePathBuf;
-use futures::future::BoxFuture;
-use serde_json::Value;
-use tempfile::TempDir;
 use wiremock::MockServer;
 
 use crate::PathBufExt;
@@ -422,7 +422,7 @@ impl TestCodexBuilder {
         );
         #[cfg(not(target_os = "linux"))]
         let codex_linux_sandbox_exe = None;
-        let local_runtime_paths = codex_exec_server_api::ExecServerRuntimePaths::new(
+        let local_runtime_paths = exec_server_api::ExecServerRuntimePaths::new(
             std::env::current_exe()?,
             codex_linux_sandbox_exe,
         )?;
@@ -468,10 +468,10 @@ impl TestCodexBuilder {
     ) -> anyhow::Result<TestCodex> {
         let auth = self.auth.clone();
         let auth_manager = thread_service::test_support::auth_manager_from_auth(auth);
-        let state_db = codex_rollout::state_db::init(&config).await;
+        let state_db = rollout::state_db::init(&config).await;
         let thread_store = thread_store_from_config(&config, state_db.clone());
         let installation_id = resolve_installation_id(&config.codex_home).await?;
-        let environment_provider: Arc<dyn codex_exec_server_api::ExecEnvironmentProvider> =
+        let environment_provider: Arc<dyn exec_server_api::ExecEnvironmentProvider> =
             environment_manager.clone();
         let thread_service = Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
             let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
@@ -481,13 +481,15 @@ impl TestCodexBuilder {
                 thread_service_api.clone(),
             ));
             let approval_service = Arc::new(approval_service::ApprovalService);
+            let permissions_service = Arc::new(permissions_service::PermissionsService);
             let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
-            let command_service = Arc::new(codex_command_service::CommandService::new());
+            let command_service = Arc::new(command_service::CommandService::new());
             let tool_service = Arc::new(codex_tool_service::ToolService::new(
                 approval_service,
                 command_service.clone(),
                 Arc::new(goal_service::GoalService),
                 mcp_service.clone(),
+                permissions_service,
                 workflow_service,
                 thread_service_api,
             ));
@@ -502,7 +504,7 @@ impl TestCodexBuilder {
                 /*analytics_events_client*/ None,
                 thread_store,
                 state_db.clone(),
-                Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+                Arc::new(thread_store::DefaultLiveThreadFactory),
                 installation_id,
                 /*attestation_provider*/ None,
                 thread_service::test_support::model_provider_factory_for_tests(),
@@ -510,17 +512,17 @@ impl TestCodexBuilder {
                 command_service,
                 Arc::new(approval_service::ApprovalService),
                 Arc::new(goal_service::GoalService),
-                Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-                Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+                Arc::new(mcp_service::DefaultMcpAuthRuntime),
+                Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),
                 Arc::new(codex_openai_files::ReqwestOpenAiFileUploader),
-                Arc::new(codex_execpolicy_loader::StarlarkExecPolicyLoader),
-                Arc::new(codex_api::DefaultApiRuntimeFactory),
+                Arc::new(permissions_service::StarlarkExecPolicyLoader),
+                Arc::new(model_service::DefaultApiRuntimeFactory),
                 Arc::new(codex_network_proxy::DefaultNetworkProxyRuntimeFactory),
                 Arc::new(codex_sandboxing::SandboxManager::new()),
                 Arc::new(codex_otel::OtelSessionTelemetryFactory),
-                Arc::new(codex_hooks::DisabledHookRuntimeFactory),
+                Arc::new(hooks::DisabledHookRuntimeFactory),
                 Arc::new(memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider),
-                Arc::new(codex_core_skills_api::DisabledSkillsRuntime),
+                Arc::new(skill_service_api::DisabledSkillService),
                 Arc::new(plugin_service_api::DisabledPluginRuntime),
                 tool_service,
                 mcp_service,
@@ -528,37 +530,36 @@ impl TestCodexBuilder {
         });
         let user_shell_override = self.user_shell_override.clone();
 
-        let new_conversation =
-            match (resume_from, user_shell_override) {
-                (Some(path), Some(user_shell_override)) => Box::pin(
-                    thread_service::test_support::resume_thread_from_rollout_with_user_shell_override(
+        let new_conversation = match (resume_from, user_shell_override) {
+            (Some(path), Some(user_shell_override)) => Box::pin(
+                thread_service::test_support::resume_thread_from_rollout_with_user_shell_override(
+                    thread_service.as_ref(),
+                    config.clone(),
+                    path,
+                    user_shell_override,
+                ),
+            )
+            .await?,
+            (Some(path), None) => {
+                Box::pin(thread_service.resume_thread_from_rollout(
+                    config.clone(),
+                    path,
+                    /*parent_trace*/ None,
+                ))
+                .await?
+            }
+            (None, Some(user_shell_override)) => {
+                Box::pin(
+                    thread_service::test_support::start_thread_with_user_shell_override(
                         thread_service.as_ref(),
                         config.clone(),
-                        path,
                         user_shell_override,
                     ),
                 )
-                .await?,
-                (Some(path), None) => {
-                    Box::pin(thread_service.resume_thread_from_rollout(
-                        config.clone(),
-                        path,
-                        /*parent_trace*/ None,
-                    ))
-                    .await?
-                }
-                (None, Some(user_shell_override)) => {
-                    Box::pin(
-                        thread_service::test_support::start_thread_with_user_shell_override(
-                            thread_service.as_ref(),
-                            config.clone(),
-                            user_shell_override,
-                        ),
-                    )
-                    .await?
-                }
-                (None, None) => Box::pin(thread_service.start_thread(config.clone())).await?,
-            };
+                .await?
+            }
+            (None, None) => Box::pin(thread_service.start_thread(config.clone())).await?,
+        };
 
         Ok(TestCodex {
             home,

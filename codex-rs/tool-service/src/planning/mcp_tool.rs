@@ -1,6 +1,6 @@
 use crate::ToolDefinition;
 use crate::parse_tool_input_schema;
-use codex_mcp_tool_types::McpTool;
+use mcp_types::McpTool;
 use serde_json::Value as JsonValue;
 use serde_json::json;
 

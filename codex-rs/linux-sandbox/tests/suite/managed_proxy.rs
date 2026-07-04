@@ -1,10 +1,10 @@
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used)]
 
-use codex_command_service::create_env;
-use codex_protocol::config_types::ShellEnvironmentPolicy;
-use codex_protocol::models::PermissionProfile;
+use command_service::create_env;
 use pretty_assertions::assert_eq;
+use protocol::config_types::ShellEnvironmentPolicy;
+use protocol::models::PermissionProfile;
 use std::collections::HashMap;
 use std::io::Read;
 use std::io::Write;

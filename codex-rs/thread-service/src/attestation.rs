@@ -1,3 +1,3 @@
-pub use codex_model_client::AttestationContext;
-pub use codex_model_client::AttestationProvider;
-pub use codex_model_client::GenerateAttestationFuture;
+pub use model_service::AttestationContext;
+pub use model_service::AttestationProvider;
+pub use model_service::GenerateAttestationFuture;

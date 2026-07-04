@@ -1,4 +1,4 @@
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;

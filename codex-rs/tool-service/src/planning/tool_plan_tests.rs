@@ -5,12 +5,12 @@ use crate::ResponsesApiTool;
 use crate::ToolName;
 use codex_features::Feature;
 use codex_features::Features;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::protocol::SessionSource;
 use pretty_assertions::assert_eq;
+use protocol::config_types::WebSearchMode;
+use protocol::config_types::WindowsSandboxLevel;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ModelInfo;
+use protocol::protocol::SessionSource;
 use serde_json::json;
 use std::collections::BTreeMap;
 

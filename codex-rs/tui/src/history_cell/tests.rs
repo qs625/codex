@@ -8,26 +8,26 @@ use crate::legacy_core::config::Config;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::session_state::ThreadSessionState;
 use crate::wrapping::word_wrap_lines;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::McpAuthStatus;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::McpAuthStatus;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerDisabledReason;
-use codex_metrics_api::RuntimeMetricTotals;
-use codex_metrics_api::RuntimeMetricsSummary;
-use codex_protocol::ThreadId;
-use codex_protocol::account::PlanType;
-use codex_protocol::parse_command::ParsedCommand;
 use dirs::home_dir;
+use metrics_api::RuntimeMetricTotals;
+use metrics_api::RuntimeMetricsSummary;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::account::PlanType;
+use protocol::parse_command::ParsedCommand;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::mcp::Tool;
+use app_server_protocol::CommandExecutionSource as ExecCommandSource;
+use protocol::mcp::CallToolResult;
+use protocol::mcp::Tool;
 use rmcp::model::Content;
 
 const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
@@ -444,7 +444,7 @@ fn session_configured_event(model: &str) -> ThreadSessionState {
         model_provider_id: "test-provider".to_string(),
         service_tier: None,
         approval_policy: AskForApproval::Never,
-        approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
+        approvals_reviewer: protocol::config_types::ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/tmp/project").abs(),
@@ -831,7 +831,7 @@ async fn mcp_tools_output_from_statuses_renders_status_only_servers() {
         )]),
         resources: Vec::new(),
         resource_templates: Vec::new(),
-        auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
+        auth_status: app_server_protocol::McpAuthStatus::Unsupported,
     }];
 
     let cell = new_mcp_tools_output_from_statuses(
@@ -889,7 +889,7 @@ async fn mcp_tools_output_from_statuses_renders_verbose_inventory() {
             description: None,
             mime_type: None,
         }],
-        auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
+        auth_status: app_server_protocol::McpAuthStatus::Unsupported,
     }];
 
     let cell = new_mcp_tools_output_from_statuses(&config, &statuses, McpServerStatusDetail::Full);

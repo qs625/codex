@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 
 /// Future returned by one injected subagent-spawn helper.
 pub type AgentSpawnFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;

@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use crate::legacy_core::config::set_project_trust_level;
-use codex_protocol::config_types::TrustLevel;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use protocol::config_types::TrustLevel;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;

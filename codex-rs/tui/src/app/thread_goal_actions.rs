@@ -8,8 +8,8 @@ use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 use crate::goal_display::goal_status_label;
 use crate::goal_display::goal_usage_summary;
-use codex_app_server_protocol::ThreadGoalStatus;
-use codex_protocol::ThreadId;
+use app_server_protocol::ThreadGoalStatus;
+use protocol::ThreadId;
 
 impl App {
     pub(super) async fn open_thread_goal_menu(

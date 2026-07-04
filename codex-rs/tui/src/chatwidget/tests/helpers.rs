@@ -1,5 +1,5 @@
 use super::*;
-use codex_app_server_protocol::PluginAvailability;
+use app_server_protocol::PluginAvailability;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -367,8 +367,8 @@ fn thread_id(chat: &ChatWidget) -> String {
     chat.thread_id.map(|id| id.to_string()).unwrap_or_default()
 }
 
-fn token_usage_breakdown(usage: TokenUsage) -> codex_app_server_protocol::TokenUsageBreakdown {
-    codex_app_server_protocol::TokenUsageBreakdown {
+fn token_usage_breakdown(usage: TokenUsage) -> app_server_protocol::TokenUsageBreakdown {
+    app_server_protocol::TokenUsageBreakdown {
         total_tokens: usage.total_tokens,
         input_tokens: usage.input_tokens,
         cached_input_tokens: usage.cached_input_tokens,
@@ -382,14 +382,14 @@ pub(super) fn handle_token_count(chat: &mut ChatWidget, info: Option<TokenUsageI
         Some(info) => {
             chat.handle_server_notification(
                 ServerNotification::ThreadTokenUsageUpdated(
-                    codex_app_server_protocol::ThreadTokenUsageUpdatedNotification {
+                    app_server_protocol::ThreadTokenUsageUpdatedNotification {
                         thread_id: thread_id(chat),
                         turn_id: chat
                             .turn_lifecycle
                             .last_turn_id
                             .clone()
                             .unwrap_or_else(|| "turn-1".to_string()),
-                        token_usage: codex_app_server_protocol::ThreadTokenUsage {
+                        token_usage: app_server_protocol::ThreadTokenUsage {
                             total: token_usage_breakdown(info.total_token_usage),
                             last: token_usage_breakdown(info.last_token_usage),
                             model_context_window: info.model_context_window,
@@ -490,18 +490,16 @@ pub(super) fn handle_model_verification(
 
 pub(super) fn handle_agent_message_delta(chat: &mut ChatWidget, delta: impl Into<String>) {
     chat.handle_server_notification(
-        ServerNotification::AgentMessageDelta(
-            codex_app_server_protocol::AgentMessageDeltaNotification {
-                thread_id: thread_id(chat),
-                turn_id: chat
-                    .turn_lifecycle
-                    .last_turn_id
-                    .clone()
-                    .unwrap_or_else(|| "turn-1".to_string()),
-                item_id: "msg-1".to_string(),
-                delta: delta.into(),
-            },
-        ),
+        ServerNotification::AgentMessageDelta(app_server_protocol::AgentMessageDeltaNotification {
+            thread_id: thread_id(chat),
+            turn_id: chat
+                .turn_lifecycle
+                .last_turn_id
+                .clone()
+                .unwrap_or_else(|| "turn-1".to_string()),
+            item_id: "msg-1".to_string(),
+            delta: delta.into(),
+        }),
         /*replay_kind*/ None,
     );
 }
@@ -786,14 +784,12 @@ pub(super) fn replay_agent_message_delta(
     replay_kind: ReplayKind,
 ) {
     chat.handle_server_notification(
-        ServerNotification::AgentMessageDelta(
-            codex_app_server_protocol::AgentMessageDeltaNotification {
-                thread_id: thread_id(chat),
-                turn_id: "turn-1".to_string(),
-                item_id: "msg-1".to_string(),
-                delta: delta.into(),
-            },
-        ),
+        ServerNotification::AgentMessageDelta(app_server_protocol::AgentMessageDeltaNotification {
+            thread_id: thread_id(chat),
+            turn_id: "turn-1".to_string(),
+            item_id: "msg-1".to_string(),
+            delta: delta.into(),
+        }),
         Some(replay_kind),
     );
 }
@@ -879,7 +875,7 @@ pub(super) fn terminal_interaction(
 ) {
     chat.handle_server_notification(
         ServerNotification::TerminalInteraction(
-            codex_app_server_protocol::TerminalInteractionNotification {
+            app_server_protocol::TerminalInteractionNotification {
                 thread_id: thread_id(chat),
                 turn_id: chat
                     .turn_lifecycle
@@ -966,7 +962,7 @@ pub(super) fn app_server_turn(
 ) -> AppServerTurn {
     AppServerTurn {
         id: turn_id.to_string(),
-        items_view: codex_app_server_protocol::TurnItemsView::Full,
+        items_view: app_server_protocol::TurnItemsView::Full,
         items: Vec::new(),
         status,
         error,
@@ -1389,7 +1385,7 @@ pub(super) fn plugins_test_detail(
     summary: PluginSummary,
     description: Option<&str>,
     skills: &[&str],
-    hooks: &[(codex_app_server_protocol::HookEventName, usize)],
+    hooks: &[(app_server_protocol::HookEventName, usize)],
     apps: &[(&str, bool)],
     mcp_servers: &[&str],
 ) -> PluginDetail {
@@ -1416,7 +1412,7 @@ pub(super) fn plugins_test_detail(
             .enumerate()
             .flat_map(|(event_index, (event_name, handler_count))| {
                 (0..*handler_count).map(move |handler_index| {
-                    codex_app_server_protocol::PluginHookSummary {
+                    app_server_protocol::PluginHookSummary {
                         key: format!("plugin:{event_index}:{handler_index}"),
                         event_name: *event_name,
                     }
@@ -1473,37 +1469,37 @@ pub(super) fn handle_hook_completed(chat: &mut ChatWidget, run: AppServerHookRun
 
 pub(super) fn hook_run(
     run_id: &str,
-    event_name: codex_app_server_protocol::HookEventName,
-    status: codex_app_server_protocol::HookRunStatus,
+    event_name: app_server_protocol::HookEventName,
+    status: app_server_protocol::HookRunStatus,
     status_message: &str,
-    entries: Vec<codex_app_server_protocol::HookOutputEntry>,
-) -> codex_app_server_protocol::HookRunSummary {
-    codex_app_server_protocol::HookRunSummary {
+    entries: Vec<app_server_protocol::HookOutputEntry>,
+) -> app_server_protocol::HookRunSummary {
+    app_server_protocol::HookRunSummary {
         id: run_id.to_string(),
         event_name,
-        handler_type: codex_app_server_protocol::HookHandlerType::Command,
-        execution_mode: codex_app_server_protocol::HookExecutionMode::Sync,
-        scope: codex_app_server_protocol::HookScope::Turn,
+        handler_type: app_server_protocol::HookHandlerType::Command,
+        execution_mode: app_server_protocol::HookExecutionMode::Sync,
+        scope: app_server_protocol::HookScope::Turn,
         source_path: PathBuf::from(test_path_display("/tmp/hooks.json")).abs(),
-        source: codex_app_server_protocol::HookSource::User,
+        source: app_server_protocol::HookSource::User,
         display_order: 0,
         status,
         status_message: Some(status_message.to_string()),
         started_at: 1,
         completed_at: matches!(
             status,
-            codex_app_server_protocol::HookRunStatus::Completed
-                | codex_app_server_protocol::HookRunStatus::Failed
-                | codex_app_server_protocol::HookRunStatus::Blocked
-                | codex_app_server_protocol::HookRunStatus::Stopped
+            app_server_protocol::HookRunStatus::Completed
+                | app_server_protocol::HookRunStatus::Failed
+                | app_server_protocol::HookRunStatus::Blocked
+                | app_server_protocol::HookRunStatus::Stopped
         )
         .then_some(11),
         duration_ms: matches!(
             status,
-            codex_app_server_protocol::HookRunStatus::Completed
-                | codex_app_server_protocol::HookRunStatus::Failed
-                | codex_app_server_protocol::HookRunStatus::Blocked
-                | codex_app_server_protocol::HookRunStatus::Stopped
+            app_server_protocol::HookRunStatus::Completed
+                | app_server_protocol::HookRunStatus::Failed
+                | app_server_protocol::HookRunStatus::Blocked
+                | app_server_protocol::HookRunStatus::Stopped
         )
         .then_some(10),
         entries,
@@ -1511,7 +1507,7 @@ pub(super) fn hook_run(
 }
 
 pub(super) async fn assert_hook_events_snapshot(
-    event_name: codex_app_server_protocol::HookEventName,
+    event_name: app_server_protocol::HookEventName,
     run_id: &str,
     status_message: &str,
     snapshot_name: &str,
@@ -1523,7 +1519,7 @@ pub(super) async fn assert_hook_events_snapshot(
         hook_run(
             run_id,
             event_name,
-            codex_app_server_protocol::HookRunStatus::Running,
+            app_server_protocol::HookRunStatus::Running,
             status_message,
             Vec::new(),
         ),
@@ -1546,15 +1542,15 @@ pub(super) async fn assert_hook_events_snapshot(
         hook_run(
             run_id,
             event_name,
-            codex_app_server_protocol::HookRunStatus::Completed,
+            app_server_protocol::HookRunStatus::Completed,
             status_message,
             vec![
-                codex_app_server_protocol::HookOutputEntry {
-                    kind: codex_app_server_protocol::HookOutputEntryKind::Warning,
+                app_server_protocol::HookOutputEntry {
+                    kind: app_server_protocol::HookOutputEntryKind::Warning,
                     text: "Heads up from the hook".to_string(),
                 },
-                codex_app_server_protocol::HookOutputEntry {
-                    kind: codex_app_server_protocol::HookOutputEntryKind::Context,
+                app_server_protocol::HookOutputEntry {
+                    kind: app_server_protocol::HookOutputEntryKind::Context,
                     text: "Remember the startup checklist.".to_string(),
                 },
             ],
@@ -1569,15 +1565,15 @@ pub(super) async fn assert_hook_events_snapshot(
     assert_chatwidget_snapshot!(snapshot_name, combined);
 }
 
-fn hook_event_label(event_name: codex_app_server_protocol::HookEventName) -> &'static str {
+fn hook_event_label(event_name: app_server_protocol::HookEventName) -> &'static str {
     match event_name {
-        codex_app_server_protocol::HookEventName::PreToolUse => "PreToolUse",
-        codex_app_server_protocol::HookEventName::PermissionRequest => "PermissionRequest",
-        codex_app_server_protocol::HookEventName::PostToolUse => "PostToolUse",
-        codex_app_server_protocol::HookEventName::PreCompact => "PreCompact",
-        codex_app_server_protocol::HookEventName::PostCompact => "PostCompact",
-        codex_app_server_protocol::HookEventName::SessionStart => "SessionStart",
-        codex_app_server_protocol::HookEventName::UserPromptSubmit => "UserPromptSubmit",
-        codex_app_server_protocol::HookEventName::Stop => "Stop",
+        app_server_protocol::HookEventName::PreToolUse => "PreToolUse",
+        app_server_protocol::HookEventName::PermissionRequest => "PermissionRequest",
+        app_server_protocol::HookEventName::PostToolUse => "PostToolUse",
+        app_server_protocol::HookEventName::PreCompact => "PreCompact",
+        app_server_protocol::HookEventName::PostCompact => "PostCompact",
+        app_server_protocol::HookEventName::SessionStart => "SessionStart",
+        app_server_protocol::HookEventName::UserPromptSubmit => "UserPromptSubmit",
+        app_server_protocol::HookEventName::Stop => "Stop",
     }
 }

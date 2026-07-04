@@ -1,23 +1,23 @@
 use anyhow::Result;
+use app_server_protocol::CodexErrorInfo;
+use app_server_protocol::ErrorNotification;
+use app_server_protocol::ItemCompletedNotification;
+use app_server_protocol::ItemStartedNotification;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::ModelRerouteReason;
+use app_server_protocol::ModelReroutedNotification;
+use app_server_protocol::ModelVerification;
+use app_server_protocol::ModelVerificationNotification;
+use app_server_protocol::RequestId;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::UserInput;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
-use codex_app_server_protocol::CodexErrorInfo;
-use codex_app_server_protocol::ErrorNotification;
-use codex_app_server_protocol::ItemCompletedNotification;
-use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::ModelRerouteReason;
-use codex_app_server_protocol::ModelReroutedNotification;
-use codex_app_server_protocol::ModelVerification;
-use codex_app_server_protocol::ModelVerificationNotification;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::UserInput;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
@@ -151,7 +151,7 @@ async fn cyber_policy_response_emits_typed_error_notification_v2() -> Result<()>
     assert_eq!(
         error,
         ErrorNotification {
-            error: codex_app_server_protocol::TurnError {
+            error: app_server_protocol::TurnError {
                 message: CYBER_POLICY_MESSAGE.to_string(),
                 codex_error_info: Some(CodexErrorInfo::CyberPolicy),
                 additional_details: None,

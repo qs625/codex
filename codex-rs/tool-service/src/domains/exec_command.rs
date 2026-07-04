@@ -6,33 +6,35 @@ use crate::planning::ToolName;
 use crate::planning::ToolSpec;
 use crate::planning::create_exec_command_tool_with_environment_id;
 use codex_approval_service_api::ApprovalServiceApi;
-use codex_approval_service_api::ExecCommandApprovalKey;
+use codex_approval_service_api::ApprovalSessionCapability;
 use codex_approval_service_api::ExecCommandApprovalDispatch;
-use codex_approval_service_api::ExecCommandApprovalRequirement;
+use codex_approval_service_api::ExecCommandApprovalKey;
 use codex_approval_service_api::ExecCommandApprovalOutcome;
-use codex_command_service_api::CommandServiceApi;
-use codex_command_service_api::ExecCommandApprovalMode;
-use codex_command_service_api::ExecCommandArgs;
-use codex_command_service_api::ExecCommandRunOutput;
-use codex_command_service_api::ExecCommandRunRequest;
-use codex_command_service_api::UnifiedExecError;
-use codex_command_service_api::generate_chunk_id;
-use codex_command_service_api::resolve_max_tokens;
-use codex_permissions_runtime::ExecPolicyApprovalRequest;
-use codex_protocol::openai_models::ConfigShellToolType;
-use codex_protocol::protocol::AskForApproval;
-use thread_service_api::SharedToolTurnDiffTracker;
-use thread_service_api::ThreadSessionCapability;
-use thread_service_api::ThreadRuntimeCapability;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_service_api::HookToolName;
-use codex_tool_service_api::PostToolUsePayload;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolOutput;
+use codex_approval_service_api::ExecCommandApprovalRequirement;
+use command_service_api::CommandServiceApi;
+use command_service_api::ExecCommandApprovalMode;
+use command_service_api::ExecCommandArgs;
+use command_service_api::ExecCommandRunOutput;
+use command_service_api::ExecCommandRunRequest;
+use command_service_api::UnifiedExecError;
+use command_service_api::generate_chunk_id;
+use command_service_api::resolve_max_tokens;
+use permissions_service_api::ExecPolicyApprovalRequest;
+use permissions_service_api::PermissionsServiceApi;
+use protocol::openai_models::ConfigShellToolType;
+use protocol::protocol::AskForApproval;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use thread_service_api::SharedToolTurnDiffTracker;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::HookToolName;
+use tool_service_api::PostToolUsePayload;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolOutput;
 
 use crate::context::TypedToolSpecRequest;
 use crate::domains::apply_patch::apply_granted_permissions_from_grants;
@@ -90,8 +92,10 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 pub(crate) async fn dispatch(
     approval_api: Arc<dyn ApprovalServiceApi>,
     command_service_api: Arc<dyn CommandServiceApi>,
+    permissions_api: Arc<dyn PermissionsServiceApi>,
+    approval_session: Arc<dyn ApprovalSessionCapability>,
     session: Arc<dyn ThreadSessionCapability>,
-    command_state: Arc<dyn codex_command_service_api::CommandServiceSessionState>,
+    command_state: Arc<dyn command_service_api::CommandServiceSessionState>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     _tracker: SharedToolTurnDiffTracker,
     call: ToolCall,
@@ -106,6 +110,8 @@ pub(crate) async fn dispatch(
     let output = dispatch_exec_command(
         approval_api,
         command_service_api,
+        permissions_api,
+        approval_session,
         session,
         command_state,
         turn,
@@ -125,8 +131,10 @@ pub(crate) async fn dispatch(
 async fn dispatch_exec_command(
     approval_api: Arc<dyn ApprovalServiceApi>,
     command_service_api: Arc<dyn CommandServiceApi>,
+    permissions_api: Arc<dyn PermissionsServiceApi>,
+    approval_session: Arc<dyn ApprovalSessionCapability>,
     session: Arc<dyn ThreadSessionCapability>,
-    command_state: Arc<dyn codex_command_service_api::CommandServiceSessionState>,
+    command_state: Arc<dyn command_service_api::CommandServiceSessionState>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: &ToolCall,
 ) -> Result<ExecCommandToolOutput, FunctionCallError> {
@@ -176,7 +184,7 @@ async fn dispatch_exec_command(
 
     let exec_permission_approvals_enabled = turn_capability.exec_permission_approvals_enabled();
     let requested_additional_permissions = additional_permissions.clone();
-    let grants = session.tool_permission_grants().await;
+    let grants = approval_session.tool_permission_grants().await;
     let effective_additional_permissions = apply_granted_permissions_from_grants(
         grants.session,
         grants.turn,
@@ -223,25 +231,28 @@ async fn dispatch_exec_command(
     .map_err(FunctionCallError::RespondToModel)?;
 
     let exec_policy = turn_capability.current_exec_policy();
-    let exec_approval_requirement = approval_api
-        .create_exec_approval_requirement(exec_policy.as_ref(), ExecPolicyApprovalRequest {
-            command: &command,
-            approval_policy: turn_capability.approval_policy(),
-            permission_profile: turn_capability.permission_profile(),
-            file_system_sandbox_policy: &turn_capability.file_system_sandbox_policy(),
-            sandbox_cwd: turn_environment.sandbox_cwd.as_path(),
-            sandbox_permissions: if effective_additional_permissions.permissions_preapproved {
-                codex_protocol::models::SandboxPermissions::UseDefault
-            } else {
-                effective_additional_permissions.sandbox_permissions
+    let exec_approval_requirement = permissions_api
+        .create_exec_approval_requirement(
+            exec_policy.as_ref(),
+            ExecPolicyApprovalRequest {
+                command: &command,
+                approval_policy: turn_capability.approval_policy(),
+                permission_profile: turn_capability.permission_profile(),
+                file_system_sandbox_policy: &turn_capability.file_system_sandbox_policy(),
+                sandbox_cwd: turn_environment.sandbox_cwd.as_path(),
+                sandbox_permissions: if effective_additional_permissions.permissions_preapproved {
+                    protocol::models::SandboxPermissions::UseDefault
+                } else {
+                    effective_additional_permissions.sandbox_permissions
+                },
+                prefix_rule: prefix_rule.clone(),
             },
-            prefix_rule: prefix_rule.clone(),
-        })
+        )
         .await;
 
     if let Some(output) = intercept_apply_patch(
         approval_api.clone(),
-        session.clone(),
+        approval_session.clone(),
         turn.clone(),
         None,
         &command,
@@ -267,7 +278,7 @@ async fn dispatch_exec_command(
 
     let approval_outcome = approval_api
         .request_exec_command_approval(ExecCommandApprovalDispatch {
-            session: session.clone(),
+            session: approval_session.clone(),
             turn: turn.clone(),
             call_id: call.call_id.clone(),
             command: command.clone(),
@@ -279,21 +290,21 @@ async fn dispatch_exec_command(
             additional_permissions: normalized_additional_permissions.clone(),
             tty,
             exec_approval_requirement: match exec_approval_requirement.clone() {
-                codex_permissions_runtime::ExecApprovalRequirement::Skip {
+                command_service_api::ExecApprovalRequirement::Skip {
                     bypass_sandbox,
                     proposed_execpolicy_amendment,
                 } => ExecCommandApprovalRequirement::Skip {
                     bypass_sandbox,
                     proposed_execpolicy_amendment,
                 },
-                codex_permissions_runtime::ExecApprovalRequirement::NeedsApproval {
+                command_service_api::ExecApprovalRequirement::NeedsApproval {
                     reason,
                     proposed_execpolicy_amendment,
                 } => ExecCommandApprovalRequirement::NeedsApproval {
                     reason,
                     proposed_execpolicy_amendment,
                 },
-                codex_permissions_runtime::ExecApprovalRequirement::Forbidden { reason } => {
+                command_service_api::ExecApprovalRequirement::Forbidden { reason } => {
                     ExecCommandApprovalRequirement::Forbidden { reason }
                 }
             },
@@ -340,6 +351,7 @@ async fn dispatch_exec_command(
     match command_service_api
         .run_exec_command(
             Arc::clone(&session),
+            approval_session,
             Arc::clone(&command_state),
             Arc::clone(&turn),
             call.call_id.clone(),
@@ -407,7 +419,7 @@ where
 
 fn post_unified_exec_tool_use_payload(
     call_id: &str,
-    payload: &codex_tool_types::ToolPayload,
+    payload: &tool_service_api::ToolPayload,
     result: &ExecCommandToolOutput,
 ) -> Option<PostToolUsePayload> {
     let command = result.hook_command.clone()?;
@@ -444,19 +456,26 @@ mod tests {
     use super::*;
 
     use codex_approval_service_api::ApprovalServiceFuture;
-    use codex_command_service_api::CommandServiceFuture;
-    use codex_command_service_api::CommandSessionError;
-    use codex_command_service_api::CommandWaitOperation;
-    use codex_command_service_api::CommandWaitRequest;
-    use codex_command_service_api::WriteStdinOutput;
-    use codex_command_service_api::WriteStdinRequest;
-    use codex_command_service_api::UserShellRunRequest;
-    use thread_service_api::TurnDiffTracker;
+    use command_service_api::CommandServiceFuture;
+    use command_service_api::CommandSessionError;
+    use command_service_api::CommandWaitOperation;
+    use command_service_api::CommandWaitRequest;
+    use command_service_api::UserShellRunRequest;
+    use command_service_api::WriteStdinOutput;
+    use command_service_api::WriteStdinRequest;
+    use permissions_service_api::PermissionsServiceFuture;
     use thread_service::test_support;
+    use thread_service_api::TurnDiffTracker;
 
     struct PanickingApprovalService;
 
     impl ApprovalServiceApi for PanickingApprovalService {
+        fn create_session_network_approval(
+            &self,
+        ) -> Arc<dyn codex_approval_service_api::SessionNetworkApprovalApi> {
+            panic!("unexpected session network approval creation")
+        }
+
         fn request_apply_patch_approval(
             &self,
             _request: codex_approval_service_api::ApplyPatchApprovalDispatch,
@@ -470,6 +489,13 @@ mod tests {
         ) -> ApprovalServiceFuture<'_, Result<ExecCommandApprovalOutcome, String>> {
             Box::pin(async { panic!("unexpected exec_command approval request") })
         }
+
+        fn review_guardian_request(
+            &self,
+            _request: codex_approval_service_api::GuardianReviewDispatch,
+        ) -> ApprovalServiceFuture<'_, codex_approval_service_api::GuardianReviewResult> {
+            Box::pin(async { panic!("unexpected guardian review request") })
+        }
     }
 
     struct PanickingCommandService;
@@ -478,7 +504,8 @@ mod tests {
         fn run_exec_command<'a>(
             &'a self,
             _session: Arc<dyn thread_service_api::ThreadSessionCapability>,
-            _state: Arc<dyn codex_command_service_api::CommandServiceSessionState>,
+            _approval_session: Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
+            _state: Arc<dyn command_service_api::CommandServiceSessionState>,
             _turn: Arc<dyn ThreadRuntimeCapability>,
             _call_id: String,
             _request: ExecCommandRunRequest,
@@ -488,7 +515,7 @@ mod tests {
 
         fn begin_command_wait<'a>(
             &'a self,
-            _state: Arc<dyn codex_command_service_api::CommandServiceSessionState>,
+            _state: Arc<dyn command_service_api::CommandServiceSessionState>,
             _request: CommandWaitRequest,
         ) -> CommandServiceFuture<'a, Result<Box<dyn CommandWaitOperation>, CommandSessionError>>
         {
@@ -497,7 +524,7 @@ mod tests {
 
         fn write_command_stdin<'a>(
             &'a self,
-            _state: Arc<dyn codex_command_service_api::CommandServiceSessionState>,
+            _state: Arc<dyn command_service_api::CommandServiceSessionState>,
             _request: WriteStdinRequest<'a>,
         ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>> {
             Box::pin(async { panic!("unexpected command_write_stdin") })
@@ -506,9 +533,72 @@ mod tests {
         fn run_user_shell_command<'a>(
             &'a self,
             _request: UserShellRunRequest,
-        ) -> CommandServiceFuture<'a, codex_protocol::error::Result<codex_protocol::exec_output::ExecToolCallOutput>>
-        {
+        ) -> CommandServiceFuture<
+            'a,
+            protocol::error::Result<protocol::exec_output::ExecToolCallOutput>,
+        > {
             Box::pin(async { panic!("unexpected user_shell run") })
+        }
+    }
+
+    struct PanickingPermissionsService;
+
+    impl PermissionsServiceApi for PanickingPermissionsService {
+        fn create_exec_approval_requirement<'a>(
+            &'a self,
+            _exec_policy: &'a permissions_service_api::Policy,
+            _request: ExecPolicyApprovalRequest<'a>,
+        ) -> PermissionsServiceFuture<'a, command_service_api::ExecApprovalRequirement> {
+            Box::pin(async { panic!("unexpected exec approval requirement request") })
+        }
+    }
+
+    struct PanickingCommandState;
+
+    impl command_service_api::CommandServiceSessionState for PanickingCommandState {
+        fn allocate_process_id<'a>(&'a self) -> CommandServiceFuture<'a, i32> {
+            Box::pin(async { panic!("unexpected allocate_process_id") })
+        }
+
+        fn release_process_id<'a>(&'a self, _process_id: i32) -> CommandServiceFuture<'a, ()> {
+            Box::pin(async { panic!("unexpected release_process_id") })
+        }
+
+        fn has_running_process_for_thread<'a>(
+            &'a self,
+            _thread_id: protocol::ThreadId,
+        ) -> CommandServiceFuture<'a, bool> {
+            Box::pin(async { panic!("unexpected has_running_process_for_thread") })
+        }
+
+        fn terminate_all_processes<'a>(&'a self) -> CommandServiceFuture<'a, ()> {
+            Box::pin(async { panic!("unexpected terminate_all_processes") })
+        }
+
+        fn run_exec_command<'a>(
+            &'a self,
+            _session: Arc<dyn thread_service_api::ThreadSessionCapability>,
+            _approval_session: Arc<dyn codex_approval_service_api::ApprovalSessionCapability>,
+            _turn: Arc<dyn ThreadRuntimeCapability>,
+            _call_id: String,
+            _request: ExecCommandRunRequest,
+        ) -> CommandServiceFuture<'a, Result<ExecCommandRunOutput, UnifiedExecError>> {
+            Box::pin(async { panic!("unexpected state.run_exec_command") })
+        }
+
+        fn begin_command_wait<'a>(
+            &'a self,
+            _request: CommandWaitRequest,
+        ) -> CommandServiceFuture<'a, Result<Box<dyn CommandWaitOperation>, CommandSessionError>>
+        {
+            Box::pin(async { panic!("unexpected state.begin_command_wait") })
+        }
+
+        fn write_command_stdin<'a>(
+            &'a self,
+            _request: WriteStdinRequest<'a>,
+        ) -> CommandServiceFuture<'a, Result<WriteStdinOutput, CommandSessionError>> {
+            Box::pin(async { panic!("unexpected state.write_command_stdin") })
         }
     }
 
@@ -520,13 +610,16 @@ mod tests {
         let result = dispatch(
             Arc::new(PanickingApprovalService),
             Arc::new(PanickingCommandService),
+            Arc::new(PanickingPermissionsService),
+            session.clone(),
             session,
+            Arc::new(PanickingCommandState),
             turn,
             tracker,
             ToolCall {
                 call_id: "call-1".to_string(),
                 tool_name: ToolName::plain("exec_command"),
-                payload: codex_tool_types::ToolPayload::Custom {
+                payload: tool_service_api::ToolPayload::Custom {
                     input: "{}".to_string(),
                 },
             },

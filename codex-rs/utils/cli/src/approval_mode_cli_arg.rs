@@ -2,7 +2,7 @@
 
 use clap::ValueEnum;
 
-use codex_protocol::protocol::AskForApproval;
+use protocol::protocol::AskForApproval;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 #[value(rename_all = "kebab-case")]

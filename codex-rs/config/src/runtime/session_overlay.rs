@@ -1,11 +1,11 @@
 use codex_config_types::Constrained;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary;
+use protocol::models::PermissionProfile;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AskForApproval;
 
 use super::Config;
 use super::PermissionProfileState;
@@ -87,10 +87,10 @@ mod tests {
     use super::*;
     use crate::ConfigOverrides;
     use crate::config_toml::ConfigToml;
-    use codex_protocol::config_types::ModeKind;
-    use codex_protocol::config_types::Settings;
-    use codex_protocol::models::ActivePermissionProfile;
-    use codex_protocol::models::PermissionProfile;
+    use protocol::config_types::ModeKind;
+    use protocol::config_types::Settings;
+    use protocol::models::ActivePermissionProfile;
+    use protocol::models::PermissionProfile;
     use tempfile::tempdir;
 
     fn active_permission_profile_state(
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn overlay_type_can_be_built_from_collaboration_settings() {
-        let collaboration_mode = codex_protocol::config_types::CollaborationMode {
+        let collaboration_mode = protocol::config_types::CollaborationMode {
             mode: ModeKind::Default,
             settings: Settings {
                 model: "gpt-test".to_string(),

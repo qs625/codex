@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use codex_exec_server_api::ExecEnvironment;
-use codex_exec_server_api::ExecEnvironmentProvider;
 use codex_file_system::ExecutorFileSystem;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use exec_server_api::ExecEnvironment;
+use exec_server_api::ExecEnvironmentProvider;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
+use protocol::protocol::TurnEnvironmentSelection;
 
 use crate::session::turn_context::TurnEnvironment;
 
@@ -86,12 +86,12 @@ pub(crate) fn resolve_environment_selections(
 #[cfg(test)]
 mod tests {
     use codex_exec_server::EnvironmentManager;
-    use codex_exec_server_api::ExecServerRuntimePaths;
-    use codex_exec_server_api::LOCAL_ENVIRONMENT_ID;
-    use codex_exec_server_api::REMOTE_ENVIRONMENT_ID;
-    use codex_protocol::protocol::TurnEnvironmentSelection;
     use codex_utils_absolute_path::AbsolutePathBuf;
+    use exec_server_api::ExecServerRuntimePaths;
+    use exec_server_api::LOCAL_ENVIRONMENT_ID;
+    use exec_server_api::REMOTE_ENVIRONMENT_ID;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::TurnEnvironmentSelection;
 
     use super::*;
 

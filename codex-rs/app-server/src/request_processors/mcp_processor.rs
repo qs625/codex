@@ -1,10 +1,10 @@
 use super::*;
 
 use codex_config_types::McpServerConfig;
-use codex_protocol::mcp::CallToolResult;
 use futures::future::BoxFuture;
 use mcp_service_api::SharedMcpAuthHeaderProvider;
 use mcp_service_api::StaticMcpAuthHeaderProvider;
+use protocol::mcp::CallToolResult;
 use std::collections::HashMap;
 use std::io;
 
@@ -14,7 +14,7 @@ fn mcp_runtime_environment(
     environment: Arc<codex_exec_server::Environment>,
     fallback_cwd: std::path::PathBuf,
 ) -> McpRuntimeEnvironment {
-    let local_http_client: Arc<dyn codex_exec_server_api::HttpClient> =
+    let local_http_client: Arc<dyn exec_server_api::HttpClient> =
         Arc::new(codex_exec_server::ReqwestHttpClient);
     McpRuntimeEnvironment::new(mcp_service_api::McpRuntimeEnvironmentParams {
         remote_available: environment.is_remote(),
@@ -27,8 +27,8 @@ fn mcp_runtime_environment(
 
 fn codex_apps_auth_context(
     auth: Option<&codex_auth_types::RequestAuthSnapshot>,
-) -> Option<codex_mcp_types::CodexAppsAuthContext> {
-    auth.map(|auth| codex_mcp_types::CodexAppsAuthContext {
+) -> Option<mcp_types::CodexAppsAuthContext> {
+    auth.map(|auth| mcp_types::CodexAppsAuthContext {
         uses_codex_backend: auth.uses_codex_backend(),
         account_id: auth.account_id().map(ToOwned::to_owned),
         chatgpt_user_id: auth.chatgpt_user_id().map(ToOwned::to_owned),
@@ -38,7 +38,7 @@ fn codex_apps_auth_context(
 
 fn codex_apps_auth_provider(auth: Option<&CodexAuth>) -> Option<SharedMcpAuthHeaderProvider> {
     auth.filter(|auth| auth.uses_codex_backend())
-        .map(codex_model_provider::auth_provider_from_auth)
+        .map(model_service::auth_provider_from_auth)
         .map(|auth_provider| StaticMcpAuthHeaderProvider::shared(auth_provider.to_auth_headers()))
 }
 
@@ -53,7 +53,7 @@ pub(crate) trait McpProcessorRuntime: Send + Sync {
         config: &'a Config,
     ) -> BoxFuture<'a, HashMap<String, McpServerConfig>>;
 
-    fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, codex_mcp_types::McpConfig>;
+    fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, mcp_types::McpConfig>;
 
     fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
 
@@ -95,7 +95,7 @@ impl McpProcessorRuntime for ThreadService {
         })
     }
 
-    fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, codex_mcp_types::McpConfig> {
+    fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, mcp_types::McpConfig> {
         Box::pin(async move { config.to_mcp_config(self.plugin_runtime().as_ref()).await })
     }
 
@@ -353,7 +353,7 @@ impl McpRequestProcessor {
         request_id: ConnectionRequestId,
         params: ListMcpServerStatusParams,
         config: Config,
-        mcp_config: codex_mcp_types::McpConfig,
+        mcp_config: mcp_types::McpConfig,
         auth: Option<CodexAuth>,
         runtime_environment: McpRuntimeEnvironment,
     ) {
@@ -373,7 +373,7 @@ impl McpRequestProcessor {
         request_id: String,
         params: ListMcpServerStatusParams,
         config: Config,
-        mcp_config: codex_mcp_types::McpConfig,
+        mcp_config: mcp_types::McpConfig,
         auth: Option<CodexAuth>,
         runtime_environment: McpRuntimeEnvironment,
     ) -> Result<ListMcpServerStatusResponse, JSONRPCErrorError> {

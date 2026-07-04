@@ -5,28 +5,28 @@ use std::time::UNIX_EPOCH;
 use crate::planning::ToolSpec;
 use crate::planning::create_command_wait_tool;
 use crate::planning::create_write_stdin_tool;
-use codex_command_service_api::CommandNotificationKind;
-use codex_command_service_api::CommandServiceApi;
-use codex_command_service_api::CommandWaitRequest;
-use codex_command_service_api::CommandWaitStatus;
-use codex_command_service_api::SessionCommandInteractionCaller;
-use codex_command_service_api::WriteStdinRequest;
-use codex_protocol::models::CommandWaitNotificationKind as ResponseCommandWaitNotificationKind;
-use codex_protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
-use codex_protocol::models::FunctionCallOutputContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::TerminalInteractionEvent;
-use codex_tool_service_api::AnyToolResult;
-use codex_tool_service_api::ErasedToolArgumentDiffConsumer;
-use codex_tool_types::FunctionCallError;
-use codex_tool_types::ToolCall;
-use codex_tool_types::ToolName;
-use codex_tool_types::ToolPayload;
+use command_service_api::CommandNotificationKind;
+use command_service_api::CommandServiceApi;
+use command_service_api::CommandWaitRequest;
+use command_service_api::CommandWaitStatus;
+use command_service_api::SessionCommandInteractionCaller;
+use command_service_api::WriteStdinRequest;
+use protocol::models::CommandWaitNotificationKind as ResponseCommandWaitNotificationKind;
+use protocol::models::CommandWaitStatus as ResponseCommandWaitStatus;
+use protocol::models::FunctionCallOutputContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::TerminalInteractionEvent;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
+use tool_service_api::AnyToolResult;
+use tool_service_api::ErasedToolArgumentDiffConsumer;
+use tool_service_api::FunctionCallError;
+use tool_service_api::ToolCall;
+use tool_service_api::ToolName;
+use tool_service_api::ToolPayload;
 
 use crate::context::TypedToolSpecRequest;
 use crate::output::FunctionToolOutput;
@@ -39,8 +39,7 @@ const WRITE_STDIN_EMPTY_INPUT_ERROR: &str = "command_write_stdin requires non-em
 // sessions created by `exec_command` and should eventually depend on a dedicated
 // command service rather than thread service internals.
 pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
-    if request.config.shell_type != codex_protocol::openai_models::ConfigShellToolType::UnifiedExec
-    {
+    if request.config.shell_type != protocol::openai_models::ConfigShellToolType::UnifiedExec {
         return Vec::new();
     }
 
@@ -75,8 +74,13 @@ pub(crate) async fn dispatch(
 ) -> Result<AnyToolResult, FunctionCallError> {
     let result = match call.tool_name.name.as_str() {
         COMMAND_WAIT_TOOL_NAME => {
-            dispatch_command_wait(session_interaction.as_ref(), session.as_ref(), turn.as_ref(), &call)
-                .await
+            dispatch_command_wait(
+                session_interaction.as_ref(),
+                session.as_ref(),
+                turn.as_ref(),
+                &call,
+            )
+            .await
         }
         COMMAND_WRITE_STDIN_TOOL_NAME => {
             dispatch_command_write_stdin(
@@ -127,7 +131,9 @@ async fn dispatch_command_wait(
         wait_timeout,
         created_at_ms,
     });
-    session.emit_model_item_started_display_event(turn, &started_item).await;
+    session
+        .emit_model_item_started_display_event(turn, &started_item)
+        .await;
 
     let output = command_wait
         .finish()

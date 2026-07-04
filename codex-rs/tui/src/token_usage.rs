@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use codex_protocol::num_format::format_with_separators;
+use protocol::num_format::format_with_separators;
 use serde::Deserialize;
 use serde::Serialize;
 

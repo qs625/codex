@@ -25,13 +25,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
-use codex_exec_server_api::ExecProcess;
-use codex_exec_server_api::ExecProcessEvent;
-use codex_exec_server_api::ExecProcessEventReceiver;
 use codex_exec_server_protocol::ExecOutputStream;
 use codex_exec_server_protocol::ProcessId;
 use codex_exec_server_protocol::ProcessOutputChunk;
 use codex_exec_server_protocol::WriteStatus;
+use exec_server_api::ExecProcess;
+use exec_server_api::ExecProcessEvent;
+use exec_server_api::ExecProcessEventReceiver;
 use rmcp::service::RoleClient;
 use rmcp::service::RxJsonRpcMessage;
 use rmcp::service::TxJsonRpcMessage;

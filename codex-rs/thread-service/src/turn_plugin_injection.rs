@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 
-use codex_connectors_api::metadata::connector_display_label;
 use codex_connectors_api::AppInfo;
+use codex_connectors_api::metadata::connector_display_label;
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::PluginInstructions;
-use codex_mcp_tool_types::ToolInfo;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_protocol::models::ResponseItem;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::ToolInfo;
 use plugin_service_api::PluginCapabilitySummary;
+use protocol::models::ResponseItem;
 
 pub(crate) fn build_plugin_injections(
     mentioned_plugins: &[PluginCapabilitySummary],

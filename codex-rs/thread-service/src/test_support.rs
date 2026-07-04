@@ -12,81 +12,81 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use codex_api::ModelsClient;
-use codex_api::ReqwestTransport;
-use codex_api_types::map_api_error;
+use transport_client::ReqwestTransport;
+use transport_client::build_reqwest_client;
 #[cfg(any(test, feature = "test-support"))]
 use codex_code_mode_api::DisabledCodeModeRuntimeFactory;
 #[cfg(any(test, feature = "test-support"))]
-use codex_config::ConfigBuilder;
-use codex_default_client::build_reqwest_client;
-use codex_exec_server_api::ExecEnvironmentProvider;
+use config_service::ConfigBuilder;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::model_provider_auth_manager;
-use codex_model_provider_api::ModelProvider;
-use codex_model_provider_api::ModelProviderFactory;
-use codex_model_provider_api::ModelProviderFuture;
-use codex_model_provider_api::ProviderAccountResult;
-use codex_model_provider_api::ProviderAccountState;
-use codex_model_provider_api::SharedModelProvider;
-use codex_model_provider_api::SharedModelProviderAuthManager;
-use codex_model_provider_api::SharedModelProviderFactory;
-use codex_model_provider_api::model_provider_info_to_api_provider;
-use codex_model_provider_api::resolve_provider_auth;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_models_manager::bundled_models_response;
-use codex_models_manager::collaboration_mode_presets;
-use codex_models_manager::manager::ModelCachePolicy;
-use codex_models_manager::manager::ModelsEndpointClient;
-use codex_models_manager::manager::OpenAiModelsManager;
-use codex_models_manager::manager::StaticModelsManager;
-use codex_models_manager::test_support::construct_model_info_offline_for_tests;
-use codex_models_manager::test_support::get_model_offline_for_tests;
-use codex_models_manager_api::SharedModelsManager;
-use codex_protocol::config_types::CollaborationModeMask;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::openai_models::ModelInfo;
-use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::openai_models::ModelsResponse;
-#[cfg(any(test, feature = "test-support"))]
-use codex_protocol::protocol::InitialHistory;
-#[cfg(any(test, feature = "test-support"))]
-use codex_protocol::protocol::SessionSource;
-#[cfg(any(test, feature = "test-support"))]
-use codex_state::StateRuntime;
-#[cfg(any(test, feature = "test-support"))]
-use codex_thread_store::DefaultLiveThreadFactory;
-#[cfg(any(test, feature = "test-support"))]
-use codex_thread_store::LocalThreadStore;
-#[cfg(any(test, feature = "test-support"))]
-use codex_thread_store::LocalThreadStoreConfig;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_service_api::AnyToolResult;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_service_api::ToolDiffConsumerRequest;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_service_api::ToolDispatchRequest;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_service_api::ToolParallelRequest;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_service_api::ToolServiceApi;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_service_api::ToolServiceFuture;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_service_api::ToolSpecRequest;
-#[cfg(any(test, feature = "test-support"))]
-use codex_tool_types::FunctionCallError;
+use exec_server_api::ExecEnvironmentProvider;
 use http::HeaderMap;
+use model_service::ModelsClient;
+use model_service::builtin_collaboration_mode_presets as model_service_builtin_collaboration_mode_presets;
+use model_service::bundled_models_response;
+use model_service::manager::ModelCachePolicy;
+use model_service::manager::ModelsEndpointClient;
+use model_service::manager::OpenAiModelsManager;
+use model_service::manager::StaticModelsManager;
+use model_service::test_support::construct_model_info_offline_for_tests;
+use model_service::test_support::get_model_offline_for_tests;
+use model_service_api::ModelProvider;
+use model_service_api::ModelProviderFactory;
+use model_service_api::ModelProviderFuture;
+use model_service_api::ModelProviderInfo;
+use model_service_api::ProviderAccountResult;
+use model_service_api::ProviderAccountState;
+use model_service_api::SharedModelProvider;
+use model_service_api::SharedModelProviderAuthManager;
+use model_service_api::SharedModelProviderFactory;
+use model_service_api::SharedModelsManager;
+use model_service_api::map_api_error;
+use model_service_api::model_provider_info_to_api_provider;
+use model_service_api::resolve_provider_auth;
+use protocol::config_types::CollaborationModeMask;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
+use protocol::openai_models::ModelInfo;
+use protocol::openai_models::ModelPreset;
+use protocol::openai_models::ModelsResponse;
+#[cfg(any(test, feature = "test-support"))]
+use protocol::protocol::InitialHistory;
+#[cfg(any(test, feature = "test-support"))]
+use protocol::protocol::SessionSource;
+#[cfg(any(test, feature = "test-support"))]
+use state::StateRuntime;
+#[cfg(any(test, feature = "test-support"))]
+use thread_store::DefaultLiveThreadFactory;
+#[cfg(any(test, feature = "test-support"))]
+use thread_store::LocalThreadStore;
+#[cfg(any(test, feature = "test-support"))]
+use thread_store::LocalThreadStoreConfig;
 use tokio::time::timeout;
+#[cfg(any(test, feature = "test-support"))]
+use tool_service_api::AnyToolResult;
+#[cfg(any(test, feature = "test-support"))]
+use tool_service_api::FunctionCallError;
+#[cfg(any(test, feature = "test-support"))]
+use tool_service_api::ToolDiffConsumerRequest;
+#[cfg(any(test, feature = "test-support"))]
+use tool_service_api::ToolDispatchRequest;
+#[cfg(any(test, feature = "test-support"))]
+use tool_service_api::ToolParallelRequest;
+#[cfg(any(test, feature = "test-support"))]
+use tool_service_api::ToolServiceApi;
+#[cfg(any(test, feature = "test-support"))]
+use tool_service_api::ToolServiceFuture;
+#[cfg(any(test, feature = "test-support"))]
+use tool_service_api::ToolSpecRequest;
 
 use crate::ThreadAuthRuntimes;
+use crate::ThreadService;
 #[cfg(any(test, feature = "test-support"))]
 use crate::ThreadSession;
-use crate::ThreadService;
 #[cfg(any(test, feature = "test-support"))]
 use crate::ThreadTurnContext;
 use crate::config::Config;
@@ -299,7 +299,7 @@ pub fn set_thread_service_test_mode(enabled: bool) {
 }
 
 pub fn set_deterministic_process_ids(enabled: bool) {
-    codex_command_service::set_deterministic_process_ids_for_tests(enabled);
+    command_service::set_deterministic_process_ids_for_tests(enabled);
 }
 
 pub fn auth_manager_from_auth(auth: CodexAuth) -> Arc<AuthManager> {
@@ -371,7 +371,7 @@ pub async fn start_thread_with_user_shell_override(
     thread_service: &ThreadService,
     config: Config,
     user_shell_override: crate::runtime_shell_model::Shell,
-) -> codex_protocol::error::Result<crate::NewThread> {
+) -> protocol::error::Result<crate::NewThread> {
     thread_service
         .start_thread_with_user_shell_override_for_tests(config, user_shell_override)
         .await
@@ -382,7 +382,7 @@ pub async fn resume_thread_from_rollout_with_user_shell_override(
     config: Config,
     rollout_path: PathBuf,
     user_shell_override: crate::runtime_shell_model::Shell,
-) -> codex_protocol::error::Result<crate::NewThread> {
+) -> protocol::error::Result<crate::NewThread> {
     thread_service
         .resume_thread_from_rollout_with_user_shell_override_for_tests(
             config,
@@ -424,7 +424,7 @@ pub fn all_model_presets() -> &'static Vec<ModelPreset> {
 }
 
 pub fn builtin_collaboration_mode_presets() -> Vec<CollaborationModeMask> {
-    collaboration_mode_presets::builtin_collaboration_mode_presets()
+    model_service_builtin_collaboration_mode_presets()
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -475,15 +475,16 @@ where
     std::fs::create_dir_all(&codex_home).expect("create temp dir");
     let mut config = build_test_config(&codex_home).await;
     configure_config(&mut config);
-    let state_db = if config.features.enabled(Feature::Goals) {
-        Some(
-            StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
-                .await
-                .expect("goal tests should initialize sqlite state db"),
-        )
-    } else {
-        None
-    };
+    let state_db: Option<state_api::SharedStateDbRuntime> =
+        if config.features.enabled(Feature::Goals) {
+            Some(
+                StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
+                    .await
+                    .expect("goal tests should initialize sqlite state db"),
+            )
+        } else {
+            None
+        };
     let auth_manager = auth_manager_from_auth_with_home(auth, config.codex_home.to_path_buf());
     let environment_manager = Arc::new(codex_exec_server::EnvironmentManager::default_for_tests());
     let thread_store = Arc::new(LocalThreadStore::new(
@@ -504,11 +505,13 @@ where
         /*attestation_provider*/ None,
         model_provider_factory_for_tests(),
         Arc::new(DisabledCodeModeRuntimeFactory),
-        Arc::new(codex_command_service::CommandService::new()),
+        Arc::new(command_service::CommandService::new()),
         Arc::new(approval_service::ApprovalService),
         Arc::new(goal_service::GoalService),
         Arc::new(DisabledToolServiceForTests),
-        Arc::new(mcp_service::McpService::new(Arc::new(approval_service::ApprovalService))),
+        Arc::new(mcp_service::McpService::new(Arc::new(
+            approval_service::ApprovalService,
+        ))),
     );
     let thread = thread_service
         .start_thread_with_options(crate::StartThreadOptions {
@@ -539,7 +542,7 @@ pub struct DisabledToolServiceForTests;
 
 #[cfg(any(test, feature = "test-support"))]
 impl ToolServiceApi for DisabledToolServiceForTests {
-    fn model_visible_specs(&self, request: ToolSpecRequest<'_>) -> Vec<codex_tool_types::ToolSpec> {
+    fn model_visible_specs(&self, request: ToolSpecRequest<'_>) -> Vec<tool_service_api::ToolSpec> {
         let _ = request;
         Vec::new()
     }
@@ -547,7 +550,7 @@ impl ToolServiceApi for DisabledToolServiceForTests {
     fn create_diff_consumer(
         &self,
         request: ToolDiffConsumerRequest<'_>,
-    ) -> Option<Box<dyn codex_tool_service_api::ErasedToolArgumentDiffConsumer>> {
+    ) -> Option<Box<dyn tool_service_api::ErasedToolArgumentDiffConsumer>> {
         let _ = request;
         None
     }

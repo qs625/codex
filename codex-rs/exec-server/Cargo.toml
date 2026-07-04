@@ -16,12 +16,12 @@ async-trait = { workspace = true }
 axum = { workspace = true, features = ["http1", "tokio", "ws"] }
 base64 = { workspace = true }
 bytes = { workspace = true }
-codex-client = { workspace = true }
-codex-exec-server-api = { workspace = true }
+transport-client = { workspace = true }
+exec-server-api = { workspace = true }
 codex-exec-server-protocol = { workspace = true }
 codex-file-system = { workspace = true }
-codex-jsonrpc-types = { workspace = true }
-codex-protocol = { workspace = true }
+jsonrpc-types = { workspace = true }
+protocol = { workspace = true }
 codex-sandboxing-api = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

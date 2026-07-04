@@ -1,4 +1,41 @@
 use anyhow::Result;
+use app_server::in_process;
+use app_server::in_process::InProcessStartArgs;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::InitializeCapabilities;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::SessionSource;
+use app_server_protocol::SortDirection;
+use app_server_protocol::ThreadActiveFlag;
+use app_server_protocol::ThreadForkParams;
+use app_server_protocol::ThreadForkResponse;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadNameUpdatedNotification;
+use app_server_protocol::ThreadReadParams;
+use app_server_protocol::ThreadReadResponse;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadSetNameParams;
+use app_server_protocol::ThreadSetNameResponse;
+use app_server_protocol::ThreadSkill;
+use app_server_protocol::ThreadSkillKind;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadTurnsItemsListParams;
+use app_server_protocol::ThreadTurnsListParams;
+use app_server_protocol::ThreadTurnsListResponse;
+use app_server_protocol::TurnItemsView;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout_with_text_elements;
 use app_test_support::create_fake_rollout_with_token_usage;
@@ -6,75 +43,29 @@ use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::rollout_path;
 use app_test_support::test_absolute_path;
 use app_test_support::to_response;
-use codex_app_server::in_process;
-use codex_app_server::in_process::InProcessStartArgs;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::InitializeCapabilities;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::SessionSource;
-use codex_app_server_protocol::SortDirection;
-use codex_app_server_protocol::ThreadActiveFlag;
-use codex_app_server_protocol::ThreadForkParams;
-use codex_app_server_protocol::ThreadForkResponse;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadListResponse;
-use codex_app_server_protocol::ThreadNameUpdatedNotification;
-use codex_app_server_protocol::ThreadReadParams;
-use codex_app_server_protocol::ThreadReadResponse;
-use codex_app_server_protocol::ThreadResumeParams;
-use codex_app_server_protocol::ThreadResumeResponse;
-use codex_app_server_protocol::ThreadSetNameParams;
-use codex_app_server_protocol::ThreadSetNameResponse;
-use codex_app_server_protocol::ThreadSkill;
-use codex_app_server_protocol::ThreadSkillKind;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::ThreadStatus;
-use codex_app_server_protocol::ThreadTurnsItemsListParams;
-use codex_app_server_protocol::ThreadTurnsListParams;
-use codex_app_server_protocol::ThreadTurnsListResponse;
-use codex_app_server_protocol::TurnItemsView;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::TurnStatus;
-use codex_app_server_protocol::UserInput;
 use codex_arg0::Arg0DispatchPaths;
-use codex_config::CloudRequirementsLoader;
-use codex_config::LoaderOverrides;
+use config_service::CloudRequirementsLoader;
+use config_service::LoaderOverrides;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
-use codex_protocol::models::BaseInstructions;
-use codex_protocol::protocol::AgentMessageEvent;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SessionSource as ProtocolSessionSource;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
-use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
-use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
-use codex_protocol::protocol::ThreadMemoryMode;
-use codex_protocol::protocol::UserMessageEvent;
-use codex_protocol::user_input::ByteRange;
-use codex_protocol::user_input::TextElement;
-use codex_rollout::ARCHIVED_SESSIONS_SUBDIR;
-use thread_service::config::ConfigBuilder;
-use codex_thread_store::AppendThreadItemsParams;
-use codex_thread_store::CreateThreadParams;
-use codex_thread_store::InMemoryThreadStore;
-use codex_thread_store::ThreadEventPersistenceMode;
-use codex_thread_store::ThreadMetadataPatch;
-use codex_thread_store::ThreadPersistenceMetadata;
-use codex_thread_store::ThreadStore;
-use codex_thread_store::UpdateThreadMetadataParams;
 use core_test_support::responses;
 use core_test_support::streaming_sse::StreamingSseChunk;
 use core_test_support::streaming_sse::start_streaming_sse_server;
 use pretty_assertions::assert_eq;
+use protocol::models::BaseInstructions;
+use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SessionSource as ProtocolSessionSource;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadContextUsageCategoryBreakdown;
+use protocol::protocol::ThreadContextUsageLoadedSkills;
+use protocol::protocol::ThreadContextUsageUpdatedEvent;
+use protocol::protocol::ThreadMemoryMode;
+use protocol::protocol::UserMessageEvent;
+use protocol::user_input::ByteRange;
+use protocol::user_input::TextElement;
+use rollout::ARCHIVED_SESSIONS_SUBDIR;
 use serde_json::Value;
 use serde_json::json;
 use std::future::Future;
@@ -83,6 +74,15 @@ use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use tempfile::TempDir;
+use thread_service::config::ConfigBuilder;
+use thread_store::AppendThreadItemsParams;
+use thread_store::CreateThreadParams;
+use thread_store::InMemoryThreadStore;
+use thread_store::ThreadEventPersistenceMode;
+use thread_store::ThreadMetadataPatch;
+use thread_store::ThreadPersistenceMetadata;
+use thread_store::ThreadStore;
+use thread_store::UpdateThreadMetadataParams;
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -544,8 +544,7 @@ async fn thread_turns_list_supports_requested_items_view() -> Result<()> {
 fn thread_turns_list_reads_store_history_without_rollout_path() -> Result<()> {
     run_current_thread_test_with_stack(async {
         let codex_home = TempDir::new()?;
-        let thread_id =
-            codex_protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000123")?;
+        let thread_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000123")?;
         let store_id = Uuid::new_v4().to_string();
         create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
         let store = InMemoryThreadStore::for_id(store_id.clone());
@@ -566,7 +565,7 @@ fn thread_turns_list_reads_store_history_without_rollout_path() -> Result<()> {
             loader_overrides,
             strict_config: false,
             cloud_requirements: CloudRequirementsLoader::default(),
-            thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             log_db: None,
             state_db: None,
@@ -634,7 +633,7 @@ fn thread_read_loaded_include_turns_uses_live_history_without_rollout_path() -> 
             loader_overrides,
             strict_config: false,
             cloud_requirements: CloudRequirementsLoader::default(),
-            thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             log_db: None,
             state_db: None,
@@ -670,7 +669,7 @@ fn thread_read_loaded_include_turns_uses_live_history_without_rollout_path() -> 
         let ThreadStartResponse { thread, .. } = serde_json::from_value(result)?;
         assert_eq!(thread.path, None);
 
-        let thread_id = codex_protocol::ThreadId::from_string(&thread.id)?;
+        let thread_id = protocol::ThreadId::from_string(&thread.id)?;
         store
             .append_items(AppendThreadItemsParams {
                 thread_id,
@@ -701,8 +700,7 @@ fn thread_read_loaded_include_turns_uses_live_history_without_rollout_path() -> 
 fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> {
     run_current_thread_test_with_stack(async {
         let codex_home = TempDir::new()?;
-        let thread_id =
-            codex_protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000124")?;
+        let thread_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000124")?;
         let store_id = Uuid::new_v4().to_string();
         create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
         let store = InMemoryThreadStore::for_id(store_id.clone());
@@ -723,7 +721,7 @@ fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> {
             loader_overrides,
             strict_config: false,
             cloud_requirements: CloudRequirementsLoader::default(),
-            thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             log_db: None,
             state_db: None,
@@ -798,8 +796,7 @@ where
 fn thread_read_includes_persisted_thread_skills_for_pathless_store_threads() -> Result<()> {
     run_current_thread_test_with_stack(async {
         let codex_home = TempDir::new()?;
-        let thread_id =
-            codex_protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000125")?;
+        let thread_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000125")?;
         let store_id = Uuid::new_v4().to_string();
         create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
         let store = InMemoryThreadStore::for_id(store_id.clone());
@@ -809,10 +806,10 @@ fn thread_read_includes_persisted_thread_skills_for_pathless_store_threads() -> 
             .update_thread_metadata(UpdateThreadMetadataParams {
                 thread_id,
                 patch: ThreadMetadataPatch {
-                    skills: Some(vec![codex_protocol::protocol::ThreadSkill {
+                    skills: Some(vec![protocol::protocol::ThreadSkill {
                         name: "demo".to_string(),
                         path: "/tmp/demo/SKILL.md".to_string(),
-                        kind: codex_protocol::protocol::ThreadSkillKind::All,
+                        kind: protocol::protocol::ThreadSkillKind::All,
                     }]),
                     ..Default::default()
                 },
@@ -834,7 +831,7 @@ fn thread_read_includes_persisted_thread_skills_for_pathless_store_threads() -> 
             loader_overrides,
             strict_config: false,
             cloud_requirements: CloudRequirementsLoader::default(),
-            thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             log_db: None,
             state_db: None,
@@ -1620,7 +1617,7 @@ async fn read_single_turn_items_view(
     mcp: &mut McpProcess,
     thread_id: &str,
     items_view: Option<TurnItemsView>,
-) -> anyhow::Result<codex_app_server_protocol::Turn> {
+) -> anyhow::Result<app_server_protocol::Turn> {
     let read_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
             thread_id: thread_id.to_string(),
@@ -1641,7 +1638,7 @@ async fn read_single_turn_items_view(
     Ok(data.remove(0))
 }
 
-fn turn_user_texts(turns: &[codex_app_server_protocol::Turn]) -> Vec<&str> {
+fn turn_user_texts(turns: &[app_server_protocol::Turn]) -> Vec<&str> {
     turns
         .iter()
         .filter_map(|turn| match turn.items.first()? {
@@ -1657,7 +1654,7 @@ fn turn_user_texts(turns: &[codex_app_server_protocol::Turn]) -> Vec<&str> {
         .collect()
 }
 
-fn turn_agent_texts(turns: &[codex_app_server_protocol::Turn]) -> Vec<&str> {
+fn turn_agent_texts(turns: &[app_server_protocol::Turn]) -> Vec<&str> {
     turns
         .iter()
         .flat_map(|turn| &turn.items)
@@ -1680,7 +1677,7 @@ impl Drop for InMemoryThreadStoreId {
 
 async fn seed_pathless_store_thread(
     store: &InMemoryThreadStore,
-    thread_id: codex_protocol::ThreadId,
+    thread_id: protocol::ThreadId,
 ) -> Result<()> {
     store
         .create_thread(CreateThreadParams {

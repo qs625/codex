@@ -6,7 +6,7 @@ use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ThreadStopInput;
 use codex_extension_api::ToolContributor;
 use codex_file_watcher::FileWatcher;
-use codex_protocol::ThreadId;
+use protocol::ThreadId;
 
 use crate::SubscriptionActivityObserver;
 use crate::registry::FsSubscriptionRegistry;

@@ -1,24 +1,24 @@
 use super::shared::v2_enum_from_core;
-use codex_protocol::approvals::ExecPolicyAmendment as CoreExecPolicyAmendment;
-use codex_protocol::approvals::NetworkApprovalContext as CoreNetworkApprovalContext;
-use codex_protocol::approvals::NetworkApprovalProtocol as CoreNetworkApprovalProtocol;
-use codex_protocol::approvals::NetworkPolicyAmendment as CoreNetworkPolicyAmendment;
-use codex_protocol::approvals::NetworkPolicyRuleAction as CoreNetworkPolicyRuleAction;
-use codex_protocol::models::ActivePermissionProfile as CoreActivePermissionProfile;
-use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
-use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
-use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
-use codex_protocol::models::NetworkPermissions as CoreNetworkPermissions;
-use codex_protocol::models::PermissionProfile as CorePermissionProfile;
-use codex_protocol::permissions::FileSystemAccessMode as CoreFileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath as CoreFileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry as CoreFileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSpecialPath as CoreFileSystemSpecialPath;
-use codex_protocol::permissions::NetworkSandboxPolicy as CoreNetworkSandboxPolicy;
-use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
-use codex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
-use codex_protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::approvals::ExecPolicyAmendment as CoreExecPolicyAmendment;
+use protocol::approvals::NetworkApprovalContext as CoreNetworkApprovalContext;
+use protocol::approvals::NetworkApprovalProtocol as CoreNetworkApprovalProtocol;
+use protocol::approvals::NetworkPolicyAmendment as CoreNetworkPolicyAmendment;
+use protocol::approvals::NetworkPolicyRuleAction as CoreNetworkPolicyRuleAction;
+use protocol::models::ActivePermissionProfile as CoreActivePermissionProfile;
+use protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
+use protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
+use protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
+use protocol::models::NetworkPermissions as CoreNetworkPermissions;
+use protocol::models::PermissionProfile as CorePermissionProfile;
+use protocol::permissions::FileSystemAccessMode as CoreFileSystemAccessMode;
+use protocol::permissions::FileSystemPath as CoreFileSystemPath;
+use protocol::permissions::FileSystemSandboxEntry as CoreFileSystemSandboxEntry;
+use protocol::permissions::FileSystemSpecialPath as CoreFileSystemSpecialPath;
+use protocol::permissions::NetworkSandboxPolicy as CoreNetworkSandboxPolicy;
+use protocol::protocol::NetworkAccess as CoreNetworkAccess;
+use protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
+use protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -726,18 +726,16 @@ impl<'de> Deserialize<'de> for SandboxPolicy {
 }
 
 impl SandboxPolicy {
-    pub fn to_core(&self) -> codex_protocol::protocol::SandboxPolicy {
+    pub fn to_core(&self) -> protocol::protocol::SandboxPolicy {
         match self {
-            SandboxPolicy::DangerFullAccess => {
-                codex_protocol::protocol::SandboxPolicy::DangerFullAccess
-            }
+            SandboxPolicy::DangerFullAccess => protocol::protocol::SandboxPolicy::DangerFullAccess,
             SandboxPolicy::ReadOnly { network_access } => {
-                codex_protocol::protocol::SandboxPolicy::ReadOnly {
+                protocol::protocol::SandboxPolicy::ReadOnly {
                     network_access: *network_access,
                 }
             }
             SandboxPolicy::ExternalSandbox { network_access } => {
-                codex_protocol::protocol::SandboxPolicy::ExternalSandbox {
+                protocol::protocol::SandboxPolicy::ExternalSandbox {
                     network_access: match network_access {
                         NetworkAccess::Restricted => CoreNetworkAccess::Restricted,
                         NetworkAccess::Enabled => CoreNetworkAccess::Enabled,
@@ -749,7 +747,7 @@ impl SandboxPolicy {
                 network_access,
                 exclude_tmpdir_env_var,
                 exclude_slash_tmp,
-            } => codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
+            } => protocol::protocol::SandboxPolicy::WorkspaceWrite {
                 writable_roots: writable_roots.clone(),
                 network_access: *network_access,
                 exclude_tmpdir_env_var: *exclude_tmpdir_env_var,
@@ -759,16 +757,14 @@ impl SandboxPolicy {
     }
 }
 
-impl From<codex_protocol::protocol::SandboxPolicy> for SandboxPolicy {
-    fn from(value: codex_protocol::protocol::SandboxPolicy) -> Self {
+impl From<protocol::protocol::SandboxPolicy> for SandboxPolicy {
+    fn from(value: protocol::protocol::SandboxPolicy) -> Self {
         match value {
-            codex_protocol::protocol::SandboxPolicy::DangerFullAccess => {
-                SandboxPolicy::DangerFullAccess
-            }
-            codex_protocol::protocol::SandboxPolicy::ReadOnly { network_access } => {
+            protocol::protocol::SandboxPolicy::DangerFullAccess => SandboxPolicy::DangerFullAccess,
+            protocol::protocol::SandboxPolicy::ReadOnly { network_access } => {
                 SandboxPolicy::ReadOnly { network_access }
             }
-            codex_protocol::protocol::SandboxPolicy::ExternalSandbox { network_access } => {
+            protocol::protocol::SandboxPolicy::ExternalSandbox { network_access } => {
                 SandboxPolicy::ExternalSandbox {
                     network_access: match network_access {
                         CoreNetworkAccess::Restricted => NetworkAccess::Restricted,
@@ -776,7 +772,7 @@ impl From<codex_protocol::protocol::SandboxPolicy> for SandboxPolicy {
                     },
                 }
             }
-            codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
+            protocol::protocol::SandboxPolicy::WorkspaceWrite {
                 writable_roots,
                 network_access,
                 exclude_tmpdir_env_var,

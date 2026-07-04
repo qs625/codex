@@ -8,16 +8,16 @@ use codex_mcp_server::ExecApprovalElicitRequestParams;
 use codex_mcp_server::ExecApprovalResponse;
 use codex_mcp_server::PatchApprovalElicitRequestParams;
 use codex_mcp_server::PatchApprovalResponse;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::ReviewDecision;
 use codex_shell_utils::parse_command;
-use thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use pretty_assertions::assert_eq;
+use protocol::protocol::FileChange;
+use protocol::protocol::ReviewDecision;
 use rmcp::model::JsonRpcResponse;
 use rmcp::model::JsonRpcVersion2_0;
 use rmcp::model::RequestId;
 use serde_json::json;
 use tempfile::TempDir;
+use thread_service::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use tokio::time::timeout;
 use wiremock::MockServer;
 
@@ -191,7 +191,7 @@ fn create_expected_elicitation_request_params(
     workdir: &Path,
     codex_mcp_tool_call_id: String,
     codex_event_id: String,
-    thread_id: codex_protocol::ThreadId,
+    thread_id: protocol::ThreadId,
 ) -> anyhow::Result<serde_json::Value> {
     let expected_message = format!(
         "Allow Codex to run `{}` in `{}`?",
@@ -452,7 +452,7 @@ fn create_expected_patch_approval_elicitation_request_params(
     reason: Option<String>,
     codex_mcp_tool_call_id: String,
     codex_event_id: String,
-    thread_id: codex_protocol::ThreadId,
+    thread_id: protocol::ThreadId,
 ) -> anyhow::Result<serde_json::Value> {
     let mut message_lines = Vec::new();
     if let Some(r) = &reason {

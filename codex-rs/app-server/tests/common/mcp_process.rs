@@ -11,93 +11,93 @@ use tokio::process::ChildStdin;
 use tokio::process::ChildStdout;
 
 use anyhow::Context;
-use codex_app_server_protocol::AppsListParams;
-use codex_app_server_protocol::CancelLoginAccountParams;
-use codex_app_server_protocol::ClientInfo;
-use codex_app_server_protocol::ClientNotification;
-use codex_app_server_protocol::CollaborationModeListParams;
-use codex_app_server_protocol::CommandExecParams;
-use codex_app_server_protocol::CommandExecResizeParams;
-use codex_app_server_protocol::CommandExecTerminateParams;
-use codex_app_server_protocol::CommandExecWriteParams;
-use codex_app_server_protocol::ConfigBatchWriteParams;
-use codex_app_server_protocol::ConfigReadParams;
-use codex_app_server_protocol::ConfigValueWriteParams;
-use codex_app_server_protocol::ExperimentalFeatureListParams;
-use codex_app_server_protocol::FeedbackUploadParams;
-use codex_app_server_protocol::FsCopyParams;
-use codex_app_server_protocol::FsCreateDirectoryParams;
-use codex_app_server_protocol::FsGetMetadataParams;
-use codex_app_server_protocol::FsReadDirectoryParams;
-use codex_app_server_protocol::FsReadFileParams;
-use codex_app_server_protocol::FsRemoveParams;
-use codex_app_server_protocol::FsUnwatchParams;
-use codex_app_server_protocol::FsWatchParams;
-use codex_app_server_protocol::FsWriteFileParams;
-use codex_app_server_protocol::GetAccountParams;
-use codex_app_server_protocol::GetAuthStatusParams;
-use codex_app_server_protocol::GetConversationSummaryParams;
-use codex_app_server_protocol::HooksListParams;
-use codex_app_server_protocol::InitializeCapabilities;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::JSONRPCNotification;
-use codex_app_server_protocol::JSONRPCRequest;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::ListMcpServerStatusParams;
-use codex_app_server_protocol::LoginAccountParams;
-use codex_app_server_protocol::MarketplaceAddParams;
-use codex_app_server_protocol::MarketplaceRemoveParams;
-use codex_app_server_protocol::MarketplaceUpgradeParams;
-use codex_app_server_protocol::McpResourceReadParams;
-use codex_app_server_protocol::McpServerToolCallParams;
-use codex_app_server_protocol::MockExperimentalMethodParams;
-use codex_app_server_protocol::ModelListParams;
-use codex_app_server_protocol::ModelProviderCapabilitiesReadParams;
-use codex_app_server_protocol::PluginInstallParams;
-use codex_app_server_protocol::PluginListParams;
-use codex_app_server_protocol::PluginReadParams;
-use codex_app_server_protocol::PluginSkillReadParams;
-use codex_app_server_protocol::PluginUninstallParams;
-use codex_app_server_protocol::ProcessKillParams;
-use codex_app_server_protocol::ProcessResizePtyParams;
-use codex_app_server_protocol::ProcessSpawnParams;
-use codex_app_server_protocol::ProcessWriteStdinParams;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ReviewStartParams;
-use codex_app_server_protocol::SendAddCreditsNudgeEmailParams;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::SkillsListParams;
-use codex_app_server_protocol::ThreadArchiveParams;
-use codex_app_server_protocol::ThreadCompactStartParams;
-use codex_app_server_protocol::ThreadForkParams;
-use codex_app_server_protocol::ThreadInjectItemsParams;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadLoadedListParams;
-use codex_app_server_protocol::ThreadMemoryModeSetParams;
-use codex_app_server_protocol::ThreadMetadataUpdateParams;
-use codex_app_server_protocol::ThreadReadParams;
-use codex_app_server_protocol::ThreadRealtimeAppendAudioParams;
-use codex_app_server_protocol::ThreadRealtimeAppendTextParams;
-use codex_app_server_protocol::ThreadRealtimeListVoicesParams;
-use codex_app_server_protocol::ThreadRealtimeStartParams;
-use codex_app_server_protocol::ThreadRealtimeStopParams;
-use codex_app_server_protocol::ThreadResumeParams;
-use codex_app_server_protocol::ThreadRollbackParams;
-use codex_app_server_protocol::ThreadSetNameParams;
-use codex_app_server_protocol::ThreadShellCommandParams;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadTurnsItemsListParams;
-use codex_app_server_protocol::ThreadTurnsListParams;
-use codex_app_server_protocol::ThreadUnarchiveParams;
-use codex_app_server_protocol::ThreadUnsubscribeParams;
-use codex_app_server_protocol::TurnCompletedNotification;
-use codex_app_server_protocol::TurnInterruptParams;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnSteerParams;
-use codex_app_server_protocol::WindowsSandboxSetupStartParams;
+use app_server_protocol::AppsListParams;
+use app_server_protocol::CancelLoginAccountParams;
+use app_server_protocol::ClientInfo;
+use app_server_protocol::ClientNotification;
+use app_server_protocol::CollaborationModeListParams;
+use app_server_protocol::CommandExecParams;
+use app_server_protocol::CommandExecResizeParams;
+use app_server_protocol::CommandExecTerminateParams;
+use app_server_protocol::CommandExecWriteParams;
+use app_server_protocol::ConfigBatchWriteParams;
+use app_server_protocol::ConfigReadParams;
+use app_server_protocol::ConfigValueWriteParams;
+use app_server_protocol::ExperimentalFeatureListParams;
+use app_server_protocol::FeedbackUploadParams;
+use app_server_protocol::FsCopyParams;
+use app_server_protocol::FsCreateDirectoryParams;
+use app_server_protocol::FsGetMetadataParams;
+use app_server_protocol::FsReadDirectoryParams;
+use app_server_protocol::FsReadFileParams;
+use app_server_protocol::FsRemoveParams;
+use app_server_protocol::FsUnwatchParams;
+use app_server_protocol::FsWatchParams;
+use app_server_protocol::FsWriteFileParams;
+use app_server_protocol::GetAccountParams;
+use app_server_protocol::GetAuthStatusParams;
+use app_server_protocol::GetConversationSummaryParams;
+use app_server_protocol::HooksListParams;
+use app_server_protocol::InitializeCapabilities;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCNotification;
+use app_server_protocol::JSONRPCRequest;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::ListMcpServerStatusParams;
+use app_server_protocol::LoginAccountParams;
+use app_server_protocol::MarketplaceAddParams;
+use app_server_protocol::MarketplaceRemoveParams;
+use app_server_protocol::MarketplaceUpgradeParams;
+use app_server_protocol::McpResourceReadParams;
+use app_server_protocol::McpServerToolCallParams;
+use app_server_protocol::MockExperimentalMethodParams;
+use app_server_protocol::ModelListParams;
+use app_server_protocol::ModelProviderCapabilitiesReadParams;
+use app_server_protocol::PluginInstallParams;
+use app_server_protocol::PluginListParams;
+use app_server_protocol::PluginReadParams;
+use app_server_protocol::PluginSkillReadParams;
+use app_server_protocol::PluginUninstallParams;
+use app_server_protocol::ProcessKillParams;
+use app_server_protocol::ProcessResizePtyParams;
+use app_server_protocol::ProcessSpawnParams;
+use app_server_protocol::ProcessWriteStdinParams;
+use app_server_protocol::RequestId;
+use app_server_protocol::ReviewStartParams;
+use app_server_protocol::SendAddCreditsNudgeEmailParams;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::SkillsListParams;
+use app_server_protocol::ThreadArchiveParams;
+use app_server_protocol::ThreadCompactStartParams;
+use app_server_protocol::ThreadForkParams;
+use app_server_protocol::ThreadInjectItemsParams;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadLoadedListParams;
+use app_server_protocol::ThreadMemoryModeSetParams;
+use app_server_protocol::ThreadMetadataUpdateParams;
+use app_server_protocol::ThreadReadParams;
+use app_server_protocol::ThreadRealtimeAppendAudioParams;
+use app_server_protocol::ThreadRealtimeAppendTextParams;
+use app_server_protocol::ThreadRealtimeListVoicesParams;
+use app_server_protocol::ThreadRealtimeStartParams;
+use app_server_protocol::ThreadRealtimeStopParams;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadRollbackParams;
+use app_server_protocol::ThreadSetNameParams;
+use app_server_protocol::ThreadShellCommandParams;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadTurnsItemsListParams;
+use app_server_protocol::ThreadTurnsListParams;
+use app_server_protocol::ThreadUnarchiveParams;
+use app_server_protocol::ThreadUnsubscribeParams;
+use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnInterruptParams;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnSteerParams;
+use app_server_protocol::WindowsSandboxSetupStartParams;
 use codex_login::default_client::CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR;
 use tokio::process::Command;
 
@@ -174,8 +174,8 @@ impl McpProcess {
         env_overrides: &[(&str, Option<&str>)],
         args: &[&str],
     ) -> anyhow::Result<Self> {
-        let program = codex_utils_cargo_bin::cargo_bin("codex-app-server")
-            .context("should find binary for codex-app-server")?;
+        let program = codex_utils_cargo_bin::cargo_bin("app-server")
+            .context("should find binary for app-server")?;
         let mut cmd = Command::new(program);
 
         cmd.stdin(Stdio::piped());
@@ -563,7 +563,7 @@ impl McpProcess {
     /// Send an `experimentalFeature/enablement/set` JSON-RPC request.
     pub async fn send_experimental_feature_enablement_set_request(
         &mut self,
-        params: codex_app_server_protocol::ExperimentalFeatureEnablementSetParams,
+        params: app_server_protocol::ExperimentalFeatureEnablementSetParams,
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("experimentalFeature/enablement/set", params)
@@ -1436,7 +1436,7 @@ impl McpProcess {
 
 impl Drop for McpProcess {
     fn drop(&mut self) {
-        // These tests spawn a `codex-app-server` child process.
+        // These tests spawn a `app-server` child process.
         //
         // We keep that child alive for the test and rely on Tokio's `kill_on_drop(true)` when this
         // helper is dropped. Tokio documents kill-on-drop as best-effort: dropping requests

@@ -4,6 +4,22 @@ use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use anyhow::Result;
+use app_server_protocol::AppInfo;
+use app_server_protocol::HookEventName;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::PluginAuthPolicy;
+use app_server_protocol::PluginInstallPolicy;
+use app_server_protocol::PluginReadParams;
+use app_server_protocol::PluginReadResponse;
+use app_server_protocol::PluginShareDiscoverability;
+use app_server_protocol::PluginSharePrincipal;
+use app_server_protocol::PluginSharePrincipalRole;
+use app_server_protocol::PluginSharePrincipalType;
+use app_server_protocol::PluginSkillReadParams;
+use app_server_protocol::PluginSkillReadResponse;
+use app_server_protocol::PluginSource;
+use app_server_protocol::RequestId;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
@@ -16,23 +32,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::http::header::AUTHORIZATION;
 use axum::routing::get;
-use codex_app_server_protocol::AppInfo;
-use codex_app_server_protocol::HookEventName;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::PluginAuthPolicy;
-use codex_app_server_protocol::PluginInstallPolicy;
-use codex_app_server_protocol::PluginReadParams;
-use codex_app_server_protocol::PluginReadResponse;
-use codex_app_server_protocol::PluginShareDiscoverability;
-use codex_app_server_protocol::PluginSharePrincipal;
-use codex_app_server_protocol::PluginSharePrincipalRole;
-use codex_app_server_protocol::PluginSharePrincipalType;
-use codex_app_server_protocol::PluginSkillReadParams;
-use codex_app_server_protocol::PluginSkillReadResponse;
-use codex_app_server_protocol::PluginSource;
-use codex_app_server_protocol::RequestId;
-use codex_config::types::AuthCredentialsStoreMode;
+use config_service::types::AuthCredentialsStoreMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use rmcp::handler::server::ServerHandler;
@@ -1373,15 +1373,15 @@ enabled = false
     assert_eq!(
         response.plugin.hooks,
         vec![
-            codex_app_server_protocol::PluginHookSummary {
+            app_server_protocol::PluginHookSummary {
                 key: "demo-plugin@codex-curated:hooks/hooks.json:pre_tool_use:0:0".to_string(),
                 event_name: HookEventName::PreToolUse,
             },
-            codex_app_server_protocol::PluginHookSummary {
+            app_server_protocol::PluginHookSummary {
                 key: "demo-plugin@codex-curated:hooks/hooks.json:pre_tool_use:0:1".to_string(),
                 event_name: HookEventName::PreToolUse,
             },
-            codex_app_server_protocol::PluginHookSummary {
+            app_server_protocol::PluginHookSummary {
                 key: "demo-plugin@codex-curated:hooks/hooks.json:session_start:0:0".to_string(),
                 event_name: HookEventName::SessionStart,
             },

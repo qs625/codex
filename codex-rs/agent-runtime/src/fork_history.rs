@@ -1,8 +1,8 @@
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::MessagePhase;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::RolloutItem;
-use codex_rollout_api::truncate_rollout_to_last_n_fork_turns;
+use protocol::models::ContentItem;
+use protocol::models::MessagePhase;
+use protocol::models::ResponseItem;
+use protocol::protocol::RolloutItem;
+use rollout_api::truncate_rollout_to_last_n_fork_turns;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SpawnAgentForkMode {
@@ -90,8 +90,8 @@ fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::AgentPath;
-    use codex_protocol::protocol::InterAgentCommunication;
+    use protocol::AgentPath;
+    use protocol::protocol::InterAgentCommunication;
 
     fn message(role: &str, text: &str, phase: Option<MessagePhase>) -> RolloutItem {
         RolloutItem::ResponseItem(ResponseItem::Message {
@@ -127,7 +127,7 @@ mod tests {
             AgentPath::try_from("/root/worker").expect("agent path"),
             Vec::new(),
             "triggered context".to_string(),
-            codex_protocol::protocol::InterAgentOperation::Unknown,
+            protocol::protocol::InterAgentOperation::Unknown,
         );
         let items = vec![
             message("developer", &usage_hint, None),

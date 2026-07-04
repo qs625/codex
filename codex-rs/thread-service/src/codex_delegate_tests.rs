@@ -1,31 +1,31 @@
 use super::*;
-use codex_mcp_types::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
-use codex_mcp_types::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX;
 use async_channel::bounded;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::models::NetworkPermissions;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecApprovalRequestEvent;
-use codex_protocol::protocol::GuardianAssessmentAction;
-use codex_protocol::protocol::GuardianAssessmentStatus;
-use codex_protocol::protocol::GuardianCommandSource;
-use codex_protocol::protocol::McpInvocation;
-use codex_protocol::protocol::RawResponseItemEvent;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::TurnAbortedEvent;
-use codex_protocol::request_permissions::RequestPermissionProfile;
-use codex_protocol::request_permissions::RequestPermissionsEvent;
-use codex_protocol::request_permissions::RequestPermissionsResponse;
-use codex_protocol::request_user_input::RequestUserInputAnswer;
-use codex_protocol::request_user_input::RequestUserInputEvent;
-use codex_protocol::request_user_input::RequestUserInputQuestion;
 use core_test_support::PathBufExt;
 use core_test_support::test_path_buf;
+use mcp_types::MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC;
+use mcp_types::MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX;
 use pretty_assertions::assert_eq;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::models::NetworkPermissions;
+use protocol::models::ResponseItem;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ExecApprovalRequestEvent;
+use protocol::protocol::GuardianAssessmentAction;
+use protocol::protocol::GuardianAssessmentStatus;
+use protocol::protocol::GuardianCommandSource;
+use protocol::protocol::McpInvocation;
+use protocol::protocol::RawResponseItemEvent;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortedEvent;
+use protocol::request_permissions::RequestPermissionProfile;
+use protocol::request_permissions::RequestPermissionsEvent;
+use protocol::request_permissions::RequestPermissionsResponse;
+use protocol::request_user_input::RequestUserInputAnswer;
+use protocol::request_user_input::RequestUserInputEvent;
+use protocol::request_user_input::RequestUserInputQuestion;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -129,7 +129,7 @@ async fn forward_ops_preserves_submission_trace_context() {
     let submission = Submission {
         id: "sub-1".to_string(),
         op: Op::Interrupt,
-        trace: Some(codex_protocol::protocol::W3cTraceContext {
+        trace: Some(protocol::protocol::W3cTraceContext {
             traceparent: Some(
                 "00-1234567890abcdef1234567890abcdef-1234567890abcdef-01".to_string(),
             ),
@@ -165,8 +165,7 @@ async fn run_codex_thread_interactive_respects_pre_cancelled_spawn() {
         run_codex_thread_interactive(
             parent_ctx.config.as_ref().clone(),
             Arc::clone(&parent_session.services.auth_runtime),
-            parent_session.services.model_client.auth_manager(),
-            Arc::clone(&parent_session.services.models_manager),
+            parent_session.services.provider_auth_manager.clone(),
             parent_session,
             parent_ctx,
             cancel_token,

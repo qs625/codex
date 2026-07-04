@@ -1,31 +1,35 @@
 use super::*;
-use crate::SkillLoadOutcome;
 use crate::TurnContextItemBuildInput;
 use crate::build_turn_context_item;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use codex_auth_types::AuthRuntime;
 use codex_auth_types::SharedAuthRuntime;
-use codex_config::EffectiveSessionConfigOverlay;
-use codex_config::GhostSnapshotConfig;
-use codex_config::SessionConfigOverlay;
-use codex_config::build_effective_session_config_from_session_overlay;
-use codex_config::build_per_turn_config_from_session_overlay;
-use codex_exec_server_api::ExecEnvironment;
-use codex_model_provider_api::ModelProviderFactory;
-use codex_model_provider_api::SharedModelProvider;
-use codex_model_provider_api::SharedModelProviderAuthManager;
-use codex_protocol::SessionId;
-use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TurnEnvironmentSelection;
+use config_service::EffectiveSessionConfigOverlay;
+use config_service::GhostSnapshotConfig;
+use config_service::SessionConfigOverlay;
+use config_service::build_effective_session_config_from_session_overlay;
+use config_service::build_per_turn_config_from_session_overlay;
 use codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile;
 use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_policy;
 use codex_sandboxing_api::policy_transforms::effective_network_sandbox_policy;
-use codex_tool_types::FunctionCallError;
+use exec_server_api::ExecEnvironment;
+use model_service_api::ListModelsRequest;
+use model_service_api::ModelCatalogRefresh;
+use model_service_api::ModelProviderFactory;
+use model_service_api::SharedModelProvider;
+use model_service_api::SharedModelProviderAuthManager;
+use model_service_api::SharedModelServiceApi;
+use protocol::SessionId;
+use protocol::models::AdditionalPermissionProfile;
+use protocol::openai_models::ModelPreset;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TurnEnvironmentSelection;
+use skill_service_api::SkillLoadOutcome;
 use std::sync::OnceLock;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use tool_service_api::FunctionCallError;
 
 pub(super) fn image_generation_tool_auth_allowed(auth_runtime: Option<&dyn AuthRuntime>) -> bool {
     auth_runtime.is_some_and(AuthRuntime::current_auth_uses_codex_backend)
@@ -131,7 +135,8 @@ impl TurnContext {
     pub(crate) fn resolve_apply_patch_environment(
         &self,
         environment_id: Option<&str>,
-    ) -> Result<Option<codex_sandboxing_api::ResolvedApplyPatchEnvironment>, FunctionCallError> {
+    ) -> Result<Option<codex_sandboxing_api::ResolvedApplyPatchEnvironment>, FunctionCallError>
+    {
         let environment = environment_id.map_or_else(
             || Ok(self.environments.primary()),
             |environment_id| {
@@ -148,14 +153,14 @@ impl TurnContext {
             },
         )?;
 
-        Ok(environment.map(
-            |turn_environment| codex_sandboxing_api::ResolvedApplyPatchEnvironment {
+        Ok(environment.map(|turn_environment| {
+            codex_sandboxing_api::ResolvedApplyPatchEnvironment {
                 cwd: turn_environment.cwd.clone(),
                 environment: crate::apply_patch_environment::CoreApplyPatchEnvironment::new(
                     turn_environment.clone(),
                 ),
-            },
-        ))
+            }
+        }))
     }
 
     pub(crate) fn resolve_exec_command_environment(
@@ -187,17 +192,14 @@ impl TurnContext {
             || turn_environment.cwd.clone(),
             |workdir| turn_environment.cwd.join(workdir),
         );
-        Ok(Some(
-            codex_sandboxing_api::ResolvedExecCommandEnvironment {
-                cwd,
-                sandbox_cwd: turn_environment.cwd.clone(),
-                environment: turn_environment.environment.clone(),
-                apply_patch_environment:
-                    crate::apply_patch_environment::CoreApplyPatchEnvironment::new(
-                        turn_environment.clone(),
-                    ),
-            },
-        ))
+        Ok(Some(codex_sandboxing_api::ResolvedExecCommandEnvironment {
+            cwd,
+            sandbox_cwd: turn_environment.cwd.clone(),
+            environment: turn_environment.environment.clone(),
+            apply_patch_environment: crate::apply_patch_environment::CoreApplyPatchEnvironment::new(
+                turn_environment.clone(),
+            ),
+        }))
     }
 
     pub(crate) fn tool_sandbox_context(&self) -> codex_sandboxing_api::ToolSandboxContext {
@@ -397,14 +399,14 @@ impl TurnContext {
 
     pub(crate) fn supported_reasoning_levels(
         &self,
-    ) -> &[codex_protocol::openai_models::ReasoningEffortPreset] {
+    ) -> &[protocol::openai_models::ReasoningEffortPreset] {
         &self.model_info.supported_reasoning_levels
     }
 
     pub fn supports_image_input(&self) -> bool {
         self.model_info
             .input_modalities
-            .contains(&codex_protocol::openai_models::InputModality::Image)
+            .contains(&protocol::openai_models::InputModality::Image)
     }
 
     pub fn auth_elicitation_enabled(&self) -> bool {
@@ -424,8 +426,8 @@ impl TurnContext {
         )
     }
 
-    pub fn mcp_sandbox_state(&self) -> codex_mcp_types::SandboxState {
-        codex_mcp_types::SandboxState {
+    pub fn mcp_sandbox_state(&self) -> mcp_types::SandboxState {
+        mcp_types::SandboxState {
             permission_profile: Some(self.permission_profile()),
             sandbox_policy: self.sandbox_policy(),
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
@@ -454,7 +456,7 @@ impl TurnContext {
                 .config
                 .config_layer_stack
                 .get_layers(
-                    codex_config_state::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                    config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
                     /*include_disabled*/ false,
                 )
                 .into_iter()
@@ -477,7 +479,7 @@ impl TurnContext {
 
     pub fn codex_app_tool_policy(
         &self,
-        metadata: Option<&codex_mcp_types::McpToolApprovalMetadata>,
+        metadata: Option<&mcp_types::McpToolApprovalMetadata>,
         tool_name: &str,
     ) -> thread_service_api::ThreadAppToolPolicy {
         self.session_arc()
@@ -499,17 +501,13 @@ impl TurnContext {
 
     pub fn refresh_accessible_connectors_cache_from_mcp_tools(
         &self,
-        connector_auth_context: Option<&codex_mcp_types::CodexAppsAuthContext>,
-        mcp_tools: &[codex_mcp_tool_types::ToolInfo],
+        connector_auth_context: Option<&mcp_types::CodexAppsAuthContext>,
+        mcp_tools: &[mcp_types::ToolInfo],
     ) {
         self.session_arc()
             .services
             .mcp_service
-            .refresh_accessible_connectors_cache(
-            &self.config,
-            connector_auth_context,
-            mcp_tools,
-        );
+            .refresh_accessible_connectors_cache(&self.config, connector_auth_context, mcp_tools);
     }
 
     pub(crate) fn chatgpt_base_url(&self) -> &str {
@@ -541,13 +539,13 @@ impl TurnContext {
         self.tools_config.allow_login_shell
     }
 
-    pub(crate) fn unified_exec_shell_mode(&self) -> codex_tool_config::UnifiedExecShellMode {
+    pub(crate) fn unified_exec_shell_mode(&self) -> tool_config::UnifiedExecShellMode {
         self.tools_config.unified_exec_shell_mode.clone()
     }
 
     pub(crate) fn emit_unified_exec_tty_metric(&self, tty: bool) {
         self.session_telemetry.counter(
-            codex_metrics_api::TOOL_CALL_UNIFIED_EXEC_METRIC,
+            metrics_api::TOOL_CALL_UNIFIED_EXEC_METRIC,
             /*inc*/ 1,
             &[("tty", if tty { "true" } else { "false" })],
         );
@@ -629,13 +627,14 @@ impl TurnContext {
     pub(crate) async fn with_model(
         &self,
         model: String,
-        models_manager: &SharedModelsManager,
+        model_service: &SharedModelServiceApi,
     ) -> Self {
         let mut config = (*self.config).clone();
         config.model = Some(model.clone());
-        let model_info = models_manager
-            .get_model_info(model.as_str(), &config.to_models_manager_config())
-            .await;
+        let model_info = model_service
+            .get_model_info(model.as_str())
+            .await
+            .unwrap_or_else(|err| panic!("failed to resolve model info for {model}: {err}"));
         let truncation_policy = model_info.truncation_policy.into();
         let supported_reasoning_levels = model_info
             .supported_reasoning_levels
@@ -666,11 +665,16 @@ impl TurnContext {
         );
         let features = self.features.clone();
         let provider_capabilities = self.provider.capabilities();
+        let available_models = model_service
+            .list_models(ListModelsRequest {
+                include_hidden: true,
+                refresh: ModelCatalogRefresh::OnlineIfUncached,
+            })
+            .await
+            .unwrap_or_default();
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
-            available_models: &models_manager
-                .list_models(RefreshStrategy::OnlineIfUncached)
-                .await,
+            available_models: &available_models,
             features: &features,
             image_generation_tool_auth_allowed: image_generation_tool_auth_allowed(
                 self.auth_runtime.as_deref(),
@@ -837,12 +841,12 @@ impl TurnContext {
             allowed_domains: network
                 .domains
                 .as_ref()
-                .and_then(codex_config_requirements::NetworkDomainPermissionsToml::allowed_domains)
+                .and_then(config_service::NetworkDomainPermissionsToml::allowed_domains)
                 .unwrap_or_default(),
             denied_domains: network
                 .domains
                 .as_ref()
-                .and_then(codex_config_requirements::NetworkDomainPermissionsToml::denied_domains)
+                .and_then(config_service::NetworkDomainPermissionsToml::denied_domains)
                 .unwrap_or_default(),
         })
     }
@@ -926,7 +930,7 @@ impl Session {
         main_execve_wrapper_exe: Option<&PathBuf>,
         per_turn_config: Config,
         model_info: ModelInfo,
-        models_manager: &SharedModelsManager,
+        available_models: &[ModelPreset],
         network: Option<SharedNetworkProxyRuntime>,
         environments: ResolvedTurnEnvironments,
         cwd: AbsolutePathBuf,
@@ -951,7 +955,7 @@ impl Session {
         let session_telemetry_for_context = session_telemetry;
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
-            available_models: &models_manager.try_list_models().unwrap_or_default(),
+            available_models,
             features: &per_turn_config.features,
             image_generation_tool_auth_allowed,
             web_search_mode: Some(per_turn_config.web_search_mode.value()),
@@ -1183,12 +1187,24 @@ impl Session {
 
         let model_info = self
             .services
-            .models_manager
-            .get_model_info(
-                session_configuration.collaboration_mode.model(),
-                &per_turn_config.to_models_manager_config(),
-            )
-            .await;
+            .model_service
+            .get_model_info(session_configuration.collaboration_mode.model())
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to resolve turn model info for {}: {err}",
+                    session_configuration.collaboration_mode.model()
+                )
+            });
+        let available_models = self
+            .services
+            .model_service
+            .list_models(ListModelsRequest {
+                include_hidden: true,
+                refresh: ModelCatalogRefresh::Offline,
+            })
+            .await
+            .unwrap_or_default();
         crate::session::merge_plugin_agent_roles_for_config(
             self.services.plugins_manager.as_ref(),
             &per_turn_config.plugins_config_input(),
@@ -1201,12 +1217,13 @@ impl Session {
             .plugins_manager
             .effective_skill_roots_for_config(&per_turn_config.plugins_config_input())
             .await;
-        let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);
+        let skills_input =
+            crate::build_skill_service_input_from_config(&per_turn_config, effective_skill_roots);
         let fs = primary_turn_environment
             .map(|turn_environment| turn_environment.environment.get_filesystem());
         let skills_outcome = Arc::new(
             self.services
-                .skills_manager
+                .skill_service
                 .skills_for_config(&skills_input, fs)
                 .await,
         );
@@ -1215,7 +1232,7 @@ impl Session {
             self.thread_id(),
             self.session_id(),
             Some(Arc::clone(&self.services.auth_runtime)),
-            self.services.model_client.auth_manager(),
+            self.services.provider_auth_manager.clone(),
             self.services.model_provider_factory.as_ref(),
             &self.services.session_telemetry,
             session_configuration.provider.clone(),
@@ -1225,7 +1242,7 @@ impl Session {
             self.services.main_execve_wrapper_exe.as_ref(),
             per_turn_config,
             model_info,
-            &self.services.models_manager,
+            &available_models,
             self.services
                 .network_proxy
                 .as_ref()

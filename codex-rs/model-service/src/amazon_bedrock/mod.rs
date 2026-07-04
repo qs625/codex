@@ -1,0 +1,162 @@
+mod auth;
+mod catalog;
+mod mantle;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::manager::StaticModelsManager;
+use model_service_api::AMAZON_BEDROCK_GPT_5_4_MODEL_ID;
+use model_service_api::ModelProvider;
+use model_service_api::ModelProviderAwsAuthInfo;
+use model_service_api::ModelProviderFuture;
+use model_service_api::ModelProviderInfo;
+use model_service_api::Provider;
+use model_service_api::ProviderAccountResult;
+use model_service_api::ProviderAccountState;
+use model_service_api::ProviderCapabilities;
+use model_service_api::SharedAuthProvider;
+use model_service_api::SharedModelProviderAuthManager;
+use model_service_api::SharedModelsManager;
+use protocol::account::ProviderAccount;
+use protocol::error::Result;
+use protocol::openai_models::ModelsResponse;
+
+use crate::provider_runtime::model_provider_info_to_api_provider;
+use auth::resolve_provider_auth;
+pub(crate) use catalog::static_model_catalog;
+use mantle::runtime_base_url;
+
+/// Runtime provider for Amazon Bedrock's OpenAI-compatible Mantle endpoint.
+#[derive(Clone, Debug)]
+pub(crate) struct AmazonBedrockModelProvider {
+    pub(crate) info: ModelProviderInfo,
+    pub(crate) aws: ModelProviderAwsAuthInfo,
+}
+
+impl AmazonBedrockModelProvider {
+    pub(crate) fn new(provider_info: ModelProviderInfo) -> Self {
+        let aws = provider_info
+            .aws
+            .clone()
+            .unwrap_or(ModelProviderAwsAuthInfo {
+                profile: None,
+                region: None,
+            });
+        Self {
+            info: provider_info,
+            aws,
+        }
+    }
+}
+
+impl ModelProvider for AmazonBedrockModelProvider {
+    fn info(&self) -> &ModelProviderInfo {
+        &self.info
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            namespace_tools: false,
+            image_generation: false,
+            web_search: false,
+        }
+    }
+
+    fn approval_review_preferred_model(&self) -> &'static str {
+        AMAZON_BEDROCK_GPT_5_4_MODEL_ID
+    }
+
+    fn auth_manager(&self) -> Option<SharedModelProviderAuthManager> {
+        None
+    }
+
+    fn auth(&self) -> ModelProviderFuture<'_, Option<codex_auth_types::RequestAuthSnapshot>> {
+        Box::pin(async { None })
+    }
+
+    fn account_state(&self) -> ProviderAccountResult {
+        Ok(ProviderAccountState {
+            account: Some(ProviderAccount::AmazonBedrock),
+            requires_openai_auth: false,
+        })
+    }
+
+    fn api_provider(&self) -> ModelProviderFuture<'_, Result<Provider>> {
+        Box::pin(async move {
+            let mut api_provider_info = self.info.clone();
+            api_provider_info.base_url = Some(runtime_base_url(&self.aws).await?);
+            model_provider_info_to_api_provider(&api_provider_info, /*auth_mode*/ None)
+        })
+    }
+
+    fn runtime_base_url(&self) -> ModelProviderFuture<'_, Result<Option<String>>> {
+        Box::pin(async move { Ok(Some(runtime_base_url(&self.aws).await?)) })
+    }
+
+    fn api_auth(&self) -> ModelProviderFuture<'_, Result<SharedAuthProvider>> {
+        Box::pin(async move { resolve_provider_auth(&self.aws).await })
+    }
+
+    fn models_manager(
+        &self,
+        _codex_home: PathBuf,
+        config_model_catalog: Option<ModelsResponse>,
+    ) -> SharedModelsManager {
+        Arc::new(StaticModelsManager::new(
+            /*auth_manager*/ None,
+            config_model_catalog.unwrap_or_else(static_model_catalog),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn api_provider_for_bedrock_bearer_token_uses_configured_region_endpoint() {
+        let region = "eu-central-1";
+        let mut api_provider_info =
+            ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None);
+        api_provider_info.base_url = Some(mantle::base_url(region).expect("supported region"));
+        let api_provider =
+            model_provider_info_to_api_provider(&api_provider_info, /*auth_mode*/ None)
+                .expect("api provider should build");
+
+        assert_eq!(
+            api_provider.base_url,
+            "https://bedrock-mantle.eu-central-1.api.aws/openai/v1"
+        );
+    }
+
+    #[test]
+    fn capabilities_disable_unsupported_launch_features() {
+        let provider = AmazonBedrockModelProvider::new(
+            ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None),
+        );
+
+        assert_eq!(
+            provider.capabilities(),
+            ProviderCapabilities {
+                namespace_tools: false,
+                image_generation: false,
+                web_search: false,
+            }
+        );
+    }
+
+    #[test]
+    fn approval_review_preferred_model_uses_bedrock_gpt_5_4() {
+        let provider = AmazonBedrockModelProvider::new(
+            ModelProviderInfo::create_amazon_bedrock_provider(/*aws*/ None),
+        );
+
+        assert_eq!(
+            provider.approval_review_preferred_model(),
+            AMAZON_BEDROCK_GPT_5_4_MODEL_ID
+        );
+    }
+}

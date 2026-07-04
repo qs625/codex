@@ -1,4 +1,4 @@
-# codex-protocol
+# protocol
 
 This crate defines the "types" for the protocol used by Codex CLI, which includes both "internal types" for communication between `codex-core` and `codex-tui`, as well as "external types" used with `codex app-server`.
 

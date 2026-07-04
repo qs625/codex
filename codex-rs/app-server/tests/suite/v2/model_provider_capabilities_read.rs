@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::ModelProviderCapabilitiesReadParams;
+use app_server_protocol::ModelProviderCapabilitiesReadResponse;
+use app_server_protocol::RequestId;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::ModelProviderCapabilitiesReadParams;
-use codex_app_server_protocol::ModelProviderCapabilitiesReadResponse;
-use codex_app_server_protocol::RequestId;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::time::timeout;

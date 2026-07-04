@@ -1,11 +1,11 @@
 use super::App;
 use crate::session_resume::read_session_model;
 use crate::session_state::ThreadSessionState;
-use codex_app_server_protocol::AskForApproval;
-use codex_app_server_protocol::Thread;
-use codex_protocol::ThreadId;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::PermissionProfile;
+use app_server_protocol::AskForApproval;
+use app_server_protocol::Thread;
+use protocol::ThreadId;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::PermissionProfile;
 
 impl App {
     pub(super) async fn sync_active_thread_permission_settings_to_cached_session(&mut self) {
@@ -122,17 +122,17 @@ mod tests {
     use crate::app::thread_events::ThreadEventChannel;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
-    use codex_app_server_protocol::AskForApproval;
-    use codex_app_server_protocol::FileSystemAccessMode;
-    use codex_app_server_protocol::FileSystemPath;
-    use codex_app_server_protocol::FileSystemSandboxEntry;
-    use codex_app_server_protocol::FileSystemSpecialPath;
-    use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-    use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
-    use codex_app_server_protocol::PermissionProfileNetworkPermissions;
-    use codex_protocol::config_types::ApprovalsReviewer;
-    use codex_protocol::models::PermissionProfile;
+    use app_server_protocol::AskForApproval;
+    use app_server_protocol::FileSystemAccessMode;
+    use app_server_protocol::FileSystemPath;
+    use app_server_protocol::FileSystemSandboxEntry;
+    use app_server_protocol::FileSystemSpecialPath;
+    use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+    use app_server_protocol::PermissionProfileFileSystemPermissions;
+    use app_server_protocol::PermissionProfileNetworkPermissions;
     use pretty_assertions::assert_eq;
+    use protocol::config_types::ApprovalsReviewer;
+    use protocol::models::PermissionProfile;
     use std::path::PathBuf;
 
     fn test_thread_session(thread_id: ThreadId, cwd: PathBuf) -> ThreadSessionState {
@@ -330,11 +330,11 @@ mod tests {
             model_provider: "read-provider".to_string(),
             created_at: 1,
             updated_at: 2,
-            status: codex_app_server_protocol::ThreadStatus::Complete,
+            status: app_server_protocol::ThreadStatus::Complete,
             path: None,
             cwd: test_path_buf("/tmp/read").abs(),
             cli_version: "0.0.0".to_string(),
-            source: codex_app_server_protocol::SessionSource::Unknown,
+            source: app_server_protocol::SessionSource::Unknown,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,

@@ -7,29 +7,29 @@
 // network access are required the first time the artifact is fetched.
 
 use anyhow::Result;
+use app_server_protocol::CommandAction;
+use app_server_protocol::CommandExecutionApprovalDecision;
+use app_server_protocol::CommandExecutionRequestApprovalResponse;
+use app_server_protocol::CommandExecutionStatus;
+use app_server_protocol::ItemCompletedNotification;
+use app_server_protocol::ItemStartedNotification;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RequestId;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadStartParams;
+use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnStartParams;
+use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::create_shell_command_sse_response;
 use app_test_support::to_response;
-use codex_app_server_protocol::CommandAction;
-use codex_app_server_protocol::CommandExecutionApprovalDecision;
-use codex_app_server_protocol::CommandExecutionRequestApprovalResponse;
-use codex_app_server_protocol::CommandExecutionStatus;
-use codex_app_server_protocol::ItemCompletedNotification;
-use codex_app_server_protocol::ItemStartedNotification;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadStartParams;
-use codex_app_server_protocol::ThreadStartResponse;
-use codex_app_server_protocol::TurnCompletedNotification;
-use codex_app_server_protocol::TurnStartParams;
-use codex_app_server_protocol::TurnStartResponse;
-use codex_app_server_protocol::TurnStatus;
-use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_features::FEATURES;
 use codex_features::Feature;
 use core_test_support::responses;
@@ -122,11 +122,11 @@ async fn turn_start_shell_zsh_fork_executes_command_v2() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
-            approval_policy: Some(codex_app_server_protocol::AskForApproval::Never),
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
+            approval_policy: Some(app_server_protocol::AskForApproval::Never),
+            sandbox_policy: Some(app_server_protocol::SandboxPolicy::DangerFullAccess),
             model: Some("mock-model".to_string()),
-            effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
-            summary: Some(codex_protocol::config_types::ReasoningSummary::Auto),
+            effort: Some(protocol::openai_models::ReasoningEffort::Medium),
+            summary: Some(protocol::config_types::ReasoningSummary::Auto),
             ..Default::default()
         })
         .await?;
@@ -533,16 +533,16 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
-            approval_policy: Some(codex_app_server_protocol::AskForApproval::UnlessTrusted),
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
+            approval_policy: Some(app_server_protocol::AskForApproval::UnlessTrusted),
+            sandbox_policy: Some(app_server_protocol::SandboxPolicy::WorkspaceWrite {
                 writable_roots: vec![workspace.clone().try_into()?],
                 network_access: false,
                 exclude_tmpdir_env_var: true,
                 exclude_slash_tmp: true,
             }),
             model: Some("mock-model".to_string()),
-            effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
-            summary: Some(codex_protocol::config_types::ReasoningSummary::Auto),
+            effort: Some(protocol::openai_models::ReasoningEffort::Medium),
+            summary: Some(protocol::config_types::ReasoningSummary::Auto),
             ..Default::default()
         })
         .await?;

@@ -6,20 +6,20 @@ use crate::agent::spawn_support::build_agent_spawn_config;
 use crate::config::Config;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use codex_protocol::ThreadId;
-use codex_protocol::error::CodexErr;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
-use codex_protocol::user_input::UserInput;
-use codex_state_api::SharedStateDbRuntime;
+use protocol::ThreadId;
+use protocol::error::CodexErr;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SubAgentSource;
+use protocol::user_input::UserInput;
+use state_api::SharedStateDbRuntime;
 use thread_service_api::AgentJobRunnerOptions;
 use thread_service_api::AgentJobSpawnWorkerError;
 use thread_service_api::SessionAgentJobCaller;
 use thread_service_api::ThreadCapability;
 use thread_service_api::ThreadRuntimeCapability;
-use codex_tool_types::FunctionCallError;
 use tokio::sync::watch;
+use tool_service_api::FunctionCallError;
 
 impl SessionAgentJobCaller for Session {
     fn agent_job_state_db(&self) -> Option<SharedStateDbRuntime> {
@@ -45,13 +45,15 @@ impl SessionAgentJobCaller for Session {
             let max_depth = turn.agent_max_depth();
             if exceeds_thread_spawn_depth_limit(child_depth, max_depth) {
                 return Err(FunctionCallError::RespondToModel(
-                    "agent depth limit reached; this session cannot spawn more subagents".to_string(),
+                    "agent depth limit reached; this session cannot spawn more subagents"
+                        .to_string(),
                 ));
             }
             let agent_max_threads = turn.agent_max_threads();
             if agent_max_threads == Some(0) {
                 return Err(FunctionCallError::RespondToModel(
-                    "agent thread limit reached; this session cannot spawn more subagents".to_string(),
+                    "agent thread limit reached; this session cannot spawn more subagents"
+                        .to_string(),
                 ));
             }
             let max_concurrency = codex_agent_runtime::bounded_agent_job_concurrency(
@@ -59,7 +61,8 @@ impl SessionAgentJobCaller for Session {
                 agent_max_threads,
             );
             let base_instructions = self.get_base_instructions().await;
-            let spawn_config = build_agent_spawn_config(&base_instructions, turn, /*cwd*/ None)?;
+            let spawn_config =
+                build_agent_spawn_config(&base_instructions, turn, /*cwd*/ None)?;
             Ok(AgentJobRunnerOptions {
                 max_concurrency,
                 spawn_config: Arc::new(spawn_config) as thread_service_api::AgentJobSpawnConfig,
@@ -73,7 +76,8 @@ impl SessionAgentJobCaller for Session {
         spawn_config: thread_service_api::AgentJobSpawnConfig,
         job_id: &'a str,
         prompt: String,
-    ) -> thread_service_api::SessionCapabilityFuture<'a, Result<ThreadId, AgentJobSpawnWorkerError>> {
+    ) -> thread_service_api::SessionCapabilityFuture<'a, Result<ThreadId, AgentJobSpawnWorkerError>>
+    {
         Box::pin(async move {
             let turn = turn_context_from_capability(turn);
             let spawn_config = Arc::downcast::<Config>(spawn_config).map_err(|_| {
@@ -124,8 +128,13 @@ impl SessionAgentJobCaller for Session {
     fn subscribe_agent_job_worker_status(
         self: Arc<Self>,
         thread_id: ThreadId,
-    ) -> thread_service_api::SessionCapabilityFuture<'static, Option<watch::Receiver<AgentStatus>>> {
-        Box::pin(async move { Session::subscribe_agent_status(self.as_ref(), thread_id).await.ok() })
+    ) -> thread_service_api::SessionCapabilityFuture<'static, Option<watch::Receiver<AgentStatus>>>
+    {
+        Box::pin(async move {
+            Session::subscribe_agent_status(self.as_ref(), thread_id)
+                .await
+                .ok()
+        })
     }
 }
 

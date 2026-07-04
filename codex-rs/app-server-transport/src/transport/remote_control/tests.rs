@@ -15,12 +15,12 @@ use crate::outgoing_message::QueuedOutgoingMessage;
 use crate::transport::CHANNEL_CAPACITY;
 use crate::transport::ConnectionOrigin;
 use crate::transport::TransportEvent;
+use app_server_protocol::ConfigWarningNotification;
+use app_server_protocol::JSONRPCMessage;
+use app_server_protocol::RemoteControlConnectionStatus;
+use app_server_protocol::RemoteControlStatusChangedNotification;
+use app_server_protocol::ServerNotification;
 use base64::Engine;
-use codex_app_server_protocol::ConfigWarningNotification;
-use codex_app_server_protocol::JSONRPCMessage;
-use codex_app_server_protocol::RemoteControlConnectionStatus;
-use codex_app_server_protocol::RemoteControlStatusChangedNotification;
-use codex_app_server_protocol::ServerNotification;
 use codex_auth_types::AuthMode;
 use codex_config_types::AuthCredentialsStoreMode;
 use codex_login::AuthDotJson;
@@ -29,17 +29,17 @@ use codex_login::CodexAuth;
 use codex_login::save_auth;
 use codex_login::token_data::TokenData;
 use codex_login::token_data::parse_chatgpt_jwt_claims;
-use codex_state::StateRuntime;
-use thread_service::test_support::auth_manager_from_auth;
-use thread_service::test_support::auth_manager_from_auth_with_home;
 use futures::SinkExt;
 use futures::StreamExt;
 use gethostname::gethostname;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use state::StateRuntime;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::TempDir;
+use thread_service::test_support::auth_manager_from_auth;
+use thread_service::test_support::auth_manager_from_auth_with_home;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
@@ -235,12 +235,10 @@ async fn remote_control_transport_manages_virtual_clients_and_routes_messages() 
         &mut websocket,
         ClientEnvelope {
             event: ClientEvent::ClientMessage {
-                message: JSONRPCMessage::Notification(
-                    codex_app_server_protocol::JSONRPCNotification {
-                        method: "initialized".to_string(),
-                        params: None,
-                    },
-                ),
+                message: JSONRPCMessage::Notification(app_server_protocol::JSONRPCNotification {
+                    method: "initialized".to_string(),
+                    params: None,
+                }),
             },
             client_id: client_id.clone(),
             stream_id: None,
@@ -256,8 +254,8 @@ async fn remote_control_transport_manages_virtual_clients_and_routes_messages() 
         "non-initialize client messages should be ignored before connection creation"
     );
 
-    let initialize_message = JSONRPCMessage::Request(codex_app_server_protocol::JSONRPCRequest {
-        id: codex_app_server_protocol::RequestId::Integer(1),
+    let initialize_message = JSONRPCMessage::Request(app_server_protocol::JSONRPCRequest {
+        id: app_server_protocol::RequestId::Integer(1),
         method: "initialize".to_string(),
         params: Some(json!({
             "clientInfo": {
@@ -313,11 +311,10 @@ async fn remote_control_transport_manages_virtual_clients_and_routes_messages() 
         other => panic!("expected initialize incoming message, got {other:?}"),
     }
 
-    let followup_message =
-        JSONRPCMessage::Notification(codex_app_server_protocol::JSONRPCNotification {
-            method: "initialized".to_string(),
-            params: None,
-        });
+    let followup_message = JSONRPCMessage::Notification(app_server_protocol::JSONRPCNotification {
+        method: "initialized".to_string(),
+        params: None,
+    });
     send_client_event(
         &mut websocket,
         ClientEnvelope {
@@ -499,8 +496,8 @@ async fn remote_control_transport_reconnects_after_disconnect() {
         &mut second_websocket,
         ClientEnvelope {
             event: ClientEvent::ClientMessage {
-                message: JSONRPCMessage::Request(codex_app_server_protocol::JSONRPCRequest {
-                    id: codex_app_server_protocol::RequestId::Integer(2),
+                message: JSONRPCMessage::Request(app_server_protocol::JSONRPCRequest {
+                    id: app_server_protocol::RequestId::Integer(2),
                     method: "initialize".to_string(),
                     params: Some(json!({
                         "clientInfo": {
@@ -802,8 +799,8 @@ async fn remote_control_transport_clears_outgoing_buffer_when_backend_acks() {
     .await;
 
     let client_id = ClientId("client-1".to_string());
-    let initialize_message = JSONRPCMessage::Request(codex_app_server_protocol::JSONRPCRequest {
-        id: codex_app_server_protocol::RequestId::Integer(1),
+    let initialize_message = JSONRPCMessage::Request(app_server_protocol::JSONRPCRequest {
+        id: app_server_protocol::RequestId::Integer(1),
         method: "initialize".to_string(),
         params: Some(json!({
             "clientInfo": {
@@ -1044,18 +1041,17 @@ async fn remote_control_http_mode_enrolls_before_connecting() {
 
     let backend_client_id = ClientId("backend-test-client".to_string());
     let writer = {
-        let initialize_message =
-            JSONRPCMessage::Request(codex_app_server_protocol::JSONRPCRequest {
-                id: codex_app_server_protocol::RequestId::Integer(11),
-                method: "initialize".to_string(),
-                params: Some(json!({
-                    "clientInfo": {
-                        "name": "remote-backend-client",
-                        "version": "0.1.0"
-                    }
-                })),
-                trace: None,
-            });
+        let initialize_message = JSONRPCMessage::Request(app_server_protocol::JSONRPCRequest {
+            id: app_server_protocol::RequestId::Integer(11),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "clientInfo": {
+                    "name": "remote-backend-client",
+                    "version": "0.1.0"
+                }
+            })),
+            trace: None,
+        });
         send_client_event(
             &mut websocket,
             ClientEnvelope {
@@ -1104,7 +1100,7 @@ async fn remote_control_http_mode_enrolls_before_connecting() {
     writer
         .send(QueuedOutgoingMessage::new(OutgoingMessage::Response(
             crate::outgoing_message::OutgoingResponse {
-                id: codex_app_server_protocol::RequestId::Integer(11),
+                id: app_server_protocol::RequestId::Integer(11),
                 result: json!({
                     "userAgent": "codex-test-agent"
                 }),

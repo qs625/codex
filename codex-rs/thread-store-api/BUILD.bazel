@@ -2,5 +2,5 @@ load("//:defs.bzl", "codex_rust_crate")
 
 codex_rust_crate(
     name = "thread-store-api",
-    crate_name = "codex_thread_store_api",
+    crate_name = "thread_store_api",
 )

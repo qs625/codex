@@ -10,10 +10,10 @@ use codex_connectors::filter::filter_disallowed_connectors;
 use codex_connectors::merge::merge_connectors;
 use codex_connectors::merge::merge_plugin_connectors;
 use codex_connectors_api::AppInfo;
-use plugin_service::PluginsManager;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::originator;
+use plugin_service::PluginsManager;
 use plugin_service_api::AppConnectorId;
 
 use crate::ChatGptConfig;

@@ -1,12 +1,12 @@
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
-use codex_protocol::protocol::CollabAgentInteractionBeginEvent;
-use codex_protocol::protocol::CollabAgentInteractionEndEvent;
-use codex_protocol::protocol::CollabAgentSpawnEndEvent;
-use codex_protocol::protocol::CollabCloseBeginEvent;
-use codex_protocol::protocol::CollabCloseEndEvent;
-use codex_protocol::protocol::InterAgentCommunication;
+use protocol::protocol::CollabAgentInteractionBeginEvent;
+use protocol::protocol::CollabAgentInteractionEndEvent;
+use protocol::protocol::CollabAgentSpawnEndEvent;
+use protocol::protocol::CollabCloseBeginEvent;
+use protocol::protocol::CollabCloseEndEvent;
+use protocol::protocol::InterAgentCommunication;
 
 use super::super::TraceReducer;
 use crate::model::ConversationItem;

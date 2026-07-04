@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::RemoteControlConnectionStatus;
+use app_server_protocol::RemoteControlDisableResponse;
+use app_server_protocol::RemoteControlEnableResponse;
+use app_server_protocol::RequestId;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::RemoteControlConnectionStatus;
-use codex_app_server_protocol::RemoteControlDisableResponse;
-use codex_app_server_protocol::RemoteControlEnableResponse;
-use codex_app_server_protocol::RequestId;
 use tempfile::TempDir;
 use tokio::time::timeout;
 

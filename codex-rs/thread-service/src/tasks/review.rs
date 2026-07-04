@@ -1,19 +1,19 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::items::TurnItem;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::AgentMessageContentDeltaEvent;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExitedReviewModeEvent;
-use codex_protocol::protocol::ItemCompletedEvent;
-use codex_protocol::protocol::ReviewOutputEvent;
-use codex_protocol::protocol::SubAgentSource;
 use codex_utils_template::Template;
+use protocol::config_types::WebSearchMode;
+use protocol::items::TurnItem;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::AgentMessageContentDeltaEvent;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::ExitedReviewModeEvent;
+use protocol::protocol::ItemCompletedEvent;
+use protocol::protocol::ReviewOutputEvent;
+use protocol::protocol::SubAgentSource;
 use tokio_util::sync::CancellationToken;
 
 use crate::codex_delegate::run_codex_thread_one_shot;
@@ -22,9 +22,9 @@ use crate::review_format::render_review_output_text;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::TaskKind;
-use codex_config::Constrained;
+use config_service::Constrained;
 use codex_features::Feature;
-use codex_protocol::user_input::UserInput;
+use protocol::user_input::UserInput;
 use std::sync::LazyLock;
 
 use super::SessionTask;
@@ -123,7 +123,6 @@ async fn start_review_conversation(
         sub_agent_config,
         session.auth_runtime(),
         session.provider_auth_manager(),
-        session.models_manager(),
         input,
         session.clone_session(),
         ctx.clone(),

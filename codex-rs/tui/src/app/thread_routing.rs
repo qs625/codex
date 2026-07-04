@@ -200,7 +200,7 @@ impl App {
         thread_id: ThreadId,
         turn_id: &str,
         item_id: &str,
-    ) -> Option<Vec<codex_app_server_protocol::FileUpdateChange>> {
+    ) -> Option<Vec<app_server_protocol::FileUpdateChange>> {
         let channel = self.thread_event_channels.get(&thread_id)?;
         let store = channel.store.lock().await;
         store.file_change_changes(turn_id, item_id)
@@ -279,9 +279,8 @@ impl App {
                     Some(ThreadInteractiveRequest::McpServerElicitation(request))
                 } else {
                     match &params.request {
-                        codex_app_server_protocol::McpServerElicitationRequest::Form {
-                            message,
-                            ..
+                        app_server_protocol::McpServerElicitationRequest::Form {
+                            message, ..
                         } => Some(ThreadInteractiveRequest::Approval(
                             ApprovalRequest::McpElicitation {
                                 thread_id,
@@ -291,12 +290,12 @@ impl App {
                                 message: message.clone(),
                             },
                         )),
-                        codex_app_server_protocol::McpServerElicitationRequest::Url { .. } => {
+                        app_server_protocol::McpServerElicitationRequest::Url { .. } => {
                             self.app_event_tx.resolve_elicitation(
                                 thread_id,
                                 params.server_name.clone(),
                                 request_id.clone(),
-                                codex_app_server_protocol::McpServerElicitationAction::Decline,
+                                app_server_protocol::McpServerElicitationAction::Decline,
                                 /*content*/ None,
                                 /*meta*/ None,
                             );
@@ -621,7 +620,7 @@ impl App {
             AppCommand::ListSkills { cwds, force_reload } => {
                 self.handle_skills_list_result(
                     app_server
-                        .skills_list(codex_app_server_protocol::SkillsListParams {
+                        .skills_list(app_server_protocol::SkillsListParams {
                             cwds: cwds.clone(),
                             force_reload: *force_reload,
                         })

@@ -6,11 +6,12 @@ use super::super::RemotePluginCatalogError;
 use super::super::RemotePluginServiceConfig;
 use super::local_paths;
 use crate::marketplace;
-use plugin_service_api::PluginId;
-use plugin_service_api::validate_plugin_segment;
-use plugin_service_api::PluginAuthPolicy;
-use plugin_service_api::PluginInstallPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use model_service_api::ModelServiceApi;
+use plugin_service_api::PluginAuthPolicy;
+use plugin_service_api::PluginId;
+use plugin_service_api::PluginInstallPolicy;
+use plugin_service_api::validate_plugin_segment;
 use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -36,12 +37,14 @@ pub struct RemotePluginShareCheckoutResult {
 }
 
 pub async fn checkout_remote_plugin_share(
+    model_service: &dyn ModelServiceApi,
     config: &RemotePluginServiceConfig,
     auth: Option<&RemotePluginAuth>,
     codex_home: &Path,
     remote_plugin_id: &str,
 ) -> Result<RemotePluginShareCheckoutResult, RemotePluginCatalogError> {
     let detail = super::super::fetch_remote_plugin_detail_with_download_urls(
+        model_service,
         config,
         auth,
         REMOTE_WORKSPACE_SHARED_WITH_ME_PRIVATE_MARKETPLACE_NAME,
@@ -93,6 +96,7 @@ pub async fn checkout_remote_plugin_share(
             ))
         })?;
         super::super::remote_bundle::download_and_extract_remote_plugin_bundle_to_path(
+            model_service.http_client().as_ref(),
             bundle,
             local_plugin_path.clone(),
         )

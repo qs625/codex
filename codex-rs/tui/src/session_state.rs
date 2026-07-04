@@ -5,11 +5,11 @@
 
 use std::path::PathBuf;
 
-use codex_app_server_protocol::AskForApproval;
-use codex_protocol::ThreadId;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::PermissionProfile;
+use app_server_protocol::AskForApproval;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::ThreadId;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::PermissionProfile;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SessionNetworkProxyRuntime {
@@ -33,7 +33,7 @@ pub(crate) struct ThreadSessionState {
     pub(crate) model_provider_id: String,
     pub(crate) service_tier: Option<String>,
     pub(crate) approval_policy: AskForApproval,
-    pub(crate) approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer,
+    pub(crate) approvals_reviewer: protocol::config_types::ApprovalsReviewer,
     /// Canonical active permissions for this session. Legacy app-server
     /// responses are converted to a profile at ingestion time using the
     /// response cwd so cached sessions do not reinterpret cwd-bound grants.
@@ -44,7 +44,7 @@ pub(crate) struct ThreadSessionState {
     pub(crate) cwd: AbsolutePathBuf,
     pub(crate) runtime_workspace_roots: Vec<AbsolutePathBuf>,
     pub(crate) instruction_source_paths: Vec<AbsolutePathBuf>,
-    pub(crate) reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
+    pub(crate) reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
     pub(crate) message_history: Option<MessageHistoryMetadata>,
     pub(crate) network_proxy: Option<SessionNetworkProxyRuntime>,
     pub(crate) rollout_path: Option<PathBuf>,

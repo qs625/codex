@@ -1,8 +1,8 @@
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::HookHandlerType;
-use codex_protocol::protocol::HookSource;
-use codex_protocol::protocol::HookTrustStatus;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::protocol::HookEventName;
+use protocol::protocol::HookHandlerType;
+use protocol::protocol::HookSource;
+use protocol::protocol::HookTrustStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookListEntry {

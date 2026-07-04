@@ -5,17 +5,17 @@ use chrono::DateTime;
 use chrono::NaiveDateTime;
 use chrono::Timelike;
 use chrono::Utc;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::CompactedItem;
-use codex_protocol::protocol::GitInfo;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::RolloutLine;
-use codex_protocol::protocol::SessionMeta;
-use codex_protocol::protocol::SessionMetaLine;
-use codex_protocol::protocol::SessionSource;
-use codex_state::BackfillStatus;
-use codex_state::ThreadMetadataBuilder;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::protocol::CompactedItem;
+use protocol::protocol::GitInfo;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::RolloutLine;
+use protocol::protocol::SessionMeta;
+use protocol::protocol::SessionMetaLine;
+use protocol::protocol::SessionSource;
+use state::BackfillStatus;
+use state::ThreadMetadataBuilder;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -189,7 +189,7 @@ async fn backfill_sessions_resumes_from_watermark_and_marks_complete() {
         /*git*/ None,
     );
 
-    let runtime = codex_state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+    let runtime = state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
         .await
         .expect("initialize runtime");
     let first_watermark = backfill_watermark_for_path(codex_home.as_path(), first_path.as_path());
@@ -254,7 +254,7 @@ async fn backfill_sessions_preserves_existing_git_branch_and_fills_missing_git_f
         }),
     );
 
-    let runtime = codex_state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+    let runtime = state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
         .await
         .expect("initialize runtime");
     let thread_id = ThreadId::from_string(&thread_uuid.to_string()).expect("thread id");
@@ -300,7 +300,7 @@ async fn backfill_sessions_normalizes_cwd_before_upsert() {
         /*git*/ None,
     );
 
-    let runtime = codex_state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+    let runtime = state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
         .await
         .expect("initialize runtime");
 

@@ -1,7 +1,7 @@
 use super::*;
-use codex_protocol::protocol::MAX_THREAD_GOAL_OBJECTIVE_CHARS;
-use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use pretty_assertions::assert_eq;
+use protocol::protocol::MAX_THREAD_GOAL_OBJECTIVE_CHARS;
+use protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 
 fn complete_turn_with_message(chat: &mut ChatWidget, turn_id: &str, message: Option<&str>) {
     if let Some(message) = message {

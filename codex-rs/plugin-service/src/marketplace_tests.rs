@@ -1,6 +1,6 @@
 use super::*;
-use codex_protocol::protocol::Product;
 use pretty_assertions::assert_eq;
+use protocol::protocol::Product;
 use std::path::Path;
 use tempfile::tempdir;
 

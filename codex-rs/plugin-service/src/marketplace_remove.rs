@@ -1,8 +1,8 @@
 use crate::installed_marketplaces::marketplace_install_root;
-use codex_config_edit::RemoveMarketplaceConfigOutcome;
-use codex_config_edit::remove_user_marketplace_config;
-use plugin_service_api::validate_plugin_segment;
+use config_service::RemoveMarketplaceConfigOutcome;
+use config_service::remove_user_marketplace_config;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use plugin_service_api::validate_plugin_segment;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -107,8 +107,8 @@ fn remove_marketplace_root(root: &Path) -> Result<Option<AbsolutePathBuf>, Marke
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_config_edit::MarketplaceConfigUpdate;
-    use codex_config_edit::record_user_marketplace;
+    use config_service::MarketplaceConfigUpdate;
+    use config_service::record_user_marketplace;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 

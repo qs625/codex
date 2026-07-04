@@ -11,45 +11,44 @@ use crate::error_code::internal_error;
 use crate::error_code::invalid_params;
 use crate::outgoing_message::ConnectionRequestId;
 use crate::outgoing_message::OutgoingMessageSender;
-use codex_app_server_protocol::CommandMigration;
-use codex_app_server_protocol::ExternalAgentConfigDetectParams;
-use codex_app_server_protocol::ExternalAgentConfigDetectResponse;
-use codex_app_server_protocol::ExternalAgentConfigImportCompletedNotification;
-use codex_app_server_protocol::ExternalAgentConfigImportParams;
-use codex_app_server_protocol::ExternalAgentConfigImportResponse;
-use codex_app_server_protocol::ExternalAgentConfigMigrationItem;
-use codex_app_server_protocol::ExternalAgentConfigMigrationItemType;
-use codex_app_server_protocol::HookMigration;
-use codex_app_server_protocol::JSONRPCErrorError;
-use codex_app_server_protocol::McpServerMigration;
-use codex_app_server_protocol::MigrationDetails;
-use codex_app_server_protocol::PluginsMigration;
-use codex_app_server_protocol::ServerNotification;
+use app_server_protocol::CommandMigration;
+use app_server_protocol::ExternalAgentConfigDetectParams;
+use app_server_protocol::ExternalAgentConfigDetectResponse;
+use app_server_protocol::ExternalAgentConfigImportCompletedNotification;
+use app_server_protocol::ExternalAgentConfigImportParams;
+use app_server_protocol::ExternalAgentConfigImportResponse;
+use app_server_protocol::ExternalAgentConfigMigrationItem;
+use app_server_protocol::ExternalAgentConfigMigrationItemType;
+use app_server_protocol::HookMigration;
+use app_server_protocol::JSONRPCErrorError;
+use app_server_protocol::McpServerMigration;
+use app_server_protocol::MigrationDetails;
+use app_server_protocol::PluginsMigration;
+use app_server_protocol::ServerNotification;
 use codex_arg0::Arg0DispatchPaths;
-use plugin_service::PluginsManager;
 use codex_external_agent_sessions::ExternalAgentSessionMigration as CoreSessionMigration;
 use codex_external_agent_sessions::ImportedExternalAgentSession;
 use codex_external_agent_sessions::PendingSessionImport;
 use codex_external_agent_sessions::prepare_validated_session_imports;
 use codex_external_agent_sessions::record_imported_session;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::RolloutItem;
+use futures::future::BoxFuture;
+use plugin_service::PluginsManager;
+use protocol::ThreadId;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::RolloutItem;
+use skill_service_api::SharedSkillServiceApi;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use thread_service::StartThreadOptions;
 use thread_service::ThreadService;
 use thread_service::config::Config;
 use thread_service::config::ConfigOverrides;
-use codex_thread_store::ThreadMetadataPatch;
-use futures::future::BoxFuture;
-use std::collections::HashSet;
-use std::path::PathBuf;
+use thread_store::ThreadMetadataPatch;
 use tokio::sync::Semaphore;
 
 use super::ConfigRequestProcessor;
 
 pub(crate) trait ExternalAgentRuntime: Send + Sync {
-    fn clear_skills_cache(&self);
-
     fn import_external_agent_thread<'a>(
         &'a self,
         config: Config,
@@ -59,10 +58,6 @@ pub(crate) trait ExternalAgentRuntime: Send + Sync {
 }
 
 impl ExternalAgentRuntime for ThreadService {
-    fn clear_skills_cache(&self) {
-        self.skills_manager().clear_cache();
-    }
-
     fn import_external_agent_thread<'a>(
         &'a self,
         config: Config,
@@ -114,6 +109,7 @@ pub(crate) struct ExternalAgentConfigRequestProcessor {
     migration_service: ExternalAgentConfigService,
     session_import_permits: Arc<Semaphore>,
     runtime: Arc<dyn ExternalAgentRuntime>,
+    skill_service: SharedSkillServiceApi,
     plugins_manager: Arc<PluginsManager>,
     config_manager: ConfigManager,
     config_processor: ConfigRequestProcessor,
@@ -124,6 +120,7 @@ impl ExternalAgentConfigRequestProcessor {
     pub(crate) fn new(
         outgoing: Arc<OutgoingMessageSender>,
         runtime: Arc<impl ExternalAgentRuntime + 'static>,
+        skill_service: SharedSkillServiceApi,
         plugins_manager: Arc<PluginsManager>,
         config_manager: ConfigManager,
         config_processor: ConfigRequestProcessor,
@@ -137,6 +134,7 @@ impl ExternalAgentConfigRequestProcessor {
             codex_home,
             session_import_permits: Arc::new(Semaphore::new(1)),
             runtime,
+            skill_service,
             plugins_manager,
             config_manager,
             config_processor,
@@ -202,7 +200,7 @@ impl ExternalAgentConfigRequestProcessor {
                         sessions: details
                             .sessions
                             .into_iter()
-                            .map(|session| codex_app_server_protocol::SessionMigration {
+                            .map(|session| app_server_protocol::SessionMigration {
                                 path: session.path,
                                 cwd: session.cwd,
                                 title: session.title,
@@ -223,7 +221,7 @@ impl ExternalAgentConfigRequestProcessor {
                         subagents: details
                             .subagents
                             .into_iter()
-                            .map(|subagent| codex_app_server_protocol::SubagentMigration {
+                            .map(|subagent| app_server_protocol::SubagentMigration {
                                 name: subagent.name,
                             })
                             .collect(),
@@ -278,8 +276,8 @@ impl ExternalAgentConfigRequestProcessor {
         let session_import_permits = Arc::clone(&self.session_import_permits);
         let session_processor = self.clone();
         let plugin_processor = self.clone();
+        let skill_service = Arc::clone(&self.skill_service);
         let outgoing = Arc::clone(&self.outgoing);
-        let runtime = Arc::clone(&self.runtime);
         let plugins_manager = Arc::clone(&self.plugins_manager);
         tokio::spawn(async move {
             let session_imports = async move {
@@ -331,7 +329,7 @@ impl ExternalAgentConfigRequestProcessor {
             tokio::join!(session_imports, plugin_imports);
             if has_plugin_imports {
                 plugins_manager.clear_cache();
-                runtime.clear_skills_cache();
+                skill_service.clear_cache();
             }
             outgoing
                 .send_server_notification(ServerNotification::ExternalAgentConfigImportCompleted(

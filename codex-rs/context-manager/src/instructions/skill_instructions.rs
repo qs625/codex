@@ -1,4 +1,4 @@
-use codex_core_skills_api::injection::SkillInjection;
+use skill_service_api::injection::SkillInjection;
 
 use super::ContextualUserFragment;
 

@@ -6,13 +6,13 @@ use chrono::NaiveDateTime;
 use chrono::Utc;
 use codex_git_info::collect_git_info;
 use codex_git_info::get_git_repo_root;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::GitInfo;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::ThreadMemoryMode;
-use codex_protocol::protocol::USER_MESSAGE_BEGIN;
-use codex_protocol::protocol::UserMessageEvent;
+use protocol::ThreadId;
+use protocol::protocol::EventMsg;
+use protocol::protocol::GitInfo;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::ThreadMemoryMode;
+use protocol::protocol::USER_MESSAGE_BEGIN;
+use protocol::protocol::UserMessageEvent;
 
 use crate::CreateThreadParams;
 use crate::GitInfoPatch;
@@ -156,7 +156,7 @@ impl ThreadMetadataSync {
         self.defer_resume_update_until_append = false;
         let affects_metadata = items
             .iter()
-            .any(codex_state::rollout_item_affects_thread_metadata);
+            .any(state::rollout_item_affects_thread_metadata);
         let update = if affects_metadata {
             self.observe_items(items)?
         } else {
@@ -393,20 +393,20 @@ fn git_info_patch_from_observation(git_info: GitInfo) -> GitInfoPatch {
 
 #[cfg(test)]
 mod tests {
-    use codex_protocol::AgentPath;
-    use codex_protocol::protocol::CompactedItem;
-    use codex_protocol::protocol::SessionMeta;
-    use codex_protocol::protocol::SessionMetaLine;
-    use codex_protocol::protocol::SessionSource;
-    use codex_protocol::protocol::SubAgentSource;
-    use codex_protocol::protocol::ThreadGoal;
-    use codex_protocol::protocol::ThreadGoalStatus;
-    use codex_protocol::protocol::ThreadGoalUpdatedEvent;
-    use codex_protocol::protocol::ThreadSkill;
-    use codex_protocol::protocol::ThreadSkillKind;
-    use codex_protocol::protocol::ThreadSkillsUpdatedEvent;
-    use codex_protocol::protocol::UserMessageEvent;
     use pretty_assertions::assert_eq;
+    use protocol::AgentPath;
+    use protocol::protocol::CompactedItem;
+    use protocol::protocol::SessionMeta;
+    use protocol::protocol::SessionMetaLine;
+    use protocol::protocol::SessionSource;
+    use protocol::protocol::SubAgentSource;
+    use protocol::protocol::ThreadGoal;
+    use protocol::protocol::ThreadGoalStatus;
+    use protocol::protocol::ThreadGoalUpdatedEvent;
+    use protocol::protocol::ThreadSkill;
+    use protocol::protocol::ThreadSkillKind;
+    use protocol::protocol::ThreadSkillsUpdatedEvent;
+    use protocol::protocol::UserMessageEvent;
 
     use super::*;
     use crate::ThreadEventPersistenceMode;

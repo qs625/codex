@@ -8,7 +8,7 @@ use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerTransportConfig;
 use codex_config_types::OAuthCredentialsStoreMode;
 use plugin_service_api::PluginCapabilitySummary;
-use codex_protocol::protocol::AskForApproval;
+use protocol::protocol::AskForApproval;
 
 use crate::CODEX_APPS_MCP_SERVER_NAME;
 use crate::CodexAppsAuthContext;

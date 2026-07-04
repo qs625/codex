@@ -16,21 +16,21 @@ use crate::test_support::load_plugins_config as load_plugins_config_input;
 use crate::test_support::write_curated_plugin_sha_with as write_curated_plugin_sha;
 use crate::test_support::write_file;
 use crate::test_support::write_openai_curated_marketplace;
-use codex_config::AppToolApproval;
-use codex_config::CONFIG_TOML_FILE;
-use codex_config::ConfigLayerEntry;
-use codex_config::ConfigLayerStack;
-use codex_config::ConfigRequirements;
-use codex_config::ConfigRequirementsToml;
-use codex_config::McpServerConfig;
-use codex_config::McpServerOAuthConfig;
-use codex_config::McpServerToolConfig;
-use codex_config::types::McpServerTransportConfig;
+use config_service::AppToolApproval;
+use config_service::CONFIG_TOML_FILE;
+use config_service::ConfigLayerEntry;
+use config_service::ConfigLayerStack;
+use config_service::ConfigRequirements;
+use config_service::ConfigRequirementsToml;
+use config_service::McpServerConfig;
+use config_service::McpServerOAuthConfig;
+use config_service::McpServerToolConfig;
+use config_service::types::McpServerTransportConfig;
 use codex_config_types::ConfigLayerSource;
-use codex_protocol::protocol::HookEventName;
-use codex_protocol::protocol::Product;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use pretty_assertions::assert_eq;
+use protocol::protocol::HookEventName;
+use protocol::protocol::Product;
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -3155,7 +3155,7 @@ async fn load_plugins_ignores_project_config_files() {
         ConfigRequirementsToml::default(),
     )
     .expect("config layer stack should build");
-    let stack = stack.into();
+    let stack = crate::test_support::plugin_config_layer_stack_from_config(&stack);
 
     let outcome = load_plugins_from_layer_stack(
         &stack,

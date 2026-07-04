@@ -1,19 +1,19 @@
 [package]
-name = "codex-state-cli"
+name = "state-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "CLI utilities for inspecting Codex SQLite state."
 
 [[bin]]
-name = "codex-state-logs"
+name = "state-logs"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
-codex-state = { workspace = true }
+state = { workspace = true }
 dirs = { workspace = true }
 owo-colors = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

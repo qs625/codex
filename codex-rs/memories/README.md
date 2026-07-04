@@ -99,7 +99,7 @@ What it does:
   - `raw_memories.md` (merged raw memories, stable ascending thread-id order)
   - `rollout_summaries/` (one summary file per selected rollout)
 - keeps the memories root itself as a git-baseline directory, initialized under
-  `~/.codex/memories/.git` by `codex-git-utils`
+  `~/.codex/memories/.git` by `codex-git-info`
 - prunes stale rollout summaries that are no longer selected
 - prunes memory extension resource files older than the extension retention
   window, so cleanup appears in the workspace diff

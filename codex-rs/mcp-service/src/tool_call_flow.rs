@@ -1,14 +1,14 @@
 use std::time::Duration;
 
 use codex_config_types::AppToolApproval;
-use codex_mcp_tool_types::truncate_mcp_tool_result_for_event;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp_types::McpToolApprovalDecision;
-use codex_mcp_types::McpToolApprovalMetadata;
-use codex_protocol::items::TurnItem;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::McpInvocation;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::McpToolApprovalDecision;
+use mcp_types::McpToolApprovalMetadata;
+use mcp_types::truncate_mcp_tool_result_for_event;
+use protocol::items::TurnItem;
+use protocol::mcp::CallToolResult;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::McpInvocation;
 use serde_json::Value as JsonValue;
 use tracing::error;
 
@@ -331,8 +331,8 @@ mod tests {
     use std::time::Duration;
 
     use codex_config_types::AppToolApproval;
-    use codex_protocol::items::McpToolCallStatus;
-    use codex_protocol::items::TurnItem;
+    use protocol::items::McpToolCallStatus;
+    use protocol::items::TurnItem;
 
     use super::*;
     use crate::McpToolExecutionHost;
@@ -351,9 +351,9 @@ mod tests {
     impl crate::CodexAppsAuthElicitationHost for FakeTopLevelHost {
         async fn request_codex_apps_auth_elicitation(
             &self,
-            _request_id: codex_protocol::mcp::RequestId,
-            _params: codex_mcp_types::McpServerElicitationRequestParams,
-        ) -> Option<codex_mcp_types::ElicitationResponse> {
+            _request_id: protocol::mcp::RequestId,
+            _params: mcp_types::McpServerElicitationRequestParams,
+        ) -> Option<mcp_types::ElicitationResponse> {
             None
         }
 
@@ -430,7 +430,7 @@ mod tests {
     }
 
     impl crate::McpToolMetadataLookupHost for FakeTopLevelHost {
-        async fn list_all_mcp_tools(&self) -> Vec<codex_mcp_tool_types::ToolInfo> {
+        async fn list_all_mcp_tools(&self) -> Vec<mcp_types::ToolInfo> {
             Vec::new()
         }
 

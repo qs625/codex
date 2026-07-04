@@ -1,17 +1,17 @@
-use codex_protocol::account::PlanType as AccountPlanType;
-use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::SandboxEnforcement;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
-use codex_protocol::permissions::FileSystemSpecialPath;
-use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::account::PlanType as AccountPlanType;
+use protocol::config_types::CollaborationMode;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use protocol::config_types::ServiceTier;
+use protocol::models::ActivePermissionProfile;
+use protocol::models::PermissionProfile;
+use protocol::models::SandboxEnforcement;
+use protocol::permissions::FileSystemPath;
+use protocol::permissions::FileSystemSandboxPolicy;
+use protocol::permissions::FileSystemSpecialPath;
+use protocol::permissions::NetworkSandboxPolicy;
+use protocol::protocol::SandboxPolicy;
 
 use crate::SessionSettingsUpdate;
 
@@ -322,12 +322,12 @@ pub fn permission_profile_preserving_deny_reads(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::config_types::ModeKind;
-    use codex_protocol::config_types::Settings;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
-    use codex_protocol::permissions::FileSystemSandboxKind;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use protocol::config_types::ModeKind;
+    use protocol::config_types::Settings;
+    use protocol::permissions::FileSystemAccessMode;
+    use protocol::permissions::FileSystemSandboxEntry;
+    use protocol::permissions::FileSystemSandboxKind;
+    use protocol::permissions::NetworkSandboxPolicy;
 
     fn path(value: &str) -> AbsolutePathBuf {
         AbsolutePathBuf::from_absolute_path(value).expect("absolute test path")

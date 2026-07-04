@@ -1,6 +1,6 @@
 //! Protocol-neutral Codex Apps auth elicitation payload helpers.
 
-use codex_protocol::mcp::CallToolResult;
+use protocol::mcp::CallToolResult;
 use serde::Serialize;
 
 use crate::MCP_TOOL_CODEX_APPS_META_KEY;

@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
-use codex_exec_server_api::ExecRuntimeError;
-use codex_exec_server_api::HttpClient;
-use codex_exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
+use exec_server_api::ExecRuntimeError;
+use exec_server_api::HttpClient;
+use exec_server_api::HttpResponseBodyStream as ApiHttpResponseBodyStream;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use tokio::sync::mpsc;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use codex_approval_service_api::routes_approval_to_guardian;
 use crate::session::turn_context::TurnContext;
+use codex_approval_service_api::routes_approval_to_guardian;
 
 struct CommandApplyPatchEnvironmentBridge {
     inner: Arc<dyn codex_sandboxing_api::ApplyPatchEnvironment>,
@@ -31,14 +31,14 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
         environment_id: Option<&str>,
     ) -> Result<
         Option<codex_sandboxing_api::ResolvedApplyPatchEnvironment>,
-        codex_tool_types::FunctionCallError,
+        tool_service_api::FunctionCallError,
     > {
         self.resolve_apply_patch_environment(environment_id)
     }
 
     fn file_system_sandbox_context(
         &self,
-        additional_permissions: Option<codex_protocol::models::AdditionalPermissionProfile>,
+        additional_permissions: Option<protocol::models::AdditionalPermissionProfile>,
         cwd: &codex_utils_absolute_path::AbsolutePathBuf,
     ) -> codex_file_system::FileSystemSandboxContext {
         TurnContext::file_system_sandbox_context(self, additional_permissions, cwd)
@@ -46,7 +46,7 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
 
     fn single_local_environment_cwd(
         &self,
-    ) -> Result<codex_utils_absolute_path::AbsolutePathBuf, codex_tool_types::FunctionCallError>
+    ) -> Result<codex_utils_absolute_path::AbsolutePathBuf, tool_service_api::FunctionCallError>
     {
         TurnContext::single_local_environment_cwd(self)
     }
@@ -56,14 +56,17 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
     }
 
     fn routes_approval_to_guardian(&self) -> bool {
-        routes_approval_to_guardian(&self.approval_policy.value(), self.config.approvals_reviewer)
+        routes_approval_to_guardian(
+            &self.approval_policy.value(),
+            self.config.approvals_reviewer,
+        )
     }
 
-    fn current_exec_policy(&self) -> std::sync::Arc<codex_execpolicy_api::Policy> {
+    fn current_exec_policy(&self) -> std::sync::Arc<permissions_service_api::Policy> {
         self.session_arc().services.exec_policy.current()
     }
 
-    fn shell_environment_policy(&self) -> codex_protocol::config_types::ShellEnvironmentPolicy {
+    fn shell_environment_policy(&self) -> protocol::config_types::ShellEnvironmentPolicy {
         self.shell_environment_policy.clone()
     }
 
@@ -71,7 +74,7 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
         self.session_arc().runtime_shell()
     }
 
-    fn tool_user_shell_type(&self) -> codex_tool_config::ToolUserShellType {
+    fn tool_user_shell_type(&self) -> tool_config::ToolUserShellType {
         self.session_arc().tool_user_shell_type()
     }
 
@@ -81,8 +84,13 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
         workdir: &'a codex_utils_absolute_path::AbsolutePathBuf,
     ) -> thread_service_api::SessionCapabilityFuture<'a, ()> {
         Box::pin(async move {
-            crate::skills::maybe_emit_implicit_skill_invocation(&self.session_arc(), self, command, workdir)
-                .await;
+            crate::skills::maybe_emit_implicit_skill_invocation(
+                &self.session_arc(),
+                self,
+                command,
+                workdir,
+            )
+            .await;
         })
     }
 
@@ -158,7 +166,11 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
                 command: spec.command,
             });
             let active = Arc::clone(&self.session_arc().services.network_approval)
-                .begin_network_approval(self.runtime_turn_id().as_str(), self.active_network().is_some(), spec)
+                .begin_network_approval(
+                    self.runtime_turn_id().as_str(),
+                    self.active_network().is_some(),
+                    spec,
+                )
                 .await;
             let Some(active) = active else {
                 return None;
@@ -178,16 +190,21 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
                     )
                 }
             };
-            Some(Arc::new(crate::session_capability::SessionToolNetworkApprovalHandle {
-                service: Arc::clone(&self.session_arc().services.network_approval),
-                mode,
-                cancellation_token,
-                state,
-            }) as Arc<dyn thread_service_api::ToolRuntimeNetworkApprovalHandle>)
+            Some(Arc::new(
+                crate::session_capability::SessionToolNetworkApprovalHandle {
+                    service: Arc::clone(&self.session_arc().services.network_approval),
+                    mode,
+                    cancellation_token,
+                    state,
+                },
+            )
+                as Arc<
+                    dyn thread_service_api::ToolRuntimeNetworkApprovalHandle,
+                >)
         })
     }
 
-    fn unified_exec_shell_mode(&self) -> codex_tool_config::UnifiedExecShellMode {
+    fn unified_exec_shell_mode(&self) -> tool_config::UnifiedExecShellMode {
         self.unified_exec_shell_mode()
     }
 
@@ -209,19 +226,20 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
         workdir: Option<&str>,
     ) -> Result<
         Option<codex_sandboxing_api::ResolvedExecCommandEnvironment>,
-        codex_tool_types::FunctionCallError,
+        tool_service_api::FunctionCallError,
     > {
         self.resolve_exec_command_environment(environment_id, workdir)
             .map(|resolved| {
-                resolved.map(|resolved| codex_sandboxing_api::ResolvedExecCommandEnvironment {
-                    cwd: resolved.cwd,
-                    sandbox_cwd: resolved.sandbox_cwd,
-                    environment: resolved.environment,
-                    apply_patch_environment: Arc::new(CommandApplyPatchEnvironmentBridge {
-                        inner: resolved.apply_patch_environment,
-                    }),
-                })
+                resolved.map(
+                    |resolved| codex_sandboxing_api::ResolvedExecCommandEnvironment {
+                        cwd: resolved.cwd,
+                        sandbox_cwd: resolved.sandbox_cwd,
+                        environment: resolved.environment,
+                        apply_patch_environment: Arc::new(CommandApplyPatchEnvironmentBridge {
+                            inner: resolved.apply_patch_environment,
+                        }),
+                    },
+                )
             })
     }
-
 }

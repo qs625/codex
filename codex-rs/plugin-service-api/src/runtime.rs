@@ -1,7 +1,7 @@
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::collections::HashSet;
 
 use codex_config_types::McpServerConfig;
 
@@ -52,7 +52,12 @@ pub trait PluginRuntime: Send + Sync {
         &'a self,
         config: &'a PluginsConfigInput,
     ) -> PluginRuntimeFuture<'a, Vec<PluginCapabilitySummary>> {
-        Box::pin(async move { self.plugins_for_config(config).await.capability_summaries().to_vec() })
+        Box::pin(async move {
+            self.plugins_for_config(config)
+                .await
+                .capability_summaries()
+                .to_vec()
+        })
     }
 
     fn effective_apps_for_config<'a>(
@@ -66,7 +71,11 @@ pub trait PluginRuntime: Send + Sync {
         &'a self,
         config: &'a PluginsConfigInput,
     ) -> PluginRuntimeFuture<'a, Vec<PluginSkillRoot>> {
-        Box::pin(async move { self.plugins_for_config(config).await.effective_plugin_skill_roots() })
+        Box::pin(async move {
+            self.plugins_for_config(config)
+                .await
+                .effective_plugin_skill_roots()
+        })
     }
 
     fn plugin_hook_sources_for_config<'a>(
@@ -90,7 +99,11 @@ pub trait PluginRuntime: Send + Sync {
         &'a self,
         config: &'a PluginsConfigInput,
     ) -> PluginRuntimeFuture<'a, Vec<PluginAgentDir>> {
-        Box::pin(async move { self.plugins_for_config(config).await.effective_plugin_agent_dirs() })
+        Box::pin(async move {
+            self.plugins_for_config(config)
+                .await
+                .effective_plugin_agent_dirs()
+        })
     }
 
     fn connector_ids_for_config<'a>(

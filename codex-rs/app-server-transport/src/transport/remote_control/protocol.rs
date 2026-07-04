@@ -1,5 +1,5 @@
 use crate::outgoing_message::OutgoingMessage;
-use codex_app_server_protocol::JSONRPCMessage;
+use app_server_protocol::JSONRPCMessage;
 use serde::Deserialize;
 use serde::Serialize;
 use std::io;

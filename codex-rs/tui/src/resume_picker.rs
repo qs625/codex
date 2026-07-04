@@ -29,22 +29,22 @@ use crate::tui::Tui;
 use crate::tui::TuiEvent;
 use crate::wrapping::RtOptions;
 use crate::wrapping::adaptive_wrap_lines;
+use app_server_protocol::Thread;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadListCwdFilter;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadSortKey;
+use app_server_protocol::ThreadSourceKind;
 use chrono::DateTime;
 use chrono::Utc;
-use codex_app_server_protocol::Thread;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::ThreadListCwdFilter;
-use codex_app_server_protocol::ThreadListParams;
-use codex_app_server_protocol::ThreadSortKey;
-use codex_app_server_protocol::ThreadSourceKind;
 use codex_config_types::SessionPickerViewMode;
-use codex_protocol::ThreadId;
 use codex_utils_path as path_utils;
 use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
+use protocol::ThreadId;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
@@ -778,9 +778,7 @@ async fn load_transcript_preview(
                 text: content
                     .iter()
                     .filter_map(|input| match input {
-                        codex_app_server_protocol::UserInput::Text { text, .. } => {
-                            Some(text.as_str())
-                        }
+                        app_server_protocol::UserInput::Text { text, .. } => Some(text.as_str()),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -3182,10 +3180,10 @@ fn render_empty_state_line(state: &PickerState) -> Line<'static> {
 mod tests {
     use super::*;
     use chrono::Duration;
-    use codex_config_edit::CONFIG_TOML_FILE;
-    use codex_protocol::ThreadId;
+    use config_service::CONFIG_TOML_FILE;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
+    use protocol::ThreadId;
 
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
@@ -5742,11 +5740,11 @@ session_picker_view = "dense"
             model_provider: String::from("openai"),
             created_at: 1,
             updated_at: 2,
-            status: codex_app_server_protocol::ThreadStatus::Complete,
+            status: app_server_protocol::ThreadStatus::Complete,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: String::from("0.0.0"),
-            source: codex_app_server_protocol::SessionSource::Cli,
+            source: app_server_protocol::SessionSource::Cli,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -5779,11 +5777,11 @@ session_picker_view = "dense"
             model_provider: String::from("openai"),
             created_at: 1,
             updated_at: 2,
-            status: codex_app_server_protocol::ThreadStatus::Complete,
+            status: app_server_protocol::ThreadStatus::Complete,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: String::from("0.0.0"),
-            source: codex_app_server_protocol::SessionSource::Cli,
+            source: app_server_protocol::SessionSource::Cli,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -5792,13 +5790,13 @@ session_picker_view = "dense"
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
-            turns: vec![codex_app_server_protocol::Turn {
+            turns: vec![app_server_protocol::Turn {
                 id: String::from("turn-1"),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: vec![
                     ThreadItem::UserMessage {
                         id: String::from("user-1"),
-                        content: vec![codex_app_server_protocol::UserInput::Text {
+                        content: vec![app_server_protocol::UserInput::Text {
                             text: String::from("hello from user"),
                             text_elements: Vec::new(),
                         }],
@@ -5814,7 +5812,7 @@ session_picker_view = "dense"
                         text: String::from("1. Do the thing"),
                     },
                 ],
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: None,
@@ -5849,11 +5847,11 @@ session_picker_view = "dense"
             model_provider: String::from("openai"),
             created_at: 1,
             updated_at: 2,
-            status: codex_app_server_protocol::ThreadStatus::Complete,
+            status: app_server_protocol::ThreadStatus::Complete,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: String::from("0.0.0"),
-            source: codex_app_server_protocol::SessionSource::Cli,
+            source: app_server_protocol::SessionSource::Cli,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -5862,15 +5860,15 @@ session_picker_view = "dense"
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
-            turns: vec![codex_app_server_protocol::Turn {
+            turns: vec![app_server_protocol::Turn {
                 id: String::from("turn-1"),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: vec![ThreadItem::Reasoning {
                     id: String::from("reasoning-1"),
                     summary: Vec::new(),
                     content: vec![String::from("private raw chain of thought")],
                 }],
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: None,
@@ -5909,11 +5907,11 @@ session_picker_view = "dense"
             model_provider: String::from("openai"),
             created_at: 1,
             updated_at: 2,
-            status: codex_app_server_protocol::ThreadStatus::Complete,
+            status: app_server_protocol::ThreadStatus::Complete,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: String::from("0.0.0"),
-            source: codex_app_server_protocol::SessionSource::Cli,
+            source: app_server_protocol::SessionSource::Cli,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -5922,15 +5920,15 @@ session_picker_view = "dense"
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
-            turns: vec![codex_app_server_protocol::Turn {
+            turns: vec![app_server_protocol::Turn {
                 id: String::from("turn-1"),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: vec![ThreadItem::Reasoning {
                     id: String::from("reasoning-1"),
                     summary: vec![String::from("public summary")],
                     content: vec![String::from("raw reasoning content")],
                 }],
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: None,
@@ -5963,11 +5961,11 @@ session_picker_view = "dense"
             model_provider: String::from("openai"),
             created_at: 1,
             updated_at: 2,
-            status: codex_app_server_protocol::ThreadStatus::Complete,
+            status: app_server_protocol::ThreadStatus::Complete,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: String::from("0.0.0"),
-            source: codex_app_server_protocol::SessionSource::Cli,
+            source: app_server_protocol::SessionSource::Cli,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -5976,9 +5974,9 @@ session_picker_view = "dense"
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
-            turns: vec![codex_app_server_protocol::Turn {
+            turns: vec![app_server_protocol::Turn {
                 id: String::from("turn-1"),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: vec![ThreadItem::EventDrivenToolCall {
                     id: String::from("builtin-1"),
                     tool: String::from("fs_subscribe"),
@@ -5986,10 +5984,10 @@ session_picker_view = "dense"
                         "path": "/tmp/build.log",
                         "label": "build",
                     }),
-                    status: codex_app_server_protocol::DynamicToolCallStatus::Completed,
+                    status: app_server_protocol::DynamicToolCallStatus::Completed,
                     output: Some(serde_json::Value::String(String::from("subscribed"))),
                 }],
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: None,
@@ -6022,11 +6020,11 @@ session_picker_view = "dense"
             model_provider: String::from("openai"),
             created_at: 1,
             updated_at: 2,
-            status: codex_app_server_protocol::ThreadStatus::Complete,
+            status: app_server_protocol::ThreadStatus::Complete,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: String::from("0.0.0"),
-            source: codex_app_server_protocol::SessionSource::Cli,
+            source: app_server_protocol::SessionSource::Cli,
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
@@ -6035,16 +6033,16 @@ session_picker_view = "dense"
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
-            turns: vec![codex_app_server_protocol::Turn {
+            turns: vec![app_server_protocol::Turn {
                 id: String::from("turn-1"),
-                items_view: codex_app_server_protocol::TurnItemsView::Full,
+                items_view: app_server_protocol::TurnItemsView::Full,
                 items: vec![ThreadItem::EventDrivenTool {
                     id: String::from("evt-1"),
                     tool: String::from("process_exit_subscribe"),
                     title: String::from("Process exited"),
                     text: String::from("[Process exit subscription] Session 42 exited"),
                 }],
-                status: codex_app_server_protocol::TurnStatus::Completed,
+                status: app_server_protocol::TurnStatus::Completed,
                 error: None,
                 started_at: None,
                 completed_at: None,

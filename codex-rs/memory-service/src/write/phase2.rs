@@ -12,13 +12,15 @@ use crate::workspace::memory_workspace_diff;
 use crate::workspace::prepare_memory_workspace;
 use crate::workspace::reset_memory_workspace_baseline;
 use crate::workspace::write_workspace_diff;
-use codex_protocol::protocol::AgentStatus;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::user_input::UserInput;
-use codex_state::Stage1Output;
-use codex_state::StateRuntime;
 use memory_service_api::MemoryConsolidationAgent;
 use memory_service_api::MemoryStartupSettings;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::TokenUsage;
+use protocol::user_input::UserInput;
+use state_api::Phase2JobClaimOutcome;
+use state_api::SharedStateDbRuntime;
+use state_api::Stage1Output;
+use state_api::StateDbRuntime;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -202,7 +204,7 @@ mod job {
 
     pub(super) async fn claim(
         context: &MemoryStartupContext,
-        db: &StateRuntime,
+        db: &dyn StateDbRuntime,
     ) -> Result<Claim, &'static str> {
         let claim = db
             .try_claim_global_phase2_job(context.thread_id(), crate::stage_two::JOB_LEASE_SECONDS)
@@ -212,7 +214,7 @@ mod job {
                 "failed_claim"
             })?;
         let (token, watermark) = match claim {
-            codex_state::Phase2JobClaimOutcome::Claimed {
+            Phase2JobClaimOutcome::Claimed {
                 ownership_token,
                 input_watermark,
             } => {
@@ -223,13 +225,13 @@ mod job {
                 );
                 (ownership_token, input_watermark)
             }
-            codex_state::Phase2JobClaimOutcome::SkippedRetryUnavailable => {
+            Phase2JobClaimOutcome::SkippedRetryUnavailable => {
                 return Err("skipped_retry_unavailable");
             }
-            codex_state::Phase2JobClaimOutcome::SkippedCooldown => {
+            Phase2JobClaimOutcome::SkippedCooldown => {
                 return Err("skipped_cooldown");
             }
-            codex_state::Phase2JobClaimOutcome::SkippedRunning => return Err("skipped_running"),
+            Phase2JobClaimOutcome::SkippedRunning => return Err("skipped_running"),
         };
 
         Ok(Claim { token, watermark })
@@ -237,7 +239,7 @@ mod job {
 
     pub(super) async fn failed(
         context: &MemoryStartupContext,
-        db: &StateRuntime,
+        db: &dyn StateDbRuntime,
         claim: &Claim,
         reason: &'static str,
     ) {
@@ -263,10 +265,10 @@ mod job {
 
     pub(super) async fn succeed(
         context: &MemoryStartupContext,
-        db: &StateRuntime,
+        db: &dyn StateDbRuntime,
         claim: &Claim,
         completion_watermark: i64,
-        selected_outputs: &[codex_state::Stage1Output],
+        selected_outputs: &[Stage1Output],
         reason: &'static str,
     ) -> bool {
         context.counter(MEMORY_PHASE_TWO_JOBS, /*inc*/ 1, &[("status", reason)]);
@@ -294,7 +296,7 @@ mod agent {
         context: Arc<MemoryStartupContext>,
         claim: Claim,
         new_watermark: i64,
-        selected_outputs: Vec<codex_state::Stage1Output>,
+        selected_outputs: Vec<Stage1Output>,
         memory_root: codex_utils_absolute_path::AbsolutePathBuf,
         agent: Box<dyn MemoryConsolidationAgent>,
         phase_two_e2e_timer: Option<codex_otel::Timer>,
@@ -334,7 +336,7 @@ mod agent {
                         false
                     }
                     Err(_) => {
-                        job::failed(context.as_ref(), &db, &claim, "failed_confirm_ownership")
+                        job::failed(context.as_ref(), db.as_ref(), &claim, "failed_confirm_ownership")
                             .await;
                         false
                     }
@@ -342,10 +344,16 @@ mod agent {
                 if still_owns_lock {
                     if let Err(err) = reset_memory_workspace_baseline(&memory_root).await {
                         tracing::error!("failed resetting memory workspace baseline: {err}");
-                        job::failed(context.as_ref(), &db, &claim, "failed_workspace_commit").await;
+                        job::failed(
+                            context.as_ref(),
+                            db.as_ref(),
+                            &claim,
+                            "failed_workspace_commit",
+                        )
+                        .await;
                     } else if !job::succeed(
                         context.as_ref(),
-                        &db,
+                        db.as_ref(),
                         &claim,
                         new_watermark,
                         &selected_outputs,
@@ -359,7 +367,7 @@ mod agent {
                     }
                 }
             } else {
-                job::failed(context.as_ref(), &db, &claim, "failed_agent").await;
+                job::failed(context.as_ref(), db.as_ref(), &claim, "failed_agent").await;
             }
 
             let cleanup_context = Arc::clone(&context);
@@ -375,7 +383,7 @@ mod agent {
     }
 
     async fn loop_agent(
-        db: Arc<StateRuntime>,
+        db: SharedStateDbRuntime,
         token: String,
         agent: &dyn MemoryConsolidationAgent,
     ) -> AgentStatus {
@@ -441,10 +449,7 @@ mod agent {
     }
 }
 
-pub(super) fn get_watermark(
-    claimed_watermark: i64,
-    latest_memories: &[codex_state::Stage1Output],
-) -> i64 {
+pub(super) fn get_watermark(claimed_watermark: i64, latest_memories: &[Stage1Output]) -> i64 {
     latest_memories
         .iter()
         .map(|memory| memory.source_updated_at.timestamp())

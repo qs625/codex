@@ -1,7 +1,7 @@
 use clap::Parser;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
-use codex_config_loader::LoaderOverrides;
+use config_service::LoaderOverrides;
 use codex_tui::AppExitInfo;
 use codex_tui::Cli;
 use codex_tui::ExitReason;

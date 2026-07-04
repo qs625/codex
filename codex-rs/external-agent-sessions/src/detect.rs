@@ -91,7 +91,7 @@ fn is_recent_enough(now: i64, latest_timestamp: i64) -> bool {
 mod tests {
     use super::*;
     use crate::ledger::record_imported_session;
-    use codex_protocol::ThreadId;
+    use protocol::ThreadId;
     use serde_json::Value as JsonValue;
     use std::path::Path;
     use tempfile::TempDir;

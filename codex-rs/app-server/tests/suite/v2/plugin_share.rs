@@ -3,32 +3,32 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
+use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCResponse;
+use app_server_protocol::PluginAuthPolicy;
+use app_server_protocol::PluginInstallPolicy;
+use app_server_protocol::PluginInterface;
+use app_server_protocol::PluginListParams;
+use app_server_protocol::PluginListResponse;
+use app_server_protocol::PluginShareCheckoutResponse;
+use app_server_protocol::PluginShareContext;
+use app_server_protocol::PluginShareDeleteResponse;
+use app_server_protocol::PluginShareDiscoverability;
+use app_server_protocol::PluginShareListItem;
+use app_server_protocol::PluginShareListResponse;
+use app_server_protocol::PluginSharePrincipal;
+use app_server_protocol::PluginSharePrincipalRole;
+use app_server_protocol::PluginSharePrincipalType;
+use app_server_protocol::PluginShareSaveResponse;
+use app_server_protocol::PluginShareUpdateTargetsResponse;
+use app_server_protocol::PluginSource;
+use app_server_protocol::PluginSummary;
+use app_server_protocol::RequestId;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
-use codex_app_server_protocol::JSONRPCError;
-use codex_app_server_protocol::JSONRPCResponse;
-use codex_app_server_protocol::PluginAuthPolicy;
-use codex_app_server_protocol::PluginInstallPolicy;
-use codex_app_server_protocol::PluginInterface;
-use codex_app_server_protocol::PluginListParams;
-use codex_app_server_protocol::PluginListResponse;
-use codex_app_server_protocol::PluginShareCheckoutResponse;
-use codex_app_server_protocol::PluginShareContext;
-use codex_app_server_protocol::PluginShareDeleteResponse;
-use codex_app_server_protocol::PluginShareDiscoverability;
-use codex_app_server_protocol::PluginShareListItem;
-use codex_app_server_protocol::PluginShareListResponse;
-use codex_app_server_protocol::PluginSharePrincipal;
-use codex_app_server_protocol::PluginSharePrincipalRole;
-use codex_app_server_protocol::PluginSharePrincipalType;
-use codex_app_server_protocol::PluginShareSaveResponse;
-use codex_app_server_protocol::PluginShareUpdateTargetsResponse;
-use codex_app_server_protocol::PluginSource;
-use codex_app_server_protocol::PluginSummary;
-use codex_app_server_protocol::RequestId;
-use codex_config::types::AuthCredentialsStoreMode;
+use config_service::types::AuthCredentialsStoreMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -179,7 +179,7 @@ async fn plugin_share_save_uploads_local_plugin() -> Result<()> {
                     enabled: true,
                     install_policy: PluginInstallPolicy::Available,
                     auth_policy: PluginAuthPolicy::OnUse,
-                    availability: codex_app_server_protocol::PluginAvailability::Available,
+                    availability: app_server_protocol::PluginAvailability::Available,
                     interface: Some(expected_plugin_interface()),
                     keywords: Vec::new(),
                 },
@@ -583,7 +583,7 @@ async fn plugin_share_list_returns_created_workspace_plugins() -> Result<()> {
                     enabled: true,
                     install_policy: PluginInstallPolicy::Available,
                     auth_policy: PluginAuthPolicy::OnUse,
-                    availability: codex_app_server_protocol::PluginAvailability::Available,
+                    availability: app_server_protocol::PluginAvailability::Available,
                     interface: Some(expected_plugin_interface()),
                     keywords: Vec::new(),
                 },
@@ -716,9 +716,7 @@ async fn plugin_share_checkout_adds_personal_marketplace_entry() -> Result<()> {
     let request_id = mcp
         .send_plugin_list_request(PluginListParams {
             cwds: None,
-            marketplace_kinds: Some(vec![
-                codex_app_server_protocol::PluginListMarketplaceKind::Local,
-            ]),
+            marketplace_kinds: Some(vec![app_server_protocol::PluginListMarketplaceKind::Local]),
         })
         .await?;
     let response: JSONRPCResponse = timeout(
@@ -1032,7 +1030,7 @@ async fn plugin_share_update_targets_updates_share_targets() -> Result<()> {
                     name: "Workspace".to_string(),
                 },
             ],
-            discoverability: codex_app_server_protocol::PluginShareDiscoverability::Unlisted,
+            discoverability: app_server_protocol::PluginShareDiscoverability::Unlisted,
         }
     );
     Ok(())
@@ -1184,7 +1182,7 @@ async fn plugin_share_delete_removes_created_workspace_plugin() -> Result<()> {
                     enabled: true,
                     install_policy: PluginInstallPolicy::Available,
                     auth_policy: PluginAuthPolicy::OnUse,
-                    availability: codex_app_server_protocol::PluginAvailability::Available,
+                    availability: app_server_protocol::PluginAvailability::Available,
                     interface: Some(expected_plugin_interface()),
                     keywords: Vec::new(),
                 },

@@ -1,51 +1,33 @@
 use super::*;
-use crate::config::test_config;
 use crate::config::Config;
 use crate::config::ConfigOverrides;
 use crate::config::Constrained;
 use crate::config::ManagedFeatures;
 use crate::config::NetworkProxySpec;
+use crate::config::test_config;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use crate::test_support;
 use crate::test_support::create_model_provider_for_tests_with_provider_auth;
 use codex_analytics_api::GuardianApprovalRequestSource;
-use codex_config::config_toml::ConfigToml;
-use codex_config::types::McpServerConfig;
-use codex_config::ConfigLayerStack;
-use codex_config::FeatureRequirementsToml;
-use codex_config::NetworkConstraints;
-use codex_config::NetworkDomainPermissionToml;
-use codex_config::NetworkDomainPermissionsToml;
-use codex_config::RequirementSource;
-use codex_config::Sourced;
+use config_service::ConfigLayerStack;
+use config_service::FeatureRequirementsToml;
+use config_service::NetworkConstraints;
+use config_service::NetworkDomainPermissionToml;
+use config_service::NetworkDomainPermissionsToml;
+use config_service::RequirementSource;
+use config_service::Sourced;
+use config_service::config_toml::ConfigToml;
+use config_service::types::McpServerConfig;
 use codex_features::Feature;
 use codex_file_system::LOCAL_FS;
-use codex_guardian::format_guardian_action_pretty;
 use codex_guardian::GuardianApprovalRequest;
 use codex_guardian::GuardianPromptMode;
 use codex_guardian::GuardianTranscriptCursor;
+use codex_guardian::format_guardian_action_pretty;
 use codex_guardian::guardian_request_target_item_id;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_model_provider_info::AMAZON_BEDROCK_GPT_5_4_MODEL_ID;
-use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 use codex_network_proxy_api::NetworkProxyConfig;
-use codex_protocol::approvals::NetworkApprovalProtocol;
-use codex_protocol::config_types::ApprovalsReviewer;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::GranularApprovalConfig;
-use codex_protocol::protocol::GuardianAssessmentStatus;
-use codex_protocol::protocol::ReviewDecision;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::TurnCompleteEvent;
-use codex_protocol::ThreadId;
+use core_test_support::PathBufExt;
+use core_test_support::TempDirExt;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
 use core_test_support::responses::ev_assistant_message;
@@ -57,14 +39,31 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
-use core_test_support::streaming_sse::start_streaming_sse_server;
 use core_test_support::streaming_sse::StreamingSseChunk;
+use core_test_support::streaming_sse::start_streaming_sse_server;
 use core_test_support::test_path_buf;
-use core_test_support::PathBufExt;
-use core_test_support::TempDirExt;
-use insta::assert_snapshot;
 use insta::Settings;
+use insta::assert_snapshot;
+use model_service_api::AMAZON_BEDROCK_GPT_5_4_MODEL_ID;
+use model_service_api::AMAZON_BEDROCK_PROVIDER_ID;
+use model_service_api::ModelProviderInfo;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
+use protocol::approvals::NetworkApprovalProtocol;
+use protocol::config_types::ApprovalsReviewer;
+use protocol::models::ContentItem;
+use protocol::models::PermissionProfile;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AskForApproval;
+use protocol::protocol::Event;
+use protocol::protocol::EventMsg;
+use protocol::protocol::GranularApprovalConfig;
+use protocol::protocol::GuardianAssessmentStatus;
+use protocol::protocol::ReviewDecision;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::TurnCompleteEvent;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -92,12 +91,11 @@ async fn guardian_test_session_and_turn_with_base_url(
     config.model_provider.base_url = Some(format!("{base_url}/v1"));
     config.user_instructions = None;
     let config = Arc::new(config);
-    let models_manager = test_support::models_manager_with_provider_auth(
-        config.codex_home.to_path_buf(),
+    session.services.model_service = crate::session::tests::build_test_model_service_for_config(
+        config.as_ref(),
         turn.provider.auth_manager(),
-        config.model_provider.clone(),
+        Arc::clone(&session.services.model_provider_factory),
     );
-    session.services.models_manager = models_manager;
     turn.config = Arc::clone(&config);
     turn.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
@@ -130,7 +128,7 @@ async fn seed_guardian_parent_history(session: &Arc<Session>, turn: &Arc<TurnCon
                 },
                 ResponseItem::FunctionCallOutput {
                     call_id: "call-1".to_string(),
-                    output: codex_protocol::models::FunctionCallOutputPayload::from_text(
+                    output: protocol::models::FunctionCallOutputPayload::from_text(
                         "repo visibility: public".to_string(),
                     ),
                 },
@@ -191,11 +189,11 @@ fn normalize_guardian_snapshot_paths(text: String) -> String {
     text
 }
 
-fn guardian_prompt_text(items: &[codex_protocol::user_input::UserInput]) -> String {
+fn guardian_prompt_text(items: &[protocol::user_input::UserInput]) -> String {
     items
         .iter()
         .map(|item| match item {
-            codex_protocol::user_input::UserInput::Text { text, .. } => text.as_str(),
+            protocol::user_input::UserInput::Text { text, .. } => text.as_str(),
             _ => "",
         })
         .collect::<String>()
@@ -228,7 +226,7 @@ async fn build_guardian_prompt_full_mode_preserves_initial_review_format() -> an
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Need to push the reviewed docs fix.".to_string()),
         },
@@ -282,7 +280,7 @@ async fn build_guardian_prompt_delta_mode_preserves_original_numbering() -> anyh
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Need to push the second docs fix.".to_string()),
         },
@@ -320,7 +318,7 @@ async fn build_guardian_prompt_delta_mode_handles_empty_delta() -> anyhow::Resul
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Need to push the second docs fix.".to_string()),
         },
@@ -355,7 +353,7 @@ async fn build_guardian_prompt_stale_delta_cursor_falls_back_to_full_prompt() ->
             id: "shell-3".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Need to push the docs fix.".to_string()),
         },
@@ -436,7 +434,7 @@ async fn build_guardian_prompt_stale_delta_version_falls_back_to_full_prompt() -
             id: "shell-4".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Need to push after the compaction.".to_string()),
         },
@@ -553,7 +551,7 @@ fn guardian_approval_request_to_json_renders_network_access_trigger() -> serde_j
             tool_name: "shell".to_string(),
             command: vec!["curl".to_string(), "https://example.com".to_string()],
             cwd: cwd.clone(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Fetch the release metadata.".to_string()),
             tty: None,
@@ -603,7 +601,7 @@ async fn build_guardian_prompt_items_explains_network_access_review_scope() -> a
                 tool_name: "shell".to_string(),
                 command: vec!["curl".to_string(), "https://example.com".to_string()],
                 cwd,
-                sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+                sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
                 additional_permissions: None,
                 justification: Some("Fetch the release metadata.".to_string()),
                 tty: None,
@@ -716,7 +714,7 @@ fn guardian_request_target_item_id_omits_network_access_trigger_call_id() {
             tool_name: "shell".to_string(),
             command: vec!["curl".to_string(), "https://example.com".to_string()],
             cwd: test_path_buf("/repo").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: None,
             tty: None,
@@ -823,8 +821,8 @@ async fn routes_approval_to_guardian_allows_granular_review_policy() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn guardian_review_request_layout_matches_model_visible_request_snapshot(
-) -> anyhow::Result<()> {
+async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
+-> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -852,12 +850,11 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot(
     config.cwd = temp_cwd.abs();
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     let config = Arc::new(config);
-    let models_manager = test_support::models_manager_with_provider_auth(
-        config.codex_home.to_path_buf(),
+    session.services.model_service = crate::session::tests::build_test_model_service_for_config(
+        config.as_ref(),
         turn.provider.auth_manager(),
-        config.model_provider.clone(),
+        Arc::clone(&session.services.model_provider_factory),
     );
-    session.services.models_manager = models_manager;
     turn.config = Arc::clone(&config);
     turn.provider = create_model_provider_for_tests_with_provider_auth(
         config.model_provider.clone(),
@@ -876,7 +873,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot(
             "guardian-approval-mvp".to_string(),
         ],
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
-        sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+        sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
         additional_permissions: None,
         justification: Some("Need to push the reviewed docs fix to the repo remote.".to_string()),
     };
@@ -981,7 +978,7 @@ async fn build_guardian_prompt_items_includes_parent_session_id() -> anyhow::Res
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "status".to_string()],
             cwd: test_path_buf("/repo").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: None,
         },
@@ -992,8 +989,8 @@ async fn build_guardian_prompt_items_includes_parent_session_id() -> anyhow::Res
         .items
         .into_iter()
         .map(|item| match item {
-            codex_protocol::user_input::UserInput::Text { text, .. } => text,
-            codex_protocol::user_input::UserInput::Image { .. } => String::new(),
+            protocol::user_input::UserInput::Text { text, .. } => text,
+            protocol::user_input::UserInput::Image { .. } => String::new(),
             _ => String::new(),
         })
         .collect::<String>();
@@ -1055,7 +1052,7 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
         id: "shell-1".to_string(),
         command: vec!["git".to_string(), "push".to_string()],
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
-        sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+        sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
         additional_permissions: None,
         justification: Some("Need to push the first docs fix.".to_string()),
     };
@@ -1099,7 +1096,7 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
             "--force-with-lease".to_string(),
         ],
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
-        sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+        sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
         additional_permissions: None,
         justification: Some("Need to push the second docs fix.".to_string()),
     };
@@ -1139,7 +1136,7 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
         id: "shell-3".to_string(),
         command: vec!["git".to_string(), "push".to_string()],
         cwd: test_path_buf("/repo/codex-rs/core").abs(),
-        sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+        sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
         additional_permissions: None,
         justification: Some("Need to push the third docs fix.".to_string()),
     };
@@ -1266,7 +1263,9 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
         .join("");
     assert!(second_user_message.contains(">>> TRANSCRIPT DELTA START\n"));
     assert!(second_user_message.contains("[5] user: Please push the second docs fix too."));
-    assert!(second_user_message.contains("[6] assistant: I need approval for the second docs fix."));
+    assert!(
+        second_user_message.contains("[6] assistant: I need approval for the second docs fix.")
+    );
     assert!(!second_user_message.contains("[1] user: Please check the repo visibility"));
 
     let mut settings = Settings::clone_current();
@@ -1332,7 +1331,7 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
             id: "shell-1".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Need to push the first docs fix.".to_string()),
         },
@@ -1374,7 +1373,7 @@ async fn guardian_reused_trunk_ignores_stale_prior_turn_completion() -> anyhow::
             id: "shell-2".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Need to push the second docs fix.".to_string()),
         },
@@ -1428,15 +1427,14 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     config.user_instructions = None;
     let config = Arc::new(config);
-    let models_manager = test_support::models_manager_with_provider_auth(
-        config.codex_home.to_path_buf(),
-        turn.provider.auth_manager(),
-        config.model_provider.clone(),
-    );
     Arc::get_mut(&mut session)
         .expect("session should be uniquely owned")
         .services
-        .models_manager = models_manager;
+        .model_service = crate::session::tests::build_test_model_service_for_config(
+        config.as_ref(),
+        turn.provider.auth_manager(),
+        Arc::clone(&session.services.model_provider_factory),
+    );
     let turn_mut = Arc::get_mut(&mut turn).expect("turn should be uniquely owned");
     turn_mut.config = Arc::clone(&config);
     turn_mut.provider = create_model_provider_for_tests_with_provider_auth(
@@ -1455,7 +1453,7 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
             id: "shell-guardian-error".to_string(),
             command: vec!["git".to_string(), "push".to_string()],
             cwd: test_path_buf("/repo/codex-rs/core").abs(),
-            sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+            sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: Some("Need to push the reviewed docs fix.".to_string()),
         },
@@ -1518,14 +1516,15 @@ async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> 
 async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> anyhow::Result<()> {
     const TEST_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
 
-    let handle = std::thread::Builder::new()
-        .name("guardian_parallel_reviews_fork_from_last_committed_trunk_history".to_string())
-        .stack_size(TEST_STACK_SIZE_BYTES)
-        .spawn(|| -> anyhow::Result<()> {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()?;
-            runtime.block_on(Box::pin(async {
+    let handle =
+        std::thread::Builder::new()
+            .name("guardian_parallel_reviews_fork_from_last_committed_trunk_history".to_string())
+            .stack_size(TEST_STACK_SIZE_BYTES)
+            .spawn(|| -> anyhow::Result<()> {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(Box::pin(async {
                 let first_assessment = serde_json::json!({
                     "risk_level": "low",
                     "user_authorization": "high",
@@ -1589,7 +1588,7 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                     id: "shell-guardian-1".to_string(),
                     command: vec!["git".to_string(), "status".to_string()],
                     cwd: test_path_buf("/repo/codex-rs/core").abs(),
-                    sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+                    sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
                     additional_permissions: None,
                     justification: Some("Inspect repo state before proceeding.".to_string()),
                 };
@@ -1633,7 +1632,7 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                     id: "shell-guardian-2".to_string(),
                     command: vec!["git".to_string(), "diff".to_string()],
                     cwd: test_path_buf("/repo/codex-rs/core").abs(),
-                    sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+                    sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
                     additional_permissions: None,
                     justification: Some("Inspect pending changes before proceeding.".to_string()),
                 };
@@ -1641,7 +1640,7 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
                     id: "shell-guardian-3".to_string(),
                     command: vec!["git".to_string(), "push".to_string()],
                     cwd: test_path_buf("/repo/codex-rs/core").abs(),
-                    sandbox_permissions: codex_protocol::models::SandboxPermissions::UseDefault,
+                    sandbox_permissions: protocol::models::SandboxPermissions::UseDefault,
                     additional_permissions: None,
                     justification: Some(
                         "Inspect whether pushing is safe before proceeding.".to_string(),
@@ -1743,7 +1742,7 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
 
                 Ok(())
             }))
-        })?;
+            })?;
 
     match handle.join() {
         Ok(result) => result,
@@ -1776,7 +1775,7 @@ async fn guardian_review_session_config_preserves_parent_network_proxy() {
         &parent_config,
         /*live_network_config*/ None,
         "parent-active-model",
-        Some(codex_protocol::openai_models::ReasoningEffort::Low),
+        Some(protocol::openai_models::ReasoningEffort::Low),
     )
     .expect("guardian config");
 
@@ -1787,7 +1786,7 @@ async fn guardian_review_session_config_preserves_parent_network_proxy() {
     );
     assert_eq!(
         guardian_config.model_reasoning_effort,
-        Some(codex_protocol::openai_models::ReasoningEffort::Low)
+        Some(protocol::openai_models::ReasoningEffort::Low)
     );
     assert_eq!(
         guardian_config.permissions.approval_policy,
@@ -1978,7 +1977,7 @@ async fn guardian_review_session_config_uses_requirements_guardian_policy_config
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        codex_config::ConfigRequirementsToml {
+        config_service::ConfigRequirementsToml {
             guardian_policy_config: Some(
                 "  Use the workspace-managed guardian policy.  ".to_string(),
             ),

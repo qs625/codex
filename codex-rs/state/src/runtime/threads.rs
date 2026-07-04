@@ -1,8 +1,8 @@
 use super::*;
 use crate::SortDirection;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::ThreadSkill;
+use protocol::protocol::EventMsg;
+use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadSkill;
 use std::sync::atomic::Ordering;
 
 impl StateRuntime {
@@ -567,7 +567,7 @@ ON CONFLICT(id) DO NOTHING
         .bind(
             metadata
                 .thread_source
-                .map(codex_protocol::protocol::ThreadSource::as_str),
+                .map(protocol::protocol::ThreadSource::as_str),
         )
         .bind(metadata.agent_nickname.as_deref())
         .bind(metadata.agent_role.as_deref())
@@ -799,7 +799,7 @@ ON CONFLICT(id) DO UPDATE SET
         .bind(
             metadata
                 .thread_source
-                .map(codex_protocol::protocol::ThreadSource::as_str),
+                .map(protocol::protocol::ThreadSource::as_str),
         )
         .bind(metadata.agent_nickname.as_deref())
         .bind(metadata.agent_role.as_deref())
@@ -1136,7 +1136,7 @@ fn thread_spawn_parent_thread_id_from_source_str(source: &str) -> Option<ThreadI
     let parsed_source = serde_json::from_str(source)
         .or_else(|_| serde_json::from_value::<SessionSource>(Value::String(source.to_string())));
     match parsed_source.ok() {
-        Some(SessionSource::SubAgent(codex_protocol::protocol::SubAgentSource::ThreadSpawn {
+        Some(SessionSource::SubAgent(protocol::protocol::SubAgentSource::ThreadSpawn {
             parent_thread_id,
             ..
         })) => Some(parent_thread_id),
@@ -1272,12 +1272,12 @@ mod tests {
     use crate::DirectionalThreadSpawnEdgeStatus;
     use crate::runtime::test_support::test_thread_metadata;
     use crate::runtime::test_support::unique_temp_dir;
-    use codex_protocol::protocol::EventMsg;
-    use codex_protocol::protocol::GitInfo;
-    use codex_protocol::protocol::SessionMeta;
-    use codex_protocol::protocol::SessionMetaLine;
-    use codex_protocol::protocol::SessionSource;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::EventMsg;
+    use protocol::protocol::GitInfo;
+    use protocol::protocol::SessionMeta;
+    use protocol::protocol::SessionMetaLine;
+    use protocol::protocol::SessionSource;
     use std::path::PathBuf;
 
     #[tokio::test]
@@ -2017,16 +2017,16 @@ mod tests {
             SessionSource::Cli,
         );
         let items = vec![RolloutItem::EventMsg(EventMsg::TokenCount(
-            codex_protocol::protocol::TokenCountEvent {
-                info: Some(codex_protocol::protocol::TokenUsageInfo {
-                    total_token_usage: codex_protocol::protocol::TokenUsage {
+            protocol::protocol::TokenCountEvent {
+                info: Some(protocol::protocol::TokenUsageInfo {
+                    total_token_usage: protocol::protocol::TokenUsage {
                         input_tokens: 0,
                         cached_input_tokens: 0,
                         output_tokens: 0,
                         reasoning_output_tokens: 0,
                         total_tokens: 321,
                     },
-                    last_token_usage: codex_protocol::protocol::TokenUsage::default(),
+                    last_token_usage: protocol::protocol::TokenUsage::default(),
                     model_context_window: None,
                 }),
                 rate_limits: None,

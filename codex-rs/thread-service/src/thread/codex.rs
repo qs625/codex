@@ -5,44 +5,44 @@ use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
 use codex_agent_runtime::ThreadIdleReason;
 use codex_agent_runtime::ThreadPostTurnState;
-use codex_config::ConstraintResult;
+use config_service::ConstraintResult;
 use codex_features::Feature;
 use mcp_service_api::McpToolRuntime;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
-use codex_protocol::mcp::CallToolResult;
-use codex_protocol::mcp::ReadResourceRequestParams;
+use protocol::error::CodexErr;
+use protocol::error::Result as CodexResult;
+use protocol::mcp::CallToolResult;
+use protocol::mcp::ReadResourceRequestParams;
 #[cfg(any(test, feature = "test-support"))]
-use codex_protocol::models::ContentItem;
+use protocol::models::ContentItem;
 #[cfg(any(test, feature = "test-support"))]
-use codex_protocol::models::ResponseInputItem;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::SessionConfiguredEvent;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::Submission;
-use codex_protocol::protocol::ThreadContextUsage;
-use codex_protocol::protocol::ThreadMemoryMode;
-use codex_protocol::protocol::TokenUsageInfo;
-use codex_protocol::protocol::TurnEnvironmentSelection;
-use codex_protocol::protocol::W3cTraceContext;
-use codex_protocol::user_input::UserInput;
-use codex_session_telemetry_api::SharedSessionTelemetry;
-use codex_state_api::ExternalGoalSet;
+use protocol::models::ResponseInputItem;
+use protocol::models::ResponseItem;
+use protocol::protocol::Event;
+use protocol::protocol::Op;
+use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::SessionSource;
+use protocol::protocol::Submission;
+use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadMemoryMode;
+use protocol::protocol::TokenUsageInfo;
+use protocol::protocol::TurnEnvironmentSelection;
+use protocol::protocol::W3cTraceContext;
+use protocol::user_input::UserInput;
+use session_telemetry_api::SharedSessionTelemetry;
+use state_api::ExternalGoalSet;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::CodexThreadTurnContextOverrides;
 use thread_service_api::ThreadConfigSnapshot;
 use thread_service_api::ThreadRuntimeStatus;
-use codex_thread_store_api::StoredThread;
-use codex_thread_store_api::StoredThreadHistory;
-use codex_thread_store_api::ThreadMetadataPatch;
-use codex_thread_store_api::ThreadStoreError;
-use codex_thread_store_api::ThreadStoreResult;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use thread_store_api::StoredThread;
+use thread_store_api::StoredThreadHistory;
+use thread_store_api::ThreadMetadataPatch;
+use thread_store_api::ThreadStoreError;
+use thread_store_api::ThreadStoreResult;
 use tokio::sync::Mutex;
 use tokio::sync::watch;
 
@@ -472,14 +472,14 @@ impl CodexThread {
         self.codex.thread_config_snapshot().await
     }
 
-    pub async fn config(&self) -> Arc<codex_config::Config> {
+    pub async fn config(&self) -> Arc<config_service::Config> {
         self.codex.session.get_config().await
     }
 
     /// Refresh the thread's layer-backed user config state from a caller-supplied
     /// config snapshot. Thread-scoped layers and session-static settings remain
     /// unchanged.
-    pub async fn refresh_runtime_config(&self, next_config: codex_config::Config) {
+    pub async fn refresh_runtime_config(&self, next_config: config_service::Config) {
         self.codex.session.refresh_runtime_config(next_config).await;
     }
 
@@ -492,7 +492,13 @@ impl CodexThread {
         server: &str,
         uri: &str,
     ) -> anyhow::Result<serde_json::Value> {
-        let manager = self.codex.session.services.mcp_connection_manager.read().await;
+        let manager = self
+            .codex
+            .session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await;
         let result = manager
             .read_resource(
                 server,
@@ -512,7 +518,13 @@ impl CodexThread {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> anyhow::Result<CallToolResult> {
-        let manager = self.codex.session.services.mcp_connection_manager.read().await;
+        let manager = self
+            .codex
+            .session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await;
         McpToolRuntime::call_tool(manager.as_ref(), server, tool, arguments, meta).await
     }
 

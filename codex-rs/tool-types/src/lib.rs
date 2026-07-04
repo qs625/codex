@@ -16,13 +16,13 @@ mod tool_output;
 mod tool_payload;
 mod tool_spec;
 
-pub use codex_protocol::ToolName;
 pub use function_call_error::FunctionCallError;
 pub use json_schema::AdditionalProperties;
 pub use json_schema::JsonSchema;
 pub use json_schema::JsonSchemaPrimitiveType;
 pub use json_schema::JsonSchemaType;
 pub use json_schema::parse_tool_input_schema;
+pub use protocol::ToolName;
 pub use request_plugin_install::REQUEST_PLUGIN_INSTALL_APPROVAL_KIND_VALUE;
 pub use request_plugin_install::REQUEST_PLUGIN_INSTALL_PERSIST_ALWAYS_VALUE;
 pub use request_plugin_install::REQUEST_PLUGIN_INSTALL_PERSIST_KEY;

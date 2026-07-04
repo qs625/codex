@@ -80,48 +80,48 @@ use crate::now_unix_seconds;
 use crate::option_i64_to_u64;
 use crate::serialize_enum_as_string;
 use crate::usize_to_u64;
-use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ClientResponse;
-use codex_app_server_protocol::CodexErrorInfo;
-use codex_app_server_protocol::CollabAgentStatus;
-use codex_app_server_protocol::CollabAgentTool;
-use codex_app_server_protocol::CollabAgentToolCallStatus;
-use codex_app_server_protocol::CommandAction;
-use codex_app_server_protocol::CommandExecutionApprovalDecision;
-use codex_app_server_protocol::CommandExecutionSource;
-use codex_app_server_protocol::CommandExecutionStatus;
-use codex_app_server_protocol::DynamicToolCallOutputContentItem;
-use codex_app_server_protocol::DynamicToolCallStatus;
-use codex_app_server_protocol::FileChangeApprovalDecision;
-use codex_app_server_protocol::GuardianApprovalReviewAction;
-use codex_app_server_protocol::GuardianApprovalReviewStatus;
-use codex_app_server_protocol::InitializeParams;
-use codex_app_server_protocol::McpToolCallStatus;
-use codex_app_server_protocol::NetworkPolicyRuleAction;
-use codex_app_server_protocol::PatchApplyStatus;
-use codex_app_server_protocol::PatchChangeKind;
-use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::RequestPermissionProfile;
-use codex_app_server_protocol::ServerNotification;
-use codex_app_server_protocol::ServerRequest;
-use codex_app_server_protocol::ServerResponse;
-use codex_app_server_protocol::ThreadItem;
-use codex_app_server_protocol::TurnSteerResponse;
-use codex_app_server_protocol::UserInput;
-use codex_app_server_protocol::WebSearchAction;
+use app_server_protocol::ClientRequest;
+use app_server_protocol::ClientResponse;
+use app_server_protocol::CodexErrorInfo;
+use app_server_protocol::CollabAgentStatus;
+use app_server_protocol::CollabAgentTool;
+use app_server_protocol::CollabAgentToolCallStatus;
+use app_server_protocol::CommandAction;
+use app_server_protocol::CommandExecutionApprovalDecision;
+use app_server_protocol::CommandExecutionSource;
+use app_server_protocol::CommandExecutionStatus;
+use app_server_protocol::DynamicToolCallOutputContentItem;
+use app_server_protocol::DynamicToolCallStatus;
+use app_server_protocol::FileChangeApprovalDecision;
+use app_server_protocol::GuardianApprovalReviewAction;
+use app_server_protocol::GuardianApprovalReviewStatus;
+use app_server_protocol::InitializeParams;
+use app_server_protocol::McpToolCallStatus;
+use app_server_protocol::NetworkPolicyRuleAction;
+use app_server_protocol::PatchApplyStatus;
+use app_server_protocol::PatchChangeKind;
+use app_server_protocol::RequestId;
+use app_server_protocol::RequestPermissionProfile;
+use app_server_protocol::ServerNotification;
+use app_server_protocol::ServerRequest;
+use app_server_protocol::ServerResponse;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::TurnSteerResponse;
+use app_server_protocol::UserInput;
+use app_server_protocol::WebSearchAction;
 use codex_git_info::collect_git_info;
 use codex_git_info::get_git_repo_root;
 use codex_login::default_client::originator;
-use codex_protocol::config_types::ModeKind;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::models::PermissionProfile;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SkillScope;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
-use codex_protocol::request_permissions::RequestPermissionsResponse as CoreRequestPermissionsResponse;
+use protocol::config_types::ModeKind;
+use protocol::config_types::Personality;
+use protocol::config_types::ReasoningSummary;
+use protocol::models::PermissionProfile;
+use protocol::protocol::SessionSource;
+use protocol::protocol::SkillScope;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TokenUsage;
+use protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
+use protocol::request_permissions::RequestPermissionsResponse as CoreRequestPermissionsResponse;
 use sha1::Digest;
 use std::collections::HashMap;
 use std::path::Path;
@@ -190,7 +190,7 @@ impl<'a> AnalyticsDropSite<'a> {
     }
 
     fn tool_item(
-        notification: &'a codex_app_server_protocol::ItemCompletedNotification,
+        notification: &'a app_server_protocol::ItemCompletedNotification,
         item_id: &'a str,
     ) -> Self {
         Self {
@@ -1237,7 +1237,7 @@ impl AnalyticsReducer {
     fn emit_thread_initialized(
         &mut self,
         connection_id: u64,
-        thread: codex_app_server_protocol::Thread,
+        thread: app_server_protocol::Thread,
         model: String,
         initialization_mode: ThreadInitializationMode,
         out: &mut Vec<TrackEventRequest>,
@@ -1301,7 +1301,7 @@ impl AnalyticsReducer {
 
     fn ingest_guardian_review_completed(
         &mut self,
-        notification: codex_app_server_protocol::ItemGuardianApprovalReviewCompletedNotification,
+        notification: app_server_protocol::ItemGuardianApprovalReviewCompletedNotification,
         out: &mut Vec<TrackEventRequest>,
     ) {
         let Some((status, resolution)) = guardian_review_result(notification.review.status) else {
@@ -2344,7 +2344,7 @@ struct FileChangeCounts {
     move_: u64,
 }
 
-fn file_change_counts(changes: &[codex_app_server_protocol::FileUpdateChange]) -> FileChangeCounts {
+fn file_change_counts(changes: &[app_server_protocol::FileUpdateChange]) -> FileChangeCounts {
     let mut counts = FileChangeCounts::default();
     for change in changes {
         match &change.kind {
@@ -2576,12 +2576,12 @@ fn personality_mode(personality: Option<Personality>) -> Option<String> {
     }
 }
 
-fn analytics_turn_status(status: codex_app_server_protocol::TurnStatus) -> Option<TurnStatus> {
+fn analytics_turn_status(status: app_server_protocol::TurnStatus) -> Option<TurnStatus> {
     match status {
-        codex_app_server_protocol::TurnStatus::Completed => Some(TurnStatus::Completed),
-        codex_app_server_protocol::TurnStatus::Failed => Some(TurnStatus::Failed),
-        codex_app_server_protocol::TurnStatus::Interrupted => Some(TurnStatus::Interrupted),
-        codex_app_server_protocol::TurnStatus::InProgress => None,
+        app_server_protocol::TurnStatus::Completed => Some(TurnStatus::Completed),
+        app_server_protocol::TurnStatus::Failed => Some(TurnStatus::Failed),
+        app_server_protocol::TurnStatus::Interrupted => Some(TurnStatus::Interrupted),
+        app_server_protocol::TurnStatus::InProgress => None,
     }
 }
 
@@ -2646,9 +2646,9 @@ pub(crate) fn normalize_path_for_skill_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::models::SandboxEnforcement;
-    use codex_protocol::permissions::FileSystemSandboxPolicy;
-    use codex_protocol::permissions::NetworkSandboxPolicy;
+    use protocol::models::SandboxEnforcement;
+    use protocol::permissions::FileSystemSandboxPolicy;
+    use protocol::permissions::NetworkSandboxPolicy;
 
     #[test]
     fn managed_full_disk_with_restricted_network_reports_external_sandbox() {

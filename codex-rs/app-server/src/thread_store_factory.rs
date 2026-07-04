@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use codex_rollout::StateDbHandle;
+use rollout::StateDbHandle;
 use thread_service::config::Config;
 use thread_service::config::ThreadStoreConfig;
-use codex_thread_store::InMemoryThreadStore;
-use codex_thread_store::LocalThreadStore;
-use codex_thread_store::LocalThreadStoreConfig;
-use codex_thread_store::ThreadStore;
+use thread_store::InMemoryThreadStore;
+use thread_store::LocalThreadStore;
+use thread_store::LocalThreadStoreConfig;
+use thread_store::ThreadStore;
 
 pub(crate) fn thread_store_from_config(
     config: &Config,

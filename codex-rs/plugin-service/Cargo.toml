@@ -14,26 +14,25 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-codex-api-auth = { workspace = true }
+transport-client = { workspace = true }
+transport-client-types = { workspace = true }
 codex-auth-types = { workspace = true }
 codex-connectors-api = { workspace = true }
-codex-tool-types = { workspace = true }
-codex-config = { workspace = true }
-codex-config-edit = { workspace = true }
-codex-config-state = { workspace = true }
+codex-tool-service-api = { workspace = true }
+config-service = { workspace = true }
 codex-config-types = { workspace = true }
 codex-context-manager = { workspace = true }
-codex-core-skills-api = { workspace = true }
-codex-default-client = { workspace = true }
-codex-metrics-api = { workspace = true }
-codex-mcp-tool-types = { workspace = true }
-codex-mcp-types = { workspace = true }
+skill-service-api = { workspace = true }
+metrics-api = { workspace = true }
+mcp-types = { workspace = true }
+model-service-api = { workspace = true }
 plugin-service-api = { workspace = true }
-codex-core-skills = { workspace = true }
+skill-service = { workspace = true }
 codex-file-system = { workspace = true }
 codex-git-info = { workspace = true }
-codex-hooks-api = { workspace = true }
-codex-protocol = { workspace = true }
+hooks-api = { workspace = true }
+http = { workspace = true }
+protocol = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 chrono = { workspace = true }
 dirs = { workspace = true }
@@ -51,10 +50,10 @@ url = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]
-codex-config = { workspace = true }
-codex-config-local-loader = { workspace = true }
+config-service = { workspace = true }
 plugin-service-api = { workspace = true }
-codex-login = { workspace = true }
+codex-login = { workspace = true, features = ["model-provider-auth"] }
+model-service = { workspace = true }
 libc = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

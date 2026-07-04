@@ -1,11 +1,11 @@
 use crate::config::edit::ConfigEditsBuilder;
 use codex_config_toml::config_toml::ConfigToml;
-use codex_protocol::config_types::Personality;
-use codex_thread_store_api::ListThreadsParams;
-use codex_thread_store_api::ThreadSortKey;
-use codex_thread_store_api::ThreadStore;
+use protocol::config_types::Personality;
 use std::io;
 use std::path::Path;
+use thread_store_api::ListThreadsParams;
+use thread_store_api::ThreadSortKey;
+use thread_store_api::ThreadStore;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
@@ -67,7 +67,7 @@ async fn has_threads(store: &dyn ThreadStore, archived: bool) -> io::Result<bool
             page_size: 1,
             cursor: None,
             sort_key: ThreadSortKey::CreatedAt,
-            sort_direction: codex_thread_store_api::SortDirection::Desc,
+            sort_direction: thread_store_api::SortDirection::Desc,
             allowed_sources: Vec::new(),
             model_providers: None,
             cwd_filters: None,

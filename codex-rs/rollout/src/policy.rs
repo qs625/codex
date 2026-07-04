@@ -1,7 +1,7 @@
-use crate::protocol::EventMsg;
-use crate::protocol::RolloutItem;
-use codex_protocol::models::ResponseItem;
+use crate::rollout_protocol::EventMsg;
+use crate::rollout_protocol::RolloutItem;
 use codex_utils_string::truncate_middle_chars;
+use protocol::models::ResponseItem;
 
 const PERSISTED_EXEC_AGGREGATED_OUTPUT_MAX_BYTES: usize = 10_000;
 
@@ -193,8 +193,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
             // that are not recoverable from raw ResponseItem replay.
             if matches!(
                 event.item,
-                codex_protocol::items::TurnItem::Plan(_)
-                    | codex_protocol::items::TurnItem::InjectedContext(_)
+                protocol::items::TurnItem::Plan(_) | protocol::items::TurnItem::InjectedContext(_)
             ) {
                 Some(EventPersistenceMode::Limited)
             } else {
@@ -257,28 +256,28 @@ mod tests {
 
     use super::EventPersistenceMode;
     use super::should_persist_event_msg;
-    use codex_protocol::ThreadId;
-    use codex_protocol::items::InjectedContextItem;
-    use codex_protocol::items::InjectedContextSection;
-    use codex_protocol::items::TurnItem;
-    use codex_protocol::openai_models::ReasoningEffort;
-    use codex_protocol::protocol::AgentStatus;
-    use codex_protocol::protocol::CollabAgentInteractionBeginEvent;
-    use codex_protocol::protocol::CollabAgentInteractionEndEvent;
-    use codex_protocol::protocol::CollabAgentSpawnBeginEvent;
-    use codex_protocol::protocol::CollabAgentSpawnEndEvent;
-    use codex_protocol::protocol::CollabCloseBeginEvent;
-    use codex_protocol::protocol::CollabCloseEndEvent;
-    use codex_protocol::protocol::CollabResumeBeginEvent;
-    use codex_protocol::protocol::CollabResumeEndEvent;
-    use codex_protocol::protocol::CollabWaitingBeginEvent;
-    use codex_protocol::protocol::CollabWaitingEndEvent;
-    use codex_protocol::protocol::EventMsg;
-    use codex_protocol::protocol::ItemCompletedEvent;
-    use codex_protocol::protocol::ThreadContextUsage;
-    use codex_protocol::protocol::ThreadContextUsageCategoryBreakdown;
-    use codex_protocol::protocol::ThreadContextUsageLoadedSkills;
-    use codex_protocol::protocol::ThreadContextUsageUpdatedEvent;
+    use protocol::ThreadId;
+    use protocol::items::InjectedContextItem;
+    use protocol::items::InjectedContextSection;
+    use protocol::items::TurnItem;
+    use protocol::openai_models::ReasoningEffort;
+    use protocol::protocol::AgentStatus;
+    use protocol::protocol::CollabAgentInteractionBeginEvent;
+    use protocol::protocol::CollabAgentInteractionEndEvent;
+    use protocol::protocol::CollabAgentSpawnBeginEvent;
+    use protocol::protocol::CollabAgentSpawnEndEvent;
+    use protocol::protocol::CollabCloseBeginEvent;
+    use protocol::protocol::CollabCloseEndEvent;
+    use protocol::protocol::CollabResumeBeginEvent;
+    use protocol::protocol::CollabResumeEndEvent;
+    use protocol::protocol::CollabWaitingBeginEvent;
+    use protocol::protocol::CollabWaitingEndEvent;
+    use protocol::protocol::EventMsg;
+    use protocol::protocol::ItemCompletedEvent;
+    use protocol::protocol::ThreadContextUsage;
+    use protocol::protocol::ThreadContextUsageCategoryBreakdown;
+    use protocol::protocol::ThreadContextUsageLoadedSkills;
+    use protocol::protocol::ThreadContextUsageUpdatedEvent;
 
     #[test]
     fn limited_mode_persists_thread_context_usage() {

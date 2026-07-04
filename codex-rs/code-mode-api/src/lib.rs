@@ -1,4 +1,4 @@
-use codex_protocol::ToolName;
+use protocol::ToolName;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -930,8 +930,8 @@ mod tests {
     use super::build_exec_tool_description;
     use super::normalize_code_mode_identifier;
     use super::parse_exec_source;
-    use codex_protocol::ToolName;
     use pretty_assertions::assert_eq;
+    use protocol::ToolName;
     use serde_json::Value as JsonValue;
     use serde_json::json;
     use std::collections::BTreeMap;

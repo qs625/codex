@@ -8,8 +8,8 @@ use crate::style::accent_style;
 use crate::tui::FrameRequester;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
-use codex_app_server_protocol::ExternalAgentConfigMigrationItem;
-use codex_app_server_protocol::PluginsMigration;
+use app_server_protocol::ExternalAgentConfigMigrationItem;
+use app_server_protocol::PluginsMigration;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -765,9 +765,9 @@ mod tests {
     use crate::custom_terminal::Terminal;
     use crate::test_backend::VT100Backend;
     use crate::tui::FrameRequester;
-    use codex_app_server_protocol::ExternalAgentConfigMigrationItem;
-    use codex_app_server_protocol::ExternalAgentConfigMigrationItemType;
-    use codex_app_server_protocol::PluginsMigration;
+    use app_server_protocol::ExternalAgentConfigMigrationItem;
+    use app_server_protocol::ExternalAgentConfigMigrationItemType;
+    use app_server_protocol::PluginsMigration;
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
     use crossterm::event::KeyModifiers;
@@ -776,8 +776,8 @@ mod tests {
     use ratatui::layout::Rect;
     use std::path::PathBuf;
 
-    fn sample_plugin_details() -> codex_app_server_protocol::MigrationDetails {
-        codex_app_server_protocol::MigrationDetails {
+    fn sample_plugin_details() -> app_server_protocol::MigrationDetails {
+        app_server_protocol::MigrationDetails {
             plugins: vec![
                 PluginsMigration {
                     marketplace_name: "acme-tools".to_string(),

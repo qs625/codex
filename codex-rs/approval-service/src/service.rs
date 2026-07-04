@@ -5,36 +5,33 @@ use std::sync::Arc;
 use codex_approval_service_api::ApplyPatchApprovalDispatch;
 use codex_approval_service_api::ApplyPatchApprovalKey;
 use codex_approval_service_api::ApplyPatchApprovalRequest;
+use codex_approval_service_api::ApprovalSessionCapability;
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_approval_service_api::ApprovalServiceFuture;
-use codex_approval_service_api::ExecCommandApprovalRequirement;
 use codex_approval_service_api::ExecCommandApprovalDispatch;
 use codex_approval_service_api::ExecCommandApprovalOutcome;
+use codex_approval_service_api::ExecCommandApprovalRequirement;
 use codex_approval_service_api::GuardianReviewDispatch;
 use codex_approval_service_api::GuardianReviewResult;
+use codex_approval_service_api::PermissionRequestPayload;
 use codex_approval_service_api::SessionNetworkApprovalApi;
 use codex_approval_service_api::routes_approval_to_guardian;
 use codex_guardian::GuardianApprovalRequest;
-use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::ReviewDecision;
-use thread_service_api::PermissionRequestPayload;
+use protocol::protocol::FileChange;
+use protocol::protocol::ReviewDecision;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadTurnCapability;
 
 #[derive(Default)]
 pub struct ApprovalService;
 
-fn should_use_guardian(
-    turn: &dyn ThreadTurnCapability,
-    strict_auto_review_enabled: bool,
-) -> bool {
+fn should_use_guardian(turn: &dyn ThreadTurnCapability, strict_auto_review_enabled: bool) -> bool {
     routes_approval_to_guardian(&turn.approval_policy(), turn.approvals_reviewer())
         || strict_auto_review_enabled
 }
 
 async fn request_cached_approval<T>(
-    session: &dyn ThreadSessionCapability,
+    session: &dyn ApprovalSessionCapability,
     tool_name: &str,
     keys: Vec<T>,
     fetch: impl std::future::Future<Output = ReviewDecision>,
@@ -92,19 +89,6 @@ impl ApprovalServiceApi for ApprovalService {
         Arc::new(crate::network::NetworkApprovalService::default())
     }
 
-    fn create_exec_approval_requirement<'a>(
-        &'a self,
-        exec_policy: &'a codex_execpolicy_api::Policy,
-        request: codex_permissions_runtime::ExecPolicyApprovalRequest<'a>,
-    ) -> ApprovalServiceFuture<'a, codex_command_service_api::ExecApprovalRequirement> {
-        Box::pin(async move {
-            codex_permissions_runtime::create_exec_approval_requirement_for_command(
-                exec_policy,
-                request,
-            )
-        })
-    }
-
     fn request_apply_patch_approval(
         &self,
         request: ApplyPatchApprovalDispatch,
@@ -127,11 +111,7 @@ impl ApprovalServiceApi for ApprovalService {
     ) -> ApprovalServiceFuture<'_, Result<ExecCommandApprovalOutcome, String>> {
         let session_api = Arc::clone(&request.session);
         let turn = Arc::clone(&request.turn);
-        Box::pin(request_exec_command_approval(
-            session_api,
-            turn,
-            request,
-        ))
+        Box::pin(request_exec_command_approval(session_api, turn, request))
     }
 
     fn review_guardian_request(
@@ -180,7 +160,7 @@ impl ApprovalServiceApi for ApprovalService {
 }
 
 async fn request_apply_patch_approval(
-    session_api: Arc<dyn ThreadSessionCapability>,
+    session_api: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call_id: String,
     approval_keys: Vec<ApplyPatchApprovalKey>,
@@ -204,7 +184,7 @@ async fn request_apply_patch_approval(
             },
             retry_reason,
         )
-            .await
+        .await
     } else if permissions_preapproved && retry_reason.is_none() {
         ReviewDecision::Approved
     } else if let Some(reason) = retry_reason {
@@ -242,8 +222,8 @@ async fn request_apply_patch_approval(
         ReviewDecision::NetworkPolicyAmendment {
             network_policy_amendment,
         } => match network_policy_amendment.action {
-            codex_protocol::protocol::NetworkPolicyRuleAction::Allow => Ok(()),
-            codex_protocol::protocol::NetworkPolicyRuleAction::Deny => {
+            protocol::protocol::NetworkPolicyRuleAction::Allow => Ok(()),
+            protocol::protocol::NetworkPolicyRuleAction::Deny => {
                 Err("patch rejected by user".to_string())
             }
         },
@@ -251,7 +231,7 @@ async fn request_apply_patch_approval(
 }
 
 async fn request_exec_command_approval(
-    session_api: Arc<dyn ThreadSessionCapability>,
+    session_api: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     request: ExecCommandApprovalDispatch,
 ) -> Result<ExecCommandApprovalOutcome, String> {
@@ -266,25 +246,25 @@ async fn request_exec_command_approval(
             }
 
             let decision = crate::guardian::review_approval_request(
-                    session_api.as_ref(),
-                    turn.as_ref(),
-                    uuid::Uuid::new_v4().to_string(),
-                    GuardianApprovalRequest::ExecCommand {
-                        id: request.call_id,
-                        command: request.command,
-                        cwd: request
-                            .cwd
-                            .clone()
-                            .try_into()
-                            .map_err(|_| "exec approval received invalid cwd".to_string())?,
-                        sandbox_permissions: request.sandbox_permissions,
-                        additional_permissions: request.additional_permissions,
-                        justification: request.justification,
-                        tty: request.tty,
-                    },
-                    request.reason,
-                )
-                .await;
+                session_api.as_ref(),
+                turn.as_ref(),
+                uuid::Uuid::new_v4().to_string(),
+                GuardianApprovalRequest::ExecCommand {
+                    id: request.call_id,
+                    command: request.command,
+                    cwd: request
+                        .cwd
+                        .clone()
+                        .try_into()
+                        .map_err(|_| "exec approval received invalid cwd".to_string())?,
+                    sandbox_permissions: request.sandbox_permissions,
+                    additional_permissions: request.additional_permissions,
+                    justification: request.justification,
+                    tty: request.tty,
+                },
+                request.reason,
+            )
+            .await;
             reject_unapproved_exec_decision(decision, session_api.as_ref())?;
             Ok(ExecCommandApprovalOutcome::Preapproved)
         }
@@ -305,10 +285,10 @@ async fn request_exec_command_approval(
                     .await
             {
                 match decision {
-                    codex_hooks_api::PermissionRequestDecision::Allow => {
+                    hooks_api::PermissionRequestDecision::Allow => {
                         return Ok(ExecCommandApprovalOutcome::Preapproved);
                     }
-                    codex_hooks_api::PermissionRequestDecision::Deny { message } => {
+                    hooks_api::PermissionRequestDecision::Deny { message } => {
                         return Err(message);
                     }
                 }
@@ -317,25 +297,25 @@ async fn request_exec_command_approval(
             let decision = if review_with_guardian {
                 let retry_reason = request.reason.clone().or(reason.clone());
                 crate::guardian::review_approval_request(
-                        session_api.as_ref(),
-                        turn.as_ref(),
-                        uuid::Uuid::new_v4().to_string(),
-                        GuardianApprovalRequest::ExecCommand {
-                            id: request.call_id,
-                            command: request.command,
-                            cwd: request
-                                .cwd
-                                .clone()
-                                .try_into()
-                                .map_err(|_| "exec approval received invalid cwd".to_string())?,
-                            sandbox_permissions: request.sandbox_permissions,
-                            additional_permissions: request.additional_permissions.clone(),
-                            justification: request.justification.clone(),
-                            tty: request.tty,
-                        },
-                        retry_reason,
-                    )
-                    .await
+                    session_api.as_ref(),
+                    turn.as_ref(),
+                    uuid::Uuid::new_v4().to_string(),
+                    GuardianApprovalRequest::ExecCommand {
+                        id: request.call_id,
+                        command: request.command,
+                        cwd: request
+                            .cwd
+                            .clone()
+                            .try_into()
+                            .map_err(|_| "exec approval received invalid cwd".to_string())?,
+                        sandbox_permissions: request.sandbox_permissions,
+                        additional_permissions: request.additional_permissions.clone(),
+                        justification: request.justification.clone(),
+                        tty: request.tty,
+                    },
+                    retry_reason,
+                )
+                .await
             } else {
                 let call_id = request.call_id.clone();
                 let command = request.command.clone();
@@ -375,7 +355,7 @@ async fn request_exec_command_approval(
 
 fn reject_unapproved_exec_decision(
     decision: ReviewDecision,
-    _session: &dyn ThreadSessionCapability,
+    _session: &dyn ApprovalSessionCapability,
 ) -> Result<(), String> {
     match decision {
         ReviewDecision::Approved
@@ -386,8 +366,8 @@ fn reject_unapproved_exec_decision(
         ReviewDecision::NetworkPolicyAmendment {
             network_policy_amendment,
         } => match network_policy_amendment.action {
-            codex_protocol::protocol::NetworkPolicyRuleAction::Allow => Ok(()),
-            codex_protocol::protocol::NetworkPolicyRuleAction::Deny => {
+            protocol::protocol::NetworkPolicyRuleAction::Allow => Ok(()),
+            protocol::protocol::NetworkPolicyRuleAction::Deny => {
                 Err("rejected by user".to_string())
             }
         },

@@ -10,12 +10,12 @@ use crate::types::Personality;
 use crate::types::SessionPickerViewMode;
 use crate::types::WindowsToml;
 use codex_features::FeaturesToml;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::config_types::Verbosity;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
+use protocol::config_types::ReasoningSummary;
+use protocol::config_types::SandboxMode;
+use protocol::config_types::Verbosity;
+use protocol::config_types::WebSearchMode;
+use protocol::openai_models::ReasoningEffort;
+use protocol::protocol::AskForApproval;
 
 /// Collection of common configuration options that a user can define as a unit
 /// in `config.toml`.

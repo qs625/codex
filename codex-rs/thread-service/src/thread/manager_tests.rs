@@ -6,35 +6,35 @@ use crate::session::tests::make_session_and_context;
 use crate::state_db_bridge::init_state_db;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
-use codex_models_manager::manager::RefreshStrategy;
-use codex_protocol::models::ContentItem;
-use codex_protocol::models::ReasoningItemReasoningSummary;
-use codex_protocol::models::ResponseItem;
-use codex_protocol::openai_models::ModelsResponse;
-use codex_protocol::protocol::AgentMessageEvent;
-use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::InternalSessionSource;
-use codex_protocol::protocol::ResumedHistory;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::ThreadSource;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::TurnAbortedEvent;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_protocol::protocol::UserMessageEvent;
-use codex_protocol::user_input::UserInput;
-use codex_rollout::RolloutRecorder;
-use codex_rollout_api::ForkSnapshot;
-use codex_rollout_api::InterruptedTurnHistoryMarker;
-use codex_rollout_api::SnapshotTurnState;
-use codex_rollout_api::append_interrupted_boundary;
-use codex_rollout_api::interrupted_turn_history_marker;
-use codex_rollout_api::snapshot_turn_state;
-use codex_rollout_api::truncate_before_nth_user_message;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::responses::mount_models_once;
+use model_service_api::ModelCatalogRefresh;
 use pretty_assertions::assert_eq;
+use protocol::models::ContentItem;
+use protocol::models::ReasoningItemReasoningSummary;
+use protocol::models::ResponseItem;
+use protocol::openai_models::ModelsResponse;
+use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::InitialHistory;
+use protocol::protocol::InternalSessionSource;
+use protocol::protocol::ResumedHistory;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadSource;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortedEvent;
+use protocol::protocol::TurnStartedEvent;
+use protocol::protocol::UserMessageEvent;
+use protocol::user_input::UserInput;
+use rollout::RolloutRecorder;
+use rollout_api::ForkSnapshot;
+use rollout_api::InterruptedTurnHistoryMarker;
+use rollout_api::SnapshotTurnState;
+use rollout_api::append_interrupted_boundary;
+use rollout_api::interrupted_turn_history_marker;
+use rollout_api::snapshot_turn_state;
+use rollout_api::truncate_before_nth_user_message;
 use std::time::Duration;
 use tempfile::tempdir;
 use wiremock::MockServer;
@@ -46,14 +46,12 @@ fn thread_store_from_config(
     state_db: Option<StateDbHandle>,
 ) -> Arc<dyn ThreadStore> {
     match &config.experimental_thread_store {
-        crate::config::ThreadStoreConfig::Local => {
-            Arc::new(codex_thread_store::LocalThreadStore::new(
-                codex_thread_store::LocalThreadStoreConfig::from_config(config),
-                state_db,
-            ))
-        }
+        crate::config::ThreadStoreConfig::Local => Arc::new(thread_store::LocalThreadStore::new(
+            thread_store::LocalThreadStoreConfig::from_config(config),
+            state_db,
+        )),
         crate::config::ThreadStoreConfig::InMemory { id } => {
-            codex_thread_store::InMemoryThreadStore::for_id(id)
+            thread_store::InMemoryThreadStore::for_id(id)
         }
     }
 }
@@ -65,7 +63,7 @@ fn test_thread_service_manager(
     state_db: Option<StateDbHandle>,
     installation_id: String,
 ) -> ThreadService {
-    let command_service = Arc::new(codex_command_service::CommandService::new());
+    let command_service = Arc::new(command_service::CommandService::new());
     let approval_service = Arc::new(approval_service::ApprovalService);
     let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
     ThreadService::new_with_mcp_auth_runtime(
@@ -77,7 +75,7 @@ fn test_thread_service_manager(
         /*analytics_events_client*/ None,
         thread_store,
         state_db,
-        Arc::new(codex_thread_store::DefaultLiveThreadFactory),
+        Arc::new(thread_store::DefaultLiveThreadFactory),
         installation_id,
         /*attestation_provider*/ None,
         crate::test_support::model_provider_factory_for_tests(),
@@ -87,8 +85,8 @@ fn test_thread_service_manager(
         Arc::new(goal_service::GoalService),
         Arc::new(crate::test_support::DisabledToolServiceForTests),
         mcp_service,
-        Arc::new(codex_mcp::DefaultMcpAuthRuntime),
-        Arc::new(codex_mcp::DefaultMcpConnectionRuntimeFactory),
+        Arc::new(mcp_service::DefaultMcpAuthRuntime),
+        Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),
     )
 }
 
@@ -361,7 +359,7 @@ async fn start_thread_rejects_explicit_local_environment_when_default_provider_i
     config.cwd = config.codex_home.abs();
     std::fs::create_dir_all(&config.codex_home).expect("create codex home");
 
-    let runtime_paths = codex_exec_server_api::ExecServerRuntimePaths::new(
+    let runtime_paths = exec_server_api::ExecServerRuntimePaths::new(
         std::env::current_exe().expect("current exe path"),
         /*codex_linux_sandbox_exe*/ None,
     )
@@ -426,7 +424,7 @@ args = ["dev", "cd /tmp && true"]
     )
     .expect("write environments.toml");
 
-    let runtime_paths = codex_exec_server_api::ExecServerRuntimePaths::new(
+    let runtime_paths = exec_server_api::ExecServerRuntimePaths::new(
         std::env::current_exe().expect("current exe path"),
         /*codex_linux_sandbox_exe*/ None,
     )
@@ -879,7 +877,7 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
     let thread_store = thread_store_from_config(&config, state_db.clone());
     let in_memory_store = thread_store
         .as_any()
-        .downcast_ref::<codex_thread_store::InMemoryThreadStore>()
+        .downcast_ref::<thread_store::InMemoryThreadStore>()
         .expect("configured in-memory store");
     let manager = test_thread_service_manager(
         &config,
@@ -985,7 +983,7 @@ async fn new_uses_active_provider_for_model_refresh() {
         TEST_INSTALLATION_ID.to_string(),
     );
 
-    let _ = manager.list_models(RefreshStrategy::Online).await;
+    let _ = manager.list_models(ModelCatalogRefresh::Online).await;
     assert_eq!(models_mock.requests().len(), 1);
 }
 
@@ -1123,7 +1121,7 @@ fn multi_agent_v2_interrupted_marker_uses_developer_input_message() {
         matches!(
             content.as_slice(),
             [ContentItem::InputText { text }]
-                if text.contains(codex_rollout_api::TurnAborted::INTERRUPTED_DEVELOPER_GUIDANCE)
+                if text.contains(rollout_api::TurnAborted::INTERRUPTED_DEVELOPER_GUIDANCE)
         ),
         "expected interrupted marker to use developer InputText content"
     );
@@ -1548,7 +1546,7 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
         .replace_thread_goal(
             source.thread_id,
             "Keep working until the task is done",
-            codex_state_api::ThreadGoalStatus::Paused,
+            state_api::ThreadGoalStatus::Paused,
             /*token_budget*/ None,
         )
         .await?;
@@ -1563,7 +1561,7 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
         .get_thread_goal(resumed.thread_id)
         .await?
         .expect("goal should still exist after resume");
-    assert_eq!(codex_state_api::ThreadGoalStatus::Paused, goal.status);
+    assert_eq!(state_api::ThreadGoalStatus::Paused, goal.status);
     assert!(
         resumed
             .thread

@@ -1,11 +1,11 @@
-use codex_config::Config;
-use codex_config_requirements::AppsRequirementsToml;
+use config_service::Config;
+use config_service::AppsRequirementsToml;
 use codex_config_types::AppToolApproval;
 use codex_config_types::AppsConfigToml;
 use codex_connectors_api::AppInfo;
-use codex_mcp_tool_types::ToolAnnotations;
-use codex_mcp_tool_types::ToolInfo;
-use codex_mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::CODEX_APPS_MCP_SERVER_NAME;
+use mcp_types::ToolAnnotations;
+use mcp_types::ToolInfo;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

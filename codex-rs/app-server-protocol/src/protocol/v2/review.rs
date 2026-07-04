@@ -6,7 +6,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 v2_enum_from_core!(
-    pub enum ReviewDelivery from codex_protocol::protocol::ReviewDelivery {
+    pub enum ReviewDelivery from protocol::protocol::ReviewDelivery {
         Inline, Detached
     }
 );

@@ -2,7 +2,10 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use codex_client::build_reqwest_client_with_custom_ca;
+use transport_client::HttpTransport;
+use transport_client::Request;
+use transport_client::ReqwestTransport;
+use transport_client::build_reqwest_client;
 use codex_openai_files_api::OpenAiFileUploadAuth;
 use codex_openai_files_api::OpenAiFileUploadFuture;
 use codex_openai_files_api::OpenAiFileUploader;
@@ -10,9 +13,8 @@ pub use codex_openai_files_api::UploadedOpenAiFile;
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_LENGTH;
 use serde::Deserialize;
-use tokio::fs::File;
+use serde::Serialize;
 use tokio::time::Instant;
-use tokio_util::io::ReaderStream;
 
 pub const OPENAI_FILE_URI_PREFIX: &str = "sediment://";
 pub const OPENAI_FILE_UPLOAD_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
@@ -60,12 +62,8 @@ pub enum OpenAiFileError {
         size_bytes: u64,
         limit_bytes: u64,
     },
-    #[error("failed to send OpenAI file request to {url}: {source}")]
-    Request {
-        url: String,
-        #[source]
-        source: reqwest::Error,
-    },
+    #[error("failed to send OpenAI file request to {url}: {message}")]
+    Request { url: String, message: String },
     #[error("OpenAI file request to {url} failed with status {status}: {body}")]
     UnexpectedStatus {
         url: String,
@@ -109,6 +107,7 @@ pub async fn upload_local_file(
     auth: &dyn OpenAiFileUploadAuth,
     path: &Path,
 ) -> Result<UploadedOpenAiFile, OpenAiFileError> {
+    let transport = build_transport();
     let metadata = tokio::fs::metadata(path)
         .await
         .map_err(|source| match source.kind() {
@@ -139,20 +138,22 @@ pub async fn upload_local_file(
         .unwrap_or("file")
         .to_string();
     let create_url = format!("{}/files", base_url.trim_end_matches('/'));
-    let create_response = authorized_request(auth, reqwest::Method::POST, &create_url)
-        .json(&serde_json::json!({
+    let create_response = execute_request(
+        &transport,
+        authorized_json_request(
+            auth,
+            reqwest::Method::POST,
+            &create_url,
+            serde_json::json!({
             "file_name": file_name,
             "file_size": metadata.len(),
             "use_case": OPENAI_FILE_USE_CASE,
-        }))
-        .send()
-        .await
-        .map_err(|source| OpenAiFileError::Request {
-            url: create_url.clone(),
-            source,
-        })?;
-    let create_status = create_response.status();
-    let create_body = create_response.text().await.unwrap_or_default();
+        }),
+        ),
+    )
+    .await?;
+    let create_status = create_response.status;
+    let create_body = String::from_utf8_lossy(&create_response.body).into_owned();
     if !create_status.is_success() {
         return Err(OpenAiFileError::UnexpectedStatus {
             url: create_url,
@@ -166,26 +167,38 @@ pub async fn upload_local_file(
             source,
         })?;
 
-    let upload_file = File::open(path)
+    let upload_bytes = tokio::fs::read(path)
         .await
         .map_err(|source| OpenAiFileError::ReadFile {
             path: path.to_path_buf(),
             source,
         })?;
-    let upload_response = build_reqwest_client()
-        .put(&create_payload.upload_url)
-        .timeout(OPENAI_FILE_REQUEST_TIMEOUT)
-        .header("x-ms-blob-type", "BlockBlob")
-        .header(CONTENT_LENGTH, metadata.len())
-        .body(reqwest::Body::wrap_stream(ReaderStream::new(upload_file)))
-        .send()
-        .await
-        .map_err(|source| OpenAiFileError::Request {
-            url: create_payload.upload_url.clone(),
-            source,
-        })?;
-    let upload_status = upload_response.status();
-    let upload_body = upload_response.text().await.unwrap_or_default();
+    let upload_response = execute_request(
+        &transport,
+        raw_request(
+            reqwest::Method::PUT,
+            &create_payload.upload_url,
+            upload_bytes,
+            &[
+                (
+                    http::HeaderName::from_static("x-ms-blob-type"),
+                    http::HeaderValue::from_static("BlockBlob"),
+                ),
+                (
+                    CONTENT_LENGTH,
+                    http::HeaderValue::from_str(&metadata.len().to_string()).map_err(|error| {
+                        OpenAiFileError::Request {
+                            url: create_payload.upload_url.clone(),
+                            message: format!("invalid content-length header: {error}"),
+                        }
+                    })?,
+                ),
+            ],
+        ),
+    )
+    .await?;
+    let upload_status = upload_response.status;
+    let upload_body = String::from_utf8_lossy(&upload_response.body).into_owned();
     if !upload_status.is_success() {
         return Err(OpenAiFileError::UnexpectedStatus {
             url: create_payload.upload_url.clone(),
@@ -201,16 +214,13 @@ pub async fn upload_local_file(
     );
     let finalize_started_at = Instant::now();
     loop {
-        let finalize_response = authorized_request(auth, reqwest::Method::POST, &finalize_url)
-            .json(&serde_json::json!({}))
-            .send()
-            .await
-            .map_err(|source| OpenAiFileError::Request {
-                url: finalize_url.clone(),
-                source,
-            })?;
-        let finalize_status = finalize_response.status();
-        let finalize_body = finalize_response.text().await.unwrap_or_default();
+        let finalize_response = execute_request(
+            &transport,
+            authorized_json_request(auth, reqwest::Method::POST, &finalize_url, serde_json::json!({})),
+        )
+        .await?;
+        let finalize_status = finalize_response.status;
+        let finalize_body = String::from_utf8_lossy(&finalize_response.body).into_owned();
         if !finalize_status.is_success() {
             return Err(OpenAiFileError::UnexpectedStatus {
                 url: finalize_url.clone(),
@@ -261,26 +271,52 @@ pub async fn upload_local_file(
     }
 }
 
-fn authorized_request(
+fn authorized_json_request(
     auth: &dyn OpenAiFileUploadAuth,
     method: reqwest::Method,
     url: &str,
-) -> reqwest::RequestBuilder {
+    body: impl Serialize,
+) -> Request {
     let mut headers = http::HeaderMap::new();
     auth.add_auth_headers(&mut headers);
-
-    let client = build_reqwest_client();
-    client
-        .request(method, url)
-        .timeout(OPENAI_FILE_REQUEST_TIMEOUT)
-        .headers(headers)
+    let mut request = Request::new(method, url.to_string()).with_json(&body);
+    request.headers = headers;
+    request.timeout = Some(OPENAI_FILE_REQUEST_TIMEOUT);
+    request
 }
 
-fn build_reqwest_client() -> reqwest::Client {
-    build_reqwest_client_with_custom_ca(reqwest::Client::builder()).unwrap_or_else(|error| {
-        tracing::warn!(error = %error, "failed to build OpenAI file upload client");
-        reqwest::Client::new()
-    })
+fn raw_request(
+    method: reqwest::Method,
+    url: &str,
+    body: Vec<u8>,
+    headers: &[(http::HeaderName, http::HeaderValue)],
+) -> Request {
+    let mut request = Request::new(method, url.to_string()).with_raw_body(body);
+    request.timeout = Some(OPENAI_FILE_REQUEST_TIMEOUT);
+    for (header_name, header_value) in headers {
+        request
+            .headers
+            .insert(header_name.clone(), header_value.clone());
+    }
+    request
+}
+
+async fn execute_request(
+    transport: &impl HttpTransport,
+    request: Request,
+) -> Result<transport_client::Response, OpenAiFileError> {
+    let url = request.url.clone();
+    transport
+        .execute(request)
+        .await
+        .map_err(|error| OpenAiFileError::Request {
+            url,
+            message: error.to_string(),
+        })
+}
+
+fn build_transport() -> ReqwestTransport {
+    ReqwestTransport::new(build_reqwest_client())
 }
 
 #[cfg(test)]

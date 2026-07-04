@@ -1,7 +1,7 @@
 //! Migration helpers for importing external-agent configuration into Codex.
 
-use codex_hooks::HOOK_EVENT_NAMES;
-use codex_hooks::HOOK_EVENT_NAMES_WITH_MATCHERS;
+use hooks::HOOK_EVENT_NAMES;
+use hooks::HOOK_EVENT_NAMES_WITH_MATCHERS;
 use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 use std::collections::BTreeMap;

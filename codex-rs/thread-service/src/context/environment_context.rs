@@ -52,12 +52,12 @@ fn network_context_from_turn_context(turn_context: &TurnContext) -> Option<Netwo
         network
             .domains
             .as_ref()
-            .and_then(codex_config_requirements::NetworkDomainPermissionsToml::allowed_domains)
+            .and_then(config_service::NetworkDomainPermissionsToml::allowed_domains)
             .unwrap_or_default(),
         network
             .domains
             .as_ref()
-            .and_then(codex_config_requirements::NetworkDomainPermissionsToml::denied_domains)
+            .and_then(config_service::NetworkDomainPermissionsToml::denied_domains)
             .unwrap_or_default(),
     ))
 }

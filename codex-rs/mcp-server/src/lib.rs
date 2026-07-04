@@ -9,9 +9,9 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::default_client::set_default_client_residency_requirement;
+use codex_utils_cli::CliConfigOverrides;
 use thread_service::config::ConfigBuilder;
 use thread_service::resolve_installation_id;
-use codex_utils_cli::CliConfigOverrides;
 
 use rmcp::model::ClientNotification;
 use rmcp::model::ClientRequest;
@@ -28,24 +28,24 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
-mod codex_tool_config;
 mod codex_tool_runner;
 mod exec_approval;
 pub(crate) mod message_processor;
 mod outgoing_message;
 mod patch_approval;
+mod tool_config;
 
 use crate::message_processor::MessageProcessor;
 use crate::outgoing_message::OutgoingJsonRpcMessage;
 use crate::outgoing_message::OutgoingMessage;
 use crate::outgoing_message::OutgoingMessageSender;
 
-pub use crate::codex_tool_config::CodexToolCallParam;
-pub use crate::codex_tool_config::CodexToolCallReplyParam;
 pub use crate::exec_approval::ExecApprovalElicitRequestParams;
 pub use crate::exec_approval::ExecApprovalResponse;
 pub use crate::patch_approval::PatchApprovalElicitRequestParams;
 pub use crate::patch_approval::PatchApprovalResponse;
+pub use crate::tool_config::CodexToolCallParam;
+pub use crate::tool_config::CodexToolCallReplyParam;
 
 /// Size of the bounded channels used to communicate between tasks. The value
 /// is a balance between throughput and memory usage – 128 messages should be
@@ -99,7 +99,7 @@ pub async fn run_main(
     })?;
     codex_otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
     codex_otel_init::install_sqlite_telemetry(otel.as_ref(), OTEL_SERVICE_NAME);
-    let state_db = codex_rollout::state_db::init(&config).await;
+    let state_db = rollout::state_db::init(&config).await;
     let environment_manager = Arc::new(
         EnvironmentManager::from_codex_home(
             config.codex_home.clone(),
@@ -213,10 +213,10 @@ pub async fn run_main(
 mod tests {
     use super::*;
     use codex_config_types::OtelExporterKind;
-    use thread_service::config::ConfigBuilder;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use tempfile::TempDir;
+    use thread_service::config::ConfigBuilder;
 
     #[test]
     fn mcp_server_defaults_analytics_to_enabled() {

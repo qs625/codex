@@ -1,6 +1,6 @@
 use super::*;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use pretty_assertions::assert_eq;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
 
 const SUMMARY_PREFIX: &str = "<summary>";
 

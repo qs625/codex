@@ -5,9 +5,9 @@ use crate::formatted_truncate_text;
 use crate::formatted_truncate_text_content_items_with_policy;
 use crate::truncate_function_output_items_with_policy;
 use crate::truncate_text;
-use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
-use codex_protocol::models::FunctionCallOutputContentItem;
 use pretty_assertions::assert_eq;
+use protocol::models::DEFAULT_IMAGE_DETAIL;
+use protocol::models::FunctionCallOutputContentItem;
 
 #[test]
 fn truncate_bytes_less_than_placeholder_returns_placeholder() {

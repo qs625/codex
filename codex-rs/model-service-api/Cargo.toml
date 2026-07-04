@@ -1,0 +1,33 @@
+[package]
+name = "model-service-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Model discovery and request service API."
+
+[lib]
+name = "model_service_api"
+path = "src/lib.rs"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-agent-identity-api = { workspace = true }
+codex-auth-types = { workspace = true }
+transport-client-types = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+protocol = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tool-types = { workspace = true }
+rollout-trace-api = { workspace = true }
+session-telemetry-api = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

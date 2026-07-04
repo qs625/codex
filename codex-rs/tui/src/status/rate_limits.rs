@@ -9,13 +9,13 @@ use crate::chatwidget::get_limits_duration;
 use crate::text_formatting::capitalize_first;
 
 use super::helpers::format_reset_timestamp;
+use app_server_protocol::CreditsSnapshot as CoreCreditsSnapshot;
+use app_server_protocol::RateLimitSnapshot;
+use app_server_protocol::RateLimitWindow;
 use chrono::DateTime;
 use chrono::Duration as ChronoDuration;
 use chrono::Local;
 use chrono::Utc;
-use codex_app_server_protocol::CreditsSnapshot as CoreCreditsSnapshot;
-use codex_app_server_protocol::RateLimitSnapshot;
-use codex_app_server_protocol::RateLimitWindow;
 
 const STATUS_LIMIT_BAR_SEGMENTS: usize = 20;
 const STATUS_LIMIT_BAR_FILLED: &str = "█";

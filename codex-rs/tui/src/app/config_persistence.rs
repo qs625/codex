@@ -563,8 +563,8 @@ mod tests {
     use crate::app::test_support::app_enabled_in_effective_config;
     use crate::app::test_support::make_test_app;
     use crate::test_support::PathBufExt;
-    use codex_protocol::models::PermissionProfile;
     use pretty_assertions::assert_eq;
+    use protocol::models::PermissionProfile;
     use tempfile::tempdir;
 
     #[tokio::test]

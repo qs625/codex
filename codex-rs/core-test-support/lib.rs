@@ -9,21 +9,21 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use tempfile::TempDir;
 
-use codex_config_loader::LoaderOverrides;
-use codex_config_requirements::CloudRequirementsLoader;
-use codex_config_requirements::ConfigRequirementsToml;
-use codex_config_requirements::NetworkRequirementsToml;
-use codex_rollout::StateDbHandle;
+use config_service::LoaderOverrides;
+use config_service::CloudRequirementsLoader;
+use config_service::ConfigRequirementsToml;
+use config_service::NetworkRequirementsToml;
+use codex_utils_absolute_path::AbsolutePathBuf;
+pub use codex_utils_absolute_path::test_support::PathBufExt;
+pub use codex_utils_absolute_path::test_support::PathExt;
+use regex_lite::Regex;
+use rollout::StateDbHandle;
+use std::path::PathBuf;
 use thread_service::CodexThread;
 use thread_service::config::Config;
 use thread_service::config::ConfigBuilder;
 use thread_service::config::ConfigOverrides;
 use thread_service::config::ThreadStoreConfig;
-use codex_utils_absolute_path::AbsolutePathBuf;
-pub use codex_utils_absolute_path::test_support::PathBufExt;
-pub use codex_utils_absolute_path::test_support::PathExt;
-use regex_lite::Regex;
-use std::path::PathBuf;
 
 pub mod apps_test_server;
 pub mod context_snapshot;
@@ -39,13 +39,13 @@ pub mod zsh_fork;
 pub fn thread_store_from_config(
     config: &Config,
     state_db: Option<StateDbHandle>,
-) -> Arc<dyn codex_thread_store::ThreadStore> {
+) -> Arc<dyn thread_store::ThreadStore> {
     match &config.experimental_thread_store {
-        ThreadStoreConfig::Local => Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_thread_store::LocalThreadStoreConfig::from_config(config),
+        ThreadStoreConfig::Local => Arc::new(thread_store::LocalThreadStore::new(
+            thread_store::LocalThreadStoreConfig::from_config(config),
             state_db,
         )),
-        ThreadStoreConfig::InMemory { id } => codex_thread_store::InMemoryThreadStore::for_id(id),
+        ThreadStoreConfig::InMemory { id } => thread_store::InMemoryThreadStore::for_id(id),
     }
 }
 
@@ -253,12 +253,9 @@ pub fn find_codex_linux_sandbox_exe() -> Result<PathBuf, CargoBinError> {
     codex_utils_cargo_bin::cargo_bin("codex-linux-sandbox")
 }
 
-pub async fn wait_for_event<F>(
-    codex: &CodexThread,
-    predicate: F,
-) -> codex_protocol::protocol::EventMsg
+pub async fn wait_for_event<F>(codex: &CodexThread, predicate: F) -> protocol::protocol::EventMsg
 where
-    F: FnMut(&codex_protocol::protocol::EventMsg) -> bool,
+    F: FnMut(&protocol::protocol::EventMsg) -> bool,
 {
     use tokio::time::Duration;
     wait_for_event_with_timeout(codex, predicate, Duration::from_secs(1)).await
@@ -266,7 +263,7 @@ where
 
 pub async fn wait_for_event_match<T, F>(codex: &CodexThread, matcher: F) -> T
 where
-    F: Fn(&codex_protocol::protocol::EventMsg) -> Option<T>,
+    F: Fn(&protocol::protocol::EventMsg) -> Option<T>,
 {
     let ev = wait_for_event(codex, |ev| matcher(ev).is_some()).await;
     matcher(&ev).expect("EventMsg should match matcher predicate")
@@ -276,9 +273,9 @@ pub async fn wait_for_event_with_timeout<F>(
     codex: &CodexThread,
     mut predicate: F,
     wait_time: tokio::time::Duration,
-) -> codex_protocol::protocol::EventMsg
+) -> protocol::protocol::EventMsg
 where
-    F: FnMut(&codex_protocol::protocol::EventMsg) -> bool,
+    F: FnMut(&protocol::protocol::EventMsg) -> bool,
 {
     use tokio::time::Duration;
     use tokio::time::timeout;

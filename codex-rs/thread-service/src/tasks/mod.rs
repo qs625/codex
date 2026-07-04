@@ -29,28 +29,27 @@ use crate::state::RunningTask;
 use crate::state::TaskKind;
 use codex_analytics_api::TurnTokenUsageFact;
 use codex_auth_types::SharedAuthRuntime;
-use codex_config::Config;
-use codex_hooks::PendingInputHookDisposition;
-use codex_hooks::inspect_pending_input;
-use codex_hooks::record_additional_contexts;
-use codex_hooks::record_pending_input;
-use codex_metrics_api::TURN_E2E_DURATION_METRIC;
-use codex_metrics_api::TURN_MEMORY_METRIC;
-use codex_metrics_api::TURN_NETWORK_PROXY_METRIC;
-use codex_metrics_api::TURN_TOKEN_USAGE_METRIC;
-use codex_metrics_api::TURN_TOOL_CALL_METRIC;
-use codex_model_provider_api::SharedModelProviderAuthManager;
-use codex_models_manager_api::SharedModelsManager;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TurnAbortReason;
-use codex_protocol::protocol::TurnAbortedEvent;
-use codex_protocol::protocol::TurnCompleteEvent;
-use codex_protocol::protocol::WarningEvent;
-use codex_protocol::user_input::UserInput;
-pub(crate) use codex_rollout_api::InterruptedTurnHistoryMarker;
-pub(crate) use codex_rollout_api::interrupted_turn_history_marker;
+use config_service::Config;
+use hooks::PendingInputHookDisposition;
+use hooks::inspect_pending_input;
+use hooks::record_additional_contexts;
+use hooks::record_pending_input;
+use metrics_api::TURN_E2E_DURATION_METRIC;
+use metrics_api::TURN_MEMORY_METRIC;
+use metrics_api::TURN_NETWORK_PROXY_METRIC;
+use metrics_api::TURN_TOKEN_USAGE_METRIC;
+use metrics_api::TURN_TOOL_CALL_METRIC;
+use model_service_api::SharedModelProviderAuthManager;
+use protocol::protocol::EventMsg;
+use protocol::protocol::RolloutItem;
+use protocol::protocol::TokenUsage;
+use protocol::protocol::TurnAbortReason;
+use protocol::protocol::TurnAbortedEvent;
+use protocol::protocol::TurnCompleteEvent;
+use protocol::protocol::WarningEvent;
+use protocol::user_input::UserInput;
+pub(crate) use rollout_api::InterruptedTurnHistoryMarker;
+pub(crate) use rollout_api::interrupted_turn_history_marker;
 
 use codex_features::Feature;
 pub(crate) use compact::CompactTask;
@@ -72,7 +71,7 @@ pub(crate) fn interrupted_turn_history_marker_from_config(
 }
 
 fn emit_turn_network_proxy_metric(
-    metrics: &dyn codex_session_telemetry_api::SessionTelemetry,
+    metrics: &dyn session_telemetry_api::SessionTelemetry,
     network_proxy_active: bool,
     tmp_mem: (&str, &str),
 ) {
@@ -89,7 +88,7 @@ fn emit_turn_network_proxy_metric(
 }
 
 fn emit_turn_memory_metric(
-    metrics: &dyn codex_session_telemetry_api::SessionTelemetry,
+    metrics: &dyn session_telemetry_api::SessionTelemetry,
     feature_enabled: bool,
     config_enabled: bool,
     has_citations: bool,
@@ -139,11 +138,7 @@ impl SessionTaskContext {
     }
 
     pub(crate) fn provider_auth_manager(&self) -> Option<SharedModelProviderAuthManager> {
-        self.session.services.model_client.auth_manager()
-    }
-
-    pub(crate) fn models_manager(&self) -> SharedModelsManager {
-        Arc::clone(&self.session.services.models_manager)
+        self.session.services.provider_auth_manager.clone()
     }
 }
 
