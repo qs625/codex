@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:archiveThread", threadId),
   readThread: (threadId, includeTurns = true) =>
     ipcRenderer.invoke("codex:readThread", threadId, includeTurns),
+  readCompactHistory: (threadId) =>
+    ipcRenderer.invoke("codex:readCompactHistory", threadId),
   setThreadRunConfig: (payload) =>
     ipcRenderer.invoke("codex:setThreadRunConfig", payload),
   subscribeThread: (threadId) =>

@@ -25,8 +25,12 @@ import type { ConversationCell } from "../types";
 
 type ConversationVirtualListProps = {
   cells: ConversationCell[];
+  compactHistoryById: Readonly<
+    Record<string, { isLoading: boolean; isExpanded: boolean; error: string | null }>
+  >;
   containerRef: RefObject<HTMLDivElement | null>;
   focusedItem: { itemId: string; token: number } | null;
+  onToggleCompactHistory: (entryId: string) => void;
   onOpenLocalFile: (target: string) => void;
   searchCurrentCellId: string | null;
   searchMatchCellIds: Set<string>;
@@ -54,8 +58,10 @@ export function shouldHandleFocusedItemRequest({
 
 export function ConversationVirtualList({
   cells,
+  compactHistoryById,
   containerRef,
   focusedItem,
+  onToggleCompactHistory,
   onOpenLocalFile,
   searchCurrentCellId,
   searchMatchCellIds,
@@ -206,7 +212,7 @@ export function ConversationVirtualList({
     }
 
     const index = cells.findIndex((cell) =>
-      cell.entries.some((entry) => entry.id === focusedItemId),
+      cell.entries.some((entry) => conversationEntryContainsId(entry, focusedItemId)),
     );
     if (index === -1) {
       return;
@@ -356,8 +362,10 @@ export function ConversationVirtualList({
             >
               {renderConversationCell(
                 cell,
+                compactHistoryById[cell.entries[0]?.id ?? cell.id] ?? null,
                 openToolCellIds.has(cell.id),
                 selectedToolEntryIds.get(cell.id) ?? null,
+                onToggleCompactHistory,
                 onOpenLocalFile,
                 handleToolOpenChange,
                 handleToolEntrySelection,
@@ -369,10 +377,43 @@ export function ConversationVirtualList({
   );
 }
 
+function conversationEntryContainsId(
+  entry: ConversationCell["entries"][number],
+  targetId: string,
+): boolean {
+  if (entry.id === targetId) {
+    return true;
+  }
+
+  if (
+    entry.replacementHistoryEntries?.some((nestedEntry) =>
+      conversationEntryContainsId(nestedEntry, targetId),
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    entry.archivedCells?.some((cell) =>
+      cell.entries.some((nestedEntry) =>
+        conversationEntryContainsId(nestedEntry, targetId),
+      ),
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function renderConversationCell(
   cell: ConversationCell,
+  compactHistoryState:
+    | { isLoading: boolean; isExpanded: boolean; error: string | null }
+    | null,
   isToolOpen: boolean,
   selectedToolEntryId: string | null,
+  onToggleCompactHistory: (entryId: string) => void,
   onOpenLocalFile: (target: string) => void,
   onToolOpenChange: (cellId: string, isOpen: boolean) => void,
   onToolEntrySelection: (cellId: string, entryId: string | null) => void,
@@ -391,7 +432,17 @@ function renderConversationCell(
   }
 
   if (cell.kind === "compact") {
-    return <CompactRow entry={cell.entries[0]} />;
+    const entry = cell.entries[0];
+    return (
+      <CompactRow
+        entry={entry}
+        isExpanded={compactHistoryState?.isExpanded ?? false}
+        isLoading={compactHistoryState?.isLoading ?? false}
+        loadError={compactHistoryState?.error ?? null}
+        onToggleExpanded={() => onToggleCompactHistory(entry.id)}
+        onOpenLocalFile={onOpenLocalFile}
+      />
+    );
   }
 
   if (cell.kind === "tool") {

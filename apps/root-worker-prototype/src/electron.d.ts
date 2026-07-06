@@ -38,6 +38,7 @@ declare global {
         threadId: string,
         includeTurns?: boolean,
       ) => Promise<{ thread: unknown }>;
+      readCompactHistory: (threadId: string) => Promise<{ thread: unknown }>;
       setThreadRunConfig: (payload: {
         threadId: string;
         model: string;

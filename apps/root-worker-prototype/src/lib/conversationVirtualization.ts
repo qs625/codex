@@ -33,7 +33,7 @@ export function estimateConversationCellHeight(cell: ConversationCell): number {
   }
 
   if (cell.kind === "compact") {
-    return DEFAULT_COMPACT_ROW_HEIGHT;
+    return estimateCompactCellHeight(cell.entries[0]);
   }
 
   return estimateMessageCellHeight(cell.entries);
@@ -119,6 +119,39 @@ function estimateToolCellHeight(entries: ConversationEntry[]) {
     height += (entries.length - 1) * 24;
   }
   return height;
+}
+
+function estimateCompactCellHeight(entry: ConversationEntry | undefined) {
+  let height = DEFAULT_COMPACT_ROW_HEIGHT;
+  if (!entry) {
+    return height;
+  }
+
+  const archivedCells = entry.archivedCells ?? [];
+  const replacementHistoryCells = entry.replacementHistoryCells ?? [];
+
+  if (archivedCells.length > 0) {
+    height += 96;
+    height += estimateNestedCellsHeight(archivedCells);
+  }
+
+  if (replacementHistoryCells.length > 0) {
+    height += 96;
+    height += estimateNestedCellsHeight(replacementHistoryCells);
+  }
+
+  return height;
+}
+
+function estimateNestedCellsHeight(cells: ConversationCell[]) {
+  if (cells.length === 0) {
+    return 0;
+  }
+
+  return cells.reduce((total, cell, index) => {
+    const gap = index === 0 ? 0 : CONVERSATION_ROW_GAP;
+    return total + gap + estimateConversationCellHeight(cell);
+  }, 0);
 }
 
 function estimateWrappedTextHeight(

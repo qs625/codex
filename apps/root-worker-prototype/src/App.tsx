@@ -25,7 +25,14 @@ import {
   type ComposerDraftsByThreadId,
   type GoalComposerCommand,
 } from "./lib/composerDraft";
-import { buildConversationState } from "./lib/conversation";
+import {
+  buildConversationEntries,
+  buildConversationState,
+} from "./lib/conversation";
+import {
+  extractCompactConversationDetails,
+  type LoadedCompactConversationDetails,
+} from "./lib/conversationCompact";
 import { isConversationNearBottom } from "./lib/conversationScroll";
 import {
   readImageBlob,
@@ -36,6 +43,7 @@ import {
   readStoredRightPanelView,
   storeRightPanelView,
 } from "./lib/rightPanelView";
+import { advanceCompactHistoryRequestToken } from "./lib/compactHistoryRequest";
 import type { RunConfigSelection } from "./lib/runConfig";
 import {
   applyRunConfigOverride,
@@ -123,6 +131,12 @@ const RIGHT_PANEL_MIN_RATIO = 0.22;
 const RIGHT_PANEL_MAX_RATIO = 0.46;
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
+type CompactHistoryViewState = {
+  isExpanded: boolean;
+  isLoading: boolean;
+  error: string | null;
+  details: LoadedCompactConversationDetails | null;
+};
 
 function getViewportWidth() {
   return window.innerWidth;
@@ -154,6 +168,9 @@ function App() {
   >({});
   const [goalActionErrorsByThreadId, setGoalActionErrorsByThreadId] = useState<
     Record<string, string | null>
+  >({});
+  const [compactHistoryByThreadId, setCompactHistoryByThreadId] = useState<
+    Record<string, Record<string, CompactHistoryViewState>>
   >({});
   const [composerDraftsByThreadId, setComposerDraftsByThreadId] =
     useState<ComposerDraftsByThreadId>({});
@@ -204,6 +221,7 @@ function App() {
   const loadThreadRequestIdsByThreadIdRef = useRef<Map<string, number>>(
     new Map(),
   );
+  const compactHistoryRequestIdsRef = useRef<Map<string, number>>(new Map());
   const pendingThreadUpdatesRef = useRef(new Map<string, ThreadUpdate[]>());
   const voiceSessionRef = useRef<ActiveVoiceSession | null>(null);
   const voiceDraftStateRef = useRef<VoiceDraftState | null>(null);
@@ -311,6 +329,18 @@ function App() {
       selectedThread?.latestPlan ??
       null)
     : null;
+  const selectedCompactHistory = selectedThreadId
+    ? compactHistoryByThreadId[selectedThreadId] ?? {}
+    : {};
+  const selectedLoadedCompactDetails = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(selectedCompactHistory)
+          .filter(([, state]) => state.isExpanded && state.details)
+          .map(([entryId, state]) => [entryId, state.details]),
+      ),
+    [selectedCompactHistory],
+  );
   const selectedRunConfigOverride = selectedThreadId
     ? (runConfigOverrideByThreadIdRef.current.get(selectedThreadId) ?? null)
     : null;
@@ -632,10 +662,13 @@ function App() {
     const nextConversationState = buildConversationState(
       selectedThread,
       conversationStateRef.current,
+      {
+        compactDetailsById: selectedLoadedCompactDetails,
+      },
     );
     conversationStateRef.current = nextConversationState;
     return nextConversationState.cells;
-  }, [selectedThread]);
+  }, [selectedLoadedCompactDetails, selectedThread]);
 
   useLayoutEffect(() => {
     const container = conversationScrollRef.current;
@@ -845,8 +878,20 @@ function App() {
       loadingThreadIdsRef.current.delete(threadId);
       loadThreadRequestIdsByThreadIdRef.current.delete(threadId);
       runConfigOverrideByThreadIdRef.current.delete(threadId);
+      for (const requestKey of compactHistoryRequestIdsRef.current.keys()) {
+        if (requestKey.startsWith(`${threadId}:`)) {
+          compactHistoryRequestIdsRef.current.delete(requestKey);
+        }
+      }
     }
     clearComposerDraftsForThreads(threadIdSet);
+    setCompactHistoryByThreadId((current) => {
+      const next = { ...current };
+      for (const threadId of threadIdSet) {
+        delete next[threadId];
+      }
+      return next;
+    });
     setLatestPlansByThreadId((current) => {
       const next = { ...current };
       for (const threadId of threadIdSet) {
@@ -1018,6 +1063,110 @@ function App() {
     } catch {
       updateThreadGoalLocally(threadId, null);
     }
+  }
+
+  function updateCompactHistoryState(
+    threadId: string,
+    entryId: string,
+    nextState: CompactHistoryViewState | null,
+  ) {
+    setCompactHistoryByThreadId((current) => {
+      const threadState = current[threadId] ?? {};
+      if (nextState === null) {
+        if (!(entryId in threadState)) {
+          return current;
+        }
+        const nextThreadState = { ...threadState };
+        delete nextThreadState[entryId];
+        if (Object.keys(nextThreadState).length === 0) {
+          const next = { ...current };
+          delete next[threadId];
+          return next;
+        }
+        return {
+          ...current,
+          [threadId]: nextThreadState,
+        };
+      }
+
+      return {
+        ...current,
+        [threadId]: {
+          ...threadState,
+          [entryId]: nextState,
+        },
+      };
+    });
+  }
+
+  async function loadCompactHistory(threadId: string, entryId: string) {
+    const requestKey = `${threadId}:${entryId}`;
+    const requestId = advanceCompactHistoryRequestToken(
+      compactHistoryRequestIdsRef.current,
+      requestKey,
+    );
+    compactHistoryRequestIdsRef.current.set(requestKey, requestId);
+    updateCompactHistoryState(threadId, entryId, {
+      isExpanded: true,
+      isLoading: true,
+      error: null,
+      details: null,
+    });
+
+    try {
+      const payload = (await window.codexDesktop.readCompactHistory(threadId)) as {
+        thread: Thread;
+      };
+      const entries = buildConversationEntries(payload.thread);
+      const details = extractCompactConversationDetails(entries, entryId);
+      const latestRequestId =
+        compactHistoryRequestIdsRef.current.get(requestKey) ?? null;
+      if (latestRequestId !== requestId) {
+        return;
+      }
+      if (!details) {
+        throw new Error("Compact history could not be loaded for this item.");
+      }
+      updateCompactHistoryState(threadId, entryId, {
+        isExpanded: true,
+        isLoading: false,
+        error: null,
+        details,
+      });
+    } catch (loadError) {
+      const latestRequestId =
+        compactHistoryRequestIdsRef.current.get(requestKey) ?? null;
+      if (latestRequestId !== requestId) {
+        return;
+      }
+      updateCompactHistoryState(threadId, entryId, {
+        isExpanded: true,
+        isLoading: false,
+        error: toErrorMessage(loadError),
+        details: null,
+      });
+    }
+  }
+
+  function toggleCompactHistory(entryId: string) {
+    const threadId = selectedThreadIdRef.current;
+    if (!threadId) {
+      return;
+    }
+    const existing = compactHistoryByThreadId[threadId]?.[entryId] ?? null;
+    if (existing?.isExpanded) {
+      const requestKey = `${threadId}:${entryId}`;
+      compactHistoryRequestIdsRef.current.set(
+        requestKey,
+        advanceCompactHistoryRequestToken(
+          compactHistoryRequestIdsRef.current,
+          requestKey,
+        ),
+      );
+      updateCompactHistoryState(threadId, entryId, null);
+      return;
+    }
+    void loadCompactHistory(threadId, entryId);
   }
 
   async function loadThread(threadId: string) {
@@ -2129,6 +2278,7 @@ function App() {
         <ConversationPanel
           availableSkills={availableSkills}
           availableWorkflows={availableWorkflows}
+          compactHistoryById={selectedCompactHistory}
           conversationCells={conversationCells}
           conversationScrollRef={conversationScrollRef}
           draft={draft}
@@ -2148,6 +2298,7 @@ function App() {
           onDraftChange={handleDraftChange}
           onHandleComposerPaste={(event) => void handleComposerPaste(event)}
           onHandleImageSelection={(event) => void handleImageSelection(event)}
+          onToggleCompactHistory={toggleCompactHistory}
           onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
           onPauseGoal={pauseCurrentThreadGoal}
           onRemoveDraftImage={removeDraftImage}

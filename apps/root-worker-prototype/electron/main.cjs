@@ -202,6 +202,15 @@ ipcMain.handle(
   },
 );
 
+ipcMain.handle("codex:readCompactHistory", async (_event, threadId) => {
+  return readThread(
+    threadId,
+    true,
+    threadRuntimeById.get(threadId) ?? null,
+    { includeCompactReplacementHistory: true },
+  );
+});
+
 ipcMain.handle("codex:setThreadRunConfig", async (_event, payload) => {
   rememberThreadRuntime(payload.threadId, {
     model: payload.model ?? null,
@@ -431,12 +440,12 @@ async function listSkills(cwd) {
   };
 }
 
-async function readThread(threadId, includeTurns, runtime = null) {
+async function readThread(threadId, includeTurns, runtime = null, options = {}) {
   const response = await appServerClient.request("thread/read", {
     threadId,
     includeTurns,
   });
-  return { thread: normalizeThread(response.thread, runtime) };
+  return { thread: normalizeThread(response.thread, runtime, options) };
 }
 
 async function subscribeThread(threadId) {
@@ -550,7 +559,7 @@ function normalizeNotification(notification) {
   return notification;
 }
 
-function normalizeThread(thread, runtime = null) {
+function normalizeThread(thread, runtime = null, options = {}) {
   const tokenUsage = Object.prototype.hasOwnProperty.call(thread, "tokenUsage")
     ? thread.tokenUsage
       ? normalizeThreadTokenUsage(thread.tokenUsage)
@@ -580,7 +589,7 @@ function normalizeThread(thread, runtime = null) {
     ...(Object.prototype.hasOwnProperty.call(thread, "contextUsage")
       ? { contextUsage }
       : {}),
-    turns: (thread.turns ?? []).map(normalizeTurn),
+    turns: (thread.turns ?? []).map((turn) => normalizeTurn(turn, options)),
   });
 }
 
@@ -664,20 +673,37 @@ function normalizeThreadGoal(goal) {
   };
 }
 
-function normalizeTurn(turn) {
+function normalizeTurn(turn, options = {}) {
   return {
     ...turn,
     status: normalizeStatusValue(turn.status),
-    items: (turn.items ?? []).map(normalizeItem),
+    items: (turn.items ?? []).map((item) => normalizeItem(item, options)),
   };
 }
 
-function normalizeItem(item) {
+function normalizeItem(item, options = {}) {
   if (!item || typeof item !== "object") {
     return item;
   }
 
   switch (item.type) {
+    case "contextCompaction": {
+      const replacementHistory = Array.isArray(item.replacementHistory)
+        ? item.replacementHistory
+        : null;
+      const hasReplacementHistory = replacementHistory !== null;
+      return {
+        ...item,
+        replacementHistory:
+          options.includeCompactReplacementHistory ? replacementHistory : null,
+        replacementHistoryStatus: hasReplacementHistory
+          ? replacementHistory.length > 0
+            ? "available"
+            : "empty"
+          : "missing",
+        replacementHistoryCount: replacementHistory?.length ?? null,
+      };
+    }
     case "userMessage":
       return {
         ...item,

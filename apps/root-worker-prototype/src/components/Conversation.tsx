@@ -33,6 +33,11 @@ type ToolRowProps = {
 
 type CompactRowProps = {
   entry: ConversationEntry;
+  isExpanded?: boolean;
+  isLoading?: boolean;
+  loadError?: string | null;
+  onToggleExpanded?: () => void;
+  onOpenLocalFile?: (target: string) => void;
 };
 
 type ArchivedHistoryRowProps = {
@@ -792,19 +797,34 @@ export const ToolRow = memo(function ToolRow({
   );
 }, areToolRowPropsEqual);
 
-export const CompactRow = memo(function CompactRow({ entry }: CompactRowProps) {
+export const CompactRow = memo(function CompactRow({
+  entry,
+  isExpanded = false,
+  isLoading = false,
+  loadError = null,
+  onToggleExpanded,
+  onOpenLocalFile,
+}: CompactRowProps) {
   const replacementCount = entry.replacementHistoryCount;
   const replacementLabel =
     replacementCount === null || replacementCount === undefined
       ? "replacement history unavailable"
       : `${replacementCount} replacement item${replacementCount === 1 ? "" : "s"}`;
+  const archivedCells = entry.archivedCells ?? [];
+  const replacementHistoryCells = entry.replacementHistoryCells ?? [];
+  const archivedEntryCount = entry.archivedEntryCount ?? 0;
   return (
     <section className="compact-row" aria-label="Context compacted">
       <div className="event-icon compact-icon">
         <ShareIcon />
       </div>
       <div className="compact-card">
-        <div className="compact-summary">
+        <button
+          type="button"
+          className={`compact-summary compact-toggle ${isExpanded ? "expanded" : ""}`}
+          aria-expanded={isExpanded}
+          onClick={onToggleExpanded}
+        >
           <div className="compact-copy">
             <strong>Context compacted</strong>
             <span>{entry.text}</span>
@@ -813,14 +833,80 @@ export const CompactRow = memo(function CompactRow({ entry }: CompactRowProps) {
             ) : entry.replacementHistoryStatus === "empty" ? (
               <em>No replacement history was provided after compacting.</em>
             ) : (
-              <em>Open Previous conversation for older messages; compacted context is shown below.</em>
+              <em>Open this compact round to load the archived conversation and compacted context.</em>
             )}
           </div>
           <div className="compact-meta">
             <span>{replacementLabel}</span>
             <time>{entry.timestamp}</time>
           </div>
-        </div>
+        </button>
+        {isExpanded ? (
+          <div className="compact-body">
+            {isLoading ? (
+              <div className="compact-body-note">Loading compact history…</div>
+            ) : loadError ? (
+              <div className="compact-body-note compact-body-error">
+                {loadError}
+              </div>
+            ) : (
+              <>
+                <div className="compact-group-section">
+                  <div className="compact-group-header">
+                    <strong>Previous conversation</strong>
+                    <span>
+                      {archivedEntryCount} archived item
+                      {archivedEntryCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  {archivedCells.length > 0 ? (
+                    <div className="compact-group-cells">
+                      {archivedCells.map((cell) => (
+                        <div
+                          key={cell.id}
+                          className={`archive-cell archive-cell-${cell.kind}`}
+                        >
+                          {renderNestedConversationCell(cell, onOpenLocalFile)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="compact-body-note">
+                      No archived items were available for this compact round.
+                    </div>
+                  )}
+                </div>
+                <div className="compact-group-section">
+                  <div className="compact-group-header">
+                    <strong>Compacted context</strong>
+                    <span>{replacementLabel}</span>
+                  </div>
+                  {entry.replacementHistoryStatus === "missing" ? (
+                    <div className="compact-body-note">
+                      Replacement history is unavailable for this compact
+                      round.
+                    </div>
+                  ) : replacementHistoryCells.length > 0 ? (
+                    <div className="compact-group-cells">
+                      {replacementHistoryCells.map((cell) => (
+                        <div
+                          key={cell.id}
+                          className={`archive-cell archive-cell-${cell.kind}`}
+                        >
+                          {renderNestedConversationCell(cell, onOpenLocalFile)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="compact-body-note">
+                      No replacement history was provided after compacting.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -871,6 +957,13 @@ function renderArchivedConversationCell(
   cell: ConversationCell,
   onOpenLocalFile?: (target: string) => void,
 ) {
+  return renderNestedConversationCell(cell, onOpenLocalFile);
+}
+
+function renderNestedConversationCell(
+  cell: ConversationCell,
+  onOpenLocalFile?: (target: string) => void,
+) {
   if (cell.kind === "message") {
     return (
       <MessageRow entries={cell.entries} onOpenLocalFile={onOpenLocalFile} />
@@ -887,6 +980,23 @@ function renderArchivedConversationCell(
   }
   if (cell.kind === "event") {
     return <EventRow entry={cell.entries[0]} />;
+  }
+  if (cell.kind === "compact") {
+    return (
+      <CompactRow
+        entry={cell.entries[0]}
+        isExpanded
+        onOpenLocalFile={onOpenLocalFile}
+      />
+    );
+  }
+  if (cell.kind === "archive") {
+    return (
+      <ArchivedHistoryRow
+        entry={cell.entries[0]}
+        onOpenLocalFile={onOpenLocalFile}
+      />
+    );
   }
   return (
     <div className="compact-nested-item">
@@ -925,7 +1035,13 @@ function areCompactRowPropsEqual(
   previous: Readonly<CompactRowProps>,
   next: Readonly<CompactRowProps>,
 ) {
-  return previous.entry === next.entry;
+  return (
+    previous.entry === next.entry &&
+    previous.isExpanded === next.isExpanded &&
+    previous.isLoading === next.isLoading &&
+    previous.loadError === next.loadError &&
+    previous.onOpenLocalFile === next.onOpenLocalFile
+  );
 }
 
 function areArchivedHistoryRowPropsEqual(

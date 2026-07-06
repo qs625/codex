@@ -2,10 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  buildConversationCells,
   buildConversationEntries,
   buildConversationState,
 } from "./conversation";
+import {
+  buildConversationCells,
+  extractCompactConversationDetails,
+} from "./conversationCompact";
 import { formatClockTime } from "./thread";
 import type { Thread } from "../types";
 
@@ -1551,8 +1554,8 @@ test("renders wait agent replacement fallback without raw output json", () => {
   );
 });
 
-test("places replacement history into the main conversation after archived history", () => {
-  const entries = buildConversationEntries(
+test("keeps compact rows collapsed by default even when replacement history exists", () => {
+  const state = buildConversationState(
     makeThread([
       {
         type: "userMessage",
@@ -1562,19 +1565,9 @@ test("places replacement history into the main conversation after archived histo
       {
         type: "contextCompaction",
         id: "compact-1",
-        replacementHistory: [
-          {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "recent request" }],
-          },
-          {
-            type: "function_call",
-            name: "shell",
-            arguments: '{"cmd":"pwd"}',
-            call_id: "call-1",
-          },
-        ],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 2,
+        replacementHistory: null,
       },
       {
         type: "agentMessage",
@@ -1586,88 +1579,20 @@ test("places replacement history into the main conversation after archived histo
     ]),
   );
 
-  const cells = buildConversationCells(entries);
-
   assert.deepEqual(
-    cells.map((cell) => ({
-      id: cell.id,
-      kind: cell.kind,
-      entries: cell.entries.map((entry) => ({
-        id: entry.id,
-        kind: entry.kind,
-        text: entry.text,
-        archivedEntryCount: entry.archivedEntryCount,
-        isReplacementHistory: entry.isReplacementHistory,
-      })),
-    })),
+    state.cells.map((cell) => [cell.id, cell.kind, cell.entries[0]?.text]),
     [
-      {
-        id: "compact-1:archive",
-        kind: "archive",
-        entries: [
-          {
-            id: "compact-1:archive",
-            kind: "archive",
-            text: "Previous conversation is no longer the active model context.",
-            archivedEntryCount: 1,
-            isReplacementHistory: undefined,
-          },
-        ],
-      },
-      {
-        id: "compact-1",
-        kind: "compact",
-        entries: [
-          {
-            id: "compact-1",
-            kind: "compact",
-            text: "Previous conversation was archived; compacted model context continues below.",
-            archivedEntryCount: undefined,
-            isReplacementHistory: undefined,
-          },
-        ],
-      },
-      {
-        id: "compact-1:replacement:0",
-        kind: "message",
-        entries: [
-          {
-            id: "compact-1:replacement:0",
-            kind: "message",
-            text: "recent request",
-            archivedEntryCount: undefined,
-            isReplacementHistory: true,
-          },
-        ],
-      },
-      {
-        id: "compact-1:replacement:1",
-        kind: "tool",
-        entries: [
-          {
-            id: "compact-1:replacement:1",
-            kind: "tool",
-            text: "Function call call-1",
-            archivedEntryCount: undefined,
-            isReplacementHistory: true,
-          },
-        ],
-      },
-      {
-        id: "after-compact",
-        kind: "message",
-        entries: [
-          {
-            id: "after-compact",
-            kind: "message",
-            text: "continued",
-            archivedEntryCount: undefined,
-            isReplacementHistory: undefined,
-          },
-        ],
-      },
+      ["old-user", "message", "old request"],
+      [
+        "compact-1",
+        "compact",
+        "Previous conversation was archived; compacted model context continues below.",
+      ],
+      ["after-compact", "message", "continued"],
     ],
   );
+  assert.equal(state.cells[1]?.entries[0]?.archivedCells, undefined);
+  assert.equal(state.cells[1]?.entries[0]?.replacementHistoryCells, null);
 });
 
 test("preserves compact replacement raw child completion when live status update exists", () => {
@@ -1715,14 +1640,10 @@ test("preserves compact replacement raw child completion when live status update
     ]),
   );
 
+  const details = extractCompactConversationDetails(state.entries, "compact-1");
+  assert.equal(details?.archivedEntryCount, 1);
   assert.deepEqual(
-    state.cells.map((cell) => cell.kind),
-    ["archive", "compact", "message", "tool"],
-  );
-  assert.equal(state.cells[0]?.entries[0]?.archivedEntryCount, 1);
-  assert.deepEqual(
-    state.cells
-      .flatMap((cell) => cell.entries)
+    details?.replacementHistoryEntries
       .filter((entry) => entry.kind === "message" && entry.role === "agent")
       .map((entry) => entry.text),
     [childCompletionEnvelope],
@@ -1736,12 +1657,10 @@ test("preserves compact replacement raw child completion when live status update
           entry.toolCategory === "subagentNotification",
       )
       .map((entry) => [entry.toolName, entry.text]),
-    [
-      [
-        "/root/worker subagent completion",
-        "/root/worker • completed • done",
-      ],
-    ],
+    [[
+      "/root/worker subagent completion",
+      "/root/worker • completed • done",
+    ]],
   );
 });
 
@@ -1805,7 +1724,7 @@ test("does not render compact replacement raw child completion before typed stat
   );
 });
 
-test("archives earlier compact boundaries when a later compact replaces context again", () => {
+test("extracts compact round details with earlier compact rounds grouped into archived history", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -1845,26 +1764,15 @@ test("archives earlier compact boundaries when a later compact replaces context 
     ]),
   );
 
-  const cells = buildConversationCells(entries);
-  const archiveEntry = cells[0]?.entries[0];
+  const details = extractCompactConversationDetails(entries, "compact-2");
 
   assert.deepEqual(
-    cells.map((cell) => ({
+    details?.replacementHistoryCells.map((cell) => ({
       id: cell.id,
       kind: cell.kind,
       text: cell.entries[0]?.text,
     })),
     [
-      {
-        id: "compact-2:archive",
-        kind: "archive",
-        text: "Previous conversation is no longer the active model context.",
-      },
-      {
-        id: "compact-2",
-        kind: "compact",
-        text: "Previous conversation was archived; compacted model context continues below.",
-      },
       {
         id: "compact-2:replacement:0",
         kind: "message",
@@ -1872,15 +1780,88 @@ test("archives earlier compact boundaries when a later compact replaces context 
       },
     ],
   );
-  assert.equal(archiveEntry?.archivedEntryCount, 4);
+  assert.equal(details?.archivedEntryCount, 4);
   assert.deepEqual(
-    archiveEntry?.archivedCells?.map((cell) => [cell.id, cell.kind]),
+    details?.archivedCells.map((cell) => [cell.id, cell.kind]),
     [
-      ["compact-1:archive", "archive"],
       ["compact-1", "compact"],
-      ["compact-1:replacement:0", "message"],
       ["after-compact-1", "message"],
     ],
+  );
+});
+
+test("hydrates a compact row with loaded round details without flattening them into top-level cells", () => {
+  const fullHistoryThread = makeThread([
+    {
+      type: "userMessage",
+      id: "old-user",
+      content: [{ type: "text", text: "old request" }],
+    },
+    {
+      type: "contextCompaction",
+      id: "compact-1",
+      replacementHistory: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "recent request" }],
+        },
+      ],
+    },
+    {
+      type: "agentMessage",
+      id: "after-compact",
+      text: "continued",
+      phase: null,
+      memoryCitation: null,
+    },
+  ]);
+  const details = extractCompactConversationDetails(
+    buildConversationEntries(fullHistoryThread),
+    "compact-1",
+  );
+  assert.ok(details);
+
+  const strippedThread = makeThread([
+    {
+      type: "userMessage",
+      id: "old-user",
+      content: [{ type: "text", text: "old request" }],
+    },
+    {
+      type: "contextCompaction",
+      id: "compact-1",
+      replacementHistory: null,
+      replacementHistoryStatus: "available",
+      replacementHistoryCount: 1,
+    },
+    {
+      type: "agentMessage",
+      id: "after-compact",
+      text: "continued",
+      phase: null,
+      memoryCitation: null,
+    },
+  ]);
+
+  const state = buildConversationState(strippedThread, undefined, {
+    compactDetailsById: {
+      "compact-1": details,
+    },
+  });
+
+  assert.deepEqual(
+    state.cells.map((cell) => [cell.id, cell.kind]),
+    [
+      ["old-user", "message"],
+      ["compact-1", "compact"],
+      ["after-compact", "message"],
+    ],
+  );
+  assert.equal(state.cells[1]?.entries[0]?.archivedEntryCount, 1);
+  assert.deepEqual(
+    state.cells[1]?.entries[0]?.replacementHistoryCells?.map((cell) => cell.id),
+    ["compact-1:replacement:0"],
   );
 });
 

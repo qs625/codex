@@ -148,6 +148,7 @@ export function SidebarPanel({
 export function ConversationPanel({
   availableSkills,
   availableWorkflows,
+  compactHistoryById,
   conversationCells,
   conversationScrollRef,
   draft,
@@ -167,6 +168,7 @@ export function ConversationPanel({
   onDraftChange,
   onHandleComposerPaste,
   onHandleImageSelection,
+  onToggleCompactHistory,
   onOpenLocalFile,
   onPauseGoal,
   onRemoveDraftImage,
@@ -184,6 +186,9 @@ export function ConversationPanel({
 }: {
   availableSkills: ThreadSkill[];
   availableWorkflows: WorkflowSummary[];
+  compactHistoryById: Readonly<
+    Record<string, { isLoading: boolean; isExpanded: boolean; error: string | null }>
+  >;
   conversationCells: ConversationCell[];
   conversationScrollRef: RefObject<HTMLDivElement | null>;
   draft: string;
@@ -203,6 +208,7 @@ export function ConversationPanel({
   onDraftChange: (value: string) => void;
   onHandleComposerPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onHandleImageSelection: (event: ChangeEvent<HTMLInputElement>) => void;
+  onToggleCompactHistory: (entryId: string) => void;
   onOpenLocalFile: (target: string) => void;
   onPauseGoal: () => void;
   onRemoveDraftImage: (imageId: string) => void;
@@ -555,8 +561,10 @@ export function ConversationPanel({
             <ConversationVirtualList
               key={selectedThreadId}
               cells={conversationCells}
+              compactHistoryById={compactHistoryById}
               containerRef={conversationScrollRef}
               focusedItem={focusedConversationListItem}
+              onToggleCompactHistory={onToggleCompactHistory}
               onOpenLocalFile={onOpenLocalFile}
               searchCurrentCellId={activeSearchResult?.cellId ?? null}
               searchMatchCellIds={conversationSearchMatchingCellIds}

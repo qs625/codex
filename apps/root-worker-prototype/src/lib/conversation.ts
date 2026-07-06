@@ -6,6 +6,10 @@ import type {
   ThreadItem,
 } from "../types";
 import {
+  buildConversationCells,
+  type ConversationCellBuildOptions,
+} from "./conversationCompact";
+import {
   formatClockTime,
   getThreadLabel,
   trimPath,
@@ -36,13 +40,15 @@ const STRUCTURED_TOOL_OUTPUT_NAMES = new Set([
 
 export function buildConversationEntries(
   thread: Thread | null,
+  options?: ConversationCellBuildOptions,
 ): ConversationEntry[] {
-  return buildConversationState(thread).entries;
+  return buildConversationState(thread, undefined, options).entries;
 }
 
 export function buildConversationState(
   thread: Thread | null,
   previous?: ConversationBuildState | null,
+  options?: ConversationCellBuildOptions,
 ): ConversationBuildState {
   if (!thread) {
     return {
@@ -94,7 +100,7 @@ export function buildConversationState(
     author,
     flatItems,
     entries,
-    cells: buildConversationCells(entries, previous?.cells),
+    cells: buildConversationCells(entries, previous?.cells, options),
   };
 }
 
@@ -322,14 +328,17 @@ function buildConversationItemEntries(
         timestamp,
         attachments: [],
         replacementHistoryEntries,
-        replacementHistoryStatus: Array.isArray(replacementHistory)
-          ? replacementHistory.length > 0
-            ? "available"
-            : "empty"
-          : "missing",
-        replacementHistoryCount: Array.isArray(replacementHistory)
-          ? replacementHistory.length
-          : null,
+        replacementHistoryCells: null,
+        replacementHistoryStatus:
+          item.replacementHistoryStatus ??
+          (Array.isArray(replacementHistory)
+            ? replacementHistory.length > 0
+              ? "available"
+              : "empty"
+            : "missing"),
+        replacementHistoryCount:
+          item.replacementHistoryCount ??
+          (Array.isArray(replacementHistory) ? replacementHistory.length : null),
       },
     ];
   }
@@ -1084,191 +1093,6 @@ function arrayOfStrings(value: unknown) {
   return Array.isArray(value)
     ? value.map((item) => stringOrFallback(item, "unknown"))
     : [];
-}
-
-export function buildConversationCells(
-  entries: ConversationEntry[],
-  previousCells?: ConversationCell[] | null,
-): ConversationCell[] {
-  const cells: ConversationCell[] = [];
-  let segmentEntries: ConversationEntry[] = [];
-
-  const appendSegmentEntry = (entry: ConversationEntry) => {
-    segmentEntries.push(entry);
-  };
-
-  for (const entry of entries) {
-    if (entry.kind !== "compact") {
-      appendSegmentEntry(entry);
-      continue;
-    }
-
-    cells.push(...buildConversationCellsForSegment(segmentEntries));
-    segmentEntries = [];
-
-    if (cells.length > 0) {
-      const archivedCell = buildArchivedHistoryCell(entry, [...cells]);
-      cells.length = 0;
-      cells.push(archivedCell);
-    }
-
-    cells.push({
-      id: entry.id,
-      kind: "compact",
-      entries: [entry],
-    });
-
-    segmentEntries = [];
-    for (const replacementEntry of entry.replacementHistoryEntries ?? []) {
-      appendSegmentEntry(replacementEntry);
-    }
-  }
-
-  cells.push(...buildConversationCellsForSegment(segmentEntries));
-
-  return reuseConversationCells(cells, previousCells);
-}
-
-function buildConversationCellsForSegment(
-  entries: ConversationEntry[],
-): ConversationCell[] {
-  const cells: ConversationCell[] = [];
-  let entryIndex = 0;
-
-  while (entryIndex < entries.length) {
-    const nextCellEntries = [entries[entryIndex]];
-    while (
-      entryIndex + nextCellEntries.length < entries.length &&
-      shouldMergeConversationEntry(
-        {
-          id: nextCellEntries[0].id,
-          kind: nextCellEntries[0].kind,
-          entries: nextCellEntries,
-        },
-        entries[entryIndex + nextCellEntries.length],
-      )
-    ) {
-      nextCellEntries.push(entries[entryIndex + nextCellEntries.length]);
-    }
-
-    cells.push({
-      id: nextCellEntries[0].id,
-      kind: nextCellEntries[0].kind,
-      entries: nextCellEntries,
-    });
-
-    entryIndex += nextCellEntries.length;
-  }
-
-  return cells;
-}
-
-function buildArchivedHistoryCell(
-  compactEntry: ConversationEntry,
-  archivedCells: ConversationCell[],
-): ConversationCell {
-  const archivedEntryCount = archivedCells.reduce(
-    (count, cell) =>
-      count +
-      cell.entries.reduce(
-        (entryCount, entry) =>
-          entryCount +
-          (entry.kind === "archive"
-            ? (entry.archivedEntryCount ?? 0)
-            : 1),
-        0,
-      ),
-    0,
-  );
-  return {
-    id: `${compactEntry.id}:archive`,
-    kind: "archive",
-    entries: [
-      {
-        id: `${compactEntry.id}:archive`,
-        kind: "archive",
-        author: compactEntry.author,
-        role: "system",
-        text: "Previous conversation is no longer the active model context.",
-        timestamp: compactEntry.timestamp,
-        attachments: [],
-        archivedCells,
-        archivedEntryCount,
-      },
-    ],
-  };
-}
-
-function reuseConversationCells(
-  cells: ConversationCell[],
-  previousCells?: ConversationCell[] | null,
-): ConversationCell[] {
-  if (!previousCells) {
-    return cells;
-  }
-
-  const previousCellsByKey = new Map(
-    previousCells.map((cell) => [conversationCellReuseKey(cell), cell]),
-  );
-
-  return cells.map((cell) => {
-    const existingCell = previousCellsByKey.get(conversationCellReuseKey(cell));
-    if (
-      existingCell &&
-      existingCell.entries.length === cell.entries.length &&
-      existingCell.entries.every(
-        (entry, entryIndex) => entry === cell.entries[entryIndex],
-      )
-    ) {
-      return existingCell;
-    }
-    return cell;
-  });
-}
-
-function conversationCellReuseKey(cell: ConversationCell) {
-  return `${cell.kind}:${cell.id}`;
-}
-
-function shouldMergeConversationEntry(
-  cell: ConversationCell,
-  nextEntry: ConversationEntry,
-) {
-  const previousEntry = cell.entries.at(-1);
-  if (!previousEntry) {
-    return false;
-  }
-
-  if (cell.kind === "tool" && nextEntry.kind === "tool") {
-    if (isStandaloneNotificationEntry(previousEntry) || isStandaloneNotificationEntry(nextEntry)) {
-      return false;
-    }
-    if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {
-      return false;
-    }
-    return previousEntry.toolCategory === nextEntry.toolCategory;
-  }
-
-  if (
-    cell.kind === "message" &&
-    nextEntry.kind === "message" &&
-    previousEntry.role === "agent" &&
-    nextEntry.role === "agent"
-  ) {
-    if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {
-      return false;
-    }
-    return true;
-  }
-
-  return false;
-}
-
-function isStandaloneNotificationEntry(entry: ConversationEntry) {
-  return (
-    entry.toolCategory === "childCompletion" ||
-    entry.toolCategory === "subagentNotification"
-  );
 }
 
 function summarizeFileChanges(

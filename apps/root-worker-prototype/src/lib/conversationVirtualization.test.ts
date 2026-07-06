@@ -111,6 +111,46 @@ test("estimates archived history rows separately from compact rows", () => {
   assert.ok(estimateConversationCellHeight(compactCell) > 0);
 });
 
+test("expanded compact rows account for loaded round details in height estimates", () => {
+  const collapsedCompactCell: ConversationCell = {
+    id: "compact-collapsed",
+    kind: "compact",
+    entries: [
+      {
+        id: "compact-collapsed",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "compacted",
+        timestamp: "09:41",
+        attachments: [],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 1,
+        replacementHistoryEntries: [],
+        replacementHistoryCells: [],
+      },
+    ],
+  };
+  const expandedCompactCell: ConversationCell = {
+    id: "compact-expanded",
+    kind: "compact",
+    entries: [
+      {
+        ...collapsedCompactCell.entries[0]!,
+        id: "compact-expanded",
+        archivedEntryCount: 1,
+        archivedCells: [makeMessageCell("archived", "old request")],
+        replacementHistoryCells: [makeMessageCell("replacement", "recent request")],
+      },
+    ],
+  };
+
+  assert.ok(
+    estimateConversationCellHeight(expandedCompactCell) >
+      estimateConversationCellHeight(collapsedCompactCell),
+  );
+});
+
 test("finds a stable virtualized window with overscan", () => {
   const cells = Array.from({ length: 6 }, (_, index) =>
     makeMessageCell(`cell-${index}`, `row ${index}`),

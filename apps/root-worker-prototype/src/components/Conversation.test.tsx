@@ -262,7 +262,10 @@ test("compact rows point to replacement history in the active chat list", () => 
 
   assert.match(markup, /Context compacted/);
   assert.match(markup, /2 replacement items/);
-  assert.match(markup, /compacted context is shown below/);
+  assert.match(
+    markup,
+    /load the archived conversation and compacted context/,
+  );
   assert.doesNotMatch(markup, /recent request/);
   assert.doesNotMatch(markup, /functions\/exec_command/);
 });
@@ -287,6 +290,185 @@ test("compact rows explain unavailable replacement history", () => {
 
   assert.match(markup, /replacement history unavailable/);
   assert.match(markup, /Replacement history is unavailable/);
+});
+
+test("compact rows render a grouped history body only when expanded", () => {
+  const collapsedMarkup = renderToStaticMarkup(
+    <CompactRow
+      entry={{
+        id: "compact-1",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "Previous conversation was archived; compacted model context continues below.",
+        timestamp: "09:43",
+        attachments: [],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 1,
+        replacementHistoryEntries: [],
+        replacementHistoryCells: [],
+        archivedEntryCount: 1,
+        archivedCells: [
+          {
+            id: "archived-message",
+            kind: "message",
+            entries: [
+              {
+                id: "archived-message",
+                kind: "message",
+                author: "You",
+                role: "user",
+                text: "old request",
+                timestamp: "09:41",
+                attachments: [],
+              },
+            ],
+          },
+        ],
+      }}
+    />,
+  );
+  assert.doesNotMatch(collapsedMarkup, /Compacted context/);
+  assert.doesNotMatch(collapsedMarkup, /old request/);
+
+  const expandedMarkup = renderToStaticMarkup(
+    <CompactRow
+      entry={{
+        id: "compact-1",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "Previous conversation was archived; compacted model context continues below.",
+        timestamp: "09:43",
+        attachments: [],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 1,
+        replacementHistoryEntries: [],
+        replacementHistoryCells: [
+          {
+            id: "replacement-message",
+            kind: "message",
+            entries: [
+              {
+                id: "replacement-message",
+                kind: "message",
+                author: "You",
+                role: "user",
+                text: "recent request",
+                timestamp: "09:42",
+                attachments: [],
+              },
+            ],
+          },
+        ],
+        archivedEntryCount: 1,
+        archivedCells: [
+          {
+            id: "archived-message",
+            kind: "message",
+            entries: [
+              {
+                id: "archived-message",
+                kind: "message",
+                author: "You",
+                role: "user",
+                text: "old request",
+                timestamp: "09:41",
+                attachments: [],
+              },
+            ],
+          },
+        ],
+      }}
+      isExpanded
+    />,
+  );
+
+  assert.match(expandedMarkup, /Previous conversation/);
+  assert.match(expandedMarkup, /Compacted context/);
+  assert.match(expandedMarkup, /old request/);
+  assert.match(expandedMarkup, /recent request/);
+});
+
+test("expanded compact rows preserve nested compact groups inside archived history", () => {
+  const markup = renderToStaticMarkup(
+    <CompactRow
+      entry={{
+        id: "compact-2",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "Previous conversation was archived; compacted model context continues below.",
+        timestamp: "09:43",
+        attachments: [],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 1,
+        replacementHistoryEntries: [],
+        replacementHistoryCells: [],
+        archivedEntryCount: 3,
+        archivedCells: [
+          {
+            id: "compact-1",
+            kind: "compact",
+            entries: [
+              {
+                id: "compact-1",
+                kind: "compact",
+                author: "Root",
+                role: "system",
+                text: "Previous conversation was archived; compacted model context continues below.",
+                timestamp: "09:41",
+                attachments: [],
+                replacementHistoryStatus: "available",
+                replacementHistoryCount: 1,
+                replacementHistoryEntries: [],
+                replacementHistoryCells: [
+                  {
+                    id: "replacement-message",
+                    kind: "message",
+                    entries: [
+                      {
+                        id: "replacement-message",
+                        kind: "message",
+                        author: "You",
+                        role: "user",
+                        text: "first replacement",
+                        timestamp: "09:40",
+                        attachments: [],
+                      },
+                    ],
+                  },
+                ],
+                archivedEntryCount: 1,
+                archivedCells: [
+                  {
+                    id: "old-message",
+                    kind: "message",
+                    entries: [
+                      {
+                        id: "old-message",
+                        kind: "message",
+                        author: "You",
+                        role: "user",
+                        text: "old request",
+                        timestamp: "09:39",
+                        attachments: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }}
+      isExpanded
+    />,
+  );
+
+  assert.ok((markup.match(/Context compacted/g)?.length ?? 0) >= 2);
+  assert.match(markup, /first replacement/);
+  assert.match(markup, /old request/);
 });
 
 test("archived history rows collapse previous conversation by default", () => {

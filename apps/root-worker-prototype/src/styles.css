@@ -1552,6 +1552,14 @@ svg {
   list-style: none;
 }
 
+.compact-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
 .archive-summary {
   cursor: pointer;
 }
@@ -1611,6 +1619,49 @@ svg {
   background: #f3f4f6;
   color: #4b5563;
   font-weight: 600;
+}
+
+.compact-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+}
+
+.compact-body-note {
+  color: #57534e;
+  font-size: 13px;
+}
+
+.compact-body-error {
+  color: #b42318;
+}
+
+.compact-group-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.compact-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #57534e;
+  font-size: 12px;
+}
+
+.compact-group-header strong {
+  color: #18181b;
+  font-size: 13px;
+}
+
+.compact-group-cells {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .archive-body {

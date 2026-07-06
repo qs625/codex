@@ -242,6 +242,8 @@ export type ThreadItem = ThreadItemTimestamps &
       type: "contextCompaction";
       id: string;
       replacementHistory?: ResponseItem[] | null;
+      replacementHistoryStatus?: "missing" | "empty" | "available";
+      replacementHistoryCount?: number | null;
     }
   );
 
@@ -589,6 +591,7 @@ export type ConversationEntry = {
     | "goal"
     | "external"
     | "context";
+  replacementHistoryCells?: ConversationCell[] | null;
   replacementHistoryEntries?: ConversationEntry[] | null;
   replacementHistoryStatus?: "missing" | "empty" | "available";
   replacementHistoryCount?: number | null;
