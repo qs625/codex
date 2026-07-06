@@ -836,7 +836,47 @@ impl Config {
             "experimental compact prompt file",
         )
         .await?;
-        let compact_prompt = compact_prompt.or(file_compact_prompt);
+        let default_compact_prompt =
+            if compact_prompt.is_some() || experimental_compact_prompt_path.is_some() {
+            None
+        } else {
+            let workspace_compact_prompt_path = AbsolutePathBuf::try_from(
+                resolved_cwd
+                    .join(".codex")
+                    .join("compact")
+                    .join("COMPACT.md"),
+            )
+            .expect("workspace compact prompt path should remain absolute");
+            match Self::try_read_non_empty_file(
+                fs,
+                Some(&workspace_compact_prompt_path),
+                "workspace compact prompt file",
+            )
+            .await
+            {
+                Ok(prompt) => prompt,
+                Err(err) if Self::is_default_compact_prompt_fallback(&err) => {
+                    let codex_home_compact_prompt_path =
+                        AbsolutePathBuf::try_from(codex_home.join("compact").join("COMPACT.md"))
+                            .expect("Codex home compact prompt path should remain absolute");
+                    match Self::try_read_non_empty_file(
+                        fs,
+                        Some(&codex_home_compact_prompt_path),
+                        "Codex home compact prompt file",
+                    )
+                    .await
+                    {
+                        Ok(prompt) => prompt,
+                        Err(err) if Self::is_default_compact_prompt_fallback(&err) => None,
+                        Err(err) => return Err(err),
+                    }
+                }
+                Err(err) => return Err(err),
+            }
+        };
+        let compact_prompt = compact_prompt
+            .or(file_compact_prompt)
+            .or(default_compact_prompt);
         let zsh_path = zsh_path_override
             .or(config_profile.zsh_path.map(Into::into))
             .or(cfg.zsh_path.map(Into::into));
@@ -1262,6 +1302,12 @@ impl Config {
         } else {
             Ok(Some(s))
         }
+    }
+
+    fn is_default_compact_prompt_fallback(err: &std::io::Error) -> bool {
+        err.kind() == std::io::ErrorKind::NotFound
+            || (err.kind() == std::io::ErrorKind::InvalidData
+                && err.to_string().contains("is empty"))
     }
 
     pub fn set_windows_sandbox_enabled(&mut self, value: bool) {

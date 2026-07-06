@@ -22,6 +22,9 @@ pub mod types;
 extern crate self as codex_config;
 
 #[cfg(test)]
+extern crate self as config_service;
+
+#[cfg(test)]
 mod agents_md {
     pub use crate::runtime::DEFAULT_AGENTS_MD_FILENAME;
     pub use crate::runtime::LOCAL_AGENTS_MD_FILENAME;

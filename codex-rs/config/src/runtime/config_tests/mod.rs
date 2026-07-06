@@ -108,13 +108,14 @@ use super::*;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::PathExt;
-use pretty_assertions::assert_eq;
-
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
+
+pub(crate) use config_edits::PrecedenceTestFixture;
+pub(crate) use agent_roles_and_plugins::create_test_fixture;
 
 fn test_absolute_path(unix_path: &str) -> AbsolutePathBuf {
     AbsolutePathBuf::from_absolute_path(test_path_buf(unix_path))
@@ -295,6 +296,7 @@ async fn derive_legacy_sandbox_policy_for_test(
 
 
 mod agent_roles_and_plugins;
+mod compact_prompt;
 mod approval_aliases_and_tail;
 mod config_edits;
 mod fixtures_and_requirements;

@@ -6232,7 +6232,6 @@ async fn cli_override_sets_compact_prompt() -> std::io::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
 async fn loads_compact_prompt_from_file() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
@@ -6261,7 +6260,6 @@ async fn loads_compact_prompt_from_file() -> std::io::Result<()> {
 
     Ok(())
 }
-
 #[tokio::test]
 async fn load_config_uses_requirements_guardian_policy_config() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;

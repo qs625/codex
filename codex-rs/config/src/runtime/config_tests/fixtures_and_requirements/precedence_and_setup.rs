@@ -1,8 +1,6 @@
 use super::*;
 
 use super::*;
-
-#[tokio::test]
 async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
     let fixture = create_test_fixture()?;
 
@@ -153,8 +151,6 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
 
     Ok(())
 }
-
-#[tokio::test]
 async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() -> anyhow::Result<()>
 {
     let fixture = create_test_fixture()?;
@@ -339,7 +335,6 @@ trust_level = "trusted"
 }
 
 #[cfg(unix)]
-#[tokio::test]
 async fn active_project_does_not_match_configured_alias_for_canonical_cwd() -> anyhow::Result<()> {
     let tmp = tempdir()?;
     let project_root = tmp.path().join("project");
@@ -418,7 +413,6 @@ fn test_set_default_oss_provider_rejects_legacy_ollama_chat_provider() -> std::i
     Ok(())
 }
 
-#[tokio::test]
 async fn test_load_config_rejects_legacy_ollama_chat_provider_with_helpful_error()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
@@ -445,7 +439,6 @@ async fn test_load_config_rejects_legacy_ollama_chat_provider_with_helpful_error
     Ok(())
 }
 
-#[tokio::test]
 async fn test_untrusted_project_gets_workspace_write_sandbox() -> anyhow::Result<()> {
     let config_with_untrusted = r#"
 [projects."/tmp/test"]
@@ -484,7 +477,6 @@ trust_level = "untrusted"
     Ok(())
 }
 
-#[tokio::test]
 async fn derive_sandbox_policy_falls_back_to_read_only_for_implicit_defaults() -> anyhow::Result<()>
 {
     let project_dir = TempDir::new()?;
@@ -827,5 +819,3 @@ path = "/custom/mcp"
     assert!(config.features.enabled(Feature::AppsMcpPathOverride));
     Ok(())
 }
-
-#[tokio::test]

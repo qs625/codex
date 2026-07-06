@@ -565,7 +565,7 @@ async fn model_catalog_json_rejects_empty_catalog() -> std::io::Result<()> {
     Ok(())
 }
 
-fn create_test_fixture() -> std::io::Result<PrecedenceTestFixture> {
+pub(crate) fn create_test_fixture() -> std::io::Result<PrecedenceTestFixture> {
     let toml = r#"
 model = "o3"
 approval_policy = "untrusted"
@@ -1451,4 +1451,3 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
 
     Ok(())
 }
-

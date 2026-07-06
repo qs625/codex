@@ -190,25 +190,25 @@ async fn set_feature_enabled_profile_disable_overrides_root_enable() -> anyhow::
     Ok(())
 }
 
-struct PrecedenceTestFixture {
-    cwd: TempDir,
-    codex_home: TempDir,
-    cfg: ConfigToml,
-    model_provider_map: HashMap<String, ModelProviderInfo>,
-    openai_provider: ModelProviderInfo,
-    openai_custom_provider: ModelProviderInfo,
+pub(crate) struct PrecedenceTestFixture {
+    pub(crate) cwd: TempDir,
+    pub(crate) codex_home: TempDir,
+    pub(crate) cfg: ConfigToml,
+    pub(crate) model_provider_map: HashMap<String, ModelProviderInfo>,
+    pub(crate) openai_provider: ModelProviderInfo,
+    pub(crate) openai_custom_provider: ModelProviderInfo,
 }
 
 impl PrecedenceTestFixture {
-    fn cwd(&self) -> AbsolutePathBuf {
+    pub(crate) fn cwd(&self) -> AbsolutePathBuf {
         self.cwd.abs()
     }
 
-    fn cwd_path(&self) -> PathBuf {
+    pub(crate) fn cwd_path(&self) -> PathBuf {
         self.cwd.path().to_path_buf()
     }
 
-    fn codex_home(&self) -> AbsolutePathBuf {
+    pub(crate) fn codex_home(&self) -> AbsolutePathBuf {
         self.codex_home.abs()
     }
 }
@@ -1432,4 +1432,3 @@ trust_level = "trusted"
 
     Ok(())
 }
-

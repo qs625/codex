@@ -81,6 +81,8 @@ serde_json = { workspace = true }
 similar = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tonic = { workspace = true, features = ["router", "server", "transport"] }
+tokio-stream = { workspace = true, features = ["net"] }
 
 [lib]
 doctest = false

@@ -361,7 +361,8 @@ mod tests {
         let addr = listener.local_addr().expect("test server addr");
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         let server = tokio::spawn(async move {
-            Server::builder()
+            let mut server = Server::builder();
+            server
                 .add_service(ThreadConfigLoaderServer::new(TestServer {
                     sources: proto_sources(),
                     expected_cwd,
