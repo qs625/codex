@@ -37,6 +37,21 @@ type ViewportState = {
   viewportHeight: number;
 };
 
+export function shouldHandleFocusedItemRequest({
+  focusedItem,
+  lastHandledRequest,
+}: {
+  focusedItem: { itemId: string; token: number } | null;
+  lastHandledRequest: { itemId: string; token: number } | null;
+}) {
+  return (
+    focusedItem !== null &&
+    (lastHandledRequest === null ||
+      lastHandledRequest.itemId !== focusedItem.itemId ||
+      lastHandledRequest.token !== focusedItem.token)
+  );
+}
+
 export function ConversationVirtualList({
   cells,
   containerRef,
@@ -63,6 +78,10 @@ export function ConversationVirtualList({
   const [highlightedCellId, setHighlightedCellId] = useState<string | null>(
     null,
   );
+  const lastHandledFocusRequestRef = useRef<{
+    itemId: string;
+    token: number;
+  } | null>(null);
 
   useEffect(() => {
     const liveCellIds = new Set(cells.map((cell) => cell.id));
@@ -173,7 +192,16 @@ export function ConversationVirtualList({
   const focusedItemToken = focusedItem?.token ?? null;
 
   useEffect(() => {
-    if (!focusedItemId) {
+    if (
+      !shouldHandleFocusedItemRequest({
+        focusedItem,
+        lastHandledRequest: lastHandledFocusRequestRef.current,
+      })
+    ) {
+      return;
+    }
+
+    if (!focusedItemId || focusedItemToken == null) {
       return;
     }
 
@@ -193,12 +221,16 @@ export function ConversationVirtualList({
         behavior: "smooth",
       });
     }
+    lastHandledFocusRequestRef.current = {
+      itemId: focusedItemId,
+      token: focusedItemToken,
+    };
     setHighlightedCellId(cell.id);
     const timeout = window.setTimeout(() => {
       setHighlightedCellId((current) => (current === cell.id ? null : current));
     }, 2000);
     return () => window.clearTimeout(timeout);
-  }, [cells, containerRef, focusedItemId, focusedItemToken]);
+  }, [cells, containerRef, focusedItem, focusedItemId, focusedItemToken]);
 
   const visibleWindow = useMemo(
     () =>

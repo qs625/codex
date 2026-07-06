@@ -159,7 +159,7 @@ test("renders live commands and schedule subscriptions", () => {
   );
 
   assert.match(markup, /tail -f \/tmp\/out\.log/);
-  assert.match(markup, /changed:\/tmp\/out\.log/);
+  assert.doesNotMatch(markup, /changed:\/tmp\/out\.log/);
   assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);
   assert.match(markup, /once_after:60/);

@@ -9,7 +9,10 @@ import {
   MessageRow,
   ToolRow,
 } from "./Conversation";
-import { buildConversationRowClassName } from "./ConversationVirtualList";
+import {
+  buildConversationRowClassName,
+  shouldHandleFocusedItemRequest,
+} from "./ConversationVirtualList";
 import type { ConversationEntry } from "../types";
 
 const entries: ConversationEntry[] = [
@@ -205,6 +208,37 @@ test("conversation virtual rows expose search match and current highlight classe
       searchMatch: true,
     }),
     "conversation-virtual-row highlighted search-match search-current",
+  );
+});
+
+test("focused conversation jumps only consume each focus token once", () => {
+  assert.equal(
+    shouldHandleFocusedItemRequest({
+      focusedItem: { itemId: "cmd-1", token: 1 },
+      lastHandledRequest: null,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldHandleFocusedItemRequest({
+      focusedItem: { itemId: "cmd-1", token: 1 },
+      lastHandledRequest: { itemId: "cmd-1", token: 1 },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldHandleFocusedItemRequest({
+      focusedItem: { itemId: "cmd-1", token: 2 },
+      lastHandledRequest: { itemId: "cmd-1", token: 1 },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldHandleFocusedItemRequest({
+      focusedItem: { itemId: "search-hit-1", token: 1 },
+      lastHandledRequest: { itemId: "cmd-1", token: 1 },
+    }),
+    true,
   );
 });
 

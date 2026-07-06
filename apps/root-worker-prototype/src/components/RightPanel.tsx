@@ -17,6 +17,7 @@ import { LocalImagePreview } from "./Conversation";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
 import {
   buildThreadAnalysis,
+  type MonitorSummary,
   type ThreadAnalysis,
 } from "../lib/threadAnalysis";
 import type {
@@ -377,7 +378,7 @@ function ThreadAnalysisPanel({
                         <div className="monitor-row-main">
                           <strong title={monitor.label}>{monitor.label}</strong>
                           <span title={monitor.detail}>{monitor.detail}</span>
-                          {monitor.latestEvent ? (
+                          {shouldRenderMonitorLatestEvent(monitor) ? (
                             <span title={monitor.latestEvent}>
                               {monitor.latestEvent}
                             </span>
@@ -431,6 +432,10 @@ function ThreadAnalysisPanel({
       </div>
     </div>
   );
+}
+
+function shouldRenderMonitorLatestEvent(monitor: MonitorSummary) {
+  return monitor.kind !== "command" && Boolean(monitor.latestEvent);
 }
 
 function GoalDetailPanel({
