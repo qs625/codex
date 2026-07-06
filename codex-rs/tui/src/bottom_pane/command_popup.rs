@@ -280,37 +280,31 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn filter_includes_init_when_typing_prefix() {
+    fn filter_prefers_skills_when_typing_prefix() {
         let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
-        // Simulate the composer line starting with '/in' so the popup filters
-        // matching commands by prefix.
-        popup.on_composer_text_change("/in".to_string());
+        popup.on_composer_text_change("/sk".to_string());
 
-        // Access the filtered list via the selected command and ensure that
-        // one of the matches is the new "init" command.
         let matches = popup.filtered_items();
-        let has_init = matches.iter().any(|item| match item {
-            CommandItem::Builtin(cmd) => cmd.command() == "init",
+        let has_skills = matches.iter().any(|item| match item {
+            CommandItem::Builtin(cmd) => cmd.command() == "skills",
             CommandItem::ServiceTier(_) => false,
         });
         assert!(
-            has_init,
-            "expected '/init' to appear among filtered commands"
+            has_skills,
+            "expected '/skills' to appear among filtered commands"
         );
     }
 
     #[test]
-    fn selecting_init_by_exact_match() {
+    fn selecting_skills_by_exact_match() {
         let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
-        popup.on_composer_text_change("/init".to_string());
+        popup.on_composer_text_change("/skills".to_string());
 
-        // When an exact match exists, the selected command should be that
-        // command by default.
         let selected = popup.selected_item();
         match selected {
-            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "init"),
+            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "skills"),
             Some(CommandItem::ServiceTier(command)) => {
-                panic!("expected init command, got service tier {command:?}")
+                panic!("expected skills command, got service tier {command:?}")
             }
             None => panic!("expected a selected command for exact match"),
         }

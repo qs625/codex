@@ -7708,7 +7708,7 @@ mod tests {
     }
 
     #[test]
-    fn slash_init_dispatches_command_and_does_not_submit_literal_text() {
+    fn slash_skills_dispatches_command_and_does_not_submit_literal_text() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;
         use crossterm::event::KeyModifiers;
@@ -7724,7 +7724,7 @@ mod tests {
         );
 
         // Type the slash command.
-        type_chars_humanlike(&mut composer, &['/', 'i', 'n', 'i', 't']);
+        type_chars_humanlike(&mut composer, &['/', 's', 'k', 'i', 'l', 'l', 's']);
 
         // Press Enter to dispatch the selected command.
         let (result, _needs_redraw) =
@@ -7734,13 +7734,13 @@ mod tests {
         // Command result (not submit literal text) and clear its textarea.
         match result {
             InputResult::Command(cmd) => {
-                assert_eq!(cmd.command(), "init");
+                assert_eq!(cmd.command(), "skills");
             }
             InputResult::CommandWithArgs(_, _, _) => {
-                panic!("expected command dispatch without args for '/init'")
+                panic!("expected command dispatch without args for '/skills'")
             }
             InputResult::ServiceTierCommand(command) => {
-                panic!("expected init command, got service tier {command:?}")
+                panic!("expected skills command, got service tier {command:?}")
             }
             InputResult::Submitted { text, .. } => {
                 panic!("expected command dispatch, but composer submitted literal text: {text}")
@@ -7748,7 +7748,7 @@ mod tests {
             InputResult::Queued { .. } => {
                 panic!("expected command dispatch, but composer queued literal text")
             }
-            InputResult::None => panic!("expected Command result for '/init'"),
+            InputResult::None => panic!("expected Command result for '/skills'"),
         }
         assert!(composer.textarea.is_empty(), "composer should be cleared");
     }

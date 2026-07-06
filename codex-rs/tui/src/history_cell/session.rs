@@ -169,8 +169,8 @@ pub(crate) fn new_session_info(
             Line::from(""),
             Line::from(vec![
                 "  ".into(),
-                "/init".into(),
-                " - create an AGENTS.md file with instructions for Codex".dim(),
+                "/skills".into(),
+                " - browse skills, including the system init skill".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),
