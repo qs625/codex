@@ -305,3 +305,29 @@ async fn process_compacted_history_reinjects_model_switch_message() {
     });
     assert_eq!(refreshed, expected);
 }
+
+#[test]
+fn prepend_initial_context_to_memory_checkpoint_history_keeps_checkpoint_block_contiguous() {
+    let compacted_history = vec![
+        user_message("recent user"),
+        user_message(&format!("{SUMMARY_PREFIX}\nsummary text")),
+        user_message("Memory checkpoint: current work\n# Current Work\n- item"),
+    ];
+    let initial_context = vec![ResponseItem::Message {
+        id: None,
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "fresh permissions".to_string(),
+        }],
+        phase: None,
+    }];
+
+    let refreshed =
+        prepend_initial_context_to_memory_checkpoint_history(compacted_history, initial_context.clone());
+
+    let mut expected = initial_context;
+    expected.push(user_message("recent user"));
+    expected.push(user_message(&format!("{SUMMARY_PREFIX}\nsummary text")));
+    expected.push(user_message("Memory checkpoint: current work\n# Current Work\n- item"));
+    assert_eq!(refreshed, expected);
+}

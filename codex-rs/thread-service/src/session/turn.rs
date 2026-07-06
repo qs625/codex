@@ -851,8 +851,18 @@ async fn run_pre_sampling_compact(
         .model_info
         .auto_compact_token_limit()
         .unwrap_or(i64::MAX);
-    // Compact if the total usage tokens are greater than the auto compact limit
-    if total_usage_tokens >= auto_compact_limit {
+    let should_compact = if total_usage_tokens >= auto_compact_limit {
+        true
+    } else {
+        crate::compact::should_auto_compact_in_soft_window(
+            sess,
+            turn_context,
+            total_usage_tokens,
+            auto_compact_limit,
+        )
+        .await?
+    };
+    if should_compact {
         reset_client_session |= run_auto_compact(
             sess,
             turn_context,

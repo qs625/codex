@@ -8,6 +8,9 @@ use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
+use compact_service::FsCompactService;
+use compact_service_api::ReplacementHistoryInput;
+use compact_service_api::SoftCompactInputs;
 use codex_analytics_api::CodexCompactionEvent;
 use codex_analytics_api::CompactionImplementation;
 use codex_analytics_api::CompactionPhase;
@@ -39,9 +42,12 @@ use protocol::protocol::WarningEvent;
 use protocol::user_input::UserInput;
 use rollout_trace_api::InferenceTraceContext;
 use tracing::error;
+use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
+const MEMORY_CHECKPOINT_MARKER: &str =
+    "Context compacted into a memory-backed checkpoint. Use the following memory snapshots instead of the full earlier thread.";
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -49,9 +55,8 @@ pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_pref
 /// clear `reference_context_item`, so the next regular turn will fully reinject initial context
 /// after compaction.
 ///
-/// Mid-turn compaction must use `BeforeLastUserMessage` because the model is trained to see the
-/// compaction summary as the last item in history after mid-turn compaction; we therefore inject
-/// initial context into the replacement history just above the last real user message.
+/// Mid-turn compaction must use `BeforeLastUserMessage` so the rebuilt initial context lands
+/// ahead of the retained compact checkpoint block instead of being omitted entirely.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InitialContextInjection {
     BeforeLastUserMessage,
@@ -164,15 +169,34 @@ async fn run_compact_task_inner(
 async fn run_compact_task_inner_impl(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
-    input: Vec<UserInput>,
+    _input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<String> {
+    let compact_service = FsCompactService::new();
+    let memory_layout = compact_service
+        .derive_memory_layout(
+            &turn_context.config.cwd,
+            &turn_context.config.codex_home,
+            turn_context.compact_prompt.as_deref(),
+        )
+        .await
+        .map_err(|err| CodexErr::Fatal(format!("failed to derive compact memory layout: {err}")))?;
+    let memory_bundle = compact_service
+        .read_memory_bundle(&memory_layout)
+        .await
+        .map_err(|err| CodexErr::Fatal(format!("failed to read compact memory bundle: {err}")))?;
+    let compact_prompt_spec =
+        compact_service.build_prompt_spec(turn_context.compact_prompt(), &memory_bundle);
+
     let compaction_item = ContextCompactionItem::new();
     let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
     sess.emit_turn_item_started(&turn_context, &started_compaction_item)
         .await;
     let initial_input_for_turn: ResponseInputItem =
-        codex_model_input::response_input_item_from_user_input(input);
+        codex_model_input::response_input_item_from_user_input(vec![UserInput::Text {
+            text: compact_prompt_spec.prompt_text.clone(),
+            text_elements: Vec::new(),
+        }]);
 
     let mut history = sess.clone_history().await;
     history.record_items(
@@ -206,6 +230,8 @@ async fn run_compact_task_inner_impl(
             input: turn_input,
             base_instructions: sess.get_base_instructions().await,
             personality: turn_context.personality,
+            output_schema: Some(compact_prompt_spec.output_schema.clone()),
+            output_schema_strict: true,
             ..Default::default()
         };
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
@@ -263,11 +289,25 @@ async fn run_compact_task_inner_impl(
 
     let history_snapshot = sess.clone_history().await;
     let history_items = history_snapshot.raw_items();
-    let summary_suffix = last_assistant_message_from_turn(history_items).unwrap_or_default();
-    let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let user_messages = collect_user_messages(history_items);
-
-    let mut new_history = build_compacted_history(Vec::new(), &user_messages, &summary_text);
+    let model_output_text = last_assistant_message_from_turn(history_items).unwrap_or_default();
+    let compact_model_output = compact_service
+        .parse_model_output(&model_output_text)
+        .map_err(|err| {
+            CodexErr::Fatal(format!("failed to parse compact model output as JSON: {err}"))
+        })?;
+    let applied_memory = compact_service
+        .apply_model_output(&memory_layout, &memory_bundle, &compact_model_output)
+        .await
+        .map_err(|err| CodexErr::Fatal(format!("failed to apply compact memory output: {err}")))?;
+    let compact_window_summary =
+        compact_service.summarize_compact_window(history_items, SUMMARY_PREFIX);
+    let compact_marker_text = format!("{SUMMARY_PREFIX}\n{MEMORY_CHECKPOINT_MARKER}");
+    let mut new_history = compact_service.build_replacement_history(ReplacementHistoryInput {
+        initial_context: Vec::new(),
+        memory_bundle: applied_memory.bundle.clone(),
+        recent_real_user_messages: compact_window_summary.recent_real_user_messages,
+        compact_marker_text: compact_marker_text.clone(),
+    });
 
     if matches!(
         initial_context_injection,
@@ -275,15 +315,20 @@ async fn run_compact_task_inner_impl(
     ) {
         let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
         new_history =
-            insert_initial_context_before_last_real_user_or_summary(new_history, initial_context);
+            prepend_initial_context_to_memory_checkpoint_history(new_history, initial_context);
     }
     let reference_context_item = match initial_context_injection {
         InitialContextInjection::DoNotInject => None,
         InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
     };
     let replacement_history = Some(new_history.clone());
+    let compacted_message = if compact_model_output.handoff_summary.trim().is_empty() {
+        MEMORY_CHECKPOINT_MARKER.to_string()
+    } else {
+        compact_model_output.handoff_summary.clone()
+    };
     let compacted_item = CompactedItem {
-        message: summary_text.clone(),
+        message: compacted_message,
         replacement_history: replacement_history.clone(),
     };
     sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
@@ -327,7 +372,7 @@ async fn run_compact_task_inner_impl(
         message: "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.".to_string(),
     });
     sess.send_event(&turn_context, warning).await;
-    Ok(summary_suffix)
+    Ok(compact_model_output.handoff_summary)
 }
 
 pub(crate) struct CompactionAnalyticsAttempt {
@@ -411,6 +456,7 @@ pub(crate) fn is_summary_message(message: &str) -> bool {
     codex_context_manager::is_compaction_summary_message(message, Some(SUMMARY_PREFIX))
 }
 
+#[cfg(test)]
 pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
     compacted_history: Vec<ResponseItem>,
     initial_context: Vec<ResponseItem>,
@@ -422,6 +468,16 @@ pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
     )
 }
 
+fn prepend_initial_context_to_memory_checkpoint_history(
+    mut compacted_history: Vec<ResponseItem>,
+    initial_context: Vec<ResponseItem>,
+) -> Vec<ResponseItem> {
+    let mut refreshed = initial_context;
+    refreshed.append(&mut compacted_history);
+    refreshed
+}
+
+#[cfg(test)]
 pub(crate) fn build_compacted_history(
     initial_context: Vec<ResponseItem>,
     user_messages: &[String],
@@ -447,6 +503,59 @@ pub(crate) async fn process_compacted_history(
     };
 
     process_remote_compacted_history(compacted_history, initial_context)
+}
+
+pub(crate) async fn should_auto_compact_in_soft_window(
+    sess: &Session,
+    turn_context: &TurnContext,
+    total_usage_tokens: i64,
+    auto_compact_limit: i64,
+) -> CodexResult<bool> {
+    if auto_compact_limit <= 0 {
+        return Ok(false);
+    }
+    let usage_ratio = total_usage_tokens as f64 / auto_compact_limit as f64;
+    if !(0.70..0.85).contains(&usage_ratio) {
+        return Ok(false);
+    }
+
+    let compact_service = FsCompactService::new();
+    let memory_layout = match compact_service
+        .derive_memory_layout(
+            &turn_context.config.cwd,
+            &turn_context.config.codex_home,
+            turn_context.compact_prompt.as_deref(),
+        )
+        .await
+    {
+        Ok(layout) => layout,
+        Err(err) => {
+            warn!("skip soft compact because compact memory layout is unavailable: {err}");
+            return Ok(false);
+        }
+    };
+    let memory_bundle = match compact_service.read_memory_bundle(&memory_layout).await {
+        Ok(bundle) => bundle,
+        Err(err) => {
+            warn!("skip soft compact because compact memory bundle is unavailable: {err}");
+            return Ok(false);
+        }
+    };
+    let history_snapshot = sess.clone_history().await;
+    let compact_window =
+        compact_service.summarize_compact_window(history_snapshot.raw_items(), SUMMARY_PREFIX);
+    let current_work_completeness =
+        compact_service.current_work_completeness(memory_bundle.current_work.as_deref());
+    let decision = compact_service.evaluate_soft_compact(SoftCompactInputs {
+        usage_ratio,
+        turns_since_last_compact: compact_window.turns_since_last_compact,
+        recent_file_read_search_count: compact_window.recent_file_read_search_count,
+        recent_tool_output_bytes: compact_window.recent_tool_output_bytes,
+        current_work_completeness,
+        cooldown_turns_satisfied: compact_window.turns_since_last_compact >= 2,
+        cooldown_bytes_satisfied: compact_window.recent_tool_output_bytes >= 8_000,
+    });
+    Ok(decision.should_compact)
 }
 
 async fn drain_to_completed(
