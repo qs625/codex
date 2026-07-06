@@ -87,17 +87,14 @@ use codex_sandboxing_api::policy_transforms::intersect_permission_profiles;
 use codex_shell_utils::shlex_join;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::ThreadId;
-use protocol::items::TurnItem as CoreTurnItem;
 #[cfg(test)]
 use protocol::items::parse_hook_prompt_message;
 use protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use protocol::plan_tool::UpdatePlanArgs;
-use protocol::protocol::AgentStatus;
 use protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
 use protocol::protocol::Event;
 use protocol::protocol::EventMsg;
 use protocol::protocol::ExecApprovalRequestEvent;
-use protocol::protocol::InterAgentOperation;
 use protocol::protocol::Op;
 use protocol::protocol::RealtimeEvent;
 use protocol::protocol::ReviewDecision;
@@ -122,28 +119,6 @@ use thread_service_api::ThreadRuntimeStatus;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
 use tracing::error;
-
-fn child_completion_trigger_turn(item: &CoreTurnItem) -> Option<bool> {
-    match item {
-        CoreTurnItem::CollabAgentMessage(collab)
-            if collab.communication.operation == InterAgentOperation::ChildCompletion =>
-        {
-            Some(collab.communication.trigger_turn)
-        }
-        _ => None,
-    }
-}
-
-fn collab_wait_completed_agent(end_event: &protocol::protocol::CollabWaitingEndEvent) -> bool {
-    end_event
-        .statuses
-        .values()
-        .any(|status| matches!(status, AgentStatus::Completed(_)))
-        || end_event
-            .agent_statuses
-            .iter()
-            .any(|entry| matches!(entry.status, AgentStatus::Completed(_)))
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_bespoke_event_handling(
@@ -458,9 +433,6 @@ pub(crate) async fn apply_bespoke_event_handling(
             outgoing.send_server_notification(notification).await;
         }
         EventMsg::CollabWaitingBegin(begin_event) => {
-            thread_watch_manager
-                .note_subagent_wait_started(&conversation_id.to_string())
-                .await;
             let notification = item_event_to_server_notification(
                 EventMsg::CollabWaitingBegin(begin_event),
                 &conversation_id.to_string(),
@@ -469,15 +441,6 @@ pub(crate) async fn apply_bespoke_event_handling(
             outgoing.send_server_notification(notification).await;
         }
         EventMsg::CollabWaitingEnd(end_event) => {
-            if collab_wait_completed_agent(&end_event) {
-                thread_watch_manager
-                    .note_subagent_wait_completion_deferred(&conversation_id.to_string())
-                    .await;
-            } else {
-                thread_watch_manager
-                    .note_subagent_wait_completed(&conversation_id.to_string())
-                    .await;
-            }
             let notification = item_event_to_server_notification(
                 EventMsg::CollabWaitingEnd(end_event),
                 &conversation_id.to_string(),
@@ -626,14 +589,6 @@ pub(crate) async fn apply_bespoke_event_handling(
             outgoing.send_server_notification(notification).await;
         }
         EventMsg::ItemCompleted(event) => {
-            if let Some(trigger_turn) = child_completion_trigger_turn(&event.item) {
-                thread_watch_manager
-                    .note_child_completion_item_completed(
-                        &conversation_id.to_string(),
-                        trigger_turn,
-                    )
-                    .await;
-            }
             let notification = item_event_to_server_notification(
                 EventMsg::ItemCompleted(event),
                 &conversation_id.to_string(),

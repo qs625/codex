@@ -16,10 +16,6 @@ use tokio::sync::Mutex;
 #[cfg(test)]
 use tokio::sync::mpsc;
 use tokio::sync::watch;
-use tokio::time::Duration;
-
-const SUBAGENT_WAIT_COMPLETION_GRACE: Duration = Duration::from_millis(250);
-
 #[derive(Clone)]
 pub(crate) struct ThreadWatchManager {
     state: Arc<Mutex<ThreadWatchState>>,
@@ -152,8 +148,6 @@ impl ThreadWatchManager {
             runtime.running = true;
             runtime.post_turn_wait_child = false;
             runtime.post_turn_wait_command = false;
-            runtime.pending_subagent_wait_count = 0;
-            runtime.deferred_subagent_wait_completion_count = 0;
             runtime.has_system_error = false;
         })
         .await;
@@ -188,8 +182,6 @@ impl ThreadWatchManager {
             runtime.pending_permission_requests = 0;
             runtime.pending_user_input_requests = 0;
             runtime.pending_event_subscription_count = 0;
-            runtime.pending_subagent_wait_count = 0;
-            runtime.deferred_subagent_wait_completion_count = 0;
             runtime.post_turn_wait_child = false;
             runtime.post_turn_wait_command = false;
             runtime.is_loaded = false;
@@ -203,8 +195,6 @@ impl ThreadWatchManager {
             runtime.pending_permission_requests = 0;
             runtime.pending_user_input_requests = 0;
             runtime.pending_event_subscription_count = 0;
-            runtime.pending_subagent_wait_count = 0;
-            runtime.deferred_subagent_wait_completion_count = 0;
             runtime.post_turn_wait_child = false;
             runtime.post_turn_wait_command = false;
             runtime.has_system_error = true;
@@ -220,88 +210,6 @@ impl ThreadWatchManager {
         self.update_runtime_for_thread(thread_id, move |runtime| {
             runtime.is_loaded = true;
             runtime.pending_event_subscription_count = active_count.try_into().unwrap_or(u32::MAX);
-        })
-        .await;
-    }
-
-    pub(crate) async fn note_subagent_wait_started(&self, thread_id: &str) {
-        self.update_runtime_for_thread(thread_id, |runtime| {
-            runtime.is_loaded = true;
-            runtime.pending_subagent_wait_count =
-                runtime.pending_subagent_wait_count.saturating_add(1);
-        })
-        .await;
-    }
-
-    pub(crate) async fn note_subagent_wait_completed(&self, thread_id: &str) {
-        self.update_runtime_for_thread(thread_id, |runtime| {
-            runtime.pending_subagent_wait_count =
-                runtime.pending_subagent_wait_count.saturating_sub(1);
-        })
-        .await;
-    }
-
-    pub(crate) async fn note_subagent_wait_completion_deferred(&self, thread_id: &str) {
-        let should_schedule_fallback = self
-            .update_runtime_for_thread_with_result(thread_id, |runtime| {
-                runtime.is_loaded = true;
-                if runtime.running {
-                    runtime.pending_subagent_wait_count =
-                        runtime.pending_subagent_wait_count.saturating_sub(1);
-                    return false;
-                }
-                runtime.deferred_subagent_wait_completion_count = runtime
-                    .deferred_subagent_wait_completion_count
-                    .saturating_add(1);
-                true
-            })
-            .await;
-
-        if should_schedule_fallback {
-            let manager = self.clone();
-            let thread_id = thread_id.to_string();
-            tokio::spawn(async move {
-                tokio::time::sleep(SUBAGENT_WAIT_COMPLETION_GRACE).await;
-                manager
-                    .note_deferred_subagent_wait_completion_expired(&thread_id)
-                    .await;
-            });
-        }
-    }
-
-    async fn note_deferred_subagent_wait_completion_expired(&self, thread_id: &str) {
-        self.update_runtime_for_thread(thread_id, |runtime| {
-            if runtime.deferred_subagent_wait_completion_count > 0 {
-                runtime.deferred_subagent_wait_completion_count = runtime
-                    .deferred_subagent_wait_completion_count
-                    .saturating_sub(1);
-                runtime.pending_subagent_wait_count =
-                    runtime.pending_subagent_wait_count.saturating_sub(1);
-            }
-        })
-        .await;
-    }
-
-    pub(crate) async fn note_child_completion_item_completed(
-        &self,
-        thread_id: &str,
-        trigger_turn: bool,
-    ) {
-        self.update_runtime_for_thread(thread_id, |runtime| {
-            if runtime.deferred_subagent_wait_completion_count > 0 {
-                runtime.deferred_subagent_wait_completion_count = runtime
-                    .deferred_subagent_wait_completion_count
-                    .saturating_sub(1);
-                runtime.pending_subagent_wait_count =
-                    runtime.pending_subagent_wait_count.saturating_sub(1);
-            }
-            if trigger_turn {
-                runtime.is_loaded = true;
-                runtime.running = true;
-                runtime.post_turn_wait_child = false;
-                runtime.post_turn_wait_command = false;
-                runtime.has_system_error = false;
-            }
         })
         .await;
     }
@@ -398,34 +306,6 @@ impl ThreadWatchManager {
             .await;
     }
 
-    async fn update_runtime_for_thread_with_result<F, R>(&self, thread_id: &str, update: F) -> R
-    where
-        F: FnOnce(&mut RuntimeFacts) -> R,
-    {
-        let thread_id = thread_id.to_string();
-        let (result, notification, running_turn_count) = {
-            let mut state = self.state.lock().await;
-            let (result, notification) = state.update_runtime_with_result(&thread_id, update);
-            let running_turn_count = state
-                .runtime_by_thread_id
-                .values()
-                .filter(|runtime| runtime.running)
-                .count();
-            (result, notification, running_turn_count)
-        };
-        let _ = self.running_turn_count_tx.send(running_turn_count);
-
-        if let Some(notification) = notification
-            && let Some(outgoing) = &self.outgoing
-        {
-            outgoing
-                .send_server_notification(ServerNotification::ThreadStatusChanged(notification))
-                .await;
-        }
-
-        result
-    }
-
     fn pending_counter(
         runtime: &mut RuntimeFacts,
         guard_type: ThreadWatchActiveGuardType,
@@ -517,28 +397,6 @@ impl ThreadWatchState {
         self.status_changed_notification(thread_id.to_string(), previous_status)
     }
 
-    fn update_runtime_with_result<F, R>(
-        &mut self,
-        thread_id: &str,
-        mutate: F,
-    ) -> (R, Option<ThreadStatusChangedNotification>)
-    where
-        F: FnOnce(&mut RuntimeFacts) -> R,
-    {
-        let previous_status = self.status_for(thread_id);
-        let runtime = self
-            .runtime_by_thread_id
-            .entry(thread_id.to_string())
-            .or_default();
-        runtime.is_loaded = true;
-        let result = mutate(runtime);
-        self.update_status_watcher_for_thread(thread_id);
-        (
-            result,
-            self.status_changed_notification(thread_id.to_string(), previous_status),
-        )
-    }
-
     fn status_for(&self, thread_id: &str) -> Option<ThreadStatus> {
         self.runtime_by_thread_id
             .get(thread_id)
@@ -606,8 +464,6 @@ struct RuntimeFacts {
     pending_permission_requests: u32,
     pending_user_input_requests: u32,
     pending_event_subscription_count: u32,
-    pending_subagent_wait_count: u32,
-    deferred_subagent_wait_completion_count: u32,
     post_turn_wait_command: bool,
     post_turn_wait_child: bool,
     has_system_error: bool,
@@ -637,7 +493,7 @@ fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadStatus {
         return ThreadStatus::SystemError;
     }
 
-    if runtime.pending_subagent_wait_count > 0 || runtime.post_turn_wait_child {
+    if runtime.post_turn_wait_child {
         return ThreadStatus::Idle {
             reason: ThreadIdleReason::WaitChild,
         };
@@ -860,97 +716,6 @@ mod tests {
             ThreadStatus::Active {
                 active_flags: vec![ThreadActiveFlag::Running],
             },
-        );
-    }
-
-    #[tokio::test]
-    async fn subagent_wait_hands_off_to_pending_turn_without_idle_gap() {
-        let manager = ThreadWatchManager::new();
-        manager
-            .upsert_thread(test_thread(
-                INTERACTIVE_THREAD_ID,
-                app_server_protocol::SessionSource::Cli,
-            ))
-            .await;
-
-        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
-        manager
-            .note_subagent_wait_started(INTERACTIVE_THREAD_ID)
-            .await;
-        manager
-            .note_turn_completed(INTERACTIVE_THREAD_ID, false)
-            .await;
-
-        assert_eq!(
-            manager
-                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
-                .await,
-            ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitChild,
-            },
-        );
-
-        manager
-            .note_subagent_wait_completion_deferred(INTERACTIVE_THREAD_ID)
-            .await;
-        assert_eq!(
-            manager
-                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
-                .await,
-            ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitChild,
-            },
-        );
-
-        manager
-            .note_child_completion_item_completed(INTERACTIVE_THREAD_ID, /*trigger_turn*/ true)
-            .await;
-        assert_eq!(
-            manager
-                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
-                .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
-            },
-        );
-
-        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
-        assert_eq!(
-            manager
-                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
-                .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
-            },
-        );
-    }
-
-    #[tokio::test]
-    async fn subagent_wait_completion_without_pending_turn_returns_idle() {
-        let manager = ThreadWatchManager::new();
-        manager
-            .upsert_thread(test_thread(
-                INTERACTIVE_THREAD_ID,
-                app_server_protocol::SessionSource::Cli,
-            ))
-            .await;
-
-        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
-        manager
-            .note_subagent_wait_started(INTERACTIVE_THREAD_ID)
-            .await;
-        manager
-            .note_turn_completed(INTERACTIVE_THREAD_ID, false)
-            .await;
-        manager
-            .note_subagent_wait_completed(INTERACTIVE_THREAD_ID)
-            .await;
-
-        assert_eq!(
-            manager
-                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
-                .await,
-            ThreadStatus::Complete,
         );
     }
 
@@ -1209,346 +974,6 @@ mod tests {
 
         manager
             .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 0)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
-            },
-        );
-    }
-
-    #[tokio::test]
-    async fn subagent_wait_handoff_emits_running_without_idle_gap() {
-        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(8);
-        let manager = ThreadWatchManager::new_with_outgoing(Arc::new(OutgoingMessageSender::new(
-            outgoing_tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        )));
-
-        manager
-            .upsert_thread(test_thread(
-                INTERACTIVE_THREAD_ID,
-                app_server_protocol::SessionSource::Cli,
-            ))
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
-            },
-        );
-
-        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_subagent_wait_started(INTERACTIVE_THREAD_ID)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_turn_completed(INTERACTIVE_THREAD_ID, false)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle {
-                    reason: ThreadIdleReason::WaitChild,
-                },
-            },
-        );
-
-        manager
-            .note_subagent_wait_completion_deferred(INTERACTIVE_THREAD_ID)
-            .await;
-        assert!(
-            timeout(Duration::from_millis(100), outgoing_rx.recv())
-                .await
-                .is_err(),
-            "completed wait should remain waiting during the child-completion grace window"
-        );
-
-        manager
-            .note_child_completion_item_completed(INTERACTIVE_THREAD_ID, /*trigger_turn*/ true)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-        assert!(
-            timeout(Duration::from_millis(100), outgoing_rx.recv())
-                .await
-                .is_err(),
-            "subagent wait handoff should not emit an intermediate idle status"
-        );
-    }
-
-    #[tokio::test]
-    async fn subagent_wait_handoff_allows_child_completion_before_wait_end() {
-        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(8);
-        let manager = ThreadWatchManager::new_with_outgoing(Arc::new(OutgoingMessageSender::new(
-            outgoing_tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        )));
-
-        manager
-            .upsert_thread(test_thread(
-                INTERACTIVE_THREAD_ID,
-                app_server_protocol::SessionSource::Cli,
-            ))
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
-            },
-        );
-
-        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_subagent_wait_started(INTERACTIVE_THREAD_ID)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_turn_completed(INTERACTIVE_THREAD_ID, false)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle {
-                    reason: ThreadIdleReason::WaitChild,
-                },
-            },
-        );
-
-        manager
-            .note_child_completion_item_completed(INTERACTIVE_THREAD_ID, /*trigger_turn*/ true)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_subagent_wait_completion_deferred(INTERACTIVE_THREAD_ID)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-    }
-
-    #[tokio::test]
-    async fn subagent_wait_non_trigger_completion_returns_idle() {
-        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(8);
-        let manager = ThreadWatchManager::new_with_outgoing(Arc::new(OutgoingMessageSender::new(
-            outgoing_tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        )));
-
-        manager
-            .upsert_thread(test_thread(
-                INTERACTIVE_THREAD_ID,
-                app_server_protocol::SessionSource::Cli,
-            ))
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
-            },
-        );
-
-        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_subagent_wait_started(INTERACTIVE_THREAD_ID)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_turn_completed(INTERACTIVE_THREAD_ID, false)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle {
-                    reason: ThreadIdleReason::WaitChild,
-                },
-            },
-        );
-
-        manager
-            .note_subagent_wait_completion_deferred(INTERACTIVE_THREAD_ID)
-            .await;
-        assert!(
-            timeout(Duration::from_millis(100), outgoing_rx.recv())
-                .await
-                .is_err(),
-            "completed wait should not publish running before non-trigger child completion"
-        );
-
-        manager
-            .note_child_completion_item_completed(
-                INTERACTIVE_THREAD_ID,
-                /*trigger_turn*/ false,
-            )
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
-            },
-        );
-    }
-
-    #[tokio::test]
-    async fn subagent_wait_missing_child_completion_falls_back_to_idle() {
-        let (outgoing_tx, mut outgoing_rx) = mpsc::channel(8);
-        let manager = ThreadWatchManager::new_with_outgoing(Arc::new(OutgoingMessageSender::new(
-            outgoing_tx,
-            codex_analytics::AnalyticsEventsClient::disabled(),
-        )));
-
-        manager
-            .upsert_thread(test_thread(
-                INTERACTIVE_THREAD_ID,
-                app_server_protocol::SessionSource::Cli,
-            ))
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
-            },
-        );
-
-        manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_subagent_wait_started(INTERACTIVE_THREAD_ID)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
-                },
-            },
-        );
-
-        manager
-            .note_turn_completed(INTERACTIVE_THREAD_ID, false)
-            .await;
-        assert_eq!(
-            recv_status_changed_notification(&mut outgoing_rx).await,
-            ThreadStatusChangedNotification {
-                thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle {
-                    reason: ThreadIdleReason::WaitChild,
-                },
-            },
-        );
-
-        manager
-            .note_subagent_wait_completion_deferred(INTERACTIVE_THREAD_ID)
-            .await;
-        assert!(
-            timeout(Duration::from_millis(100), outgoing_rx.recv())
-                .await
-                .is_err(),
-            "completed wait should remain waiting until grace expires"
-        );
-
-        manager
-            .note_deferred_subagent_wait_completion_expired(INTERACTIVE_THREAD_ID)
             .await;
         assert_eq!(
             recv_status_changed_notification(&mut outgoing_rx).await,
