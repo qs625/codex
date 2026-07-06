@@ -41,6 +41,8 @@ members = [
     "collaboration-mode-templates",
     "command-service",
     "command-service-api",
+    "compact-service-api",
+    "compact-service",
     "connectors",
     "connectors-api",
     "config",
@@ -213,6 +215,8 @@ codex-code-mode-api = { path = "code-mode-api" }
 transport-client-identity = { path = "client-identity" }
 command-service = { path = "command-service" }
 command-service-api = { path = "command-service-api" }
+compact-service-api = { path = "compact-service-api" }
+compact-service = { path = "compact-service" }
 config-service = { path = "config" }
 codex-config-permissions = { path = "config-permissions" }
 codex-config-requirements = { path = "config-requirements" }

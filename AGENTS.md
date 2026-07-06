@@ -65,6 +65,7 @@
 - 优先继续拆 `codex-thread-runtime` 内 tool adapter：`src/tools`、`apply_patch_tool_host.rs`、`shell_tool_host.rs`、`unified_exec/tool_host.rs`、`code_mode_host.rs`、`plugins/request_plugin_install.rs` 等。
 - `CoreApplyPatchHandlerHost` 仍是迁移中的 concrete session side-effect host；后续要按 capability 拆分或迁出，不要把它当最终边界。
 - MCP adapter、workflow bridge、goal runtime、guardian/hook、compact、command/unified exec 继续按 capability contract 收缩，再整体迁往 owner crate。
+- compact 已开始拆出 `compact-service-api` / `compact-service`：新的 memory layout、structured compact prompt、local `current-work.md` 落盘、memory-backed replacement history 和 soft compact MVP 纯逻辑优先放这里；`thread-service` 只保留 compact turn 生命周期、session history replace 与 event 发射。
 - app-server、CLI、MCP server、core-api 等组合根应逐步从 `codex_core` import 切到真实 owner crate。
 
 ## Typed Display 与历史
@@ -122,3 +123,4 @@
 
 - 不要在 `docs/` 下新增通用产品或用户文档；官方 Codex 文档在别处。
 - 例外是 app-server API 文档，按上面的 app-server 规则维护。
+- 当前仓库没有根级 `spec/` 目录时，feature 设计说明可落在 `docs/superpowers/specs/`，并保持为内部工程设计文档，而不是产品/用户文档。

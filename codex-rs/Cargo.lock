@@ -4114,6 +4114,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "compact-service"
+version = "0.0.0"
+dependencies = [
+ "codex-context-manager",
+ "codex-utils-absolute-path",
+ "codex-utils-output-truncation",
+ "compact-service-api",
+ "pretty_assertions",
+ "protocol",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "compact-service-api"
+version = "0.0.0"
+dependencies = [
+ "codex-utils-absolute-path",
+ "protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "compact_str"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13422,6 +13447,8 @@ dependencies = [
  "codex-workflow-api",
  "command-service",
  "command-service-api",
+ "compact-service",
+ "compact-service-api",
  "config-service",
  "core_test_support",
  "ctor 0.6.3",

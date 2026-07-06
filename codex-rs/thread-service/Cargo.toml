@@ -46,6 +46,8 @@ transport-client = { workspace = true }
 codex-code-mode-api = { workspace = true }
 command-service = { workspace = true }
 command-service-api = { workspace = true }
+compact-service = { workspace = true }
+compact-service-api = { workspace = true }
 transport-client-identity = { workspace = true }
 transport-client-types = { workspace = true }
 config-service = { workspace = true }
