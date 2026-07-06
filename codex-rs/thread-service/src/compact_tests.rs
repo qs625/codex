@@ -322,12 +322,16 @@ fn prepend_initial_context_to_memory_checkpoint_history_keeps_checkpoint_block_c
         phase: None,
     }];
 
-    let refreshed =
-        prepend_initial_context_to_memory_checkpoint_history(compacted_history, initial_context.clone());
+    let refreshed = prepend_initial_context_to_memory_checkpoint_history(
+        compacted_history,
+        initial_context.clone(),
+    );
 
     let mut expected = initial_context;
     expected.push(user_message("recent user"));
     expected.push(user_message(&format!("{SUMMARY_PREFIX}\nsummary text")));
-    expected.push(user_message("Memory checkpoint: current work\n# Current Work\n- item"));
+    expected.push(user_message(
+        "Memory checkpoint: current work\n# Current Work\n- item",
+    ));
     assert_eq!(refreshed, expected);
 }

@@ -27,11 +27,11 @@ use crate::types::Tui;
 use crate::types::UriBasedFileOpener;
 use crate::types::WindowsToml;
 pub use codex_auth_types::ForcedChatgptWorkspaceIds;
+pub use codex_config_types::ProjectConfig;
 pub use codex_config_types::RealtimeAudioConfig;
 pub use codex_config_types::RealtimeTransport;
 pub use codex_config_types::RealtimeWsMode;
 pub use codex_config_types::ThreadStoreToml;
-pub use codex_config_types::ProjectConfig;
 pub use codex_config_types::{AgentRoleToml, AgentsToml};
 pub type ConfigLockfileToml = codex_config_types::ConfigLockfileToml<ConfigToml>;
 use codex_features::FeaturesToml;
@@ -228,6 +228,10 @@ pub struct ConfigToml {
     /// Ordered list of fallback filenames to look for when AGENTS.md is missing.
     #[serde(default = "default_project_doc_fallback_filenames")]
     pub project_doc_fallback_filenames: Option<Vec<String>>,
+
+    /// Ordered list of instruction files to inject into model-visible user instructions.
+    #[serde(default)]
+    pub instruction_files: Option<Vec<AbsolutePathBuf>>,
 
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,
@@ -729,7 +733,7 @@ fn project_config_for_lookup_key(
         .iter()
         .filter(|(key, _)| normalize_project_lookup_key((*key).clone()) == lookup_key)
         .collect();
-    normalized_matches.sort_by(|(left, _), (right, _)| left.cmp(right));
+    normalized_matches.sort_by_key(|(left, _)| *left);
     normalized_matches
         .first()
         .map(|(_, project_config)| (**project_config).clone())

@@ -1,0 +1,21 @@
+# 当前项目显式指定注入给模型的 instruction 文件。
+# 统一读取 memory 文件中的长期项目事实和用户偏好。
+instruction_files = [
+  "memory/user-preferences.md",
+  "memory/project-understanding.md",
+]
+
+[memories]
+compact_replacement_file_token_limit = 1500
+
+[[memories.compact_replacement_files]]
+path = "memory/current-work.md"
+role = "current-work"
+
+[[memories.compact_replacement_files]]
+path = "memory/project-understanding.md"
+role = "project-understanding"
+
+[[memories.compact_replacement_files]]
+path = "memory/user-preferences.md"
+role = "user-preferences"

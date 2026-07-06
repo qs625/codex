@@ -1559,4 +1559,3 @@ async fn runtime_config_resolves_terminal_resize_reflow_defaults_and_overrides()
         TerminalResizeReflowMaxRows::Disabled
     );
 }
-

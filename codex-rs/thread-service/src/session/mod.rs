@@ -58,9 +58,6 @@ use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
-use config_service::ManagedFeatures;
-use config_service::hook_config_layer_stack_from_config_layer_stack;
-use config_service::resolve_tool_suggest_config_from_layer_stack;
 use codex_extension_api::PromptSlot;
 use codex_features::FEATURES;
 use codex_features::Feature;
@@ -73,9 +70,6 @@ use codex_network_proxy_api::NetworkProxyRuntimeFactory;
 use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use codex_network_proxy_api::SharedNetworkProxyRuntimeFactory;
 use codex_openai_files_api::SharedOpenAiFileUploader;
-use permissions_service::ExecPolicyLoader;
-use permissions_service::ExecPolicyManager;
-use permissions_service::validate_network_policy_amendment_host;
 use codex_sandboxing_api::normalize_request_permissions_response;
 use codex_shell_utils::parse_command::parse_command;
 use codex_utils_output_truncation::TruncationPolicy;
@@ -84,6 +78,9 @@ use command_service_api::CommandWaitOperation;
 use command_service_api::CommandWaitRequest;
 use command_service_api::WriteStdinOutput;
 use command_service_api::WriteStdinRequest;
+use config_service::ManagedFeatures;
+use config_service::hook_config_layer_stack_from_config_layer_stack;
+use config_service::resolve_tool_suggest_config_from_layer_stack;
 use exec_server_api::ExecEnvironmentProvider;
 use futures::future::BoxFuture;
 use futures::future::Shared;
@@ -111,6 +108,9 @@ use model_service_api::ResolveDefaultModelRequest;
 use model_service_api::SharedApiRuntimeFactory;
 use model_service_api::SharedModelProviderAuthManager;
 use model_service_api::SharedModelProviderFactory;
+use permissions_service::ExecPolicyLoader;
+use permissions_service::ExecPolicyManager;
+use permissions_service::validate_network_policy_amendment_host;
 use protocol::AgentPath;
 use protocol::ThreadId;
 use protocol::approvals::ExecPolicyAmendment;
@@ -195,17 +195,17 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::compact::collect_user_messages;
 use crate::thread::ThreadConfigSnapshot;
-use config_service::CONFIG_TOML_FILE;
-use config_service::Config;
-use config_service::Constrained;
-use config_service::ConstraintResult;
-use config_service::PermissionProfileState;
-use config_service::StartedNetworkProxy;
-use config_service::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
 use codex_context_manager::ContextManager;
 use codex_context_manager::PreviousTurnSettingsView;
 use codex_context_manager::SettingsUpdateInput;
+use config_service::CONFIG_TOML_FILE;
+use config_service::Config;
+use config_service::ConfigLayerStackOrdering;
+use config_service::Constrained;
+use config_service::ConstraintResult;
+use config_service::PermissionProfileState;
+use config_service::StartedNetworkProxy;
 use model_service_api::ModelProviderInfo;
 use protocol::config_types::ShellEnvironmentPolicy;
 use protocol::error::CodexErr;
@@ -216,30 +216,30 @@ use rollout_api::initial_history_has_prior_user_turns;
 use thread_service_api::PostToolUsePayload;
 use tool_service_api::UPDATE_GOAL_TOOL_NAME;
 
+mod codex_runtime;
 mod config_lock;
+mod events_history;
 mod handlers;
 mod multi_agents;
+mod pending_input;
 mod review;
 mod rollout_reconstruction;
-mod events_history;
-mod pending_input;
-mod codex_runtime;
 #[allow(clippy::module_inception)]
 pub(crate) mod session;
 pub(crate) mod turn;
 pub(crate) mod turn_context;
-use self::config_lock::export_config_lock_if_configured;
-use self::config_lock::validate_config_lock_if_configured;
+use self::codex_runtime::CYBER_SAFETY_URL;
+use self::codex_runtime::CYBER_VERIFY_URL;
 pub(crate) use self::codex_runtime::Codex;
 pub(crate) use self::codex_runtime::CodexSpawnArgs;
 pub(crate) use self::codex_runtime::CodexSpawnOk;
 pub(crate) use self::codex_runtime::INITIAL_SUBMIT_ID;
-pub(crate) use self::codex_runtime::SUBMISSION_CHANNEL_CAPACITY;
-use self::codex_runtime::CYBER_SAFETY_URL;
-use self::codex_runtime::CYBER_VERIFY_URL;
 use self::codex_runtime::LiveThreadInitGuard;
+pub(crate) use self::codex_runtime::SUBMISSION_CHANNEL_CAPACITY;
 use self::codex_runtime::SessionLoopTermination;
 use self::codex_runtime::duration_from_config_ms;
+use self::config_lock::export_config_lock_if_configured;
+use self::config_lock::validate_config_lock_if_configured;
 #[cfg(test)]
 use self::handlers::submission_dispatch_span;
 use self::handlers::submission_loop;
@@ -314,7 +314,6 @@ use codex_otel::context_from_w3c_trace_context;
 use codex_otel::current_span_trace_id;
 use codex_otel::current_span_w3c_trace_context;
 use codex_otel::set_parent_from_w3c_trace_context;
-use permissions_service::ExecPolicyUpdateError;
 use codex_sandboxing::WindowsSandboxLevelExt;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_turn_items::realtime_text_for_event;
@@ -323,6 +322,7 @@ use command_service_api::ExecCommandRunOutput;
 use command_service_api::ExecCommandRunRequest;
 use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
 use metrics_api::THREAD_STARTED_METRIC;
+use permissions_service::ExecPolicyUpdateError;
 use plugin_service_api::PluginRuntime;
 use plugin_service_api::SharedPluginRuntime;
 use protocol::config_types::CollaborationMode;
@@ -1440,14 +1440,27 @@ impl Session {
             .reconstruct_history_from_rollout(turn_context, rollout_items)
             .await;
         let previous_turn_settings = reconstructed_rollout.previous_turn_settings.clone();
-        self.replace_history(
-            reconstructed_rollout.history,
-            reconstructed_rollout.reference_context_item,
-        )
-        .await;
+        {
+            let mut state = self.state.lock().await;
+            state.replace_history_with_compact_window_start(
+                reconstructed_rollout.history,
+                reconstructed_rollout.reference_context_item,
+                Self::last_compact_window_start_from_rollout(rollout_items),
+            );
+        }
         self.set_previous_turn_settings(previous_turn_settings.clone())
             .await;
         previous_turn_settings
+    }
+
+    fn last_compact_window_start_from_rollout(rollout_items: &[RolloutItem]) -> Option<usize> {
+        rollout_items.iter().rev().find_map(|item| match item {
+            RolloutItem::Compacted(compacted) => compacted
+                .replacement_history
+                .as_ref()
+                .map(std::vec::Vec::len),
+            _ => None,
+        })
     }
 
     fn last_token_info_from_rollout(rollout_items: &[RolloutItem]) -> Option<TokenUsageInfo> {

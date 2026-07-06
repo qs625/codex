@@ -41,5 +41,5 @@ fn is_meaningful_line(line: &str) -> bool {
         return false;
     }
 
-    normalized.chars().any(|ch| ch.is_alphanumeric())
+    normalized.chars().any(char::is_alphanumeric)
 }

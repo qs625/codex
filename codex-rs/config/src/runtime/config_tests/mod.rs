@@ -7,7 +7,14 @@ use crate::config::ThreadStoreConfig;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::edit::apply_blocking;
+use crate::editing::load_global_mcp_servers;
+use crate::loader::ProjectConfig;
+use crate::local_loader::load_config_layers_state;
 use assert_matches::assert_matches;
+use codex_config_types::RealtimeAudioConfig;
+use codex_features::Feature;
+use codex_features::FeaturesToml;
+use codex_file_system::LOCAL_FS;
 use config_service::ConfigLayerEntry;
 use config_service::ProfileV2Name;
 use config_service::RequirementSource;
@@ -62,13 +69,6 @@ use config_service::types::TuiNotificationSettings;
 use config_service::types::TuiPetAnchor;
 use config_service::types::WindowsSandboxModeToml;
 use config_service::types::WindowsToml;
-use crate::editing::load_global_mcp_servers;
-use crate::loader::ProjectConfig;
-use crate::local_loader::load_config_layers_state;
-use codex_config_types::RealtimeAudioConfig;
-use codex_features::Feature;
-use codex_features::FeaturesToml;
-use codex_file_system::LOCAL_FS;
 use model_service::bundled_models_response;
 use model_service_api::LMSTUDIO_OSS_PROVIDER_ID;
 use model_service_api::ModelProviderInfo;
@@ -114,8 +114,8 @@ use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
 
-pub(crate) use config_edits::PrecedenceTestFixture;
 pub(crate) use agent_roles_and_plugins::create_test_fixture;
+pub(crate) use config_edits::PrecedenceTestFixture;
 
 fn test_absolute_path(unix_path: &str) -> AbsolutePathBuf {
     AbsolutePathBuf::from_absolute_path(test_path_buf(unix_path))
@@ -294,10 +294,9 @@ async fn derive_legacy_sandbox_policy_for_test(
         })
 }
 
-
 mod agent_roles_and_plugins;
-mod compact_prompt;
 mod approval_aliases_and_tail;
+mod compact_prompt;
 mod config_edits;
 mod fixtures_and_requirements;
 mod load_and_parse;

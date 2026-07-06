@@ -4853,6 +4853,14 @@
       },
       "type": "array"
     },
+    "instruction_files": {
+      "default": null,
+      "description": "Ordered list of instruction files to inject into model-visible user instructions.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "project_doc_max_bytes": {
       "default": 32768,
       "description": "Maximum number of bytes to include from an AGENTS.md project doc file.",

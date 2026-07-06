@@ -66,6 +66,7 @@ codex-exec-server = { workspace = true, optional = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
 codex-feedback-api = { workspace = true }
+codex-file-subscription = { workspace = true }
 codex-login = { workspace = true, optional = true, features = ["model-provider-auth"] }
 memory-service-api = { workspace = true }
 mcp-service = { workspace = true }

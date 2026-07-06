@@ -55,6 +55,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         model_providers: fixture.model_provider_map.clone(),
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
         project_doc_fallback_filenames: Vec::new(),
+        instruction_files: Vec::new(),
         tool_output_token_limit: None,
         agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,

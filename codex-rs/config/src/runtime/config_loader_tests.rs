@@ -2,6 +2,11 @@ use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::config::ConfigOverrides;
 use crate::config::ConstraintError;
+use crate::loader::ProjectConfig;
+use crate::local_loader::load_requirements_toml;
+use codex_config_types::ConfigLayerSource;
+use codex_file_system::LOCAL_FS;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use config_service::CloudRequirementsLoadError;
 use config_service::CloudRequirementsLoader;
 use config_service::ConfigError;
@@ -21,11 +26,6 @@ use config_service::config_error_from_ignored_toml_fields;
 use config_service::config_error_from_toml;
 use config_service::config_toml::ConfigToml;
 use config_service::loader::load_config_layers_state;
-use crate::loader::ProjectConfig;
-use crate::local_loader::load_requirements_toml;
-use codex_config_types::ConfigLayerSource;
-use codex_file_system::LOCAL_FS;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use protocol::config_types::TrustLevel;
 use protocol::config_types::WebSearchMode;
@@ -2865,6 +2865,8 @@ async fn project_root_markers_supports_alternate_markers() -> std::io::Result<()
 
 mod requirements_exec_policy_tests {
     use crate::exec_policy::load_exec_policy;
+    use codex_config_types::ConfigLayerSource;
+    use codex_utils_absolute_path::AbsolutePathBuf;
     use config_service::ConfigLayerEntry;
     use config_service::ConfigLayerStack;
     use config_service::ConfigRequirements;
@@ -2876,11 +2878,9 @@ mod requirements_exec_policy_tests {
     use config_service::RequirementsExecPolicyPatternTokenToml;
     use config_service::RequirementsExecPolicyPrefixRuleToml;
     use config_service::RequirementsExecPolicyToml;
-    use codex_config_types::ConfigLayerSource;
     use permissions_service_api::Decision;
     use permissions_service_api::Evaluation;
     use permissions_service_api::RuleMatch;
-    use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use std::path::Path;
     use tempfile::tempdir;

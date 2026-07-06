@@ -1,7 +1,7 @@
 use super::*;
+use codex_network_proxy_api::NetworkDomainPermission;
 use config_service::NetworkDomainPermissionToml;
 use config_service::NetworkDomainPermissionsToml;
-use codex_network_proxy_api::NetworkDomainPermission;
 use pretty_assertions::assert_eq;
 use protocol::models::ManagedFileSystemPermissions;
 use protocol::models::PermissionProfile;

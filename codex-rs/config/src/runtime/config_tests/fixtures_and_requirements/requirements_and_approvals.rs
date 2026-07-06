@@ -777,4 +777,3 @@ approvals_reviewer = "user"
     assert_eq!(config.approvals_reviewer, ApprovalsReviewer::AutoReview);
     Ok(())
 }
-

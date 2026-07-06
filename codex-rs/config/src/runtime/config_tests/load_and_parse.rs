@@ -19,7 +19,7 @@ async fn load_config_normalizes_relative_cwd_override() -> std::io::Result<()> {
 }
 
 #[tokio::test]
-async fn load_config_loads_global_agents_instructions() -> std::io::Result<()> {
+async fn load_config_does_not_inline_global_agents_instructions() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     std::fs::write(
         codex_home.path().join(DEFAULT_AGENTS_MD_FILENAME),
@@ -34,15 +34,12 @@ async fn load_config_loads_global_agents_instructions() -> std::io::Result<()> {
     .await?;
     let _ = config.features.enable(Feature::MemoryTool);
 
-    assert_eq!(
-        config.user_instructions.as_deref(),
-        Some("global instructions")
-    );
+    assert_eq!(config.user_instructions, None);
     Ok(())
 }
 
 #[tokio::test]
-async fn load_config_prefers_global_agents_override_instructions() -> std::io::Result<()> {
+async fn load_config_does_not_inline_global_agents_override_instructions() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     std::fs::write(
         codex_home.path().join(DEFAULT_AGENTS_MD_FILENAME),
@@ -58,9 +55,38 @@ async fn load_config_prefers_global_agents_override_instructions() -> std::io::R
     )
     .await?;
 
+    assert_eq!(config.user_instructions, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_reads_explicit_instruction_files() -> std::io::Result<()> {
+    let cwd = tempdir()?;
+    let parsed = deserialize_config_toml_with_base(
+        toml::toml! {
+            instruction_files = ["instructions/project.md", "instructions/user.md"]
+        },
+        cwd.path(),
+    )
+    .expect("instruction files config should deserialize");
+    let config = Config::load_from_base_config_with_overrides(
+        parsed,
+        ConfigOverrides {
+            cwd: Some(cwd.abs()),
+            ..Default::default()
+        },
+        tempdir()?.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.instruction_files.len(), 2);
     assert_eq!(
-        config.user_instructions.as_deref(),
-        Some("local override instructions")
+        config.instruction_files[0],
+        cwd.abs().join("instructions").join("project.md")
+    );
+    assert_eq!(
+        config.instruction_files[1],
+        cwd.abs().join("instructions").join("user.md")
     );
     Ok(())
 }
@@ -137,10 +163,7 @@ consolidation_model = "gpt-5.2"
     )
     .await
     .expect("load config from memories settings");
-    assert_eq!(
-        config.memories.disable_on_external_context,
-        true
-    );
+    assert_eq!(config.memories.disable_on_external_context, true);
     assert_eq!(config.memories.generate_memories, false);
     assert_eq!(config.memories.use_memories, false);
     assert_eq!(config.memories.max_raw_memories_for_consolidation, 512);
@@ -161,7 +184,7 @@ consolidation_model = "gpt-5.2"
         config.memories.compact_replacement_file_token_limit,
         DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT
     );
-    assert_eq!(config.memories.compact_replacement_files.len(), 3);
+    assert!(config.memories.compact_replacement_files.is_empty());
 
     let legacy_memories_cfg =
         toml::from_str::<ConfigToml>("[memories]\nno_memories_if_mcp_or_web_search = true\n")

@@ -27,6 +27,7 @@ pub use command_types::WriteStdinRequest;
 pub use command_types::clamp_yield_time;
 pub use command_types::generate_chunk_id;
 pub use command_types::resolve_max_tokens;
+pub use permissions_service_api::ExecApprovalRequirement;
 pub use process_exec_contracts::DEFAULT_EXEC_COMMAND_TIMEOUT_MS;
 pub use process_exec_contracts::DEFAULT_EXEC_OUTPUT_MAX_BYTES;
 pub use process_exec_contracts::ExecCapturePolicy;
@@ -43,7 +44,6 @@ pub use session_controller::CommandSessionController;
 pub use session_controller::CommandSessionError;
 pub use session_controller::CommandSessionFuture;
 pub use session_controller::CommandWaitOperation;
-pub use permissions_service_api::ExecApprovalRequirement;
 pub use thread_service_api::NetworkApprovalMode;
 pub use thread_service_api::NetworkApprovalSpec;
 pub use thread_service_api::ResolvedExecCommand;
@@ -79,6 +79,16 @@ use thread_service_api::ThreadSessionCapability;
 /// Boxed future returned by object-safe command service APIs.
 pub type CommandServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningCommandSnapshot {
+    pub process_id: i32,
+    pub call_id: String,
+    pub command: String,
+    pub cwd: codex_utils_absolute_path::AbsolutePathBuf,
+    pub tty: bool,
+    pub notify_on: CommandNotificationFilter,
+}
+
 /// Session-owned command interaction capability consumed by command-wait tools.
 pub trait SessionCommandInteractionCaller: Send + Sync + 'static {
     fn begin_command_wait<'a>(
@@ -102,6 +112,11 @@ pub trait CommandServiceSessionState: Send + Sync + 'static {
         &'a self,
         thread_id: ThreadId,
     ) -> CommandServiceFuture<'a, bool>;
+
+    fn running_processes_for_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> CommandServiceFuture<'a, Vec<RunningCommandSnapshot>>;
 
     fn terminate_all_processes<'a>(&'a self) -> CommandServiceFuture<'a, ()>;
 

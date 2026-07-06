@@ -146,7 +146,10 @@ async fn falls_back_to_codex_home_default_compact_prompt() -> std::io::Result<()
     )
     .await?;
 
-    assert_eq!(config.compact_prompt.as_deref(), Some("home compact prompt"));
+    assert_eq!(
+        config.compact_prompt.as_deref(),
+        Some("home compact prompt")
+    );
 
     Ok(())
 }
@@ -158,7 +161,10 @@ async fn empty_workspace_default_compact_prompt_falls_back_to_codex_home() -> st
     std::fs::create_dir_all(workspace.join(".codex").join("compact"))?;
     std::fs::create_dir_all(codex_home.path().join("compact"))?;
 
-    std::fs::write(workspace.join(".codex").join("compact").join("COMPACT.md"), "   ")?;
+    std::fs::write(
+        workspace.join(".codex").join("compact").join("COMPACT.md"),
+        "   ",
+    )?;
     std::fs::write(
         codex_home.path().join("compact").join("COMPACT.md"),
         "  home compact prompt  ",
@@ -174,7 +180,10 @@ async fn empty_workspace_default_compact_prompt_falls_back_to_codex_home() -> st
     )
     .await?;
 
-    assert_eq!(config.compact_prompt.as_deref(), Some("home compact prompt"));
+    assert_eq!(
+        config.compact_prompt.as_deref(),
+        Some("home compact prompt")
+    );
 
     Ok(())
 }
@@ -204,8 +213,8 @@ async fn empty_codex_home_default_compact_prompt_is_treated_as_missing() -> std:
 }
 
 #[tokio::test]
-async fn explicit_compact_prompt_file_beats_default_compact_prompt_locations(
-) -> std::io::Result<()> {
+async fn explicit_compact_prompt_file_beats_default_compact_prompt_locations() -> std::io::Result<()>
+{
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
     std::fs::create_dir_all(workspace.join(".codex").join("compact"))?;
@@ -244,8 +253,8 @@ async fn explicit_compact_prompt_file_beats_default_compact_prompt_locations(
 }
 
 #[tokio::test]
-async fn explicit_compact_prompt_file_error_does_not_fall_back_to_default_locations(
-) -> std::io::Result<()> {
+async fn explicit_compact_prompt_file_error_does_not_fall_back_to_default_locations()
+-> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let workspace = codex_home.path().join("workspace");
     std::fs::create_dir_all(workspace.join(".codex").join("compact"))?;

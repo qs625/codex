@@ -662,7 +662,7 @@ mod tests {
         );
         assert_eq!(plan.service_tier.as_deref(), Some("priority"));
         assert_eq!(plan.personality, Some(Personality::Pragmatic));
-        assert_eq!(plan.cwd, new_cwd.clone());
+        assert_eq!(plan.cwd, new_cwd);
         assert_eq!(plan.workspace_roots, vec![new_cwd]);
         assert_eq!(plan.app_server_client_name.as_deref(), Some("root-worker"));
         assert_eq!(plan.app_server_client_version.as_deref(), Some("1.2.3"));

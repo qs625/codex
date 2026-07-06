@@ -15,31 +15,32 @@ use std::sync::Arc;
 use codex_approval_service_api::ApprovalSessionCapability;
 use command_service_api::CommandServiceApi;
 use command_service_api::CommandServiceFuture;
+use command_service_api::CommandServiceSessionState;
 use command_service_api::CommandSessionController;
 use command_service_api::CommandSessionError;
-use command_service_api::CommandServiceSessionState;
 use command_service_api::CommandWaitOperation;
 use command_service_api::CommandWaitRequest;
 use command_service_api::ExecCommandRunOutput;
 use command_service_api::ExecCommandRunRequest;
+use command_service_api::RunningCommandSnapshot;
 use command_service_api::UnifiedExecError;
 use command_service_api::UserShellRunRequest;
 use command_service_api::WriteStdinOutput;
 use command_service_api::WriteStdinRequest;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
 use unified_exec::UnifiedExecProcessManager;
 
-pub use unified_exec::UnifiedExecManagerHandle;
-#[cfg(unix)]
-pub use shell_escalation::run_shell_escalation_execve_wrapper;
 pub use exec_env::create_env;
 pub use exec_request::ExecRequest;
 pub use process_exec::StdoutStream;
 pub use process_exec::build_exec_request;
 pub use process_exec::execute_exec_request;
 pub use process_exec::process_exec_tool_call;
+#[cfg(unix)]
+pub use shell_escalation::run_shell_escalation_execve_wrapper;
 pub use shell_support::maybe_wrap_shell_lc_with_snapshot;
+pub use unified_exec::UnifiedExecManagerHandle;
 
 pub struct CommandService;
 
@@ -70,7 +71,9 @@ impl CommandServiceApi for CommandService {
         request: ExecCommandRunRequest,
     ) -> CommandServiceFuture<'a, Result<ExecCommandRunOutput, UnifiedExecError>> {
         Box::pin(async move {
-            state.run_exec_command(session, approval_session, turn, call_id, request).await
+            state
+                .run_exec_command(session, approval_session, turn, call_id, request)
+                .await
         })
     }
 
@@ -109,11 +112,10 @@ impl CommandSessionState {
         let unified_exec_manager = Arc::new(UnifiedExecProcessManager::new(
             max_write_stdin_yield_time_ms,
         ));
-        let command_session_controller = Arc::new(
-            unified_exec::UnifiedExecCommandSessionController::new(Arc::clone(
-                &unified_exec_manager,
-            )),
-        );
+        let command_session_controller =
+            Arc::new(unified_exec::UnifiedExecCommandSessionController::new(
+                Arc::clone(&unified_exec_manager),
+            ));
         Self {
             unified_exec_manager,
             command_session_controller,
@@ -132,7 +134,9 @@ impl CommandServiceSessionState for CommandSessionState {
 
     fn release_process_id<'a>(&'a self, process_id: i32) -> CommandServiceFuture<'a, ()> {
         Box::pin(async move {
-            self.unified_exec_manager.release_process_id(process_id).await;
+            self.unified_exec_manager
+                .release_process_id(process_id)
+                .await;
         })
     }
 
@@ -143,6 +147,17 @@ impl CommandServiceSessionState for CommandSessionState {
         Box::pin(async move {
             self.unified_exec_manager
                 .has_running_process_for_thread(thread_id)
+                .await
+        })
+    }
+
+    fn running_processes_for_thread<'a>(
+        &'a self,
+        thread_id: protocol::ThreadId,
+    ) -> CommandServiceFuture<'a, Vec<RunningCommandSnapshot>> {
+        Box::pin(async move {
+            self.unified_exec_manager
+                .running_processes_for_thread(thread_id)
                 .await
         })
     }
@@ -165,10 +180,13 @@ impl CommandServiceSessionState for CommandSessionState {
             let context =
                 unified_exec::UnifiedExecContext::new(session, approval_session, turn, call_id);
             self.unified_exec_manager
-                .exec_command(unified_exec::ExecCommandRequest::from_run_request(
-                    request,
-                    context.turn.active_network(),
-                ), &context)
+                .exec_command(
+                    unified_exec::ExecCommandRequest::from_run_request(
+                        request,
+                        context.turn.active_network(),
+                    ),
+                    &context,
+                )
                 .await
         })
     }

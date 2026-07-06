@@ -64,7 +64,7 @@ impl HeadTailBuffer {
     }
 
     /// Total bytes that were dropped from the middle due to the size cap.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub fn omitted_bytes(&self) -> usize {
         self.omitted_bytes
     }

@@ -464,7 +464,7 @@ fn build_available_models(
     mut remote_models: Vec<ModelInfo>,
     uses_codex_backend: bool,
 ) -> Vec<ModelPreset> {
-    remote_models.sort_by(|a, b| a.priority.cmp(&b.priority));
+    remote_models.sort_by_key(|a| a.priority);
 
     let mut presets: Vec<ModelPreset> = remote_models.into_iter().map(Into::into).collect();
     presets = ModelPreset::filter_by_auth(presets, uses_codex_backend);

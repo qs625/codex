@@ -116,7 +116,7 @@ pub struct Config {
     /// Defaults to `false`.
     pub show_raw_agent_reasoning: bool,
 
-    /// User-provided instructions from AGENTS.md.
+    /// User-provided instructions injected ahead of project doc fallback.
     pub user_instructions: Option<String>,
 
     /// Base instructions override.
@@ -287,6 +287,9 @@ pub struct Config {
 
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
+
+    /// Explicit instruction files to load into model-visible user instructions.
+    pub instruction_files: Vec<AbsolutePathBuf>,
 
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,

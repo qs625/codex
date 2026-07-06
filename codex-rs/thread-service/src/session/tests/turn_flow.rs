@@ -351,14 +351,9 @@ async fn built_tools_include_custom_agent_roles_in_spawn_agent_schema() {
     )
     .await
     .expect("build tool inputs");
-    let tool_specs = session
-        .services
-        .tool_service
-        .model_visible_specs(crate::session::turn::tool_service_request(
-            &session,
-            &turn_context,
-            &tool_inputs,
-        ));
+    let tool_specs = session.services.tool_service.model_visible_specs(
+        crate::session::turn::tool_service_request(&session, &turn_context, &tool_inputs),
+    );
     let spawn_agent_type_description = tool_specs
         .iter()
         .find_map(|tool| match tool {
@@ -372,9 +367,7 @@ async fn built_tools_include_custom_agent_roles_in_spawn_agent_schema() {
         })
         .expect("spawn_agent agent_type description");
 
-    assert!(
-        spawn_agent_type_description.contains("custom: {\nCustom agent role.\n}")
-    );
+    assert!(spawn_agent_type_description.contains("custom: {\nCustom agent role.\n}"));
 }
 
 pub(crate) async fn dispatch_exec_command_via_tool_service(
@@ -801,7 +794,7 @@ async fn user_shell_commands_do_not_inherit_managed_network_proxy() -> anyhow::R
 #[tokio::test]
 async fn get_base_instructions_no_user_content() {
     let prompt_with_apply_patch_instructions =
-        include_str!("../../prompt_with_apply_patch_instructions.md");
+        include_str!("../../../prompt_with_apply_patch_instructions.md");
     let models_response = bundled_models_response()
         .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));
     let model_info_for_slug = |slug: &str, config: &Config| {

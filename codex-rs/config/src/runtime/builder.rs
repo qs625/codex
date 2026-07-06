@@ -21,9 +21,7 @@ fn missing_config_layer_loader_error() -> std::io::Error {
 
 #[cfg(any(test, feature = "test-support"))]
 fn default_config_layer_loader_for_tests() -> Option<Arc<dyn ConfigLayerLoader>> {
-    Some(Arc::new(
-        crate::loader::LocalConfigLayerLoader::default(),
-    ))
+    Some(Arc::new(crate::loader::LocalConfigLayerLoader::default()))
 }
 
 #[cfg(not(any(test, feature = "test-support")))]

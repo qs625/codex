@@ -8,11 +8,6 @@ use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
-use compact_service::FsCompactService;
-use compact_service_api::CompactMemoryRole;
-use compact_service_api::CompactReplacementFile;
-use compact_service_api::ReplacementHistoryInput;
-use compact_service_api::SoftCompactInputs;
 use codex_analytics_api::CodexCompactionEvent;
 use codex_analytics_api::CompactionImplementation;
 use codex_analytics_api::CompactionPhase;
@@ -26,6 +21,11 @@ use codex_features::Feature;
 use codex_turn_items::last_assistant_message_from_turn;
 #[cfg(test)]
 use codex_turn_items::process_remote_compacted_history;
+use compact_service::FsCompactService;
+use compact_service_api::CompactMemoryRole;
+use compact_service_api::CompactReplacementFile;
+use compact_service_api::ReplacementHistoryInput;
+use compact_service_api::SoftCompactInputs;
 use futures::prelude::*;
 use hooks::PostCompactHookOutcome;
 use hooks::PreCompactHookOutcome;
@@ -49,8 +49,6 @@ use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
-const MEMORY_CHECKPOINT_MARKER: &str =
-    "Context compacted into a memory-backed checkpoint. Use the following memory snapshots instead of the full earlier thread.";
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -285,12 +283,10 @@ async fn run_compact_task_inner_impl(
         })?;
     let compact_window_summary =
         compact_service.summarize_compact_window(history_items, SUMMARY_PREFIX);
-    let compact_marker_text = format!("{SUMMARY_PREFIX}\n{MEMORY_CHECKPOINT_MARKER}");
     let mut new_history = compact_service.build_replacement_history(ReplacementHistoryInput {
         initial_context: Vec::new(),
         memory_bundle: memory_bundle.clone(),
         recent_real_user_messages: compact_window_summary.recent_real_user_messages,
-        compact_marker_text: compact_marker_text.clone(),
     });
 
     if matches!(
@@ -308,7 +304,7 @@ async fn run_compact_task_inner_impl(
     let replacement_history = Some(new_history.clone());
     let compacted_message = last_assistant_message_from_turn(history_items)
         .filter(|message| !message.trim().is_empty())
-        .unwrap_or_else(|| MEMORY_CHECKPOINT_MARKER.to_string());
+        .unwrap_or_else(|| "Memory-backed checkpoint recorded.".to_string());
     let compacted_item = CompactedItem {
         message: compacted_message.clone(),
         replacement_history: replacement_history.clone(),
@@ -439,6 +435,7 @@ pub(crate) fn is_summary_message(message: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn insert_initial_context_before_last_real_user_or_summary(
     compacted_history: Vec<ResponseItem>,
     initial_context: Vec<ResponseItem>,
@@ -510,9 +507,9 @@ pub(crate) async fn should_auto_compact_in_soft_window(
             return Ok(false);
         }
     };
-    let history_snapshot = sess.clone_history().await;
+    let compact_window_items = sess.compact_window_items().await;
     let compact_window =
-        compact_service.summarize_compact_window(history_snapshot.raw_items(), SUMMARY_PREFIX);
+        compact_service.summarize_compact_window(&compact_window_items, SUMMARY_PREFIX);
     let current_work_completeness = if memory_bundle.current_work_content().is_some() {
         compact_service.current_work_completeness(&memory_bundle)
     } else {

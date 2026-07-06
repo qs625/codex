@@ -37,27 +37,23 @@ pub struct ConfigEditsBuilder {
 impl ConfigEditsBuilder {
     pub fn new(codex_home: &Path) -> Self {
         Self {
-            inner: with_core_feature_defaults(crate::editing::ConfigEditsBuilder::new(
-                codex_home,
-            )),
+            inner: with_core_feature_defaults(crate::editing::ConfigEditsBuilder::new(codex_home)),
         }
     }
 
     pub fn for_config(config: &Config) -> Self {
         Self {
-            inner: with_core_feature_defaults(
-                crate::editing::ConfigEditsBuilder::for_config_path(
-                    config_path_for_config(config).as_path(),
-                ),
-            ),
+            inner: with_core_feature_defaults(crate::editing::ConfigEditsBuilder::for_config_path(
+                config_path_for_config(config).as_path(),
+            )),
         }
     }
 
     pub fn for_config_path(config_path: &Path) -> Self {
         Self {
-            inner: with_core_feature_defaults(
-                crate::editing::ConfigEditsBuilder::for_config_path(config_path),
-            ),
+            inner: with_core_feature_defaults(crate::editing::ConfigEditsBuilder::for_config_path(
+                config_path,
+            )),
         }
     }
 

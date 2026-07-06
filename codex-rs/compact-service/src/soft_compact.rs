@@ -14,27 +14,17 @@ pub(super) fn summarize_compact_window(
     items: &[ResponseItem],
     summary_prefix: &str,
 ) -> CompactWindowSummary {
-    let start_index = items
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(idx, item)| is_compact_marker(item, summary_prefix).then_some(idx + 1))
-        .unwrap_or(0);
-    let window = &items[start_index..];
     let recent_real_user_messages =
-        codex_context_manager::collect_compaction_user_messages(window, Some(summary_prefix))
+        codex_context_manager::collect_compaction_user_messages(items, Some(summary_prefix))
             .into_iter()
             .filter(|message| !message.starts_with(MEMORY_CHECKPOINT_PREFIX))
             .collect::<Vec<_>>();
     let turns_since_last_compact = recent_real_user_messages.len();
-    let recent_file_read_search_count = window
+    let recent_file_read_search_count = items
         .iter()
         .filter(|item| is_file_read_or_search_tool(item))
         .count();
-    let recent_tool_output_bytes = window
-        .iter()
-        .map(tool_output_bytes)
-        .sum::<usize>();
+    let recent_tool_output_bytes = items.iter().map(tool_output_bytes).sum::<usize>();
 
     CompactWindowSummary {
         recent_real_user_messages,
@@ -66,7 +56,10 @@ pub(super) fn evaluate_soft_compact(inputs: SoftCompactInputs) -> SoftCompactDec
     if inputs.turns_since_last_compact < MIN_TURNS_SINCE_LAST_COMPACT {
         return decision(false, "too little new user progress since last compact");
     }
-    decision(true, "soft compact window exceeded with enough new progress")
+    decision(
+        true,
+        "soft compact window exceeded with enough new progress",
+    )
 }
 
 fn decision(should_compact: bool, reason: &str) -> SoftCompactDecision {
@@ -74,19 +67,6 @@ fn decision(should_compact: bool, reason: &str) -> SoftCompactDecision {
         should_compact,
         reason: reason.to_string(),
     }
-}
-
-fn is_compact_marker(item: &ResponseItem, summary_prefix: &str) -> bool {
-    matches!(
-        item,
-        ResponseItem::Message { role, content, .. }
-            if role == "user"
-                && content.iter().any(|content_item| matches!(
-                    content_item,
-                    protocol::models::ContentItem::InputText { text }
-                        if text.starts_with(summary_prefix)
-                ))
-    )
 }
 
 fn is_file_read_or_search_tool(item: &ResponseItem) -> bool {

@@ -7,7 +7,14 @@ use crate::config::ThreadStoreConfig;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::edit::apply_blocking;
+use crate::editing::load_global_mcp_servers;
+use crate::loader::ProjectConfig;
+use crate::local_loader::load_config_layers_state;
 use assert_matches::assert_matches;
+use codex_config_types::RealtimeAudioConfig;
+use codex_features::Feature;
+use codex_features::FeaturesToml;
+use codex_file_system::LOCAL_FS;
 use config_service::ConfigLayerEntry;
 use config_service::ProfileV2Name;
 use config_service::RequirementSource;
@@ -62,13 +69,6 @@ use config_service::types::TuiNotificationSettings;
 use config_service::types::TuiPetAnchor;
 use config_service::types::WindowsSandboxModeToml;
 use config_service::types::WindowsToml;
-use crate::editing::load_global_mcp_servers;
-use crate::loader::ProjectConfig;
-use crate::local_loader::load_config_layers_state;
-use codex_config_types::RealtimeAudioConfig;
-use codex_features::Feature;
-use codex_features::FeaturesToml;
-use codex_file_system::LOCAL_FS;
 use model_service::bundled_models_response;
 use model_service_api::LMSTUDIO_OSS_PROVIDER_ID;
 use model_service_api::ModelProviderInfo;
@@ -312,7 +312,7 @@ async fn load_config_normalizes_relative_cwd_override() -> std::io::Result<()> {
 }
 
 #[tokio::test]
-async fn load_config_loads_global_agents_instructions() -> std::io::Result<()> {
+async fn load_config_does_not_inline_global_agents_instructions() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     std::fs::write(
         codex_home.path().join(DEFAULT_AGENTS_MD_FILENAME),
@@ -327,15 +327,12 @@ async fn load_config_loads_global_agents_instructions() -> std::io::Result<()> {
     .await?;
     let _ = config.features.enable(Feature::MemoryTool);
 
-    assert_eq!(
-        config.user_instructions.as_deref(),
-        Some("global instructions")
-    );
+    assert_eq!(config.user_instructions, None);
     Ok(())
 }
 
 #[tokio::test]
-async fn load_config_prefers_global_agents_override_instructions() -> std::io::Result<()> {
+async fn load_config_does_not_inline_global_agents_override_instructions() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     std::fs::write(
         codex_home.path().join(DEFAULT_AGENTS_MD_FILENAME),
@@ -351,10 +348,7 @@ async fn load_config_prefers_global_agents_override_instructions() -> std::io::R
     )
     .await?;
 
-    assert_eq!(
-        config.user_instructions.as_deref(),
-        Some("local override instructions")
-    );
+    assert_eq!(config.user_instructions, None);
     Ok(())
 }
 
@@ -471,14 +465,11 @@ consolidation_model = "gpt-5.2"
     )
     .await
     .expect("load default config");
-    assert_eq!(default_memories_config.memories.compact_replacement_files.len(), 3);
-    assert_eq!(
-        default_memories_config.memories.compact_replacement_files[0].path,
-        cwd.join(".codex").join("memory").join("current-work.md")
-    );
-    assert_eq!(
-        default_memories_config.memories.compact_replacement_files[0].token_limit,
-        DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT
+    assert!(
+        default_memories_config
+            .memories
+            .compact_replacement_files
+            .is_empty()
     );
 
     let cwd = tempdir().expect("tempdir").abs();
@@ -509,7 +500,10 @@ consolidation_model = "gpt-5.2"
         config.memories.compact_replacement_files[0].path,
         cwd.join("replacement").join("current-work.md")
     );
-    assert_eq!(config.memories.compact_replacement_files[0].token_limit, 321);
+    assert_eq!(
+        config.memories.compact_replacement_files[0].token_limit,
+        321
+    );
 }
 
 #[test]
@@ -8215,6 +8209,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
             project_doc_fallback_filenames: Vec::new(),
+            instruction_files: Vec::new(),
             tool_output_token_limit: None,
             agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
             agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
@@ -8668,6 +8663,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         model_providers: fixture.model_provider_map.clone(),
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
         project_doc_fallback_filenames: Vec::new(),
+        instruction_files: Vec::new(),
         tool_output_token_limit: None,
         agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
@@ -8835,6 +8831,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         model_providers: fixture.model_provider_map.clone(),
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
         project_doc_fallback_filenames: Vec::new(),
+        instruction_files: Vec::new(),
         tool_output_token_limit: None,
         agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
@@ -8987,6 +8984,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         model_providers: fixture.model_provider_map.clone(),
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
         project_doc_fallback_filenames: Vec::new(),
+        instruction_files: Vec::new(),
         tool_output_token_limit: None,
         agent_max_threads: Some(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION - 1),
         agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,

@@ -306,24 +306,22 @@ impl GuardianReviewSessionHost for Session {
 }
 
 #[cfg(test)]
-pub(crate) fn build_guardian_prompt_items_from_session_history(
+pub(crate) async fn build_guardian_prompt_items_from_session_history(
     session: &Session,
     retry_reason: Option<String>,
     request: GuardianApprovalRequest,
     mode: GuardianPromptMode,
-) -> impl std::future::Future<Output = serde_json::Result<GuardianPromptItems>> + '_ {
-    async move {
-        let history = session.clone_history().await;
-        let transcript_entries = collect_guardian_transcript_entries(history.raw_items());
-        build_guardian_prompt_items_from_entries(
-            &session.conversation_id.to_string(),
-            history.history_version(),
-            transcript_entries.as_slice(),
-            retry_reason,
-            request,
-            mode,
-        )
-    }
+) -> serde_json::Result<GuardianPromptItems> {
+    let history = session.clone_history().await;
+    let transcript_entries = collect_guardian_transcript_entries(history.raw_items());
+    build_guardian_prompt_items_from_entries(
+        &session.conversation_id.to_string(),
+        history.history_version(),
+        transcript_entries.as_slice(),
+        retry_reason,
+        request,
+        mode,
+    )
 }
 
 pub(crate) fn build_guardian_review_session_config(

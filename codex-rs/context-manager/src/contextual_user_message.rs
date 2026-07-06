@@ -11,6 +11,7 @@ const CONTEXTUAL_USER_MARKERS: &[(&str, &str)] = &[
     ("<agents_instructions>", "</agents_instructions>"),
     (ENVIRONMENT_CONTEXT_OPEN_TAG, ENVIRONMENT_CONTEXT_CLOSE_TAG),
     ("<multiagent_context>", "</multiagent_context>"),
+    ("<runtime_activity>", "</runtime_activity>"),
     ("<skill>", "</skill>"),
     ("<user_shell_command>", "</user_shell_command>"),
     ("<turn_aborted>", "</turn_aborted>"),

@@ -910,7 +910,7 @@ impl Session {
         }
     }
 
-    async fn record_granted_request_permissions_for_turn(
+    pub(crate) async fn record_granted_request_permissions_for_turn(
         &self,
         response: &RequestPermissionsResponse,
         originating_turn_state: Option<&Arc<Mutex<crate::state::TurnState>>>,
@@ -1146,6 +1146,7 @@ impl Session {
         .await;
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn replace_history(
         &self,
         items: Vec<ResponseItem>,
@@ -1161,8 +1162,14 @@ impl Session {
         reference_context_item: Option<TurnContextItem>,
         compacted_item: CompactedItem,
     ) {
-        self.replace_history(items, reference_context_item.clone())
-            .await;
+        {
+            let mut state = self.state.lock().await;
+            state.replace_history_with_compact_window_start(
+                items.clone(),
+                reference_context_item.clone(),
+                Some(items.len()),
+            );
+        }
 
         self.persist_rollout_items(&[RolloutItem::Compacted(compacted_item)])
             .await;
@@ -1444,6 +1451,24 @@ impl Session {
                 )
                 .render(),
             );
+            let running_commands = self
+                .services
+                .command_service_state
+                .running_processes_for_thread(self.conversation_id)
+                .await;
+            let active_subscriptions =
+                codex_file_subscription::active_subscriptions_from_thread_store(
+                    &self.services.thread_extension_data,
+                )
+                .await
+                .unwrap_or_default();
+            let runtime_activity = crate::context::RuntimeActivityContext {
+                running_commands,
+                active_subscriptions,
+            };
+            if !runtime_activity.is_empty() {
+                contextual_user_sections.push(runtime_activity.render());
+            }
         }
 
         let multi_agent_v2_usage_hint_text =
@@ -1501,6 +1526,11 @@ impl Session {
     pub(crate) async fn clone_history(&self) -> ContextManager {
         let state = self.state.lock().await;
         state.clone_history()
+    }
+
+    pub(crate) async fn compact_window_items(&self) -> Vec<ResponseItem> {
+        let state = self.state.lock().await;
+        state.compact_window_items()
     }
 
     pub(crate) async fn reference_context_item(&self) -> Option<TurnContextItem> {
@@ -1750,5 +1780,4 @@ impl Session {
         });
         self.send_event(turn_context, event).await;
     }
-
 }

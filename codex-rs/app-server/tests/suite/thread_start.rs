@@ -23,11 +23,11 @@ use app_test_support::PathBufExt;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
-use config_service::loader::project_trust_key;
-use config_service::types::AuthCredentialsStoreMode;
 use codex_exec_server::LOCAL_FS;
 use codex_git_info::resolve_root_git_project_for_trust;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
+use config_service::loader::project_trust_key;
+use config_service::types::AuthCredentialsStoreMode;
 use pretty_assertions::assert_eq;
 use protocol::config_types::TrustLevel;
 use protocol::openai_models::ReasoningEffort;
@@ -416,11 +416,24 @@ async fn thread_start_response_includes_loaded_instruction_sources() -> Result<(
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
-    let global_agents_path = codex_home.path().join("AGENTS.md");
-    std::fs::write(&global_agents_path, "global instructions")?;
     let workspace = TempDir::new()?;
-    let project_agents_path = workspace.path().join("AGENTS.md");
-    std::fs::write(&project_agents_path, "project instructions")?;
+    let project_config_dir = workspace.path().join(".codex");
+    std::fs::create_dir_all(&project_config_dir)?;
+    let instruction_dir = workspace.path().join("memory");
+    std::fs::create_dir_all(&instruction_dir)?;
+    let project_instruction_path = instruction_dir.join("project-understanding.md");
+    let user_instruction_path = instruction_dir.join("user-preferences.md");
+    std::fs::write(&project_instruction_path, "project instructions")?;
+    std::fs::write(&user_instruction_path, "user instructions")?;
+    std::fs::write(
+        project_config_dir.join("config.toml"),
+        r#"
+instruction_files = [
+  "memory/project-understanding.md",
+  "memory/user-preferences.md",
+]
+"#,
+    )?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
@@ -446,8 +459,8 @@ async fn thread_start_response_includes_loaded_instruction_sources() -> Result<(
         .map(normalize_path_for_comparison)
         .collect::<Vec<_>>();
     let expected_instruction_sources = vec![
-        std::fs::canonicalize(global_agents_path)?,
-        std::fs::canonicalize(project_agents_path)?,
+        std::fs::canonicalize(project_instruction_path)?,
+        std::fs::canonicalize(user_instruction_path)?,
     ]
     .into_iter()
     .map(normalize_path_for_comparison)

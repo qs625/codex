@@ -48,5 +48,9 @@ tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true, features = ["log"] }
 uuid = { workspace = true, features = ["serde", "v4"] }
 
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+
 [target.'cfg(windows)'.dependencies]
 codex-windows-sandbox = { package = "codex-windows-sandbox", path = "../windows-sandbox-rs", default-features = false }

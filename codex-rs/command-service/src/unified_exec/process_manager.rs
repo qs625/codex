@@ -42,30 +42,33 @@ use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::unified_exec::WaitBackoffState;
 use crate::unified_exec::WriteStdinOutput;
-use crate::unified_exec::apply_unified_exec_env;
-use crate::unified_exec::collect_output_until_deadline;
-use crate::unified_exec::command_process_id_to_prune;
-use crate::unified_exec::events::emit_unified_exec_begin;
-use crate::unified_exec::exec_env_policy_from_shell_policy;
-use crate::unified_exec::exec_server_spawn_params;
 use crate::unified_exec::WriteStdinRequest;
+use crate::unified_exec::apply_unified_exec_env;
 use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
 use crate::unified_exec::async_watcher::emit_failed_exec_end_for_unified_exec;
 use crate::unified_exec::async_watcher::spawn_exit_watcher;
 use crate::unified_exec::async_watcher::start_streaming_output;
 use crate::unified_exec::clamp_yield_time;
+use crate::unified_exec::collect_output_until_deadline;
 use crate::unified_exec::command_notification_filter_to_protocol;
+use crate::unified_exec::command_process_id_to_prune;
+use crate::unified_exec::events::emit_unified_exec_begin;
+use crate::unified_exec::exec_env_policy_from_shell_policy;
+use crate::unified_exec::exec_server_spawn_params;
 use crate::unified_exec::generate_chunk_id;
 use codex_approval_service_api::ApprovalSessionCapability;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_output_truncation::approx_token_count;
 use command_service_api::CommandSessionController;
 use command_service_api::CommandSessionError;
 use command_service_api::CommandSessionFuture;
 use command_service_api::CommandWaitOperation;
-use command_service_api::ExecCapturePolicy;
-use command_service_api::ExecExpiration;
 use command_service_api::ExecApprovalRequirement;
+use command_service_api::ExecCapturePolicy;
 use command_service_api::ExecCommandRunOutput;
+use command_service_api::ExecExpiration;
 use command_service_api::ExecOptions;
+use command_service_api::RunningCommandSnapshot;
 use command_service_api::ToolRuntimeNetworkApprovalError;
 use command_service_api::ToolRuntimeNetworkApprovalHandle;
 use command_service_api::ToolRuntimeNetworkApprovalTrigger;
@@ -79,8 +82,6 @@ use protocol::protocol::AskForApproval;
 use protocol::protocol::ExecCommandSource;
 use protocol::protocol::NetworkPolicyRuleAction;
 use protocol::protocol::ReviewDecision;
-use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_output_truncation::approx_token_count;
 
 const NETWORK_ACCESS_DENIED_MESSAGE: &str =
     "Network access was denied by the Codex sandbox network proxy.";
@@ -270,8 +271,12 @@ async fn wait_for_late_network_denial(network_cancelled: Option<CancellationToke
 async fn finish_deferred_network_approval_after_process_exit_for_session(
     approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
 ) -> Result<(), String> {
-    wait_for_late_network_denial(approval.as_ref().map(|approval| approval.cancellation_token()))
-        .await;
+    wait_for_late_network_denial(
+        approval
+            .as_ref()
+            .map(|approval| approval.cancellation_token()),
+    )
+    .await;
     finish_network_approval(approval).await
 }
 
@@ -336,7 +341,9 @@ async fn reject_unapproved_decision(
             let reason = if let Some(review_id) = review_id {
                 let rejection = session.take_review_rejection(review_id).await;
                 codex_approval_service_api::guardian_rejection_message_from_rationale(
-                    rejection.as_ref().map(|rejection| rejection.rationale.as_str()),
+                    rejection
+                        .as_ref()
+                        .map(|rejection| rejection.rationale.as_str()),
                 )
             } else {
                 "rejected by user".to_string()
@@ -451,8 +458,10 @@ async fn spawn_unified_exec_process(
     context: &UnifiedExecContext,
 ) -> Result<UnifiedExecProcess, ToolError> {
     let session_shell = context.turn.runtime_shell();
-    let managed_network =
-        managed_network_for_sandbox_permissions(request.network.as_ref(), request.sandbox_permissions);
+    let managed_network = managed_network_for_sandbox_permissions(
+        request.network.as_ref(),
+        request.sandbox_permissions,
+    );
     let mut env = exec_env_for_sandbox_permissions(&base_env, request.sandbox_permissions);
     if let Some(network) = managed_network.as_ref() {
         network.apply_to_env(&mut env);
@@ -475,8 +484,10 @@ async fn spawn_unified_exec_process(
         attempt.sandbox,
         attempt.windows_sandbox_level,
     );
-    let command = if matches!(session_shell.shell_type, tool_config::ToolUserShellType::PowerShell)
-    {
+    let command = if matches!(
+        session_shell.shell_type,
+        tool_config::ToolUserShellType::PowerShell
+    ) {
         codex_shell_utils::powershell::prefix_powershell_script_with_utf8(&command)
     } else {
         command
@@ -588,9 +599,7 @@ async fn run_unified_exec_attempt(
 
 fn map_runtime_tool_error(err: ToolRuntimeNetworkApprovalError) -> ToolError {
     match err {
-        ToolRuntimeNetworkApprovalError::Rejected(message) => {
-            ToolError::Rejected(message)
-        }
+        ToolRuntimeNetworkApprovalError::Rejected(message) => ToolError::Rejected(message),
         ToolRuntimeNetworkApprovalError::Codex(err) => ToolError::Codex(err),
     }
 }
@@ -660,6 +669,27 @@ impl UnifiedExecProcessManager {
         })
     }
 
+    pub(crate) async fn running_processes_for_thread(
+        &self,
+        thread_id: ThreadId,
+    ) -> Vec<RunningCommandSnapshot> {
+        let store = self.process_store.lock().await;
+        let mut processes = store
+            .processes
+            .values()
+            .filter(|entry| {
+                !entry.process.has_exited()
+                    && entry
+                        .session
+                        .upgrade()
+                        .is_some_and(|session| session.conversation_id() == thread_id)
+            })
+            .map(ProcessEntry::as_running_snapshot)
+            .collect::<Vec<_>>();
+        processes.sort_by_key(|entry| entry.process_id);
+        processes
+    }
+
     pub(crate) async fn begin_command_wait(
         &self,
         request: CommandWaitRequest,
@@ -714,7 +744,7 @@ impl UnifiedExecProcessManager {
         })
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub async fn subscribe_process_exit(&self, process_id: i32) -> Option<ProcessExitSubscription> {
         let (process, transcript) = {
             let mut store = self.process_store.lock().await;
@@ -767,10 +797,7 @@ impl UnifiedExecProcessManager {
             }
         };
         if let Some(deferred) = deferred_network_approval.as_ref() {
-            terminate_process_on_network_denial(
-                Arc::clone(&process),
-                deferred.clone(),
-            );
+            terminate_process_on_network_denial(Arc::clone(&process), deferred.clone());
         }
 
         let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
@@ -825,7 +852,11 @@ impl UnifiedExecProcessManager {
         let deadline = start + Duration::from_millis(yield_time_ms);
         let collected = collect_output_until_deadline(
             &output_handles,
-            Some(context.session.subscribe_out_of_band_elicitation_pause_state()),
+            Some(
+                context
+                    .session
+                    .subscribe_out_of_band_elicitation_pause_state(),
+            ),
             deadline,
         )
         .await;
@@ -837,7 +868,8 @@ impl UnifiedExecProcessManager {
             .as_ref()
             .is_some_and(|approval| approval.cancellation_token().is_cancelled())
         {
-            let message = network_denial_message_for_session(deferred_network_approval.take()).await;
+            let message =
+                network_denial_message_for_session(deferred_network_approval.take()).await;
             emit_failed_initial_exec_end_if_unstored(
                 process_started_alive,
                 context,
@@ -1067,7 +1099,10 @@ impl UnifiedExecProcessManager {
             process: Arc::clone(&process),
             call_id: context.call_id.clone(),
             process_id,
+            command: command.join(" "),
+            cwd: cwd.clone(),
             tty,
+            notify_on,
             network_approval,
             session: Arc::downgrade(&context.session),
             last_used: started_at,
@@ -1097,7 +1132,7 @@ impl UnifiedExecProcessManager {
             Arc::clone(&context.turn),
             context.call_id.clone(),
             command.to_vec(),
-            cwd,
+            cwd.clone(),
             process_id,
             transcript,
             started_at,
@@ -1107,7 +1142,7 @@ impl UnifiedExecProcessManager {
         );
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) async fn wait_for_command_notification(
         &self,
         request: CommandWaitRequest,
@@ -1376,7 +1411,10 @@ impl UnifiedExecProcessManager {
         };
         let sandbox_context = context.turn.tool_sandbox_context();
         let sandbox_runtime = context.session.sandbox_runtime();
-        let strict_auto_review = context.approval_session.strict_auto_review_enabled_for_turn().await;
+        let strict_auto_review = context
+            .approval_session
+            .strict_auto_review_enabled_for_turn()
+            .await;
         let use_guardian = strict_auto_review || context.turn.routes_approval_to_guardian();
         let approval_policy = context.turn.approval_policy();
         let requirement = request.exec_approval_requirement.clone();
@@ -1395,8 +1433,7 @@ impl UnifiedExecProcessManager {
                     .await
                     .map_err(|err| UnifiedExecError::create_process(format!("{err:?}")))?;
                     true
-                }
-                else {
+                } else {
                     matches!(
                         request.approval_mode,
                         crate::unified_exec::ExecCommandApprovalMode::AlreadyApproved
@@ -1498,16 +1535,15 @@ impl UnifiedExecProcessManager {
                     }
                 }
 
-                let retry_reason = if let Some(network_approval_context) =
-                    network_approval_context.as_ref()
-                {
-                    format!(
-                        "Network access to \"{}\" is blocked by policy.",
-                        network_approval_context.host
-                    )
-                } else {
-                    sandbox_denial_reason(output.as_ref())
-                };
+                let retry_reason =
+                    if let Some(network_approval_context) = network_approval_context.as_ref() {
+                        format!(
+                            "Network access to \"{}\" is blocked by policy.",
+                            network_approval_context.host
+                        )
+                    } else {
+                        sandbox_denial_reason(output.as_ref())
+                    };
                 let bypass_retry_approval = !strict_auto_review
                     && (already_approved || matches!(approval_policy, AskForApproval::Never))
                     && network_approval_context.is_none();
@@ -1534,7 +1570,8 @@ impl UnifiedExecProcessManager {
                     codex_linux_sandbox_exe: None,
                     use_legacy_landlock: sandbox_context.use_legacy_landlock,
                     windows_sandbox_level: sandbox_context.windows_sandbox_level,
-                    windows_sandbox_private_desktop: sandbox_context.windows_sandbox_private_desktop,
+                    windows_sandbox_private_desktop: sandbox_context
+                        .windows_sandbox_private_desktop,
                     network_denial_cancellation_token: None,
                 };
                 run_unified_exec_attempt(

@@ -56,7 +56,7 @@ impl Config {
             guardian_policy_config_source: _,
         } = config_layer_stack.requirements().clone();
 
-        let user_instructions = load_global_instructions(Some(&codex_home));
+        let user_instructions = None;
         let mut startup_warnings = config_layer_stack
             .startup_warnings()
             .unwrap_or_default()
@@ -840,13 +840,8 @@ impl Config {
             if compact_prompt.is_some() || experimental_compact_prompt_path.is_some() {
             None
         } else {
-            let workspace_compact_prompt_path = AbsolutePathBuf::try_from(
-                resolved_cwd
-                    .join(".codex")
-                    .join("compact")
-                    .join("COMPACT.md"),
-            )
-            .expect("workspace compact prompt path should remain absolute");
+            let workspace_compact_prompt_path =
+                resolved_cwd.join(".codex").join("compact").join("COMPACT.md");
             match Self::try_read_non_empty_file(
                 fs,
                 Some(&workspace_compact_prompt_path),
@@ -857,8 +852,7 @@ impl Config {
                 Ok(prompt) => prompt,
                 Err(err) if Self::is_default_compact_prompt_fallback(&err) => {
                     let codex_home_compact_prompt_path =
-                        AbsolutePathBuf::try_from(codex_home.join("compact").join("COMPACT.md"))
-                            .expect("Codex home compact prompt path should remain absolute");
+                        codex_home.join("compact").join("COMPACT.md");
                     match Self::try_read_non_empty_file(
                         fs,
                         Some(&codex_home_compact_prompt_path),
@@ -1096,16 +1090,19 @@ impl Config {
                     }
                 })
                 .collect(),
+            instruction_files: cfg
+                .instruction_files
+                .unwrap_or_default()
+                .into_iter()
+                .map(|path| AbsolutePathBuf::resolve_path_against_base(path, resolved_cwd.as_path()))
+                .collect(),
             tool_output_token_limit: cfg.tool_output_token_limit,
             agent_max_threads,
             agent_max_depth,
             agent_roles,
             agent_tool_patterns: None,
             agent_skill_patterns: None,
-            memories: MemoriesConfig::from_toml_with_replacement_defaults(
-                cfg.memories.unwrap_or_default(),
-                default_compact_replacement_files(&resolved_cwd),
-            ),
+            memories: MemoriesConfig::from(cfg.memories.unwrap_or_default()),
             agent_job_max_runtime_seconds,
             agent_interrupt_message_enabled,
             codex_home,
@@ -1355,35 +1352,4 @@ impl Config {
             &skill_config_layer_stack_from_config_layer_stack(&self.config_layer_stack),
         )
     }
-}
-
-fn default_compact_replacement_files(
-    cwd: &AbsolutePathBuf,
-) -> Vec<CompactReplacementFileConfig> {
-    let memory_root = cwd.join(".codex").join("memory");
-    [
-        (
-            "current-work.md",
-            CompactReplacementFileRole::CurrentWork,
-            None,
-        ),
-        (
-            "project-understanding.md",
-            CompactReplacementFileRole::ProjectUnderstanding,
-            None,
-        ),
-        (
-            "user-preferences.md",
-            CompactReplacementFileRole::UserPreferences,
-            None,
-        ),
-    ]
-    .into_iter()
-    .map(|(filename, role, label)| CompactReplacementFileConfig {
-        path: memory_root.join(filename),
-        role,
-        label,
-        token_limit: DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT,
-    })
-    .collect()
 }

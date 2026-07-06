@@ -4,14 +4,14 @@ use crate::build_turn_context_item;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use codex_auth_types::AuthRuntime;
 use codex_auth_types::SharedAuthRuntime;
+use codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile;
+use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_policy;
+use codex_sandboxing_api::policy_transforms::effective_network_sandbox_policy;
 use config_service::EffectiveSessionConfigOverlay;
 use config_service::GhostSnapshotConfig;
 use config_service::SessionConfigOverlay;
 use config_service::build_effective_session_config_from_session_overlay;
 use config_service::build_per_turn_config_from_session_overlay;
-use codex_sandboxing_api::compatibility_sandbox_policy_for_permission_profile;
-use codex_sandboxing_api::policy_transforms::effective_file_system_sandbox_policy;
-use codex_sandboxing_api::policy_transforms::effective_network_sandbox_policy;
 use exec_server_api::ExecEnvironment;
 use model_service_api::ListModelsRequest;
 use model_service_api::ModelCatalogRefresh;
@@ -120,11 +120,9 @@ pub struct TurnContext {
 }
 impl TurnContext {
     pub fn session_arc(&self) -> Arc<Session> {
-        self.session
-            .upgrade()
-            .unwrap_or_else(|| {
-                panic!("TurnContext session must remain alive while the turn is active")
-            })
+        self.session.upgrade().unwrap_or_else(|| {
+            panic!("TurnContext session must remain alive while the turn is active")
+        })
     }
 
     pub fn self_arc(&self) -> Arc<TurnContext> {

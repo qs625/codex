@@ -57,7 +57,11 @@ async fn reads_configured_replacement_files_without_missing_file_errors() {
 
     assert_eq!(bundle.snapshots.len(), 1);
     assert_eq!(bundle.snapshots[0].label, "current work");
-    assert!(bundle.snapshots[0].content.contains("切换 compact 主流程到 memory 中心"));
+    assert!(
+        bundle.snapshots[0]
+            .content
+            .contains("切换 compact 主流程到 memory 中心")
+    );
 }
 
 #[tokio::test]
@@ -81,7 +85,10 @@ async fn read_memory_bundle_truncates_oversized_memory_files() {
     let service = FsCompactService::new();
     let bundle = service
         .read_memory_bundle(&[CompactReplacementFile {
-            path: cwd.join(".codex").join("memory").join("user-preferences.md"),
+            path: cwd
+                .join(".codex")
+                .join("memory")
+                .join("user-preferences.md"),
             role: CompactMemoryRole::UserPreferences,
             label: None,
             token_limit: 1_500,
@@ -118,10 +125,9 @@ fn replacement_history_is_memory_backed_not_summary_only() {
             ],
         },
         recent_real_user_messages: vec!["最近一次真实用户消息".to_string()],
-        compact_marker_text: "<summary>\nMemory-backed checkpoint".to_string(),
     });
 
-    assert_eq!(history.len(), 5);
+    assert_eq!(history.len(), 4);
     let texts = history
         .into_iter()
         .filter_map(|item| match item {
@@ -138,9 +144,17 @@ fn replacement_history_is_memory_backed_not_summary_only() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(texts.iter().any(|text| text.contains("Memory checkpoint: current work")));
-    assert!(texts.iter().any(|text| text.contains("Memory checkpoint: project understanding")));
-    assert!(texts.iter().any(|text| text.starts_with("<summary>\nMemory-backed checkpoint")));
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("Memory checkpoint: current work"))
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("Memory checkpoint: project understanding"))
+    );
+    assert!(texts.iter().any(|text| text == "最近一次真实用户消息"));
 }
 
 #[test]
@@ -148,7 +162,6 @@ fn compact_window_ignores_memory_checkpoint_and_context_noise() {
     let service = FsCompactService::new();
     let window = service.summarize_compact_window(
         &[
-            user_message("<summary>\nMemory-backed checkpoint"),
             user_message("Memory checkpoint: current work\n# Current Work\n- compact"),
             user_message(
                 r#"<environment_context>

@@ -12,17 +12,15 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use transport_client::ReqwestTransport;
-use transport_client::build_reqwest_client;
 #[cfg(any(test, feature = "test-support"))]
 use codex_code_mode_api::DisabledCodeModeRuntimeFactory;
-#[cfg(any(test, feature = "test-support"))]
-use config_service::ConfigBuilder;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::model_provider_auth_manager;
+#[cfg(any(test, feature = "test-support"))]
+use config_service::ConfigBuilder;
 use exec_server_api::ExecEnvironmentProvider;
 use http::HeaderMap;
 use model_service::ModelsClient;
@@ -82,6 +80,8 @@ use tool_service_api::ToolServiceApi;
 use tool_service_api::ToolServiceFuture;
 #[cfg(any(test, feature = "test-support"))]
 use tool_service_api::ToolSpecRequest;
+use transport_client::ReqwestTransport;
+use transport_client::build_reqwest_client;
 
 use crate::ThreadAuthRuntimes;
 use crate::ThreadService;
@@ -95,7 +95,7 @@ use crate::thread;
 static TEST_MODEL_PRESETS: LazyLock<Vec<ModelPreset>> = LazyLock::new(|| {
     let mut response = bundled_models_response()
         .unwrap_or_else(|err| panic!("bundled models.json should parse: {err}"));
-    response.models.sort_by(|a, b| a.priority.cmp(&b.priority));
+    response.models.sort_by_key(|a| a.priority);
     let mut presets: Vec<ModelPreset> = response.models.into_iter().map(Into::into).collect();
     ModelPreset::mark_default_by_picker_visibility(&mut presets);
     presets

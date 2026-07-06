@@ -59,7 +59,6 @@ pub struct ReplacementHistoryInput {
     pub initial_context: Vec<ResponseItem>,
     pub memory_bundle: CompactMemoryBundle,
     pub recent_real_user_messages: Vec<String>,
-    pub compact_marker_text: String,
 }
 
 impl CompactMemoryBundle {

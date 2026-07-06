@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use codex_utils_absolute_path::AbsolutePathBuf;
 use exec_server_api::ExecEnvironment;
+use permissions_service_api::ExecApprovalRequirement;
 use protocol::models::AdditionalPermissionProfile;
 use protocol::models::SandboxPermissions;
 use serde::Deserialize;
-use permissions_service_api::ExecApprovalRequirement;
 use tool_config::ToolUserShellType;
 
 use crate::CommandNotificationFilter;

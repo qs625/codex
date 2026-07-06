@@ -21,6 +21,7 @@ use protocol::protocol::TurnContextItem;
 pub(crate) struct SessionState {
     pub(crate) session_configuration: SessionConfiguration,
     pub(crate) history: ContextManager,
+    compact_window_start: Option<usize>,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
     pub(crate) server_reasoning_included: bool,
     pub(crate) dependency_env: HashMap<String, String>,
@@ -45,6 +46,7 @@ impl SessionState {
         Self {
             session_configuration,
             history,
+            compact_window_start: None,
             latest_rate_limits: None,
             server_reasoning_included: false,
             dependency_env: HashMap::new(),
@@ -92,6 +94,7 @@ impl SessionState {
         self.history.clone()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn replace_history(
         &mut self,
         items: Vec<ResponseItem>,
@@ -100,6 +103,20 @@ impl SessionState {
         self.history.replace(items);
         self.history
             .set_reference_context_item(reference_context_item);
+        self.compact_window_start = None;
+    }
+
+    pub(crate) fn replace_history_with_compact_window_start(
+        &mut self,
+        items: Vec<ResponseItem>,
+        reference_context_item: Option<TurnContextItem>,
+        compact_window_start: Option<usize>,
+    ) {
+        let clamped_window_start = compact_window_start.map(|start| start.min(items.len()));
+        self.history.replace(items);
+        self.history
+            .set_reference_context_item(reference_context_item);
+        self.compact_window_start = clamped_window_start;
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
@@ -112,6 +129,11 @@ impl SessionState {
 
     pub(crate) fn reference_context_item(&self) -> Option<TurnContextItem> {
         self.history.reference_context_item()
+    }
+
+    pub(crate) fn compact_window_items(&self) -> Vec<ResponseItem> {
+        let start = self.compact_window_start.unwrap_or(0);
+        self.history.raw_items()[start..].to_vec()
     }
 
     // Token/rate limit helpers

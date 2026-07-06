@@ -84,3 +84,10 @@ impl ToolContributor for FsSubscriptionExtension {
         tools::subscription_tools(state.thread_id, Arc::clone(&state.registry))
     }
 }
+
+pub async fn active_subscriptions_from_thread_store(
+    thread_store: &ExtensionData,
+) -> Option<Vec<protocol::subscriptions::PersistedSubscription>> {
+    let state = thread_store.get::<ThreadSubscriptionState>()?;
+    Some(state.registry.active_subscriptions(state.thread_id).await)
+}

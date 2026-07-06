@@ -1,6 +1,4 @@
-use codex_auth_types::AuthManagerConfig;
-use codex_auth_types::ForcedChatgptWorkspaceIds;
-use codex_config_state::io_error_from_config_error;
+use crate::CloudRequirementsLoader;
 use crate::editing::ConfigEdit;
 use crate::editing::ConfigEditsBuilder;
 use crate::loader::ConfigLayerLoadRequest;
@@ -8,7 +6,8 @@ use crate::loader::ConfigLayerLoader;
 use crate::loader::NoopThreadConfigLoader;
 use crate::loader::ThreadConfigLoader;
 use crate::loader::build_cli_overrides_layer;
-use crate::CloudRequirementsLoader;
+use codex_auth_types::AuthManagerConfig;
+use codex_auth_types::ForcedChatgptWorkspaceIds;
 use codex_config_requirements::ConfigRequirements;
 use codex_config_requirements::ConfigRequirementsToml;
 use codex_config_requirements::ConstrainedWithSource;
@@ -23,6 +22,7 @@ use codex_config_requirements::sandbox_mode_requirement_for_permission_profile;
 pub use codex_config_state::ConfigLayerStack;
 use codex_config_state::ConfigLayerStackOrdering;
 use codex_config_state::first_layer_config_error;
+use codex_config_state::io_error_from_config_error;
 use codex_config_state::merge_toml_values;
 use codex_config_toml::config_toml::ConfigToml;
 use codex_config_toml::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
@@ -32,10 +32,7 @@ pub use codex_config_toml::deserialize_config_toml_with_base;
 use codex_config_toml::profile_toml::ConfigProfile;
 use codex_config_toml::read_config_lock_from_path;
 use codex_config_types::AuthCredentialsStoreMode;
-use codex_config_types::CompactReplacementFileConfig;
-use codex_config_types::CompactReplacementFileRole;
 use codex_config_types::ConfigLayerSource;
-use codex_config_types::DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT;
 use codex_config_types::McpServerConfig;
 use codex_config_types::McpServerDisabledReason;
 use codex_config_types::McpServerTransportConfig;
@@ -134,6 +131,9 @@ mod runtime_config;
 mod schema;
 mod session_overlay;
 mod tool_suggest;
+pub use crate::loader::ConfigLoadOptions;
+pub use crate::loader::LoaderOverrides;
+pub use crate::loader::ProjectConfig;
 pub use builder::ConfigBuilder;
 pub use builder::load_config_as_toml_with_cli_and_load_options;
 pub use builder::load_config_as_toml_with_cli_and_load_options_and_layer_loader;
@@ -143,9 +143,6 @@ pub use builder::resolve_profile_v2_config_path;
 pub use codex_agent_roles::AgentCapabilityAllowlist;
 pub use codex_agent_roles::AgentRoleConfig;
 pub use codex_agent_roles::AgentRoleSource;
-pub use crate::loader::ConfigLoadOptions;
-pub use crate::loader::LoaderOverrides;
-pub use crate::loader::ProjectConfig;
 pub use codex_config_types::CONFIG_TOML_FILE;
 pub use codex_config_types::Constrained;
 pub use codex_config_types::ConstraintError;
@@ -244,9 +241,6 @@ pub(crate) const HARD_MAX_MULTI_AGENT_V2_TIMEOUT_MS: i64 =
 pub(crate) const DEFAULT_AGENT_MAX_DEPTH: i32 = 1;
 pub(crate) const DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS: Option<u64> = None;
 
-pub const DEFAULT_AGENTS_MD_FILENAME: &str = "AGENTS.md";
-pub const LOCAL_AGENTS_MD_FILENAME: &str = "AGENTS.override.md";
-
 const LOCAL_DEV_BUILD_VERSION: &str = "0.0.0";
 
 const CONFIG_PROFILE_V2_SUFFIX: &str = ".config.toml";
@@ -263,20 +257,6 @@ fn resolve_sqlite_home_env(resolved_cwd: &Path) -> Option<PathBuf> {
     } else {
         Some(resolved_cwd.join(path))
     }
-}
-
-fn load_global_instructions(codex_dir: Option<&AbsolutePathBuf>) -> Option<String> {
-    let base = codex_dir?;
-    for candidate in [LOCAL_AGENTS_MD_FILENAME, DEFAULT_AGENTS_MD_FILENAME] {
-        let path = base.join(candidate);
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            let trimmed = contents.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
 }
 
 fn windows_sandbox_level_from_features(features: &Features) -> WindowsSandboxLevel {

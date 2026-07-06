@@ -211,6 +211,20 @@ impl FsSubscriptionRegistry {
             .await
     }
 
+    pub(crate) async fn active_subscriptions(
+        &self,
+        thread_id: ThreadId,
+    ) -> Vec<PersistedSubscription> {
+        let state = self.state.lock().await;
+        let mut subscriptions = state
+            .iter()
+            .filter(|(key, _)| key.thread_id == thread_id)
+            .map(|(_, entry)| entry.persisted.clone())
+            .collect::<Vec<_>>();
+        subscriptions.sort_by(|left, right| subscription_id(left).cmp(subscription_id(right)));
+        subscriptions
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn subscribe_event_command(
         &self,

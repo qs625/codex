@@ -137,7 +137,10 @@ pub(super) async fn start_session_mcp_runtime(
         .map(|(name, _)| name.clone())
         .collect();
     required_mcp_servers.sort();
-    let enabled_mcp_server_count = mcp_servers.values().filter(|server| server.enabled()).count();
+    let enabled_mcp_server_count = mcp_servers
+        .values()
+        .filter(|server| server.enabled())
+        .count();
     let required_mcp_server_count = required_mcp_servers.len();
     let tool_plugin_provenance = sess
         .services
@@ -148,14 +151,14 @@ pub(super) async fn start_session_mcp_runtime(
         .services
         .mcp_service
         .codex_apps_auth_context(auth_snapshot.as_ref());
-    let host_owned_codex_apps_enabled =
-        config.features.apps_enabled_for_auth(auth_snapshot.as_ref().is_some_and(|auth| {
-            auth.uses_codex_backend()
-        }));
-    let client_elicitation_support =
-        McpClientElicitationSupport::from_auth_elicitation_enabled(
-            config.features.enabled(Feature::AuthElicitation),
-        );
+    let host_owned_codex_apps_enabled = config.features.apps_enabled_for_auth(
+        auth_snapshot
+            .as_ref()
+            .is_some_and(codex_auth_types::RequestAuthSnapshot::uses_codex_backend),
+    );
+    let client_elicitation_support = McpClientElicitationSupport::from_auth_elicitation_enabled(
+        config.features.enabled(Feature::AuthElicitation),
+    );
     {
         let mut cancel_guard = sess.services.mcp_startup_cancellation_token.lock().await;
         cancel_guard.cancel();
@@ -166,10 +169,10 @@ pub(super) async fn start_session_mcp_runtime(
         &session_configuration.environments,
     )
     .map_err(|err| {
-        CodexErr::InvalidRequest(
-            err.to_string()
-                .replace("unknown turn environment id", "unknown stored MCP environment id"),
-        )
+        CodexErr::InvalidRequest(err.to_string().replace(
+            "unknown turn environment id",
+            "unknown stored MCP environment id",
+        ))
     })?
     .primary()
     .cloned();

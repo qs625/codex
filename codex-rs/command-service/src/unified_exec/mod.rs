@@ -25,30 +25,29 @@ use std::sync::Arc;
 use std::sync::Weak;
 
 use codex_approval_service_api::ApprovalSessionCapability;
+use codex_network_proxy_api::SharedNetworkProxyRuntime;
+use codex_utils_absolute_path::AbsolutePathBuf;
 pub(crate) use command_service_api::CommandNotificationFilter;
 pub(crate) use command_service_api::CommandNotificationKind;
 pub(crate) use command_service_api::CommandWaitOutput;
 pub(crate) use command_service_api::CommandWaitRequest;
 pub(crate) use command_service_api::CommandWaitStatus;
 pub(crate) use command_service_api::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
-#[cfg(test)]
-pub(crate) use command_service_api::MIN_YIELD_TIME_MS;
+use command_service_api::RunningCommandSnapshot;
 pub(crate) use command_service_api::WaitBackoffState;
 pub(crate) use command_service_api::WriteStdinOutput;
 pub(crate) use command_service_api::WriteStdinRequest;
 pub(crate) use command_service_api::clamp_yield_time;
 pub(crate) use command_service_api::generate_chunk_id;
 use exec_server_api::ExecEnvironment;
-use codex_network_proxy_api::SharedNetworkProxyRuntime;
 use protocol::models::AdditionalPermissionProfile;
-use tool_config::ToolUserShellType;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::sync::Mutex;
+use tool_config::ToolUserShellType;
 
 use crate::exec_request::SandboxPermissions;
 mod async_watcher;
-mod exec_server_env;
 mod events;
+mod exec_server_env;
 mod output;
 mod process_manager;
 mod runtime_types;
@@ -66,25 +65,25 @@ pub(crate) fn set_deterministic_process_ids_for_tests(enabled: bool) {
     process_manager::set_deterministic_process_ids_for_tests(enabled);
 }
 
+pub(crate) use command_service_api::ExecApprovalRequirement;
+pub(crate) use command_service_api::ExecCommandApprovalMode;
+pub(crate) use command_service_api::ExecCommandRunRequest;
+pub(crate) use command_service_api::UnifiedExecError;
 pub(crate) use exec_server_env::ExecServerEnvConfig;
 pub(crate) use exec_server_env::ExecServerSpawnRequest;
 pub(crate) use exec_server_env::apply_unified_exec_env;
 pub(crate) use exec_server_env::exec_env_policy_from_shell_policy;
 pub(crate) use exec_server_env::exec_server_spawn_params;
-pub(crate) use command_service_api::ExecApprovalRequirement;
-pub(crate) use command_service_api::ExecCommandApprovalMode;
-pub(crate) use command_service_api::ExecCommandRunRequest;
 pub(crate) use output::collect_output_until_deadline;
 pub(crate) use output::resolve_aggregated_output;
 pub(crate) use output::split_valid_utf8_prefix;
+pub(crate) use process_manager::UnifiedExecCommandSessionController;
+use thread_service_api::ThreadRuntimeCapability;
+use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ToolRuntimeNetworkApprovalHandle;
 pub(crate) use unified_exec_process::NoopSpawnLifecycle;
 pub(crate) use unified_exec_process::SpawnLifecycleHandle;
 pub(crate) use unified_exec_process::UnifiedExecProcess;
-pub(crate) use command_service_api::UnifiedExecError;
-pub(crate) use process_manager::UnifiedExecCommandSessionController;
-use thread_service_api::ThreadSessionCapability;
-use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ToolRuntimeNetworkApprovalHandle;
 
 pub(crate) const MAX_UNIFIED_EXEC_PROCESSES: usize = 64;
 pub(crate) const DEFAULT_COMMAND_OUTPUT_MAX_TOKENS: usize =
@@ -208,8 +207,8 @@ pub(crate) struct UnifiedExecProcessManager {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct UnifiedExecManagerHandle {
-    #[cfg_attr(not(test), allow(dead_code))]
     manager: Weak<UnifiedExecProcessManager>,
 }
 
@@ -218,13 +217,13 @@ impl UnifiedExecManagerHandle {
         Self { manager }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn upgrade(&self) -> Option<Arc<UnifiedExecProcessManager>> {
         self.manager.upgrade()
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) struct ProcessExitSubscription {
     process: Arc<UnifiedExecProcess>,
     cancellation_token: tokio_util::sync::CancellationToken,
@@ -232,13 +231,13 @@ pub(crate) struct ProcessExitSubscription {
 }
 
 impl ProcessExitSubscription {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) async fn wait(&self) -> Option<i32> {
         self.cancellation_token.cancelled().await;
         self.process.exit_code()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) async fn wait_with_retained_output(&self) -> (Option<i32>, String) {
         self.cancellation_token.cancelled().await;
         let output = {
@@ -268,7 +267,10 @@ struct ProcessEntry {
     process: Arc<UnifiedExecProcess>,
     call_id: String,
     process_id: i32,
+    command: String,
+    cwd: AbsolutePathBuf,
     tty: bool,
+    notify_on: CommandNotificationFilter,
     network_approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
     session: Weak<dyn ThreadSessionCapability>,
     last_used: tokio::time::Instant,
@@ -276,6 +278,19 @@ struct ProcessEntry {
     transcript: Arc<Mutex<HeadTailBuffer>>,
     notification_state: Arc<CommandNotificationState>,
     command_wait_backoff: WaitBackoffState,
+}
+
+impl ProcessEntry {
+    fn as_running_snapshot(&self) -> RunningCommandSnapshot {
+        RunningCommandSnapshot {
+            process_id: self.process_id,
+            call_id: self.call_id.clone(),
+            command: self.command.clone(),
+            cwd: self.cwd.clone(),
+            tty: self.tty,
+            notify_on: self.notify_on,
+        }
+    }
 }
 
 #[cfg(test)]

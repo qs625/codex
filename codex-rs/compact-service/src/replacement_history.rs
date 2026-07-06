@@ -19,8 +19,6 @@ pub(super) fn build_replacement_history(input: ReplacementHistoryInput) -> Vec<R
         history.push(user_message(message.clone()));
     }
 
-    history.push(user_message(input.compact_marker_text));
-
     for snapshot in input.memory_bundle.snapshots {
         history.push(user_message(format!(
             "Memory checkpoint: {}\n{}",

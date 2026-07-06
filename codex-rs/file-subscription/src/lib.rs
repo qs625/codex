@@ -14,6 +14,7 @@ use codex_file_watcher::FileWatcher;
 use protocol::ThreadId;
 
 pub use extension::FsSubscriptionExtension;
+pub use extension::active_subscriptions_from_thread_store;
 pub use runtime::FileSubscriptionThreadRuntime;
 pub use runtime::SubscriptionRuntimeFuture;
 
