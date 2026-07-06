@@ -1,67 +1,9 @@
 use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::models::ResponseItem;
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::Value;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompactMemoryLayout {
-    pub shared_memory_root: Option<AbsolutePathBuf>,
-    pub worktree_memory_root: AbsolutePathBuf,
-    pub write_policy: CompactWritePolicy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompactWritePolicy {
-    LocalCurrentWorkOnly,
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompactMemoryBundle {
-    pub user_preferences: Option<String>,
-    pub project_understanding: Option<String>,
-    pub current_work: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactFileNote {
-    pub path: String,
-    pub reason: String,
-    pub conclusion: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revisit: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactCurrentWork {
-    pub goal: String,
-    pub status: String,
-    #[serde(default)]
-    pub recent_progress: Vec<String>,
-    #[serde(default)]
-    pub files_read: Vec<CompactFileNote>,
-    #[serde(default)]
-    pub key_findings: Vec<String>,
-    #[serde(default)]
-    pub skip_files: Vec<String>,
-    #[serde(default)]
-    pub blockers: Vec<String>,
-    #[serde(default)]
-    pub next_steps: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactModelOutput {
-    pub current_work: CompactCurrentWork,
-    #[serde(default)]
-    pub shared_fact_candidates: Vec<String>,
-    pub handoff_summary: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppliedCompactMemory {
-    pub bundle: CompactMemoryBundle,
-    pub current_work_markdown: String,
+    pub snapshots: Vec<CompactMemorySnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,9 +32,26 @@ pub struct SoftCompactDecision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompactPromptSpec {
-    pub prompt_text: String,
-    pub output_schema: Value,
+pub struct CompactReplacementFile {
+    pub path: AbsolutePathBuf,
+    pub role: CompactMemoryRole,
+    pub label: Option<String>,
+    pub token_limit: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactMemoryRole {
+    CurrentWork,
+    ProjectUnderstanding,
+    UserPreferences,
+    Custom,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactMemorySnapshot {
+    pub role: CompactMemoryRole,
+    pub label: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,4 +60,13 @@ pub struct ReplacementHistoryInput {
     pub memory_bundle: CompactMemoryBundle,
     pub recent_real_user_messages: Vec<String>,
     pub compact_marker_text: String,
+}
+
+impl CompactMemoryBundle {
+    pub fn current_work_content(&self) -> Option<&str> {
+        self.snapshots
+            .iter()
+            .find(|snapshot| snapshot.role == CompactMemoryRole::CurrentWork)
+            .map(|snapshot| snapshot.content.as_str())
+    }
 }
