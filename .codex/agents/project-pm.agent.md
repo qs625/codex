@@ -28,7 +28,6 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - PM 管理长期、多 owner、跨 turn 或用户要求持续推进的任务时，必须维护 `.codex/pm-progress.md` 作为 durable progress file。thread context 只作为临时工作区，owner/reviewer 回报和 owner 自测结果必须先归纳到 progress file，再决定下一步。PM 可使用 thread goal 驱动持续推进；只要 progress file 仍有 Active Work，PM goal 就应明确设为“完成 `.codex/pm-progress.md` 中的 active work”，而不是空泛目标。goal continuation 只能读取 progress file 和 typed runtime event 来恢复状态；不要依赖记忆或 compact 摘要猜测当前任务进度。
 - PM 每次修改 `.codex/pm-progress.md` 后都必须重新检查 Active Work；如果仍有未完成任务，并且当前 thread 没有 goal 或 goal 不是围绕完成 progress file 的 Active Work，必须立即创建或校准 goal 为完成 `.codex/pm-progress.md` 中的 Active Work。不要把 progress file 改成 in-progress 后让 thread 处于无 goal 状态。
 - PM 委派、验收或返工涉及 app-server/root-worker conversation display 的任务时，必须明确 item 架构：`ResponseItem` 只维护模型交互和模型可见上下文；客户端可见事件必须走 display-capable typed `EventMsg`，并通过共享 `EventMsg -> ThreadItem` projector 生成 `ThreadItem`。不得把 display 修复委派成新增 display-only `ResponseItem`、raw marker、assistant JSON envelope 或 legacy 解析路径。
-- PM 不为 UI/UE 需求直接调用 `@ui-ue-designer`。涉及 UI/UE 时，在 owner 委派消息中明确要求 owner 在自己的任务树内调用 `@ui-ue-designer`，并把原型图、设计结论和 handoff 纳入实现验收。
 
 ## 标准流程
 
@@ -110,9 +109,6 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 已知背景/证据：
 <用户输入、错误、关键代码证据；如调用 explorer，附完整 explorer 结论；如跳过，说明原因>
 
-UI/UE 要求：
-<如涉及 UI/UE，要求 owner 调用 @ui-ue-designer，并在实现前吸收原型图、设计结论和开发 handoff；不涉及则写“无”>
-
 约束：
 <仓库规则、权限、安全、兼容性、测试、文档、schema、snapshot 等；如涉及 Rust/Cargo 验证，写明 reviewer 只做 code review，owner 在 review 通过后自行在所属 checkout 运行测试；默认只运行修改模块单元测试/最小 crate 测试和与入口匹配的 binary 编译验证：app-server/root-worker 后端启动路径默认 `cargo build -p codex-app-server --bin codex-app-server`，CLI/TUI 入口默认 `cargo build -p codex-cli`>
 
@@ -142,7 +138,6 @@ UI/UE 要求：
 <本任务基线 commit、依赖的 active work、是否需要等待其他 checkout 同步；如无依赖写“无”>
 
 子流程执行：
-- UE/UX：已调用 / 已跳过；结论或跳过原因
 - explorer：已调用 / 已跳过；结论或跳过原因。轻量调研可由 PM/owner 自行完成，不要求默认派发 explorer
 - reviewer：必填；代码评审结论、多轮复审情况、未覆盖测试建议；不得包含 reviewer 执行命令
 - AGENTS.md：已更新 / 已确认无需更新；原因
