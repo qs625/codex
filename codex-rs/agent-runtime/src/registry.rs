@@ -161,7 +161,7 @@ impl AgentRegistry {
             .cloned()
     }
 
-    pub fn live_agents(&self) -> Vec<AgentMetadata> {
+    pub fn registered_agents(&self) -> Vec<AgentMetadata> {
         self.active_agents
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

@@ -835,7 +835,7 @@ impl AgentControl {
             return Ok(thread_id);
         }
         Err(CodexErr::UnsupportedOperation(format!(
-            "live agent path `{}` not found",
+            "agent path `{}` not found",
             agent_path.as_str()
         )))
     }
@@ -865,8 +865,12 @@ impl AgentControl {
     ) -> CodexResult<Vec<ListedAgent>> {
         let state = self.upgrade()?;
         let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
-        let plan = list_agents_plan(&current_agent_path, path_prefix, self.state.live_agents())
-            .map_err(CodexErr::UnsupportedOperation)?;
+        let plan = list_agents_plan(
+            &current_agent_path,
+            path_prefix,
+            self.state.registered_agents(),
+        )
+        .map_err(CodexErr::UnsupportedOperation)?;
 
         let root_path = AgentPath::root();
         let mut agents = Vec::with_capacity(plan.candidates.len().saturating_add(1));

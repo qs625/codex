@@ -113,9 +113,8 @@ pub fn create_list_agents_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "list_agents".to_string(),
-        description:
-            "List live agents in the current root thread tree. Optionally filter by task-path prefix."
-                .to_string(),
+        description: "List registered agents in the current root thread tree whose live status is still available, including completed agents that are still known to the runtime. Optionally filter by task-path prefix."
+            .to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(properties, /*required*/ None, Some(false.into())),

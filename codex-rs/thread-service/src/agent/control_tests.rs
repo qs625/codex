@@ -1594,6 +1594,85 @@ async fn legacy_child_spawn_does_not_register_completion_pending() {
 }
 
 #[tokio::test]
+async fn completed_agent_path_can_still_receive_followup_while_registered() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    emit_turn_complete(&worker_thread, "done").await;
+    sleep(Duration::from_millis(100)).await;
+
+    let resolved_thread_id = harness
+        .control
+        .resolve_agent_reference(root_thread_id, &SessionSource::Exec, worker_path.as_str())
+        .await
+        .expect("completed worker path should still resolve");
+    assert_eq!(resolved_thread_id, worker_thread_id);
+
+    let communication = InterAgentCommunication::new(
+        AgentPath::root(),
+        worker_path.clone(),
+        Vec::new(),
+        "followup after completion".to_string(),
+        protocol::protocol::InterAgentOperation::Unknown,
+    );
+    let submission_id = harness
+        .control
+        .send_inter_agent_communication(resolved_thread_id, communication.clone())
+        .await
+        .expect("followup should succeed for completed worker");
+    assert!(!submission_id.is_empty());
+
+    let expected = (
+        worker_thread_id,
+        Op::InterAgentCommunication {
+            communication: communication.clone(),
+        },
+    );
+    let captured = harness
+        .manager
+        .captured_ops()
+        .into_iter()
+        .find(|entry| *entry == expected);
+    assert_eq!(captured, Some(expected));
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if worker_thread.codex.session.has_pending_input().await {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("completed worker should receive pending input");
+    assert_eq!(
+        worker_thread.codex.session.get_pending_input().await,
+        vec![PendingInputItem::from(communication)],
+    );
+}
+
+#[tokio::test]
 async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
