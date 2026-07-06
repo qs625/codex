@@ -94,6 +94,9 @@ impl ContextualUserFragment for AvailableAgentsInstructions {
         lines.push(
             "- Choose an `agent_type` whose description matches the delegated task.".to_string(),
         );
+        lines.push(
+            "- The list above reflects agents loaded for the current turn. If `spawn_agent.cwd` points to another directory, that directory or its repository may contribute additional agent types even when they are not listed here.".to_string(),
+        );
         lines.push("- The agent body is applied only to the spawned agent.".to_string());
 
         format!("\n{}\n", lines.join("\n"))
@@ -167,8 +170,24 @@ mod tests {
         .expect("agent instructions should render");
 
         assert_eq!(
-            "\n## Agents\nAgents are reusable subagent definitions. Use `spawn_agent.agent_type` to start one.\n### Available agents\n- `reviewer`: Review code changes.\n  Source: plugin: code-review/reviewer\n  Model: gpt-5.4\n  Effort: high\n  Tools: exec_command, apply_patch\n  Skills: *\n### How to use agents\n- Choose an `agent_type` whose description matches the delegated task.\n- The agent body is applied only to the spawned agent.\n",
+            "\n## Agents\nAgents are reusable subagent definitions. Use `spawn_agent.agent_type` to start one.\n### Available agents\n- `reviewer`: Review code changes.\n  Source: plugin: code-review/reviewer\n  Model: gpt-5.4\n  Effort: high\n  Tools: exec_command, apply_patch\n  Skills: *\n### How to use agents\n- Choose an `agent_type` whose description matches the delegated task.\n- The list above reflects agents loaded for the current turn. If `spawn_agent.cwd` points to another directory, that directory or its repository may contribute additional agent types even when they are not listed here.\n- The agent body is applied only to the spawned agent.\n",
             fragment.body()
         );
+    }
+
+    #[test]
+    fn explains_cwd_switch_can_expose_unlisted_agent_types() {
+        let fragment = AvailableAgentsInstructions::from_agent_roles(&BTreeMap::from([(
+            "reviewer".to_string(),
+            AgentRoleConfig {
+                description: Some("Review code changes.".to_string()),
+                ..Default::default()
+            },
+        )]))
+        .expect("agent instructions should render");
+
+        assert!(fragment
+            .body()
+            .contains("If `spawn_agent.cwd` points to another directory, that directory or its repository may contribute additional agent types even when they are not listed here."));
     }
 }

@@ -309,7 +309,7 @@ pub(crate) fn test_tool_inputs(
     let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
         Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
     let default_agent_type_description =
-        codex_agent_roles::spawn_tool_spec::build(&std::collections::BTreeMap::new());
+        codex_agent_roles::spawn_tool_spec::build(&turn_context.config.agent_roles);
     let result = crate::session::turn::TurnToolInputs {
         session_capability: Arc::downgrade(&session_capability),
         mcp_tools: Vec::new(),
@@ -319,6 +319,62 @@ pub(crate) fn test_tool_inputs(
     };
     let _ = (session, turn_context);
     Arc::new(result)
+}
+
+#[tokio::test]
+async fn built_tools_include_custom_agent_roles_in_spawn_agent_schema() {
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.agent_roles.insert(
+                "custom".to_string(),
+                codex_agent_roles::AgentRoleConfig {
+                    description: Some("Custom agent role.".to_string()),
+                    ..Default::default()
+                },
+            );
+        },
+    )
+    .await;
+
+    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let tool_inputs = crate::session::turn::built_tools(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::downgrade(&session_capability),
+        &[],
+        &std::collections::HashSet::new(),
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("build tool inputs");
+    let tool_specs = session
+        .services
+        .tool_service
+        .model_visible_specs(crate::session::turn::tool_service_request(
+            &session,
+            &turn_context,
+            &tool_inputs,
+        ));
+    let spawn_agent_type_description = tool_specs
+        .iter()
+        .find_map(|tool| match tool {
+            tool_service_api::ToolSpec::Function(tool) if tool.name == "spawn_agent" => tool
+                .parameters
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.get("agent_type"))
+                .and_then(|schema| schema.description.as_deref()),
+            _ => None,
+        })
+        .expect("spawn_agent agent_type description");
+
+    assert!(
+        spawn_agent_type_description.contains("custom: {\nCustom agent role.\n}")
+    );
 }
 
 pub(crate) async fn dispatch_exec_command_via_tool_service(

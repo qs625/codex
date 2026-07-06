@@ -1191,7 +1191,7 @@ pub(crate) async fn built_tools(
     let mcp_tools = has_mcp_servers.then_some(mcp_tool_exposure.direct_tools);
     let deferred_mcp_tools = mcp_tool_exposure.deferred_tools;
     let default_agent_type_description =
-        codex_agent_roles::spawn_tool_spec::build(&std::collections::BTreeMap::new());
+        codex_agent_roles::spawn_tool_spec::build(&turn_context.config.agent_roles);
     Ok(TurnToolInputs {
         session_capability,
         mcp_tools: mcp_tools.unwrap_or_default(),
