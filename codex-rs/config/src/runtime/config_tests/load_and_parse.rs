@@ -125,6 +125,7 @@ consolidation_model = "gpt-5.2"
             min_rate_limit_remaining_percent: Some(12),
             extract_model: Some("gpt-5-mini".to_string()),
             consolidation_model: Some("gpt-5.2".to_string()),
+            ..Default::default()
         }),
         memories_cfg.memories
     );
@@ -137,21 +138,30 @@ consolidation_model = "gpt-5.2"
     .await
     .expect("load config from memories settings");
     assert_eq!(
-        config.memories,
-        MemoriesConfig {
-            disable_on_external_context: true,
-            generate_memories: false,
-            use_memories: false,
-            max_raw_memories_for_consolidation: 512,
-            max_unused_days: 21,
-            max_rollout_age_days: 42,
-            max_rollouts_per_startup: 9,
-            min_rollout_idle_hours: 24,
-            min_rate_limit_remaining_percent: 12,
-            extract_model: Some("gpt-5-mini".to_string()),
-            consolidation_model: Some("gpt-5.2".to_string()),
-        }
+        config.memories.disable_on_external_context,
+        true
     );
+    assert_eq!(config.memories.generate_memories, false);
+    assert_eq!(config.memories.use_memories, false);
+    assert_eq!(config.memories.max_raw_memories_for_consolidation, 512);
+    assert_eq!(config.memories.max_unused_days, 21);
+    assert_eq!(config.memories.max_rollout_age_days, 42);
+    assert_eq!(config.memories.max_rollouts_per_startup, 9);
+    assert_eq!(config.memories.min_rollout_idle_hours, 24);
+    assert_eq!(config.memories.min_rate_limit_remaining_percent, 12);
+    assert_eq!(
+        config.memories.extract_model,
+        Some("gpt-5-mini".to_string())
+    );
+    assert_eq!(
+        config.memories.consolidation_model,
+        Some("gpt-5.2".to_string())
+    );
+    assert_eq!(
+        config.memories.compact_replacement_file_token_limit,
+        DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT
+    );
+    assert_eq!(config.memories.compact_replacement_files.len(), 3);
 
     let legacy_memories_cfg =
         toml::from_str::<ConfigToml>("[memories]\nno_memories_if_mcp_or_web_search = true\n")
@@ -1119,4 +1129,3 @@ async fn permissions_profiles_network_disabled_by_default_does_not_start_proxy()
     assert!(config.permissions.network.is_none());
     Ok(())
 }
-

@@ -418,6 +418,7 @@ consolidation_model = "gpt-5.2"
             min_rate_limit_remaining_percent: Some(12),
             extract_model: Some("gpt-5-mini".to_string()),
             consolidation_model: Some("gpt-5.2".to_string()),
+            ..Default::default()
         }),
         memories_cfg.memories
     );
@@ -443,6 +444,7 @@ consolidation_model = "gpt-5.2"
             min_rate_limit_remaining_percent: 12,
             extract_model: Some("gpt-5-mini".to_string()),
             consolidation_model: Some("gpt-5.2".to_string()),
+            ..MemoriesConfig::default()
         }
     );
 
@@ -457,6 +459,57 @@ consolidation_model = "gpt-5.2"
         )
         .disable_on_external_context
     );
+
+    let cwd = tempdir().expect("tempdir").abs();
+    let default_memories_config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides {
+            cwd: Some(cwd.clone()),
+            ..Default::default()
+        },
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load default config");
+    assert_eq!(default_memories_config.memories.compact_replacement_files.len(), 3);
+    assert_eq!(
+        default_memories_config.memories.compact_replacement_files[0].path,
+        cwd.join(".codex").join("memory").join("current-work.md")
+    );
+    assert_eq!(
+        default_memories_config.memories.compact_replacement_files[0].token_limit,
+        DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT
+    );
+
+    let cwd = tempdir().expect("tempdir").abs();
+    let configured_replacement_files = deserialize_config_toml_with_base(
+        toml::toml! {
+            [memories]
+            compact_replacement_file_token_limit = 321
+
+            [[memories.compact_replacement_files]]
+            path = "replacement/current-work.md"
+            role = "current-work"
+        },
+        cwd.as_path(),
+    )
+    .expect("replacement file config should deserialize");
+    let config = Config::load_from_base_config_with_overrides(
+        configured_replacement_files,
+        ConfigOverrides {
+            cwd: Some(cwd.clone()),
+            ..Default::default()
+        },
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load replacement file config");
+    assert_eq!(config.memories.compact_replacement_files.len(), 1);
+    assert_eq!(
+        config.memories.compact_replacement_files[0].path,
+        cwd.join("replacement").join("current-work.md")
+    );
+    assert_eq!(config.memories.compact_replacement_files[0].token_limit, 321);
 }
 
 #[test]

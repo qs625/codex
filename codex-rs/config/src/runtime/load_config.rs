@@ -1039,7 +1039,7 @@ impl Config {
             model_provider_id,
             model_provider,
             model_options,
-            cwd: resolved_cwd,
+            cwd: resolved_cwd.clone(),
             workspace_roots: workspace_roots.clone(),
             workspace_roots_explicit,
             startup_warnings,
@@ -1102,7 +1102,10 @@ impl Config {
             agent_roles,
             agent_tool_patterns: None,
             agent_skill_patterns: None,
-            memories: cfg.memories.unwrap_or_default().into(),
+            memories: MemoriesConfig::from_toml_with_replacement_defaults(
+                cfg.memories.unwrap_or_default(),
+                default_compact_replacement_files(&resolved_cwd),
+            ),
             agent_job_max_runtime_seconds,
             agent_interrupt_message_enabled,
             codex_home,
@@ -1352,4 +1355,35 @@ impl Config {
             &skill_config_layer_stack_from_config_layer_stack(&self.config_layer_stack),
         )
     }
+}
+
+fn default_compact_replacement_files(
+    cwd: &AbsolutePathBuf,
+) -> Vec<CompactReplacementFileConfig> {
+    let memory_root = cwd.join(".codex").join("memory");
+    [
+        (
+            "current-work.md",
+            CompactReplacementFileRole::CurrentWork,
+            None,
+        ),
+        (
+            "project-understanding.md",
+            CompactReplacementFileRole::ProjectUnderstanding,
+            None,
+        ),
+        (
+            "user-preferences.md",
+            CompactReplacementFileRole::UserPreferences,
+            None,
+        ),
+    ]
+    .into_iter()
+    .map(|(filename, role, label)| CompactReplacementFileConfig {
+        path: memory_root.join(filename),
+        role,
+        label,
+        token_limit: DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT,
+    })
+    .collect()
 }

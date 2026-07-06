@@ -1,5 +1,6 @@
 //! Memory configuration TOML and effective settings types.
 
+use codex_utils_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -10,11 +11,42 @@ pub const DEFAULT_MEMORIES_MIN_ROLLOUT_IDLE_HOURS: i64 = 6;
 pub const DEFAULT_MEMORIES_MIN_RATE_LIMIT_REMAINING_PERCENT: i64 = 25;
 pub const DEFAULT_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION: usize = 256;
 pub const DEFAULT_MEMORIES_MAX_UNUSED_DAYS: i64 = 30;
+pub const DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT: usize = 1_500;
 
 const MIN_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION: usize = 1;
 const MAX_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION: usize = 4096;
 const MIN_MEMORIES_MAX_ROLLOUTS_PER_STARTUP: usize = 1;
 const MAX_MEMORIES_MAX_ROLLOUTS_PER_STARTUP: usize = 128;
+const MIN_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT: usize = 1;
+const MAX_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT: usize = 20_000;
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CompactReplacementFileRole {
+    CurrentWork,
+    ProjectUnderstanding,
+    UserPreferences,
+    Custom,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CompactReplacementFileToml {
+    /// Relative paths are resolved relative to the `config.toml` that defines them.
+    pub path: AbsolutePathBuf,
+    pub role: CompactReplacementFileRole,
+    pub label: Option<String>,
+    #[schemars(range(min = 1, max = 20000))]
+    pub token_limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CompactReplacementFileConfig {
+    pub path: AbsolutePathBuf,
+    pub role: CompactReplacementFileRole,
+    pub label: Option<String>,
+    pub token_limit: usize,
+}
 
 /// Memories settings loaded from config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
@@ -46,6 +78,11 @@ pub struct MemoriesToml {
     pub extract_model: Option<String>,
     /// Model used for memory consolidation.
     pub consolidation_model: Option<String>,
+    /// Default token cap when compact rereads replacement files after the model turn finishes.
+    #[schemars(range(min = 1, max = 20000))]
+    pub compact_replacement_file_token_limit: Option<usize>,
+    /// Files reread after compact to rebuild replacement context.
+    pub compact_replacement_files: Option<Vec<CompactReplacementFileToml>>,
 }
 
 /// Effective memories settings after defaults are applied.
@@ -62,6 +99,8 @@ pub struct MemoriesConfig {
     pub min_rate_limit_remaining_percent: i64,
     pub extract_model: Option<String>,
     pub consolidation_model: Option<String>,
+    pub compact_replacement_file_token_limit: usize,
+    pub compact_replacement_files: Vec<CompactReplacementFileConfig>,
 }
 
 impl Default for MemoriesConfig {
@@ -78,13 +117,50 @@ impl Default for MemoriesConfig {
             min_rate_limit_remaining_percent: DEFAULT_MEMORIES_MIN_RATE_LIMIT_REMAINING_PERCENT,
             extract_model: None,
             consolidation_model: None,
+            compact_replacement_file_token_limit: DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT,
+            compact_replacement_files: Vec::new(),
         }
     }
 }
 
 impl From<MemoriesToml> for MemoriesConfig {
     fn from(toml: MemoriesToml) -> Self {
+        Self::from_toml_with_replacement_defaults(toml, Vec::new())
+    }
+}
+
+impl MemoriesConfig {
+    pub fn from_toml_with_replacement_defaults(
+        toml: MemoriesToml,
+        default_compact_replacement_files: Vec<CompactReplacementFileConfig>,
+    ) -> Self {
         let defaults = Self::default();
+        let compact_replacement_file_token_limit = toml
+            .compact_replacement_file_token_limit
+            .unwrap_or(defaults.compact_replacement_file_token_limit)
+            .clamp(
+                MIN_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT,
+                MAX_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT,
+            );
+        let compact_replacement_files = toml
+            .compact_replacement_files
+            .map(|files| {
+                files.into_iter()
+                    .map(|file| CompactReplacementFileConfig {
+                        path: file.path,
+                        role: file.role,
+                        label: file.label,
+                        token_limit: file
+                            .token_limit
+                            .unwrap_or(compact_replacement_file_token_limit)
+                            .clamp(
+                                MIN_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT,
+                                MAX_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT,
+                            ),
+                    })
+                    .collect()
+            })
+            .unwrap_or(default_compact_replacement_files);
         Self {
             disable_on_external_context: toml
                 .disable_on_external_context
@@ -123,6 +199,8 @@ impl From<MemoriesToml> for MemoriesConfig {
                 .clamp(0, 100),
             extract_model: toml.extract_model,
             consolidation_model: toml.consolidation_model,
+            compact_replacement_file_token_limit,
+            compact_replacement_files,
         }
     }
 }
@@ -175,6 +253,33 @@ mod tests {
                 min_rate_limit_remaining_percent: 0,
                 ..MemoriesConfig::default()
             }
+        );
+    }
+
+    #[test]
+    fn memories_config_resolves_compact_replacement_files_with_global_default_limit() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let file_path = AbsolutePathBuf::from_absolute_path(tempdir.path().join("current-work.md"))
+            .expect("absolute path");
+        let config = MemoriesConfig::from(MemoriesToml {
+            compact_replacement_file_token_limit: Some(321),
+            compact_replacement_files: Some(vec![CompactReplacementFileToml {
+                path: file_path.clone(),
+                role: CompactReplacementFileRole::CurrentWork,
+                label: None,
+                token_limit: None,
+            }]),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            config.compact_replacement_files,
+            vec![CompactReplacementFileConfig {
+                path: file_path,
+                role: CompactReplacementFileRole::CurrentWork,
+                label: None,
+                token_limit: 321,
+            }]
         );
     }
 }

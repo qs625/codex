@@ -9,6 +9,8 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::util::backoff;
 use compact_service::FsCompactService;
+use compact_service_api::CompactMemoryRole;
+use compact_service_api::CompactReplacementFile;
 use compact_service_api::ReplacementHistoryInput;
 use compact_service_api::SoftCompactInputs;
 use codex_analytics_api::CodexCompactionEvent;
@@ -19,6 +21,7 @@ use codex_analytics_api::CompactionStatus;
 use codex_analytics_api::CompactionStrategy;
 use codex_analytics_api::CompactionTrigger;
 use codex_analytics_api::now_unix_seconds;
+use codex_config_types::CompactReplacementFileRole as ConfigCompactReplacementFileRole;
 use codex_features::Feature;
 use codex_turn_items::last_assistant_message_from_turn;
 #[cfg(test)]
@@ -173,20 +176,7 @@ async fn run_compact_task_inner_impl(
     initial_context_injection: InitialContextInjection,
 ) -> CodexResult<String> {
     let compact_service = FsCompactService::new();
-    let memory_layout = compact_service
-        .derive_memory_layout(
-            &turn_context.config.cwd,
-            &turn_context.config.codex_home,
-            turn_context.compact_prompt.as_deref(),
-        )
-        .await
-        .map_err(|err| CodexErr::Fatal(format!("failed to derive compact memory layout: {err}")))?;
-    let memory_bundle = compact_service
-        .read_memory_bundle(&memory_layout)
-        .await
-        .map_err(|err| CodexErr::Fatal(format!("failed to read compact memory bundle: {err}")))?;
-    let compact_prompt_spec =
-        compact_service.build_prompt_spec(turn_context.compact_prompt(), &memory_bundle);
+    let replacement_files = compact_replacement_files(turn_context.as_ref());
 
     let compaction_item = ContextCompactionItem::new();
     let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
@@ -194,7 +184,7 @@ async fn run_compact_task_inner_impl(
         .await;
     let initial_input_for_turn: ResponseInputItem =
         codex_model_input::response_input_item_from_user_input(vec![UserInput::Text {
-            text: compact_prompt_spec.prompt_text.clone(),
+            text: turn_context.compact_prompt().to_string(),
             text_elements: Vec::new(),
         }]);
 
@@ -230,8 +220,6 @@ async fn run_compact_task_inner_impl(
             input: turn_input,
             base_instructions: sess.get_base_instructions().await,
             personality: turn_context.personality,
-            output_schema: Some(compact_prompt_spec.output_schema.clone()),
-            output_schema_strict: true,
             ..Default::default()
         };
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
@@ -289,22 +277,18 @@ async fn run_compact_task_inner_impl(
 
     let history_snapshot = sess.clone_history().await;
     let history_items = history_snapshot.raw_items();
-    let model_output_text = last_assistant_message_from_turn(history_items).unwrap_or_default();
-    let compact_model_output = compact_service
-        .parse_model_output(&model_output_text)
-        .map_err(|err| {
-            CodexErr::Fatal(format!("failed to parse compact model output as JSON: {err}"))
-        })?;
-    let applied_memory = compact_service
-        .apply_model_output(&memory_layout, &memory_bundle, &compact_model_output)
+    let memory_bundle = compact_service
+        .read_memory_bundle(&replacement_files)
         .await
-        .map_err(|err| CodexErr::Fatal(format!("failed to apply compact memory output: {err}")))?;
+        .map_err(|err| {
+            CodexErr::Fatal(format!("failed to read compact replacement files: {err}"))
+        })?;
     let compact_window_summary =
         compact_service.summarize_compact_window(history_items, SUMMARY_PREFIX);
     let compact_marker_text = format!("{SUMMARY_PREFIX}\n{MEMORY_CHECKPOINT_MARKER}");
     let mut new_history = compact_service.build_replacement_history(ReplacementHistoryInput {
         initial_context: Vec::new(),
-        memory_bundle: applied_memory.bundle.clone(),
+        memory_bundle: memory_bundle.clone(),
         recent_real_user_messages: compact_window_summary.recent_real_user_messages,
         compact_marker_text: compact_marker_text.clone(),
     });
@@ -322,13 +306,11 @@ async fn run_compact_task_inner_impl(
         InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
     };
     let replacement_history = Some(new_history.clone());
-    let compacted_message = if compact_model_output.handoff_summary.trim().is_empty() {
-        MEMORY_CHECKPOINT_MARKER.to_string()
-    } else {
-        compact_model_output.handoff_summary.clone()
-    };
+    let compacted_message = last_assistant_message_from_turn(history_items)
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or_else(|| MEMORY_CHECKPOINT_MARKER.to_string());
     let compacted_item = CompactedItem {
-        message: compacted_message,
+        message: compacted_message.clone(),
         replacement_history: replacement_history.clone(),
     };
     sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
@@ -372,7 +354,7 @@ async fn run_compact_task_inner_impl(
         message: "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.".to_string(),
     });
     sess.send_event(&turn_context, warning).await;
-    Ok(compact_model_output.handoff_summary)
+    Ok(compacted_message)
 }
 
 pub(crate) struct CompactionAnalyticsAttempt {
@@ -520,32 +502,22 @@ pub(crate) async fn should_auto_compact_in_soft_window(
     }
 
     let compact_service = FsCompactService::new();
-    let memory_layout = match compact_service
-        .derive_memory_layout(
-            &turn_context.config.cwd,
-            &turn_context.config.codex_home,
-            turn_context.compact_prompt.as_deref(),
-        )
-        .await
-    {
-        Ok(layout) => layout,
-        Err(err) => {
-            warn!("skip soft compact because compact memory layout is unavailable: {err}");
-            return Ok(false);
-        }
-    };
-    let memory_bundle = match compact_service.read_memory_bundle(&memory_layout).await {
+    let replacement_files = compact_replacement_files(turn_context);
+    let memory_bundle = match compact_service.read_memory_bundle(&replacement_files).await {
         Ok(bundle) => bundle,
         Err(err) => {
-            warn!("skip soft compact because compact memory bundle is unavailable: {err}");
+            warn!("skip soft compact because compact replacement files are unavailable: {err}");
             return Ok(false);
         }
     };
     let history_snapshot = sess.clone_history().await;
     let compact_window =
         compact_service.summarize_compact_window(history_snapshot.raw_items(), SUMMARY_PREFIX);
-    let current_work_completeness =
-        compact_service.current_work_completeness(memory_bundle.current_work.as_deref());
+    let current_work_completeness = if memory_bundle.current_work_content().is_some() {
+        compact_service.current_work_completeness(&memory_bundle)
+    } else {
+        1.0
+    };
     let decision = compact_service.evaluate_soft_compact(SoftCompactInputs {
         usage_ratio,
         turns_since_last_compact: compact_window.turns_since_last_compact,
@@ -556,6 +528,30 @@ pub(crate) async fn should_auto_compact_in_soft_window(
         cooldown_bytes_satisfied: compact_window.recent_tool_output_bytes >= 8_000,
     });
     Ok(decision.should_compact)
+}
+
+fn compact_replacement_files(turn_context: &TurnContext) -> Vec<CompactReplacementFile> {
+    turn_context
+        .config
+        .memories
+        .compact_replacement_files
+        .iter()
+        .map(|file| CompactReplacementFile {
+            path: file.path.clone(),
+            role: match file.role {
+                ConfigCompactReplacementFileRole::CurrentWork => CompactMemoryRole::CurrentWork,
+                ConfigCompactReplacementFileRole::ProjectUnderstanding => {
+                    CompactMemoryRole::ProjectUnderstanding
+                }
+                ConfigCompactReplacementFileRole::UserPreferences => {
+                    CompactMemoryRole::UserPreferences
+                }
+                ConfigCompactReplacementFileRole::Custom => CompactMemoryRole::Custom,
+            },
+            label: file.label.clone(),
+            token_limit: file.token_limit,
+        })
+        .collect()
 }
 
 async fn drain_to_completed(

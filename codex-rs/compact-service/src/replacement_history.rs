@@ -21,19 +21,10 @@ pub(super) fn build_replacement_history(input: ReplacementHistoryInput) -> Vec<R
 
     history.push(user_message(input.compact_marker_text));
 
-    if let Some(user_preferences) = input.memory_bundle.user_preferences {
+    for snapshot in input.memory_bundle.snapshots {
         history.push(user_message(format!(
-            "Memory checkpoint: user preferences\n{user_preferences}"
-        )));
-    }
-    if let Some(project_understanding) = input.memory_bundle.project_understanding {
-        history.push(user_message(format!(
-            "Memory checkpoint: project understanding\n{project_understanding}"
-        )));
-    }
-    if let Some(current_work) = input.memory_bundle.current_work {
-        history.push(user_message(format!(
-            "Memory checkpoint: current work\n{current_work}"
+            "Memory checkpoint: {}\n{}",
+            snapshot.label, snapshot.content
         )));
     }
 

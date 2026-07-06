@@ -328,6 +328,45 @@
       },
       "type": "object"
     },
+    "CompactReplacementFileRole": {
+      "enum": [
+        "current-work",
+        "project-understanding",
+        "user-preferences",
+        "custom"
+      ],
+      "type": "string"
+    },
+    "CompactReplacementFileToml": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AbsolutePathBuf"
+            }
+          ],
+          "description": "Relative paths are resolved relative to the `config.toml` that defines them."
+        },
+        "role": {
+          "$ref": "#/definitions/CompactReplacementFileRole"
+        },
+        "token_limit": {
+          "format": "uint",
+          "maximum": 20000.0,
+          "minimum": 1.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "role"
+      ],
+      "type": "object"
+    },
     "ConfigProfile": {
       "additionalProperties": false,
       "description": "Collection of common configuration options that a user can define as a unit in `config.toml`.",
@@ -389,9 +428,6 @@
               "type": "boolean"
             },
             "codex_git_commit": {
-              "type": "boolean"
-            },
-            "hooks": {
               "type": "boolean"
             },
             "collab": {
@@ -1241,6 +1277,20 @@
       "additionalProperties": false,
       "description": "Memories settings loaded from config.toml.",
       "properties": {
+        "compact_replacement_file_token_limit": {
+          "description": "Default token cap when compact rereads replacement files after the model turn finishes.",
+          "format": "uint",
+          "maximum": 20000.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "compact_replacement_files": {
+          "description": "Files reread after compact to rebuild replacement context.",
+          "items": {
+            "$ref": "#/definitions/CompactReplacementFileToml"
+          },
+          "type": "array"
+        },
         "consolidation_model": {
           "description": "Model used for memory consolidation.",
           "type": "string"
@@ -4298,9 +4348,6 @@
           "type": "boolean"
         },
         "codex_git_commit": {
-          "type": "boolean"
-        },
-        "hooks": {
           "type": "boolean"
         },
         "collab": {

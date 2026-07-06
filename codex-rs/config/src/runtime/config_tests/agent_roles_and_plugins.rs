@@ -1,5 +1,25 @@
 use super::*;
 
+fn default_compact_replacement_files_for_cwd(cwd: &AbsolutePathBuf) -> Vec<CompactReplacementFileConfig> {
+    let memory_root = cwd.join(".codex").join("memory");
+    [
+        ("current-work.md", CompactReplacementFileRole::CurrentWork),
+        (
+            "project-understanding.md",
+            CompactReplacementFileRole::ProjectUnderstanding,
+        ),
+        ("user-preferences.md", CompactReplacementFileRole::UserPreferences),
+    ]
+    .into_iter()
+    .map(|(filename, role)| CompactReplacementFileConfig {
+        path: memory_root.join(filename),
+        role,
+        label: None,
+        token_limit: DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT,
+    })
+    .collect()
+}
+
 #[tokio::test]
 async fn merging_missing_agent_role_dirs_does_not_override_existing_roles() -> std::io::Result<()> {
     let temp = TempDir::new()?;
@@ -741,7 +761,10 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             agent_roles: BTreeMap::new(),
             agent_tool_patterns: None,
             agent_skill_patterns: None,
-            memories: MemoriesConfig::default(),
+            memories: MemoriesConfig {
+                compact_replacement_files: default_compact_replacement_files_for_cwd(&fixture.cwd()),
+                ..MemoriesConfig::default()
+            },
             agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
             agent_interrupt_message_enabled: true,
             codex_home: fixture.codex_home(),
@@ -1194,7 +1217,10 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         agent_roles: BTreeMap::new(),
         agent_tool_patterns: None,
         agent_skill_patterns: None,
-        memories: MemoriesConfig::default(),
+        memories: MemoriesConfig {
+            compact_replacement_files: default_compact_replacement_files_for_cwd(&fixture.cwd()),
+            ..MemoriesConfig::default()
+        },
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
         codex_home: fixture.codex_home(),
@@ -1361,7 +1387,10 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         agent_roles: BTreeMap::new(),
         agent_tool_patterns: None,
         agent_skill_patterns: None,
-        memories: MemoriesConfig::default(),
+        memories: MemoriesConfig {
+            compact_replacement_files: default_compact_replacement_files_for_cwd(&fixture.cwd()),
+            ..MemoriesConfig::default()
+        },
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
         codex_home: fixture.codex_home(),

@@ -65,7 +65,7 @@
 - 优先继续拆 `codex-thread-runtime` 内 tool adapter：`src/tools`、`apply_patch_tool_host.rs`、`shell_tool_host.rs`、`unified_exec/tool_host.rs`、`code_mode_host.rs`、`plugins/request_plugin_install.rs` 等。
 - `CoreApplyPatchHandlerHost` 仍是迁移中的 concrete session side-effect host；后续要按 capability 拆分或迁出，不要把它当最终边界。
 - MCP adapter、workflow bridge、goal runtime、guardian/hook、compact、command/unified exec 继续按 capability contract 收缩，再整体迁往 owner crate。
-- compact 已开始拆出 `compact-service-api` / `compact-service`：新的 memory layout、structured compact prompt、local `current-work.md` 落盘、memory-backed replacement history 和 soft compact MVP 纯逻辑优先放这里；`thread-service` 只保留 compact turn 生命周期、session history replace 与 event 发射。
+- compact 已开始拆出 `compact-service-api` / `compact-service`：现在优先承载 compact replacement file 回读、token capped memory 读取、memory-backed replacement history 和 soft compact MVP 纯逻辑；`COMPACT.md` 行为规则与 compact turn 生命周期仍由 `thread-service` 驱动，不要再把 runtime prompt/output 解释逻辑塞回 service。
 - app-server、CLI、MCP server、core-api 等组合根应逐步从 `codex_core` import 切到真实 owner crate。
 
 ## Typed Display 与历史
