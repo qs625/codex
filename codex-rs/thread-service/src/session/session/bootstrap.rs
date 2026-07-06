@@ -334,7 +334,7 @@ impl Session {
             let thread_name = thread_title_from_thread_store(
                 live_thread_init
                     .as_ref()
-                    .map(|live_thread| live_thread.as_ref()),
+                    .map(std::convert::AsRef::as_ref),
                 &thread_store,
                 init.thread_id,
             )

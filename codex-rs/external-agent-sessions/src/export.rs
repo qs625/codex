@@ -198,7 +198,7 @@ fn turn_complete_item(
 mod tests {
     use super::*;
     use app_server_protocol::ThreadItem;
-    use app_server_protocol::build_turns_from_rollout_items;
+    use thread_history::build_turns_from_rollout_items;
     use serde_json::Value as JsonValue;
     use std::path::Path;
     use tempfile::TempDir;

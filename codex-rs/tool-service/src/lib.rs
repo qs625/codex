@@ -134,12 +134,12 @@ impl ToolServiceApi for ToolService {
         let discoverable_tools = tool_request
             .params
             .discoverable_tools
-            .map(|tools| tools.to_vec());
-        let mcp_tools = tool_request.params.mcp_tools.map(|tools| tools.to_vec());
+            .map(<[tool_service_api::DiscoverableTool]>::to_vec);
+        let mcp_tools = tool_request.params.mcp_tools.map(<[mcp_types::ToolInfo]>::to_vec);
         let deferred_mcp_tools = tool_request
             .params
             .deferred_mcp_tools
-            .map(|tools| tools.to_vec());
+            .map(<[mcp_types::ToolInfo]>::to_vec);
         let cancellation_token = request.cancellation_token;
         let tracker = request.tracker;
         let call = request.call;
@@ -198,8 +198,13 @@ impl ToolServiceApi for ToolService {
                     .await
                 }
                 domains::ToolDomain::Extension => {
+                    let Some(extension_executor) = extension_executor else {
+                        return Err(FunctionCallError::Fatal(
+                            "extension route executor missing".to_string(),
+                        ));
+                    };
                     domains::extension::dispatch(
-                        extension_executor.expect("extension route")?,
+                        extension_executor?,
                         call,
                     )
                     .await

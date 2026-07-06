@@ -46,7 +46,7 @@ impl GoalServiceApi for GoalService {
         Box::pin(async move {
             validate_thread_goal_budget(token_budget).map_err(|err| err.to_string())?;
             let objective = objective.trim();
-            validate_thread_goal_objective(objective).map_err(|err| err.to_string())?;
+            validate_thread_goal_objective(objective)?;
 
             let state_db = session.require_persisted_state_db().await?;
             session.prepare_external_goal_mutation().await?;

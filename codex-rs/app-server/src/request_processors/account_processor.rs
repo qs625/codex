@@ -11,6 +11,11 @@ const LOGIN_CHATGPT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 #[cfg(debug_assertions)]
 const LOGIN_ISSUER_OVERRIDE_ENV_VAR: &str = "CODEX_APP_SERVER_LOGIN_ISSUER";
 
+#[derive(Clone)]
+struct LoginApiKeyParams {
+    api_key: String,
+}
+
 enum ActiveLogin {
     Browser {
         shutdown_handle: ShutdownHandle,
@@ -159,6 +164,7 @@ pub(crate) struct AccountRequestProcessor {
 }
 
 impl AccountRequestProcessor {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
         account_runtime: Arc<R>,
@@ -215,15 +221,6 @@ impl AccountRequestProcessor {
         params: GetAccountParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         self.get_account_response(params)
-            .await
-            .map(|response| Some(response.into()))
-    }
-
-    pub(crate) async fn get_auth_status(
-        &self,
-        params: GetAuthStatusParams,
-    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.get_auth_status_response(params)
             .await
             .map(|response| Some(response.into()))
     }
@@ -700,6 +697,7 @@ impl AccountRequestProcessor {
             .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn send_chatgpt_login_completion_notifications(
         outgoing: &OutgoingMessageSender,
         config_manager: ConfigManager,
@@ -820,72 +818,6 @@ impl AccountRequestProcessor {
             return RefreshTokenRequestOutcome::FailedPermanently;
         }
         RefreshTokenRequestOutcome::NotAttemptedOrSucceeded
-    }
-
-    async fn get_auth_status_response(
-        &self,
-        params: GetAuthStatusParams,
-    ) -> Result<GetAuthStatusResponse, JSONRPCErrorError> {
-        let include_token = params.include_token.unwrap_or(false);
-        let do_refresh = params.refresh_token.unwrap_or(false);
-
-        self.refresh_token_if_requested(do_refresh).await;
-
-        // Determine whether auth is required based on the active model provider.
-        // If a custom provider is configured with `requires_openai_auth == false`,
-        // then no auth step is required; otherwise, default to requiring auth.
-        let requires_openai_auth = self.config.model_provider.requires_openai_auth;
-
-        let response = if !requires_openai_auth {
-            GetAuthStatusResponse {
-                auth_method: None,
-                auth_token: None,
-                requires_openai_auth: Some(false),
-            }
-        } else {
-            let auth = if do_refresh {
-                self.auth_manager.auth_cached()
-            } else {
-                self.auth_manager.auth().await
-            };
-            match auth {
-                Some(auth) => {
-                    let permanent_refresh_failure =
-                        self.auth_manager.refresh_failure_for_auth(&auth).is_some();
-                    let auth_mode = auth.api_auth_mode();
-                    let (reported_auth_method, token_opt) =
-                        if matches!(auth, CodexAuth::AgentIdentity(_))
-                            || include_token && permanent_refresh_failure
-                        {
-                            (Some(auth_mode), None)
-                        } else {
-                            match auth.get_token() {
-                                Ok(token) if !token.is_empty() => {
-                                    let tok = if include_token { Some(token) } else { None };
-                                    (Some(auth_mode), tok)
-                                }
-                                Ok(_) => (None, None),
-                                Err(err) => {
-                                    tracing::warn!("failed to get token for auth status: {err}");
-                                    (None, None)
-                                }
-                            }
-                        };
-                    GetAuthStatusResponse {
-                        auth_method: reported_auth_method,
-                        auth_token: token_opt,
-                        requires_openai_auth: Some(true),
-                    }
-                }
-                None => GetAuthStatusResponse {
-                    auth_method: None,
-                    auth_token: None,
-                    requires_openai_auth: Some(true),
-                },
-            }
-        };
-
-        Ok(response)
     }
 
     async fn get_account_response(

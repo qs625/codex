@@ -25,7 +25,6 @@ use crate::request_processors::EnvironmentRequestProcessor;
 use crate::request_processors::ExternalAgentConfigRequestProcessor;
 use crate::request_processors::FeedbackRequestProcessor;
 use crate::request_processors::FsRequestProcessor;
-use crate::request_processors::GitRequestProcessor;
 use crate::request_processors::InitializeRequestProcessor;
 use crate::request_processors::MarketplaceRequestProcessor;
 use crate::request_processors::McpRequestProcessor;
@@ -225,7 +224,6 @@ pub(crate) struct MessageProcessor {
     external_agent_config_processor: ExternalAgentConfigRequestProcessor,
     feedback_processor: FeedbackRequestProcessor,
     fs_processor: FsRequestProcessor,
-    git_processor: GitRequestProcessor,
     initialize_processor: InitializeRequestProcessor,
     marketplace_processor: MarketplaceRequestProcessor,
     mcp_processor: McpRequestProcessor,
@@ -442,8 +440,8 @@ impl MessageProcessor {
                         session_source.restriction_product(),
                     )),
                     thread_service_plugin_runtime.clone(),
-                    tool_service.clone(),
-                    mcp_service.clone(),
+                    tool_service,
+                    mcp_service,
                 )
                 .with_terminal_type(user_agent())
             });
@@ -506,7 +504,6 @@ impl MessageProcessor {
             log_db,
             state_db.clone(),
         );
-        let git_processor = GitRequestProcessor::new();
         let initialize_processor = InitializeRequestProcessor::new(
             outgoing.clone(),
             analytics_events_client.clone(),
@@ -638,7 +635,6 @@ impl MessageProcessor {
             external_agent_config_processor,
             feedback_processor,
             fs_processor,
-            git_processor,
             initialize_processor,
             marketplace_processor,
             mcp_processor,
@@ -1272,9 +1268,6 @@ impl MessageProcessor {
                     .thread_approve_guardian_denied_action(&request_id, params)
                     .await
             }
-            ClientRequest::GetConversationSummary { params, .. } => {
-                self.thread_processor.conversation_summary(params).await
-            }
             ClientRequest::SkillsList { params, .. } => {
                 self.catalog_processor.skills_list(params).await
             }
@@ -1433,9 +1426,6 @@ impl MessageProcessor {
             ClientRequest::GetAccount { params, .. } => {
                 self.account_processor.get_account(params).await
             }
-            ClientRequest::GetAuthStatus { params, .. } => {
-                self.account_processor.get_auth_status(params).await
-            }
             ClientRequest::GetAccountRateLimits { .. } => {
                 self.account_processor.get_account_rate_limits().await
             }
@@ -1443,9 +1433,6 @@ impl MessageProcessor {
                 self.account_processor
                     .send_add_credits_nudge_email(params)
                     .await
-            }
-            ClientRequest::GitDiffToRemote { params, .. } => {
-                self.git_processor.git_diff_to_remote(params).await
             }
             ClientRequest::FuzzyFileSearch { params, .. } => self
                 .search_processor

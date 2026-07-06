@@ -35,8 +35,6 @@ use app_server_protocol::FsUnwatchParams;
 use app_server_protocol::FsWatchParams;
 use app_server_protocol::FsWriteFileParams;
 use app_server_protocol::GetAccountParams;
-use app_server_protocol::GetAuthStatusParams;
-use app_server_protocol::GetConversationSummaryParams;
 use app_server_protocol::HooksListParams;
 use app_server_protocol::InitializeCapabilities;
 use app_server_protocol::InitializeParams;
@@ -318,24 +316,6 @@ impl McpProcess {
                 anyhow::bail!("unexpected JSONRPCMessage::Request: {request:?}");
             }
         }
-    }
-
-    /// Send a `getAuthStatus` JSON-RPC request.
-    pub async fn send_get_auth_status_request(
-        &mut self,
-        params: GetAuthStatusParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("getAuthStatus", params).await
-    }
-
-    /// Send a `getConversationSummary` JSON-RPC request.
-    pub async fn send_get_conversation_summary_request(
-        &mut self,
-        params: GetConversationSummaryParams,
-    ) -> anyhow::Result<i64> {
-        let params = Some(serde_json::to_value(params)?);
-        self.send_request("getConversationSummary", params).await
     }
 
     /// Send an `account/rateLimits/read` JSON-RPC request.
@@ -731,7 +711,7 @@ impl McpProcess {
         self.send_request("mock/experimentalMethod", params).await
     }
 
-    /// Send a `thread/memoryMode/set` JSON-RPC request (v2, experimental).
+    /// Send a `thread/memoryMode/set` JSON-RPC request (experimental).
     pub async fn send_thread_memory_mode_set_request(
         &mut self,
         params: ThreadMemoryModeSetParams,
@@ -740,7 +720,7 @@ impl McpProcess {
         self.send_request("thread/memoryMode/set", params).await
     }
 
-    /// Send a `turn/start` JSON-RPC request (v2).
+    /// Send a `turn/start` JSON-RPC request.
     pub async fn send_turn_start_request(
         &mut self,
         params: TurnStartParams,
@@ -749,7 +729,7 @@ impl McpProcess {
         self.send_request("turn/start", params).await
     }
 
-    /// Send a `thread/inject_items` JSON-RPC request (v2).
+    /// Send a `thread/inject_items` JSON-RPC request.
     pub async fn send_thread_inject_items_request(
         &mut self,
         params: ThreadInjectItemsParams,
@@ -758,7 +738,7 @@ impl McpProcess {
         self.send_request("thread/inject_items", params).await
     }
 
-    /// Send a `command/exec` JSON-RPC request (v2).
+    /// Send a `command/exec` JSON-RPC request.
     pub async fn send_command_exec_request(
         &mut self,
         params: CommandExecParams,
@@ -767,7 +747,7 @@ impl McpProcess {
         self.send_request("command/exec", params).await
     }
 
-    /// Send a `process/spawn` JSON-RPC request (v2).
+    /// Send a `process/spawn` JSON-RPC request.
     pub async fn send_process_spawn_request(
         &mut self,
         params: ProcessSpawnParams,
@@ -776,7 +756,7 @@ impl McpProcess {
         self.send_request("process/spawn", params).await
     }
 
-    /// Send a `process/writeStdin` JSON-RPC request (v2).
+    /// Send a `process/writeStdin` JSON-RPC request.
     pub async fn send_process_write_stdin_request(
         &mut self,
         params: ProcessWriteStdinParams,
@@ -785,7 +765,7 @@ impl McpProcess {
         self.send_request("process/writeStdin", params).await
     }
 
-    /// Send a `process/resizePty` JSON-RPC request (v2).
+    /// Send a `process/resizePty` JSON-RPC request.
     pub async fn send_process_resize_pty_request(
         &mut self,
         params: ProcessResizePtyParams,
@@ -794,7 +774,7 @@ impl McpProcess {
         self.send_request("process/resizePty", params).await
     }
 
-    /// Send a `process/kill` JSON-RPC request (v2).
+    /// Send a `process/kill` JSON-RPC request.
     pub async fn send_process_kill_request(
         &mut self,
         params: ProcessKillParams,
@@ -803,7 +783,7 @@ impl McpProcess {
         self.send_request("process/kill", params).await
     }
 
-    /// Send a `command/exec/write` JSON-RPC request (v2).
+    /// Send a `command/exec/write` JSON-RPC request.
     pub async fn send_command_exec_write_request(
         &mut self,
         params: CommandExecWriteParams,
@@ -812,7 +792,7 @@ impl McpProcess {
         self.send_request("command/exec/write", params).await
     }
 
-    /// Send a `command/exec/resize` JSON-RPC request (v2).
+    /// Send a `command/exec/resize` JSON-RPC request.
     pub async fn send_command_exec_resize_request(
         &mut self,
         params: CommandExecResizeParams,
@@ -821,7 +801,7 @@ impl McpProcess {
         self.send_request("command/exec/resize", params).await
     }
 
-    /// Send a `command/exec/terminate` JSON-RPC request (v2).
+    /// Send a `command/exec/terminate` JSON-RPC request.
     pub async fn send_command_exec_terminate_request(
         &mut self,
         params: CommandExecTerminateParams,
@@ -830,7 +810,7 @@ impl McpProcess {
         self.send_request("command/exec/terminate", params).await
     }
 
-    /// Send a `turn/interrupt` JSON-RPC request (v2).
+    /// Send a `turn/interrupt` JSON-RPC request.
     pub async fn send_turn_interrupt_request(
         &mut self,
         params: TurnInterruptParams,
@@ -839,7 +819,7 @@ impl McpProcess {
         self.send_request("turn/interrupt", params).await
     }
 
-    /// Send a `thread/realtime/start` JSON-RPC request (v2).
+    /// Send a `thread/realtime/start` JSON-RPC request.
     pub async fn send_thread_realtime_start_request(
         &mut self,
         params: ThreadRealtimeStartParams,
@@ -848,7 +828,7 @@ impl McpProcess {
         self.send_request("thread/realtime/start", params).await
     }
 
-    /// Send a `thread/realtime/appendAudio` JSON-RPC request (v2).
+    /// Send a `thread/realtime/appendAudio` JSON-RPC request.
     pub async fn send_thread_realtime_append_audio_request(
         &mut self,
         params: ThreadRealtimeAppendAudioParams,
@@ -858,7 +838,7 @@ impl McpProcess {
             .await
     }
 
-    /// Send a `thread/realtime/appendText` JSON-RPC request (v2).
+    /// Send a `thread/realtime/appendText` JSON-RPC request.
     pub async fn send_thread_realtime_append_text_request(
         &mut self,
         params: ThreadRealtimeAppendTextParams,
@@ -868,7 +848,7 @@ impl McpProcess {
             .await
     }
 
-    /// Send a `thread/realtime/stop` JSON-RPC request (v2).
+    /// Send a `thread/realtime/stop` JSON-RPC request.
     pub async fn send_thread_realtime_stop_request(
         &mut self,
         params: ThreadRealtimeStopParams,
@@ -944,7 +924,7 @@ impl McpProcess {
         Ok(())
     }
 
-    /// Send a `turn/steer` JSON-RPC request (v2).
+    /// Send a `turn/steer` JSON-RPC request.
     pub async fn send_turn_steer_request(
         &mut self,
         params: TurnSteerParams,
@@ -953,7 +933,7 @@ impl McpProcess {
         self.send_request("turn/steer", params).await
     }
 
-    /// Send a `review/start` JSON-RPC request (v2).
+    /// Send a `review/start` JSON-RPC request.
     pub async fn send_review_start_request(
         &mut self,
         params: ReviewStartParams,

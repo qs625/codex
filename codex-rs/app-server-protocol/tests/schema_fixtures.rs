@@ -1,3 +1,5 @@
+#![cfg(feature = "schema-export")]
+
 use anyhow::Context;
 use anyhow::Result;
 use app_server_protocol::generate_json_with_experimental;

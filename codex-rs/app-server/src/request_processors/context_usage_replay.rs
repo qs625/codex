@@ -3,7 +3,7 @@ use std::sync::Arc;
 use app_server_protocol::ServerNotification;
 use app_server_protocol::Thread;
 use app_server_protocol::ThreadContextUsageUpdatedNotification;
-use app_server_protocol::ThreadHistoryBuilder;
+use thread_history::ThreadHistoryBuilder;
 use app_server_protocol::ThreadTokenUsage;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnStatus;
@@ -267,7 +267,7 @@ fn latest_context_usage_turn_id(thread: &Thread) -> String {
 mod tests {
     use super::latest_context_usage_turn_id_from_rollout_items;
     use super::latest_thread_context_usage_from_rollout_items;
-    use app_server_protocol::build_turns_from_rollout_items;
+    use thread_history::build_turns_from_rollout_items;
     use pretty_assertions::assert_eq;
     use protocol::protocol::AgentMessageEvent;
     use protocol::protocol::EventMsg;

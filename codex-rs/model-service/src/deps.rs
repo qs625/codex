@@ -87,11 +87,15 @@ impl ModelService {
     }
 
     pub fn from_runtime_deps(deps: ModelServiceRuntimeDeps) -> Self {
-        let provider = deps
+        let provider = if let Some(provider) = deps
             .default_provider
             .clone()
             .or_else(|| deps.providers_by_id.values().next().cloned())
-            .expect("model service requires at least one model provider");
+        {
+            provider
+        } else {
+            panic!("model service requires at least one model provider");
+        };
         let models_manager = deps
             .model_provider_factory
             .create_model_provider(provider, deps.provider_auth_manager.clone())

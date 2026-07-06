@@ -111,6 +111,7 @@ fn errors_to_info(errors: &[SkillError]) -> Vec<app_server_protocol::SkillErrorI
 }
 
 impl CatalogRequestProcessor {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
         catalog_runtime: Arc<R>,

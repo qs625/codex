@@ -1093,9 +1093,7 @@ impl McpToolApprovalReviewHost for ServiceMcpHost {
         hook_tool_name: &str,
         tool_input: serde_json::Value,
     ) -> Option<McpToolApprovalHookDecision> {
-        let Some(approval_session) = self.approval_session.as_ref() else {
-            return None;
-        };
+        let approval_session = self.approval_session.as_ref()?;
         match approval_session
             .run_permission_request_hooks(
                 self.turn_view(),
@@ -1120,14 +1118,16 @@ impl McpToolApprovalReviewHost for ServiceMcpHost {
         request: codex_guardian::GuardianApprovalRequest,
         monitor_reason: Option<String>,
     ) -> (ReviewDecision, Option<String>) {
+        let Some(approval_session) = self.approval_session.as_ref() else {
+            return (
+                ReviewDecision::Denied,
+                Some("approval session required for guardian review".to_string()),
+            );
+        };
         let result = self
             .approval_api
             .review_guardian_request(GuardianReviewDispatch {
-                session: Arc::clone(
-                    self.approval_session
-                        .as_ref()
-                        .expect("approval session required for guardian review"),
-                ),
+                session: Arc::clone(approval_session),
                 turn: Arc::clone(&self.turn),
                 review_id: uuid::Uuid::new_v4().to_string(),
                 request,

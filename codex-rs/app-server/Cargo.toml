@@ -78,6 +78,7 @@ codex-network-proxy = { workspace = true }
 codex-openai-files = { workspace = true }
 protocol = { workspace = true }
 app-server-protocol = { workspace = true }
+thread-history = { workspace = true }
 app-server-transport = { workspace = true }
 codex-auth-types = { workspace = true }
 codex-feedback = { workspace = true }

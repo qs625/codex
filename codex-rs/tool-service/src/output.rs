@@ -309,7 +309,14 @@ pub(crate) fn format_exec_output_for_model_structured(
             duration_seconds: ((exec_output.duration.as_secs_f32()) * 10.0).round() / 10.0,
         },
     };
-    serde_json::to_string(&payload).expect("serialize exec output")
+    match serde_json::to_string(&payload) {
+        Ok(value) => value,
+        Err(err) => format!(
+            "{{\"output\":\"failed to serialize exec output: {err}\",\"metadata\":{{\"exit_code\":{},\"duration_seconds\":{}}}}}",
+            exec_output.exit_code,
+            ((exec_output.duration.as_secs_f32()) * 10.0).round() / 10.0
+        ),
+    }
 }
 
 pub(crate) fn format_exec_output_str(

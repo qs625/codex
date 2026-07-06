@@ -28,6 +28,7 @@ use codex_extension_api::empty_extension_registry;
 
 /// Build the model-visible `input` list for a single debug turn.
 #[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
 pub async fn build_prompt_input(
     mut config: Config,
     input: Vec<UserInput>,

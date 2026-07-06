@@ -141,5 +141,5 @@ impl SessionAgentJobCaller for Session {
 fn turn_context_from_capability(capability: &dyn ThreadRuntimeCapability) -> &TurnContext {
     ThreadCapability::as_any(capability)
         .downcast_ref::<TurnContext>()
-        .expect("agent job turn capability must be backed by TurnContext")
+        .unwrap_or_else(|| panic!("agent job turn capability must be backed by TurnContext"))
 }

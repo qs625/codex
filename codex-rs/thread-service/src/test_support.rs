@@ -434,7 +434,7 @@ async fn build_test_config(codex_home: &Path) -> Config {
         .fallback_cwd(Some(codex_home.to_path_buf()))
         .build()
         .await
-        .expect("load default test config")
+        .unwrap_or_else(|err| panic!("load default test config: {err}"))
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -472,7 +472,8 @@ where
         "thread-service-test-support-{}",
         uuid::Uuid::new_v4()
     ));
-    std::fs::create_dir_all(&codex_home).expect("create temp dir");
+    std::fs::create_dir_all(&codex_home)
+        .unwrap_or_else(|err| panic!("create temp dir {codex_home:?}: {err}"));
     let mut config = build_test_config(&codex_home).await;
     configure_config(&mut config);
     let state_db: Option<state_api::SharedStateDbRuntime> =
@@ -480,7 +481,9 @@ where
             Some(
                 StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
                     .await
-                    .expect("goal tests should initialize sqlite state db"),
+                    .unwrap_or_else(|err| {
+                        panic!("goal tests should initialize sqlite state db: {err}")
+                    }),
             )
         } else {
             None
@@ -526,7 +529,7 @@ where
             environments: thread_service.default_environment_selections(&config.cwd),
         })
         .await
-        .expect("start test thread");
+        .unwrap_or_else(|err| panic!("start test thread: {err}"));
     let session = Arc::clone(&thread.thread.codex.session);
     let turn = session.new_default_turn().await;
     (session, turn)

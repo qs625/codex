@@ -590,6 +590,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
         config: &'a Config,
     ) -> McpRuntimeFuture<'a, Vec<AppInfo>>;
 
+    #[allow(clippy::too_many_arguments)]
     fn list_discoverable_tools<'a>(
         &self,
         turn: &'a dyn ThreadTurnCapability,
@@ -800,6 +801,7 @@ pub trait McpServiceApi: Send + Sync + 'static {
         tool_name: &'a str,
     ) -> McpRuntimeFuture<'a, Option<McpToolApprovalMetadata>>;
 
+    #[allow(clippy::too_many_arguments)]
     fn call_tool<'a>(
         &self,
         session: Arc<dyn ThreadSessionCapability>,

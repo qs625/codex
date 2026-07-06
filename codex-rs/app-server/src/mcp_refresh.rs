@@ -306,8 +306,8 @@ mod tests {
                             SessionSource::Exec.restriction_product(),
                         ),
                     ),
-                    tool_service.clone(),
-                    mcp_service.clone(),
+                    tool_service,
+                    mcp_service,
                 )
             });
         thread_service.start_thread(good_config).await?;

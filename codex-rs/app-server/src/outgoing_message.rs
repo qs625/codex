@@ -699,7 +699,6 @@ mod tests {
     use app_server_protocol::AccountLoginCompletedNotification;
     use app_server_protocol::AccountRateLimitsUpdatedNotification;
     use app_server_protocol::AccountUpdatedNotification;
-    use app_server_protocol::ApplyPatchApprovalParams;
     use app_server_protocol::CommandExecutionApprovalDecision;
     use app_server_protocol::CommandExecutionRequestApprovalParams;
     use app_server_protocol::ConfigWarningNotification;
@@ -1170,11 +1169,12 @@ mod tests {
             OutgoingMessageSender::new(tx, codex_analytics::AnalyticsEventsClient::disabled());
 
         let (request_id, wait_for_result) = outgoing
-            .send_request(ServerRequestPayload::ApplyPatchApproval(
-                ApplyPatchApprovalParams {
-                    conversation_id: ThreadId::new(),
-                    call_id: "call-id".to_string(),
-                    file_changes: HashMap::new(),
+            .send_request(ServerRequestPayload::FileChangeRequestApproval(
+                FileChangeRequestApprovalParams {
+                    thread_id: ThreadId::new().to_string(),
+                    turn_id: "turn-id".to_string(),
+                    item_id: "item-id".to_string(),
+                    started_at_ms: 1,
                     reason: None,
                     grant_root: None,
                 },

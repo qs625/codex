@@ -2,22 +2,22 @@ use crate::protocol::item_builders::convert_patch_changes;
 use crate::protocol::response_item_projection::thread_goal_from_update_goal;
 use crate::protocol::response_item_projection::thread_goal_status_from_update_status;
 use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
-use crate::protocol::v2::CommandExecutionNotificationKind;
-use crate::protocol::v2::CommandWaitNotificationKind;
-use crate::protocol::v2::CommandWaitStatus;
-use crate::protocol::v2::EventCommandEventKind;
-use crate::protocol::v2::HookPromptFragment;
-use crate::protocol::v2::InjectedContextSection;
-use crate::protocol::v2::McpToolCallError;
-use crate::protocol::v2::McpToolCallResult;
-use crate::protocol::v2::McpToolCallStatus;
-use crate::protocol::v2::PatchApplyStatus;
-use crate::protocol::v2::ThreadGoalUpdateAction;
-use crate::protocol::v2::ThreadGoalUpdateSource;
-use crate::protocol::v2::ThreadItem;
-use crate::protocol::v2::UserInput;
-use crate::protocol::v2::WebSearchAction;
-use crate::protocol::v2::assistant_message_thread_item;
+use crate::protocol::CommandExecutionNotificationKind;
+use crate::protocol::CommandWaitNotificationKind;
+use crate::protocol::CommandWaitStatus;
+use crate::protocol::EventCommandEventKind;
+use crate::protocol::HookPromptFragment;
+use crate::protocol::InjectedContextSection;
+use crate::protocol::McpToolCallError;
+use crate::protocol::McpToolCallResult;
+use crate::protocol::McpToolCallStatus;
+use crate::protocol::PatchApplyStatus;
+use crate::protocol::ThreadGoalUpdateAction;
+use crate::protocol::ThreadGoalUpdateSource;
+use crate::protocol::ThreadItem;
+use crate::protocol::UserInput;
+use crate::protocol::WebSearchAction;
+use crate::protocol::assistant_message_thread_item;
 use protocol::items::AgentMessageContent as CoreAgentMessageContent;
 use protocol::items::TurnItem as CoreTurnItem;
 use protocol::protocol::EventMsg;
@@ -303,8 +303,8 @@ fn command_wait_thread_item(event: &protocol::protocol::CommandWaitDisplayEvent)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::v2::CommandWaitNotificationKind;
-    use crate::protocol::v2::CommandWaitStatus;
+    use crate::protocol::CommandWaitNotificationKind;
+    use crate::protocol::CommandWaitStatus;
     use pretty_assertions::assert_eq;
     use protocol::ThreadId;
     use protocol::models::WorkflowRunProgressEvent;
@@ -402,7 +402,7 @@ mod tests {
                 item: ThreadItem::CommandExecutionNotification {
                     id: "notify-1".to_string(),
                     command_item_id: "cmd-item-1".to_string(),
-                    kind: crate::protocol::v2::CommandExecutionNotificationKind::Exit,
+                    kind: crate::protocol::CommandExecutionNotificationKind::Exit,
                     message: "Command exited".to_string(),
                     output: Some("done".to_string()),
                     exit_code: Some(0),

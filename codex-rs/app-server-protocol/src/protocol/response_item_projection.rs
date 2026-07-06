@@ -1,8 +1,8 @@
-use crate::protocol::v2::CollabAgentState;
-use crate::protocol::v2::CommandExecutionNotificationKind;
-use crate::protocol::v2::CommandWaitNotificationKind;
-use crate::protocol::v2::CommandWaitStatus;
-use crate::protocol::v2::ThreadItem;
+use crate::protocol::CollabAgentState;
+use crate::protocol::CommandExecutionNotificationKind;
+use crate::protocol::CommandWaitNotificationKind;
+use crate::protocol::CommandWaitStatus;
+use crate::protocol::ThreadItem;
 use protocol::models::CommandExecutionNotificationKind as CoreCommandExecutionNotificationKind;
 use protocol::models::CommandWaitNotificationKind as CoreCommandWaitNotificationKind;
 use protocol::models::CommandWaitStatus as CoreCommandWaitStatus;
@@ -13,8 +13,8 @@ use protocol::protocol::InterAgentOperation as CoreInterAgentOperation;
 
 pub(crate) fn thread_goal_from_update_goal(
     goal: &ThreadGoalUpdateGoal,
-) -> crate::protocol::v2::ThreadGoal {
-    crate::protocol::v2::ThreadGoal {
+) -> crate::protocol::ThreadGoal {
+    crate::protocol::ThreadGoal {
         thread_id: goal.thread_id.to_string(),
         objective: goal.objective.clone(),
         status: thread_goal_status_from_update_status(goal.status),
@@ -28,14 +28,14 @@ pub(crate) fn thread_goal_from_update_goal(
 
 pub(crate) fn thread_goal_status_from_update_status(
     status: ThreadGoalUpdateGoalStatus,
-) -> crate::protocol::v2::ThreadGoalStatus {
+) -> crate::protocol::ThreadGoalStatus {
     match status {
-        ThreadGoalUpdateGoalStatus::Active => crate::protocol::v2::ThreadGoalStatus::Active,
-        ThreadGoalUpdateGoalStatus::Paused => crate::protocol::v2::ThreadGoalStatus::Paused,
+        ThreadGoalUpdateGoalStatus::Active => crate::protocol::ThreadGoalStatus::Active,
+        ThreadGoalUpdateGoalStatus::Paused => crate::protocol::ThreadGoalStatus::Paused,
         ThreadGoalUpdateGoalStatus::BudgetLimited => {
-            crate::protocol::v2::ThreadGoalStatus::BudgetLimited
+            crate::protocol::ThreadGoalStatus::BudgetLimited
         }
-        ThreadGoalUpdateGoalStatus::Complete => crate::protocol::v2::ThreadGoalStatus::Complete,
+        ThreadGoalUpdateGoalStatus::Complete => crate::protocol::ThreadGoalStatus::Complete,
     }
 }
 

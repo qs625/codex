@@ -1241,6 +1241,7 @@ pub(crate) fn tool_service_request<'a>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn dispatch_tool_call(
     tool_service: Arc<crate::ToolServiceApi>,
     sess: Arc<Session>,

@@ -946,6 +946,7 @@ impl ThreadSessionCapability for Session {
         arguments: Option<serde_json::Value>,
         meta: Option<serde_json::Value>,
     ) -> SessionCapabilityFuture<'a, Result<protocol::mcp::CallToolResult, String>> {
+        #[allow(clippy::await_holding_invalid_type)]
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             mcp_service_api::McpToolRuntime::call_tool(
@@ -965,6 +966,7 @@ impl ThreadSessionCapability for Session {
         server: &'a str,
         params: Option<protocol::mcp::PaginatedRequestParams>,
     ) -> SessionCapabilityFuture<'a, Result<protocol::mcp::ListResourcesResult, String>> {
+        #[allow(clippy::await_holding_invalid_type)]
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager
@@ -977,6 +979,7 @@ impl ThreadSessionCapability for Session {
     fn list_all_mcp_resources(
         &self,
     ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<protocol::mcp::Resource>>> {
+        #[allow(clippy::await_holding_invalid_type)]
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager.list_all_resources().await
@@ -989,6 +992,7 @@ impl ThreadSessionCapability for Session {
         params: Option<protocol::mcp::PaginatedRequestParams>,
     ) -> SessionCapabilityFuture<'a, Result<protocol::mcp::ListResourceTemplatesResult, String>>
     {
+        #[allow(clippy::await_holding_invalid_type)]
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager
@@ -1001,6 +1005,7 @@ impl ThreadSessionCapability for Session {
     fn list_all_mcp_resource_templates(
         &self,
     ) -> SessionCapabilityFuture<'_, HashMap<String, Vec<protocol::mcp::ResourceTemplate>>> {
+        #[allow(clippy::await_holding_invalid_type)]
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager.list_all_resource_templates().await
@@ -1012,6 +1017,7 @@ impl ThreadSessionCapability for Session {
         server: &'a str,
         params: protocol::mcp::ReadResourceRequestParams,
     ) -> SessionCapabilityFuture<'a, Result<protocol::mcp::ReadResourceResult, String>> {
+        #[allow(clippy::await_holding_invalid_type)]
         Box::pin(async move {
             let manager = self.services.mcp_connection_manager.read().await;
             manager

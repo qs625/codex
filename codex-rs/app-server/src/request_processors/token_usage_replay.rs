@@ -2,7 +2,7 @@
 //!
 //! The message processor decides when replay is allowed and preserves JSON-RPC response
 //! ordering. This module owns notification construction and the attribution rules that
-//! map the latest persisted `TokenCount` back to a v2 turn id.
+//! map the latest persisted `TokenCount` back to a protocol turn id.
 //!
 //! Rollout histories can contain explicit turn ids or generated turn ids. When explicit
 //! ids do not match the rebuilt thread, replay falls back to the active turn position at
@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use app_server_protocol::ServerNotification;
 use app_server_protocol::Thread;
-use app_server_protocol::ThreadHistoryBuilder;
+use thread_history::ThreadHistoryBuilder;
 use app_server_protocol::ThreadTokenUsage;
 use app_server_protocol::ThreadTokenUsageUpdatedNotification;
 use app_server_protocol::Turn;
@@ -131,7 +131,7 @@ fn latest_token_usage_turn_id(thread: &Thread) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use app_server_protocol::build_turns_from_rollout_items;
+    use thread_history::build_turns_from_rollout_items;
     use pretty_assertions::assert_eq;
     use protocol::protocol::AgentMessageEvent;
     use protocol::protocol::TokenCountEvent;

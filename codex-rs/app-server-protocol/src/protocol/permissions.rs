@@ -1,0 +1,901 @@
+use super::shared::camel_case_enum_from_core;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use protocol::approvals::ExecPolicyAmendment as CoreExecPolicyAmendment;
+use protocol::approvals::NetworkApprovalContext as CoreNetworkApprovalContext;
+use protocol::approvals::NetworkApprovalProtocol as CoreNetworkApprovalProtocol;
+use protocol::approvals::NetworkPolicyAmendment as CoreNetworkPolicyAmendment;
+use protocol::approvals::NetworkPolicyRuleAction as CoreNetworkPolicyRuleAction;
+use protocol::models::ActivePermissionProfile as CoreActivePermissionProfile;
+use protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
+use protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
+use protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
+use protocol::models::NetworkPermissions as CoreNetworkPermissions;
+use protocol::models::PermissionProfile as CorePermissionProfile;
+use protocol::permissions::FileSystemAccessMode as CoreFileSystemAccessMode;
+use protocol::permissions::FileSystemPath as CoreFileSystemPath;
+use protocol::permissions::FileSystemSandboxEntry as CoreFileSystemSandboxEntry;
+use protocol::permissions::FileSystemSpecialPath as CoreFileSystemSpecialPath;
+use protocol::permissions::NetworkSandboxPolicy as CoreNetworkSandboxPolicy;
+use protocol::protocol::NetworkAccess as CoreNetworkAccess;
+use protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
+use protocol::request_permissions::RequestPermissionProfile as CoreRequestPermissionProfile;
+#[cfg(feature = "schema-export")]
+#[cfg(feature = "schema-export")]
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde::Serializer;
+use std::num::NonZeroUsize;
+use std::path::PathBuf;
+#[cfg(feature = "schema-export")]
+#[cfg(feature = "schema-export")]
+use ts_rs::TS;
+
+camel_case_enum_from_core! {
+    pub enum NetworkApprovalProtocol from CoreNetworkApprovalProtocol {
+        Http,
+        Https,
+        Socks5Tcp,
+        Socks5Udp,
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct NetworkApprovalContext {
+    pub host: String,
+    pub protocol: NetworkApprovalProtocol,
+}
+
+impl From<CoreNetworkApprovalContext> for NetworkApprovalContext {
+    fn from(value: CoreNetworkApprovalContext) -> Self {
+        Self {
+            host: value.host,
+            protocol: value.protocol.into(),
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct AdditionalFileSystemPermissions {
+    /// This will be removed in favor of `entries`.
+    pub read: Option<Vec<AbsolutePathBuf>>,
+    /// This will be removed in favor of `entries`.
+    pub write: Option<Vec<AbsolutePathBuf>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema-export", ts(optional))]
+    pub glob_scan_max_depth: Option<NonZeroUsize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema-export", ts(optional))]
+    pub entries: Option<Vec<FileSystemSandboxEntry>>,
+}
+
+impl From<CoreFileSystemPermissions> for AdditionalFileSystemPermissions {
+    fn from(value: CoreFileSystemPermissions) -> Self {
+        if let Some((read, write)) = value.legacy_read_write_roots() {
+            let mut entries = Vec::with_capacity(
+                read.as_ref().map_or(0, Vec::len) + write.as_ref().map_or(0, Vec::len),
+            );
+            if let Some(paths) = read.as_ref() {
+                entries.extend(paths.iter().map(|path| FileSystemSandboxEntry {
+                    path: FileSystemPath::Path { path: path.clone() },
+                    access: FileSystemAccessMode::Read,
+                }));
+            }
+            if let Some(paths) = write.as_ref() {
+                entries.extend(paths.iter().map(|path| FileSystemSandboxEntry {
+                    path: FileSystemPath::Path { path: path.clone() },
+                    access: FileSystemAccessMode::Write,
+                }));
+            }
+            Self {
+                read,
+                write,
+                glob_scan_max_depth: None,
+                entries: Some(entries),
+            }
+        } else {
+            Self {
+                read: None,
+                write: None,
+                glob_scan_max_depth: value.glob_scan_max_depth,
+                entries: Some(
+                    value
+                        .entries
+                        .into_iter()
+                        .map(FileSystemSandboxEntry::from)
+                        .collect(),
+                ),
+            }
+        }
+    }
+}
+
+impl From<AdditionalFileSystemPermissions> for CoreFileSystemPermissions {
+    fn from(value: AdditionalFileSystemPermissions) -> Self {
+        let mut permissions = if let Some(entries) = value.entries {
+            Self {
+                entries: entries
+                    .into_iter()
+                    .map(CoreFileSystemSandboxEntry::from)
+                    .collect(),
+                glob_scan_max_depth: None,
+            }
+        } else {
+            CoreFileSystemPermissions::from_read_write_roots(value.read, value.write)
+        };
+        permissions.glob_scan_max_depth = value.glob_scan_max_depth;
+        permissions
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct AdditionalNetworkPermissions {
+    pub enabled: Option<bool>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct PermissionProfileNetworkPermissions {
+    pub enabled: bool,
+}
+
+impl From<CoreNetworkPermissions> for AdditionalNetworkPermissions {
+    fn from(value: CoreNetworkPermissions) -> Self {
+        Self {
+            enabled: value.enabled,
+        }
+    }
+}
+
+impl From<AdditionalNetworkPermissions> for CoreNetworkPermissions {
+    fn from(value: AdditionalNetworkPermissions) -> Self {
+        Self {
+            enabled: value.enabled,
+        }
+    }
+}
+
+impl From<CoreNetworkSandboxPolicy> for PermissionProfileNetworkPermissions {
+    fn from(value: CoreNetworkSandboxPolicy) -> Self {
+        Self {
+            enabled: value.is_enabled(),
+        }
+    }
+}
+
+impl From<PermissionProfileNetworkPermissions> for CoreNetworkSandboxPolicy {
+    fn from(value: PermissionProfileNetworkPermissions) -> Self {
+        if value.enabled {
+            Self::Enabled
+        } else {
+            Self::Restricted
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct RequestPermissionProfile {
+    pub network: Option<AdditionalNetworkPermissions>,
+    pub file_system: Option<AdditionalFileSystemPermissions>,
+}
+
+impl From<CoreRequestPermissionProfile> for RequestPermissionProfile {
+    fn from(value: CoreRequestPermissionProfile) -> Self {
+        Self {
+            network: value.network.map(AdditionalNetworkPermissions::from),
+            file_system: value.file_system.map(AdditionalFileSystemPermissions::from),
+        }
+    }
+}
+
+impl From<RequestPermissionProfile> for CoreRequestPermissionProfile {
+    fn from(value: RequestPermissionProfile) -> Self {
+        Self {
+            network: value.network.map(CoreNetworkPermissions::from),
+            file_system: value.file_system.map(CoreFileSystemPermissions::from),
+        }
+    }
+}
+
+camel_case_enum_from_core!(
+    pub enum FileSystemAccessMode from CoreFileSystemAccessMode {
+        Read,
+        Write,
+        None
+    }
+);
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(feature = "schema-export", ts(tag = "kind"))]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum FileSystemSpecialPath {
+    Root,
+    Minimal,
+    #[serde(alias = "current_working_directory")]
+    ProjectRoots {
+        subpath: Option<PathBuf>,
+    },
+    Tmpdir,
+    SlashTmp,
+    Unknown {
+        path: String,
+        subpath: Option<PathBuf>,
+    },
+}
+
+impl From<CoreFileSystemSpecialPath> for FileSystemSpecialPath {
+    fn from(value: CoreFileSystemSpecialPath) -> Self {
+        match value {
+            CoreFileSystemSpecialPath::Root => Self::Root,
+            CoreFileSystemSpecialPath::Minimal => Self::Minimal,
+            CoreFileSystemSpecialPath::ProjectRoots { subpath } => Self::ProjectRoots { subpath },
+            CoreFileSystemSpecialPath::Tmpdir => Self::Tmpdir,
+            CoreFileSystemSpecialPath::SlashTmp => Self::SlashTmp,
+            CoreFileSystemSpecialPath::Unknown { path, subpath } => Self::Unknown { path, subpath },
+        }
+    }
+}
+
+impl From<FileSystemSpecialPath> for CoreFileSystemSpecialPath {
+    fn from(value: FileSystemSpecialPath) -> Self {
+        match value {
+            FileSystemSpecialPath::Root => Self::Root,
+            FileSystemSpecialPath::Minimal => Self::Minimal,
+            FileSystemSpecialPath::ProjectRoots { subpath } => Self::ProjectRoots { subpath },
+            FileSystemSpecialPath::Tmpdir => Self::Tmpdir,
+            FileSystemSpecialPath::SlashTmp => Self::SlashTmp,
+            FileSystemSpecialPath::Unknown { path, subpath } => Self::Unknown { path, subpath },
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(feature = "schema-export", ts(tag = "type"))]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum FileSystemPath {
+    Path { path: AbsolutePathBuf },
+    GlobPattern { pattern: String },
+    Special { value: FileSystemSpecialPath },
+}
+
+impl From<CoreFileSystemPath> for FileSystemPath {
+    fn from(value: CoreFileSystemPath) -> Self {
+        match value {
+            CoreFileSystemPath::Path { path } => Self::Path { path },
+            CoreFileSystemPath::GlobPattern { pattern } => Self::GlobPattern { pattern },
+            CoreFileSystemPath::Special { value } => Self::Special {
+                value: value.into(),
+            },
+        }
+    }
+}
+
+impl From<FileSystemPath> for CoreFileSystemPath {
+    fn from(value: FileSystemPath) -> Self {
+        match value {
+            FileSystemPath::Path { path } => Self::Path { path },
+            FileSystemPath::GlobPattern { pattern } => Self::GlobPattern { pattern },
+            FileSystemPath::Special { value } => Self::Special {
+                value: value.into(),
+            },
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct FileSystemSandboxEntry {
+    pub path: FileSystemPath,
+    pub access: FileSystemAccessMode,
+}
+
+impl From<CoreFileSystemSandboxEntry> for FileSystemSandboxEntry {
+    fn from(value: CoreFileSystemSandboxEntry) -> Self {
+        Self {
+            path: value.path.into(),
+            access: value.access.into(),
+        }
+    }
+}
+
+impl From<FileSystemSandboxEntry> for CoreFileSystemSandboxEntry {
+    fn from(value: FileSystemSandboxEntry) -> Self {
+        Self {
+            path: value.path.into(),
+            access: value.access.to_core(),
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(tag = "type"))]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum PermissionProfileFileSystemPermissions {
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    Restricted {
+        entries: Vec<FileSystemSandboxEntry>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema-export", ts(optional))]
+        glob_scan_max_depth: Option<NonZeroUsize>,
+    },
+    Unrestricted,
+}
+
+impl From<CoreManagedFileSystemPermissions> for PermissionProfileFileSystemPermissions {
+    fn from(value: CoreManagedFileSystemPermissions) -> Self {
+        match value {
+            CoreManagedFileSystemPermissions::Restricted {
+                entries,
+                glob_scan_max_depth,
+            } => Self::Restricted {
+                entries: entries
+                    .into_iter()
+                    .map(FileSystemSandboxEntry::from)
+                    .collect(),
+                glob_scan_max_depth,
+            },
+            CoreManagedFileSystemPermissions::Unrestricted => Self::Unrestricted,
+        }
+    }
+}
+
+impl From<PermissionProfileFileSystemPermissions> for CoreManagedFileSystemPermissions {
+    fn from(value: PermissionProfileFileSystemPermissions) -> Self {
+        match value {
+            PermissionProfileFileSystemPermissions::Restricted {
+                entries,
+                glob_scan_max_depth,
+            } => Self::Restricted {
+                entries: entries
+                    .into_iter()
+                    .map(CoreFileSystemSandboxEntry::from)
+                    .collect(),
+                glob_scan_max_depth,
+            },
+            PermissionProfileFileSystemPermissions::Unrestricted => Self::Unrestricted,
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(tag = "type"))]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum PermissionProfile {
+    /// Codex owns sandbox construction for this profile.
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    Managed {
+        network: PermissionProfileNetworkPermissions,
+        file_system: PermissionProfileFileSystemPermissions,
+    },
+    /// Do not apply an outer sandbox.
+    Disabled,
+    /// Filesystem isolation is enforced by an external caller.
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    External {
+        network: PermissionProfileNetworkPermissions,
+    },
+}
+
+impl From<CorePermissionProfile> for PermissionProfile {
+    fn from(value: CorePermissionProfile) -> Self {
+        match value {
+            CorePermissionProfile::Managed {
+                file_system,
+                network,
+            } => Self::Managed {
+                network: network.into(),
+                file_system: file_system.into(),
+            },
+            CorePermissionProfile::Disabled => Self::Disabled,
+            CorePermissionProfile::External { network } => Self::External {
+                network: network.into(),
+            },
+        }
+    }
+}
+
+impl From<PermissionProfile> for CorePermissionProfile {
+    fn from(value: PermissionProfile) -> Self {
+        match value {
+            PermissionProfile::Managed {
+                file_system,
+                network,
+            } => Self::Managed {
+                file_system: file_system.into(),
+                network: network.into(),
+            },
+            PermissionProfile::Disabled => Self::Disabled,
+            PermissionProfile::External { network } => Self::External {
+                network: network.into(),
+            },
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ActivePermissionProfile {
+    /// Identifier from `default_permissions` or the implicit built-in default,
+    /// such as `:workspace` or a user-defined `[permissions.<id>]` profile.
+    pub id: String,
+    /// Parent profile identifier once permissions profiles support
+    /// inheritance. This is currently always `null`.
+    #[serde(default)]
+    pub extends: Option<String>,
+}
+
+impl From<CoreActivePermissionProfile> for ActivePermissionProfile {
+    fn from(value: CoreActivePermissionProfile) -> Self {
+        Self {
+            id: value.id,
+            extends: value.extends,
+        }
+    }
+}
+
+impl From<ActivePermissionProfile> for CoreActivePermissionProfile {
+    fn from(value: ActivePermissionProfile) -> Self {
+        Self {
+            id: value.id,
+            extends: value.extends,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionProfileSelectionParams {
+    id: String,
+    legacy_additional_writable_roots: Vec<AbsolutePathBuf>,
+}
+
+impl PermissionProfileSelectionParams {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            legacy_additional_writable_roots: Vec::new(),
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn into_id(self) -> String {
+        self.id
+    }
+
+    pub fn legacy_additional_writable_roots(&self) -> &[AbsolutePathBuf] {
+        &self.legacy_additional_writable_roots
+    }
+}
+
+impl From<String> for PermissionProfileSelectionParams {
+    fn from(id: String) -> Self {
+        Self::new(id)
+    }
+}
+
+impl Serialize for PermissionProfileSelectionParams {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.id)
+    }
+}
+
+impl<'de> Deserialize<'de> for PermissionProfileSelectionParams {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Id(String),
+            LegacyProfile {
+                #[serde(rename = "type")]
+                _type: LegacyPermissionProfileSelectionType,
+                id: String,
+                #[serde(default)]
+                modifications: Option<Vec<LegacyPermissionProfileModificationParams>>,
+            },
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        enum LegacyPermissionProfileSelectionType {
+            Profile,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "camelCase")]
+        enum LegacyPermissionProfileModificationParams {
+            #[serde(rename_all = "camelCase")]
+            AdditionalWritableRoot { path: AbsolutePathBuf },
+        }
+
+        match Wire::deserialize(deserializer)? {
+            Wire::Id(id) => Ok(Self::new(id)),
+            Wire::LegacyProfile {
+                id, modifications, ..
+            } => {
+                let legacy_additional_writable_roots = modifications
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|modification| match modification {
+                        LegacyPermissionProfileModificationParams::AdditionalWritableRoot {
+                            path,
+                        } => path,
+                    })
+                    .collect();
+                Ok(Self {
+                    id,
+                    legacy_additional_writable_roots,
+                })
+            }
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct AdditionalPermissionProfile {
+    /// Partial overlay used for per-command permission requests.
+    pub network: Option<AdditionalNetworkPermissions>,
+    pub file_system: Option<AdditionalFileSystemPermissions>,
+}
+
+impl From<CoreAdditionalPermissionProfile> for AdditionalPermissionProfile {
+    fn from(value: CoreAdditionalPermissionProfile) -> Self {
+        Self {
+            network: value.network.map(AdditionalNetworkPermissions::from),
+            file_system: value.file_system.map(AdditionalFileSystemPermissions::from),
+        }
+    }
+}
+
+impl From<AdditionalPermissionProfile> for CoreAdditionalPermissionProfile {
+    fn from(value: AdditionalPermissionProfile) -> Self {
+        Self {
+            network: value.network.map(CoreNetworkPermissions::from),
+            file_system: value.file_system.map(CoreFileSystemPermissions::from),
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct GrantedPermissionProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema-export", ts(optional))]
+    pub network: Option<AdditionalNetworkPermissions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema-export", ts(optional))]
+    pub file_system: Option<AdditionalFileSystemPermissions>,
+}
+
+impl From<GrantedPermissionProfile> for CoreAdditionalPermissionProfile {
+    fn from(value: GrantedPermissionProfile) -> Self {
+        Self {
+            network: value.network.map(CoreNetworkPermissions::from),
+            file_system: value.file_system.map(CoreFileSystemPermissions::from),
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum NetworkAccess {
+    #[default]
+    Restricted,
+    Enabled,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(tag = "type"))]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum SandboxPolicy {
+    DangerFullAccess,
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    ReadOnly {
+        #[serde(default)]
+        network_access: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    ExternalSandbox {
+        #[serde(default)]
+        network_access: NetworkAccess,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    WorkspaceWrite {
+        #[serde(default)]
+        writable_roots: Vec<AbsolutePathBuf>,
+        #[serde(default)]
+        network_access: bool,
+        #[serde(default)]
+        exclude_tmpdir_env_var: bool,
+        #[serde(default)]
+        exclude_slash_tmp: bool,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum SandboxPolicyDeserialize {
+    DangerFullAccess,
+    #[serde(rename_all = "camelCase")]
+    ReadOnly {
+        #[serde(default)]
+        network_access: bool,
+        #[serde(default)]
+        access: Option<LegacyReadOnlyAccess>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ExternalSandbox {
+        #[serde(default)]
+        network_access: NetworkAccess,
+    },
+    #[serde(rename_all = "camelCase")]
+    WorkspaceWrite {
+        #[serde(default)]
+        writable_roots: Vec<AbsolutePathBuf>,
+        #[serde(default)]
+        read_only_access: Option<LegacyReadOnlyAccess>,
+        #[serde(default)]
+        network_access: bool,
+        #[serde(default)]
+        exclude_tmpdir_env_var: bool,
+        #[serde(default)]
+        exclude_slash_tmp: bool,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum LegacyReadOnlyAccess {
+    FullAccess,
+    Restricted,
+}
+
+impl<'de> Deserialize<'de> for SandboxPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match SandboxPolicyDeserialize::deserialize(deserializer)? {
+            SandboxPolicyDeserialize::DangerFullAccess => Ok(SandboxPolicy::DangerFullAccess),
+            SandboxPolicyDeserialize::ReadOnly {
+                network_access,
+                access,
+            } => {
+                if matches!(access, Some(LegacyReadOnlyAccess::Restricted)) {
+                    return Err(serde::de::Error::custom(
+                        "readOnly.access is no longer supported; use permissionProfile for restricted reads",
+                    ));
+                }
+                Ok(SandboxPolicy::ReadOnly { network_access })
+            }
+            SandboxPolicyDeserialize::ExternalSandbox { network_access } => {
+                Ok(SandboxPolicy::ExternalSandbox { network_access })
+            }
+            SandboxPolicyDeserialize::WorkspaceWrite {
+                writable_roots,
+                read_only_access,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+            } => {
+                if matches!(read_only_access, Some(LegacyReadOnlyAccess::Restricted)) {
+                    return Err(serde::de::Error::custom(
+                        "workspaceWrite.readOnlyAccess is no longer supported; use permissionProfile for restricted reads",
+                    ));
+                }
+                Ok(SandboxPolicy::WorkspaceWrite {
+                    writable_roots,
+                    network_access,
+                    exclude_tmpdir_env_var,
+                    exclude_slash_tmp,
+                })
+            }
+        }
+    }
+}
+
+impl SandboxPolicy {
+    pub fn to_core(&self) -> protocol::protocol::SandboxPolicy {
+        match self {
+            SandboxPolicy::DangerFullAccess => protocol::protocol::SandboxPolicy::DangerFullAccess,
+            SandboxPolicy::ReadOnly { network_access } => {
+                protocol::protocol::SandboxPolicy::ReadOnly {
+                    network_access: *network_access,
+                }
+            }
+            SandboxPolicy::ExternalSandbox { network_access } => {
+                protocol::protocol::SandboxPolicy::ExternalSandbox {
+                    network_access: match network_access {
+                        NetworkAccess::Restricted => CoreNetworkAccess::Restricted,
+                        NetworkAccess::Enabled => CoreNetworkAccess::Enabled,
+                    },
+                }
+            }
+            SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+            } => protocol::protocol::SandboxPolicy::WorkspaceWrite {
+                writable_roots: writable_roots.clone(),
+                network_access: *network_access,
+                exclude_tmpdir_env_var: *exclude_tmpdir_env_var,
+                exclude_slash_tmp: *exclude_slash_tmp,
+            },
+        }
+    }
+}
+
+impl From<protocol::protocol::SandboxPolicy> for SandboxPolicy {
+    fn from(value: protocol::protocol::SandboxPolicy) -> Self {
+        match value {
+            protocol::protocol::SandboxPolicy::DangerFullAccess => SandboxPolicy::DangerFullAccess,
+            protocol::protocol::SandboxPolicy::ReadOnly { network_access } => {
+                SandboxPolicy::ReadOnly { network_access }
+            }
+            protocol::protocol::SandboxPolicy::ExternalSandbox { network_access } => {
+                SandboxPolicy::ExternalSandbox {
+                    network_access: match network_access {
+                        CoreNetworkAccess::Restricted => NetworkAccess::Restricted,
+                        CoreNetworkAccess::Enabled => NetworkAccess::Enabled,
+                    },
+                }
+            }
+            protocol::protocol::SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+            } => SandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+            },
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(transparent)]
+#[cfg_attr(feature = "schema-export", ts(type = "Array<string>"))]
+pub struct ExecPolicyAmendment {
+    pub command: Vec<String>,
+}
+
+impl ExecPolicyAmendment {
+    pub fn into_core(self) -> CoreExecPolicyAmendment {
+        CoreExecPolicyAmendment::new(self.command)
+    }
+}
+
+impl From<CoreExecPolicyAmendment> for ExecPolicyAmendment {
+    fn from(value: CoreExecPolicyAmendment) -> Self {
+        Self {
+            command: value.command().to_vec(),
+        }
+    }
+}
+
+camel_case_enum_from_core!(
+    pub enum NetworkPolicyRuleAction from CoreNetworkPolicyRuleAction {
+        Allow, Deny
+    }
+);
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct NetworkPolicyAmendment {
+    pub host: String,
+    pub action: NetworkPolicyRuleAction,
+}
+
+impl NetworkPolicyAmendment {
+    pub fn into_core(self) -> CoreNetworkPolicyAmendment {
+        CoreNetworkPolicyAmendment {
+            host: self.host,
+            action: self.action.to_core(),
+        }
+    }
+}
+
+impl From<CoreNetworkPolicyAmendment> for NetworkPolicyAmendment {
+    fn from(value: CoreNetworkPolicyAmendment) -> Self {
+        Self {
+            host: value.host,
+            action: NetworkPolicyRuleAction::from(value.action),
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct PermissionsRequestApprovalParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    /// Unix timestamp (in milliseconds) when this approval request started.
+    #[cfg_attr(feature = "schema-export", ts(type = "number"))]
+    pub started_at_ms: i64,
+    pub cwd: AbsolutePathBuf,
+    pub reason: Option<String>,
+    pub permissions: RequestPermissionProfile,
+}
+
+camel_case_enum_from_core!(
+    #[derive(Default)]
+    pub enum PermissionGrantScope from CorePermissionGrantScope {
+        #[default]
+        Turn,
+        Session
+    }
+);
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct PermissionsRequestApprovalResponse {
+    pub permissions: GrantedPermissionProfile,
+    #[serde(default)]
+    pub scope: PermissionGrantScope,
+    /// Review every subsequent command in this turn before normal sandboxed execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema-export", ts(optional))]
+    pub strict_auto_review: Option<bool>,
+}

@@ -35,7 +35,7 @@ pub fn user_turn_submission_from_op(
             personality,
             environments,
         } => {
-            let collaboration_mode = collaboration_mode.or_else(|| {
+            let collaboration_mode = collaboration_mode.or({
                 Some(CollaborationMode {
                     mode: ModeKind::Default,
                     settings: Settings {

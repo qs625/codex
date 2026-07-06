@@ -201,7 +201,7 @@ impl ToolEmitter {
 fn now_unix_timestamp_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("system clock before unix epoch")
+        .unwrap_or_default()
         .as_millis() as i64
 }
 

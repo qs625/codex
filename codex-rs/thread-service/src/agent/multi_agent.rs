@@ -688,6 +688,7 @@ enum WaitEvent {
     Mailbox(bool),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_wait_result(
     target: String,
     agent_name: String,
@@ -712,6 +713,7 @@ fn build_wait_result(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_pending_message_result(
     target: &str,
     agent_name: &str,
@@ -783,8 +785,7 @@ async fn handle_spawn_agent_request(
     let agent_max_depth = turn.agent_max_depth();
     if exceeds_thread_spawn_depth_limit(child_depth, agent_max_depth) {
         return Err(FunctionCallError::RespondToModel(format!(
-            "agent depth limit reached: cannot spawn depth {child_depth}; configured agents.max_depth is {}",
-            agent_max_depth
+            "agent depth limit reached: cannot spawn depth {child_depth}; configured agents.max_depth is {agent_max_depth}"
         )));
     }
     let current_agent_path = session.current_agent_path_for_turn(turn.as_ref());

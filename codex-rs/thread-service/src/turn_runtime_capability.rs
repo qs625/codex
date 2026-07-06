@@ -172,9 +172,7 @@ impl thread_service_api::ThreadRuntimeCapability for TurnContext {
                     spec,
                 )
                 .await;
-            let Some(active) = active else {
-                return None;
-            };
+            let active = active?;
             let mode = active.mode();
             let cancellation_token = active.cancellation_token();
             let state = match mode {

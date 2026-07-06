@@ -570,7 +570,7 @@ impl ThreadService {
                 api_runtime_factory: Arc::new(model_service::DefaultApiRuntimeFactory),
                 provider_auth_manager: provider_auth_manager.clone(),
                 model_provider_factory: Arc::clone(&model_provider_factory),
-                default_provider: Some(provider.clone()),
+                default_provider: Some(provider),
                 providers_by_id: std::collections::HashMap::new(),
                 model_metadata_overrides: Vec::new(),
                 attestation_provider: None,
@@ -1784,6 +1784,7 @@ impl ThreadServiceState {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadActivitySource for ThreadServiceState {
     fn live_thread_activity_snapshot(
         &self,
@@ -1802,17 +1803,22 @@ impl thread_service_api::LiveThreadActivitySource for ThreadServiceState {
                     status: None,
                 };
             };
+            let has_active_turn = {
+                let active_turn = thread.codex.session.active_turn.lock().await;
+                active_turn.is_some()
+            };
             thread_service_api::LiveThreadActivitySnapshot {
                 manager_available: true,
                 active_event_subscription_count,
                 thread_found: true,
-                has_active_turn: thread.codex.session.active_turn.lock().await.is_some(),
+                has_active_turn,
                 status: Some(thread.agent_status().await),
             }
         }
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
     fn submit_live_thread_op(
         &self,
@@ -1830,6 +1836,7 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadShutdownRuntime for ThreadServiceState {
     fn shutdown_live_thread(
         &self,
@@ -1863,6 +1870,7 @@ impl thread_service_api::LiveThreadShutdownRuntime for ThreadServiceState {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadChildCompletionRuntime for ThreadServiceState {
     fn mark_direct_child_completion_pending_if_enabled(
         &self,
@@ -1912,6 +1920,7 @@ impl thread_service_api::LiveThreadChildCompletionRuntime for ThreadServiceState
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadStatusRuntime for ThreadServiceState {
     fn live_thread_agent_status(
         &self,
@@ -1944,6 +1953,7 @@ impl thread_service_api::LiveThreadStatusRuntime for ThreadServiceState {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
     fn list_live_thread_ids(&self) -> impl std::future::Future<Output = Vec<ThreadId>> + Send + '_ {
         self.list_thread_ids()
@@ -1998,6 +2008,7 @@ fn stored_thread_to_initial_history(
     }))
 }
 
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadRegistry for ThreadService {
     type Thread = CodexThread;
 

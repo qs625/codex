@@ -2,7 +2,7 @@ use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
 use app_server_protocol::RequestId;
 use app_server_protocol::ThreadGoal;
-use app_server_protocol::ThreadHistoryBuilder;
+use thread_history::ThreadHistoryBuilder;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnError;
 use codex_file_watcher::WatchRegistration;

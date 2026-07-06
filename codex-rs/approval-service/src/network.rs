@@ -49,16 +49,9 @@ fn network_approval_outcome_to_result(
     }
 }
 
+#[derive(Default)]
 pub struct NetworkApprovalService {
     runtime: NetworkApprovalRuntime<GuardianNetworkAccessTrigger>,
-}
-
-impl Default for NetworkApprovalService {
-    fn default() -> Self {
-        Self {
-            runtime: NetworkApprovalRuntime::default(),
-        }
-    }
 }
 
 impl NetworkApprovalService {

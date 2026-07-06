@@ -101,6 +101,7 @@ pub trait ThreadStateRuntime: Send + Sync {
         status: DirectionalThreadSpawnEdgeStatus,
     ) -> StateApiFuture<'_, ()>;
 
+    #[allow(clippy::too_many_arguments)]
     fn list_threads<'a>(
         &'a self,
         page_size: usize,

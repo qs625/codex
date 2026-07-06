@@ -47,8 +47,7 @@ class AppServerClient extends EventEmitter {
   }
 
   start() {
-    const command =
-      process.env.CODEX_APP_SERVER_CMD ?? DEFAULT_APP_SERVER_COMMAND;
+    const command = process.env.APP_SERVER_CMD ?? DEFAULT_APP_SERVER_COMMAND;
     const codexHome = process.env.CODEX_HOME ?? DEFAULT_CODEX_HOME;
     fs.mkdirSync(codexHome, { recursive: true });
     this.child = spawn(command, {
@@ -199,13 +198,13 @@ function resolveWorkspaceAppServerBinary() {
   ) {
     const workspaceBinary = path.join(
       current,
-      "codex-rs/target/debug/codex-app-server",
+      "codex-rs/target/debug/app-server",
     );
     if (fs.existsSync(workspaceBinary)) {
       return shellQuote(workspaceBinary);
     }
   }
-  return "codex-app-server";
+  return "app-server";
 }
 
 function resolvePrototypeCodexHome() {

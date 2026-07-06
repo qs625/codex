@@ -266,7 +266,6 @@ async fn maybe_persist_disabled_install_request(
             tool_id = tool.id(),
             "failed to persist disabled tool suggestion"
         );
-        return;
     }
 }
 

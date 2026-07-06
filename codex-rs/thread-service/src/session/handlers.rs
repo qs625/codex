@@ -510,6 +510,7 @@ pub async fn set_thread_memory_mode(sess: &Arc<Session>, sub_id: String, mode: T
     }
 }
 
+#[allow(clippy::await_holding_invalid_type)]
 async fn shutdown_session_runtime(sess: &Arc<Session>) {
     sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
     let _ = sess.conversation.shutdown().await;

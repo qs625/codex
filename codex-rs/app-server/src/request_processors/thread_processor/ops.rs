@@ -1,0 +1,1098 @@
+use super::*;
+
+impl ThreadRequestProcessor {
+    pub(super) async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
+        thread_service::AgentsMdManager::new(config)
+            .instruction_sources(LOCAL_FS.as_ref())
+            .await
+    }
+
+    pub(super) async fn acquire_thread_list_state_permit(
+        &self,
+    ) -> Result<SemaphorePermit<'_>, JSONRPCErrorError> {
+        self.thread_list_state_permit
+            .acquire()
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to acquire thread list state permit: {err}"))
+            })
+    }
+
+    pub(super) async fn set_app_server_client_info(
+        &self,
+        thread_id: ThreadId,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+    ) -> Result<(), JSONRPCErrorError> {
+        let mcp_elicitations_auto_deny = xcode_26_4_mcp_elicitations_auto_deny(
+            app_server_client_name.as_deref(),
+            app_server_client_version.as_deref(),
+        );
+        self.live_threads
+            .set_thread_app_server_client_info(
+                thread_id,
+                AppServerClientInfo {
+                    app_server_client_name,
+                    app_server_client_version,
+                    mcp_elicitations_auto_deny,
+                },
+            )
+            .await
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!("failed to set app server client info: {err}")),
+            })
+    }
+
+    pub(super) async fn finalize_thread_teardown(&self, thread_id: ThreadId) {
+        self.pending_thread_unloads.lock().await.remove(&thread_id);
+        self.outgoing
+            .cancel_requests_for_thread(thread_id, /*error*/ None)
+            .await;
+        self.thread_state_manager
+            .remove_thread_state(thread_id)
+            .await;
+        self.thread_watch_manager
+            .remove_thread(&thread_id.to_string())
+            .await;
+    }
+
+    pub(super) async fn thread_unsubscribe_response_inner(
+        &self,
+        params: ThreadUnsubscribeParams,
+        connection_id: ConnectionId,
+    ) -> Result<ThreadUnsubscribeResponse, JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        if !self.live_threads.is_thread_loaded(thread_id).await {
+            self.finalize_thread_teardown(thread_id).await;
+            return Ok(ThreadUnsubscribeResponse {
+                status: ThreadUnsubscribeStatus::NotLoaded,
+            });
+        };
+
+        let was_subscribed = self
+            .thread_state_manager
+            .unsubscribe_connection_from_thread(thread_id, connection_id)
+            .await;
+
+        let status = if was_subscribed {
+            ThreadUnsubscribeStatus::Unsubscribed
+        } else {
+            ThreadUnsubscribeStatus::NotSubscribed
+        };
+        Ok(ThreadUnsubscribeResponse { status })
+    }
+
+    pub(super) async fn prepare_thread_for_archive(&self, thread_id: ThreadId) {
+        let removed_conversation = match self.live_threads.live_thread_handle(thread_id).await {
+            Ok(conversation) if self.live_threads.remove_loaded_thread(thread_id).await => {
+                Some(conversation)
+            }
+            Ok(_) | Err(_) => None,
+        };
+        if let Some(conversation) = removed_conversation {
+            info!("thread {thread_id} was active; shutting down");
+            match wait_for_thread_shutdown(&conversation).await {
+                ThreadShutdownResult::Complete => {}
+                ThreadShutdownResult::SubmitFailed => {
+                    error!(
+                        "failed to submit Shutdown to thread {thread_id}; proceeding with archive"
+                    );
+                }
+                ThreadShutdownResult::TimedOut => {
+                    warn!("thread {thread_id} shutdown timed out; proceeding with archive");
+                }
+            }
+        }
+        self.finalize_thread_teardown(thread_id).await;
+    }
+
+    pub(super) fn listener_task_context(&self) -> ListenerTaskContext {
+        ListenerTaskContext {
+            live_threads: Arc::clone(&self.live_threads),
+            thread_store: Some(Arc::clone(&self.thread_store)),
+            thread_state_manager: self.thread_state_manager.clone(),
+            outgoing: Arc::clone(&self.outgoing),
+            pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
+            thread_watch_manager: self.thread_watch_manager.clone(),
+            thread_list_state_permit: self.thread_list_state_permit.clone(),
+            fallback_model_provider: self.config.model_provider_id.clone(),
+            codex_home: self.config.codex_home.to_path_buf(),
+            skills_watcher: Arc::clone(&self.skills_watcher),
+        }
+    }
+
+    pub(super) async fn ensure_conversation_listener(
+        &self,
+        conversation_id: ThreadId,
+        connection_id: ConnectionId,
+    ) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
+        super::thread_lifecycle::ensure_conversation_listener(
+            self.listener_task_context(),
+            conversation_id,
+            connection_id,
+        )
+        .await
+    }
+
+    pub(crate) async fn drain_background_tasks(&self) {
+        self.background_tasks.close();
+        if tokio::time::timeout(Duration::from_secs(10), self.background_tasks.wait())
+            .await
+            .is_err()
+        {
+            warn!("timed out waiting for background tasks to shut down; proceeding");
+        }
+    }
+
+    pub(crate) async fn clear_all_thread_listeners(&self) {
+        self.thread_state_manager.clear_all_listeners().await;
+    }
+
+    pub(crate) async fn shutdown_threads(&self) {
+        let report = self
+            .thread_lifecycle_runtime
+            .shutdown_all_threads_bounded(Duration::from_secs(10))
+            .await;
+        for thread_id in report.submit_failed {
+            warn!("failed to submit Shutdown to thread {thread_id}");
+        }
+        for thread_id in report.timed_out {
+            warn!("timed out waiting for thread {thread_id} to shut down");
+        }
+    }
+
+    pub(super) async fn request_trace_context(
+        &self,
+        request_id: &ConnectionRequestId,
+    ) -> Option<protocol::protocol::W3cTraceContext> {
+        self.outgoing.request_trace_context(request_id).await
+    }
+
+    pub(super) async fn send_persist_extended_history_deprecation_notice(&self, connection_id: ConnectionId) {
+        self.outgoing
+            .send_server_notification_to_connections(
+                &[connection_id],
+                ServerNotification::DeprecationNotice(DeprecationNoticeNotification {
+                    summary: PERSIST_EXTENDED_HISTORY_DEPRECATION_SUMMARY.to_string(),
+                    details: Some(PERSIST_EXTENDED_HISTORY_DEPRECATION_DETAILS.to_string()),
+                }),
+            )
+            .await;
+    }
+
+    pub(crate) async fn emit_thread_started_notification_to_connections(
+        &self,
+        thread_id: ThreadId,
+        connection_ids: &[ConnectionId],
+    ) {
+        if connection_ids.is_empty() {
+            return;
+        }
+        let Ok(live_snapshot) = self.live_threads.live_thread_snapshot(thread_id).await else {
+            return;
+        };
+        let mut loaded_thread = build_thread_from_live_snapshot(thread_id, &live_snapshot);
+        loaded_thread.status = resolve_thread_status(
+            self.thread_watch_manager
+                .loaded_status_for_thread(&loaded_thread.id)
+                .await,
+            /*has_in_progress_turn*/ false,
+        );
+        let notif = thread_started_notification(loaded_thread);
+        self.outgoing
+            .send_server_notification_to_connections(
+                connection_ids,
+                ServerNotification::ThreadStarted(notif),
+            )
+            .await;
+    }
+
+    pub(super) async fn submit_core_op(
+        &self,
+        request_id: &ConnectionRequestId,
+        thread_id: ThreadId,
+        op: Op,
+        failure_message: &str,
+    ) -> Result<String, JSONRPCErrorError> {
+        if !self.live_threads.is_thread_loaded(thread_id).await {
+            return Err(invalid_request(format!("thread not found: {thread_id}")));
+        }
+        self.live_threads
+            .send_op_with_trace(thread_id, op, self.request_trace_context(request_id).await)
+            .await
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(_) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!("{failure_message}: {err}")),
+            })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn thread_start_task(
+        listener_task_context: ListenerTaskContext,
+        thread_runtime: Arc<dyn ThreadProcessorThreadRuntime>,
+        live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+        config_manager: ConfigManager,
+        request_id: ConnectionRequestId,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+        config_overrides: Option<HashMap<String, serde_json::Value>>,
+        typesafe_overrides: ConfigOverrides,
+        dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
+        session_start_source: Option<app_server_protocol::ThreadStartSource>,
+        thread_source: Option<protocol::protocol::ThreadSource>,
+        environments: Option<Vec<TurnEnvironmentSelection>>,
+        service_name: Option<String>,
+        request_trace: Option<W3cTraceContext>,
+    ) -> Result<(), JSONRPCErrorError> {
+        let thread_start_started_at = std::time::Instant::now();
+        let requested_cwd = typesafe_overrides.cwd.clone();
+        let mut config = config_manager
+            .load_with_overrides(config_overrides.clone(), typesafe_overrides.clone())
+            .await
+            .map_err(|err| config_load_error(&err))?;
+
+        // The user may have requested WorkspaceWrite or DangerFullAccess via
+        // the command line, though in the process of deriving the Config, it
+        // could be downgraded to ReadOnly (perhaps there is no sandbox
+        // available on Windows or the enterprise config disallows it). The cwd
+        // should still be considered "trusted" in this case.
+        let requested_permissions_trust_project =
+            requested_permissions_trust_project(&typesafe_overrides, config.cwd.as_path());
+        let effective_permissions_trust_project = permission_profile_trusts_project(
+            &config.permissions.effective_permission_profile(),
+            config.cwd.as_path(),
+        );
+
+        if requested_cwd.is_some()
+            && config.active_project.trust_level.is_none()
+            && (requested_permissions_trust_project || effective_permissions_trust_project)
+        {
+            let trust_target = resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), &config.cwd)
+                .await
+                .unwrap_or_else(|| config.cwd.clone());
+            let current_cli_overrides = config_manager.current_cli_overrides();
+            let cli_overrides_with_trust;
+            let cli_overrides_for_reload = if let Err(err) =
+                thread_service::config::set_project_trust_level(
+                    &listener_task_context.codex_home,
+                    trust_target.as_path(),
+                    TrustLevel::Trusted,
+                ) {
+                warn!(
+                    "failed to persist trusted project state for {}; continuing with in-memory trust for this thread: {err}",
+                    trust_target.display()
+                );
+                let mut project = toml::map::Map::new();
+                project.insert(
+                    "trust_level".to_string(),
+                    TomlValue::String("trusted".to_string()),
+                );
+                let mut projects = toml::map::Map::new();
+                projects.insert(
+                    project_trust_key(trust_target.as_path()),
+                    TomlValue::Table(project),
+                );
+                cli_overrides_with_trust = current_cli_overrides
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once((
+                        "projects".to_string(),
+                        TomlValue::Table(projects),
+                    )))
+                    .collect::<Vec<_>>();
+                cli_overrides_with_trust.as_slice()
+            } else {
+                current_cli_overrides.as_slice()
+            };
+
+            config = config_manager
+                .load_with_cli_overrides(
+                    cli_overrides_for_reload,
+                    config_overrides,
+                    typesafe_overrides,
+                    /*fallback_cwd*/ None,
+                )
+                .await
+                .map_err(|err| config_load_error(&err))?;
+        }
+
+        let instruction_sources = Self::instruction_sources_from_config(&config).await;
+        let environments = environments
+            .unwrap_or_else(|| thread_runtime.default_environment_selections(&config.cwd));
+        let dynamic_tools = dynamic_tools.unwrap_or_default();
+        let core_dynamic_tools = if dynamic_tools.is_empty() {
+            Vec::new()
+        } else {
+            validate_dynamic_tools(&dynamic_tools).map_err(invalid_request)?;
+            dynamic_tools
+                .into_iter()
+                .map(|tool| CoreDynamicToolSpec {
+                    namespace: tool.namespace,
+                    name: tool.name,
+                    description: tool.description,
+                    input_schema: tool.input_schema,
+                    defer_loading: tool.defer_loading,
+                })
+                .collect()
+        };
+        let core_dynamic_tool_count = core_dynamic_tools.len();
+        let create_thread_started_at = std::time::Instant::now();
+        let ThreadProcessorNewThread {
+            thread_id,
+            thread: created_thread,
+            session_configured,
+            ..
+        } = thread_runtime
+            .start_thread_with_options(StartThreadOptions {
+                config,
+                initial_history: match session_start_source
+                    .unwrap_or(app_server_protocol::ThreadStartSource::Startup)
+                {
+                    app_server_protocol::ThreadStartSource::Startup => InitialHistory::New,
+                    app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
+                },
+                session_source: None,
+                thread_source,
+                dynamic_tools: core_dynamic_tools,
+                persist_extended_history: false,
+                metrics_service_name: service_name,
+                parent_trace: request_trace,
+                environments,
+            })
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.create_thread",
+                otel.name = "app_server.thread_start.create_thread",
+                thread_start.dynamic_tool_count = core_dynamic_tool_count,
+                thread_start.persist_extended_history = false,
+            ))
+            .await
+            .map_err(|err| match err {
+                CodexErr::InvalidRequest(message) => invalid_request(message),
+                err => internal_error(format!("error creating thread: {err}")),
+            })?;
+        created_thread.record_startup_phase(
+            "thread_start_create_thread",
+            create_thread_started_at.elapsed(),
+            Some("ready"),
+        );
+
+        let mcp_elicitations_auto_deny = xcode_26_4_mcp_elicitations_auto_deny(
+            app_server_client_name.as_deref(),
+            app_server_client_version.as_deref(),
+        );
+        live_threads
+            .set_thread_app_server_client_info(
+                thread_id,
+                AppServerClientInfo {
+                    app_server_client_name,
+                    app_server_client_version,
+                    mcp_elicitations_auto_deny,
+                },
+            )
+            .await
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!("failed to set app server client info: {err}")),
+            })?;
+
+        let config_snapshot = created_thread
+            .config_snapshot()
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.config_snapshot",
+                otel.name = "app_server.thread_start.config_snapshot",
+            ))
+            .await;
+        let mut thread = build_thread_from_snapshot(
+            thread_id,
+            session_configured.session_id.to_string(),
+            &config_snapshot,
+            session_configured.rollout_path.clone(),
+        );
+
+        // Auto-attach a thread listener when starting a thread.
+        log_listener_attach_result(
+            super::thread_lifecycle::ensure_conversation_listener(
+                listener_task_context.clone(),
+                thread_id,
+                request_id.connection_id,
+            )
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.attach_listener",
+                otel.name = "app_server.thread_start.attach_listener",
+            ))
+            .await,
+            thread_id,
+            request_id.connection_id,
+            "thread",
+        );
+        let initial_display_turns = match load_initial_injected_context_turns(
+            listener_task_context.thread_store.as_ref(),
+            thread_id,
+        )
+        .instrument(tracing::info_span!(
+            "app_server.thread_start.load_initial_display_turns",
+            otel.name = "app_server.thread_start.load_initial_display_turns",
+        ))
+        .await
+        {
+            Ok(turns) => turns,
+            Err(err) => {
+                warn!("failed to load initial injected context display turns: {err:?}");
+                Vec::new()
+            }
+        };
+        thread.turns = initial_display_turns.clone();
+
+        listener_task_context
+            .thread_watch_manager
+            .upsert_thread_silently(thread.clone())
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.upsert_thread",
+                otel.name = "app_server.thread_start.upsert_thread",
+            ))
+            .await;
+
+        thread.status = resolve_thread_status(
+            listener_task_context
+                .thread_watch_manager
+                .loaded_status_for_thread(&thread.id)
+                .instrument(tracing::info_span!(
+                    "app_server.thread_start.resolve_status",
+                    otel.name = "app_server.thread_start.resolve_status",
+                ))
+                .await,
+            /*has_in_progress_turn*/ false,
+        );
+
+        let sandbox = thread_response_sandbox_policy(
+            &config_snapshot.permission_profile,
+            config_snapshot.cwd.as_path(),
+        );
+        let active_permission_profile =
+            thread_response_active_permission_profile(config_snapshot.active_permission_profile);
+
+        let response = ThreadStartResponse {
+            thread: thread.clone(),
+            model: config_snapshot.model,
+            model_provider: config_snapshot.model_provider_id,
+            service_tier: config_snapshot.service_tier,
+            cwd: config_snapshot.cwd,
+            runtime_workspace_roots: config_snapshot.workspace_roots,
+            instruction_sources,
+            approval_policy: config_snapshot.approval_policy.into(),
+            approvals_reviewer: config_snapshot.approvals_reviewer.into(),
+            sandbox,
+            permission_profile: Some(config_snapshot.permission_profile.into()),
+            active_permission_profile,
+            reasoning_effort: config_snapshot.reasoning_effort,
+        };
+        let notif = thread_started_notification(thread.clone());
+        let request_connection_id = request_id.connection_id;
+        listener_task_context
+            .outgoing
+            .send_response(request_id, response)
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.send_response",
+                otel.name = "app_server.thread_start.send_response",
+            ))
+            .await;
+
+        listener_task_context
+            .outgoing
+            .send_server_notification(ServerNotification::ThreadStarted(notif))
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.notify_started",
+                otel.name = "app_server.thread_start.notify_started",
+            ))
+            .await;
+        emit_initial_injected_context_items(
+            &listener_task_context,
+            request_connection_id,
+            &thread.id,
+            &initial_display_turns,
+        )
+        .instrument(tracing::info_span!(
+            "app_server.thread_start.emit_initial_display_items",
+            otel.name = "app_server.thread_start.emit_initial_display_items",
+        ))
+        .await;
+        created_thread.record_startup_phase(
+            "thread_start_total",
+            thread_start_started_at.elapsed(),
+            Some("ready"),
+        );
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_thread_config_overrides(
+        &self,
+        model: Option<String>,
+        model_provider: Option<String>,
+        service_tier: Option<Option<String>>,
+        cwd: Option<String>,
+        runtime_workspace_roots: Option<Vec<PathBuf>>,
+        approval_policy: Option<app_server_protocol::AskForApproval>,
+        approvals_reviewer: Option<app_server_protocol::ApprovalsReviewer>,
+        sandbox: Option<SandboxMode>,
+        permissions: Option<PermissionProfileSelectionParams>,
+        base_instructions: Option<String>,
+        developer_instructions: Option<String>,
+        personality: Option<Personality>,
+    ) -> ConfigOverrides {
+        let mut overrides = ConfigOverrides {
+            model,
+            model_provider,
+            service_tier,
+            cwd: cwd.map(PathBuf::from),
+            workspace_roots: runtime_workspace_roots,
+            approval_policy: approval_policy.map(app_server_protocol::AskForApproval::to_core),
+            approvals_reviewer: approvals_reviewer
+                .map(app_server_protocol::ApprovalsReviewer::to_core),
+            sandbox_mode: sandbox.map(SandboxMode::to_core),
+            codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
+            main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
+            base_instructions,
+            developer_instructions,
+            personality,
+            ..Default::default()
+        };
+        apply_permission_profile_selection_to_config_overrides(&mut overrides, permissions);
+        overrides
+    }
+
+    pub(super) fn parse_environment_selections(
+        &self,
+        environments: Option<Vec<TurnEnvironmentParams>>,
+    ) -> Result<Option<Vec<TurnEnvironmentSelection>>, JSONRPCErrorError> {
+        let environment_selections = environments.map(|environments| {
+            environments
+                .into_iter()
+                .map(|environment| TurnEnvironmentSelection {
+                    environment_id: environment.environment_id,
+                    cwd: environment.cwd,
+                })
+                .collect::<Vec<_>>()
+        });
+        if let Some(environment_selections) = environment_selections.as_ref() {
+            self.thread_runtime
+                .validate_environment_selections(environment_selections)
+                .map_err(|err| invalid_request(environment_selection_error_message(err)))?;
+        }
+        Ok(environment_selections)
+    }
+
+    pub(super) async fn thread_archive_inner(
+        &self,
+        params: ThreadArchiveParams,
+    ) -> Result<(ThreadArchiveResponse, Vec<String>), JSONRPCErrorError> {
+        let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
+        self.thread_archive_response(params).await
+    }
+
+    pub(super) async fn thread_archive_response(
+        &self,
+        params: ThreadArchiveParams,
+    ) -> Result<(ThreadArchiveResponse, Vec<String>), JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        let mut thread_ids = vec![thread_id];
+        if let Some(state_db_ctx) = self.state_db.as_ref() {
+            let descendants = state_db_ctx
+                .list_thread_spawn_descendants(thread_id)
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to list spawned descendants for thread id {thread_id}: {err}"
+                    ))
+                })?;
+            let mut seen = HashSet::from([thread_id]);
+            for descendant_id in descendants {
+                if seen.insert(descendant_id) {
+                    thread_ids.push(descendant_id);
+                }
+            }
+        }
+
+        let mut archive_thread_ids = Vec::new();
+        match self
+            .thread_store
+            .read_thread(StoreReadThreadParams {
+                thread_id,
+                include_archived: false,
+                include_history: false,
+            })
+            .await
+        {
+            Ok(thread) => {
+                if thread.archived_at.is_none() {
+                    archive_thread_ids.push(thread_id);
+                }
+            }
+            Err(err) => return Err(thread_store_archive_error("archive", err)),
+        }
+        for descendant_thread_id in thread_ids.into_iter().skip(1) {
+            match self
+                .thread_store
+                .read_thread(StoreReadThreadParams {
+                    thread_id: descendant_thread_id,
+                    include_archived: true,
+                    include_history: false,
+                })
+                .await
+            {
+                Ok(thread) => {
+                    if thread.archived_at.is_none() {
+                        archive_thread_ids.push(descendant_thread_id);
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        "failed to read spawned descendant thread {descendant_thread_id} while archiving {thread_id}: {err}"
+                    );
+                }
+            }
+        }
+
+        let mut archived_thread_ids = Vec::new();
+        let Some((parent_thread_id, descendant_thread_ids)) = archive_thread_ids.split_first()
+        else {
+            return Ok((ThreadArchiveResponse {}, archived_thread_ids));
+        };
+
+        self.prepare_thread_for_archive(*parent_thread_id).await;
+        match self
+            .thread_store
+            .archive_thread(StoreArchiveThreadParams {
+                thread_id: *parent_thread_id,
+            })
+            .await
+        {
+            Ok(()) => {
+                archived_thread_ids.push(parent_thread_id.to_string());
+            }
+            Err(err) => return Err(thread_store_archive_error("archive", err)),
+        }
+
+        for descendant_thread_id in descendant_thread_ids.iter().rev().copied() {
+            self.prepare_thread_for_archive(descendant_thread_id).await;
+            match self
+                .thread_store
+                .archive_thread(StoreArchiveThreadParams {
+                    thread_id: descendant_thread_id,
+                })
+                .await
+            {
+                Ok(()) => {
+                    archived_thread_ids.push(descendant_thread_id.to_string());
+                }
+                Err(err) => {
+                    warn!(
+                        "failed to archive spawned descendant thread {descendant_thread_id} while archiving {thread_id}: {err}"
+                    );
+                }
+            }
+        }
+
+        Ok((ThreadArchiveResponse {}, archived_thread_ids))
+    }
+
+    pub(super) async fn thread_increment_elicitation_inner(
+        &self,
+        params: ThreadIncrementElicitationParams,
+    ) -> Result<ThreadIncrementElicitationResponse, JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        let count = self
+            .live_threads
+            .increment_thread_out_of_band_elicitation_count(thread_id)
+            .await
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(_) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                err => internal_error(format!(
+                    "failed to increment out-of-band elicitation counter: {err}"
+                )),
+            })?;
+        Ok(ThreadIncrementElicitationResponse {
+            count,
+            paused: count > 0,
+        })
+    }
+
+    pub(super) async fn thread_decrement_elicitation_inner(
+        &self,
+        params: ThreadDecrementElicitationParams,
+    ) -> Result<ThreadDecrementElicitationResponse, JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        let count = self
+            .live_threads
+            .decrement_thread_out_of_band_elicitation_count(thread_id)
+            .await
+            .map_err(|err| match err {
+                CodexErr::ThreadNotFound(_) => {
+                    invalid_request(format!("thread not found: {thread_id}"))
+                }
+                CodexErr::InvalidRequest(message) => invalid_request(message),
+                err => internal_error(format!(
+                    "failed to decrement out-of-band elicitation counter: {err}"
+                )),
+            })?;
+        Ok(ThreadDecrementElicitationResponse {
+            count,
+            paused: count > 0,
+        })
+    }
+
+    pub(super) async fn thread_set_name_response_inner(
+        &self,
+        params: ThreadSetNameParams,
+    ) -> Result<(ThreadSetNameResponse, Option<ThreadNameUpdatedNotification>), JSONRPCErrorError>
+    {
+        let ThreadSetNameParams { thread_id, name } = params;
+        let thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        let Some(name) = thread_service::util::normalize_thread_name(&name) else {
+            return Err(invalid_request("thread name must not be empty"));
+        };
+
+        let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
+        self.thread_metadata_runtime
+            .update_thread_metadata(
+                thread_id,
+                StoreThreadMetadataPatch {
+                    name: Some(Some(name.clone())),
+                    ..Default::default()
+                },
+                /*include_archived*/ false,
+            )
+            .await
+            .map_err(|err| core_thread_write_error("set thread name", err))?;
+
+        Ok((
+            ThreadSetNameResponse {},
+            Some(ThreadNameUpdatedNotification {
+                thread_id: thread_id.to_string(),
+                thread_name: Some(name),
+            }),
+        ))
+    }
+
+    pub(super) async fn thread_memory_mode_set_response_inner(
+        &self,
+        params: ThreadMemoryModeSetParams,
+    ) -> Result<ThreadMemoryModeSetResponse, JSONRPCErrorError> {
+        let ThreadMemoryModeSetParams { thread_id, mode } = params;
+        let thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        self.thread_metadata_runtime
+            .update_thread_metadata(
+                thread_id,
+                StoreThreadMetadataPatch {
+                    memory_mode: Some(mode.to_core()),
+                    ..Default::default()
+                },
+                /*include_archived*/ false,
+            )
+            .await
+            .map_err(|err| core_thread_write_error("set thread memory mode", err))?;
+
+        Ok(ThreadMemoryModeSetResponse {})
+    }
+
+    pub(super) async fn memory_reset_response_inner(&self) -> Result<MemoryResetResponse, JSONRPCErrorError> {
+        let state_db = self
+            .state_db
+            .clone()
+            .ok_or_else(|| internal_error("sqlite state db unavailable for memory reset"))?;
+
+        state_db.clear_memory_data().await.map_err(|err| {
+            internal_error(format!("failed to clear memory rows in state db: {err}"))
+        })?;
+
+        clear_memory_roots_contents(&self.config.codex_home)
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to clear memory directories under {}: {err}",
+                    self.config.codex_home.display()
+                ))
+            })?;
+
+        Ok(MemoryResetResponse {})
+    }
+
+    pub(super) async fn thread_metadata_update_response_inner(
+        &self,
+        params: ThreadMetadataUpdateParams,
+    ) -> Result<ThreadMetadataUpdateResponse, JSONRPCErrorError> {
+        let ThreadMetadataUpdateParams {
+            thread_id,
+            git_info,
+        } = params;
+
+        let thread_uuid = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        let Some(ThreadMetadataGitInfoUpdateParams {
+            sha,
+            branch,
+            origin_url,
+        }) = git_info
+        else {
+            return Err(invalid_request("gitInfo must include at least one field"));
+        };
+
+        if sha.is_none() && branch.is_none() && origin_url.is_none() {
+            return Err(invalid_request("gitInfo must include at least one field"));
+        }
+
+        let git_sha = Self::normalize_thread_metadata_git_field(sha, "gitInfo.sha")?;
+        let git_branch = Self::normalize_thread_metadata_git_field(branch, "gitInfo.branch")?;
+        let git_origin_url =
+            Self::normalize_thread_metadata_git_field(origin_url, "gitInfo.originUrl")?;
+
+        let patch = StoreThreadMetadataPatch {
+            git_info: Some(StoreGitInfoPatch {
+                sha: git_sha,
+                branch: git_branch,
+                origin_url: git_origin_url,
+            }),
+            ..Default::default()
+        };
+
+        let updated_thread = {
+            let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
+            self.thread_metadata_runtime
+                .update_thread_metadata(thread_uuid, patch, /*include_archived*/ true)
+                .await
+                .map_err(|err| core_thread_write_error("update thread metadata", err))?
+        };
+        let (mut thread, _) = thread_from_stored_thread(
+            updated_thread,
+            self.config.model_provider_id.as_str(),
+            &self.config.cwd,
+        );
+        if let Ok(live_info) = self.live_threads.live_thread_info(thread_uuid).await {
+            thread.session_id = live_info.session_id.to_string();
+        }
+        self.attach_thread_name(thread_uuid, &mut thread).await;
+        thread.status = resolve_thread_status(
+            self.thread_watch_manager
+                .loaded_status_for_thread(&thread.id)
+                .await,
+            /*has_in_progress_turn*/ false,
+        );
+
+        Ok(ThreadMetadataUpdateResponse { thread })
+    }
+
+    pub(super) fn normalize_thread_metadata_git_field(
+        value: Option<Option<String>>,
+        name: &str,
+    ) -> Result<Option<Option<String>>, JSONRPCErrorError> {
+        match value {
+            Some(Some(value)) => {
+                let value = value.trim().to_string();
+                if value.is_empty() {
+                    return Err(invalid_request(format!("{name} must not be empty")));
+                }
+                Ok(Some(Some(value)))
+            }
+            Some(None) => Ok(Some(None)),
+            None => Ok(None),
+        }
+    }
+
+    pub(super) async fn thread_unarchive_inner(
+        &self,
+        params: ThreadUnarchiveParams,
+    ) -> Result<(ThreadUnarchiveResponse, ThreadUnarchivedNotification), JSONRPCErrorError> {
+        let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
+        let (response, thread_id) = self.thread_unarchive_response(params).await?;
+        Ok((response, ThreadUnarchivedNotification { thread_id }))
+    }
+
+    pub(super) async fn thread_unarchive_response(
+        &self,
+        params: ThreadUnarchiveParams,
+    ) -> Result<(ThreadUnarchiveResponse, String), JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        let fallback_provider = self.config.model_provider_id.clone();
+        let stored_thread = self
+            .thread_store
+            .unarchive_thread(StoreArchiveThreadParams { thread_id })
+            .await
+            .map_err(|err| thread_store_archive_error("unarchive", err))?;
+        let (mut thread, _) =
+            thread_from_stored_thread(stored_thread, fallback_provider.as_str(), &self.config.cwd);
+
+        thread.status = resolve_thread_status(
+            self.thread_watch_manager
+                .loaded_status_for_thread(&thread.id)
+                .await,
+            /*has_in_progress_turn*/ false,
+        );
+        self.attach_thread_name(thread_id, &mut thread).await;
+        let thread_id = thread.id.clone();
+        Ok((ThreadUnarchiveResponse { thread }, thread_id))
+    }
+
+    pub(super) async fn thread_rollback_inner(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadRollbackParams,
+    ) -> Result<(), JSONRPCErrorError> {
+        self.thread_rollback_start(request_id, params).await
+    }
+
+    pub(super) async fn thread_rollback_start(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadRollbackParams,
+    ) -> Result<(), JSONRPCErrorError> {
+        let ThreadRollbackParams {
+            thread_id,
+            num_turns,
+        } = params;
+
+        if num_turns == 0 {
+            return Err(invalid_request("numTurns must be >= 1"));
+        }
+
+        let thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        let request = request_id.clone();
+
+        let rollback_already_in_progress = {
+            let thread_state = self.thread_state_manager.thread_state(thread_id).await;
+            let mut thread_state = thread_state.lock().await;
+            if thread_state.pending_rollbacks.is_some() {
+                true
+            } else {
+                thread_state.pending_rollbacks = Some(request.clone());
+                false
+            }
+        };
+        if rollback_already_in_progress {
+            return Err(invalid_request(
+                "rollback already in progress for this thread",
+            ));
+        }
+
+        if let Err(err) = self
+            .submit_core_op(
+                request_id,
+                thread_id,
+                Op::ThreadRollback { num_turns },
+                "failed to start rollback",
+            )
+            .await
+        {
+            // No ThreadRollback event will arrive if an error occurs.
+            // Clean up and reply immediately.
+            let thread_state = self.thread_state_manager.thread_state(thread_id).await;
+            thread_state.lock().await.pending_rollbacks = None;
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    pub(super) async fn thread_compact_start_inner(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadCompactStartParams,
+    ) -> Result<ThreadCompactStartResponse, JSONRPCErrorError> {
+        let ThreadCompactStartParams { thread_id } = params;
+        let thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        self.submit_core_op(
+            request_id,
+            thread_id,
+            Op::Compact,
+            "failed to start compaction",
+        )
+        .await?;
+        Ok(ThreadCompactStartResponse {})
+    }
+
+    pub(super) async fn thread_background_terminals_clean_inner(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadBackgroundTerminalsCleanParams,
+    ) -> Result<ThreadBackgroundTerminalsCleanResponse, JSONRPCErrorError> {
+        let ThreadBackgroundTerminalsCleanParams { thread_id } = params;
+        let thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        self.submit_core_op(
+            request_id,
+            thread_id,
+            Op::CleanBackgroundTerminals,
+            "failed to clean background terminals",
+        )
+        .await?;
+        Ok(ThreadBackgroundTerminalsCleanResponse {})
+    }
+
+    pub(super) async fn thread_shell_command_inner(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadShellCommandParams,
+    ) -> Result<ThreadShellCommandResponse, JSONRPCErrorError> {
+        let ThreadShellCommandParams { thread_id, command } = params;
+        let command = command.trim().to_string();
+        if command.is_empty() {
+            return Err(invalid_request("command must not be empty"));
+        }
+        let thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        self.submit_core_op(
+            request_id,
+            thread_id,
+            Op::RunUserShellCommand { command },
+            "failed to start shell command",
+        )
+        .await?;
+        Ok(ThreadShellCommandResponse {})
+    }
+
+    pub(super) async fn thread_approve_guardian_denied_action_inner(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: ThreadApproveGuardianDeniedActionParams,
+    ) -> Result<ThreadApproveGuardianDeniedActionResponse, JSONRPCErrorError> {
+        let ThreadApproveGuardianDeniedActionParams { thread_id, event } = params;
+        let event = serde_json::from_value(event)
+            .map_err(|err| invalid_request(format!("invalid Guardian denial event: {err}")))?;
+        let thread_id = ThreadId::from_string(&thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+
+        self.submit_core_op(
+            request_id,
+            thread_id,
+            Op::ApproveGuardianDeniedAction { event },
+            "failed to approve Guardian denial",
+        )
+        .await?;
+        Ok(ThreadApproveGuardianDeniedActionResponse {})
+    }
+}

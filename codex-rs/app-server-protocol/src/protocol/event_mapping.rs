@@ -4,27 +4,27 @@ use crate::protocol::event_item_projection::project_event_msg_item;
 use crate::protocol::item_builders::build_command_execution_begin_item;
 use crate::protocol::item_builders::build_command_execution_end_item;
 use crate::protocol::item_builders::convert_patch_changes;
-use crate::protocol::v2::AgentMessageDeltaNotification;
-use crate::protocol::v2::CollabAgentState;
-use crate::protocol::v2::CollabAgentTool;
-use crate::protocol::v2::CollabAgentToolCallStatus;
-use crate::protocol::v2::CommandExecutionOutputDeltaNotification;
-use crate::protocol::v2::DynamicToolCallOutputContentItem;
-use crate::protocol::v2::DynamicToolCallStatus;
-use crate::protocol::v2::FileChangePatchUpdatedNotification;
-use crate::protocol::v2::ItemCompletedNotification;
-use crate::protocol::v2::ItemStartedNotification;
-use crate::protocol::v2::PlanDeltaNotification;
-use crate::protocol::v2::ReasoningSummaryPartAddedNotification;
-use crate::protocol::v2::ReasoningSummaryTextDeltaNotification;
-use crate::protocol::v2::ReasoningTextDeltaNotification;
-use crate::protocol::v2::TerminalInteractionNotification;
-use crate::protocol::v2::ThreadItem;
+use crate::protocol::AgentMessageDeltaNotification;
+use crate::protocol::CollabAgentState;
+use crate::protocol::CollabAgentTool;
+use crate::protocol::CollabAgentToolCallStatus;
+use crate::protocol::CommandExecutionOutputDeltaNotification;
+use crate::protocol::DynamicToolCallOutputContentItem;
+use crate::protocol::DynamicToolCallStatus;
+use crate::protocol::FileChangePatchUpdatedNotification;
+use crate::protocol::ItemCompletedNotification;
+use crate::protocol::ItemStartedNotification;
+use crate::protocol::PlanDeltaNotification;
+use crate::protocol::ReasoningSummaryPartAddedNotification;
+use crate::protocol::ReasoningSummaryTextDeltaNotification;
+use crate::protocol::ReasoningTextDeltaNotification;
+use crate::protocol::TerminalInteractionNotification;
+use crate::protocol::ThreadItem;
 use protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
 use protocol::protocol::EventMsg;
 use std::collections::HashMap;
 
-/// Build the v2 app-server notification that directly corresponds to a single core event.
+/// Build the app-server notification that directly corresponds to a single core event.
 ///
 /// This only covers the stateless event-to-notification projections that have a one-to-one
 /// mapping. Callers remain responsible for any surrounding state checks or side effects before
@@ -564,7 +564,7 @@ pub fn item_event_to_server_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::v2::CollabAgentStatus;
+    use crate::protocol::CollabAgentStatus;
     use pretty_assertions::assert_eq;
     use protocol::AgentPath;
     use protocol::ThreadId;
@@ -833,8 +833,8 @@ mod tests {
                 item: ThreadItem::CommandWait {
                     id: "wait-1".to_string(),
                     command_id: "cmd-1".to_string(),
-                    status: crate::protocol::v2::CommandWaitStatus::Completed,
-                    notification: Some(crate::protocol::v2::CommandWaitNotificationKind::Exit),
+                    status: crate::protocol::CommandWaitStatus::Completed,
+                    notification: Some(crate::protocol::CommandWaitNotificationKind::Exit),
                     exit_code: Some(0),
                     wall_time_seconds: 1.25,
                     wait_timeout_ms: 250,
@@ -999,7 +999,7 @@ mod tests {
                 item: ThreadItem::EventCommandEvent {
                     id: "event-command-1".to_string(),
                     subscription_id: "sub-1".to_string(),
-                    kind: crate::protocol::v2::EventCommandEventKind::Exited,
+                    kind: crate::protocol::EventCommandEventKind::Exited,
                     label: Some("tests".to_string()),
                     command: "cargo test".to_string(),
                     cwd: Some("/tmp/project".to_string()),
@@ -1055,7 +1055,7 @@ mod tests {
                 item: ThreadItem::EventCommandEvent {
                     id: "event-command-1".to_string(),
                     subscription_id: "sub-1".to_string(),
-                    kind: crate::protocol::v2::EventCommandEventKind::Exited,
+                    kind: crate::protocol::EventCommandEventKind::Exited,
                     label: Some("tests".to_string()),
                     command: "cargo test".to_string(),
                     cwd: Some("/tmp/project".to_string()),

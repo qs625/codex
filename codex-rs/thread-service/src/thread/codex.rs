@@ -487,6 +487,7 @@ impl CodexThread {
         self.codex.thread_environment_selections().await
     }
 
+    #[allow(clippy::await_holding_invalid_type)]
     pub async fn read_mcp_resource(
         &self,
         server: &str,
@@ -511,6 +512,7 @@ impl CodexThread {
         Ok(serde_json::to_value(result)?)
     }
 
+    #[allow(clippy::await_holding_invalid_type)]
     pub async fn call_mcp_tool(
         &self,
         server: &str,
@@ -603,6 +605,7 @@ impl thread_service_api::SessionCommandHandle for CodexThread {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadHandle for CodexThread {
     fn session_configured(&self) -> SessionConfiguredEvent {
         CodexThread::session_configured(self)

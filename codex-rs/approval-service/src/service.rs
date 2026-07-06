@@ -159,6 +159,7 @@ impl ApprovalServiceApi for ApprovalService {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn request_apply_patch_approval(
     session_api: Arc<dyn ApprovalSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,

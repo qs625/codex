@@ -106,7 +106,6 @@ fn app_server_request_span_template(
         rpc.transport = transport,
         rpc.request_id = %request_id,
         app_server.connection_id = %connection_id,
-        app_server.api_version = "v2",
         app_server.client_name = field::Empty,
         app_server.client_version = field::Empty,
         turn.id = field::Empty,

@@ -61,7 +61,7 @@ pub(super) async fn load_auth_and_mcp(
     let host_owned_codex_apps_enabled = config.features.apps_enabled_for_auth(
         auth_snapshot
             .as_ref()
-            .is_some_and(|auth| auth.uses_codex_backend()),
+            .is_some_and(codex_auth_types::RequestAuthSnapshot::uses_codex_backend),
     );
     let auth_statuses = mcp_auth_runtime
         .compute_auth_statuses(
@@ -121,6 +121,7 @@ pub(super) fn build_post_session_configured_events(config: &Config) -> Vec<Event
     events
 }
 
+#[allow(clippy::await_holding_invalid_type)]
 pub(super) async fn start_session_mcp_runtime(
     sess: &Arc<Session>,
     config: &Arc<Config>,

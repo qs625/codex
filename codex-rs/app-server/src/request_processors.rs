@@ -40,8 +40,6 @@ use app_server_protocol::CommandExecResizeParams;
 use app_server_protocol::CommandExecTerminateParams;
 use app_server_protocol::CommandExecWriteParams;
 use app_server_protocol::ConfigWarningNotification;
-use app_server_protocol::ConversationGitInfo;
-use app_server_protocol::ConversationSummary;
 use app_server_protocol::DeprecationNoticeNotification;
 use app_server_protocol::DynamicToolSpec as ApiDynamicToolSpec;
 use app_server_protocol::EnvironmentAddParams;
@@ -55,12 +53,6 @@ use app_server_protocol::FeedbackUploadResponse;
 use app_server_protocol::GetAccountParams;
 use app_server_protocol::GetAccountRateLimitsResponse;
 use app_server_protocol::GetAccountResponse;
-use app_server_protocol::GetAuthStatusParams;
-use app_server_protocol::GetAuthStatusResponse;
-use app_server_protocol::GetConversationSummaryParams;
-use app_server_protocol::GetConversationSummaryResponse;
-use app_server_protocol::GitDiffToRemoteParams;
-use app_server_protocol::GitDiffToRemoteResponse;
 use app_server_protocol::GitInfo as ApiGitInfo;
 use app_server_protocol::HookMetadata;
 use app_server_protocol::HooksListParams;
@@ -73,7 +65,6 @@ use app_server_protocol::ListMcpServerStatusParams;
 use app_server_protocol::ListMcpServerStatusResponse;
 use app_server_protocol::LoginAccountParams;
 use app_server_protocol::LoginAccountResponse;
-use app_server_protocol::LoginApiKeyParams;
 use app_server_protocol::LogoutAccountResponse;
 use app_server_protocol::MarketplaceAddParams;
 use app_server_protocol::MarketplaceAddResponse;
@@ -172,7 +163,7 @@ use app_server_protocol::ThreadGoalGetResponse;
 use app_server_protocol::ThreadGoalSetParams;
 use app_server_protocol::ThreadGoalSetResponse;
 use app_server_protocol::ThreadGoalUpdatedNotification;
-use app_server_protocol::ThreadHistoryBuilder;
+use thread_history::ThreadHistoryBuilder;
 use app_server_protocol::ThreadIncrementElicitationParams;
 use app_server_protocol::ThreadIncrementElicitationResponse;
 use app_server_protocol::ThreadInjectItemsParams;
@@ -267,7 +258,6 @@ use codex_features::Stage;
 use codex_feedback::CodexFeedback;
 use codex_feedback::FeedbackAttachmentPath;
 use codex_feedback::FeedbackUploadOptions;
-use codex_git_info::git_diff_to_remote;
 use codex_git_info::resolve_root_git_project_for_trust;
 use codex_login::AuthManager;
 use codex_login::CLIENT_ID;
@@ -448,7 +438,6 @@ mod external_agent_config_processor;
 mod feedback_doctor_report;
 mod feedback_processor;
 mod fs_processor;
-mod git_processor;
 mod initialize_processor;
 mod marketplace_processor;
 mod mcp_processor;
@@ -471,7 +460,6 @@ pub(crate) use environment_processor::EnvironmentRequestProcessor;
 pub(crate) use external_agent_config_processor::ExternalAgentConfigRequestProcessor;
 pub(crate) use feedback_processor::FeedbackRequestProcessor;
 pub(crate) use fs_processor::FsRequestProcessor;
-pub(crate) use git_processor::GitRequestProcessor;
 pub(crate) use initialize_processor::InitializeRequestProcessor;
 pub(crate) use marketplace_processor::MarketplaceRequestProcessor;
 pub(crate) use mcp_processor::McpRequestProcessor;
@@ -496,6 +484,29 @@ use crate::thread_state::ThreadStateManager;
 use context_usage_replay::send_thread_context_usage_update_to_connection;
 use token_usage_replay::latest_token_usage_turn_id_from_rollout_items;
 use token_usage_replay::send_thread_token_usage_update_to_connection;
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+struct ConversationGitInfo {
+    sha: Option<String>,
+    branch: Option<String>,
+    origin_url: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ConversationSummary {
+    conversation_id: ThreadId,
+    path: PathBuf,
+    preview: String,
+    timestamp: Option<String>,
+    updated_at: Option<String>,
+    model_provider: String,
+    cwd: PathBuf,
+    cli_version: String,
+    source: protocol::protocol::SessionSource,
+    git_info: Option<ConversationGitInfo>,
+}
 
 mod config_errors;
 mod request_errors;

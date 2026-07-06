@@ -343,6 +343,7 @@ impl ApplyPatchArgumentDiffConsumer {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn intercept_apply_patch(
     approval_api: Arc<dyn ApprovalServiceApi>,
     session: Arc<dyn ApprovalSessionCapability>,

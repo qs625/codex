@@ -103,6 +103,7 @@ pub trait WorkflowRuntimeBridge: Send + Sync {
 pub type WorkflowProgressFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 pub trait WorkflowProgressSink: Send + Sync + 'static {
+    #[allow(clippy::too_many_arguments)]
     fn record_workflow_progress<'a>(
         &'a self,
         run_id: &'a str,

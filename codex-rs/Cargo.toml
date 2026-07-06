@@ -114,6 +114,7 @@ members = [
     "sandboxing-api",
     "sandboxing",
     "thread-service",
+    "thread-history",
     "session-telemetry-api",
     "stdio-to-uds",
     "otel",
@@ -192,6 +193,7 @@ app-server-transport = { path = "app-server-transport" }
 app-server-daemon = { path = "app-server-daemon" }
 app-server-client = { path = "app-server-client" }
 app-server-protocol = { path = "app-server-protocol" }
+thread-history = { path = "thread-history" }
 app-server-test-client = { path = "app-server-test-client" }
 codex-apply-patch = { path = "apply-patch" }
 codex-arg0 = { path = "arg0" }

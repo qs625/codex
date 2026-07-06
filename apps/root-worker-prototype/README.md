@@ -12,7 +12,7 @@ pnpm --filter @my-codex/root-worker-prototype dev
 This starts:
 
 - Vite on `http://localhost:5173` for the Electron renderer
-- Electron, which starts `../../codex-rs/target/debug/codex-app-server --listen stdio://` by default when that local build exists, otherwise it falls back to `codex-app-server --listen stdio://` from `PATH`
+- Electron, which starts `../../codex-rs/target/debug/app-server --listen stdio://` by default when that local build exists, otherwise it falls back to `app-server --listen stdio://` from `PATH`
 - the prototype defaults `CODEX_HOME` to `~/.codex-home`
 
 Use this only when you specifically want the Vite dev server flow.
@@ -22,7 +22,7 @@ You can override the app-server command, Codex home, or workspace with:
 ```bash
 CODEX_HOME=/tmp/my-codex-root-worker-ui-env/codex-home \
 ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-ui-env/workspace \
-CODEX_APP_SERVER_CMD="codex-app-server --listen stdio://" \
+APP_SERVER_CMD="app-server --listen stdio://" \
 pnpm --filter @my-codex/root-worker-prototype dev
 ```
 

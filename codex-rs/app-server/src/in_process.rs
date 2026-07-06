@@ -155,6 +155,7 @@ pub struct InProcessStartArgs {
 /// [`Lagged`](Self::Lagged) is a transport health marker, not an application
 /// event — it signals that the consumer fell behind and some events were dropped.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum InProcessServerEvent {
     /// Server request that requires client response/rejection.
     ServerRequest(ServerRequest),
@@ -855,7 +856,7 @@ mod tests {
             assert!(response.is_object());
 
             let _parsed: ConfigRequirementsReadResponse =
-                serde_json::from_value(response).expect("response should match v2 schema");
+                serde_json::from_value(response).expect("response should match protocol schema");
             client
                 .shutdown()
                 .await
@@ -916,7 +917,7 @@ mod tests {
                 }
             };
             let _parsed: ConfigRequirementsReadResponse =
-                serde_json::from_value(response).expect("response should match v2 schema");
+                serde_json::from_value(response).expect("response should match protocol schema");
             client
                 .shutdown()
                 .await

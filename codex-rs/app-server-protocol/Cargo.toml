@@ -13,17 +13,19 @@ doctest = false
 workspace = true
 
 [features]
-cli = ["dep:clap"]
+default = []
+schema-export = []
+cli = ["dep:clap", "schema-export"]
 
 [[bin]]
 name = "export"
 path = "src/bin/export.rs"
-required-features = ["cli"]
+required-features = ["cli", "schema-export"]
 
 [[bin]]
 name = "write_schema_fixtures"
 path = "src/bin/write_schema_fixtures.rs"
-required-features = ["cli"]
+required-features = ["cli", "schema-export"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -37,21 +39,11 @@ jsonrpc-types = { workspace = true }
 mcp-types = { workspace = true }
 plugin-service-api = { workspace = true }
 protocol = { workspace = true }
-codex-shell-utils = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-shlex = { workspace = true }
 strum_macros = { workspace = true }
-tree-sitter = { workspace = true }
-tree-sitter-bash = { workspace = true }
-rmcp = { workspace = true, default-features = false, features = [
-    "base64",
-    "macros",
-    "schemars",
-    "server",
-] }
 ts-rs = { workspace = true }
 inventory = { workspace = true }
 tracing = { workspace = true }

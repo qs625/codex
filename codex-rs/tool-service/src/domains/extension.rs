@@ -63,8 +63,7 @@ pub(crate) fn resolve_executor(
 ) -> Result<Arc<dyn ExtensionToolExecutor>, FunctionCallError> {
     let Some(extension_tools) = request.params.extension_tools else {
         return Err(FunctionCallError::Fatal(format!(
-            "tool domain extension is unavailable for {}",
-            tool_name
+            "tool domain extension is unavailable for {tool_name}"
         )));
     };
 
@@ -75,9 +74,7 @@ pub(crate) fn resolve_executor(
             contributor.tools(extension_tools.session_store, extension_tools.thread_store)
         })
         .find(|tool| tool.tool_name() == *tool_name)
-        .ok_or_else(|| {
-            FunctionCallError::Fatal(format!("unsupported extension tool {}", tool_name))
-        })
+        .ok_or_else(|| FunctionCallError::Fatal(format!("unsupported extension tool {tool_name}")))
 }
 
 pub(crate) async fn dispatch(

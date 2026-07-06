@@ -344,7 +344,7 @@ async fn run_guardian_review(
             }
         }
         ReviewRuntimeOutcome::Error(error) => {
-            let decision = handle_guardian_runtime_error(
+            handle_guardian_runtime_error(
                 session,
                 turn,
                 review_tracking,
@@ -358,8 +358,7 @@ async fn run_guardian_review(
                 runtime_result.analytics_result,
                 error,
             )
-            .await;
-            decision
+            .await
         }
     }
 }

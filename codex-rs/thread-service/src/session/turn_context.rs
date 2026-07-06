@@ -122,14 +122,16 @@ impl TurnContext {
     pub fn session_arc(&self) -> Arc<Session> {
         self.session
             .upgrade()
-            .expect("TurnContext session must remain alive while the turn is active")
+            .unwrap_or_else(|| {
+                panic!("TurnContext session must remain alive while the turn is active")
+            })
     }
 
     pub fn self_arc(&self) -> Arc<TurnContext> {
         self.self_weak
             .get()
             .and_then(Weak::upgrade)
-            .expect("TurnContext self_weak must be initialized")
+            .unwrap_or_else(|| panic!("TurnContext self_weak must be initialized"))
     }
 
     pub(crate) fn resolve_apply_patch_environment(
@@ -719,9 +721,9 @@ impl TurnContext {
                 .with_model(model.as_str(), model_info.slug.as_str()),
             provider: self.provider.clone(),
             reasoning_effort,
-            reasoning_summary: self.reasoning_summary.clone(),
+            reasoning_summary: self.reasoning_summary,
             session_source: self.session_source.clone(),
-            thread_source: self.thread_source.clone(),
+            thread_source: self.thread_source,
             environments: self.environments.clone(),
             #[allow(deprecated)]
             cwd: self.cwd.clone(),
@@ -732,7 +734,7 @@ impl TurnContext {
             compact_prompt: self.compact_prompt.clone(),
             user_instructions: self.user_instructions.clone(),
             collaboration_mode,
-            personality: self.personality.clone(),
+            personality: self.personality,
             approval_policy: self.approval_policy.clone(),
             permission_profile: self.permission_profile.clone(),
             network: self.network.clone(),

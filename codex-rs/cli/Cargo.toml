@@ -25,7 +25,7 @@ clap = { workspace = true, features = ["derive"] }
 clap_complete = { workspace = true }
 app-server = { workspace = true }
 app-server-daemon = { workspace = true }
-app-server-protocol = { workspace = true }
+app-server-protocol = { workspace = true, features = ["schema-export"] }
 app-server-test-client = { workspace = true }
 codex-auth-types = { workspace = true }
 codex-arg0 = { workspace = true }

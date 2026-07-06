@@ -292,7 +292,7 @@ async fn dispatch_dynamic_tool(
 }
 
 async fn dispatch_view_image(
-    turn: &(impl ThreadTurnCapability + thread_service_api::ThreadRuntimeCapability + ?Sized),
+    turn: &(impl thread_service_api::ThreadRuntimeCapability + ?Sized),
     call: &ToolCall,
 ) -> Result<ViewImageOutput, FunctionCallError> {
     if !turn.supports_image_input() {

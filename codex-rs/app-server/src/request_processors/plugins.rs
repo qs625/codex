@@ -284,6 +284,7 @@ fn plugin_share_principal_from_remote(
 }
 
 impl PluginRequestProcessor {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<R>(
         auth_manager: Arc<AuthManager>,
         runtime: Arc<R>,

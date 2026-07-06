@@ -107,6 +107,7 @@ pub(crate) struct ConfigRequestProcessor {
 }
 
 impl ConfigRequestProcessor {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<R>(
         outgoing: Arc<OutgoingMessageSender>,
         config_manager: ConfigManager,

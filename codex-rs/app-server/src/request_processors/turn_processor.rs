@@ -549,7 +549,7 @@ impl TurnRequestProcessor {
             .map(|mode| self.normalize_turn_start_collaboration_mode(mode));
         let environment_selections = self.parse_environment_selections(params.environments)?;
 
-        // Map v2 input items to core input items.
+        // Map protocol input items to core input items.
         let mapped_items: Vec<CoreInputItem> = params
             .input
             .into_iter()

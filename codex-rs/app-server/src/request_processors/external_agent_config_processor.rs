@@ -117,6 +117,7 @@ pub(crate) struct ExternalAgentConfigRequestProcessor {
 }
 
 impl ExternalAgentConfigRequestProcessor {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         outgoing: Arc<OutgoingMessageSender>,
         runtime: Arc<impl ExternalAgentRuntime + 'static>,

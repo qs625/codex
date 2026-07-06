@@ -1,0 +1,325 @@
+use super::*;
+
+impl Session {
+    /// Inject additional user input into the currently active turn.
+    ///
+    /// Returns the active turn id when accepted.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state updates must remain atomic"
+    )]
+    pub async fn steer_input(
+        &self,
+        input: Vec<UserInput>,
+        expected_turn_id: Option<&str>,
+        responsesapi_client_metadata: Option<HashMap<String, String>>,
+    ) -> Result<String, SteerInputError> {
+        let mut active = self.active_turn.lock().await;
+        let Some(active_turn) = active.as_mut() else {
+            return validate_steer_input(input, expected_turn_id, None)
+                .map(|validated| validated.active_turn_id);
+        };
+
+        let Some((active_turn_id, active_task)) = active_turn.tasks.first() else {
+            return validate_steer_input(input, expected_turn_id, None)
+                .map(|validated| validated.active_turn_id);
+        };
+
+        let active_turn_id = active_turn_id.clone();
+        let active_task_kind = active_task.kind;
+        let active_turn_context = Arc::clone(&active_task.turn_context);
+        let validated = validate_steer_input(
+            input,
+            expected_turn_id,
+            Some(ActiveSteerTurn {
+                turn_id: &active_turn_id,
+                task_kind: steerable_task_kind(active_task_kind),
+            }),
+        )?;
+
+        if let Some(responsesapi_client_metadata) = responsesapi_client_metadata {
+            active_turn_context
+                .turn_metadata_state
+                .set_responsesapi_client_metadata(responsesapi_client_metadata);
+        }
+
+        let mut turn_state = active_turn.turn_state.lock().await;
+        turn_state.push_pending_input(PendingInputItem::from(
+            codex_model_input::response_input_item_from_user_input(validated.input),
+        ));
+        turn_state.accept_mailbox_delivery_for_current_turn();
+        Ok(validated.active_turn_id)
+    }
+
+    /// Returns the input if there was no task running to inject into.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state updates must remain atomic"
+    )]
+    pub async fn inject_hook_inspectable_items(
+        &self,
+        input: Vec<ResponseInputItem>,
+    ) -> Result<(), Vec<ResponseInputItem>> {
+        let mut active = self.active_turn.lock().await;
+        match active.as_mut() {
+            Some(at) => {
+                let mut ts = at.turn_state.lock().await;
+                for item in input {
+                    ts.push_pending_input(PendingInputItem::from(item));
+                }
+                Ok(())
+            }
+            None => Err(input),
+        }
+    }
+
+    pub(crate) async fn defer_mailbox_delivery_to_next_turn(&self, sub_id: &str) {
+        let turn_state = self.turn_state_for_sub_id(sub_id).await;
+        let Some(turn_state) = turn_state else {
+            return;
+        };
+        let mut turn_state = turn_state.lock().await;
+        if turn_state.has_pending_input() {
+            return;
+        }
+        turn_state.set_mailbox_delivery_phase(MailboxDeliveryPhase::NextTurn);
+    }
+
+    pub(crate) async fn accept_mailbox_delivery_for_current_turn(&self, sub_id: &str) {
+        let turn_state = self.turn_state_for_sub_id(sub_id).await;
+        let Some(turn_state) = turn_state else {
+            return;
+        };
+        turn_state
+            .lock()
+            .await
+            .set_mailbox_delivery_phase(MailboxDeliveryPhase::CurrentTurn);
+    }
+
+    pub(crate) async fn record_memory_citation_for_turn(&self, sub_id: &str) {
+        let turn_state = self.turn_state_for_sub_id(sub_id).await;
+        let Some(turn_state) = turn_state else {
+            return;
+        };
+        turn_state.lock().await.has_memory_citation = true;
+    }
+
+    async fn turn_state_for_sub_id(
+        &self,
+        sub_id: &str,
+    ) -> Option<Arc<tokio::sync::Mutex<crate::state::TurnState>>> {
+        let active = self.active_turn.lock().await;
+        active.as_ref().and_then(|active_turn| {
+            active_turn
+                .tasks
+                .contains_key(sub_id)
+                .then(|| Arc::clone(&active_turn.turn_state))
+        })
+    }
+
+    pub(crate) fn subscribe_mailbox_seq(&self) -> watch::Receiver<u64> {
+        self.mailbox.subscribe()
+    }
+
+    pub(crate) async fn wait_agent_current_window(
+        &self,
+        sender_thread_id: ThreadId,
+        receiver_thread_id: ThreadId,
+        initial_timeout_ms: i64,
+        hard_cap_timeout_ms: i64,
+    ) -> Duration {
+        let mut guard = self.wait_agent_backoff.lock().await;
+        guard
+            .entry((sender_thread_id, receiver_thread_id))
+            .or_insert_with(|| {
+                command_service_api::WaitBackoffState::new(
+                    duration_from_config_ms(initial_timeout_ms),
+                    duration_from_config_ms(hard_cap_timeout_ms),
+                )
+            })
+            .current_window()
+    }
+
+    pub(crate) async fn advance_wait_agent_backoff(
+        &self,
+        sender_thread_id: ThreadId,
+        receiver_thread_id: ThreadId,
+    ) {
+        let mut guard = self.wait_agent_backoff.lock().await;
+        if let Some(state) = guard.get_mut(&(sender_thread_id, receiver_thread_id)) {
+            state.advance_after_timeout();
+        }
+    }
+
+    pub(crate) async fn reset_wait_agent_backoff(
+        &self,
+        sender_thread_id: ThreadId,
+        receiver_thread_id: ThreadId,
+    ) {
+        let mut guard = self.wait_agent_backoff.lock().await;
+        if let Some(state) = guard.get_mut(&(sender_thread_id, receiver_thread_id)) {
+            state.reset_after_event();
+        }
+    }
+
+    pub(crate) fn enqueue_mailbox_communication(&self, communication: InterAgentCommunication) {
+        self.mailbox.send(PendingInputItem::from(communication));
+    }
+
+    pub(crate) fn enqueue_async_input(&self, input: PendingInputItem) {
+        self.mailbox.send(input);
+    }
+
+    pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
+        self.mailbox_rx.lock().await.has_pending_trigger_turn()
+    }
+
+    pub(crate) async fn has_pending_mailbox_items(&self) -> bool {
+        self.mailbox_rx.lock().await.has_pending()
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state reads must remain atomic"
+    )]
+    pub(crate) async fn find_pending_input<F, R>(&self, mut f: F) -> Option<R>
+    where
+        F: FnMut(&PendingInputItem) -> Option<R>,
+    {
+        let accepts_mailbox_delivery = {
+            let active = self.active_turn.lock().await;
+            match active.as_ref() {
+                Some(at) => {
+                    let ts = at.turn_state.lock().await;
+                    if let Some(found) = ts.pending_input().iter().find_map(&mut f) {
+                        return Some(found);
+                    }
+                    ts.accepts_mailbox_delivery_for_current_turn()
+                }
+                None => true,
+            }
+        };
+        if !accepts_mailbox_delivery {
+            return None;
+        }
+        {
+            let idle_pending_input = self.idle_pending_input.lock().await;
+            if let Some(found) = idle_pending_input.iter().find_map(&mut f) {
+                return Some(found);
+            }
+        }
+        let mut mailbox_rx = self.mailbox_rx.lock().await;
+        mailbox_rx.pending().find_map(f)
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state updates must remain atomic"
+    )]
+    pub async fn prepend_pending_input(&self, input: Vec<PendingInputItem>) -> Result<(), ()> {
+        let mut active = self.active_turn.lock().await;
+        match active.as_mut() {
+            Some(at) => {
+                let mut ts = at.turn_state.lock().await;
+                ts.prepend_pending_input(input);
+                Ok(())
+            }
+            None => Err(()),
+        }
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state updates must remain atomic"
+    )]
+    pub async fn get_pending_input(&self) -> Vec<PendingInputItem> {
+        let (pending_input, accepts_mailbox_delivery) = {
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    (
+                        ts.take_pending_input(),
+                        ts.accepts_mailbox_delivery_for_current_turn(),
+                    )
+                }
+                None => (Vec::new(), true),
+            }
+        };
+        if !accepts_mailbox_delivery {
+            return pending_input;
+        }
+        let mailbox_items = {
+            let mut mailbox_rx = self.mailbox_rx.lock().await;
+            mailbox_rx.drain()
+        };
+        if pending_input.is_empty() {
+            mailbox_items
+        } else if mailbox_items.is_empty() {
+            pending_input
+        } else {
+            let mut pending_input = pending_input;
+            pending_input.extend(mailbox_items);
+            pending_input
+        }
+    }
+
+    /// Queue response items to be injected into the next active turn created for this session.
+    pub(crate) async fn queue_response_items_for_next_turn(&self, items: Vec<PendingInputItem>) {
+        if items.is_empty() {
+            return;
+        }
+
+        let mut idle_pending_input = self.idle_pending_input.lock().await;
+        idle_pending_input.extend(items);
+    }
+
+    pub(crate) async fn take_queued_response_items_for_next_turn(&self) -> Vec<PendingInputItem> {
+        std::mem::take(&mut *self.idle_pending_input.lock().await)
+    }
+
+    pub(crate) async fn has_queued_response_items_for_next_turn(&self) -> bool {
+        !self.idle_pending_input.lock().await.is_empty()
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "active turn checks and turn state reads must remain atomic"
+    )]
+    pub async fn has_pending_input(&self) -> bool {
+        let (has_turn_pending_input, accepts_mailbox_delivery) = {
+            let active = self.active_turn.lock().await;
+            match active.as_ref() {
+                Some(at) => {
+                    let ts = at.turn_state.lock().await;
+                    (
+                        ts.has_pending_input(),
+                        ts.accepts_mailbox_delivery_for_current_turn(),
+                    )
+                }
+                None => (false, true),
+            }
+        };
+        if has_turn_pending_input {
+            return true;
+        }
+        if !accepts_mailbox_delivery {
+            return false;
+        }
+        self.has_pending_mailbox_items().await
+    }
+
+    pub async fn interrupt_task(self: &Arc<Self>) {
+        info!("interrupt received: abort current task, if any");
+        let had_active_turn = self.active_turn.lock().await.is_some();
+        // Even without an active task, interrupt handling pauses any active goal.
+        self.abort_all_tasks(TurnAbortReason::Interrupted).await;
+        if !had_active_turn {
+            self.services
+                .mcp_service
+                .cancel_startup(self.as_ref())
+                .await;
+        }
+    }
+
+}

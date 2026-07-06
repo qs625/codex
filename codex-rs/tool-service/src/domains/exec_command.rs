@@ -89,6 +89,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
     false
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn dispatch(
     approval_api: Arc<dyn ApprovalServiceApi>,
     command_service_api: Arc<dyn CommandServiceApi>,
@@ -128,6 +129,7 @@ pub(crate) async fn dispatch(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_exec_command(
     approval_api: Arc<dyn ApprovalServiceApi>,
     command_service_api: Arc<dyn CommandServiceApi>,

@@ -538,7 +538,7 @@ impl AgentControl {
             .await?;
         let history = stored_thread
             .history
-            .ok_or_else(|| CodexErr::ThreadNotFound(thread_id))?
+            .ok_or(CodexErr::ThreadNotFound(thread_id))?
             .items;
 
         let resumed_thread = state

@@ -109,8 +109,7 @@ pub(crate) fn tool_output_for_state(
         GET_GOAL_TOOL_NAME | CREATE_GOAL_TOOL_NAME => CompletionBudgetReport::Omit,
         _ => {
             return Err(FunctionCallError::Fatal(format!(
-                "unsupported goal tool {}",
-                tool_name
+                "unsupported goal tool {tool_name}"
             )));
         }
     };

@@ -1,33 +1,20 @@
-//! Shared builders for app-server [`ThreadItem`] values derived from compatibility events.
-//!
-//! Most live tool items now come from first-class core `ItemStarted` / `ItemCompleted` events.
-//! These builders remain for approval flows, rebuilt legacy history, and other pre-execution
-//! paths where the underlying tool has not started or never starts at all.
-//!
-//! Keeping these builders in one place is useful for two reasons:
-//! - Live notifications and rebuilt `thread/read` history both need to construct the same
-//!   synthetic items, so sharing the logic avoids drift between those paths.
-//! - The projection is presentation-specific. Core protocol events stay generic, while the
-//!   app-server protocol decides how to surface those events as `ThreadItem`s for clients.
+//! Shared helpers for app-server protocol compatibility projections.
 use crate::protocol::common::ServerNotification;
-use crate::protocol::v2::AutoReviewDecisionSource;
-use crate::protocol::v2::CommandAction;
-use crate::protocol::v2::CommandExecutionNotifyOn;
-use crate::protocol::v2::CommandExecutionSource;
-use crate::protocol::v2::CommandExecutionStatus;
-use crate::protocol::v2::FileUpdateChange;
-use crate::protocol::v2::GuardianApprovalReview;
-use crate::protocol::v2::GuardianApprovalReviewStatus;
-use crate::protocol::v2::ItemGuardianApprovalReviewCompletedNotification;
-use crate::protocol::v2::ItemGuardianApprovalReviewStartedNotification;
-use crate::protocol::v2::PatchApplyStatus;
-use crate::protocol::v2::PatchChangeKind;
-use crate::protocol::v2::ThreadItem;
-use codex_shell_utils::parse_command::parse_command;
-use codex_shell_utils::shlex_join;
+use crate::protocol::AutoReviewDecisionSource;
+use crate::protocol::CommandAction;
+use crate::protocol::CommandExecutionNotifyOn;
+use crate::protocol::CommandExecutionSource;
+use crate::protocol::CommandExecutionStatus;
+use crate::protocol::FileUpdateChange;
+use crate::protocol::GuardianApprovalReview;
+use crate::protocol::GuardianApprovalReviewStatus;
+use crate::protocol::ItemGuardianApprovalReviewCompletedNotification;
+use crate::protocol::ItemGuardianApprovalReviewStartedNotification;
+use crate::protocol::PatchApplyStatus;
+use crate::protocol::PatchChangeKind;
+use crate::protocol::ThreadItem;
 use protocol::ThreadId;
 use protocol::protocol::ApplyPatchApprovalRequestEvent;
-use protocol::protocol::ExecApprovalRequestEvent;
 use protocol::protocol::ExecCommandBeginEvent;
 use protocol::protocol::ExecCommandEndEvent;
 use protocol::protocol::ExecCommandNotifyOn as CoreExecCommandNotifyOn;
@@ -48,7 +35,7 @@ impl From<CoreExecCommandNotifyOn> for CommandExecutionNotifyOn {
     }
 }
 
-pub fn build_file_change_approval_request_item(
+pub(crate) fn build_file_change_approval_request_item(
     payload: &ApplyPatchApprovalRequestEvent,
 ) -> ThreadItem {
     ThreadItem::FileChange {
@@ -58,7 +45,7 @@ pub fn build_file_change_approval_request_item(
     }
 }
 
-pub fn build_file_change_begin_item(payload: &PatchApplyBeginEvent) -> ThreadItem {
+pub(crate) fn build_file_change_begin_item(payload: &PatchApplyBeginEvent) -> ThreadItem {
     ThreadItem::FileChange {
         id: payload.call_id.clone(),
         changes: convert_patch_changes(&payload.changes),
@@ -66,7 +53,7 @@ pub fn build_file_change_begin_item(payload: &PatchApplyBeginEvent) -> ThreadIte
     }
 }
 
-pub fn build_file_change_end_item(payload: &PatchApplyEndEvent) -> ThreadItem {
+pub(crate) fn build_file_change_end_item(payload: &PatchApplyEndEvent) -> ThreadItem {
     ThreadItem::FileChange {
         id: payload.call_id.clone(),
         changes: convert_patch_changes(&payload.changes),
@@ -74,34 +61,10 @@ pub fn build_file_change_end_item(payload: &PatchApplyEndEvent) -> ThreadItem {
     }
 }
 
-pub fn build_command_execution_approval_request_item(
-    payload: &ExecApprovalRequestEvent,
-) -> ThreadItem {
+pub(crate) fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> ThreadItem {
     ThreadItem::CommandExecution {
         id: payload.call_id.clone(),
-        command: shlex_join(&payload.command),
-        cwd: payload.cwd.clone(),
-        process_id: None,
-        source: CommandExecutionSource::Agent,
-        status: CommandExecutionStatus::InProgress,
-        initial_wait_ms: None,
-        notify_on: None,
-        command_actions: payload
-            .parsed_cmd
-            .iter()
-            .cloned()
-            .map(|parsed| CommandAction::from_core_with_cwd(parsed, &payload.cwd))
-            .collect(),
-        aggregated_output: None,
-        exit_code: None,
-        duration_ms: None,
-    }
-}
-
-pub fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> ThreadItem {
-    ThreadItem::CommandExecution {
-        id: payload.call_id.clone(),
-        command: shlex_join(&payload.command),
+        command: format_shell_command(&payload.command),
         cwd: payload.cwd.clone(),
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
@@ -122,7 +85,7 @@ pub fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> Th
     }
 }
 
-pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> ThreadItem {
+pub(crate) fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> ThreadItem {
     let aggregated_output = if payload.aggregated_output.is_empty() {
         None
     } else {
@@ -132,7 +95,7 @@ pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> Thread
 
     ThreadItem::CommandExecution {
         id: payload.call_id.clone(),
-        command: shlex_join(&payload.command),
+        command: format_shell_command(&payload.command),
         cwd: payload.cwd.clone(),
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
@@ -153,11 +116,7 @@ pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> Thread
     }
 }
 
-/// Build a guardian-derived [`ThreadItem`].
-///
-/// Currently this only synthesizes [`ThreadItem::CommandExecution`] for
-/// [`GuardianAssessmentAction::Command`] and [`GuardianAssessmentAction::Execve`].
-pub fn build_item_from_guardian_event(
+pub(crate) fn build_item_from_guardian_event(
     assessment: &GuardianAssessmentEvent,
     status: CommandExecutionStatus,
 ) -> Option<ThreadItem> {
@@ -194,18 +153,10 @@ pub fn build_item_from_guardian_event(
                     .chain(argv.iter().skip(1).cloned())
                     .collect::<Vec<_>>()
             };
-            let command = shlex_join(&argv);
-            let parsed_cmd = parse_command(&argv);
-            let command_actions = if parsed_cmd.is_empty() {
-                vec![CommandAction::Unknown {
-                    command: command.clone(),
-                }]
-            } else {
-                parsed_cmd
-                    .into_iter()
-                    .map(|parsed| CommandAction::from_core_with_cwd(parsed, cwd))
-                    .collect()
-            };
+            let command = format_shell_command(&argv);
+            let command_actions = vec![CommandAction::Unknown {
+                command: command.clone(),
+            }];
             Some(ThreadItem::CommandExecution {
                 id: id.clone(),
                 command,
@@ -339,4 +290,25 @@ fn format_file_change_diff(change: &FileChange) -> String {
             }
         }
     }
+}
+
+fn format_shell_command(argv: &[String]) -> String {
+    argv.iter()
+        .map(|arg| shell_escape(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_escape(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
+    }
+    if arg
+        .bytes()
+        .all(|byte| matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b',' | b'=')) {
+        return arg.to_string();
+    }
+
+    let escaped = arg.replace('\'', "'\"'\"'");
+    format!("'{escaped}'")
 }
