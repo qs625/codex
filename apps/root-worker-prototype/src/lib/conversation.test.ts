@@ -290,6 +290,16 @@ test("renders command notifications as standalone event entries", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "npm test",
+        cwd: "/tmp/project",
+        status: "completed",
+        aggregatedOutput: null,
+        exitCode: 0,
+        durationMs: 10,
+      },
+      {
         type: "commandExecutionNotification",
         id: "cmd-1:notification:output:1",
         commandItemId: "cmd-1",
@@ -315,11 +325,12 @@ test("renders command notifications as standalone event entries", () => {
   assert.deepEqual(
     entries.map((entry) => [entry.kind, entry.text]),
     [
+      ["tool", "tmp/project • exit 0"],
       [
         "event",
-        "Command output notification received for cmd-1: changed",
+        "Command output notification received for npm test: changed",
       ],
-      ["event", "Command exit notification received for cmd-1: exit 0."],
+      ["event", "Command exit notification received for npm test: exit 0."],
     ],
   );
 });
@@ -2221,6 +2232,77 @@ test("builds visible entries for empty reasoning and builtin schedule tools", ()
         text: "schedule_subscribe • daily digest • every_day_at 09:00 Asia/Shanghai",
         toolName: "schedule_subscribe",
         toolCategory: "eventDrivenSubscription",
+      },
+    ],
+  );
+});
+
+test("builds visible entries for poll_event builtin tools", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "builtin-poll",
+        tool: "poll_event",
+        arguments: {},
+        status: "completed",
+        output: {
+          timedOut: false,
+          sourceHint: "mailbox_message",
+          waitedMs: 14,
+          initialTimeoutMs: 50,
+          currentTimeoutMs: 50,
+          hardCapTimeoutMs: 1000,
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+    })),
+    [
+      {
+        id: "builtin-poll",
+        kind: "tool",
+        text: "poll_event • mailbox_message",
+        toolName: "poll_event",
+      },
+    ],
+  );
+});
+
+test("builds failed poll_event builtin entries without pretending they woke", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "builtin-poll-failed",
+        tool: "poll_event",
+        arguments: {},
+        status: "failed",
+        output: {
+          error: "thread wait backend unavailable",
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+    })),
+    [
+      {
+        id: "builtin-poll-failed",
+        kind: "tool",
+        text: "poll_event • failed: thread wait backend unavailable",
       },
     ],
   );

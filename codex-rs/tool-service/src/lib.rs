@@ -148,6 +148,8 @@ impl ToolServiceApi for ToolService {
             let result = match domain {
                 domains::ToolDomain::Agent => {
                     domains::agent::dispatch(
+                        Arc::clone(&session)
+                            as Arc<dyn thread_service_api::ThreadSessionCapability>,
                         Arc::clone(&tool_request.session_agent_jobs),
                         self.thread_service_api()?,
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,

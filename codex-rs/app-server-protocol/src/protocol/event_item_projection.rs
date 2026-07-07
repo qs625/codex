@@ -5,6 +5,7 @@ use crate::protocol::response_item_projection::thread_item_from_inter_agent_comm
 use crate::protocol::CommandExecutionNotificationKind;
 use crate::protocol::CommandWaitNotificationKind;
 use crate::protocol::CommandWaitStatus;
+use crate::protocol::DynamicToolCallStatus;
 use crate::protocol::EventCommandEventKind;
 use crate::protocol::HookPromptFragment;
 use crate::protocol::InjectedContextSection;
@@ -91,6 +92,16 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
                 completed_at_ms: event.completed_at_ms,
             })
         }
+        EventMsg::BuiltinToolCallStarted(event) => Some(ProjectedEventItem::Started {
+            turn_id: event.turn_id.clone(),
+            item: builtin_tool_call_thread_item(event),
+            started_at_ms: event.lifecycle_at_ms,
+        }),
+        EventMsg::BuiltinToolCallCompleted(event) => Some(ProjectedEventItem::Completed {
+            turn_id: event.turn_id.clone(),
+            item: builtin_tool_call_thread_item(event),
+            completed_at_ms: event.lifecycle_at_ms,
+        }),
         EventMsg::WorkflowRunProgressCompleted(event) => Some(ProjectedEventItem::Completed {
             turn_id: event.turn_id.clone(),
             item: ThreadItem::WorkflowRunProgress {
@@ -297,6 +308,28 @@ fn command_wait_thread_item(event: &protocol::protocol::CommandWaitDisplayEvent)
         wall_time_seconds: event.wall_time_seconds,
         wait_timeout_ms: event.wait_timeout_ms,
         created_at_ms: event.created_at_ms,
+    }
+}
+
+fn builtin_tool_call_thread_item(
+    event: &protocol::protocol::BuiltinToolCallDisplayEvent,
+) -> ThreadItem {
+    ThreadItem::BuiltinToolCall {
+        id: event.id.clone(),
+        tool: event.tool.clone(),
+        arguments: event.arguments.clone(),
+        status: match event.status {
+            protocol::protocol::BuiltinToolCallStatus::InProgress => {
+                DynamicToolCallStatus::InProgress
+            }
+            protocol::protocol::BuiltinToolCallStatus::Completed => {
+                DynamicToolCallStatus::Completed
+            }
+            protocol::protocol::BuiltinToolCallStatus::Failed => {
+                DynamicToolCallStatus::Failed
+            }
+        },
+        output: event.output.clone(),
     }
 }
 

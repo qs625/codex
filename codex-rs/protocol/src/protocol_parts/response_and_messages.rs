@@ -125,6 +125,28 @@ pub struct CommandExecutionNotificationDisplayEvent {
     pub completed_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum BuiltinToolCallStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltinToolCallDisplayEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub id: String,
+    pub tool: String,
+    pub arguments: serde_json::Value,
+    pub status: BuiltinToolCallStatus,
+    pub output: Option<serde_json::Value>,
+    pub lifecycle_at_ms: i64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
 pub struct WorkflowRunProgressDisplayEvent {
     pub thread_id: ThreadId,

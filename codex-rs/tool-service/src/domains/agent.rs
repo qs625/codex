@@ -1,6 +1,8 @@
 mod agent_jobs;
 
 use std::sync::Arc;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use crate::planning::SpawnAgentToolOptions;
 use crate::planning::ToolSpec;
@@ -17,10 +19,15 @@ use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::SpawnAgentToolRequest;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
+use protocol::protocol::BuiltinToolCallDisplayEvent;
+use protocol::protocol::BuiltinToolCallStatus;
+use protocol::protocol::EventMsg;
 use protocol::openai_models::ReasoningEffort;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::json;
 use thread_service_api::SessionAgentJobCaller;
+use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadServiceApi;
 use tool_service_api::AnyToolResult;
@@ -89,6 +96,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
+    session_capability: Arc<dyn ThreadSessionCapability>,
     session: Arc<dyn SessionAgentJobCaller>,
     thread_service_api: Arc<dyn ThreadServiceApi>,
     turn: Arc<dyn ThreadRuntimeCapability>,
@@ -133,6 +141,23 @@ pub(crate) async fn dispatch(
             function_tool_json_output(&result, WAIT_AGENT_TOOL_NAME)?
         }
         POLL_EVENT_TOOL_NAME => {
+            let item_id = format!("builtin-tool-{}", uuid::Uuid::new_v4());
+            let arguments = json!({});
+            session_capability
+                .emit_event(
+                    turn.as_ref(),
+                    EventMsg::BuiltinToolCallStarted(BuiltinToolCallDisplayEvent {
+                        thread_id: session_capability.conversation_id(),
+                        turn_id: turn.runtime_turn_id_str().to_string(),
+                        id: item_id.clone(),
+                        tool: POLL_EVENT_TOOL_NAME.to_string(),
+                        arguments: arguments.clone(),
+                        status: BuiltinToolCallStatus::InProgress,
+                        output: None,
+                        lifecycle_at_ms: now_unix_timestamp_ms(),
+                    }),
+                )
+                .await;
             let result = thread_service_api
                 .poll_event(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
@@ -141,8 +166,49 @@ pub(crate) async fn dispatch(
                         hard_cap_timeout_ms: None,
                     },
                 )
-                .await?;
-            function_tool_json_output(&result, POLL_EVENT_TOOL_NAME)?
+                .await;
+            match result {
+                Ok(result) => {
+                    let output = serde_json::to_value(&result)
+                        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                    session_capability
+                        .emit_event(
+                            turn.as_ref(),
+                            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                                thread_id: session_capability.conversation_id(),
+                                turn_id: turn.runtime_turn_id_str().to_string(),
+                                id: item_id,
+                                tool: POLL_EVENT_TOOL_NAME.to_string(),
+                                arguments,
+                                status: BuiltinToolCallStatus::Completed,
+                                output: Some(output),
+                                lifecycle_at_ms: now_unix_timestamp_ms(),
+                            }),
+                        )
+                        .await;
+                    function_tool_json_output(&result, POLL_EVENT_TOOL_NAME)?
+                }
+                Err(err) => {
+                    session_capability
+                        .emit_event(
+                            turn.as_ref(),
+                            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                                thread_id: session_capability.conversation_id(),
+                                turn_id: turn.runtime_turn_id_str().to_string(),
+                                id: item_id,
+                                tool: POLL_EVENT_TOOL_NAME.to_string(),
+                                arguments,
+                                status: BuiltinToolCallStatus::Failed,
+                                output: Some(json!({
+                                    "error": err.to_string(),
+                                })),
+                                lifecycle_at_ms: now_unix_timestamp_ms(),
+                            }),
+                        )
+                        .await;
+                    return Err(err);
+                }
+            }
         }
         LIST_AGENTS_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
@@ -190,6 +256,13 @@ pub(crate) async fn dispatch(
         result: Box::new(result),
         post_tool_use_payload: None,
     })
+}
+
+fn now_unix_timestamp_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 fn from_runtime_spawn_request(
@@ -380,6 +453,87 @@ mod tests {
     use protocol::protocol::SessionSource;
     use protocol::protocol::SubAgentSource;
     use thread_service::test_support;
+    use thread_service_api::ThreadCloseAgentResult;
+    use thread_service_api::ThreadListAgentsResult;
+    use thread_service_api::ThreadPollEventRequest;
+    use thread_service_api::ThreadPollEventResult;
+    use thread_service_api::ThreadServiceFuture;
+    use thread_service_api::ThreadSpawnAgentRequest;
+    use thread_service_api::ThreadSpawnAgentResult;
+    use thread_service_api::ThreadWaitAgentResult;
+
+    struct StubThreadServiceApi;
+
+    impl ThreadServiceApi for StubThreadServiceApi {
+        fn spawn_agent<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _request: ThreadSpawnAgentRequest,
+        ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>> {
+            Box::pin(async {
+                Err(FunctionCallError::RespondToModel(
+                    "agent depth limit reached: cannot spawn depth 2; configured agents.max_depth is 1"
+                        .to_string(),
+                ))
+            })
+        }
+
+        fn followup_task<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _target: String,
+            _message: String,
+        ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
+            Box::pin(async { unreachable!("followup_task should not be called in this test") })
+        }
+
+        fn wait_agent<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _target: String,
+        ) -> ThreadServiceFuture<'a, Result<ThreadWaitAgentResult, FunctionCallError>> {
+            Box::pin(async { unreachable!("wait_agent should not be called in this test") })
+        }
+
+        fn poll_event<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _request: ThreadPollEventRequest,
+        ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>> {
+            Box::pin(async { unreachable!("poll_event should not be called in this test") })
+        }
+
+        fn close_agent<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _target: String,
+        ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
+            Box::pin(async { unreachable!("close_agent should not be called in this test") })
+        }
+
+        fn list_agents<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _path_prefix: Option<String>,
+        ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
+            Box::pin(async { unreachable!("list_agents should not be called in this test") })
+        }
+
+        fn record_model_items_and_emit_display_events<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _items: Vec<protocol::models::ResponseItem>,
+        ) -> ThreadServiceFuture<'a, Result<(), String>> {
+            Box::pin(async {
+                unreachable!("record_model_items_and_emit_display_events should not be called in this test")
+            })
+        }
+    }
 
     #[tokio::test]
     async fn spawn_agent_tool_rejects_depth_limit_at_call_time() {
@@ -398,8 +552,10 @@ mod tests {
         .await;
 
         let response = dispatch(
-            session,
-            turn_context,
+            Arc::clone(&session) as Arc<dyn ThreadSessionCapability>,
+            Arc::clone(&session) as Arc<dyn SessionAgentJobCaller>,
+            Arc::new(StubThreadServiceApi),
+            Arc::clone(&turn_context) as Arc<dyn ThreadRuntimeCapability>,
             ToolCall {
                 call_id: "spawn-depth-limit".to_string(),
                 tool_name: ToolName::plain("spawn_agent"),

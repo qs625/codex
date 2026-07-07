@@ -162,6 +162,8 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::CommandWaitCompleted(_)
         | EventMsg::CommandWriteStdinCompleted(_)
         | EventMsg::CommandExecutionNotificationCompleted(_)
+        | EventMsg::BuiltinToolCallStarted(_)
+        | EventMsg::BuiltinToolCallCompleted(_)
         | EventMsg::WorkflowRunProgressCompleted(_)
         | EventMsg::EventCommandEventCompleted(_)
         | EventMsg::EventDrivenToolCompleted(_)
@@ -262,6 +264,8 @@ mod tests {
     use protocol::items::TurnItem;
     use protocol::openai_models::ReasoningEffort;
     use protocol::protocol::AgentStatus;
+    use protocol::protocol::BuiltinToolCallDisplayEvent;
+    use protocol::protocol::BuiltinToolCallStatus;
     use protocol::protocol::CollabAgentInteractionBeginEvent;
     use protocol::protocol::CollabAgentInteractionEndEvent;
     use protocol::protocol::CollabAgentSpawnBeginEvent;
@@ -454,6 +458,44 @@ mod tests {
                 should_persist_event_msg(&event, EventPersistenceMode::Limited),
                 true,
                 "expected {event:?} to persist in limited mode",
+            );
+        }
+    }
+
+    #[test]
+    fn limited_mode_persists_builtin_tool_call_events() {
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000001").expect("valid thread");
+        let events = [
+            EventMsg::BuiltinToolCallStarted(BuiltinToolCallDisplayEvent {
+                thread_id,
+                turn_id: "turn-1".into(),
+                id: "builtin-1".into(),
+                tool: "poll_event".into(),
+                arguments: serde_json::json!({}),
+                status: BuiltinToolCallStatus::InProgress,
+                output: None,
+                lifecycle_at_ms: 1,
+            }),
+            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                thread_id,
+                turn_id: "turn-1".into(),
+                id: "builtin-1".into(),
+                tool: "poll_event".into(),
+                arguments: serde_json::json!({}),
+                status: BuiltinToolCallStatus::Completed,
+                output: Some(serde_json::json!({
+                    "timedOut": false,
+                    "sourceHint": "user_input",
+                })),
+                lifecycle_at_ms: 2,
+            }),
+        ];
+
+        for event in events {
+            assert_eq!(
+                should_persist_event_msg(&event, EventPersistenceMode::Limited),
+                true
             );
         }
     }

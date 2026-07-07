@@ -154,6 +154,8 @@ pub fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::CommandWaitCompleted(_)
         | EventMsg::CommandWriteStdinCompleted(_)
         | EventMsg::CommandExecutionNotificationCompleted(_)
+        | EventMsg::BuiltinToolCallStarted(_)
+        | EventMsg::BuiltinToolCallCompleted(_)
         | EventMsg::WorkflowRunProgressCompleted(_)
         | EventMsg::EventCommandEventCompleted(_)
         | EventMsg::EventDrivenToolCompleted(_)
