@@ -19,6 +19,7 @@ use codex_analytics_api::now_unix_seconds;
 use codex_config_types::CompactReplacementFileRole as ConfigCompactReplacementFileRole;
 use codex_features::Feature;
 use codex_turn_items::last_assistant_message_from_turn;
+use codex_turn_items::parse_turn_item;
 #[cfg(test)]
 use codex_turn_items::process_remote_compacted_history;
 use compact_service::FsCompactService;
@@ -597,8 +598,16 @@ async fn drain_to_completed(
         match event {
             Ok(event) => match crate::session::turn::map_model_response_event(event) {
                 ResponseEvent::OutputItemDone(item) => {
-                    sess.record_into_history(std::slice::from_ref(&item), turn_context)
+                    if parse_turn_item(&item).is_some() {
+                        sess.record_response_item_and_emit_turn_item(turn_context, item)
+                            .await;
+                    } else {
+                        sess.record_model_items_and_emit_display_events(
+                            turn_context,
+                            std::slice::from_ref(&item),
+                        )
                         .await;
+                    }
                 }
                 ResponseEvent::ServerReasoningIncluded(included) => {
                     sess.set_server_reasoning_included(included).await;

@@ -50,6 +50,13 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
   };
 }
 
+function makeThreadWithTurns(turns: Thread["turns"]): Thread {
+  return {
+    ...makeThread([]),
+    turns,
+  };
+}
+
 test("separates command, event subscriptions, event notifications, and multi-agent items into different tool cells", () => {
   const entries = buildConversationEntries(
     makeThread([
@@ -154,6 +161,7 @@ test("builds a conversation event for typed goal updates", () => {
       toolDetails:
         "Objective\nShip goal ThreadItem display\n\nStatus\nActive\n\nSource\nModel tool\n\nToken Usage\n1,250 / 50,000\n\nTime Used\n1m 15s",
       toolCategory: "goal",
+      turnId: "turn-1",
     },
   ]);
 
@@ -199,6 +207,7 @@ test("builds a workflow progress tool entry from typed thread items", () => {
       toolDetails:
         "Workflow\nfeature-dev\n\nRun\nwf_123\n\nProgress\nWorkflow started\n\nRunner Status\nrunner_active\n\nMessage\nworkflow runner is executing TypeScript entry\n\nRun Status\nrunning\n\nGraph\nNo graph details in this update.",
       toolCategory: "workflow",
+      turnId: "turn-1",
     },
   ]);
 
@@ -1658,25 +1667,47 @@ test("renders wait agent replacement fallback without raw output json", () => {
 
 test("keeps compact rows collapsed by default even when replacement history exists", () => {
   const state = buildConversationState(
-    makeThread([
+    makeThreadWithTurns([
       {
-        type: "userMessage",
-        id: "old-user",
-        content: [{ type: "text", text: "old request" }],
+        id: "turn-1",
+        items: [
+          {
+            type: "userMessage",
+            id: "old-user",
+            content: [{ type: "text", text: "old request" }],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
       },
       {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistoryStatus: "available",
-        replacementHistoryCount: 2,
-        replacementHistory: null,
-      },
-      {
-        type: "agentMessage",
-        id: "after-compact",
-        text: "continued",
-        phase: null,
-        memoryCitation: null,
+        id: "turn-2",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+            replacementHistoryStatus: "available",
+            replacementHistoryCount: 2,
+            replacementHistory: null,
+          },
+          {
+            type: "agentMessage",
+            id: "after-compact",
+            text: "continued",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
       },
     ]),
   );
@@ -1684,7 +1715,6 @@ test("keeps compact rows collapsed by default even when replacement history exis
   assert.deepEqual(
     state.cells.map((cell) => [cell.id, cell.kind, cell.entries[0]?.text]),
     [
-      ["old-user", "message", "old request"],
       [
         "compact-1",
         "compact",
@@ -1693,8 +1723,87 @@ test("keeps compact rows collapsed by default even when replacement history exis
       ["after-compact", "message", "continued"],
     ],
   );
-  assert.equal(state.cells[1]?.entries[0]?.archivedCells, undefined);
-  assert.equal(state.cells[1]?.entries[0]?.replacementHistoryCells, null);
+  assert.deepEqual(
+    state.cells[0]?.entries[0]?.archivedCells?.map((cell) => cell.id),
+    ["old-user"],
+  );
+  assert.equal(state.cells[0]?.entries[0]?.replacementHistoryCells, null);
+});
+
+test("keeps compact turn actions visible while archiving earlier turns", () => {
+  const state = buildConversationState(
+    makeThreadWithTurns([
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "userMessage",
+            id: "old-user",
+            content: [{ type: "text", text: "old request" }],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
+      },
+      {
+        id: "turn-2",
+        items: [
+          {
+            type: "agentMessage",
+            id: "compact-summary",
+            text: "Summarizing previous context.",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "dynamicToolCall",
+            id: "compact-tool",
+            namespace: "functions",
+            tool: "summarize_context",
+            arguments: { thread_id: "thread-1" },
+            status: "completed",
+            contentItems: [{ text: "ok" }],
+            success: true,
+            durationMs: 10,
+          },
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+            replacementHistoryStatus: "available",
+            replacementHistoryCount: 1,
+            replacementHistory: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    state.cells.map((cell) => [cell.id, cell.kind, cell.entries[0]?.text]),
+    [
+      ["compact-summary", "message", "Summarizing previous context."],
+      ["compact-tool", "tool", "functions/summarize_context"],
+      [
+        "compact-1",
+        "compact",
+        "Previous conversation was archived; compacted model context continues below.",
+      ],
+    ],
+  );
+  assert.deepEqual(
+    state.cells[2]?.entries[0]?.archivedCells?.map((cell) => cell.id),
+    ["old-user"],
+  );
 });
 
 test("preserves compact replacement raw child completion when live status update exists", () => {
@@ -1743,7 +1852,7 @@ test("preserves compact replacement raw child completion when live status update
   );
 
   const details = extractCompactConversationDetails(state.entries, "compact-1");
-  assert.equal(details?.archivedEntryCount, 1);
+  assert.equal(details?.archivedEntryCount, 0);
   assert.deepEqual(
     details?.replacementHistoryEntries
       .filter((entry) => entry.kind === "message" && entry.role === "agent")
@@ -1828,40 +1937,84 @@ test("does not render compact replacement raw child completion before typed stat
 
 test("extracts compact round details with earlier compact rounds grouped into archived history", () => {
   const entries = buildConversationEntries(
-    makeThread([
+    makeThreadWithTurns([
       {
-        type: "userMessage",
-        id: "old-user",
-        content: [{ type: "text", text: "old request" }],
-      },
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: [
+        id: "turn-1",
+        items: [
           {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "first replacement" }],
+            type: "userMessage",
+            id: "old-user",
+            content: [{ type: "text", text: "old request" }],
           },
         ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
       },
       {
-        type: "agentMessage",
-        id: "after-compact-1",
-        text: "between compacts",
-        phase: null,
-        memoryCitation: null,
-      },
-      {
-        type: "contextCompaction",
-        id: "compact-2",
-        replacementHistory: [
+        id: "turn-2",
+        items: [
           {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "second replacement" }],
+            type: "contextCompaction",
+            id: "compact-1",
+            replacementHistory: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: "first replacement" }],
+              },
+            ],
           },
         ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+      {
+        id: "turn-3",
+        items: [
+          {
+            type: "agentMessage",
+            id: "after-compact-1",
+            text: "between compacts",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 3,
+        completedAt: 3,
+        durationMs: 0,
+      },
+      {
+        id: "turn-4",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-2",
+            replacementHistory: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: "second replacement" }],
+              },
+            ],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 4,
+        completedAt: 4,
+        durationMs: 0,
       },
     ]),
   );
@@ -1882,7 +2035,7 @@ test("extracts compact round details with earlier compact rounds grouped into ar
       },
     ],
   );
-  assert.equal(details?.archivedEntryCount, 4);
+  assert.equal(details?.archivedEntryCount, 3);
   assert.deepEqual(
     details?.archivedCells.map((cell) => [cell.id, cell.kind]),
     [
@@ -1892,30 +2045,52 @@ test("extracts compact round details with earlier compact rounds grouped into ar
   );
 });
 
-test("hydrates a compact row with loaded round details without flattening them into top-level cells", () => {
-  const fullHistoryThread = makeThread([
+test("hydrates a compact row from loaded details even when the stripped thread has no prior cells", () => {
+  const fullHistoryThread = makeThreadWithTurns([
     {
-      type: "userMessage",
-      id: "old-user",
-      content: [{ type: "text", text: "old request" }],
-    },
-    {
-      type: "contextCompaction",
-      id: "compact-1",
-      replacementHistory: [
+      id: "turn-1",
+      items: [
         {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: "recent request" }],
+          type: "userMessage",
+          id: "old-user",
+          content: [{ type: "text", text: "old request" }],
         },
       ],
+      itemsView: "full",
+      status: "completed",
+      error: null,
+      startedAt: 1,
+      completedAt: 1,
+      durationMs: 0,
     },
     {
-      type: "agentMessage",
-      id: "after-compact",
-      text: "continued",
-      phase: null,
-      memoryCitation: null,
+      id: "turn-2",
+      items: [
+        {
+          type: "contextCompaction",
+          id: "compact-1",
+          replacementHistory: [
+            {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "recent request" }],
+            },
+          ],
+        },
+        {
+          type: "agentMessage",
+          id: "after-compact",
+          text: "continued",
+          phase: null,
+          memoryCitation: null,
+        },
+      ],
+      itemsView: "full",
+      status: "completed",
+      error: null,
+      startedAt: 2,
+      completedAt: 2,
+      durationMs: 0,
     },
   ]);
   const details = extractCompactConversationDetails(
@@ -1924,25 +2099,31 @@ test("hydrates a compact row with loaded round details without flattening them i
   );
   assert.ok(details);
 
-  const strippedThread = makeThread([
+  const strippedThread = makeThreadWithTurns([
     {
-      type: "userMessage",
-      id: "old-user",
-      content: [{ type: "text", text: "old request" }],
-    },
-    {
-      type: "contextCompaction",
-      id: "compact-1",
-      replacementHistory: null,
-      replacementHistoryStatus: "available",
-      replacementHistoryCount: 1,
-    },
-    {
-      type: "agentMessage",
-      id: "after-compact",
-      text: "continued",
-      phase: null,
-      memoryCitation: null,
+      id: "turn-2",
+      items: [
+        {
+          type: "contextCompaction",
+          id: "compact-1",
+          replacementHistory: null,
+          replacementHistoryStatus: "available",
+          replacementHistoryCount: 1,
+        },
+        {
+          type: "agentMessage",
+          id: "after-compact",
+          text: "continued",
+          phase: null,
+          memoryCitation: null,
+        },
+      ],
+      itemsView: "full",
+      status: "completed",
+      error: null,
+      startedAt: 2,
+      completedAt: 2,
+      durationMs: 0,
     },
   ]);
 
@@ -1955,14 +2136,17 @@ test("hydrates a compact row with loaded round details without flattening them i
   assert.deepEqual(
     state.cells.map((cell) => [cell.id, cell.kind]),
     [
-      ["old-user", "message"],
       ["compact-1", "compact"],
       ["after-compact", "message"],
     ],
   );
-  assert.equal(state.cells[1]?.entries[0]?.archivedEntryCount, 1);
+  assert.equal(state.cells[0]?.entries[0]?.archivedEntryCount, 1);
   assert.deepEqual(
-    state.cells[1]?.entries[0]?.replacementHistoryCells?.map((cell) => cell.id),
+    state.cells[0]?.entries[0]?.archivedCells?.map((cell) => cell.id),
+    ["old-user"],
+  );
+  assert.deepEqual(
+    state.cells[0]?.entries[0]?.replacementHistoryCells?.map((cell) => cell.id),
     ["compact-1:replacement:0"],
   );
 });

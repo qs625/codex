@@ -83,7 +83,12 @@ export function buildConversationState(
         previousFlatItem.item === item &&
         previousFlatItem.timestamp === timestamp
           ? previousFlatItem.entries
-          : buildConversationItemEntries(item, { author, timestamp });
+          : buildConversationItemEntries(item, { author, timestamp }).map(
+              (entry) => ({
+                ...entry,
+                turnId: turn.id,
+              }),
+            );
 
       flatItems.push({
         id: item.id,

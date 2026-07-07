@@ -306,6 +306,51 @@ async fn process_compacted_history_reinjects_model_switch_message() {
     assert_eq!(refreshed, expected);
 }
 
+#[tokio::test]
+async fn process_compacted_history_reinjects_user_instructions_into_initial_context() {
+    let (session, mut turn_context) = crate::session::tests::make_session_and_context().await;
+    turn_context.user_instructions = Some("Loaded from instruction_files".to_string());
+    let compacted_history = vec![ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "summary".to_string(),
+        }],
+        phase: None,
+    }];
+
+    let refreshed = crate::compact::process_compacted_history(
+        &session,
+        &turn_context,
+        compacted_history,
+        InitialContextInjection::BeforeLastUserMessage,
+    )
+    .await;
+
+    let initial_context_texts = refreshed
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => Some(
+                content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentItem::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        initial_context_texts.contains("Loaded from instruction_files"),
+        "expected reinjected initial context to preserve user instructions, got {initial_context_texts:?}"
+    );
+}
+
 #[test]
 fn prepend_initial_context_to_memory_checkpoint_history_keeps_checkpoint_block_contiguous() {
     let compacted_history = vec![
