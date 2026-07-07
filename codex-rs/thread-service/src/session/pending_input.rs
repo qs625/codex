@@ -214,6 +214,50 @@ impl Session {
 
     #[expect(
         clippy::await_holding_invalid_type,
+        reason = "active turn checks and pending input updates must remain atomic"
+    )]
+    pub(crate) async fn clear_child_completion_pending_input(
+        &self,
+        child_thread_id: ThreadId,
+    ) -> usize {
+        let mut removed = Vec::new();
+        {
+            let mut active = self.active_turn.lock().await;
+            if let Some(at) = active.as_mut() {
+                let mut ts = at.turn_state.lock().await;
+                removed.extend(ts.extract_pending_input_matching(|item| {
+                    matches_child_completion(item, child_thread_id)
+                }));
+            }
+        }
+        {
+            let mut idle_pending_input = self.idle_pending_input.lock().await;
+            let mut kept = Vec::with_capacity(idle_pending_input.len());
+            for item in idle_pending_input.drain(..) {
+                if matches_child_completion(&item, child_thread_id) {
+                    removed.push(item);
+                } else {
+                    kept.push(item);
+                }
+            }
+            *idle_pending_input = kept;
+        }
+        {
+            let mut mailbox_rx = self.mailbox_rx.lock().await;
+            removed.extend(mailbox_rx.extract_matching(|item| {
+                matches_child_completion(item, child_thread_id)
+            }));
+        }
+        if removed.is_empty() {
+            return 0;
+        }
+        self.mark_direct_child_completions_received_from_pending_input(removed.iter())
+            .await;
+        removed.len()
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
     )]
     pub async fn prepend_pending_input(&self, input: Vec<PendingInputItem>) -> Result<(), ()> {
@@ -320,5 +364,23 @@ impl Session {
                 .cancel_startup(self.as_ref())
                 .await;
         }
+    }
+}
+
+fn matches_child_completion(item: &PendingInputItem, child_thread_id: ThreadId) -> bool {
+    match item {
+        PendingInputItem::InterAgentCommunication(communication)
+        | PendingInputItem::ResponseItem(ResponseItem::InterAgentCommunication {
+            communication,
+            ..
+        })
+        | PendingInputItem::HookInspectable(ResponseItem::InterAgentCommunication {
+            communication,
+            ..
+        }) => {
+            communication.operation == InterAgentOperation::ChildCompletion
+                && communication.sender_thread_id == Some(child_thread_id)
+        }
+        PendingInputItem::ResponseItem(_) | PendingInputItem::HookInspectable(_) => false,
     }
 }

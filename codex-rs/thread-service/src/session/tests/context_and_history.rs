@@ -2136,6 +2136,160 @@ async fn turn_start_consumes_child_completion_before_parent_visible_complete() {
 }
 
 #[tokio::test]
+async fn clearing_stale_child_completion_preserves_non_completion_messages() {
+    let (sess, _tc, _rx_event) = make_session_and_context_with_rx().await;
+    let parent_thread_id = sess.thread_id();
+    let child_thread_id = ThreadId::new();
+    let child_agent_path = AgentPath::try_from("/root/worker").expect("worker path should parse");
+    sess.mark_direct_child_completion_pending(child_thread_id)
+        .await;
+
+    let stale_completion = InterAgentCommunication::new(
+        child_agent_path.clone(),
+        AgentPath::root(),
+        Vec::new(),
+        "done".to_string(),
+        protocol::protocol::InterAgentOperation::ChildCompletion,
+    )
+    .with_trigger_turn(false)
+    .with_thread_ids(child_thread_id, parent_thread_id)
+    .with_status(protocol::protocol::AgentStatus::Completed(Some(
+        "done".to_string(),
+    )));
+    let progress_update = InterAgentCommunication::new(
+        child_agent_path,
+        AgentPath::root(),
+        Vec::new(),
+        "still working".to_string(),
+        protocol::protocol::InterAgentOperation::SendMessage,
+    )
+    .with_trigger_turn(false)
+    .with_thread_ids(child_thread_id, parent_thread_id);
+
+    sess.enqueue_mailbox_communication(stale_completion);
+    sess.enqueue_mailbox_communication(progress_update.clone());
+
+    let removed = sess.clear_child_completion_pending_input(child_thread_id).await;
+
+    assert_eq!(removed, 1);
+    assert!(
+        !sess.has_pending_direct_child_completions().await,
+        "dropping a stale child completion should also clear its pending delivery state"
+    );
+    assert_eq!(
+        sess.get_pending_input().await,
+        vec![PendingInputItem::from(progress_update)],
+        "only the stale child completion should be removed"
+    );
+
+    sess.mark_direct_child_completion_pending(child_thread_id)
+        .await;
+    assert!(
+        sess.has_pending_direct_child_completions().await,
+        "a new followup should still be able to arm completion tracking again"
+    );
+    assert_eq!(
+        sess.get_pending_input().await,
+        Vec::new(),
+        "re-arming completion tracking must not resurrect the old child completion"
+    );
+}
+
+#[tokio::test]
+async fn aborting_turn_clears_pending_child_completion_tracking_from_turn_state() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    let parent_thread_id = sess.thread_id();
+    let child_thread_id = ThreadId::new();
+    let stale_completion = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "done".to_string(),
+        protocol::protocol::InterAgentOperation::ChildCompletion,
+    )
+    .with_trigger_turn(false)
+    .with_thread_ids(child_thread_id, parent_thread_id)
+    .with_status(protocol::protocol::AgentStatus::Completed(Some(
+        "done".to_string(),
+    )));
+
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+    sess.mark_direct_child_completion_pending(child_thread_id)
+        .await;
+    sess.prepend_pending_input(vec![PendingInputItem::from(stale_completion)])
+        .await
+        .expect("active turn should accept pending input");
+
+    assert!(sess.has_pending_direct_child_completions().await);
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    assert!(
+        !sess.has_pending_direct_child_completions().await,
+        "dropping turn-scoped child completion input must reconcile parent-visible completion state"
+    );
+}
+
+#[tokio::test]
+async fn clearing_stale_child_completion_from_idle_queue_preserves_other_idle_input() {
+    let (sess, _tc, _rx_event) = make_session_and_context_with_rx().await;
+    let parent_thread_id = sess.thread_id();
+    let child_thread_id = ThreadId::new();
+    let child_agent_path = AgentPath::try_from("/root/worker").expect("worker path should parse");
+    sess.mark_direct_child_completion_pending(child_thread_id)
+        .await;
+
+    let stale_completion = InterAgentCommunication::new(
+        child_agent_path.clone(),
+        AgentPath::root(),
+        Vec::new(),
+        "done".to_string(),
+        protocol::protocol::InterAgentOperation::ChildCompletion,
+    )
+    .with_trigger_turn(false)
+    .with_thread_ids(child_thread_id, parent_thread_id)
+    .with_status(protocol::protocol::AgentStatus::Completed(Some(
+        "done".to_string(),
+    )));
+    let progress_update = InterAgentCommunication::new(
+        child_agent_path,
+        AgentPath::root(),
+        Vec::new(),
+        "still queued".to_string(),
+        protocol::protocol::InterAgentOperation::SendMessage,
+    )
+    .with_trigger_turn(false)
+    .with_thread_ids(child_thread_id, parent_thread_id);
+
+    sess.queue_response_items_for_next_turn(vec![
+        PendingInputItem::from(stale_completion),
+        PendingInputItem::from(progress_update.clone()),
+    ])
+    .await;
+
+    let removed = sess.clear_child_completion_pending_input(child_thread_id).await;
+
+    assert_eq!(removed, 1);
+    assert!(
+        !sess.has_pending_direct_child_completions().await,
+        "dropping an idle stale completion should clear its pending delivery state"
+    );
+    assert_eq!(
+        sess.take_queued_response_items_for_next_turn().await,
+        vec![PendingInputItem::from(progress_update)],
+        "idle non-completion input should be preserved"
+    );
+}
+
+#[tokio::test]
 async fn inter_agent_send_message_queue_only_does_not_emit_live_collab_item() -> anyhow::Result<()>
 {
     let parent_thread_id = ThreadId::new();

@@ -113,6 +113,9 @@ pub(crate) async fn followup_task_tool(
         receiver_agent.agent_mode != crate::agent::AgentMode::Management;
     if receiver_is_direct_child && receiver_will_send_completion {
         session
+            .clear_child_completion_pending_input(receiver_thread_id)
+            .await;
+        session
             .mark_direct_child_completion_pending(receiver_thread_id)
             .await;
     }

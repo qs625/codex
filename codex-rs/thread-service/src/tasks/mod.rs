@@ -491,7 +491,9 @@ impl Session {
         if let Some(active_turn) = active_turn_to_clear {
             // Let interrupted tasks observe cancellation before dropping pending approvals, or an
             // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
-            active_turn.clear_pending().await;
+            let pending_input = active_turn.clear_pending().await;
+            self.mark_direct_child_completions_received_from_pending_input(pending_input.iter())
+                .await;
         }
         if reason == TurnAbortReason::Interrupted && aborted_turn {
             self.maybe_start_turn_for_pending_work().await;
@@ -542,7 +544,9 @@ impl Session {
         }
         // Let interrupted tasks observe cancellation before dropping pending approvals, or an
         // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
-        active_turn.clear_pending().await;
+        let pending_input = active_turn.clear_pending().await;
+        self.mark_direct_child_completions_received_from_pending_input(pending_input.iter())
+            .await;
 
         if reason == TurnAbortReason::Interrupted {
             self.maybe_start_turn_for_pending_work().await;

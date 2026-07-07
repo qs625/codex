@@ -97,6 +97,24 @@ impl MailboxReceiver {
         self.pending_mails.iter()
     }
 
+    pub fn extract_matching<F>(&mut self, mut predicate: F) -> Vec<PendingInputItem>
+    where
+        F: FnMut(&PendingInputItem) -> bool,
+    {
+        self.sync_pending_mails();
+        let mut extracted = Vec::new();
+        let mut kept = VecDeque::with_capacity(self.pending_mails.len());
+        while let Some(item) = self.pending_mails.pop_front() {
+            if predicate(&item) {
+                extracted.push(item);
+            } else {
+                kept.push_back(item);
+            }
+        }
+        self.pending_mails = kept;
+        extracted
+    }
+
     pub fn drain(&mut self) -> Vec<PendingInputItem> {
         self.sync_pending_mails();
         self.pending_mails.drain(..).collect()
