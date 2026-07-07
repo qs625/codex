@@ -69,6 +69,7 @@ pub(crate) async fn dispatch(
     _command_service_api: Arc<dyn CommandServiceApi>,
     session_interaction: Arc<dyn SessionCommandInteractionCaller>,
     session: Arc<dyn ThreadSessionCapability>,
+    _thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -77,7 +78,7 @@ pub(crate) async fn dispatch(
             dispatch_command_wait(
                 session_interaction.as_ref(),
                 session.as_ref(),
-                turn.as_ref(),
+                Arc::clone(&turn),
                 &call,
             )
             .await
@@ -108,7 +109,7 @@ pub(crate) async fn dispatch(
 async fn dispatch_command_wait(
     session_interaction: &dyn SessionCommandInteractionCaller,
     session: &dyn ThreadSessionCapability,
-    turn: &dyn ThreadRuntimeCapability,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let item_id = format!("response-item-{}", uuid::Uuid::new_v4());
@@ -120,7 +121,6 @@ async fn dispatch_command_wait(
         })
         .await
         .map_err(|err| FunctionCallError::RespondToModel(format!("command_wait failed: {err}")))?;
-    let wait_timeout = command_wait.wait_timeout();
     let started_item = command_wait_item(CommandWaitItemInput {
         id: item_id.clone(),
         command_id: command_wait.process_id(),
@@ -128,15 +128,14 @@ async fn dispatch_command_wait(
         notification: None,
         exit_code: None,
         wall_time: Duration::ZERO,
-        wait_timeout,
+        wait_timeout: command_wait.initial_wait_timeout(),
         created_at_ms,
     });
     session
-        .emit_model_item_started_display_event(turn, &started_item)
+        .emit_model_item_started_display_event(turn.as_ref(), &started_item)
         .await;
-
-    let output = command_wait
-        .finish()
+    let output = session_interaction
+        .wait_command_compat_with_operation(Arc::clone(&turn), command_wait)
         .await
         .map_err(|err| FunctionCallError::RespondToModel(format!("command_wait failed: {err}")))?;
 
@@ -151,7 +150,7 @@ async fn dispatch_command_wait(
         created_at_ms,
     });
     session
-        .record_model_items_and_emit_display_events(turn, vec![response_item])
+        .record_model_items_and_emit_display_events(turn.as_ref(), vec![response_item])
         .await;
 
     let text = serde_json::to_string(&CommandWaitResponse {

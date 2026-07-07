@@ -2290,6 +2290,146 @@ async fn clearing_stale_child_completion_from_idle_queue_preserves_other_idle_in
 }
 
 #[tokio::test]
+async fn poll_event_wakes_for_user_input() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    let waiter = {
+        let sess = Arc::clone(&sess);
+        tokio::spawn(async move {
+            sess.poll_event(thread_service_api::ThreadPollEventRequest {
+                initial_timeout_ms: Some(100),
+                hard_cap_timeout_ms: Some(400),
+            })
+            .await
+            .expect("poll_event should succeed")
+        })
+    };
+    tokio::task::yield_now().await;
+
+    sess.steer_input(
+        vec![UserInput::Text {
+            text: "wake".to_string(),
+            text_elements: Vec::new(),
+        }],
+        None,
+        None,
+    )
+    .await
+    .expect("user input should steer active turn");
+
+    let result = timeout(Duration::from_secs(2), waiter)
+        .await
+        .expect("poll_event should finish")
+        .expect("poll_event task");
+    assert!(!result.timed_out);
+    assert_eq!(result.source_hint.as_deref(), Some("user_input"));
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn poll_event_wakes_for_inter_agent_input() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    let waiter = {
+        let sess = Arc::clone(&sess);
+        tokio::spawn(async move {
+            sess.poll_event(thread_service_api::ThreadPollEventRequest {
+                initial_timeout_ms: Some(100),
+                hard_cap_timeout_ms: Some(400),
+            })
+            .await
+            .expect("poll_event should succeed")
+        })
+    };
+    tokio::task::yield_now().await;
+
+    sess.enqueue_mailbox_communication(
+        InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("worker path should parse"),
+            AgentPath::root(),
+            Vec::new(),
+            "wake".to_string(),
+            protocol::protocol::InterAgentOperation::SendMessage,
+        )
+        .with_trigger_turn(false),
+    );
+
+    let result = timeout(Duration::from_secs(2), waiter)
+        .await
+        .expect("poll_event should finish")
+        .expect("poll_event task");
+    assert!(!result.timed_out);
+    assert_eq!(result.source_hint.as_deref(), Some("inter_agent"));
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn poll_event_backoff_is_thread_scoped_and_resets_after_event() {
+    let (sess, _tc, _rx_event) = make_session_and_context_with_rx().await;
+    let request = thread_service_api::ThreadPollEventRequest {
+        initial_timeout_ms: Some(20),
+        hard_cap_timeout_ms: Some(80),
+    };
+
+    let first = sess
+        .poll_event(request.clone())
+        .await
+        .expect("first poll_event should succeed");
+    assert!(first.timed_out);
+    assert_eq!(first.current_timeout_ms, 20);
+
+    let second = sess
+        .poll_event(request.clone())
+        .await
+        .expect("second poll_event should succeed");
+    assert!(second.timed_out);
+    assert_eq!(second.current_timeout_ms, 40);
+
+    sess.enqueue_async_input(PendingInputItem::from(ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: "wake".to_string(),
+        }],
+        phase: None,
+    }));
+    let wake = sess
+        .poll_event(request.clone())
+        .await
+        .expect("wake poll_event should succeed");
+    assert!(!wake.timed_out);
+    assert_eq!(wake.source_hint.as_deref(), Some("async_input"));
+    let _ = sess.get_pending_input().await;
+
+    let after_reset = sess
+        .poll_event(request)
+        .await
+        .expect("reset poll_event should succeed");
+    assert!(after_reset.timed_out);
+    assert_eq!(after_reset.current_timeout_ms, 20);
+}
+
+#[tokio::test]
 async fn inter_agent_send_message_queue_only_does_not_emit_live_collab_item() -> anyhow::Result<()>
 {
     let parent_thread_id = ThreadId::new();

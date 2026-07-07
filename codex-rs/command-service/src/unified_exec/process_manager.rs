@@ -40,7 +40,6 @@ use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
-use crate::unified_exec::WaitBackoffState;
 use crate::unified_exec::WriteStdinOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::apply_unified_exec_env;
@@ -99,7 +98,8 @@ pub(super) fn set_deterministic_process_ids_for_tests(enabled: bool) {
 
 pub(crate) struct CommandWaitBegin {
     pub(crate) process_id: i32,
-    pub(crate) wait_timeout: Duration,
+    pub(crate) initial_wait_timeout: Duration,
+    pub(crate) hard_cap_wait_timeout: Duration,
     started_at: Instant,
     state: CommandWaitBeginState,
 }
@@ -129,6 +129,7 @@ impl UnifiedExecCommandSessionController {
 struct UnifiedExecCommandWaitOperation {
     manager: Arc<UnifiedExecProcessManager>,
     wait: CommandWaitBegin,
+    finished: bool,
 }
 
 impl CommandWaitOperation for UnifiedExecCommandWaitOperation {
@@ -136,18 +137,55 @@ impl CommandWaitOperation for UnifiedExecCommandWaitOperation {
         self.wait.process_id
     }
 
-    fn wait_timeout(&self) -> Duration {
-        self.wait.wait_timeout
+    fn initial_wait_timeout(&self) -> Duration {
+        self.wait.initial_wait_timeout
+    }
+
+    fn hard_cap_wait_timeout(&self) -> Duration {
+        self.wait.hard_cap_wait_timeout
     }
 
     fn finish(
-        self: Box<Self>,
-    ) -> CommandSessionFuture<'static, Result<CommandWaitOutput, CommandSessionError>> {
+        &mut self,
+    ) -> CommandSessionFuture<'_, Result<CommandWaitOutput, CommandSessionError>> {
+        let manager = Arc::clone(&self.manager);
+        let wait = &self.wait;
+        let finished = &mut self.finished;
         Box::pin(async move {
-            self.manager
-                .finish_command_wait(self.wait)
+            if *finished {
+                return Err(CommandSessionError::new(
+                    "command_wait operation already completed",
+                ));
+            }
+            let output = manager
+                .finish_command_wait(wait)
                 .await
-                .map_err(command_session_error_from_unified_exec)
+                .map_err(command_session_error_from_unified_exec)?;
+            *finished = true;
+            Ok(output)
+        })
+    }
+
+    fn try_finish_now(
+        &mut self,
+    ) -> CommandSessionFuture<'_, Result<Option<CommandWaitOutput>, CommandSessionError>> {
+        let manager = Arc::clone(&self.manager);
+        let wait = &self.wait;
+        let finished = &mut self.finished;
+        Box::pin(async move {
+            if *finished {
+                return Err(CommandSessionError::new(
+                    "command_wait operation already completed",
+                ));
+            }
+            let output = manager
+                .try_finish_command_wait_now(wait)
+                .await
+                .map_err(command_session_error_from_unified_exec)?;
+            if output.is_some() {
+                *finished = true;
+            }
+            Ok(output)
         })
     }
 }
@@ -166,6 +204,7 @@ impl CommandSessionController for UnifiedExecCommandSessionController {
             Ok(Box::new(UnifiedExecCommandWaitOperation {
                 manager: Arc::clone(&self.manager),
                 wait,
+                finished: false,
             }) as Box<dyn CommandWaitOperation>)
         })
     }
@@ -702,7 +741,8 @@ impl UnifiedExecProcessManager {
                 if let Some(entry) = store.process_ids.completed_process(process_id) {
                     return Ok(CommandWaitBegin {
                         process_id,
-                        wait_timeout: Duration::ZERO,
+                        initial_wait_timeout: Duration::ZERO,
+                        hard_cap_wait_timeout: self.command_wait_hard_cap,
                         started_at,
                         state: CommandWaitBeginState::Completed {
                             exit_code: entry.exit_code,
@@ -712,29 +752,31 @@ impl UnifiedExecProcessManager {
                 return Err(UnifiedExecError::UnknownProcessId { process_id });
             };
             entry.last_used = started_at;
-            let wait_timeout = entry.command_wait_backoff.current_window();
-            if entry.process.has_exited() {
-                entry.command_wait_backoff.reset_after_event();
-                return Ok(CommandWaitBegin {
-                    process_id,
-                    wait_timeout,
-                    started_at,
-                    state: CommandWaitBeginState::Completed {
-                        exit_code: entry.process.exit_code(),
-                    },
-                });
-            }
             (
-                wait_timeout,
+                entry.command_wait_initial_timeout,
                 Arc::clone(&entry.process),
                 Arc::clone(&entry.notification_state),
+                entry.last_consumed_notification,
             )
         };
-        let (wait_timeout, process, notification_state) = pending;
-        let snapshot = notification_state.snapshot().await;
+        let (initial_wait_timeout, process, notification_state, snapshot) = pending;
+        if process.has_exited()
+            && notification_state.peek_after(snapshot).await.is_none()
+        {
+            return Ok(CommandWaitBegin {
+                process_id,
+                initial_wait_timeout,
+                hard_cap_wait_timeout: self.command_wait_hard_cap,
+                started_at,
+                state: CommandWaitBeginState::Completed {
+                    exit_code: process.exit_code(),
+                },
+            });
+        }
         Ok(CommandWaitBegin {
             process_id,
-            wait_timeout,
+            initial_wait_timeout,
+            hard_cap_wait_timeout: self.command_wait_hard_cap,
             started_at,
             state: CommandWaitBeginState::Pending {
                 process,
@@ -1108,10 +1150,8 @@ impl UnifiedExecProcessManager {
             last_used: started_at,
             transcript: Arc::clone(&transcript),
             notification_state: Arc::clone(&notification_state),
-            command_wait_backoff: WaitBackoffState::new(
-                Duration::from_millis(initial_wait_ms),
-                self.command_wait_hard_cap,
-            ),
+            last_consumed_notification: CommandNotificationSnapshot::default(),
+            command_wait_initial_timeout: Duration::from_millis(initial_wait_ms),
         };
         let pruned_entry = {
             let mut store = self.process_store.lock().await;
@@ -1148,92 +1188,152 @@ impl UnifiedExecProcessManager {
         request: CommandWaitRequest,
     ) -> Result<CommandWaitOutput, UnifiedExecError> {
         let wait = self.begin_command_wait(request).await?;
-        self.finish_command_wait(wait).await
+        self.finish_command_wait(&wait).await
     }
 
     pub(crate) async fn finish_command_wait(
         &self,
-        wait: CommandWaitBegin,
+        wait: &CommandWaitBegin,
     ) -> Result<CommandWaitOutput, UnifiedExecError> {
         let process_id = wait.process_id;
-        let wait_window = wait.wait_timeout;
         let started_at = wait.started_at;
-        let (process, notification_state, snapshot) = match wait.state {
+        let (process, notification_state, snapshot) = match &wait.state {
             CommandWaitBeginState::Completed { exit_code } => {
                 return Ok(CommandWaitOutput {
                     process_id,
                     status: CommandWaitStatus::Completed,
                     notification: Some(CommandNotificationKind::Exit),
-                    exit_code,
+                    exit_code: *exit_code,
                     wall_time: std::time::Duration::ZERO,
-                    wait_timeout: wait_window,
+                    wait_timeout: wait.initial_wait_timeout,
                 });
             }
             CommandWaitBeginState::Pending {
                 process,
                 notification_state,
                 snapshot,
-            } => (process, notification_state, snapshot),
+            } => (process, notification_state, *snapshot),
         };
         let cancellation_token = process.cancellation_token();
 
-        let notification = tokio::select! {
-            _ = cancellation_token.cancelled() => CommandNotificationKind::Exit,
-            kind = notification_state.wait_after(snapshot) => kind,
-            _ = tokio::time::sleep(wait_window) => {
-                self.advance_command_wait_backoff_for_process(process_id, &process)
-                    .await;
-                return Ok(CommandWaitOutput {
-                    process_id,
-                    status: CommandWaitStatus::Running,
-                    notification: None,
-                    exit_code: process.exit_code(),
-                    wall_time: Instant::now().saturating_duration_since(started_at),
-                    wait_timeout: wait_window,
-                });
+        if let Some((notification, consumed_snapshot)) =
+            notification_state.peek_after(snapshot).await
+        {
+            self.acknowledge_command_notification(process_id, consumed_snapshot)
+                .await;
+            let status = if process.has_exited() {
+                CommandWaitStatus::Completed
+            } else {
+                CommandWaitStatus::Running
+            };
+            return Ok(CommandWaitOutput {
+                process_id,
+                status,
+                notification: Some(notification),
+                exit_code: process.exit_code(),
+                wall_time: Instant::now().saturating_duration_since(started_at),
+                wait_timeout: wait.initial_wait_timeout,
+            });
+        }
+
+        let (notification, consumed_snapshot) = tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                if let Some(found) = notification_state.peek_after(snapshot).await {
+                    found
+                } else {
+                    let latest_snapshot = notification_state.snapshot().await;
+                    (CommandNotificationKind::Exit, latest_snapshot)
+                }
             }
+            result = notification_state.wait_after(snapshot) => result,
         };
+        self.acknowledge_command_notification(process_id, consumed_snapshot)
+            .await;
         let status = if process.has_exited() {
             CommandWaitStatus::Completed
         } else {
             CommandWaitStatus::Running
         };
-        self.reset_command_wait_backoff_for_process(process_id, &process)
-            .await;
         Ok(CommandWaitOutput {
             process_id,
             status,
             notification: Some(notification),
             exit_code: process.exit_code(),
             wall_time: Instant::now().saturating_duration_since(started_at),
-            wait_timeout: wait_window,
+            wait_timeout: wait.initial_wait_timeout,
         })
     }
 
-    async fn advance_command_wait_backoff_for_process(
+    async fn acknowledge_command_notification(
         &self,
         process_id: i32,
-        process: &Arc<UnifiedExecProcess>,
+        consumed_snapshot: CommandNotificationSnapshot,
     ) {
         let mut store = self.process_store.lock().await;
-        if let Some(entry) = store.processes.get_mut(&process_id)
-            && Arc::ptr_eq(&entry.process, process)
-        {
-            entry.command_wait_backoff.advance_after_timeout();
+        let Some(entry) = store.processes.get_mut(&process_id) else {
+            return;
+        };
+        if consumed_snapshot.sequence() > entry.last_consumed_notification.sequence() {
+            entry.last_consumed_notification = consumed_snapshot;
         }
     }
 
-    async fn reset_command_wait_backoff_for_process(
+    pub(crate) async fn try_finish_command_wait_now(
         &self,
-        process_id: i32,
-        process: &Arc<UnifiedExecProcess>,
-    ) {
-        let mut store = self.process_store.lock().await;
-        if let Some(entry) = store.processes.get_mut(&process_id)
-            && Arc::ptr_eq(&entry.process, process)
-        {
-            entry.command_wait_backoff.reset_after_event();
+        wait: &CommandWaitBegin,
+    ) -> Result<Option<CommandWaitOutput>, UnifiedExecError> {
+        let process_id = wait.process_id;
+        let started_at = wait.started_at;
+        let (process, notification_state, snapshot) = match &wait.state {
+            CommandWaitBeginState::Completed { exit_code } => {
+                return Ok(Some(CommandWaitOutput {
+                    process_id,
+                    status: CommandWaitStatus::Completed,
+                    notification: Some(CommandNotificationKind::Exit),
+                    exit_code: *exit_code,
+                    wall_time: std::time::Duration::ZERO,
+                    wait_timeout: wait.initial_wait_timeout,
+                }));
+            }
+            CommandWaitBeginState::Pending {
+                process,
+                notification_state,
+                snapshot,
+            } => (process, notification_state, *snapshot),
+        };
+
+        let notification = notification_state
+            .peek_after(snapshot)
+            .await
+            .or_else(|| {
+                process.has_exited().then(|| {
+                    (
+                        CommandNotificationKind::Exit,
+                        CommandNotificationSnapshot::default(),
+                    )
+                })
+            });
+        let Some((notification, consumed_snapshot)) = notification else {
+            return Ok(None);
+        };
+
+        if consumed_snapshot.sequence() > 0 {
+            self.acknowledge_command_notification(process_id, consumed_snapshot)
+                .await;
         }
+        let status = if process.has_exited() {
+            CommandWaitStatus::Completed
+        } else {
+            CommandWaitStatus::Running
+        };
+        Ok(Some(CommandWaitOutput {
+            process_id,
+            status,
+            notification: Some(notification),
+            exit_code: process.exit_code(),
+            wall_time: Instant::now().saturating_duration_since(started_at),
+            wait_timeout: wait.initial_wait_timeout,
+        }))
     }
 
     pub(crate) async fn open_session_with_exec_env(

@@ -236,6 +236,7 @@ pub enum ThreadSpawnAgentResult {
 pub enum ThreadWaitAgentReason {
     PendingMessage,
     MailboxMessage,
+    ThreadInput,
     FinalStatus,
     StatusUpdate,
     Timeout,
@@ -252,6 +253,24 @@ pub struct ThreadWaitAgentResult {
     pub message_operation: Option<String>,
     pub message_author: Option<String>,
     pub message_excerpt: Option<String>,
+    pub waited_ms: i64,
+    pub initial_timeout_ms: i64,
+    pub current_timeout_ms: i64,
+    pub hard_cap_timeout_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadPollEventRequest {
+    pub initial_timeout_ms: Option<i64>,
+    pub hard_cap_timeout_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadPollEventResult {
+    pub timed_out: bool,
+    pub source_hint: Option<String>,
     pub waited_ms: i64,
     pub initial_timeout_ms: i64,
     pub current_timeout_ms: i64,
@@ -687,6 +706,17 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         call_id: String,
         target: String,
     ) -> ThreadServiceFuture<'a, Result<ThreadWaitAgentResult, FunctionCallError>>;
+
+    fn poll_event<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>>;
+
+    fn reset_thread_wait_backoff<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+    ) -> ThreadServiceFuture<'a, ()>;
 
     fn close_agent<'a>(
         &'a self,

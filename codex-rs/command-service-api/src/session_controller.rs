@@ -39,11 +39,17 @@ impl Error for CommandSessionError {}
 pub trait CommandWaitOperation: Send {
     fn process_id(&self) -> i32;
 
-    fn wait_timeout(&self) -> Duration;
+    fn initial_wait_timeout(&self) -> Duration;
+
+    fn hard_cap_wait_timeout(&self) -> Duration;
 
     fn finish(
-        self: Box<Self>,
-    ) -> CommandSessionFuture<'static, Result<CommandWaitOutput, CommandSessionError>>;
+        &mut self,
+    ) -> CommandSessionFuture<'_, Result<CommandWaitOutput, CommandSessionError>>;
+
+    fn try_finish_now(
+        &mut self,
+    ) -> CommandSessionFuture<'_, Result<Option<CommandWaitOutput>, CommandSessionError>>;
 }
 
 /// Controller for already-running command sessions.

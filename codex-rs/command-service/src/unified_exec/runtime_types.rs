@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
@@ -42,15 +43,27 @@ impl ProcessState {
 
 #[derive(Default)]
 pub(crate) struct CommandNotificationState {
-    inner: Mutex<CommandNotificationSnapshot>,
+    inner: Mutex<CommandNotificationStateInner>,
     notify: Notify,
     background_session_active: AtomicBool,
+}
+
+#[derive(Default)]
+struct CommandNotificationStateInner {
+    latest: CommandNotificationSnapshot,
+    pending: VecDeque<CommandNotificationSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct CommandNotificationSnapshot {
     sequence: u64,
     kind: Option<CommandNotificationKind>,
+}
+
+impl CommandNotificationSnapshot {
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
 }
 
 impl CommandNotificationState {
@@ -64,14 +77,29 @@ impl CommandNotificationState {
     }
 
     pub async fn snapshot(&self) -> CommandNotificationSnapshot {
-        *self.inner.lock().await
+        self.inner.lock().await.latest
+    }
+
+    pub async fn peek_after(
+        &self,
+        snapshot: CommandNotificationSnapshot,
+    ) -> Option<(CommandNotificationKind, CommandNotificationSnapshot)> {
+        let guard = self.inner.lock().await;
+        Self::peek_after_locked(&guard, snapshot)
     }
 
     pub async fn notify(&self, kind: CommandNotificationKind) {
         {
             let mut guard = self.inner.lock().await;
-            guard.sequence += 1;
-            guard.kind = Some(kind);
+            guard.latest.sequence += 1;
+            guard.latest.kind = Some(kind);
+            let latest = guard.latest;
+            match guard.pending.back_mut() {
+                Some(last) if last.kind == Some(kind) => {
+                    last.sequence = latest.sequence;
+                }
+                _ => guard.pending.push_back(latest),
+            }
         }
         self.notify.notify_waiters();
     }
@@ -79,19 +107,28 @@ impl CommandNotificationState {
     pub async fn wait_after(
         &self,
         snapshot: CommandNotificationSnapshot,
-    ) -> CommandNotificationKind {
+    ) -> (CommandNotificationKind, CommandNotificationSnapshot) {
         loop {
             let notified = self.notify.notified();
             {
                 let guard = self.inner.lock().await;
-                if guard.sequence > snapshot.sequence
-                    && let Some(kind) = guard.kind
-                {
-                    return kind;
+                if let Some(found) = Self::peek_after_locked(&guard, snapshot) {
+                    return found;
                 }
             }
             notified.await;
         }
+    }
+
+    fn peek_after_locked(
+        guard: &CommandNotificationStateInner,
+        snapshot: CommandNotificationSnapshot,
+    ) -> Option<(CommandNotificationKind, CommandNotificationSnapshot)> {
+        guard.pending.iter().find_map(|event| {
+            (event.sequence > snapshot.sequence)
+                .then_some(event.kind.map(|kind| (kind, *event)))
+                .flatten()
+        })
     }
 }
 

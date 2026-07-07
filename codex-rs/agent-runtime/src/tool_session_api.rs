@@ -42,6 +42,7 @@ pub enum SpawnAgentToolResult {
 pub enum WaitAgentReason {
     PendingMessage,
     MailboxMessage,
+    ThreadInput,
     FinalStatus,
     StatusUpdate,
     Timeout,

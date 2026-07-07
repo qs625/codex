@@ -226,9 +226,42 @@ fn wait_agent_tool_requires_target_and_exposes_wait_metadata() {
         json!([
             "pending_message",
             "mailbox_message",
+            "thread_input",
             "status_update",
             "final_status",
             "timeout"
+        ])
+    );
+}
+
+#[test]
+fn poll_event_tool_has_empty_object_params_and_wake_metadata() {
+    let ToolSpec::Function(ResponsesApiTool {
+        parameters,
+        output_schema,
+        ..
+    }) = create_poll_event_tool()
+    else {
+        panic!("poll_event should be a function tool");
+    };
+    assert_eq!(
+        parameters.schema_type,
+        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Object))
+    );
+    assert_eq!(
+        parameters.required.as_ref(),
+        Some(&Vec::<String>::new())
+    );
+    let output_schema = output_schema.expect("poll_event output schema");
+    assert_eq!(
+        output_schema["required"],
+        json!([
+            "timed_out",
+            "source_hint",
+            "waited_ms",
+            "initial_timeout_ms",
+            "current_timeout_ms",
+            "hard_cap_timeout_ms"
         ])
     );
 }

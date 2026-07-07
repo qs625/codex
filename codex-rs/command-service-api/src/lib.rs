@@ -96,6 +96,24 @@ pub trait SessionCommandInteractionCaller: Send + Sync + 'static {
         request: CommandWaitRequest,
     ) -> CommandServiceFuture<'a, Result<Box<dyn CommandWaitOperation>, CommandSessionError>>;
 
+    /// Compatibility wrapper for the `command_wait` tool.
+    ///
+    /// The unified thread wait primitive lives in thread-service `poll_event`.
+    /// `command_wait` remains as a legacy command-session facade that delegates
+    /// to that shared wait runtime and only preserves command-specific result
+    /// shaping.
+    fn wait_command_compat<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        request: CommandWaitRequest,
+    ) -> CommandServiceFuture<'a, Result<CommandWaitOutput, CommandSessionError>>;
+
+    fn wait_command_compat_with_operation<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadRuntimeCapability>,
+        command_wait: Box<dyn CommandWaitOperation>,
+    ) -> CommandServiceFuture<'a, Result<CommandWaitOutput, CommandSessionError>>;
+
     fn write_command_stdin<'a>(
         &'a self,
         request: WriteStdinRequest<'a>,

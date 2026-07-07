@@ -1,4 +1,7 @@
 use super::*;
+use super::session::ThreadWaitEventSnapshot;
+use super::session::ThreadWaitSource;
+use tokio::time::Instant;
 
 impl Session {
     /// Inject additional user input into the currently active turn.
@@ -48,6 +51,7 @@ impl Session {
             codex_model_input::response_input_item_from_user_input(validated.input),
         ));
         turn_state.accept_mailbox_delivery_for_current_turn();
+        self.note_thread_wait_event(ThreadWaitSource::UserInput);
         Ok(validated.active_turn_id)
     }
 
@@ -67,6 +71,7 @@ impl Session {
                 for item in input {
                     ts.push_pending_input(PendingInputItem::from(item));
                 }
+                self.note_thread_wait_event(ThreadWaitSource::AsyncInput);
                 Ok(())
             }
             None => Err(input),
@@ -117,57 +122,56 @@ impl Session {
         })
     }
 
-    pub(crate) fn subscribe_mailbox_seq(&self) -> watch::Receiver<u64> {
-        self.mailbox.subscribe()
+    pub(crate) fn subscribe_thread_wait_events(&self) -> watch::Receiver<ThreadWaitEventSnapshot> {
+        self.thread_wait_events.subscribe()
     }
 
-    pub(crate) async fn wait_agent_current_window(
+    pub(crate) fn note_thread_wait_event(&self, source: ThreadWaitSource) {
+        let current = *self.thread_wait_events.borrow();
+        self.thread_wait_events.send_replace(ThreadWaitEventSnapshot {
+            seq: current.seq + 1,
+            source: Some(source),
+        });
+    }
+
+    pub(crate) async fn thread_wait_current_window(
         &self,
-        sender_thread_id: ThreadId,
-        receiver_thread_id: ThreadId,
         initial_timeout_ms: i64,
         hard_cap_timeout_ms: i64,
     ) -> Duration {
-        let mut guard = self.wait_agent_backoff.lock().await;
-        guard
-            .entry((sender_thread_id, receiver_thread_id))
-            .or_insert_with(|| {
-                command_service_api::WaitBackoffState::new(
-                    duration_from_config_ms(initial_timeout_ms),
-                    duration_from_config_ms(hard_cap_timeout_ms),
-                )
-            })
-            .current_window()
+        let initial_window = duration_from_config_ms(initial_timeout_ms);
+        let max_window = duration_from_config_ms(hard_cap_timeout_ms);
+        self.thread_wait_backoff
+            .lock()
+            .await
+            .current_window(initial_window, max_window)
     }
 
-    pub(crate) async fn advance_wait_agent_backoff(
+    pub(crate) async fn advance_thread_wait_backoff(
         &self,
-        sender_thread_id: ThreadId,
-        receiver_thread_id: ThreadId,
+        initial_timeout_ms: i64,
+        hard_cap_timeout_ms: i64,
     ) {
-        let mut guard = self.wait_agent_backoff.lock().await;
-        if let Some(state) = guard.get_mut(&(sender_thread_id, receiver_thread_id)) {
-            state.advance_after_timeout();
-        }
+        let initial_window = duration_from_config_ms(initial_timeout_ms);
+        let max_window = duration_from_config_ms(hard_cap_timeout_ms);
+        self.thread_wait_backoff
+            .lock()
+            .await
+            .advance_after_timeout(initial_window, max_window);
     }
 
-    pub(crate) async fn reset_wait_agent_backoff(
-        &self,
-        sender_thread_id: ThreadId,
-        receiver_thread_id: ThreadId,
-    ) {
-        let mut guard = self.wait_agent_backoff.lock().await;
-        if let Some(state) = guard.get_mut(&(sender_thread_id, receiver_thread_id)) {
-            state.reset_after_event();
-        }
+    pub(crate) async fn reset_thread_wait_backoff(&self) {
+        self.thread_wait_backoff.lock().await.reset_after_event();
     }
 
     pub(crate) fn enqueue_mailbox_communication(&self, communication: InterAgentCommunication) {
         self.mailbox.send(PendingInputItem::from(communication));
+        self.note_thread_wait_event(ThreadWaitSource::InterAgent);
     }
 
     pub(crate) fn enqueue_async_input(&self, input: PendingInputItem) {
         self.mailbox.send(input);
+        self.note_thread_wait_event(ThreadWaitSource::AsyncInput);
     }
 
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
@@ -316,6 +320,7 @@ impl Session {
 
         let mut idle_pending_input = self.idle_pending_input.lock().await;
         idle_pending_input.extend(items);
+        self.note_thread_wait_event(ThreadWaitSource::QueuedInput);
     }
 
     pub(crate) async fn take_queued_response_items_for_next_turn(&self) -> Vec<PendingInputItem> {
@@ -365,6 +370,87 @@ impl Session {
                 .await;
         }
     }
+
+    pub(crate) async fn pending_thread_input_source_hint(&self) -> Option<String> {
+        self.find_pending_input(|item| Some(thread_wait_source_hint_for_pending_input(item)))
+            .await
+            .flatten()
+    }
+
+    pub(crate) async fn poll_event(
+        &self,
+        request: thread_service_api::ThreadPollEventRequest,
+    ) -> Result<thread_service_api::ThreadPollEventResult, tool_service_api::FunctionCallError> {
+        let initial_timeout_ms = request.initial_timeout_ms.ok_or_else(|| {
+            tool_service_api::FunctionCallError::Fatal(
+                "poll_event requires initial_timeout_ms to be resolved by the thread runtime"
+                    .to_string(),
+            )
+        })?;
+        let hard_cap_timeout_ms = request.hard_cap_timeout_ms.ok_or_else(|| {
+            tool_service_api::FunctionCallError::Fatal(
+                "poll_event requires hard_cap_timeout_ms to be resolved by the thread runtime"
+                    .to_string(),
+            )
+        })?;
+        let started = Instant::now();
+        let current_timeout = self
+            .thread_wait_current_window(initial_timeout_ms, hard_cap_timeout_ms)
+            .await;
+        let current_timeout_ms = current_timeout.as_millis() as i64;
+        let mut thread_wait_rx = self.subscribe_thread_wait_events();
+        let wait_snapshot = *thread_wait_rx.borrow_and_update();
+        if let Some(source_hint) = self.pending_thread_input_source_hint().await {
+            self.reset_thread_wait_backoff().await;
+            return Ok(thread_service_api::ThreadPollEventResult {
+                timed_out: false,
+                source_hint: Some(source_hint),
+                waited_ms: 0,
+                initial_timeout_ms,
+                current_timeout_ms,
+                hard_cap_timeout_ms,
+            });
+        }
+
+        let source_hint = tokio::time::timeout(current_timeout, async move {
+            loop {
+                if thread_wait_rx.changed().await.is_err() {
+                    return None;
+                }
+                let snapshot = *thread_wait_rx.borrow_and_update();
+                if snapshot.seq > wait_snapshot.seq {
+                    return snapshot.source.map(thread_wait_source_hint);
+                }
+            }
+        })
+        .await;
+
+        match source_hint {
+            Ok(source_hint) => {
+                self.reset_thread_wait_backoff().await;
+                Ok(thread_service_api::ThreadPollEventResult {
+                    timed_out: false,
+                    source_hint,
+                    waited_ms: started.elapsed().as_millis() as i64,
+                    initial_timeout_ms,
+                    current_timeout_ms,
+                    hard_cap_timeout_ms,
+                })
+            }
+            Err(_) => {
+                self.advance_thread_wait_backoff(initial_timeout_ms, hard_cap_timeout_ms)
+                    .await;
+                Ok(thread_service_api::ThreadPollEventResult {
+                    timed_out: true,
+                    source_hint: None,
+                    waited_ms: started.elapsed().as_millis() as i64,
+                    initial_timeout_ms,
+                    current_timeout_ms,
+                    hard_cap_timeout_ms,
+                })
+            }
+        }
+    }
 }
 
 fn matches_child_completion(item: &PendingInputItem, child_thread_id: ThreadId) -> bool {
@@ -382,5 +468,32 @@ fn matches_child_completion(item: &PendingInputItem, child_thread_id: ThreadId) 
                 && communication.sender_thread_id == Some(child_thread_id)
         }
         PendingInputItem::ResponseItem(_) | PendingInputItem::HookInspectable(_) => false,
+    }
+}
+
+fn thread_wait_source_hint(source: ThreadWaitSource) -> String {
+    match source {
+        ThreadWaitSource::UserInput => "user_input",
+        ThreadWaitSource::InterAgent => "inter_agent",
+        ThreadWaitSource::QueuedInput => "queued_input",
+        ThreadWaitSource::AsyncInput => "async_input",
+    }
+    .to_string()
+}
+
+fn thread_wait_source_hint_for_pending_input(item: &PendingInputItem) -> Option<String> {
+    match item {
+        PendingInputItem::InterAgentCommunication(_) => Some(thread_wait_source_hint(
+            ThreadWaitSource::InterAgent,
+        )),
+        PendingInputItem::ResponseItem(ResponseItem::Message { role, .. })
+        | PendingInputItem::HookInspectable(ResponseItem::Message { role, .. })
+            if role == "user" =>
+        {
+            Some(thread_wait_source_hint(ThreadWaitSource::UserInput))
+        }
+        PendingInputItem::HookInspectable(_) | PendingInputItem::ResponseItem(_) => {
+            Some(thread_wait_source_hint(ThreadWaitSource::AsyncInput))
+        }
     }
 }

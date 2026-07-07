@@ -11,6 +11,8 @@ use thread_service_api::ThreadAgentMode;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadListedAgent;
+use thread_service_api::ThreadPollEventRequest;
+use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadServiceApi;
 use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadSpawnAgentForkMode;
@@ -86,6 +88,9 @@ fn from_runtime_wait_result(
             }
             codex_agent_runtime::WaitAgentReason::MailboxMessage => {
                 ThreadWaitAgentReason::MailboxMessage
+            }
+            codex_agent_runtime::WaitAgentReason::ThreadInput => {
+                ThreadWaitAgentReason::ThreadInput
             }
             codex_agent_runtime::WaitAgentReason::FinalStatus => ThreadWaitAgentReason::FinalStatus,
             codex_agent_runtime::WaitAgentReason::StatusUpdate => {
@@ -180,6 +185,45 @@ impl ThreadServiceApi for ThreadService {
             multi_agent::wait_agent_tool(session(turn.as_ref()), Arc::clone(&turn), call_id, target)
                 .await
                 .map(from_runtime_wait_result)
+        })
+    }
+
+    fn poll_event<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>> {
+        Box::pin(async move {
+            let turn = turn_context(turn)?;
+            let (default_initial_timeout_ms, default_hard_cap_timeout_ms) =
+                turn.default_wait_agent_timeouts();
+            session(turn.as_ref())
+                .poll_event(ThreadPollEventRequest {
+                    initial_timeout_ms: Some(
+                        request
+                            .initial_timeout_ms
+                            .unwrap_or(default_initial_timeout_ms),
+                    ),
+                    hard_cap_timeout_ms: Some(
+                        request
+                            .hard_cap_timeout_ms
+                            .unwrap_or(default_hard_cap_timeout_ms),
+                    ),
+                })
+                .await
+        })
+    }
+
+    fn reset_thread_wait_backoff<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+    ) -> ThreadServiceFuture<'a, ()> {
+        Box::pin(async move {
+            let turn = match turn_context(turn) {
+                Ok(turn) => turn,
+                Err(_) => return,
+            };
+            session(turn.as_ref()).reset_thread_wait_backoff().await;
         })
     }
 

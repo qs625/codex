@@ -2295,6 +2295,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
     );
 
     let (mailbox, mailbox_rx) = crate::Mailbox::new();
+    let (thread_wait_events, _thread_wait_events_rx) =
+        watch::channel(crate::session::session::ThreadWaitEventSnapshot::default());
     let session = Session {
         self_weak: std::sync::OnceLock::new(),
         conversation_id: thread_id,
@@ -2316,7 +2318,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         services,
         next_internal_sub_id: AtomicU64::new(0),
         child_completion: codex_agent_runtime::ChildCompletionState::new(),
-        wait_agent_backoff: Mutex::new(std::collections::HashMap::new()),
+        thread_wait_events,
+        thread_wait_backoff: Mutex::new(crate::session::session::ThreadWaitBackoffState::default()),
     };
 
     (session, turn_context)

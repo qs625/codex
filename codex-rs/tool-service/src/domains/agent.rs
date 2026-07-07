@@ -7,6 +7,7 @@ use crate::planning::ToolSpec;
 use crate::planning::create_close_agent_tool_v2;
 use crate::planning::create_followup_task_tool;
 use crate::planning::create_list_agents_tool;
+use crate::planning::create_poll_event_tool;
 use crate::planning::create_report_agent_job_result_tool;
 use crate::planning::create_spawn_agent_tool_v2;
 use crate::planning::create_spawn_agents_on_csv_tool;
@@ -35,6 +36,7 @@ use crate::output::FunctionToolOutput;
 const SPAWN_AGENT_TOOL_NAME: &str = "spawn_agent";
 const FOLLOWUP_TASK_TOOL_NAME: &str = "followup_task";
 const WAIT_AGENT_TOOL_NAME: &str = "wait_agent";
+const POLL_EVENT_TOOL_NAME: &str = "poll_event";
 const LIST_AGENTS_TOOL_NAME: &str = "list_agents";
 const CLOSE_AGENT_TOOL_NAME: &str = "close_agent";
 const SPAWN_AGENTS_ON_CSV_TOOL_NAME: &str = "spawn_agents_on_csv";
@@ -52,6 +54,7 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
         }),
         create_followup_task_tool(),
         create_wait_agent_tool_v2(),
+        create_poll_event_tool(),
         create_list_agents_tool(),
         create_close_agent_tool_v2(),
         create_spawn_agents_on_csv_tool(),
@@ -66,6 +69,7 @@ pub(crate) fn owns_tool_name(_request: &TypedToolSpecRequest<'_>, tool_name: &To
             SPAWN_AGENT_TOOL_NAME
                 | FOLLOWUP_TASK_TOOL_NAME
                 | WAIT_AGENT_TOOL_NAME
+                | POLL_EVENT_TOOL_NAME
                 | LIST_AGENTS_TOOL_NAME
                 | CLOSE_AGENT_TOOL_NAME
                 | SPAWN_AGENTS_ON_CSV_TOOL_NAME
@@ -127,6 +131,18 @@ pub(crate) async fn dispatch(
                 )
                 .await?;
             function_tool_json_output(&result, WAIT_AGENT_TOOL_NAME)?
+        }
+        POLL_EVENT_TOOL_NAME => {
+            let result = thread_service_api
+                .poll_event(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    thread_service_api::ThreadPollEventRequest {
+                        initial_timeout_ms: None,
+                        hard_cap_timeout_ms: None,
+                    },
+                )
+                .await?;
+            function_tool_json_output(&result, POLL_EVENT_TOOL_NAME)?
         }
         LIST_AGENTS_TOOL_NAME => {
             let arguments = function_arguments(&call)?;

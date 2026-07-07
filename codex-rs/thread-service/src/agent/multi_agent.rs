@@ -173,6 +173,9 @@ pub(crate) async fn wait_agent_tool(
     call_id: String,
     target: String,
 ) -> Result<WaitAgentToolResult, FunctionCallError> {
+    // `wait_agent` is a compatibility facade over the shared thread wait
+    // runtime: it reuses the same thread-scoped backoff and wake events as
+    // `poll_event`, then only adds agent-specific completion/status shaping.
     let sender_thread_id = session.thread_id();
     let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
     let receiver_agent = session.agent_metadata(receiver_thread_id);
@@ -186,12 +189,7 @@ pub(crate) async fn wait_agent_tool(
     let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref());
     let (initial_timeout_ms, hard_cap_timeout_ms) = turn.default_wait_agent_timeouts();
     let current_timeout = session
-        .wait_agent_current_window(
-            sender_thread_id,
-            receiver_thread_id,
-            initial_timeout_ms,
-            hard_cap_timeout_ms,
-        )
+        .thread_wait_current_window(initial_timeout_ms, hard_cap_timeout_ms)
         .await;
     session
         .send_event(
@@ -215,7 +213,7 @@ pub(crate) async fn wait_agent_tool(
         .await;
 
     let started = Instant::now();
-    let mailbox_seq_rx = session.subscribe_mailbox_seq();
+    let thread_wait_rx = session.subscribe_thread_wait_events();
     let snapshot_status = session.agent_status(receiver_thread_id).await;
     let agent_name = receiver_agent_path.to_string();
     let current_timeout_ms = duration_to_ms(current_timeout);
@@ -288,7 +286,7 @@ pub(crate) async fn wait_agent_tool(
                 &session,
                 receiver_thread_id,
                 receiver_agent_path.clone(),
-                mailbox_seq_rx,
+                thread_wait_rx,
                 status_rx,
                 current_timeout,
                 WaitAgentContext {
@@ -305,12 +303,10 @@ pub(crate) async fn wait_agent_tool(
     };
     if result.timed_out {
         session
-            .advance_wait_agent_backoff(sender_thread_id, receiver_thread_id)
+            .advance_thread_wait_backoff(initial_timeout_ms, hard_cap_timeout_ms)
             .await;
     } else {
-        session
-            .reset_wait_agent_backoff(sender_thread_id, receiver_thread_id)
-            .await;
+        session.reset_thread_wait_backoff().await;
     }
 
     let mut statuses = HashMap::new();
@@ -505,7 +501,7 @@ async fn wait_for_update(
     session: &Arc<Session>,
     receiver_thread_id: ThreadId,
     receiver_agent_path: AgentPath,
-    mut mailbox_seq_rx: watch::Receiver<u64>,
+    mut thread_wait_rx: watch::Receiver<crate::session::session::ThreadWaitEventSnapshot>,
     mut status_rx: watch::Receiver<crate::agent::AgentStatus>,
     current_timeout: Duration,
     wait_context: WaitAgentContext,
@@ -543,8 +539,8 @@ async fn wait_for_update(
                 status_changed = status_rx.changed() => {
                     WaitEvent::Status(status_changed.is_ok())
                 }
-                mailbox_changed = mailbox_seq_rx.changed() => {
-                    WaitEvent::Mailbox(mailbox_changed.is_ok())
+                thread_input_changed = thread_wait_rx.changed() => {
+                    WaitEvent::ThreadInput(thread_input_changed.is_ok())
                 }
             }
         })
@@ -606,7 +602,7 @@ async fn wait_for_update(
                     wait_context.hard_cap_timeout_ms,
                 );
             }
-            Ok(WaitEvent::Mailbox(true)) => {
+            Ok(WaitEvent::ThreadInput(true)) => {
                 if let Some(result) = pending_message_result(
                     session,
                     receiver_thread_id,
@@ -618,8 +614,20 @@ async fn wait_for_update(
                 {
                     return result;
                 }
+                let status = session.agent_status(receiver_thread_id).await;
+                return build_wait_result(
+                    wait_context.target,
+                    wait_context.agent_name,
+                    WaitAgentReason::ThreadInput,
+                    status,
+                    None,
+                    wait_context.started,
+                    wait_context.initial_timeout_ms,
+                    wait_context.current_timeout_ms,
+                    wait_context.hard_cap_timeout_ms,
+                );
             }
-            Ok(WaitEvent::Mailbox(false)) | Err(_) => {
+            Ok(WaitEvent::ThreadInput(false)) | Err(_) => {
                 let status = session.agent_status(receiver_thread_id).await;
                 return build_wait_result(
                     wait_context.target,
@@ -688,7 +696,7 @@ async fn pending_message_result_with_fallback_status(
 
 enum WaitEvent {
     Status(bool),
-    Mailbox(bool),
+    ThreadInput(bool),
 }
 
 #[allow(clippy::too_many_arguments)]

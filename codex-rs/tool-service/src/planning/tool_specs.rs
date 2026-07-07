@@ -31,6 +31,7 @@ pub use multi_agents::SpawnAgentToolOptions;
 pub use multi_agents::create_close_agent_tool_v2;
 pub use multi_agents::create_followup_task_tool;
 pub use multi_agents::create_list_agents_tool;
+pub use multi_agents::create_poll_event_tool;
 pub use multi_agents::create_spawn_agent_tool_v2;
 pub use multi_agents::create_wait_agent_tool_v2;
 pub use plan::create_update_plan_tool;
