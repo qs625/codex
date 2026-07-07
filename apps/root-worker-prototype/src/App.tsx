@@ -96,8 +96,10 @@ import type {
   AppServerErrorNotification,
   ComposerImage,
   DraftSkill,
-  FilePreview,
+  FilePanelView,
   FileLocation,
+  FilePreview,
+  FileTreeEntry,
   NotificationEnvelope,
   RightPanelView,
   TaskFilter,
@@ -190,6 +192,15 @@ function App() {
     token: number;
   } | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const [filePanelView, setFilePanelView] = useState<FilePanelView>("preview");
+  const [fileTreeEntriesByPath, setFileTreeEntriesByPath] = useState<
+    Record<string, FileTreeEntry[]>
+  >({});
+  const [fileTreeLoadingPath, setFileTreeLoadingPath] = useState<string | null>(null);
+  const [fileTreeErrorsByPath, setFileTreeErrorsByPath] = useState<
+    Record<string, string>
+  >({});
+  const [expandedTreeDirectories, setExpandedTreeDirectories] = useState<string[]>([]);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [voiceCaptureStatus, setVoiceCaptureStatus] =
@@ -208,6 +219,8 @@ function App() {
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
   const selectedThreadIdRef = useRef<string | null>(null);
+  const selectedThreadCwdRef = useRef<string | null>(null);
+  const fileTreeSessionTokenRef = useRef(0);
   const liveThreadIdsRef = useRef<Set<string>>(new Set());
   const runConfigOverrideByThreadIdRef = useRef<
     Map<string, RunConfigSelection>
@@ -299,10 +312,11 @@ function App() {
 
   useEffect(() => {
     selectedThreadIdRef.current = selectedThreadId;
+    selectedThreadCwdRef.current = selectedThread?.cwd ?? null;
     if (!selectedThreadId) {
       setIsLoadingThread(false);
     }
-  }, [selectedThreadId]);
+  }, [selectedThread?.cwd, selectedThreadId]);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -513,6 +527,15 @@ function App() {
   useEffect(() => {
     filePreviewRef.current = filePreview;
   }, [filePreview]);
+
+  useEffect(() => {
+    setFilePanelView("preview");
+    setFileTreeEntriesByPath({});
+    setFileTreeLoadingPath(null);
+    setFileTreeErrorsByPath({});
+    setExpandedTreeDirectories([]);
+    fileTreeSessionTokenRef.current += 1;
+  }, [selectedThread?.cwd, selectedThreadId]);
 
   useEffect(() => {
     function handlePointerMove(event: globalThis.PointerEvent) {
@@ -2152,6 +2175,7 @@ function App() {
 
   async function loadFilePreview(target: string) {
     setRightPanelView("preview");
+    setFilePanelView("preview");
     setIsLoadingPreview(true);
     setPreviewError(null);
 
@@ -2170,6 +2194,90 @@ function App() {
 
   async function handleOpenLocalFile(target: string) {
     await loadFilePreview(target);
+  }
+
+  async function loadFileTreeDirectory(target: string) {
+    const requestThreadId = selectedThreadIdRef.current;
+    const requestCwd = selectedThreadCwdRef.current;
+    const sessionToken = fileTreeSessionTokenRef.current;
+    setFileTreeLoadingPath(target);
+    setFileTreeErrorsByPath((current) => {
+      if (!(target in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[target];
+      return next;
+    });
+
+    try {
+      const payload = (await window.codexDesktop.listLocalDirectory(target)) as {
+        path: string;
+        entries: FileTreeEntry[];
+      };
+      if (
+        fileTreeSessionTokenRef.current !== sessionToken ||
+        selectedThreadIdRef.current !== requestThreadId ||
+        selectedThreadCwdRef.current !== requestCwd
+      ) {
+        return;
+      }
+      setFileTreeEntriesByPath((current) => ({
+        ...current,
+        [payload.path]: payload.entries,
+      }));
+    } catch (treeLoadError) {
+      if (
+        fileTreeSessionTokenRef.current !== sessionToken ||
+        selectedThreadIdRef.current !== requestThreadId ||
+        selectedThreadCwdRef.current !== requestCwd
+      ) {
+        return;
+      }
+      setFileTreeErrorsByPath((current) => ({
+        ...current,
+        [target]: toErrorMessage(treeLoadError),
+      }));
+    } finally {
+      if (
+        fileTreeSessionTokenRef.current === sessionToken &&
+        selectedThreadIdRef.current === requestThreadId &&
+        selectedThreadCwdRef.current === requestCwd
+      ) {
+        setFileTreeLoadingPath((current) => (current === target ? null : current));
+      }
+    }
+  }
+
+  function ensureFileTreeDirectoryLoaded(target: string) {
+    if (fileTreeEntriesByPath[target]) {
+      return;
+    }
+    void loadFileTreeDirectory(target);
+  }
+
+  function handleSetFilePanelView(nextView: FilePanelView) {
+    setFilePanelView(nextView);
+    if (nextView === "tree" && selectedThread?.cwd) {
+      ensureFileTreeDirectoryLoaded(selectedThread.cwd);
+    }
+  }
+
+  function handleToggleTreeDirectory(target: string) {
+    const isExpanded = expandedTreeDirectories.includes(target);
+    setExpandedTreeDirectories((current) =>
+      isExpanded
+        ? current.filter((entry) => entry !== target)
+        : [...current, target],
+    );
+
+    if (!isExpanded) {
+      ensureFileTreeDirectoryLoaded(target);
+    }
+  }
+
+  function handleOpenTreeFile(target: string) {
+    void loadFilePreview(target);
   }
 
   async function handleNavigateToSymbol(
@@ -2325,11 +2433,17 @@ function App() {
         <RightPanel
           activeView={rightPanelView}
           availableSkillCount={availableSkills.length}
+          expandedTreeDirectories={expandedTreeDirectories}
+          filePanelView={filePanelView}
+          fileTreeEntriesByPath={fileTreeEntriesByPath}
+          fileTreeErrorsByPath={fileTreeErrorsByPath}
+          fileTreeLoadingPath={fileTreeLoadingPath}
           onCreateRootThread={() => void createRootThread()}
           onNavigateToSymbol={(destination, sourceLocation) =>
             void handleNavigateToSymbol(destination, sourceLocation)
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
+          onOpenTreeFile={handleOpenTreeFile}
           onSelectTaskThread={setSelectedThreadId}
           onSelectCommandMonitor={(commandItemId) =>
             setFocusedConversationItem((current) => ({
@@ -2338,7 +2452,9 @@ function App() {
             }))
           }
           onSetActiveView={setRightPanelView}
+          onSetFilePanelView={handleSetFilePanelView}
           onSetTaskFilter={setTaskFilter}
+          onToggleTreeDirectory={handleToggleTreeDirectory}
           preview={filePreview}
           previewError={previewError}
           previewLoading={isLoadingPreview}

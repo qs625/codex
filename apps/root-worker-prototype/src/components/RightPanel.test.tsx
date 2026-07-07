@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { RightPanelView, Thread, ThreadPlanUpdate } from "../types";
+import type {
+  FilePanelView,
+  FileTreeEntry,
+  RightPanelView,
+  Thread,
+  ThreadPlanUpdate,
+} from "../types";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const { RightPanel } = await import("./RightPanel");
@@ -50,17 +56,30 @@ function renderRightPanel(
   thread: Thread | null,
   activeView: RightPanelView = "skills",
   planUpdate: ThreadPlanUpdate | null = thread?.latestPlan ?? null,
+  options?: {
+    filePanelView?: FilePanelView;
+    fileTreeEntriesByPath?: Record<string, FileTreeEntry[]>;
+    expandedTreeDirectories?: string[];
+  },
 ) {
   return renderToStaticMarkup(
     <RightPanel
       activeView={activeView}
       availableSkillCount={0}
+      expandedTreeDirectories={options?.expandedTreeDirectories ?? []}
+      filePanelView={options?.filePanelView ?? "preview"}
+      fileTreeEntriesByPath={options?.fileTreeEntriesByPath ?? {}}
+      fileTreeErrorsByPath={{}}
+      fileTreeLoadingPath={null}
       onCreateRootThread={() => {}}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
+      onOpenTreeFile={() => {}}
       onSelectTaskThread={() => {}}
       onSetActiveView={() => {}}
+      onSetFilePanelView={() => {}}
       onSetTaskFilter={() => {}}
+      onToggleTreeDirectory={() => {}}
       onCancelGoal={() => {}}
       onPauseGoal={() => {}}
       onResumeGoal={() => {}}
@@ -94,12 +113,20 @@ test("renders thread goal details in thread analysis", () => {
     <RightPanel
       activeView="skills"
       availableSkillCount={0}
+      expandedTreeDirectories={[]}
+      filePanelView="preview"
+      fileTreeEntriesByPath={{}}
+      fileTreeErrorsByPath={{}}
+      fileTreeLoadingPath={null}
       onCreateRootThread={() => {}}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
+      onOpenTreeFile={() => {}}
       onSelectTaskThread={() => {}}
       onSetActiveView={() => {}}
+      onSetFilePanelView={() => {}}
       onSetTaskFilter={() => {}}
+      onToggleTreeDirectory={() => {}}
       onCancelGoal={() => {}}
       onPauseGoal={() => {}}
       onResumeGoal={() => {}}
@@ -187,4 +214,102 @@ test("renders the current thread plan in the todo panel", () => {
   assert.match(markup, /Render current thread plan/);
   assert.match(markup, /Run validation/);
   assert.match(markup, /In progress/);
+});
+
+test("renders git panel with deduped thread file changes", () => {
+  const markup = renderRightPanel(
+    makeThread([
+      {
+        type: "fileChange",
+        id: "change-1",
+        status: "completed",
+        changes: [
+          { path: "/tmp/src/app.tsx", kind: "modified" },
+          { path: "/tmp/README.md", kind: "added" },
+        ],
+      },
+      {
+        type: "fileChange",
+        id: "change-2",
+        status: "completed",
+        changes: [
+          { path: "/tmp/src/app.tsx", kind: "deleted" },
+        ],
+      },
+    ]),
+    "git",
+  );
+
+  assert.match(markup, /Git Changes/);
+  assert.match(markup, /Thread File Deltas/);
+  assert.match(markup, /src\/app\.tsx/);
+  assert.match(markup, /README\.md/);
+  assert.match(markup, /Deleted/);
+  assert.match(markup, /2 updates/);
+});
+
+test("renders cwd tree inside the preview panel", () => {
+  const thread = makeThread([]);
+  const markup = renderRightPanel(thread, "preview", null, {
+    filePanelView: "tree",
+    expandedTreeDirectories: ["/tmp/src"],
+    fileTreeEntriesByPath: {
+      "/tmp": [
+        { path: "/tmp/src", name: "src", kind: "directory" },
+        { path: "/tmp/README.md", name: "README.md", kind: "file" },
+      ],
+      "/tmp/src": [
+        { path: "/tmp/src/App.tsx", name: "App.tsx", kind: "file" },
+      ],
+    },
+  });
+
+  assert.match(markup, /CWD Tree/);
+  assert.match(markup, /Thread cwd file tree/);
+  assert.match(markup, /README\.md/);
+  assert.match(markup, /App\.tsx/);
+});
+
+test("renders directory-specific cwd tree errors instead of empty state", () => {
+  const thread = makeThread([]);
+  const markup = renderToStaticMarkup(
+    <RightPanel
+      activeView="preview"
+      availableSkillCount={0}
+      expandedTreeDirectories={["/tmp/src"]}
+      filePanelView="tree"
+      fileTreeEntriesByPath={{
+        "/tmp": [{ path: "/tmp/src", name: "src", kind: "directory" }],
+      }}
+      fileTreeErrorsByPath={{ "/tmp/src": "Permission denied" }}
+      fileTreeLoadingPath={null}
+      onCreateRootThread={() => {}}
+      onNavigateToSymbol={() => {}}
+      onOpenPreviewExternally={() => {}}
+      onOpenTreeFile={() => {}}
+      onSelectTaskThread={() => {}}
+      onSetActiveView={() => {}}
+      onSetFilePanelView={() => {}}
+      onSetTaskFilter={() => {}}
+      onToggleTreeDirectory={() => {}}
+      onCancelGoal={() => {}}
+      onPauseGoal={() => {}}
+      onResumeGoal={() => {}}
+      planUpdate={null}
+      goal={null}
+      goalAction={null}
+      goalActionError={null}
+      preview={null}
+      previewError={null}
+      previewLoading={false}
+      skills={[]}
+      selectedThreadId="thread-1"
+      thread={thread}
+      taskFilter="all"
+      todoItems={[]}
+    />,
+  );
+
+  assert.match(markup, /Permission denied/);
+  assert.doesNotMatch(markup, /Empty directory/);
 });

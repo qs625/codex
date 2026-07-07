@@ -20,6 +20,7 @@ function makeStorage(initialValue: string | null = null) {
 
 test("readStoredRightPanelView restores a valid stored view", () => {
   assert.equal(readStoredRightPanelView(makeStorage("skills")), "skills");
+  assert.equal(readStoredRightPanelView(makeStorage("git")), "git");
 });
 
 test("readStoredRightPanelView falls back for invalid stored values", () => {

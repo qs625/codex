@@ -55,6 +55,14 @@ declare global {
         status?: "active" | "paused" | "budgetLimited" | "complete";
       }) => Promise<{ goal: unknown }>;
       clearThreadGoal: (threadId: string) => Promise<{ cleared: boolean }>;
+      listLocalDirectory: (target: string) => Promise<{
+        path: string;
+        entries: Array<{
+          path: string;
+          name: string;
+          kind: "file" | "directory";
+        }>;
+      }>;
       readLocalImage: (target: string) => Promise<{
         path: string;
         name: string;

@@ -260,6 +260,10 @@ ipcMain.handle("codex:readLocalFile", async (_event, target) => {
   return readLocalFileTarget(target);
 });
 
+ipcMain.handle("codex:listLocalDirectory", async (_event, target) => {
+  return listLocalDirectoryTarget(target);
+});
+
 ipcMain.handle("codex:readLocalImage", async (_event, target) => {
   return readLocalImageTarget(target);
 });
@@ -935,6 +939,38 @@ async function readLocalImageTarget(target) {
     mimeType,
     byteSize: data.length,
     bytes: Uint8Array.from(data).buffer,
+  };
+}
+
+async function listLocalDirectoryTarget(target) {
+  if (typeof target !== "string" || !target.trim()) {
+    throw new Error("Cannot browse an empty directory path");
+  }
+
+  const trimmed = target.trim();
+  const directoryPath = path.isAbsolute(trimmed)
+    ? trimmed
+    : path.resolve(defaultWorkspace, trimmed);
+  const stat = await fs.stat(directoryPath);
+  if (!stat.isDirectory()) {
+    throw new Error("Only directories can be browsed");
+  }
+
+  const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+  return {
+    path: directoryPath,
+    entries: entries
+      .filter((entry) => entry.isDirectory() || entry.isFile())
+      .map((entry) => ({
+        path: path.join(directoryPath, entry.name),
+        name: entry.name,
+        kind: entry.isDirectory() ? "directory" : "file",
+      }))
+      .sort(
+        (left, right) =>
+          Number(left.kind === "file") - Number(right.kind === "file") ||
+          left.name.localeCompare(right.name),
+      ),
   };
 }
 

@@ -24,6 +24,13 @@ export type MonitorSection = {
   monitors: MonitorSummary[];
 };
 
+export type ChangedFileSummary = {
+  path: string;
+  displayPath: string;
+  kind: string;
+  updateCount: number;
+};
+
 export type ThreadAnalysis = {
   contextUsage: ContextUsageAnalysis;
   monitors: {
@@ -31,6 +38,7 @@ export type ThreadAnalysis = {
     eventCount: number;
     sections: MonitorSection[];
   };
+  changedFiles: ChangedFileSummary[];
 };
 
 type MonitorEvent = {
@@ -78,6 +86,7 @@ export function buildThreadAnalysis(
   return {
     contextUsage,
     monitors,
+    changedFiles: buildChangedFiles(thread),
   };
 }
 
@@ -185,6 +194,51 @@ function buildMonitorSections(
         .reduce((sum, monitor) => sum + monitor.eventCount, 0),
     sections,
   };
+}
+
+function buildChangedFiles(thread: Thread | null): ChangedFileSummary[] {
+  if (!thread) {
+    return [];
+  }
+
+  const changedFilesByPath = new Map<
+    string,
+    ChangedFileSummary & { lastSeenOrder: number }
+  >();
+  let changeOrder = 0;
+
+  for (const turn of thread.turns) {
+    for (const item of turn.items) {
+      if (item.type !== "fileChange" || item.status !== "completed") {
+        continue;
+      }
+
+      for (const change of item.changes) {
+        const filePath = stringOrNull(change.path);
+        if (!filePath) {
+          continue;
+        }
+
+        changeOrder += 1;
+        const existing = changedFilesByPath.get(filePath);
+        changedFilesByPath.set(filePath, {
+          path: filePath,
+          displayPath: displayThreadFilePath(thread.cwd, filePath),
+          kind: stringOrNull(change.kind) ?? "modified",
+          updateCount: (existing?.updateCount ?? 0) + 1,
+          lastSeenOrder: changeOrder,
+        });
+      }
+    }
+  }
+
+  return [...changedFilesByPath.values()]
+    .sort(
+      (left, right) =>
+        right.lastSeenOrder - left.lastSeenOrder ||
+        left.displayPath.localeCompare(right.displayPath),
+    )
+    .map(({ lastSeenOrder: _lastSeenOrder, ...file }) => file);
 }
 
 function buildCommandMonitorSummary(
@@ -370,4 +424,32 @@ function displayUnknown(value: unknown) {
   } catch {
     return null;
   }
+}
+
+function displayThreadFilePath(threadCwd: string, filePath: string) {
+  if (!isAbsoluteFilePath(filePath)) {
+    return filePath;
+  }
+
+  const normalizedCwd = normalizeFilePath(threadCwd).replace(/\/+$/, "");
+  const normalizedFilePath = normalizeFilePath(filePath);
+
+  if (normalizedFilePath === normalizedCwd) {
+    return normalizedFilePath.split("/").at(-1) ?? filePath;
+  }
+
+  const cwdPrefix = `${normalizedCwd}/`;
+  if (normalizedCwd && normalizedFilePath.startsWith(cwdPrefix)) {
+    return normalizedFilePath.slice(cwdPrefix.length);
+  }
+
+  return filePath;
+}
+
+function normalizeFilePath(value: string) {
+  return value.replace(/\\/g, "/");
+}
+
+function isAbsoluteFilePath(value: string) {
+  return value.startsWith("/") || /^[A-Za-z]:\//.test(normalizeFilePath(value));
 }
