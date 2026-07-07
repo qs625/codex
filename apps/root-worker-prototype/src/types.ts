@@ -592,6 +592,7 @@ export type TodoCardItem = {
 
 export type ConversationEntry = {
   id: string;
+  turnId?: string;
   kind: "message" | "event" | "tool" | "compact" | "archive";
   author: string;
   role: "user" | "agent" | "system";

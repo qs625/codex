@@ -97,3 +97,4 @@ __pycache__/
 .omc
 tmp
 .worktrees/
+.codex/memory/current-work.md

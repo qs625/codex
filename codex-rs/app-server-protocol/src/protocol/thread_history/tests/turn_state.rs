@@ -303,6 +303,59 @@ use super::*;
     }
 
     #[test]
+    fn preserves_compaction_turn_display_items_alongside_compaction_marker() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-compact".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-compact".into(),
+                item: CoreTurnItem::AgentMessage(CoreAgentMessageItem {
+                    id: "compact-summary".into(),
+                    content: vec![CoreAgentMessageContent::Text {
+                        text: "Compaction summary".into(),
+                    }],
+                    phase: None,
+                    memory_citation: None,
+                }),
+                completed_at_ms: 123,
+            })),
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".into(),
+                replacement_history: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-compact".into(),
+                last_agent_message: Some("Compaction summary".into()),
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::AgentMessage {
+                    id: "compact-summary".into(),
+                    text: "Compaction summary".into(),
+                    phase: None,
+                    memory_citation: None,
+                },
+                ThreadItem::ContextCompaction {
+                    id: "item-1".into(),
+                    replacement_history: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn preserves_compaction_replacement_history() {
         let replacement_history = vec![
             ResponseItem::Message {
@@ -396,4 +449,3 @@ use super::*;
             }]
         );
     }
-
