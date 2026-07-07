@@ -4,6 +4,7 @@ use crate::config::Config;
 use codex_features::Feature;
 use codex_file_system::ExecutorFileSystem;
 use codex_utils_absolute_path::AbsolutePathBuf;
+#[cfg(test)]
 use exec_server_api::ExecEnvironment;
 use std::io;
 use tracing::error;
@@ -31,8 +32,9 @@ impl<'a> AgentsMdManager<'a> {
         Self { config }
     }
 
-    /// Combines configured user instructions and explicit instruction files
-    /// into a single model-visible instruction string.
+    /// Test-only wrapper that preserves the historical "no environment"
+    /// boundary for callers that intentionally model its absence.
+    #[cfg(test)]
     pub(crate) async fn user_instructions(
         &self,
         environment: Option<&dyn ExecEnvironment>,

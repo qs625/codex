@@ -52,6 +52,32 @@ use super::analytics::wait_for_analytics_payload;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
+fn write_workflow(root: &Path, id: &str, description: &str) -> Result<()> {
+    let workflow_dir = root.join(id);
+    std::fs::create_dir_all(&workflow_dir)?;
+    std::fs::write(workflow_dir.join("workflow.ts"), "export default {};")?;
+    std::fs::write(
+        workflow_dir.join("WORKFLOW.md"),
+        format!(
+            r#"---
+id: {id}
+name: Feature Development
+description: {description}
+entry: workflow.ts
+when_to_use:
+  - feature work
+inputs:
+  objective:
+    type: string
+    description: Goal
+---
+Use this workflow when feature work needs a structured process.
+"#
+        ),
+    )?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn thread_start_deprecates_persist_extended_history_true() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
@@ -467,6 +493,90 @@ instruction_files = [
     .collect::<Vec<_>>();
 
     assert_eq!(instruction_sources, expected_instruction_sources);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_initial_context_includes_project_workflows_and_instruction_files_without_primary_environment(
+) -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+    let workspace = TempDir::new()?;
+    let project_config_dir = workspace.path().join(".codex");
+    std::fs::create_dir_all(project_config_dir.join("workflows"))?;
+    let instruction_dir = workspace.path().join("memory");
+    std::fs::create_dir_all(&instruction_dir)?;
+    let project_instruction_path = instruction_dir.join("project-understanding.md");
+    let user_instruction_path = instruction_dir.join("user-preferences.md");
+    std::fs::write(
+        &project_instruction_path,
+        "Project understanding: payment API, cache invalidation, and release checklist.",
+    )?;
+    std::fs::write(
+        &user_instruction_path,
+        "User preference: keep migrations separate from behavior changes.",
+    )?;
+    std::fs::write(
+        project_config_dir.join("config.toml"),
+        r#"
+instruction_files = [
+  "memory/project-understanding.md",
+  "memory/user-preferences.md",
+]
+"#,
+    )?;
+    write_workflow(
+        &project_config_dir.join("workflows"),
+        "feature-dev",
+        "structured feature workflow",
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(workspace.path().display().to_string()),
+            environments: Some(Vec::new()),
+            ..Default::default()
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(response)?;
+
+    let ThreadItem::InjectedContext { sections, .. } = thread
+        .turns
+        .first()
+        .and_then(|turn| turn.items.first())
+        .expect("thread/start response should include initial context item")
+    else {
+        anyhow::bail!("thread/start response should include an injected context item");
+    };
+
+    assert!(
+        sections.iter().any(|section| section.text.contains("<workflows_instructions>")
+            && section.text.contains("- feature-dev (project)")
+            && section.text.contains("structured feature workflow")
+            && section
+                .text
+                .contains("Use this workflow when feature work needs a structured process.")),
+        "initial context should include project workflow instructions, got {sections:?}"
+    );
+    assert!(
+        sections.iter().any(|section| section
+            .text
+            .contains("Project understanding: payment API, cache invalidation, and release checklist.")
+            && section
+                .text
+                .contains("User preference: keep migrations separate from behavior changes.")),
+        "initial context should include configured instruction_files content, got {sections:?}"
+    );
 
     Ok(())
 }

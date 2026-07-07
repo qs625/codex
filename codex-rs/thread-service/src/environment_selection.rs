@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use codex_file_system::ExecutorFileSystem;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use exec_server_api::ExecEnvironment;
 use exec_server_api::ExecEnvironmentProvider;
 use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
@@ -40,11 +39,6 @@ impl ResolvedTurnEnvironments {
 
     pub(crate) fn primary(&self) -> Option<&TurnEnvironment> {
         self.turn_environments.first()
-    }
-
-    pub(crate) fn primary_environment(&self) -> Option<Arc<dyn ExecEnvironment>> {
-        self.primary()
-            .map(|environment| Arc::clone(&environment.environment))
     }
 
     pub(crate) fn primary_filesystem(&self) -> Option<Arc<dyn ExecutorFileSystem>> {
