@@ -125,6 +125,47 @@ test("builds compact context usage analysis with loaded skill ratios and timelin
   );
 });
 
+test("counts event command subscriptions and events in tool usage", () => {
+  const analysis = buildContextUsageAnalysis(
+    makeThread([
+      {
+        type: "eventCommandCall",
+        id: "event-command-1",
+        subscriptionId: "sub-1",
+        command: "cargo test -p app-server",
+        cwd: "/tmp/project",
+        label: "app-server tests",
+        status: "completed",
+        output: { ok: true },
+      },
+      {
+        type: "eventCommandEvent",
+        id: "event-command-event-1",
+        subscriptionId: "sub-1",
+        kind: "output",
+        label: "app-server tests",
+        command: "cargo test -p app-server",
+        cwd: "/tmp/project",
+        line: "running 1 test",
+        sequence: 1,
+        exitCode: null,
+        signal: null,
+        message: null,
+        truncated: false,
+        createdAt: 2,
+      },
+    ]),
+    0,
+  );
+
+  assert.ok(
+    (analysis.turnTrend.rows.find((row) => row.id === "toolCalls")?.cells[0]?.units ?? 0) > 0,
+  );
+  assert.ok(
+    (analysis.turnTrend.rows.find((row) => row.id === "toolsMetadata")?.cells[0]?.units ?? 0) > 0,
+  );
+});
+
 test("uses last token usage for budget percent and context usage ratios for token distribution", () => {
   const thread = makeThread(
     [

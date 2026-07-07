@@ -263,6 +263,24 @@ function buildConversationItemEntries(
     ];
   }
 
+  if (item.type === "builtinToolCall") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeBuiltinToolCall(item),
+        timestamp,
+        attachments: [],
+        toolName: item.tool,
+        toolStatus: item.status,
+        toolDetails: formatStructuredToolDetails(item.arguments, item.output),
+        toolCategory: toolCategoryForName(item.tool),
+      },
+    ];
+  }
+
   if (item.type === "collabAgentToolCall") {
     return [
       {
@@ -373,6 +391,38 @@ function buildConversationItemEntries(
     ];
   }
 
+  if (item.type === "eventCommandCall") {
+    return [
+      {
+        id: item.id,
+        kind: "tool" as const,
+        author,
+        role: "system" as const,
+        text: summarizeEventCommandCall(item),
+        timestamp,
+        attachments: [],
+        toolName: item.label?.trim() || item.command,
+        toolStatus: item.status,
+        toolDetails: formatEventCommandCallDetails(item),
+        toolCategory: "eventDrivenSubscription",
+      },
+    ];
+  }
+
+  if (item.type === "eventCommandEvent") {
+    return [
+      {
+        id: item.id,
+        kind: "event" as const,
+        author,
+        role: "system" as const,
+        text: summarizeEventCommandEvent(item),
+        timestamp,
+        attachments: [],
+      },
+    ];
+  }
+
   if (
     item.type === "dynamicToolCall" ||
     item.type === "mcpToolCall" ||
@@ -404,7 +454,7 @@ function buildConversationItemEntries(
             ? "eventDrivenSubscription"
             : item.type === "mcpToolCall"
               ? "external"
-              : "external",
+              : toolCategoryForName(item.tool, item.namespace),
       },
     ];
   }
@@ -572,6 +622,10 @@ function formatItemTimestamp(item: ThreadItem) {
     Number.isFinite(item.event.updatedAt)
   ) {
     return formatClockTime(item.event.updatedAt);
+  }
+
+  if (item.type === "eventCommandEvent" && Number.isFinite(item.createdAt)) {
+    return formatClockTime(item.createdAt);
   }
 
   const timestampMs = item.completedAtMs ?? item.startedAtMs;
@@ -1136,6 +1190,13 @@ function summarizeToolCall(
   return item.tool;
 }
 
+function summarizeBuiltinToolCall(
+  item: Extract<ThreadItem, { type: "builtinToolCall" }>,
+) {
+  const details = extractEventDrivenSummaryDetails(item.tool, item.arguments);
+  return details ? `${item.tool} • ${details}` : item.tool;
+}
+
 function summarizeCollabAgentToolCall(
   item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
 ) {
@@ -1177,6 +1238,13 @@ function summarizeEventDrivenToolCall(
 ) {
   const details = extractEventDrivenSummaryDetails(item.tool, item.arguments);
   return details ? `${item.tool} • ${details}` : item.tool;
+}
+
+function summarizeEventCommandCall(
+  item: Extract<ThreadItem, { type: "eventCommandCall" }>,
+) {
+  const label = stringOrNull(item.label);
+  return label ? `${label} • ${item.command}` : item.command;
 }
 
 function summarizeEventDrivenTool(
@@ -1767,6 +1835,34 @@ function summarizeCommandWriteStdin(
   return `Wrote ${item.bytesWritten} bytes to command ${item.commandId}${suffix}.`;
 }
 
+function summarizeEventCommandEvent(
+  item: Extract<ThreadItem, { type: "eventCommandEvent" }>,
+) {
+  const label = stringOrNull(item.label) ?? item.command;
+  switch (item.kind) {
+    case "output":
+      return item.line ? `${label}: ${item.line}` : `${label}: output received.`;
+    case "exited": {
+      if (item.signal) {
+        return `${label}: signal ${item.signal}.`;
+      }
+      const exitCode =
+        item.exitCode === null || item.exitCode === undefined
+          ? "unknown exit"
+          : `exit ${item.exitCode}`;
+      return `${label}: ${exitCode}.`;
+    }
+    case "cancelled":
+      return `${label}: cancelled.`;
+    case "failedToStart":
+      return item.message
+        ? `${label}: failed to start. ${item.message}`
+        : `${label}: failed to start.`;
+    default:
+      return item.message ? `${label}: ${item.message}` : `${label}: ${item.kind}.`;
+  }
+}
+
 function formatStructuredToolDetails(input: unknown, output: unknown) {
   const sections: string[] = [];
 
@@ -1776,6 +1872,30 @@ function formatStructuredToolDetails(input: unknown, output: unknown) {
 
   if (output !== null && output !== undefined) {
     sections.push(`Output\n${safeJson(output)}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+function formatEventCommandCallDetails(
+  item: Extract<ThreadItem, { type: "eventCommandCall" }>,
+) {
+  const sections = [`Command\n${item.command}`];
+
+  const cwd = stringOrNull(item.cwd);
+  if (cwd) {
+    sections.push(`Directory\n${cwd}`);
+  }
+
+  const label = stringOrNull(item.label);
+  if (label) {
+    sections.push(`Label\n${label}`);
+  }
+
+  sections.push(`Subscription\n${item.subscriptionId}`);
+
+  if (item.output !== null && item.output !== undefined) {
+    sections.push(`Output\n${safeJson(item.output)}`);
   }
 
   return sections.join("\n\n");
@@ -1814,6 +1934,21 @@ function extractEventDrivenSummaryDetails(tool: string, args: unknown) {
     default:
       return label;
   }
+}
+
+function toolCategoryForName(tool: string, namespace?: string | null) {
+  if (
+    tool === "process_exit_subscribe" ||
+    tool === "fs_subscribe" ||
+    tool === "schedule_subscribe" ||
+    tool === "process_exit_unsubscribe" ||
+    tool === "fs_unsubscribe" ||
+    tool === "schedule_unsubscribe"
+  ) {
+    return "eventDrivenSubscription" as const;
+  }
+  void namespace;
+  return "external" as const;
 }
 
 function formatInjectedContextDetails(

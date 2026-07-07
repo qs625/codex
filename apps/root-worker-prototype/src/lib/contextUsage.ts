@@ -499,6 +499,30 @@ function accumulateItemUnits(
     return;
   }
 
+  if (item.type === "eventCommandCall") {
+    units.toolsMetadata += 30;
+    units.toolCalls +=
+      estimateTextUnits(item.command) +
+      estimateTextUnits(item.cwd) +
+      estimateTextUnits(item.label) +
+      estimateObjectUnits(item.output) +
+      24;
+    return;
+  }
+
+  if (item.type === "eventCommandEvent") {
+    units.toolsMetadata += 18;
+    units.toolCalls +=
+      estimateTextUnits(item.command) +
+      estimateTextUnits(item.cwd) +
+      estimateTextUnits(item.label) +
+      estimateTextUnits(item.line) +
+      estimateTextUnits(item.message) +
+      estimateTextUnits(item.signal) +
+      20;
+    return;
+  }
+
   if (item.type === "mcpToolCall") {
     units.toolsMetadata += 32 + estimateTextUnits(item.server);
     units.toolCalls += estimateObjectUnits(item.arguments) + estimateObjectUnits(item.result) + estimateObjectUnits(item.error);
