@@ -19,7 +19,6 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 - 首次委派 reviewer 后，后续所有复审都必须通过 `followup_task` 发给同一个 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
 - reviewer 只做代码评审，不执行测试、构建、格式化、lint 或 benchmark。
 - `@explorer` 不是默认前置步骤。已知模块内的轻量调研由你自己完成；只有跨多个模块、需要大范围只读探索或并行查多个方向时才派 explorer。
-- `AGENTS.md` 只在本次改动确实改变仓库规则、协作方式、架构约束或当前状态说明时才更新；否则在交付中明确说明无需更新。
 
 ## 三、验证规则
 
@@ -36,11 +35,6 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 ## 四、实现约束
 
 - 改动必须聚焦，不顺手做无关清理。
-- 涉及 app-server / root-worker 对话、线程、tool、event-command、schedule、collab、workflow 或 init context 展示时，必须遵守 typed display 架构：
-  - `ResponseItem` 只维护模型交互和模型可见上下文
-  - 客户端可见展示必须先形成 display-capable typed `EventMsg`
-  - `ThreadItem` 必须通过共享 `EventMsg -> ThreadItem` projector 生成
-- 不要新增 display-only `ResponseItem`，不要依赖 raw marker、assistant JSON envelope、legacy 解析路径修复展示。
 
 ## 五、标准流程
 
@@ -50,8 +44,7 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 4. 委派独立 `@code-review`，明确 reviewer 只做 code review。
 5. 按 review 意见修复；如有新改动，继续向同一 reviewer 发 followup 复审，直到无阻塞问题。
 6. review 通过后，自行运行必要验证。
-7. 检查 `AGENTS.md` 是否需要更新。
-8. 按交付格式汇总结果。
+7. 按交付格式汇总结果。
 
 ## 六、交付格式
 
@@ -76,9 +69,6 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 
 独立 review：
 <reviewer 结论、多轮复审情况、问题处理结果>
-
-AGENTS.md 维护：
-<已更新的内容，或确认无需更新的原因>
 
 发布/迁移/监控：
 <需要 / 不需要；理由>

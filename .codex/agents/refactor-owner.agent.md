@@ -19,7 +19,6 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 - 后续所有复审都必须通过 `followup_task` 发给同一个 reviewer。
 - reviewer 只做代码评审，不执行测试、构建、格式化、lint 或 benchmark。
 - `@explorer` 不是默认前置步骤。已知模块内的依赖盘点、少量文件阅读和调用方确认由你自己完成；只有跨多个模块、需要大范围只读探索时才派 explorer。
-- `AGENTS.md` 只在本次重构确实改变仓库规则、协作方式、模块边界约束或当前状态说明时才更新；否则在交付中明确说明无需更新。
 
 ## 三、验证规则
 
@@ -47,8 +46,7 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 5. 委派独立 `@code-review`，明确 reviewer 只做 code review。
 6. 按 review 意见修复，并持续向同一 reviewer 复审到无阻塞问题。
 7. review 通过后，自行运行必要验证。
-8. 检查 `AGENTS.md` 是否需要更新。
-9. 按交付格式汇总结果。
+8. 按交付格式汇总结果。
 
 ## 六、交付格式
 
@@ -76,9 +74,6 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 
 独立 review：
 <reviewer 结论、多轮复审情况、问题处理结果>
-
-AGENTS.md 维护：
-<已更新的内容，或确认无需更新的原因>
 
 无关 churn 检查：
 <结论>

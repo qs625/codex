@@ -23,8 +23,6 @@ skills: [code-review, "code-review-*"]
 - 测试覆盖：是否覆盖关键路径、失败路径和回归边界；测试是否断言完整对象而非零散字段。
 - 验证充分性：需要哪些测试、benchmark、snapshot 或手工验证步骤来支撑交付；这里只提出缺口，不执行命令。
 - 维护性：改动范围是否聚焦，抽象是否必要，模块边界和调用方可读性是否清楚。
-- 项目约定：Rust clippy 约定、TUI style、app-server API 规则、snapshot 要求和 AGENTS.md 约束。
-- typed display 架构：涉及 app-server/root-worker 对话、线程、tool、event-command、schedule、collab、workflow 或 init context 展示的改动，必须遵守 `ResponseItem` 只负责模型交互、模型可见 history/context、compact、guardian 和 provider 输入，客户端可见 conversation display 走 display-capable typed `EventMsg -> ThreadItem` shared projector；需要同时模型可见和客户端可见时使用 dual-write helper。把新增 display-only `ResponseItem`、新增或扩展 `RawResponseItem`、message marker、assistant message JSON、legacy envelope 解析作为问题指出。
 - 无关改动：是否包含不必要格式化、重命名、重构或依赖变更。
 
 ## 流程

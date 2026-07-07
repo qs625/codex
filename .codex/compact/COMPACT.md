@@ -1,6 +1,6 @@
 你正在为 my-codex 项目执行 CONTEXT CHECKPOINT COMPACTION。
 
-目标不是生成一份泛化的 handoff summary，而是维护当前项目的 3 个 memory 文件，使后续模型在多轮 compact 之后仍然保留稳定的项目事实、用户偏好与当前工作现场。
+目标是维护当前项目的 3 个 memory 文件，使后续模型在多轮 compact 之后仍然保留稳定的项目事实、用户偏好与当前工作现场。不要生成 handoff summary。
 
 你必须维护这些文件：
 
@@ -145,16 +145,9 @@
 
 ## 六、compact 的输出内容
 
-在完成 memory 文件更新后，再生成一份简洁 handoff summary。
+compact 的输出只需要体现在 memory 文件更新上，不需要额外生成 handoff summary。
 
-handoff summary 只需要包含：
-
-- 当前 progress
-- 本次更新了哪些 memory 文件
-- 仍然未解决的问题
-- 下一步最应该做什么
-
-不要把 memory 文件内容完整重复到 handoff summary 中。
+如果某条信息对后续继续工作重要，就写进合适的 memory 文件；如果不值得进入 memory 文件，就不要为了“交接摘要”单独输出一份正文。
 
 ## 七、当前项目的 memory 边界
 
@@ -178,7 +171,7 @@ handoff summary 只需要包含：
 
 ### 全局共享、单一来源
 
-以下文件是全项目共享的 canonical memory，只允许 PM 在主仓库维护：
+以下文件是全项目共享的 canonical memory：
 
 - `.codex/memory/user-preferences.md`
 - `.codex/memory/project-understanding.md`
@@ -186,8 +179,9 @@ handoff summary 只需要包含：
 规则：
 
 - 所有 agent 都读取这两份文件。
-- 只有 PM 才能把新的内容正式写入这两份 canonical 文件。
-- owner 不应把自己的局部理解直接提升成全项目事实。
+- `user-preferences.md` 仍只允许 PM 在主仓库正式维护；owner 不应在自己的 worktree 随意改写用户偏好。
+- `project-understanding.md` 可以由 owner 在自己的 worktree 直接更新，只要改动基于当前任务中已确认的长期项目事实。
+- PM 在主仓库 merge owner 提交时负责检查 `project-understanding.md` 的冲突、去重、过时内容和表述一致性，并把合并结果作为新的 canonical 版本。
 
 ### worktree 本地维护
 
@@ -205,9 +199,10 @@ handoff summary 只需要包含：
 
 如果 owner 在自己的任务中发现了新的长期项目事实：
 
-1. 先写入自己 worktree 的 `current-work.md`
-2. 在交付中明确提出“建议更新 `project-understanding.md`”
-3. 由 PM 在主仓库统一吸收并改写 canonical `project-understanding.md`
-4. 再按现有同步规则传播到其他空闲 worktree
+1. 先在自己 worktree 中直接更新 `project-understanding.md`
+2. 同时在 `current-work.md` 记录为什么这是一条长期项目事实
+3. 在交付中明确指出本次对 `project-understanding.md` 的改动及其依据
+4. 由 PM 在主仓库 merge 时统一检查冲突、去重、过时内容和最终表述
+5. 再按现有同步规则传播到其他空闲 worktree
 
-不要让多个 owner 在不同 worktree 中并行修改 `project-understanding.md` 并各自保留不同版本。
+允许多个 owner 在不同 worktree 中并行修改 `project-understanding.md`，但 canonical 版本仍以 PM 合并后的主仓库结果为准。

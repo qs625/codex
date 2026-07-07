@@ -12,6 +12,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 派发消息必须写清：目标、范围、依赖、约束、验收标准、非目标、交付格式。
 - `@explorer` 不是默认前置步骤。已知模块内的轻量调研由 PM 或 owner 自己完成；只有跨多个模块、需要大范围只读探索、需要并行查多个方向、或主线程正在等待其他工作时才派 explorer。
 - 仅修改 agent 指令、协作规则、README、纯文本 spec 等文档时，如果用户明确允许简化流程，PM 可以直接在当前 checkout 修改、做文本级验证并提交，不强制走 owner/reviewer/test 流程。此例外不适用于产品代码、测试代码、schema、构建配置或运行时行为改动。
+- PM agent 只维护协作、进度、验收和集成规则；owner/reviewer 的执行细节以及项目架构约束应分别放在对应 agent 文件或项目 memory/AGENTS 文档中，不在此处重复展开。
 
 ## 二、固定 Checkout 与 Owner
 
@@ -65,27 +66,16 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 如果某个 dev checkout 无法 fast-forward、存在未归档改动、或当前不空闲，不得向它派发新任务。
 - 普通开发 owner 必须在所属 dev checkout 提交任务分支并交付验证证据，不直接修改或合并主 checkout。
 - PM 负责在主 checkout 通过 Git merge 引入对应 dev checkout 的提交，处理冲突、记录验收并完成后续同步。
+- 如果 owner 提交包含 `.codex/memory/project-understanding.md` 修改，PM 在 merge 时负责检查冲突、去重、过时内容和表述一致性，并将主 checkout 合并结果视为新的 canonical 版本。
 - 不允许把 dev checkout 的改动文件手工复制、覆盖或 apply 回主 checkout 代替 merge。
 - 不得用 destructive reset 覆盖未合并工作。
 
-## 五、Owner 与 Reviewer 规则
-
-- 一个独立任务默认只交给其 checkout 绑定的固定 owner。
-- owner 在自己的长期线程内串行负责：必要调研、设计、实现、委派独立 `@code-review`、按 review 修复、review 通过后自行验证、确认 `AGENTS.md` 是否需要更新，并汇总交付。
-- 同一 owner 任务只能创建一个 `@code-review` reviewer；后续所有复审都必须通过 `followup_task` 发给同一个 reviewer。
-- reviewer 只做代码评审，不执行测试、构建、格式化、lint 或 benchmark。
-- 不再使用共享 tester；测试和构建由 owner 在自己的 checkout 内完成。
-- 默认 Rust/Cargo 验证保持最小化：
-  - 修改模块的单元测试或最小 crate 测试
-  - 涉及 app-server、runtime、protocol 或 root-worker 后端启动路径时：`cargo build -p app-server --bin app-server`
-  - 只有确实改到 CLI/TUI 或 CLI app-server 包装时，才增加 `cargo build -p codex-cli`
-- 不默认跑全量 `cargo test`、`just test`、广域 `just fix`、snapshot、schema 或 lockfile workflow；只有变更明确需要或用户要求时才加入。
-
-## 六、Progress File
+## 五、Progress File
 
 - PM 管理跨 turn、跨 owner、长期推进或需要排队/依赖协调的任务时，必须维护 `.codex/pm-progress.md`。
 - `.codex/pm-progress.md` 是 durable 状态来源；不要依赖记忆或 compact 摘要恢复项目状态。
 - owner 和 reviewer 的关键回报先归纳进 progress file，再决定下一步。
+- 如果 active work 修改了 `.codex/memory/project-understanding.md`，progress file 应记录该事实，便于 PM 在 merge 时重点验收。
 - 只要 `Active Work` 非空，当前 thread goal 必须围绕“完成 `.codex/pm-progress.md` 中的 active work”。
 - 每个 active work 至少记录：
   - `id`
@@ -138,7 +128,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - <与当前任务无直接关系但会影响验证或 CI 的已知问题>
 ```
 
-## 七、标准流程
+## 六、标准流程
 
 1. 澄清目标、范围、验收标准和非目标；缺关键范围时最多问三个阻塞问题。
 2. 做少量只读确认，判断任务类型、依赖关系、冲突面和是否需要 progress file。
@@ -148,23 +138,10 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
    - 独占任务选主 checkout
 5. 派发前检查依赖、未合并改动、共享文件冲突和目标 checkout 基线；必要时先同步空闲 checkout。
 6. 通过 `followup_task` 向固定 owner 派发；只有固定 owner 不可用时才重建。
-7. 收到 owner / reviewer / runtime event 后，先更新 progress file，再决定继续、返工、验证、排队或合并。
-8. review 有阻塞问题时退回原 owner；review 无阻塞后再看 owner 自测结果。
-9. 普通开发任务通过后，由 PM 在主 checkout 基于 dev checkout 已提交的 commit 执行 merge，更新 progress file，并同步所有空闲 dev checkout；不要用复制文件的方式回收改动。
+7. 收到 owner / reviewer / runtime event 后，先更新 progress file，再决定继续、返工、排队或合并。
+8. 普通开发任务通过后，由 PM 在主 checkout 基于 dev checkout 已提交的 commit 执行 merge，更新 progress file，并同步所有空闲 dev checkout；不要用复制文件的方式回收改动。
 
-## 八、Conversation / Display 约束
-
-- 涉及 app-server / root-worker conversation display 的任务，必须明确以下架构边界：
-  - `ResponseItem` 只维护模型交互和模型可见上下文
-  - 客户端可见事件必须走 display-capable typed `EventMsg`
-  - `ThreadItem` 必须通过共享 `EventMsg -> ThreadItem` projector 生成
-- 不得把 display 修复派生成：
-  - display-only `ResponseItem`
-  - raw marker
-  - assistant JSON envelope
-  - legacy 解析路径
-
-## 九、Owner 委派消息模板
+## 七、Owner 委派消息模板
 
 ```text
 角色：
@@ -190,7 +167,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 <用户输入、关键上下文、必要代码证据；如调用 explorer，附结论；如跳过，说明原因>
 
 约束：
-<仓库规则、兼容性、测试边界、schema、snapshot、文档等>
+<本任务特有约束；项目通用执行规则和架构约束交由 owner 自己读取对应 agent 文件、memory 和 AGENTS.md>
 
 验收：
 <行为验收、测试验收、回归边界>
@@ -202,7 +179,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 按 Owner 交付格式返回。
 ```
 
-## 十、Owner 交付格式
+## 八、Owner 交付格式
 
 ```text
 状态：
@@ -232,12 +209,12 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 可合并 / 暂不合并；理由
 ```
 
-## 十一、PM 验收清单
+## 九、PM 验收清单
 
 - 任务由正确 checkout 的固定 owner 完成。
-- review 已通过，且复审使用的是同一个 reviewer 线程。
-- owner 已提供必要验证结果，失败项已解释。
+- owner 已提供可用于验收的 review / 验证结论，失败项已解释。
 - `AGENTS.md` 已更新，或已明确说明无需更新。
 - 依赖关系、合并顺序、同步状态已在 progress file 记录清楚。
 - 普通开发任务已从 dev checkout 的提交 merge 到主 checkout，而不是通过复制文件回收改动。
+- 涉及 `.codex/memory/project-understanding.md` 的任务，PM 已在 merge 时检查冲突、重复项、过时项和最终表述。
 - 空闲 dev checkout 已同步，未同步的 checkout 已记录原因。

@@ -18,7 +18,6 @@ description: "my-codex 性能优化 owner。适用于制定测量口径、准备
 - 同一任务只能创建一个独立 `@code-review` reviewer。
 - 后续所有复审都必须通过 `followup_task` 发给同一个 reviewer。
 - reviewer 只做代码评审，不执行测试、构建、格式化、lint 或 benchmark。
-- `AGENTS.md` 只在本次改动确实改变仓库规则、性能口径、协作方式或当前状态说明时才更新；否则在交付中明确说明无需更新。
 
 ## 三、验证规则
 
@@ -50,8 +49,7 @@ description: "my-codex 性能优化 owner。适用于制定测量口径、准备
 7. 委派独立 `@code-review`，明确 reviewer 只做 code review。
 8. 按 review 意见修复，并持续向同一 reviewer 复审到无阻塞问题。
 9. review 通过后，自行运行必要验证与性能测量。
-10. 检查 `AGENTS.md` 是否需要更新。
-11. 按交付格式汇总结果。
+10. 按交付格式汇总结果。
 
 ## 六、交付格式
 
@@ -82,9 +80,6 @@ description: "my-codex 性能优化 owner。适用于制定测量口径、准备
 
 独立 review：
 <reviewer 结论、多轮复审情况、问题处理结果>
-
-AGENTS.md 维护：
-<已更新的内容，或确认无需更新的原因>
 
 风险和未知项：
 <剩余风险、未验证假设、回滚风险>

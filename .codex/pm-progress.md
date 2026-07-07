@@ -1,28 +1,16 @@
 # PM Progress
 
 ## Current Goal
-完成 compact runtime 重构：compact 不再以单轮摘要作为主要产物，而是维护项目 memory 文件，并将 replacement history 改为基于 memory 文件构造。
+None
 
 ## Active Work
-- id: compact-memory-runtime
-  owner: /root/project_pm/owner_dev
-  checkout: /Users/bytedance/Projects/my-codex-dev
-  branch: dev
-  task_type: feature
-  execution_mode: parallel-development
-  depends_on: 无
-  files: codex-rs/thread-service compact runtime、context-manager compacted history 构造、compact prompt / memory 文件更新流程、必要的 root-worker / config / tests
-  base_commit: 9c3e13d71
-  pending_sync_from_main: none
-  status: in_progress
-  objective: compact 以维护 `.codex/memory/user-preferences.md`、`.codex/memory/project-understanding.md`、各 worktree 的 `current-work.md` 为主；replacement history 不再主要依赖模型摘要，而改为由 memory 文件构造；同时设计并实现 soft compact 判定
-  last_update: 2026-07-06
-  next_action: 派发 owner_dev 完成设计、实现、代码评审与最小验证
-  blockers: 无
-  validation: 待 owner 执行
-  commit:
+None
 
 ## Completed
+- commit: n/a
+  summary: `compact-memory-runtime` 不再继续推进；用户确认该需求已结束，无需 owner 派发或后续集成
+  validation: 用户口头确认，无新增实现或验收动作
+  residual_risk: 若后续再次开启同主题需求，需要重新建立 active work 与验收范围
 - commit: 56adcd785113ff951598794db5e279476d49b7cd
   summary: compact item 默认改为按需加载历史，按 compact 轮次分组展示，折叠后丢弃已加载详情
   validation: `rtk pnpm --dir apps/root-worker-prototype test -- src/lib/compactHistoryRequest.test.ts src/lib/conversation.test.ts src/components/Conversation.test.tsx src/lib/conversationVirtualization.test.ts src/lib/conversationSearch.test.ts`；`rtk pnpm --dir apps/root-worker-prototype build`
