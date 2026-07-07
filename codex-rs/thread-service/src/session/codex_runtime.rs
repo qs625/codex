@@ -1,4 +1,5 @@
 use super::*;
+use codex_file_system::LOCAL_FS;
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.
@@ -231,9 +232,8 @@ impl Codex {
             );
         }
 
-        let primary_environment = environment_selections.primary_environment();
         let user_instructions = AgentsMdManager::new(&config)
-            .user_instructions(primary_environment.as_deref())
+            .user_instructions_with_fs(LOCAL_FS.as_ref())
             .await;
 
         let exec_policy = if is_guardian_reviewer_source(&session_source) {
