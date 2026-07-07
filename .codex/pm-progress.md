@@ -4,8 +4,86 @@
 None
 
 ## Active Work
+- id: init-context-workflow-instructions
+  owner: /root/project_pm/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: fix/init-context-workflow-instructions
+  task_type: bugfix
+  depends_on: 无
+  files: codex-rs/thread-service/**, codex-rs/app-server/**, 相关 thread start / init context 测试
+  base_commit: a0aaf3d06ca0d39bf91729e6a5989a3d0b30d272
+  pending_sync_from_main:
+  status: merged
+  objective: 让 init context 正确包含 config path 下可发现的 workflow init context，以及 config file 中配置的 instruction_files
+  last_update: 2026-07-07
+  next_action: 已 merge 到主线；空闲时同步 checkout
+  blockers: 无
+  validation: `rtk cargo test -p app-server --test all thread_start_initial_context_includes_project_workflows_and_instruction_files_without_primary_environment -- --exact`；`rtk cargo build -p app-server --bin app-server`
+  commit: 3335c130e34140da7a118cc1bf21b91824c28509
+- id: poll-event-thread-item-visibility
+  owner: /root/project_pm/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: fix/poll-event-thread-item-visibility
+  task_type: bugfix
+  depends_on: 无
+  files: codex-rs/app-server-protocol/**, codex-rs/thread-history/**, codex-rs/tool-service/**, apps/root-worker-prototype/**, 相关 thread item / conversation 测试
+  base_commit: a0aaf3d06ca0d39bf91729e6a5989a3d0b30d272
+  pending_sync_from_main:
+  status: merged
+  objective: 让 poll_event 在客户端 thread items 中明确可见；同时将 command output / exit event 的客户端展示从 command id 改为具体命令，并提供合适的文案/分类与回归覆盖
+  last_update: 2026-07-07
+  next_action: 已 merge 到主线；空闲时同步 checkout
+  blockers: 无
+  validation: `rtk cargo test -p app-server-protocol builtin_tool_call_completed_display_event_maps_to_thread_item`；其余 `rollout` / `tool-service` / 前端测试受既有基线问题或本地依赖缺失阻断
+  commit: fbb90be4e
+
+- id: unified-poll-event-waiting
+  owner: /root/project_pm/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: fix/unified-poll-event-waiting
+  task_type: bugfix
+  depends_on: poll-event-thread-item-visibility merge 到主线
+  files: codex-rs/tool-service/**, codex-rs/thread-service/**, codex-rs/command-service/**, app-server protocol / tests, 相关 tool spec / prompt / runtime 测试
+  base_commit: eee237bdf2dc6a410d397b6a466caa045192e294
+  pending_sync_from_main:
+  status: merged
+  objective: 删除 `wait_agent` / `command_wait`，统一由 `poll_event` 承担 turn 内等待并在同一 turn 继续执行；event 来源信息通过 pending input 暴露，runtime 不维护硬性等待目标
+  last_update: 2026-07-07
+  next_action: 已 merge 到主线；空闲时同步 checkout
+  blockers: 无
+  validation: `rtk cargo test -p command-service-api unified_exec_error -- --nocapture`；`rtk cargo test -p thread-service poll_event_wakes_for_command_exit_notification -- --exact --nocapture`；`rtk cargo build -p app-server --bin app-server`
+  commit: 646fa4f5a
+
+- id: child-completion-thread-status
+  owner: /root/project_pm/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: fix/child-completion-thread-status
+  task_type: bugfix
+  depends_on: unified-poll-event-waiting 已 merge 到主线
+  files: codex-rs/agent-runtime/**, codex-rs/thread-service/**, 相关 child completion / thread status / poll_event 测试
+  base_commit: 050342997320e0cb7327fa79b39554feecf90dd0
+  pending_sync_from_main:
+  status: merged
+  objective: 调整 child completion 与 thread status 的关系，让 child thread status 只反映 child 自己的本地 turn 生命周期；去掉 parent-side direct child completion bookkeeping 对 `WaitChild` / child status 的直接驱动
+  last_update: 2026-07-07
+  next_action: 已 merge 到主线；空闲时同步 checkout
+  blockers: 无
+  validation: `rtk cargo test -p thread-service control_tests::post_turn_state_waits_for_active_direct_child_without_active_goal`；`rtk cargo test -p thread-service control_tests::pending_child_completion_bookkeeping_does_not_trigger_wait_child`；`rtk cargo test -p thread-service session::tests::context_and_history::turn_start_consumes_child_completion_before_parent_visible_complete`；`rtk cargo test -p thread-service session::tests::context_and_history::clearing_stale_child_completion_preserves_non_completion_messages`；`rtk cargo test -p thread-service session::tests::context_and_history::aborting_turn_clears_pending_child_completion_tracking_from_turn_state`
+  commit: 4baba77cb
 
 ## Completed
+- commit: 61d5d4e18
+  summary: 合并 `4baba77cb` 到主线，修正 child completion / `WaitChild` 状态语义，使 direct child 本地 active 状态与 pending completion bookkeeping 解耦
+  validation: merge 级集成；沿用 owner 已提交验证结果与 reviewer 通过结论
+  residual_risk: 仍缺一条更完整的 integration-style 生命周期测试，串联 `spawn_agent -> parent completion -> child completion envelope -> parent wakeup`
+- commit: 1dc9c8cba9ae8c446bf8d803dff1486198a75acb
+  summary: 合并 `646fa4f5a` 到主线，删除 `wait_agent` / `command_wait`，统一等待入口为 `poll_event`，并让 command output/exit 与 child completion 复用同一 pending-input 唤醒链路
+  validation: merge 级集成；沿用 owner 已提交验证结果与 reviewer 通过结论
+  residual_risk: `codex-analytics` crate 仍有既有测试基线问题，导致无法补跑一条目标测试；本次改动只显式补齐 `BuiltinToolCall` 穷举覆盖并保持原有 analytics 语义
+- commit: eee237bdf2dc6a410d397b6a466caa045192e294
+  summary: 合并 `3335c130e34140da7a118cc1bf21b91824c28509`（init context workflow/instruction files 修复）与 `fbb90be4e`（poll_event thread items 可见性与 command 文案）到主线
+  validation: merge 级集成；沿用各 owner 已提交验证结果
+  residual_risk: `poll-event-thread-item-visibility` 仍受 rollout/tool-service 既有测试问题与前端本地依赖缺失影响，尚无该分支上的完整全链路回归
 - commit: ad4dd4c1247552e9f21fda28fda9391f12e5c433
   summary: 合并 compact 展示与 reinject 修复到主线：compact row 可保留 hydrated archived history、compact turn display items 在 reload 路径保持可见、`.codex/memory/current-work.md` 默认忽略；并同步所有 dev checkout 到最新主线
   validation: `rtk pnpm --dir apps/root-worker-prototype test -- src/lib/conversation.test.ts`；`rtk cargo test -p app-server-protocol preserves_compaction_turn_display_items_alongside_compaction_marker`；`rtk cargo test -p thread-service process_compacted_history_reinjects_full_initial_context`；`rtk cargo build -p app-server --bin app-server`
