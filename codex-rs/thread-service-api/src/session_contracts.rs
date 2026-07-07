@@ -231,34 +231,6 @@ pub enum ThreadSpawnAgentResult {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ThreadWaitAgentReason {
-    PendingMessage,
-    MailboxMessage,
-    ThreadInput,
-    FinalStatus,
-    StatusUpdate,
-    Timeout,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadWaitAgentResult {
-    pub target: String,
-    pub agent_name: String,
-    pub reason: ThreadWaitAgentReason,
-    pub timed_out: bool,
-    pub status: AgentStatus,
-    pub message_operation: Option<String>,
-    pub message_author: Option<String>,
-    pub message_excerpt: Option<String>,
-    pub waited_ms: i64,
-    pub initial_timeout_ms: i64,
-    pub current_timeout_ms: i64,
-    pub hard_cap_timeout_ms: i64,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadPollEventRequest {
@@ -700,13 +672,6 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         message: String,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
 
-    fn wait_agent<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadTurnCapability>,
-        call_id: String,
-        target: String,
-    ) -> ThreadServiceFuture<'a, Result<ThreadWaitAgentResult, FunctionCallError>>;
-
     fn poll_event<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -872,6 +837,13 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
         turn: &'a dyn ThreadTurnCapability,
         items: Vec<ResponseItem>,
     ) -> SessionCapabilityFuture<'a, ()>;
+
+    /// Queue one model-visible item through the pending-input path and ensure
+    /// the runtime continues processing it in the current turn or the next one.
+    fn append_conversation_item<'a>(
+        &'a self,
+        item: ResponseItem,
+    ) -> SessionCapabilityFuture<'a, Result<String, String>>;
 
     /// Sandbox runtime shared by the owning session.
     fn sandbox_runtime(&self) -> SharedSandboxRuntime;

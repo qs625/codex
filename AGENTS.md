@@ -8,7 +8,7 @@
 - `rtk` 不支持的复杂 shell 场景使用 `rtk proxy <cmd>`，例如 `rtk proxy find . -maxdepth 3 -type f`。
 - 搜索文本优先用 `rg`，列文件优先用 `rg --files`。
 - 构建、测试、格式化、lint 命令不要重定向到日志文件；直接让 stdout/stderr 进入 command session。
-- 长时间 Rust/Cargo/`just` 验证命令启动后，通过 `command_wait` 等待完成通知；不要轮询、sleep 循环、重复查询或启动竞争同一 target 的第二个 Rust 命令。
+- 长时间 Rust/Cargo/`just` 验证命令启动后，通过 `poll_event` 等待完成通知；不要轮询、sleep 循环、重复查询或启动竞争同一 target 的第二个 Rust 命令。
 - 同一 checkout 内同一时间只允许一个会竞争 Rust target/Cargo lock 的长命令运行。不要跨 checkout 共用 `TARGET_DIR`，也不要把 `codex-rs/target` 做成共享 symlink。
 
 ## Rust 通用规则
@@ -81,8 +81,8 @@
 ## MultiAgent 与 Goal
 
 - MultiAgent 运行时只保留 V2 工具和 typed child completion 路径；不要重新引入 V1 `send_input`/`resume_agent`、legacy completion watcher 或 raw child-completion fallback。
-- `wait_agent` 只能等待 canonical typed subagent 更新；不能 drain mailbox，不能从 raw marker、assistant text 或 legacy JSON envelope 反解唤醒条件。
-- `wait_agent` 和 `command_wait` 每次只等待当前 backoff window；timeout 后返回 running 并推进同一目标的下一次窗口，事件命中时 reset。
+- turn 内等待统一使用 `poll_event`；不能从 raw marker、assistant text 或 legacy JSON envelope 反解唤醒条件。
+- `poll_event` 每次只等待当前 backoff window；timeout 后返回 timeout 元数据并推进下一次窗口，事件命中时 reset。
 - root-worker Agent Tree 主状态必须消费后端 canonical `ThreadStatus` / `thread/status/changed`，不要从 items、raw marker、legacy JSON 或 children 递归推导。
 - thread lifecycle 顺序固定为 pending input -> active goal continuation -> incomplete direct child -> wait command -> complete。
 - child completion 只对 direct parent 生效；普通 non-management subagent 完成后必须向 parent 投递 typed child completion pending input。

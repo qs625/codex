@@ -1,6 +1,6 @@
-use super::*;
 use super::session::ThreadWaitEventSnapshot;
 use super::session::ThreadWaitSource;
+use super::*;
 use tokio::time::Instant;
 
 impl Session {
@@ -128,10 +128,11 @@ impl Session {
 
     pub(crate) fn note_thread_wait_event(&self, source: ThreadWaitSource) {
         let current = *self.thread_wait_events.borrow();
-        self.thread_wait_events.send_replace(ThreadWaitEventSnapshot {
-            seq: current.seq + 1,
-            source: Some(source),
-        });
+        self.thread_wait_events
+            .send_replace(ThreadWaitEventSnapshot {
+                seq: current.seq + 1,
+                source: Some(source),
+            });
     }
 
     pub(crate) async fn thread_wait_current_window(
@@ -165,13 +166,15 @@ impl Session {
     }
 
     pub(crate) fn enqueue_mailbox_communication(&self, communication: InterAgentCommunication) {
+        let source = thread_wait_source_for_communication(&communication);
         self.mailbox.send(PendingInputItem::from(communication));
-        self.note_thread_wait_event(ThreadWaitSource::InterAgent);
+        self.note_thread_wait_event(source);
     }
 
     pub(crate) fn enqueue_async_input(&self, input: PendingInputItem) {
+        let source = thread_wait_source_for_pending_input_item(&input);
         self.mailbox.send(input);
-        self.note_thread_wait_event(ThreadWaitSource::AsyncInput);
+        self.note_thread_wait_event(source);
     }
 
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
@@ -248,9 +251,9 @@ impl Session {
         }
         {
             let mut mailbox_rx = self.mailbox_rx.lock().await;
-            removed.extend(mailbox_rx.extract_matching(|item| {
-                matches_child_completion(item, child_thread_id)
-            }));
+            removed.extend(
+                mailbox_rx.extract_matching(|item| matches_child_completion(item, child_thread_id)),
+            );
         }
         if removed.is_empty() {
             return 0;
@@ -380,7 +383,8 @@ impl Session {
     pub(crate) async fn poll_event(
         &self,
         request: thread_service_api::ThreadPollEventRequest,
-    ) -> Result<thread_service_api::ThreadPollEventResult, tool_service_api::FunctionCallError> {
+    ) -> Result<thread_service_api::ThreadPollEventResult, tool_service_api::FunctionCallError>
+    {
         let initial_timeout_ms = request.initial_timeout_ms.ok_or_else(|| {
             tool_service_api::FunctionCallError::Fatal(
                 "poll_event requires initial_timeout_ms to be resolved by the thread runtime"
@@ -475,25 +479,59 @@ fn thread_wait_source_hint(source: ThreadWaitSource) -> String {
     match source {
         ThreadWaitSource::UserInput => "user_input",
         ThreadWaitSource::InterAgent => "inter_agent",
+        ThreadWaitSource::ChildCompletion => "child_completion",
         ThreadWaitSource::QueuedInput => "queued_input",
         ThreadWaitSource::AsyncInput => "async_input",
+        ThreadWaitSource::CommandOutput => "command_output",
+        ThreadWaitSource::CommandExit => "command_exit",
     }
     .to_string()
 }
 
-fn thread_wait_source_hint_for_pending_input(item: &PendingInputItem) -> Option<String> {
+fn thread_wait_source_for_communication(
+    communication: &InterAgentCommunication,
+) -> ThreadWaitSource {
+    match communication.operation {
+        InterAgentOperation::ChildCompletion => ThreadWaitSource::ChildCompletion,
+        _ => ThreadWaitSource::InterAgent,
+    }
+}
+
+fn thread_wait_source_for_pending_input_item(item: &PendingInputItem) -> ThreadWaitSource {
     match item {
-        PendingInputItem::InterAgentCommunication(_) => Some(thread_wait_source_hint(
-            ThreadWaitSource::InterAgent,
-        )),
+        PendingInputItem::InterAgentCommunication(communication) => {
+            thread_wait_source_for_communication(communication)
+        }
         PendingInputItem::ResponseItem(ResponseItem::Message { role, .. })
         | PendingInputItem::HookInspectable(ResponseItem::Message { role, .. })
             if role == "user" =>
         {
-            Some(thread_wait_source_hint(ThreadWaitSource::UserInput))
+            ThreadWaitSource::UserInput
         }
+        PendingInputItem::ResponseItem(ResponseItem::CommandExecutionNotification {
+            kind: protocol::models::CommandExecutionNotificationKind::Output,
+            ..
+        })
+        | PendingInputItem::HookInspectable(ResponseItem::CommandExecutionNotification {
+            kind: protocol::models::CommandExecutionNotificationKind::Output,
+            ..
+        }) => ThreadWaitSource::CommandOutput,
+        PendingInputItem::ResponseItem(ResponseItem::CommandExecutionNotification {
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            ..
+        })
+        | PendingInputItem::HookInspectable(ResponseItem::CommandExecutionNotification {
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            ..
+        }) => ThreadWaitSource::CommandExit,
         PendingInputItem::HookInspectable(_) | PendingInputItem::ResponseItem(_) => {
-            Some(thread_wait_source_hint(ThreadWaitSource::AsyncInput))
+            ThreadWaitSource::AsyncInput
         }
     }
+}
+
+fn thread_wait_source_hint_for_pending_input(item: &PendingInputItem) -> Option<String> {
+    Some(thread_wait_source_hint(
+        thread_wait_source_for_pending_input_item(item),
+    ))
 }

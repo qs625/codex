@@ -15,7 +15,7 @@ Behavior rules:
    - Stop awaiting unless explicitly instructed.
 
 3. Awaiting behavior:
-   - If the task is a command session, use `command_wait`; for other tasks use the corresponding event-driven subscription instead of polling.
+   - Use `poll_event` to await command completion, command output notifications, child completion, and other thread-input wakeups.
    - Use repeated tool calls only when the target has no event-driven subscription path.
    - Do not hallucinate completion.
    - Use long timeouts only for tools that explicitly support waiting for status without polling output.

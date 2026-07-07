@@ -84,28 +84,10 @@ pub fn create_followup_task_tool() -> ToolSpec {
     })
 }
 
-pub fn create_wait_agent_tool_v2() -> ToolSpec {
-    let properties = BTreeMap::from([(
-        "target".to_string(),
-        JsonSchema::string(Some(
-            "Agent id or canonical task name to wait for (from spawn_agent).".to_string(),
-        )),
-    )]);
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "wait_agent".to_string(),
-        description: "Wait until the next relevant sub-agent update is already pending or arrives: an inter-agent message, child completion, or target status change. Runtime backoff and hard-cap timeouts are built in; do not use sleep or polling loops to wait for sub-agents.".to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
-        output_schema: Some(wait_agent_output_schema()),
-    })
-}
-
 pub fn create_poll_event_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "poll_event".to_string(),
-        description: "Wait for the next new thread input that reaches the active turn runtime, such as user input, inter-agent communication, or other queued model-consumable input. This returns only wake or timeout metadata plus a best-effort source hint, not the event payload.".to_string(),
+        description: "Wait for the next new thread input that reaches the active turn runtime, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns only wake or timeout metadata plus a best-effort source hint, not the event payload.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
@@ -118,7 +100,7 @@ pub fn create_poll_event_tool() -> ToolSpec {
                 },
                 "source_hint": {
                     "type": ["string", "null"],
-                    "description": "Best-effort hint for the source that woke the wait, when available."
+                    "description": "Best-effort hint for the source that woke the wait, such as user_input, child_completion, inter_agent, command_output, command_exit, queued_input, or async_input."
                 },
                 "waited_ms": {
                     "type": "number",
@@ -185,73 +167,6 @@ pub fn create_close_agent_tool_v2() -> ToolSpec {
         defer_loading: None,
         parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
         output_schema: Some(close_agent_output_schema()),
-    })
-}
-
-fn wait_agent_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "target": {
-                "type": "string",
-                "description": "The target argument supplied by the caller."
-            },
-            "agent_name": {
-                "type": "string",
-                "description": "Canonical task name for the target agent when available, otherwise the agent id."
-            },
-            "reason": {
-                "type": "string",
-                "enum": ["pending_message", "mailbox_message", "thread_input", "status_update", "final_status", "timeout"],
-                "description": "Why wait_agent returned."
-            },
-            "timed_out": {
-                "type": "boolean",
-                "description": "Whether the configured hard cap elapsed without a matching update."
-            },
-            "status": {
-                "description": "Last known status for the target agent.",
-                "allOf": [agent_status_output_schema()]
-            },
-            "message_operation": {
-                "type": ["string", "null"],
-                "description": "Operation of the matching inter-agent message, when one woke the wait."
-            },
-            "message_author": {
-                "type": ["string", "null"],
-                "description": "Author path of the matching inter-agent message, when present."
-            },
-            "message_excerpt": {
-                "type": ["string", "null"],
-                "description": "Short excerpt of the matching message content, when present."
-            },
-            "waited_ms": {
-                "type": "integer",
-                "description": "Elapsed wall-clock wait time in milliseconds."
-            },
-            "initial_timeout_ms": {
-                "type": "integer",
-                "description": "Initial runtime wait window before backoff."
-            },
-            "hard_cap_timeout_ms": {
-                "type": "integer",
-                "description": "Configured maximum runtime wait duration."
-            }
-        },
-        "required": [
-            "target",
-            "agent_name",
-            "reason",
-            "timed_out",
-            "status",
-            "message_operation",
-            "message_author",
-            "message_excerpt",
-            "waited_ms",
-            "initial_timeout_ms",
-            "hard_cap_timeout_ms"
-        ],
-        "additionalProperties": false
     })
 }
 

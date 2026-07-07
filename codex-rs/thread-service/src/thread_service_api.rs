@@ -19,8 +19,6 @@ use thread_service_api::ThreadSpawnAgentForkMode;
 use thread_service_api::ThreadSpawnAgentRequest;
 use thread_service_api::ThreadSpawnAgentResult;
 use thread_service_api::ThreadTurnCapability;
-use thread_service_api::ThreadWaitAgentReason;
-use thread_service_api::ThreadWaitAgentResult;
 use tool_service_api::FunctionCallError;
 
 fn turn_context(
@@ -73,40 +71,6 @@ fn from_runtime_spawn_result(
         codex_agent_runtime::SpawnAgentToolResult::HiddenMetadata { task_name } => {
             ThreadSpawnAgentResult::HiddenMetadata { task_name }
         }
-    }
-}
-
-fn from_runtime_wait_result(
-    result: codex_agent_runtime::WaitAgentToolResult,
-) -> ThreadWaitAgentResult {
-    ThreadWaitAgentResult {
-        target: result.target,
-        agent_name: result.agent_name,
-        reason: match result.reason {
-            codex_agent_runtime::WaitAgentReason::PendingMessage => {
-                ThreadWaitAgentReason::PendingMessage
-            }
-            codex_agent_runtime::WaitAgentReason::MailboxMessage => {
-                ThreadWaitAgentReason::MailboxMessage
-            }
-            codex_agent_runtime::WaitAgentReason::ThreadInput => {
-                ThreadWaitAgentReason::ThreadInput
-            }
-            codex_agent_runtime::WaitAgentReason::FinalStatus => ThreadWaitAgentReason::FinalStatus,
-            codex_agent_runtime::WaitAgentReason::StatusUpdate => {
-                ThreadWaitAgentReason::StatusUpdate
-            }
-            codex_agent_runtime::WaitAgentReason::Timeout => ThreadWaitAgentReason::Timeout,
-        },
-        timed_out: result.timed_out,
-        status: result.status,
-        message_operation: result.message_operation,
-        message_author: result.message_author,
-        message_excerpt: result.message_excerpt,
-        waited_ms: result.waited_ms,
-        initial_timeout_ms: result.initial_timeout_ms,
-        current_timeout_ms: result.current_timeout_ms,
-        hard_cap_timeout_ms: result.hard_cap_timeout_ms,
     }
 }
 
@@ -171,20 +135,6 @@ impl ThreadServiceApi for ThreadService {
                 message,
             )
             .await
-        })
-    }
-
-    fn wait_agent<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadTurnCapability>,
-        call_id: String,
-        target: String,
-    ) -> ThreadServiceFuture<'a, Result<ThreadWaitAgentResult, FunctionCallError>> {
-        Box::pin(async move {
-            let turn = turn_context(turn)?;
-            multi_agent::wait_agent_tool(session(turn.as_ref()), Arc::clone(&turn), call_id, target)
-                .await
-                .map(from_runtime_wait_result)
         })
     }
 

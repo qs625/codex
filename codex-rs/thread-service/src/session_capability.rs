@@ -764,6 +764,20 @@ impl ThreadSessionCapability for Session {
         })
     }
 
+    fn append_conversation_item<'a>(
+        &'a self,
+        item: ResponseItem,
+    ) -> SessionCapabilityFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            let submission_id = uuid::Uuid::new_v4().to_string();
+            self.enqueue_async_input(crate::PendingInputItem::from(item));
+            if let Some(session) = self.self_weak.get().and_then(|weak| weak.upgrade()) {
+                session.maybe_start_turn_for_pending_work().await;
+            }
+            Ok(submission_id)
+        })
+    }
+
     fn sandbox_runtime(&self) -> SharedSandboxRuntime {
         self.sandbox_runtime()
     }
@@ -1990,44 +2004,6 @@ impl command_service_api::SessionCommandInteractionCaller for Session {
         >,
     > {
         Box::pin(async move { Session::begin_command_wait(self, request).await })
-    }
-
-    fn wait_command_compat<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadRuntimeCapability>,
-        request: command_service_api::CommandWaitRequest,
-    ) -> command_service_api::CommandServiceFuture<
-        'a,
-        Result<
-            command_service_api::CommandWaitOutput,
-            command_service_api::CommandSessionError,
-        >,
-    > {
-        Box::pin(async move {
-            let turn = turn_context(turn.as_ref()).ok_or_else(|| {
-                command_service_api::CommandSessionError::new(invalid_turn_message())
-            })?;
-            Session::wait_command_compat(self, turn, request).await
-        })
-    }
-
-    fn wait_command_compat_with_operation<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadRuntimeCapability>,
-        command_wait: Box<dyn command_service_api::CommandWaitOperation>,
-    ) -> command_service_api::CommandServiceFuture<
-        'a,
-        Result<
-            command_service_api::CommandWaitOutput,
-            command_service_api::CommandSessionError,
-        >,
-    > {
-        Box::pin(async move {
-            let turn = turn_context(turn.as_ref()).ok_or_else(|| {
-                command_service_api::CommandSessionError::new(invalid_turn_message())
-            })?;
-            Session::wait_command_compat_with_operation(self, turn, command_wait).await
-        })
     }
 
     fn write_command_stdin<'a>(
