@@ -1323,6 +1323,8 @@ where
     );
 
     let (mailbox, mailbox_rx) = crate::Mailbox::new();
+    let (thread_wait_events, _thread_wait_events_rx) =
+        watch::channel(crate::session::session::ThreadWaitEventSnapshot::default());
     let session = Arc::new(Session {
         self_weak: std::sync::OnceLock::new(),
         conversation_id: thread_id,
@@ -1344,7 +1346,8 @@ where
         services,
         next_internal_sub_id: AtomicU64::new(0),
         child_completion: codex_agent_runtime::ChildCompletionState::new(),
-        wait_agent_backoff: Mutex::new(std::collections::HashMap::new()),
+        thread_wait_events,
+        thread_wait_backoff: Mutex::new(crate::session::session::ThreadWaitBackoffState::default()),
     });
     let _ = session.self_weak.set(Arc::downgrade(&session));
     let mut turn_context = turn_context;

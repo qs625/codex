@@ -34,7 +34,6 @@ pub(crate) use command_service_api::CommandWaitRequest;
 pub(crate) use command_service_api::CommandWaitStatus;
 pub(crate) use command_service_api::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 use command_service_api::RunningCommandSnapshot;
-pub(crate) use command_service_api::WaitBackoffState;
 pub(crate) use command_service_api::WriteStdinOutput;
 pub(crate) use command_service_api::WriteStdinRequest;
 pub(crate) use command_service_api::clamp_yield_time;
@@ -277,7 +276,8 @@ struct ProcessEntry {
     #[allow(dead_code)]
     transcript: Arc<Mutex<HeadTailBuffer>>,
     notification_state: Arc<CommandNotificationState>,
-    command_wait_backoff: WaitBackoffState,
+    last_consumed_notification: CommandNotificationSnapshot,
+    command_wait_initial_timeout: std::time::Duration,
 }
 
 impl ProcessEntry {

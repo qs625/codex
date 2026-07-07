@@ -102,6 +102,54 @@ pub fn create_wait_agent_tool_v2() -> ToolSpec {
     })
 }
 
+pub fn create_poll_event_tool() -> ToolSpec {
+    ToolSpec::Function(ResponsesApiTool {
+        name: "poll_event".to_string(),
+        description: "Wait for the next new thread input that reaches the active turn runtime, such as user input, inter-agent communication, or other queued model-consumable input. This returns only wake or timeout metadata plus a best-effort source hint, not the event payload.".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "timed_out": {
+                    "type": "boolean",
+                    "description": "Whether the wait window elapsed without a new thread input."
+                },
+                "source_hint": {
+                    "type": ["string", "null"],
+                    "description": "Best-effort hint for the source that woke the wait, when available."
+                },
+                "waited_ms": {
+                    "type": "number",
+                    "description": "Elapsed wall-clock wait time in milliseconds."
+                },
+                "initial_timeout_ms": {
+                    "type": "number",
+                    "description": "Configured initial wait window in milliseconds."
+                },
+                "current_timeout_ms": {
+                    "type": "number",
+                    "description": "Current backoff-adjusted wait window in milliseconds."
+                },
+                "hard_cap_timeout_ms": {
+                    "type": "number",
+                    "description": "Maximum backoff-adjusted wait window in milliseconds."
+                }
+            },
+            "required": [
+                "timed_out",
+                "source_hint",
+                "waited_ms",
+                "initial_timeout_ms",
+                "current_timeout_ms",
+                "hard_cap_timeout_ms"
+            ],
+            "additionalProperties": false
+        })),
+    })
+}
+
 pub fn create_list_agents_tool() -> ToolSpec {
     let properties = BTreeMap::from([(
         "path_prefix".to_string(),
@@ -154,7 +202,7 @@ fn wait_agent_output_schema() -> Value {
             },
             "reason": {
                 "type": "string",
-                "enum": ["pending_message", "mailbox_message", "status_update", "final_status", "timeout"],
+                "enum": ["pending_message", "mailbox_message", "thread_input", "status_update", "final_status", "timeout"],
                 "description": "Why wait_agent returned."
             },
             "timed_out": {

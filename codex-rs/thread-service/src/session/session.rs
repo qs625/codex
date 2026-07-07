@@ -23,7 +23,6 @@ use codex_code_mode_api::CodeModeRuntimeFactory;
 use codex_code_mode_api::CodeModeRuntimeService;
 use codex_config_types::RequirementSource;
 use command_service_api::CommandServiceApi;
-use command_service_api::WaitBackoffState;
 use config_service::ConstraintError;
 use goal_service_api::GoalServiceApi;
 use mcp_service_api::McpAuthRuntime;
@@ -49,11 +48,61 @@ use session_telemetry_api::SharedSessionTelemetryFactory;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 
 /// Context for an initialized model agent
 ///
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ThreadWaitEventSnapshot {
+    pub(crate) seq: u64,
+    pub(crate) source: Option<ThreadWaitSource>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ThreadWaitSource {
+    UserInput,
+    InterAgent,
+    QueuedInput,
+    AsyncInput,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ThreadWaitBackoffState {
+    current_window: Option<Duration>,
+}
+
+const THREAD_WAIT_BACKOFF_MULTIPLIER: u32 = 2;
+
+impl ThreadWaitBackoffState {
+    pub(crate) fn current_window(&mut self, initial_window: Duration, max_window: Duration) -> Duration {
+        let current_window = self
+            .current_window
+            .unwrap_or(initial_window)
+            .clamp(initial_window, max_window);
+        self.current_window = Some(current_window);
+        current_window
+    }
+
+    pub(crate) fn advance_after_timeout(
+        &mut self,
+        initial_window: Duration,
+        max_window: Duration,
+    ) {
+        let current_window = self.current_window(initial_window, max_window);
+        self.current_window = Some(
+            current_window
+                .saturating_mul(THREAD_WAIT_BACKOFF_MULTIPLIER)
+                .min(max_window),
+        );
+    }
+
+    pub(crate) fn reset_after_event(&mut self) {
+        self.current_window = None;
+    }
+}
+
 pub struct Session {
     pub(crate) self_weak: OnceLock<Weak<Session>>,
     pub(crate) conversation_id: ThreadId,
@@ -79,8 +128,8 @@ pub struct Session {
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
     pub(super) child_completion: ChildCompletionState,
-    pub(super) wait_agent_backoff:
-        Mutex<std::collections::HashMap<(ThreadId, ThreadId), WaitBackoffState>>,
+    pub(super) thread_wait_events: watch::Sender<ThreadWaitEventSnapshot>,
+    pub(super) thread_wait_backoff: Mutex<ThreadWaitBackoffState>,
 }
 
 #[derive(Clone)]

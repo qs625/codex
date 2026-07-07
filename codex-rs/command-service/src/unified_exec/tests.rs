@@ -233,7 +233,8 @@ async fn notification_wait_after_ignores_existing_snapshot_and_returns_next_kind
 
     let kind = tokio::time::timeout(Duration::from_secs(1), state.wait_after(snapshot))
         .await
-        .expect("notification should arrive");
+        .expect("notification should arrive")
+        .0;
 
     assert_eq!(kind, CommandNotificationKind::Exit);
 }

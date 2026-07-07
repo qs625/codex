@@ -75,6 +75,7 @@ pub(crate) use tool_specs::create_exec_command_tool_with_environment_id;
 pub(crate) use tool_specs::create_followup_task_tool;
 pub(crate) use tool_specs::create_get_goal_tool;
 pub(crate) use tool_specs::create_list_agents_tool;
+pub(crate) use tool_specs::create_poll_event_tool;
 pub(crate) use tool_specs::create_list_mcp_resource_templates_tool;
 pub(crate) use tool_specs::create_list_mcp_resources_tool;
 pub(crate) use tool_specs::create_read_mcp_resource_tool;
