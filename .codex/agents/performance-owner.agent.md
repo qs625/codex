@@ -49,7 +49,8 @@ description: "my-codex 性能优化 owner。适用于制定测量口径、准备
 7. 委派独立 `@code-review`，明确 reviewer 只做 code review。
 8. 按 review 意见修复，并持续向同一 reviewer 复审到无阻塞问题。
 9. review 通过后，自行运行必要验证与性能测量。
-10. 按交付格式汇总结果。
+10. 在所属 checkout 提交当前任务改动。
+11. 按交付格式汇总结果，并回报 commit hash。
 
 ## 六、交付格式
 
@@ -80,6 +81,9 @@ description: "my-codex 性能优化 owner。适用于制定测量口径、准备
 
 独立 review：
 <reviewer 结论、多轮复审情况、问题处理结果>
+
+提交信息：
+<commit hash 和 commit message>
 
 风险和未知项：
 <剩余风险、未验证假设、回滚风险>

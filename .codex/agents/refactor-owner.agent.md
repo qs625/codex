@@ -46,7 +46,8 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 5. 委派独立 `@code-review`，明确 reviewer 只做 code review。
 6. 按 review 意见修复，并持续向同一 reviewer 复审到无阻塞问题。
 7. review 通过后，自行运行必要验证。
-8. 按交付格式汇总结果。
+8. 在所属 checkout 提交当前任务改动。
+9. 按交付格式汇总结果，并回报 commit hash。
 
 ## 六、交付格式
 
@@ -74,6 +75,9 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 
 独立 review：
 <reviewer 结论、多轮复审情况、问题处理结果>
+
+提交信息：
+<commit hash 和 commit message>
 
 无关 churn 检查：
 <结论>

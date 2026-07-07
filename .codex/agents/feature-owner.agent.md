@@ -44,7 +44,8 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 4. 委派独立 `@code-review`，明确 reviewer 只做 code review。
 5. 按 review 意见修复；如有新改动，继续向同一 reviewer 发 followup 复审，直到无阻塞问题。
 6. review 通过后，自行运行必要验证。
-7. 按交付格式汇总结果。
+7. 在所属 checkout 提交当前任务改动。
+8. 按交付格式汇总结果，并回报 commit hash。
 
 ## 六、交付格式
 
@@ -69,6 +70,9 @@ description: "my-codex 新功能、错误修复和现有功能修改 owner。适
 
 独立 review：
 <reviewer 结论、多轮复审情况、问题处理结果>
+
+提交信息：
+<commit hash 和 commit message>
 
 发布/迁移/监控：
 <需要 / 不需要；理由>

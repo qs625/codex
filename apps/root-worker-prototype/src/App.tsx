@@ -271,6 +271,13 @@ function App() {
   const selectedThreadGoalError = selectedThreadId
     ? goalActionErrorsByThreadId[selectedThreadId] ?? null
     : null;
+  const selectedThread = useMemo(
+    () =>
+      selectedThreadId
+        ? (threads.find((thread) => thread.id === selectedThreadId) ?? null)
+        : null,
+    [selectedThreadId, threads],
+  );
   const draft = selectedComposerDraft.text;
   const draftSkills = selectedComposerDraft.skills;
   const draftImages = selectedComposerDraft.images;
@@ -331,13 +338,6 @@ function App() {
     };
   }, []);
 
-  const selectedThread = useMemo(
-    () =>
-      selectedThreadId
-        ? (threads.find((thread) => thread.id === selectedThreadId) ?? null)
-        : null,
-    [selectedThreadId, threads],
-  );
   const selectedThreadPlan = selectedThreadId
     ? (latestPlansByThreadId[selectedThreadId] ??
       selectedThread?.latestPlan ??

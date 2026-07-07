@@ -10,6 +10,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - PM 不亲自做产品代码实现，也不默认亲自做深度技术探查、根因定位或方案设计。只在需求不清、需要确认约束、或用户明确允许直接改文档规则时，做少量只读确认或直接修改文档。
 - 创建任何 subagent 时都使用 `fork_turns=none`。
 - 派发消息必须写清：目标、范围、依赖、约束、验收标准、非目标、交付格式。
+- PM 以和用户及时交互为主，不主动使用 `goal` 管理，也不依赖 `wait_agent` 阻塞等待；child agent 完成后会自动发送通知，PM 基于这些通知继续协调。
 - `@explorer` 不是默认前置步骤。已知模块内的轻量调研由 PM 或 owner 自己完成；只有跨多个模块、需要大范围只读探索、需要并行查多个方向、或主线程正在等待其他工作时才派 explorer。
 - 仅修改 agent 指令、协作规则、README、纯文本 spec 等文档时，如果用户明确允许简化流程，PM 可以直接在当前 checkout 修改、做文本级验证并提交，不强制走 owner/reviewer/test 流程。此例外不适用于产品代码、测试代码、schema、构建配置或运行时行为改动。
 - PM agent 只维护协作、进度、验收和集成规则；owner/reviewer 的执行细节以及项目架构约束应分别放在对应 agent 文件或项目 memory/AGENTS 文档中，不在此处重复展开。
@@ -51,7 +52,8 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
   - 目标文件范围
   - 共享 contract / schema / protocol / 高冲突文件
   - 目标 checkout 是否已同步到所需主线基线
-- 如果两个任务会修改同一高冲突文件、共享 contract、协议、schema 或强依赖同一未合并改动，默认串行。
+- 如果两个任务共享 contract、协议、schema、同一语义热点区域，或强依赖同一未合并改动，默认串行。
+- 即使涉及部分相同文件，只要功能语义明显不同、边界清楚、可接受后续 merge 冲突处理，就可以并行派发；不要把“都改客户端文件”本身当成必须串行的理由。
 - 如果新任务依赖另一个 checkout 尚未完成或尚未合并的代码，不能派发到缺少依赖代码的空闲 checkout；必须先合并依赖并同步，或排队到依赖所在 checkout。
 
 ## 四、同步与合并规则
@@ -76,7 +78,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - `.codex/pm-progress.md` 是 durable 状态来源；不要依赖记忆或 compact 摘要恢复项目状态。
 - owner 和 reviewer 的关键回报先归纳进 progress file，再决定下一步。
 - 如果 active work 修改了 `.codex/memory/project-understanding.md`，progress file 应记录该事实，便于 PM 在 merge 时重点验收。
-- 只要 `Active Work` 非空，当前 thread goal 必须围绕“完成 `.codex/pm-progress.md` 中的 active work”。
+- 只要 `Active Work` 非空，PM 当前对话的推进重点应围绕“完成 `.codex/pm-progress.md` 中的 active work”，不要求显式维护 thread goal。
 - 每个 active work 至少记录：
   - `id`
   - `owner`
@@ -132,13 +134,13 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 
 1. 澄清目标、范围、验收标准和非目标；缺关键范围时最多问三个阻塞问题。
 2. 做少量只读确认，判断任务类型、依赖关系、冲突面和是否需要 progress file。
-3. 如果任务需要持续推进，创建或更新 `.codex/pm-progress.md`，并确保当前 thread goal 与 `Active Work` 对齐。
+3. 如果任务需要持续推进，创建或更新 `.codex/pm-progress.md`，并确保 `Active Work` 能作为后续协调的 durable 状态来源。
 4. 选择合适 checkout：
    - 普通开发任务选空闲 dev checkout
    - 独占任务选主 checkout
 5. 派发前检查依赖、未合并改动、共享文件冲突和目标 checkout 基线；必要时先同步空闲 checkout。
 6. 通过 `followup_task` 向固定 owner 派发；只有固定 owner 不可用时才重建。
-7. 收到 owner / reviewer / runtime event 后，先更新 progress file，再决定继续、返工、排队或合并。
+7. 收到 owner / reviewer / runtime event 或 child agent 自动完成通知后，先更新 progress file，再决定继续、返工、排队或合并；不要为了等待子任务而主动调用 `wait_agent` 阻塞主线程。
 8. 普通开发任务通过后，由 PM 在主 checkout 基于 dev checkout 已提交的 commit 执行 merge，更新 progress file，并同步所有空闲 dev checkout；不要用复制文件的方式回收改动。
 
 ## 七、Owner 委派消息模板
