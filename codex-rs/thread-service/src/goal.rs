@@ -839,9 +839,9 @@ impl Session {
     }
 
     async fn thread_idle_or_completion(&self) -> ThreadPostTurnState {
-        if Box::pin(self.has_incomplete_direct_child()).await {
+        if Box::pin(self.has_active_direct_child()).await {
             return select_thread_post_turn_state(ThreadPostTurnInputs {
-                has_incomplete_direct_child: true,
+                has_active_direct_child: true,
                 ..ThreadPostTurnInputs::default()
             });
         }

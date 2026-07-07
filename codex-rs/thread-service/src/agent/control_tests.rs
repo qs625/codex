@@ -1830,7 +1830,37 @@ async fn goal_post_turn_state_continues_despite_live_direct_child() {
 }
 
 #[tokio::test]
-async fn post_turn_state_waits_for_live_direct_child_without_active_goal() {
+async fn post_turn_state_waits_for_active_direct_child_without_active_goal() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    emit_turn_complete(&root_thread, "parent turn done").await;
+
+    assert_eq!(
+        root_thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild)
+    );
+}
+
+#[tokio::test]
+async fn pending_child_completion_bookkeeping_does_not_trigger_wait_child() {
     let harness = AgentControlHarness::new().await;
     let parent = harness
         .manager
@@ -1838,7 +1868,7 @@ async fn post_turn_state_waits_for_live_direct_child_without_active_goal() {
         .await
         .expect("parent thread should start");
     let parent_thread = parent.thread;
-    let (child_thread_id, _) = harness.start_thread().await;
+    let child_thread_id = ThreadId::new();
     emit_turn_complete(&parent_thread, "parent turn done").await;
     parent_thread
         .codex
@@ -1846,9 +1876,16 @@ async fn post_turn_state_waits_for_live_direct_child_without_active_goal() {
         .mark_direct_child_completion_pending(child_thread_id)
         .await;
 
+    assert!(
+        parent_thread
+            .codex
+            .session
+            .has_pending_direct_child_completions()
+            .await
+    );
     assert_eq!(
         parent_thread.codex.session.thread_post_turn_state().await,
-        ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild)
+        ThreadPostTurnState::ThreadCompletion
     );
 }
 

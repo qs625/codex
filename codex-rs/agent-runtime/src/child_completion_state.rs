@@ -6,10 +6,9 @@ use tokio::sync::Mutex;
 
 /// Tracks child-completion delivery state from a parent thread's point of view.
 ///
-/// A direct child is considered incomplete until the parent consumes the typed
-/// child-completion pending input. The child may have reached a local final
-/// lifecycle state before that point, but this tracker intentionally keeps the
-/// parent-visible completion boundary separate.
+/// This does not define whether a child thread is currently active. It only
+/// tracks whether a previously-finished child still has a completion envelope
+/// pending delivery to the parent, plus whether completion delivery is armed.
 #[derive(Debug)]
 pub struct ChildCompletionState {
     delivery_active: AtomicBool,

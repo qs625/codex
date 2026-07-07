@@ -13,6 +13,7 @@
 - 等待模型的长期方向已确定为统一收口到 `poll_event`：`wait_agent` / `command_wait` 应删除，不再作为独立 tool surface 保留。
 - `poll_event` 需要支持在同一个 turn 内等待并在 event 到达后继续执行；runtime 不应维护会影响状态机的硬性等待目标，event 直接作为 pending input 注入当前 turn，并携带来源信息供模型判断。
 - command output / exit、child completion、inter-agent completion 都应复用同一套 pending-input 唤醒链路；不要再为某一类等待事件单独维护平行 wait API。
+- parent-side child completion bookkeeping 只用于 completion envelope 的投递、去重和清理，不应定义 child 当前是否 active；`WaitChild` / `IdleWaitChild` 只应由 direct child thread 的本地 active 状态驱动。
 - thread init context 中的 workflow discovery 依赖 `TurnContext::discovery_context()`，其 project workflows 来自 `config.config_layer_stack` 中各 project layer 的 `.codex/workflows`。
 - session 初始化阶段的 `instruction_files` 应按本地 config 路径读取，不应依赖 primary execution environment 是否存在。
 
