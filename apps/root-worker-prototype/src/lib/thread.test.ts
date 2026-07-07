@@ -638,6 +638,55 @@ test("mergeThreadSnapshot preserves duplicate dynamic tool calls in one snapshot
   assert.deepEqual(merged.turns, [firstTurn, secondTurn]);
 });
 
+test("mergeThreadSnapshot preserves restored event-driven tool calls with distinct ids", () => {
+  const liveTurn = {
+    id: "live-turn",
+    items: [
+      {
+        type: "eventDrivenToolCall" as const,
+        id: "live-item",
+        tool: "schedule_subscribe",
+        arguments: {
+          label: "daily digest",
+          schedule: "every_day_at 09:00 Asia/Shanghai",
+        },
+        status: "completed" as const,
+        output: { subscription_id: "sub-live" },
+      },
+    ],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+  const readTurn = {
+    ...liveTurn,
+    id: "read-turn",
+    items: [
+      {
+        ...liveTurn.items[0],
+        id: "read-item",
+        output: { subscription_id: "sub-read" },
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [liveTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [readTurn],
+    },
+  );
+
+  assert.deepEqual(merged.turns, [readTurn, liveTurn]);
+});
+
 test("mergeThreadSnapshot preserves duplicate context compaction markers in one snapshot", () => {
   const firstTurn = {
     id: "first-turn",

@@ -378,6 +378,108 @@ test("renders command wait and stdin actions as standalone event entries", () =>
   );
 });
 
+test("renders event command subscriptions and output events", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "eventCommandCall",
+        id: "monitor-1",
+        subscriptionId: "sub-1",
+        command: "cargo test -p app-server",
+        cwd: "/tmp/project",
+        label: "app-server tests",
+        status: "completed",
+        output: { ok: true },
+      },
+      {
+        type: "eventCommandEvent",
+        id: "monitor-event-1",
+        subscriptionId: "sub-1",
+        kind: "output",
+        label: "app-server tests",
+        command: "cargo test -p app-server",
+        cwd: "/tmp/project",
+        line: "running 1 test",
+        sequence: 1,
+        exitCode: null,
+        signal: null,
+        message: null,
+        truncated: false,
+        createdAt: 4,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolCategory: entry.toolCategory,
+      timestamp: entry.timestamp,
+    })),
+    [
+      {
+        id: "monitor-1",
+        kind: "tool",
+        text: "app-server tests • cargo test -p app-server",
+        toolName: "app-server tests",
+        toolCategory: "eventDrivenSubscription",
+        timestamp: formatClockTime(1),
+      },
+      {
+        id: "monitor-event-1",
+        kind: "event",
+        text: "app-server tests: running 1 test",
+        toolName: undefined,
+        toolCategory: undefined,
+        timestamp: formatClockTime(4),
+      },
+    ],
+  );
+});
+
+test("renders event command exit signals in event summaries", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "eventCommandEvent",
+        id: "monitor-event-2",
+        subscriptionId: "sub-1",
+        kind: "exited",
+        label: "app-server tests",
+        command: "cargo test -p app-server",
+        cwd: "/tmp/project",
+        line: null,
+        sequence: 2,
+        exitCode: null,
+        signal: "SIGTERM",
+        message: null,
+        truncated: false,
+        createdAt: 5,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      timestamp: entry.timestamp,
+    })),
+    [
+      {
+        id: "monitor-event-2",
+        kind: "event",
+        text: "app-server tests: signal SIGTERM.",
+        timestamp: formatClockTime(5),
+      },
+    ],
+  );
+});
+
 test("renders injected init context as a conversation context entry", () => {
   const entries = buildConversationEntries(
     makeThread([
@@ -1890,7 +1992,7 @@ test("distinguishes empty compact replacement history from missing history", () 
   );
 });
 
-test("builds visible entries for empty reasoning and unsupported typed items", () => {
+test("builds visible entries for empty reasoning and builtin schedule tools", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -1901,11 +2003,14 @@ test("builds visible entries for empty reasoning and unsupported typed items", (
       },
       {
         type: "builtinToolCall",
-        id: "builtin-unsupported",
-        tool: "todo_write",
-        arguments: { items: [] },
+        id: "builtin-schedule",
+        tool: "schedule_subscribe",
+        arguments: {
+          label: "daily digest",
+          schedule: "every_day_at 09:00 Asia/Shanghai",
+        },
         status: "completed",
-        output: null,
+        output: { subscription_id: "sub-1" },
       },
     ]),
   );
@@ -1915,17 +2020,23 @@ test("builds visible entries for empty reasoning and unsupported typed items", (
       id: entry.id,
       kind: entry.kind,
       text: entry.text,
+      toolName: entry.toolName,
+      toolCategory: entry.toolCategory,
     })),
     [
       {
         id: "reasoning-empty",
         kind: "event",
         text: "Reasoning item received.",
+        toolName: undefined,
+        toolCategory: undefined,
       },
       {
-        id: "builtin-unsupported",
-        kind: "event",
-        text: "Unsupported thread item: builtinToolCall",
+        id: "builtin-schedule",
+        kind: "tool",
+        text: "schedule_subscribe • daily digest • every_day_at 09:00 Asia/Shanghai",
+        toolName: "schedule_subscribe",
+        toolCategory: "eventDrivenSubscription",
       },
     ],
   );

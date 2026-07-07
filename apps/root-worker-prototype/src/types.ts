@@ -191,6 +191,32 @@ export type ThreadItem = ThreadItemTimestamps &
       text: string;
     }
   | {
+      type: "eventCommandCall";
+      id: string;
+      subscriptionId: string;
+      command: string;
+      cwd: string | null;
+      label: string | null;
+      status: string;
+      output: unknown | null;
+    }
+  | {
+      type: "eventCommandEvent";
+      id: string;
+      subscriptionId: string;
+      kind: string;
+      label: string | null;
+      command: string;
+      cwd: string | null;
+      line: string | null;
+      sequence: number | null;
+      exitCode: number | null;
+      signal: string | null;
+      message: string | null;
+      truncated: boolean;
+      createdAt: number;
+    }
+  | {
       type: "workflowRunProgress";
       id: string;
       event: ThreadWorkflowRunProgressEvent;
