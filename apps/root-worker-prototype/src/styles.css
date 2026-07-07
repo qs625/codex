@@ -2898,6 +2898,37 @@ svg {
   align-items: center;
 }
 
+.preview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.preview-mode-toggle button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #78716c;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 6px 10px;
+}
+
+.preview-mode-toggle button.active {
+  background: rgba(28, 25, 23, 0.08);
+  color: #171717;
+}
+
 .preview-empty {
   display: grid;
   place-items: center;
@@ -2920,6 +2951,183 @@ svg {
   flex-direction: column;
   min-height: 0;
   padding: 0 0 8px;
+}
+
+.preview-tree-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 0 8px;
+}
+
+.preview-tree-label {
+  color: #44403c;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cwd-tree-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.cwd-tree-row {
+  min-width: 0;
+}
+
+.cwd-tree-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: #292524;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 6px 12px 6px 0;
+  text-align: left;
+}
+
+.cwd-tree-button.file svg {
+  width: 14px;
+  height: 14px;
+  color: #a16207;
+}
+
+.cwd-tree-caret {
+  width: 12px;
+  color: #78716c;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+
+.cwd-tree-caret.expanded {
+  transform: rotate(90deg);
+}
+
+.cwd-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cwd-tree-loading,
+.cwd-tree-error {
+  color: #78716c;
+  font-size: 11px;
+  padding: 4px 12px 6px;
+}
+
+.git-panel {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.git-summary-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  color: #78716c;
+  font-size: 11px;
+}
+
+.git-summary-label,
+.git-summary-count {
+  min-width: 0;
+}
+
+.git-file-list {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.git-file-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.git-file-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.git-file-copy strong,
+.git-file-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-copy strong {
+  color: #1c1917;
+  font-size: 12px;
+}
+
+.git-file-copy span {
+  color: #78716c;
+  font-size: 11px;
+}
+
+.git-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-kind-badge {
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 6px 8px;
+  text-transform: uppercase;
+}
+
+.git-kind-badge.added {
+  background: rgba(22, 163, 74, 0.12);
+  color: #166534;
+}
+
+.git-kind-badge.deleted {
+  background: rgba(220, 38, 38, 0.12);
+  color: #991b1b;
+}
+
+.git-kind-badge.renamed,
+.git-kind-badge.modified {
+  background: rgba(217, 119, 6, 0.12);
+  color: #92400e;
+}
+
+.git-file-count {
+  color: #57534e;
+  font-size: 11px;
 }
 
 .preview-utility-strip {

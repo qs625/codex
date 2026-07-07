@@ -652,7 +652,9 @@ export type DraftSkill = {
   path: string;
 };
 
-export type RightPanelView = "todo" | "preview" | "skills";
+export type RightPanelView = "todo" | "preview" | "skills" | "git";
+
+export type FilePanelView = "preview" | "tree";
 
 export type FilePreviewImage = {
   path: string;
@@ -686,4 +688,10 @@ export type FileLocation = {
   path: string;
   line: number | null;
   column: number | null;
+};
+
+export type FileTreeEntry = {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
 };

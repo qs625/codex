@@ -21,8 +21,10 @@ import {
   type ThreadAnalysis,
 } from "../lib/threadAnalysis";
 import type {
+  FilePanelView,
   FileLocation,
   FilePreview,
+  FileTreeEntry,
   RightPanelView,
   TaskFilter,
   Thread,
@@ -68,13 +70,21 @@ export function RightPanel({
   onCreateRootThread,
   onNavigateToSymbol,
   onOpenPreviewExternally,
+  onOpenTreeFile,
   onSelectCommandMonitor,
   onSelectTaskThread,
   onSetActiveView,
+  onSetFilePanelView,
   onSetTaskFilter,
+  onToggleTreeDirectory,
   onCancelGoal,
   onPauseGoal,
   onResumeGoal,
+  filePanelView,
+  fileTreeEntriesByPath,
+  fileTreeErrorsByPath,
+  fileTreeLoadingPath,
+  expandedTreeDirectories,
   planUpdate,
   goal,
   goalAction,
@@ -94,13 +104,21 @@ export function RightPanel({
   onCreateRootThread: () => void;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
+  onOpenTreeFile: (path: string) => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
   onSelectTaskThread: (threadId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
+  onSetFilePanelView: (value: FilePanelView) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
+  onToggleTreeDirectory: (path: string) => void;
   onCancelGoal: () => void;
   onPauseGoal: () => void;
   onResumeGoal: () => void;
+  filePanelView: FilePanelView;
+  fileTreeEntriesByPath: Record<string, FileTreeEntry[]>;
+  fileTreeErrorsByPath: Record<string, string>;
+  fileTreeLoadingPath: string | null;
+  expandedTreeDirectories: string[];
   planUpdate: ThreadPlanUpdate | null;
   goal: ThreadGoal | null;
   goalAction: GoalActionKind | null;
@@ -149,13 +167,24 @@ export function RightPanel({
               onResumeGoal={onResumeGoal}
               onSelectCommandMonitor={onSelectCommandMonitor}
             />
+          ) : activeView === "git" ? (
+            <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
           ) : (
             <FilePreviewPanel
+              expandedTreeDirectories={expandedTreeDirectories}
+              filePanelView={filePanelView}
+              fileTreeEntriesByPath={fileTreeEntriesByPath}
+              fileTreeErrorsByPath={fileTreeErrorsByPath}
+              fileTreeLoadingPath={fileTreeLoadingPath}
               onNavigateToSymbol={onNavigateToSymbol}
               onOpenPreviewExternally={onOpenPreviewExternally}
+              onOpenTreeFile={onOpenTreeFile}
+              onSetFilePanelView={onSetFilePanelView}
+              onToggleTreeDirectory={onToggleTreeDirectory}
               preview={preview}
               previewError={previewError}
               previewLoading={previewLoading}
+              thread={thread}
             />
           )}
         </div>
@@ -187,15 +216,18 @@ export function RightPanel({
                 badge: preview ? "1" : "",
               },
               {
-                view: null,
-                label: "Search",
-                icon: <SearchIcon />,
-                badge: "",
+                view: "git",
+                label: "Git Changes",
+                icon: <BranchIcon />,
+                badge:
+                  threadAnalysis.changedFiles.length > 0
+                    ? String(threadAnalysis.changedFiles.length)
+                    : "",
               },
               {
                 view: null,
-                label: "Graph",
-                icon: <BranchIcon />,
+                label: "Search",
+                icon: <SearchIcon />,
                 badge: "",
               },
               {
@@ -742,18 +774,96 @@ function formatPlanStatus(status: ThreadPlanStep["status"]) {
   }
 }
 
+function GitPanel({
+  changedFiles,
+  thread,
+}: {
+  changedFiles: ThreadAnalysis["changedFiles"];
+  thread: Thread | null;
+}) {
+  return (
+    <div className="preview-panel git-panel">
+      <header className="panel-content-header">
+        <div className="panel-content-copy">
+          <span className="panel-eyebrow">Git Changes</span>
+          <h2>{thread ? "Thread File Deltas" : "Select a Thread"}</h2>
+          <p>Unique files touched by this thread's recorded file change events.</p>
+        </div>
+      </header>
+
+      <div className="git-summary-strip">
+        <span className="git-summary-label">
+          {thread ? trimPath(thread.cwd) : "No thread selected"}
+        </span>
+        <span className="git-summary-count">
+          {changedFiles.length} file{changedFiles.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {thread ? (
+        changedFiles.length > 0 ? (
+          <div className="git-file-list">
+            {changedFiles.map((file) => (
+              <article key={file.path} className="git-file-row">
+                <div className="git-file-copy">
+                  <strong title={file.path}>{file.displayPath}</strong>
+                  <span title={file.path}>{file.path}</span>
+                </div>
+                <div className="git-file-meta">
+                  <span className={`git-kind-badge ${gitKindClassName(file.kind)}`}>
+                    {formatGitKind(file.kind)}
+                  </span>
+                  <span className="git-file-count">
+                    {file.updateCount} update{file.updateCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="preview-empty">
+            <p>No file changes recorded for this thread.</p>
+          </div>
+        )
+      ) : (
+        <div className="preview-empty">
+          <p>Select a thread to inspect its changed files.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FilePreviewPanel({
+  expandedTreeDirectories,
+  filePanelView,
+  fileTreeEntriesByPath,
+  fileTreeErrorsByPath,
+  fileTreeLoadingPath,
   onNavigateToSymbol,
   onOpenPreviewExternally,
+  onOpenTreeFile,
+  onSetFilePanelView,
+  onToggleTreeDirectory,
   preview,
   previewError,
   previewLoading,
+  thread,
 }: {
+  expandedTreeDirectories: string[];
+  filePanelView: FilePanelView;
+  fileTreeEntriesByPath: Record<string, FileTreeEntry[]>;
+  fileTreeErrorsByPath: Record<string, string>;
+  fileTreeLoadingPath: string | null;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
+  onOpenTreeFile: (path: string) => void;
+  onSetFilePanelView: (value: FilePanelView) => void;
+  onToggleTreeDirectory: (path: string) => void;
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
+  thread: Thread | null;
 }) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const hoverPositionRef = useRef<Monaco.Position | null>(null);
@@ -817,19 +927,60 @@ function FilePreviewPanel({
       <header className="panel-content-header preview-header">
         <div className="panel-content-copy">
           <span className="panel-eyebrow">File Preview</span>
-          <h2>{preview ? preview.displayPath : "Linked Context"}</h2>
+          <h2>
+            {filePanelView === "tree"
+              ? (thread ? trimPath(thread.cwd) : "Workspace Browser")
+              : preview
+                ? preview.displayPath
+                : "Linked Context"}
+          </h2>
         </div>
-        <button
-          type="button"
-          className="panel-inline-action preview-open-button"
-          aria-label="Open preview in system editor"
-          onClick={onOpenPreviewExternally}
-          disabled={!preview}
-        >
-          <OpenIcon />
-        </button>
+        <div className="preview-header-actions">
+          <div className="preview-mode-toggle" role="tablist" aria-label="File panel mode">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={filePanelView === "preview"}
+              className={filePanelView === "preview" ? "active" : ""}
+              onClick={() => onSetFilePanelView("preview")}
+            >
+              Preview
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={filePanelView === "tree"}
+              className={filePanelView === "tree" ? "active" : ""}
+              onClick={() => onSetFilePanelView("tree")}
+            >
+              CWD Tree
+            </button>
+          </div>
+          <button
+            type="button"
+            className="panel-inline-action preview-open-button"
+            aria-label="Open preview in system editor"
+            onClick={onOpenPreviewExternally}
+            disabled={!preview || filePanelView !== "preview"}
+          >
+            <OpenIcon />
+          </button>
+        </div>
       </header>
 
+      {filePanelView === "tree" ? (
+        <CwdFileTreePanel
+          entriesByPath={fileTreeEntriesByPath}
+          errorsByPath={fileTreeErrorsByPath}
+          expandedDirectories={expandedTreeDirectories}
+          loadingPath={fileTreeLoadingPath}
+          onOpenFile={onOpenTreeFile}
+          onToggleDirectory={onToggleTreeDirectory}
+          rootPath={thread?.cwd ?? null}
+        />
+      ) : null}
+      {filePanelView === "tree" ? null : (
+        <>
       {previewLoading ? <div className="preview-empty">Loading file…</div> : null}
       {!previewLoading && previewError ? <div className="preview-empty">{previewError}</div> : null}
       {!previewLoading && !previewError && !preview ? (
@@ -989,7 +1140,175 @@ function FilePreviewPanel({
           </div>
         </div>
       ) : null}
+        </>
+      )}
     </div>
+  );
+}
+
+function CwdFileTreePanel({
+  entriesByPath,
+  errorsByPath,
+  expandedDirectories,
+  loadingPath,
+  onOpenFile,
+  onToggleDirectory,
+  rootPath,
+}: {
+  entriesByPath: Record<string, FileTreeEntry[]>;
+  errorsByPath: Record<string, string>;
+  expandedDirectories: string[];
+  loadingPath: string | null;
+  onOpenFile: (path: string) => void;
+  onToggleDirectory: (path: string) => void;
+  rootPath: string | null;
+}) {
+  if (!rootPath) {
+    return (
+      <div className="preview-empty">
+        <p>Select a thread to browse its cwd file tree.</p>
+      </div>
+    );
+  }
+
+  const rootEntries = entriesByPath[rootPath] ?? [];
+  const isLoadingRoot = loadingPath === rootPath && rootEntries.length === 0;
+  const rootError = errorsByPath[rootPath] ?? null;
+
+  if (rootError && rootEntries.length === 0) {
+    return <div className="preview-empty">{rootError}</div>;
+  }
+
+  if (isLoadingRoot) {
+    return <div className="preview-empty">Loading file tree…</div>;
+  }
+
+  return (
+    <div className="preview-tree-shell">
+      <div className="preview-utility-strip">
+        <div className="preview-utility-primary">
+          <span className="preview-signal ready" />
+          <span className="preview-tree-label">cwd</span>
+        </div>
+        <div className="preview-utility-secondary">
+          <span className="preview-utility-cwd">{rootPath}</span>
+        </div>
+      </div>
+      {rootEntries.length > 0 ? (
+        <div className="cwd-tree-list" role="tree" aria-label="Thread cwd file tree">
+          {rootEntries.map((entry) => (
+            <CwdTreeEntryRow
+              key={entry.path}
+              depth={0}
+              entriesByPath={entriesByPath}
+              entry={entry}
+              errorsByPath={errorsByPath}
+              expandedDirectories={expandedDirectories}
+              loadingPath={loadingPath}
+              onOpenFile={onOpenFile}
+              onToggleDirectory={onToggleDirectory}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="preview-empty">
+          <p>No files found in this cwd.</p>
+        </div>
+      )}
+      {rootError && rootEntries.length > 0 ? (
+        <div className="cwd-tree-error" role="status">
+          {rootError}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CwdTreeEntryRow({
+  depth,
+  entriesByPath,
+  entry,
+  errorsByPath,
+  expandedDirectories,
+  loadingPath,
+  onOpenFile,
+  onToggleDirectory,
+}: {
+  depth: number;
+  entriesByPath: Record<string, FileTreeEntry[]>;
+  entry: FileTreeEntry;
+  errorsByPath: Record<string, string>;
+  expandedDirectories: string[];
+  loadingPath: string | null;
+  onOpenFile: (path: string) => void;
+  onToggleDirectory: (path: string) => void;
+}) {
+  const isDirectory = entry.kind === "directory";
+  const isExpanded = isDirectory && expandedDirectories.includes(entry.path);
+  const childEntries = entriesByPath[entry.path] ?? [];
+  const childError = errorsByPath[entry.path] ?? null;
+  const isLoading = loadingPath === entry.path;
+
+  return (
+    <>
+      <div
+        className="cwd-tree-row"
+        role="treeitem"
+        aria-expanded={isDirectory ? isExpanded : undefined}
+        style={{ paddingLeft: `${12 + depth * 16}px` }}
+      >
+        {isDirectory ? (
+          <button
+            type="button"
+            className="cwd-tree-button directory"
+            onClick={() => onToggleDirectory(entry.path)}
+          >
+            <span className={`cwd-tree-caret ${isExpanded ? "expanded" : ""}`}>
+              ▸
+            </span>
+            <span className="cwd-tree-name">{entry.name}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="cwd-tree-button file"
+            onClick={() => onOpenFile(entry.path)}
+          >
+            <DocumentIcon />
+            <span className="cwd-tree-name">{entry.name}</span>
+          </button>
+        )}
+      </div>
+      {isDirectory && isExpanded ? (
+        isLoading && childEntries.length === 0 ? (
+          <div className="cwd-tree-loading" style={{ paddingLeft: `${28 + depth * 16}px` }}>
+            Loading…
+          </div>
+        ) : childEntries.length > 0 ? (
+          childEntries.map((child) => (
+            <CwdTreeEntryRow
+              key={child.path}
+              depth={depth + 1}
+              entriesByPath={entriesByPath}
+              entry={child}
+              errorsByPath={errorsByPath}
+              expandedDirectories={expandedDirectories}
+              loadingPath={loadingPath}
+              onOpenFile={onOpenFile}
+              onToggleDirectory={onToggleDirectory}
+            />
+          ))
+        ) : childError ? (
+          <div className="cwd-tree-error" style={{ paddingLeft: `${28 + depth * 16}px` }}>
+            {childError}
+          </div>
+        ) : (
+          <div className="cwd-tree-loading" style={{ paddingLeft: `${28 + depth * 16}px` }}>
+            Empty directory
+          </div>
+        )
+      ) : null}
+    </>
   );
 }
 
@@ -1039,6 +1358,37 @@ function buildTodoStats(todoItems: TodoCardItem[]) {
 
 function previewLspState(preview: FilePreview) {
   return preview.lsp.lspStatus.phase;
+}
+
+function formatGitKind(kind: string) {
+  switch (kind) {
+    case "added":
+      return "Added";
+    case "deleted":
+      return "Deleted";
+    case "renamed":
+      return "Renamed";
+    case "modified":
+    case "edited":
+      return "Modified";
+    default:
+      return kind;
+  }
+}
+
+function gitKindClassName(kind: string) {
+  switch (kind) {
+    case "added":
+    case "deleted":
+    case "renamed":
+      return kind;
+    default:
+      return "modified";
+  }
+}
+
+function trimPath(value: string) {
+  return value.length > 48 ? `…${value.slice(-47)}` : value;
 }
 
 function updateLinkDecoration(

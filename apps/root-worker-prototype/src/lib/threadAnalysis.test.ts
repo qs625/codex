@@ -48,6 +48,7 @@ test("returns command and schedule monitor sections when no thread is selected",
   assert.equal(analysis.contextUsage.totalSkills, 4);
   assert.equal(analysis.monitors.totalCount, 0);
   assert.equal(analysis.monitors.eventCount, 0);
+  assert.deepEqual(analysis.changedFiles, []);
   assert.deepEqual(
     analysis.monitors.sections.map((section) => [
       section.kind,
@@ -60,6 +61,79 @@ test("returns command and schedule monitor sections when no thread is selected",
       ["schedule", "Schedules", "No scheduled listeners.", []],
     ],
   );
+});
+
+test("dedupes changed files and keeps the latest change kind", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "fileChange",
+        id: "change-1",
+        status: "completed",
+        changes: [
+          { path: "/tmp/src/App.tsx", kind: "modified" },
+          { path: "/tmp/package.json", kind: "added" },
+        ],
+      },
+      {
+        type: "fileChange",
+        id: "change-2",
+        status: "completed",
+        changes: [{ path: "/tmp/src/App.tsx", kind: "deleted" }],
+      },
+    ]),
+    0,
+  );
+
+  assert.deepEqual(analysis.changedFiles, [
+    {
+      path: "/tmp/src/App.tsx",
+      displayPath: "src/App.tsx",
+      kind: "deleted",
+      updateCount: 2,
+    },
+    {
+      path: "/tmp/package.json",
+      displayPath: "package.json",
+      kind: "added",
+      updateCount: 1,
+    },
+  ]);
+});
+
+test("ignores incomplete file change items", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "fileChange",
+        id: "change-1",
+        status: "running",
+        changes: [{ path: "/tmp/src/App.tsx", kind: "modified" }],
+      },
+      {
+        type: "fileChange",
+        id: "change-2",
+        status: "failed",
+        changes: [{ path: "/tmp/src/App.tsx", kind: "deleted" }],
+      },
+      {
+        type: "fileChange",
+        id: "change-3",
+        status: "completed",
+        changes: [{ path: "/tmp/package.json", kind: "added" }],
+      },
+    ]),
+    0,
+  );
+
+  assert.deepEqual(analysis.changedFiles, [
+    {
+      path: "/tmp/package.json",
+      displayPath: "package.json",
+      kind: "added",
+      updateCount: 1,
+    },
+  ]);
 });
 
 test("keeps running command active and records latest output line", () => {
