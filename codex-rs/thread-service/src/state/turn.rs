@@ -7,6 +7,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
+use crate::PendingInputItem;
 use crate::TaskKind;
 use crate::TurnState;
 use codex_extension_api::ExtensionData;
@@ -126,8 +127,10 @@ impl ActiveTurn {
 
 impl ActiveTurn {
     /// Clear any pending approvals and input buffered for the current turn.
-    pub(crate) async fn clear_pending(&self) {
+    pub(crate) async fn clear_pending(&self) -> Vec<PendingInputItem> {
         let mut ts = self.turn_state.lock().await;
+        let pending_input = ts.take_pending_input();
         ts.clear_pending();
+        pending_input
     }
 }

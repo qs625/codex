@@ -159,6 +159,23 @@ impl TurnState {
         &self.pending_input
     }
 
+    pub fn extract_pending_input_matching<F>(&mut self, mut predicate: F) -> Vec<PendingInputItem>
+    where
+        F: FnMut(&PendingInputItem) -> bool,
+    {
+        let mut extracted = Vec::new();
+        let mut kept = Vec::with_capacity(self.pending_input.len());
+        for item in self.pending_input.drain(..) {
+            if predicate(&item) {
+                extracted.push(item);
+            } else {
+                kept.push(item);
+            }
+        }
+        self.pending_input = kept;
+        extracted
+    }
+
     pub fn has_pending_input(&self) -> bool {
         !self.pending_input.is_empty()
     }
