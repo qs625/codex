@@ -61,6 +61,7 @@ export function buildConversationState(
   }
 
   const author = getThreadLabel(thread);
+  const commandLookup = buildCommandLookup(thread);
   const canReusePrevious =
     previous?.threadId === thread.id && previous.author === author;
   const flatItems: ConversationFlatItemState[] = [];
@@ -77,13 +78,17 @@ export function buildConversationState(
       const previousFlatItem = canReusePrevious
         ? previous.flatItems[flatItemIndex]
         : undefined;
-      const nextEntries =
+      const rebuiltEntries =
         previousFlatItem &&
         previousFlatItem.id === item.id &&
         previousFlatItem.item === item &&
         previousFlatItem.timestamp === timestamp
           ? previousFlatItem.entries
-          : buildConversationItemEntries(item, { author, timestamp }).map(
+          : buildConversationItemEntries(item, {
+              author,
+              timestamp,
+              commandLookup,
+            }).map(
               (entry) => ({
                 ...entry,
                 turnId: turn.id,
@@ -94,9 +99,9 @@ export function buildConversationState(
         id: item.id,
         item,
         timestamp,
-        entries: nextEntries,
+        entries: rebuiltEntries,
       });
-      entries.push(...nextEntries);
+      entries.push(...rebuiltEntries);
       flatItemIndex += 1;
     }
   }
@@ -114,9 +119,11 @@ function buildConversationItemEntries(
   {
     author,
     timestamp,
+    commandLookup,
   }: {
     author: string;
     timestamp: string;
+    commandLookup: Map<string, string>;
   },
 ): ConversationEntry[] {
   if (item.type === "userMessage") {
@@ -233,7 +240,7 @@ function buildConversationItemEntries(
         kind: "event" as const,
         author,
         role: "system" as const,
-        text: summarizeCommandExecutionNotification(item),
+        text: summarizeCommandExecutionNotification(item, commandLookup),
         timestamp,
         attachments: [],
       },
@@ -1198,6 +1205,24 @@ function summarizeToolCall(
 function summarizeBuiltinToolCall(
   item: Extract<ThreadItem, { type: "builtinToolCall" }>,
 ) {
+  if (item.tool === "poll_event") {
+    const output =
+      item.output && typeof item.output === "object" && !Array.isArray(item.output)
+        ? (item.output as Record<string, unknown>)
+        : null;
+    const error = stringOrNull(output?.error);
+    const sourceHint = stringOrNull(output?.sourceHint);
+    if (item.status === "failed" || error) {
+      return error ? `poll_event • failed: ${error}` : "poll_event • failed";
+    }
+    if (output?.timedOut === true) {
+      return "poll_event • timeout";
+    }
+    if (sourceHint) {
+      return `poll_event • ${sourceHint}`;
+    }
+    return "poll_event • woke";
+  }
   const details = extractEventDrivenSummaryDetails(item.tool, item.arguments);
   return details ? `${item.tool} • ${details}` : item.tool;
 }
@@ -1758,12 +1783,14 @@ function formatCommandExecutionDetails(
 
 function summarizeCommandExecutionNotification(
   item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
+  commandLookup: Map<string, string>,
 ) {
+  const commandLabel = commandLookup.get(item.commandItemId) ?? item.commandItemId;
   if (item.kind === "output") {
     const output = stringOrNull(item.output);
     return output
-      ? `Command output notification received for ${item.commandItemId}: ${output}`
-      : `Command output notification received for ${item.commandItemId}.`;
+      ? `Command output notification received for ${commandLabel}: ${output}`
+      : `Command output notification received for ${commandLabel}.`;
   }
 
   if (item.kind === "exit") {
@@ -1771,10 +1798,22 @@ function summarizeCommandExecutionNotification(
       item.exitCode === null || item.exitCode === undefined
         ? "unknown exit"
         : `exit ${item.exitCode}`;
-    return `Command exit notification received for ${item.commandItemId}: ${exitCode}.`;
+    return `Command exit notification received for ${commandLabel}: ${exitCode}.`;
   }
 
-  return item.message || `Command notification received for ${item.commandItemId}.`;
+  return item.message || `Command notification received for ${commandLabel}.`;
+}
+
+function buildCommandLookup(thread: Thread) {
+  const commandLookup = new Map<string, string>();
+  for (const turn of thread.turns) {
+    for (const item of turn.items) {
+      if (item.type === "commandExecution") {
+        commandLookup.set(item.id, item.command);
+      }
+    }
+  }
+  return commandLookup;
 }
 
 function summarizeCommandWait(item: Extract<ThreadItem, { type: "commandWait" }>) {

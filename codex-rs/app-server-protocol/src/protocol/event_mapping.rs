@@ -845,6 +845,49 @@ mod tests {
     }
 
     #[test]
+    fn builtin_tool_call_completed_display_event_maps_to_thread_item() {
+        let event = protocol::protocol::BuiltinToolCallDisplayEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            id: "builtin-1".to_string(),
+            tool: "poll_event".to_string(),
+            arguments: serde_json::json!({}),
+            status: protocol::protocol::BuiltinToolCallStatus::Completed,
+            output: Some(serde_json::json!({
+                "timedOut": false,
+                "sourceHint": "user_input",
+                "waitedMs": 12,
+                "initialTimeoutMs": 50,
+                "currentTimeoutMs": 50,
+                "hardCapTimeoutMs": 1000
+            })),
+            lifecycle_at_ms: 790,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::BuiltinToolCallCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.lifecycle_at_ms,
+                item: ThreadItem::BuiltinToolCall {
+                    id: "builtin-1".to_string(),
+                    tool: "poll_event".to_string(),
+                    arguments: serde_json::json!({}),
+                    status: crate::protocol::DynamicToolCallStatus::Completed,
+                    output: event.output,
+                },
+            },
+        );
+    }
+
+    #[test]
     fn item_completed_preserves_context_compaction_replacement_history() {
         let replacement_history = vec![ResponseItem::Message {
             id: None,

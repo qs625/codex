@@ -316,6 +316,17 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    BuiltinToolCall {
+        id: String,
+        tool: String,
+        #[cfg_attr(feature = "schema-export", ts(type = "unknown"))]
+        arguments: JsonValue,
+        status: DynamicToolCallStatus,
+        #[cfg_attr(feature = "schema-export", ts(type = "unknown | null"))]
+        output: Option<JsonValue>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
     DynamicToolCall {
         id: String,
         namespace: Option<String>,
@@ -532,6 +543,7 @@ impl ThreadItem {
             | ThreadItem::CommandWriteStdin { id, .. }
             | ThreadItem::FileChange { id, .. }
             | ThreadItem::McpToolCall { id, .. }
+            | ThreadItem::BuiltinToolCall { id, .. }
             | ThreadItem::DynamicToolCall { id, .. }
             | ThreadItem::EventDrivenToolCall { id, .. }
             | ThreadItem::EventDrivenTool { id, .. }
