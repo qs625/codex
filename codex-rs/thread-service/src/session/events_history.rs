@@ -209,11 +209,7 @@ impl Session {
             || self.has_pending_mailbox_items().await
     }
 
-    pub(crate) async fn has_incomplete_direct_child(&self) -> bool {
-        if self.has_pending_direct_child_completions().await {
-            return true;
-        }
-
+    pub(crate) async fn has_active_direct_child(&self) -> bool {
         Box::pin(
             self.services
                 .agent_control

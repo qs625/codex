@@ -24,7 +24,7 @@ pub enum ThreadIdleReason {
 pub struct ThreadPostTurnInputs {
     pub has_pending_turn_input: bool,
     pub active_goal_id: Option<String>,
-    pub has_incomplete_direct_child: bool,
+    pub has_active_direct_child: bool,
     pub has_wait_command: bool,
 }
 
@@ -32,9 +32,9 @@ pub struct ThreadPostTurnInputs {
 ///
 /// The ordering intentionally mirrors the thread lifecycle contract:
 /// pending input keeps the thread active, an active goal continuation runs
-/// before child/command idling, direct-child completion is parent-visible only
-/// after the parent consumes the typed completion input, and command waiting is
-/// considered only after child waiting.
+/// before child/command idling, direct-child waiting is driven only by whether
+/// a direct child thread is locally active, and command waiting is considered
+/// only after child waiting.
 pub fn select_thread_post_turn_state(inputs: ThreadPostTurnInputs) -> ThreadPostTurnState {
     if inputs.has_pending_turn_input {
         return ThreadPostTurnState::ThreadActive;
@@ -42,7 +42,7 @@ pub fn select_thread_post_turn_state(inputs: ThreadPostTurnInputs) -> ThreadPost
     if let Some(goal_id) = inputs.active_goal_id {
         return ThreadPostTurnState::GoContextContinuation { goal_id };
     }
-    if inputs.has_incomplete_direct_child {
+    if inputs.has_active_direct_child {
         return ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild);
     }
     if inputs.has_wait_command {
@@ -61,7 +61,7 @@ mod tests {
             select_thread_post_turn_state(ThreadPostTurnInputs {
                 has_pending_turn_input: true,
                 active_goal_id: Some("goal-1".to_string()),
-                has_incomplete_direct_child: true,
+                has_active_direct_child: true,
                 has_wait_command: true,
             }),
             ThreadPostTurnState::ThreadActive
@@ -73,7 +73,7 @@ mod tests {
         assert_eq!(
             select_thread_post_turn_state(ThreadPostTurnInputs {
                 active_goal_id: Some("goal-1".to_string()),
-                has_incomplete_direct_child: true,
+                has_active_direct_child: true,
                 has_wait_command: true,
                 ..ThreadPostTurnInputs::default()
             }),
@@ -87,7 +87,7 @@ mod tests {
     fn child_wait_takes_precedence_over_command_wait() {
         assert_eq!(
             select_thread_post_turn_state(ThreadPostTurnInputs {
-                has_incomplete_direct_child: true,
+                has_active_direct_child: true,
                 has_wait_command: true,
                 ..ThreadPostTurnInputs::default()
             }),
