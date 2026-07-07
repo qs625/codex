@@ -957,7 +957,9 @@ async fn run_auto_compact(
         cwd = %request.turn_context.cwd.display()
     )
 )]
-async fn run_sampling_request(request: SamplingRequest<'_>) -> CodexResult<SamplingRequestResult> {
+pub(crate) async fn run_sampling_request(
+    request: SamplingRequest<'_>,
+) -> CodexResult<SamplingRequestResult> {
     let SamplingRequest {
         sess,
         turn_context,
@@ -1396,22 +1398,22 @@ pub(crate) fn map_model_response_event(
 }
 
 #[derive(Debug)]
-struct SamplingRequestResult {
-    needs_follow_up: bool,
-    last_agent_message: Option<String>,
+pub(crate) struct SamplingRequestResult {
+    pub(crate) needs_follow_up: bool,
+    pub(crate) last_agent_message: Option<String>,
 }
 
-struct SamplingRequest<'a> {
-    sess: Arc<Session>,
-    turn_context: Arc<TurnContext>,
-    turn_store: Arc<codex_extension_api::ExtensionData>,
-    turn_diff_tracker: SharedTurnDiffTracker,
-    client_session: &'a mut dyn model_service_api::ModelTurnClientApi,
-    turn_metadata_header: Option<&'a str>,
-    input: Vec<ResponseItem>,
-    explicitly_enabled_connectors: &'a HashSet<String>,
-    skills_outcome: Option<&'a SkillLoadOutcome>,
-    cancellation_token: CancellationToken,
+pub(crate) struct SamplingRequest<'a> {
+    pub(crate) sess: Arc<Session>,
+    pub(crate) turn_context: Arc<TurnContext>,
+    pub(crate) turn_store: Arc<codex_extension_api::ExtensionData>,
+    pub(crate) turn_diff_tracker: SharedTurnDiffTracker,
+    pub(crate) client_session: &'a mut dyn model_service_api::ModelTurnClientApi,
+    pub(crate) turn_metadata_header: Option<&'a str>,
+    pub(crate) input: Vec<ResponseItem>,
+    pub(crate) explicitly_enabled_connectors: &'a HashSet<String>,
+    pub(crate) skills_outcome: Option<&'a SkillLoadOutcome>,
+    pub(crate) cancellation_token: CancellationToken,
 }
 
 struct TrySamplingRequest<'a> {

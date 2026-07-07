@@ -47,7 +47,6 @@ const WORKFLOW_INSTRUCTIONS_FILE: &str = "WORKFLOW.md";
 const MAX_WORKFLOW_INSTRUCTIONS_BYTES: usize = 16 * 1024;
 const MAX_WORKFLOWS_PER_SOURCE: usize = 100;
 const MAX_CONTEXT_FIELD_CHARS: usize = 600;
-const MAX_CONTEXT_INSTRUCTIONS_CHARS: usize = 2_000;
 const MAX_AVAILABLE_WORKFLOWS_CONTEXT_CHARS: usize = 24_000;
 const TRUNCATED_NOTICE: &str = "... [truncated]";
 
@@ -1039,12 +1038,6 @@ pub fn render_available_workflows_body(registry: &WorkflowRegistry) -> Option<St
             truncate_for_context(&workflow.name),
             truncate_for_context(&workflow.description)
         );
-        if !workflow.instructions.trim().is_empty() {
-            entry.push_str(&format!(
-                "  Instructions:\n{}\n",
-                indent_instructions_for_context(&workflow.instructions)
-            ));
-        }
         if !workflow.when_to_use.is_empty() {
             entry.push_str(&format!(
                 "  Use when: {}\n",
@@ -1096,25 +1089,6 @@ fn truncate_for_context(value: &str) -> String {
         "{}{TRUNCATED_NOTICE}",
         value.chars().take(keep).collect::<String>()
     )
-}
-
-fn truncate_instructions_for_context(value: &str) -> String {
-    if value.chars().count() <= MAX_CONTEXT_INSTRUCTIONS_CHARS {
-        return value.to_string();
-    }
-    let keep = MAX_CONTEXT_INSTRUCTIONS_CHARS.saturating_sub(TRUNCATED_NOTICE.len());
-    format!(
-        "{}{TRUNCATED_NOTICE}",
-        value.chars().take(keep).collect::<String>()
-    )
-}
-
-fn indent_instructions_for_context(value: &str) -> String {
-    truncate_instructions_for_context(value)
-        .lines()
-        .map(|line| format!("    {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[cfg(test)]
@@ -1462,7 +1436,7 @@ entry: workflow.ts
     }
 
     #[test]
-    fn rendered_context_includes_workflow_name_and_instructions() {
+    fn rendered_context_includes_workflow_frontmatter_only() {
         let temp = tempfile::tempdir().expect("tempdir");
         let workflows_root = temp.path().join("repo/.codex/workflows");
         write_workflow(&workflows_root, "feature-dev", "project description");
@@ -1476,7 +1450,9 @@ entry: workflow.ts
         assert!(body.contains("- feature-dev (project)"));
         assert!(body.contains("Name: feature-dev"));
         assert!(body.contains("Description: project description"));
-        assert!(body.contains("Instructions:\n    # feature-dev"));
+        assert!(body.contains("Use when: when useful"));
+        assert!(!body.contains("Instructions:"));
+        assert!(!body.contains("# feature-dev"));
     }
 
     #[test]

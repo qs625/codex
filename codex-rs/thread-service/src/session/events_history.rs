@@ -1,6 +1,50 @@
 use super::*;
 
 impl Session {
+    async fn current_agent_role_developer_instructions(
+        &self,
+        turn_context: &TurnContext,
+        session_source: &SessionSource,
+    ) -> Option<String> {
+        let role_name = self
+            .services
+            .agent_control
+            .get_agent_metadata(self.conversation_id)
+            .and_then(|metadata| metadata.agent_role)
+            .or_else(|| session_source.get_agent_role())?;
+        let role = codex_agent_roles::resolve_role_config(&turn_context.config.agent_roles, &role_name)?;
+        let role_file = role
+            .source_path
+            .as_deref()
+            .or(role.config_file.as_deref())?;
+        let is_built_in = !turn_context.config.agent_roles.contains_key(&role_name);
+        let role_contents = if is_built_in {
+            codex_agent_roles::built_in_config_file_contents(role_file)?.to_string()
+        } else {
+            tokio::fs::read_to_string(role_file).await.ok()?
+        };
+        let role_base_dir = if is_built_in {
+            turn_context.config.codex_home.as_path()
+        } else {
+            role_file.parent()?
+        };
+        let parsed = codex_agent_roles::parse_agent_role_file_contents(
+            &role_contents,
+            role_file,
+            role_base_dir,
+            Some(&role_name),
+        )
+        .ok()?;
+        parsed
+            .config
+            .as_table()
+            .and_then(|table| table.get("developer_instructions"))
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(ToOwned::to_owned)
+    }
+
     pub(crate) async fn send_event(&self, turn_context: &TurnContext, msg: EventMsg) {
         let legacy_source = msg.clone();
         self.services
@@ -1300,6 +1344,18 @@ impl Session {
         {
             developer_sections.push(developer_instructions.to_string());
         }
+        if !separate_guardian_developer_message
+            && let Some(agent_role_instructions) = self
+                .current_agent_role_developer_instructions(turn_context, &session_source)
+                .await
+            && turn_context
+                .developer_instructions
+                .as_deref()
+                .map(str::trim)
+                != Some(agent_role_instructions.as_str())
+        {
+            developer_sections.push(agent_role_instructions);
+        }
         // Add developer instructions for memories.
         if turn_context.features.enabled(Feature::MemoryTool)
             && turn_context.config.memories.use_memories
@@ -1528,6 +1584,11 @@ impl Session {
         state.clone_history()
     }
 
+    pub(crate) async fn remove_oldest_history_item(&self) {
+        let mut state = self.state.lock().await;
+        state.history.remove_first_item();
+    }
+
     pub(crate) async fn compact_window_items(&self) -> Vec<ResponseItem> {
         let state = self.state.lock().await;
         state.compact_window_items()
@@ -1586,16 +1647,6 @@ impl Session {
         // context items. This keeps later runtime diffing aligned with the current turn state.
         let mut state = self.state.lock().await;
         state.set_reference_context_item(Some(turn_context_item));
-    }
-
-    pub(crate) async fn update_token_usage_info(
-        &self,
-        turn_context: &TurnContext,
-        token_usage: Option<&TokenUsage>,
-    ) {
-        self.record_token_usage_info(turn_context, token_usage)
-            .await;
-        self.send_token_count_event(turn_context).await;
     }
 
     pub(crate) async fn record_token_usage_info(

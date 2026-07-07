@@ -62,8 +62,8 @@ mod tests {
         assert!(rendered.starts_with("<workflows_instructions>"));
         assert!(rendered.contains("- feature-dev (project)"));
         assert!(rendered.contains("Name: Feature Development"));
-        assert!(rendered.contains("Instructions:\n    Follow the feature development workflow."));
         assert!(rendered.contains("Inputs: objective"));
+        assert!(!rendered.contains("Instructions:"));
         assert!(rendered.ends_with("</workflows_instructions>"));
     }
 }

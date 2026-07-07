@@ -1,8 +1,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::Prompt;
-use crate::client_common::ResponseEvent;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
@@ -17,9 +15,7 @@ use codex_analytics_api::CompactionStrategy;
 use codex_analytics_api::CompactionTrigger;
 use codex_analytics_api::now_unix_seconds;
 use codex_config_types::CompactReplacementFileRole as ConfigCompactReplacementFileRole;
-use codex_features::Feature;
 use codex_turn_items::last_assistant_message_from_turn;
-use codex_turn_items::parse_turn_item;
 #[cfg(test)]
 use codex_turn_items::process_remote_compacted_history;
 use compact_service::FsCompactService;
@@ -27,12 +23,10 @@ use compact_service_api::CompactMemoryRole;
 use compact_service_api::CompactReplacementFile;
 use compact_service_api::ReplacementHistoryInput;
 use compact_service_api::SoftCompactInputs;
-use futures::prelude::*;
 use hooks::PostCompactHookOutcome;
 use hooks::PreCompactHookOutcome;
 use hooks::run_post_compact_hooks;
 use hooks::run_pre_compact_hooks;
-use model_service_api::TurnModelRequest;
 use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
 use protocol::items::ContextCompactionItem;
@@ -44,7 +38,6 @@ use protocol::protocol::EventMsg;
 use protocol::protocol::TurnStartedEvent;
 use protocol::protocol::WarningEvent;
 use protocol::user_input::UserInput;
-use rollout_trace_api::InferenceTraceContext;
 use tracing::error;
 use tracing::warn;
 
@@ -186,12 +179,12 @@ async fn run_compact_task_inner_impl(
             text: turn_context.compact_prompt().to_string(),
             text_elements: Vec::new(),
         }]);
-
-    let mut history = sess.clone_history().await;
-    history.record_items(
-        &[initial_input_for_turn.into()],
-        turn_context.truncation_policy,
-    );
+    let initial_input_for_turn: ResponseItem = initial_input_for_turn.into();
+    sess.record_conversation_items(
+        &turn_context,
+        std::slice::from_ref(&initial_input_for_turn),
+    )
+    .await;
 
     let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
@@ -208,32 +201,40 @@ async fn run_compact_task_inner_impl(
     // Reuse one client session so turn-scoped state (sticky routing, websocket incremental
     // request tracking)
     // survives retries within this compact turn.
-
-    let completed_response_id = loop {
-        // Clone is required because of the loop
-        let turn_input = history
-            .clone()
+    let explicitly_enabled_connectors = std::collections::HashSet::new();
+    let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
+        thread_service_api::TurnDiffTracker::default(),
+    ));
+    let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
+    loop {
+        let turn_input = sess
+            .clone_history()
+            .await
             .for_prompt(&turn_context.model_info.input_modalities);
         let turn_input_len = turn_input.len();
-        let prompt = Prompt {
-            input: turn_input,
-            base_instructions: sess.get_base_instructions().await,
-            personality: turn_context.personality,
-            ..Default::default()
-        };
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
-        let attempt_result = drain_to_completed(
-            &sess,
-            turn_context.as_ref(),
-            &mut *client_session,
-            turn_metadata_header.as_deref(),
-            &prompt,
+        let attempt_result = crate::session::turn::run_sampling_request(
+            crate::session::turn::SamplingRequest {
+                sess: Arc::clone(&sess),
+                turn_context: Arc::clone(&turn_context),
+                turn_store: Arc::clone(&turn_context.extension_data),
+                turn_diff_tracker: Arc::clone(&turn_diff_tracker),
+                client_session: &mut *client_session,
+                turn_metadata_header: turn_metadata_header.as_deref(),
+                input: turn_input,
+                explicitly_enabled_connectors: &explicitly_enabled_connectors,
+                skills_outcome,
+                cancellation_token: tokio_util::sync::CancellationToken::new(),
+            },
         )
         .await;
 
         match attempt_result {
-            Ok(response_id) => {
-                break response_id;
+            Ok(result) => {
+                if result.needs_follow_up {
+                    continue;
+                }
+                break;
             }
             Err(CodexErr::Interrupted) => {
                 return Err(CodexErr::Interrupted);
@@ -244,7 +245,7 @@ async fn run_compact_task_inner_impl(
                     error!(
                         "Context window exceeded while compacting; removing oldest history item. Error: {e}"
                     );
-                    history.remove_first_item();
+                    sess.remove_oldest_history_item().await;
                     retries = 0;
                     continue;
                 }
@@ -272,7 +273,7 @@ async fn run_compact_task_inner_impl(
                 }
             }
         }
-    };
+    }
 
     let history_snapshot = sess.clone_history().await;
     let history_items = history_snapshot.raw_items();
@@ -312,14 +313,6 @@ async fn run_compact_task_inner_impl(
     };
     sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
         .await;
-    if turn_context
-        .features
-        .enabled(Feature::ResponsesWebsocketResponseProcessed)
-    {
-        client_session
-            .send_response_processed(&completed_response_id)
-            .await;
-    }
     client_session.reset_websocket_session();
     sess.recompute_token_usage(&turn_context).await;
 
@@ -550,85 +543,6 @@ fn compact_replacement_files(turn_context: &TurnContext) -> Vec<CompactReplaceme
             token_limit: file.token_limit,
         })
         .collect()
-}
-
-async fn drain_to_completed(
-    sess: &Session,
-    turn_context: &TurnContext,
-    client_session: &mut dyn model_service_api::ModelTurnClientApi,
-    turn_metadata_header: Option<&str>,
-    prompt: &Prompt,
-) -> CodexResult<String> {
-    let mut stream = client_session
-        .stream_responses(TurnModelRequest {
-            request: model_service_api::ResponsesModelRequest {
-                input: prompt.input.clone(),
-                tools: prompt.tools.clone(),
-                parallel_tool_calls: prompt.parallel_tool_calls,
-                base_instructions: prompt.base_instructions.clone(),
-                personality: prompt.personality,
-                output_schema: prompt.output_schema.clone(),
-                output_schema_strict: prompt.output_schema_strict,
-                model: Some(turn_context.model_info.slug.clone()),
-                reasoning_effort: turn_context.reasoning_effort,
-                reasoning_summary: turn_context.reasoning_summary,
-                service_tier: crate::session::turn::model_service_tier(
-                    turn_context.config.service_tier.as_deref(),
-                ),
-                verbosity: None,
-                turn_metadata_header: turn_metadata_header.map(ToOwned::to_owned),
-            },
-            model_info: turn_context.model_info.clone(),
-            session_telemetry: turn_context.session_telemetry.clone(),
-            turn_metadata_header: turn_metadata_header.map(ToOwned::to_owned),
-            // Rollout tracing currently models remote compaction only; local compaction streams
-            // are left untraced until the reducer has a first-class local compaction lifecycle.
-            inference_trace: InferenceTraceContext::disabled(),
-        })
-        .await
-        .map_err(|err| CodexErr::Stream(err.to_string(), None))?;
-    loop {
-        let maybe_event = stream.next().await;
-        let Some(event) = maybe_event else {
-            return Err(CodexErr::Stream(
-                "stream closed before response.completed".into(),
-                None,
-            ));
-        };
-        match event {
-            Ok(event) => match crate::session::turn::map_model_response_event(event) {
-                ResponseEvent::OutputItemDone(item) => {
-                    if parse_turn_item(&item).is_some() {
-                        sess.record_response_item_and_emit_turn_item(turn_context, item)
-                            .await;
-                    } else {
-                        sess.record_model_items_and_emit_display_events(
-                            turn_context,
-                            std::slice::from_ref(&item),
-                        )
-                        .await;
-                    }
-                }
-                ResponseEvent::ServerReasoningIncluded(included) => {
-                    sess.set_server_reasoning_included(included).await;
-                }
-                ResponseEvent::RateLimits(snapshot) => {
-                    sess.update_rate_limits(turn_context, snapshot).await;
-                }
-                ResponseEvent::Completed {
-                    response_id,
-                    token_usage,
-                    ..
-                } => {
-                    sess.update_token_usage_info(turn_context, token_usage.as_ref())
-                        .await;
-                    return Ok(response_id);
-                }
-                _ => continue,
-            },
-            Err(err) => return Err(CodexErr::Stream(err.to_string(), None)),
-        }
-    }
 }
 
 #[cfg(test)]

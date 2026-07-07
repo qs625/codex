@@ -72,14 +72,42 @@ async fn record_context_updates_and_set_reference_context_item_injects_full_cont
 #[tokio::test]
 async fn record_context_updates_emits_injected_context_with_agent_file_instructions() {
     let agent_file_instructions = "Agent type file body: always inspect the active task.";
-    let (session, turn_context, rx) = make_session_and_context_with_auth_and_config_and_rx(
+    let role_dir = tempfile::tempdir().expect("agent role tempdir");
+    let role_path = role_dir.path().join("project-pm.agent.md");
+    std::fs::write(
+        &role_path,
+        format!(
+            "---\nname: project-pm\ndescription: Project PM role.\n---\n{agent_file_instructions}\n"
+        ),
+    )
+    .expect("write agent role file");
+    let (session, mut turn_context, rx) = make_session_and_context_with_auth_and_config_and_rx(
         CodexAuth::from_api_key("test-api-key"),
         Vec::new(),
         |config| {
-            config.developer_instructions = Some(agent_file_instructions.to_string());
+            config.agent_roles.insert(
+                "project-pm".to_string(),
+                crate::config::AgentRoleConfig {
+                    description: Some("Project PM role.".to_string()),
+                    source_path: Some(role_path.clone()),
+                    ..Default::default()
+                },
+            );
         },
     )
     .await;
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: ThreadId::default(),
+        depth: 1,
+        agent_path: Some("/root/project_pm".parse().expect("agent path")),
+        agent_nickname: Some("project_pm".to_string()),
+        agent_role: Some("project-pm".to_string()),
+    });
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.session_source = session_source.clone();
+    }
+    turn_context.session_source = session_source;
 
     session
         .record_context_updates_and_set_reference_context_item(turn_context.as_ref())
