@@ -13,23 +13,22 @@ use crate::planning::create_poll_event_tool;
 use crate::planning::create_report_agent_job_result_tool;
 use crate::planning::create_spawn_agent_tool_v2;
 use crate::planning::create_spawn_agents_on_csv_tool;
-use crate::planning::create_wait_agent_tool_v2;
 use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::SpawnAgentToolRequest;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
+use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::BuiltinToolCallDisplayEvent;
 use protocol::protocol::BuiltinToolCallStatus;
 use protocol::protocol::EventMsg;
-use protocol::openai_models::ReasoningEffort;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use thread_service_api::SessionAgentJobCaller;
-use thread_service_api::ThreadSessionCapability;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadServiceApi;
+use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -42,7 +41,6 @@ use crate::output::FunctionToolOutput;
 
 const SPAWN_AGENT_TOOL_NAME: &str = "spawn_agent";
 const FOLLOWUP_TASK_TOOL_NAME: &str = "followup_task";
-const WAIT_AGENT_TOOL_NAME: &str = "wait_agent";
 const POLL_EVENT_TOOL_NAME: &str = "poll_event";
 const LIST_AGENTS_TOOL_NAME: &str = "list_agents";
 const CLOSE_AGENT_TOOL_NAME: &str = "close_agent";
@@ -60,7 +58,6 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
             max_concurrent_threads_per_session: None,
         }),
         create_followup_task_tool(),
-        create_wait_agent_tool_v2(),
         create_poll_event_tool(),
         create_list_agents_tool(),
         create_close_agent_tool_v2(),
@@ -75,7 +72,6 @@ pub(crate) fn owns_tool_name(_request: &TypedToolSpecRequest<'_>, tool_name: &To
             tool_name.name.as_str(),
             SPAWN_AGENT_TOOL_NAME
                 | FOLLOWUP_TASK_TOOL_NAME
-                | WAIT_AGENT_TOOL_NAME
                 | POLL_EVENT_TOOL_NAME
                 | LIST_AGENTS_TOOL_NAME
                 | CLOSE_AGENT_TOOL_NAME
@@ -127,18 +123,6 @@ pub(crate) async fn dispatch(
                 )
                 .await?;
             FunctionToolOutput::from_text(String::new(), Some(true))
-        }
-        WAIT_AGENT_TOOL_NAME => {
-            let arguments = function_arguments(&call)?;
-            let target = wait_agent_target_from_arguments(&arguments)?;
-            let result = thread_service_api
-                .wait_agent(
-                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
-                    call.call_id.clone(),
-                    target,
-                )
-                .await?;
-            function_tool_json_output(&result, WAIT_AGENT_TOOL_NAME)?
         }
         POLL_EVENT_TOOL_NAME => {
             let item_id = format!("builtin-tool-{}", uuid::Uuid::new_v4());
@@ -367,12 +351,6 @@ struct FollowupTaskArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WaitAgentArgs {
-    target: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct CloseAgentArgs {
     target: String,
 }
@@ -403,11 +381,6 @@ fn spawn_agent_request_from_arguments(
 fn followup_task_from_arguments(arguments: &str) -> Result<(String, String), FunctionCallError> {
     let args: FollowupTaskArgs = parse_arguments(arguments)?;
     Ok((args.target, args.message))
-}
-
-fn wait_agent_target_from_arguments(arguments: &str) -> Result<String, FunctionCallError> {
-    let args: WaitAgentArgs = parse_arguments(arguments)?;
-    Ok(args.target)
 }
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
@@ -460,7 +433,6 @@ mod tests {
     use thread_service_api::ThreadServiceFuture;
     use thread_service_api::ThreadSpawnAgentRequest;
     use thread_service_api::ThreadSpawnAgentResult;
-    use thread_service_api::ThreadWaitAgentResult;
 
     struct StubThreadServiceApi;
 
@@ -487,15 +459,6 @@ mod tests {
             _message: String,
         ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
             Box::pin(async { unreachable!("followup_task should not be called in this test") })
-        }
-
-        fn wait_agent<'a>(
-            &'a self,
-            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
-            _call_id: String,
-            _target: String,
-        ) -> ThreadServiceFuture<'a, Result<ThreadWaitAgentResult, FunctionCallError>> {
-            Box::pin(async { unreachable!("wait_agent should not be called in this test") })
         }
 
         fn poll_event<'a>(
@@ -530,7 +493,9 @@ mod tests {
             _items: Vec<protocol::models::ResponseItem>,
         ) -> ThreadServiceFuture<'a, Result<(), String>> {
             Box::pin(async {
-                unreachable!("record_model_items_and_emit_display_events should not be called in this test")
+                unreachable!(
+                    "record_model_items_and_emit_display_events should not be called in this test"
+                )
             })
         }
     }

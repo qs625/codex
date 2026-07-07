@@ -365,6 +365,7 @@ impl TurnToolCounts {
             | ThreadItem::CommandWait { .. }
             | ThreadItem::CommandWriteStdin { .. }
             | ThreadItem::CommandExecutionNotification { .. }
+            | ThreadItem::BuiltinToolCall { .. }
             | ThreadItem::EventDrivenToolCall { .. }
             | ThreadItem::EventDrivenTool { .. }
             | ThreadItem::EventCommandCall { .. }
@@ -1606,6 +1607,7 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::CommandWait { .. }
         | ThreadItem::CommandWriteStdin { .. }
         | ThreadItem::CommandExecutionNotification { .. }
+        | ThreadItem::BuiltinToolCall { .. }
         | ThreadItem::EventDrivenToolCall { .. }
         | ThreadItem::EventDrivenTool { .. }
         | ThreadItem::EventCommandCall { .. }

@@ -6,7 +6,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 
 fn exec_command_description() -> String {
-    "Runs a command and creates a command session. If the command exits during the initial wait window, returns its output and exit code; otherwise returns a command_id for `command_wait` and `command_write_stdin`. Live output is streamed to clients independently from model notifications."
+    "Runs a command and creates a command session. If the command exits during the initial wait window, returns its output and exit code; otherwise returns a command_id for `command_write_stdin`. Live output is streamed to clients independently from model notifications, and `poll_event` is used to wait for future command output or exit notifications."
         .to_string()
 }
 
@@ -112,25 +112,6 @@ pub fn create_exec_command_tool_with_environment_id(
     })
 }
 
-pub fn create_command_wait_tool() -> ToolSpec {
-    let properties = BTreeMap::from([(
-        "command_id".to_string(),
-        JsonSchema::number(Some(
-            "Identifier of the command session returned by exec_command.".to_string(),
-        )),
-    )]);
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "command_wait".to_string(),
-        description: "Wait for the next future notification from a running command session. This does not return command output or replay older notifications; if the command has already exited, it returns completed immediately."
-            .to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::object(properties, Some(vec!["command_id".to_string()]), Some(false.into())),
-        output_schema: Some(command_wait_output_schema()),
-    })
-}
-
 pub fn create_write_stdin_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
@@ -152,7 +133,7 @@ pub fn create_write_stdin_tool() -> ToolSpec {
         description: "Writes characters to an existing command session so you can interact \
             with a running PTY-backed command. Use this to answer prompts, send confirmations, or \
             provide interactive input. `chars` is required and must be non-empty; use \
-            `command_wait` for command completion or output notifications instead of polling."
+            `poll_event` for command completion or output notifications instead of polling."
             .to_string(),
         strict: false,
         defer_loading: None,
@@ -213,7 +194,7 @@ fn unified_exec_output_schema() -> Value {
             },
             "command_id": {
                 "type": "number",
-                "description": "Command identifier to pass to command_wait or command_write_stdin when the process is still running."
+                "description": "Command identifier to pass to command_write_stdin while the process is still running."
             },
             "original_token_count": {
                 "type": "number",
@@ -225,36 +206,6 @@ fn unified_exec_output_schema() -> Value {
             }
         },
         "required": ["wall_time_seconds", "output"],
-        "additionalProperties": false
-    })
-}
-
-fn command_wait_output_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "command_id": {
-                "type": "number",
-                "description": "Command session identifier."
-            },
-            "status": {
-                "type": "string",
-                "description": "Current command status: running or completed."
-            },
-            "notification": {
-                "type": "string",
-                "description": "Notification that released this wait: output or exit. Omitted when the hard cap is reached without a notification."
-            },
-            "exit_code": {
-                "type": "number",
-                "description": "Process exit code when available."
-            },
-            "wall_time_seconds": {
-                "type": "number",
-                "description": "Elapsed wall time spent waiting."
-            }
-        },
-        "required": ["command_id", "status", "wall_time_seconds"],
         "additionalProperties": false
     })
 }

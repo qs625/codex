@@ -50,7 +50,7 @@ impl std::fmt::Display for UnifiedExecError {
             Self::WriteToStdin => write!(f, "failed to write to stdin"),
             Self::EmptyStdin => write!(
                 f,
-                "command_write_stdin requires non-empty chars; use command_wait for command completion or output notifications instead of polling for output"
+                "command_write_stdin requires non-empty chars; use poll_event for command completion or output notifications instead of polling for output"
             ),
             Self::StdinClosed => write!(
                 f,
@@ -65,3 +65,16 @@ impl std::fmt::Display for UnifiedExecError {
 }
 
 impl std::error::Error for UnifiedExecError {}
+
+#[cfg(test)]
+mod tests {
+    use super::UnifiedExecError;
+
+    #[test]
+    fn empty_stdin_error_points_to_poll_event() {
+        assert_eq!(
+            UnifiedExecError::EmptyStdin.to_string(),
+            "command_write_stdin requires non-empty chars; use poll_event for command completion or output notifications instead of polling for output"
+        );
+    }
+}

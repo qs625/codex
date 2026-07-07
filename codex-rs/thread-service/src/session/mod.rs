@@ -1001,56 +1001,6 @@ impl Session {
             .await
     }
 
-    /// Compatibility wrapper for the legacy `command_wait` tool.
-    ///
-    /// `poll_event` remains the unified thread wait primitive. This helper only
-    /// preserves command-specific command-session semantics on top of it.
-    pub async fn wait_command_compat(
-        &self,
-        turn: &TurnContext,
-        request: CommandWaitRequest,
-    ) -> Result<command_service_api::CommandWaitOutput, CommandSessionError> {
-        let command_wait = self.begin_command_wait(request).await?;
-        self.wait_command_compat_with_operation(turn, command_wait).await
-    }
-
-    pub async fn wait_command_compat_with_operation(
-        &self,
-        _turn: &TurnContext,
-        mut command_wait: Box<dyn CommandWaitOperation>,
-    ) -> Result<command_service_api::CommandWaitOutput, CommandSessionError> {
-        let initial_timeout_ms = command_wait.initial_wait_timeout().as_millis() as i64;
-        let hard_cap_timeout_ms = command_wait.hard_cap_wait_timeout().as_millis() as i64;
-
-        tokio::select! {
-            output = command_wait.finish() => {
-                let output = output?;
-                self.reset_thread_wait_backoff().await;
-                Ok(output)
-            }
-            poll_result = self.poll_event(thread_service_api::ThreadPollEventRequest {
-                initial_timeout_ms: Some(initial_timeout_ms),
-                hard_cap_timeout_ms: Some(hard_cap_timeout_ms),
-            }) => {
-                let poll_result = poll_result
-                    .map_err(|err| CommandSessionError::new(err.to_string()))?;
-                if let Some(output) = command_wait.try_finish_now().await? {
-                    self.reset_thread_wait_backoff().await;
-                    Ok(output)
-                } else {
-                    Ok(command_service_api::CommandWaitOutput {
-                        process_id: command_wait.process_id(),
-                        status: command_service_api::CommandWaitStatus::Running,
-                        notification: None,
-                        exit_code: None,
-                        wall_time: Duration::from_millis(poll_result.waited_ms as u64),
-                        wait_timeout: Duration::from_millis(poll_result.current_timeout_ms as u64),
-                    })
-                }
-            }
-        }
-    }
-
     pub async fn write_command_stdin(
         &self,
         request: WriteStdinRequest<'_>,

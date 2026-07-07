@@ -107,7 +107,9 @@ async fn record_context_updates_emits_injected_context_with_agent_file_instructi
         let mut state = session.state.lock().await;
         state.session_configuration.session_source = session_source.clone();
     }
-    turn_context.session_source = session_source;
+    Arc::get_mut(&mut turn_context)
+        .expect("turn context should not be shared")
+        .session_source = session_source;
 
     session
         .record_context_updates_and_set_reference_context_item(turn_context.as_ref())
@@ -2197,7 +2199,9 @@ async fn clearing_stale_child_completion_preserves_non_completion_messages() {
     sess.enqueue_mailbox_communication(stale_completion);
     sess.enqueue_mailbox_communication(progress_update.clone());
 
-    let removed = sess.clear_child_completion_pending_input(child_thread_id).await;
+    let removed = sess
+        .clear_child_completion_pending_input(child_thread_id)
+        .await;
 
     assert_eq!(removed, 1);
     assert!(
@@ -2303,7 +2307,9 @@ async fn clearing_stale_child_completion_from_idle_queue_preserves_other_idle_in
     ])
     .await;
 
-    let removed = sess.clear_child_completion_pending_input(child_thread_id).await;
+    let removed = sess
+        .clear_child_completion_pending_input(child_thread_id)
+        .await;
 
     assert_eq!(removed, 1);
     assert!(
@@ -2365,7 +2371,46 @@ async fn poll_event_wakes_for_user_input() {
 }
 
 #[tokio::test]
-async fn poll_event_wakes_for_inter_agent_input() {
+async fn poll_event_returns_immediately_for_existing_pending_command_output() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-output-1".to_string()),
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Output,
+            message: "Command output notification received.".to_string(),
+            output: Some("wake".to_string()),
+            exit_code: None,
+            created_at_ms: 1234,
+        },
+    ));
+
+    let result = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("poll_event should succeed");
+    assert!(!result.timed_out);
+    assert_eq!(result.waited_ms, 0);
+    assert_eq!(result.source_hint.as_deref(), Some("command_output"));
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn poll_event_wakes_for_child_completion() {
     let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
     sess.spawn_task(
         Arc::clone(&tc),
@@ -2396,7 +2441,7 @@ async fn poll_event_wakes_for_inter_agent_input() {
             AgentPath::root(),
             Vec::new(),
             "wake".to_string(),
-            protocol::protocol::InterAgentOperation::SendMessage,
+            protocol::protocol::InterAgentOperation::ChildCompletion,
         )
         .with_trigger_turn(false),
     );
@@ -2406,7 +2451,55 @@ async fn poll_event_wakes_for_inter_agent_input() {
         .expect("poll_event should finish")
         .expect("poll_event task");
     assert!(!result.timed_out);
-    assert_eq!(result.source_hint.as_deref(), Some("inter_agent"));
+    assert_eq!(result.source_hint.as_deref(), Some("child_completion"));
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn poll_event_wakes_for_command_exit_notification() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    let waiter = {
+        let sess = Arc::clone(&sess);
+        tokio::spawn(async move {
+            sess.poll_event(thread_service_api::ThreadPollEventRequest {
+                initial_timeout_ms: Some(100),
+                hard_cap_timeout_ms: Some(400),
+            })
+            .await
+            .expect("poll_event should succeed")
+        })
+    };
+    tokio::task::yield_now().await;
+
+    sess.enqueue_async_input(PendingInputItem::from(
+        ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-exit-1".to_string()),
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            message: "Command exit notification received.".to_string(),
+            output: None,
+            exit_code: Some(0),
+            created_at_ms: 1234,
+        },
+    ));
+
+    let result = timeout(Duration::from_secs(2), waiter)
+        .await
+        .expect("poll_event should finish")
+        .expect("poll_event task");
+    assert!(!result.timed_out);
+    assert_eq!(result.source_hint.as_deref(), Some("command_exit"));
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }

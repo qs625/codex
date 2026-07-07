@@ -1,9 +1,9 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
+use command_service_api::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
-use command_service_api::MAX_EXEC_OUTPUT_DELTAS_PER_CALL;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 use tokio::time::Instant;
@@ -21,6 +21,7 @@ use super::events::emit_unified_exec_end_with_output;
 use super::resolve_aggregated_output;
 use super::split_valid_utf8_prefix;
 use crate::time_utils::now_unix_timestamp_ms;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::exec_output::ExecToolCallOutput;
 use protocol::exec_output::StreamOutput;
 use protocol::models::CommandExecutionNotificationKind;
@@ -30,7 +31,6 @@ use protocol::protocol::ExecCommandNotifyOn;
 use protocol::protocol::ExecCommandOutputDeltaEvent;
 use protocol::protocol::ExecCommandStatus;
 use protocol::protocol::ExecOutputStream;
-use codex_utils_absolute_path::AbsolutePathBuf;
 
 pub(crate) const TRAILING_OUTPUT_GRACE: Duration = Duration::from_millis(100);
 
@@ -130,18 +130,17 @@ pub(crate) fn spawn_exit_watcher(
         output_drained.notified().await;
 
         let duration = Instant::now().saturating_duration_since(started_at);
-        let process_id = notification_state
-            .is_background_session_active()
-            .then(|| process_id.to_string());
+        let background_session_active = notification_state.is_background_session_active();
+        let process_id = background_session_active.then(|| process_id.to_string());
         if let Some(message) = process.failure_message() {
             emit_failed_exec_end_for_unified_exec(
-                session_ref,
-                turn_ref,
-                call_id,
-                command,
-                cwd,
+                Arc::clone(&session_ref),
+                Arc::clone(&turn_ref),
+                call_id.clone(),
+                command.clone(),
+                cwd.clone(),
                 process_id,
-                transcript,
+                Arc::clone(&transcript),
                 String::new(),
                 message,
                 duration,
@@ -152,13 +151,13 @@ pub(crate) fn spawn_exit_watcher(
         } else {
             let exit_code = process.exit_code().unwrap_or(-1);
             emit_exec_end_for_unified_exec(
-                session_ref,
-                turn_ref,
-                call_id,
-                command,
-                cwd,
+                Arc::clone(&session_ref),
+                Arc::clone(&turn_ref),
+                call_id.clone(),
+                command.clone(),
+                cwd.clone(),
                 process_id,
-                transcript,
+                Arc::clone(&transcript),
                 String::new(),
                 exit_code,
                 duration,
@@ -167,7 +166,17 @@ pub(crate) fn spawn_exit_watcher(
             )
             .await;
         }
-        if notification_state.is_background_session_active() {
+        if background_session_active {
+            let item = ResponseItem::CommandExecutionNotification {
+                id: Some(format!("{call_id}:notification:exit")),
+                command_item_id: call_id,
+                kind: CommandExecutionNotificationKind::Exit,
+                message: "Command exit notification received.".to_string(),
+                output: None,
+                exit_code: process.exit_code(),
+                created_at_ms: now_unix_timestamp_ms(),
+            };
+            let _ = session_ref.append_conversation_item(item).await;
             notification_state
                 .notify(CommandNotificationKind::Exit)
                 .await;
@@ -224,9 +233,7 @@ async fn process_chunk(
                 exit_code: None,
                 created_at_ms: now_unix_timestamp_ms(),
             };
-            session_ref
-                .record_model_items_and_emit_display_events(turn_ref.as_ref(), vec![item])
-                .await;
+            let _ = session_ref.append_conversation_item(item).await;
             notification_state
                 .notify(CommandNotificationKind::Output)
                 .await;

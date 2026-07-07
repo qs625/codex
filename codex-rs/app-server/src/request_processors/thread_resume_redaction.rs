@@ -44,6 +44,7 @@ pub(super) fn redact_thread_resume_payloads(thread: &mut Thread) {
             | ThreadItem::CommandWait { .. }
             | ThreadItem::CommandWriteStdin { .. }
             | ThreadItem::FileChange { .. }
+            | ThreadItem::BuiltinToolCall { .. }
             | ThreadItem::DynamicToolCall { .. }
             | ThreadItem::EventDrivenToolCall { .. }
             | ThreadItem::EventDrivenTool { .. }

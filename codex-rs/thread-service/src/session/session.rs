@@ -64,8 +64,11 @@ pub(crate) struct ThreadWaitEventSnapshot {
 pub(crate) enum ThreadWaitSource {
     UserInput,
     InterAgent,
+    ChildCompletion,
     QueuedInput,
     AsyncInput,
+    CommandOutput,
+    CommandExit,
 }
 
 #[derive(Debug, Default)]
@@ -76,7 +79,11 @@ pub(crate) struct ThreadWaitBackoffState {
 const THREAD_WAIT_BACKOFF_MULTIPLIER: u32 = 2;
 
 impl ThreadWaitBackoffState {
-    pub(crate) fn current_window(&mut self, initial_window: Duration, max_window: Duration) -> Duration {
+    pub(crate) fn current_window(
+        &mut self,
+        initial_window: Duration,
+        max_window: Duration,
+    ) -> Duration {
         let current_window = self
             .current_window
             .unwrap_or(initial_window)
@@ -85,11 +92,7 @@ impl ThreadWaitBackoffState {
         current_window
     }
 
-    pub(crate) fn advance_after_timeout(
-        &mut self,
-        initial_window: Duration,
-        max_window: Duration,
-    ) {
+    pub(crate) fn advance_after_timeout(&mut self, initial_window: Duration, max_window: Duration) {
         let current_window = self.current_window(initial_window, max_window);
         self.current_window = Some(
             current_window

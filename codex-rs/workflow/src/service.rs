@@ -326,12 +326,14 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
                     Ok(serde_json::json!({ "ok": true }))
                 }
                 "agent.wait" => {
-                    let tool_call = workflow_wait_agent_tool_call(&request)?;
+                    let _tool_call = workflow_wait_agent_tool_call(&request)?;
                     let result = thread_service_api
-                        .wait_agent(
+                        .poll_event(
                             Arc::clone(&turn),
-                            workflow_tool_call_id(&request, "wait_agent"),
-                            tool_call.target,
+                            thread_service_api::ThreadPollEventRequest {
+                                initial_timeout_ms: None,
+                                hard_cap_timeout_ms: None,
+                            },
                         )
                         .await
                         .map_err(runtime_error_from_tool_error)?;

@@ -7,7 +7,7 @@ fn windows_shell_guidance_description() -> String {
 }
 
 fn expected_exec_command_description() -> String {
-    "Runs a command and creates a command session. If the command exits during the initial wait window, returns its output and exit code; otherwise returns a command_id for `command_wait` and `command_write_stdin`. Live output is streamed to clients independently from model notifications.".to_string()
+    "Runs a command and creates a command session. If the command exits during the initial wait window, returns its output and exit code; otherwise returns a command_id for `command_write_stdin`. Live output is streamed to clients independently from model notifications, and `poll_event` is used to wait for future command output or exit notifications.".to_string()
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn write_stdin_tool_matches_expected_spec() {
         tool,
         ToolSpec::Function(ResponsesApiTool {
             name: "command_write_stdin".to_string(),
-            description: "Writes characters to an existing command session so you can interact with a running PTY-backed command. Use this to answer prompts, send confirmations, or provide interactive input. `chars` is required and must be non-empty; use `command_wait` for command completion or output notifications instead of polling.".to_string(),
+            description: "Writes characters to an existing command session so you can interact with a running PTY-backed command. Use this to answer prompts, send confirmations, or provide interactive input. `chars` is required and must be non-empty; use `poll_event` for command completion or output notifications instead of polling.".to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(
