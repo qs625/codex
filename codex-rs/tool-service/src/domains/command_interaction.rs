@@ -7,7 +7,6 @@ use crate::planning::create_command_wait_tool;
 use crate::planning::create_write_stdin_tool;
 use command_service_api::CommandNotificationKind;
 use command_service_api::CommandServiceApi;
-use command_service_api::CommandWaitOutput;
 use command_service_api::CommandWaitRequest;
 use command_service_api::CommandWaitStatus;
 use command_service_api::SessionCommandInteractionCaller;
@@ -70,7 +69,7 @@ pub(crate) async fn dispatch(
     _command_service_api: Arc<dyn CommandServiceApi>,
     session_interaction: Arc<dyn SessionCommandInteractionCaller>,
     session: Arc<dyn ThreadSessionCapability>,
-    thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi>,
+    _thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -79,7 +78,6 @@ pub(crate) async fn dispatch(
             dispatch_command_wait(
                 session_interaction.as_ref(),
                 session.as_ref(),
-                thread_service_api.as_ref(),
                 Arc::clone(&turn),
                 &call,
             )
@@ -111,22 +109,18 @@ pub(crate) async fn dispatch(
 async fn dispatch_command_wait(
     session_interaction: &dyn SessionCommandInteractionCaller,
     session: &dyn ThreadSessionCapability,
-    thread_service_api: &dyn thread_service_api::ThreadServiceApi,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: &ToolCall,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let item_id = format!("response-item-{}", uuid::Uuid::new_v4());
     let created_at_ms = now_unix_timestamp_ms();
     let args: CommandWaitArgs = parse_function_arguments(call)?;
-    let mut command_wait = session_interaction
+    let command_wait = session_interaction
         .begin_command_wait(CommandWaitRequest {
             process_id: args.command_id,
         })
         .await
         .map_err(|err| FunctionCallError::RespondToModel(format!("command_wait failed: {err}")))?;
-    let initial_timeout_ms = command_wait.initial_wait_timeout().as_millis() as i64;
-    let hard_cap_timeout_ms = command_wait.hard_cap_wait_timeout().as_millis() as i64;
-    let wait_timeout = command_wait.initial_wait_timeout();
     let started_item = command_wait_item(CommandWaitItemInput {
         id: item_id.clone(),
         command_id: command_wait.process_id(),
@@ -134,47 +128,16 @@ async fn dispatch_command_wait(
         notification: None,
         exit_code: None,
         wall_time: Duration::ZERO,
-        wait_timeout,
+        wait_timeout: command_wait.initial_wait_timeout(),
         created_at_ms,
     });
     session
         .emit_model_item_started_display_event(turn.as_ref(), &started_item)
         .await;
-
-    let output = tokio::select! {
-        output = command_wait.finish() => {
-            let output = output
-                .map_err(|err| FunctionCallError::RespondToModel(format!("command_wait failed: {err}")))?;
-            thread_service_api
-                .reset_thread_wait_backoff(Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>)
-                .await;
-            output
-        }
-        poll_result = thread_service_api.poll_event(
-            Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
-            thread_service_api::ThreadPollEventRequest {
-                initial_timeout_ms: Some(initial_timeout_ms),
-                hard_cap_timeout_ms: Some(hard_cap_timeout_ms),
-            },
-        ) => {
-            let poll_result = poll_result?;
-            if let Some(output) = command_wait
-                .try_finish_now()
-                .await
-                .map_err(|err| FunctionCallError::RespondToModel(format!("command_wait failed: {err}")))? {
-                output
-            } else {
-                CommandWaitOutput {
-                    process_id: args.command_id,
-                    status: CommandWaitStatus::Running,
-                    notification: None,
-                    exit_code: None,
-                    wall_time: Duration::from_millis(poll_result.waited_ms as u64),
-                    wait_timeout: Duration::from_millis(poll_result.current_timeout_ms as u64),
-                }
-            }
-        }
-    };
+    let output = session_interaction
+        .wait_command_compat_with_operation(Arc::clone(&turn), command_wait)
+        .await
+        .map_err(|err| FunctionCallError::RespondToModel(format!("command_wait failed: {err}")))?;
 
     let response_item = command_wait_item(CommandWaitItemInput {
         id: item_id,

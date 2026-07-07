@@ -173,6 +173,9 @@ pub(crate) async fn wait_agent_tool(
     call_id: String,
     target: String,
 ) -> Result<WaitAgentToolResult, FunctionCallError> {
+    // `wait_agent` is a compatibility facade over the shared thread wait
+    // runtime: it reuses the same thread-scoped backoff and wake events as
+    // `poll_event`, then only adds agent-specific completion/status shaping.
     let sender_thread_id = session.thread_id();
     let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
     let receiver_agent = session.agent_metadata(receiver_thread_id);
