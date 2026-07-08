@@ -1,7 +1,7 @@
 # PM Progress
 
 ## Current Goal
-None
+修复重启客户端后 `exec_command` thread item 丢失的问题
 
 ## Active Work
 - id: init-context-workflow-instructions
@@ -70,6 +70,23 @@ None
   blockers: 无
   validation: `rtk cargo test -p thread-service control_tests::post_turn_state_waits_for_active_direct_child_without_active_goal`；`rtk cargo test -p thread-service control_tests::pending_child_completion_bookkeeping_does_not_trigger_wait_child`；`rtk cargo test -p thread-service session::tests::context_and_history::turn_start_consumes_child_completion_before_parent_visible_complete`；`rtk cargo test -p thread-service session::tests::context_and_history::clearing_stale_child_completion_preserves_non_completion_messages`；`rtk cargo test -p thread-service session::tests::context_and_history::aborting_turn_clears_pending_child_completion_tracking_from_turn_state`
   commit: 4baba77cb
+
+- id: exec-command-thread-item-reload
+  owner: /root/project_pm/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: fix/exec-command-thread-item-reload
+  task_type: bugfix
+  depends_on: child-completion-thread-status 已 merge 到主线
+  files: codex-rs/rollout/**, codex-rs/app-server-protocol/**, codex-rs/app-server/**, codex-rs/thread-service/**, codex-rs/thread-store/**, apps/root-worker-prototype/**, 相关 reload/history/thread item / list_agents 测试
+  base_commit: 1b5f3a3961b6113bf6da403724614e0d97545e2d
+  pending_sync_from_main:
+  status: in_progress
+  objective: 修复重启客户端后 `exec_command` thread item 丢失，以及 `list_agents` 不显示已 complete thread 的问题；确保 reload 后 command execution 可恢复、已完成 agent 仍能被列出
+  last_update: 2026-07-08
+  next_action: owner_dev_3 在 `fix/exec-command-thread-item-reload` 上一并定位 reload 持久化缺口与 completed agent 恢复缺口，补回归、独立 reviewer 并交付
+  blockers: 无
+  validation: 待 owner 提供 reload/history/command thread item 与 `list_agents` completed-agent 恢复相关回归与构建结果
+  commit:
 
 ## Completed
 - commit: 61d5d4e18
