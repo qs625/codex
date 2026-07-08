@@ -1,7 +1,7 @@
 # PM Progress
 
 ## Current Goal
-修复重启客户端后 `exec_command` thread item 丢失的问题
+None
 
 ## Active Work
 - id: init-context-workflow-instructions
@@ -80,15 +80,19 @@
   files: codex-rs/rollout/**, codex-rs/app-server-protocol/**, codex-rs/app-server/**, codex-rs/thread-service/**, codex-rs/thread-store/**, apps/root-worker-prototype/**, 相关 reload/history/thread item / list_agents 测试
   base_commit: 1b5f3a3961b6113bf6da403724614e0d97545e2d
   pending_sync_from_main:
-  status: in_progress
+  status: merged
   objective: 修复重启客户端后 `exec_command` thread item 丢失，以及 `list_agents` 不显示已 complete thread 的问题；确保 reload 后 command execution 可恢复、已完成 agent 仍能被列出
   last_update: 2026-07-08
-  next_action: owner_dev_3 在 `fix/exec-command-thread-item-reload` 上一并定位 reload 持久化缺口与 completed agent 恢复缺口，补回归、独立 reviewer 并交付
+  next_action: 已 merge 到主线；空闲时同步 checkout
   blockers: 无
-  validation: 待 owner 提供 reload/history/command thread item 与 `list_agents` completed-agent 恢复相关回归与构建结果
-  commit:
+  validation: `rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_history_when_live_thread_is_gone`；`rtk cargo test -p app-server limited_replay_keeps_agent_command_execution_items_visible_after_reload`；`rtk cargo build -p app-server --bin app-server`
+  commit: cce24f0d7
 
 ## Completed
+- commit: 951f010cd611
+  summary: 合并 `cce24f0d7` 到主线，补齐 reload 路径对 agent `exec_command` thread item 的 `Limited` 持久化恢复，并让 `list_agents` 在 live thread 不存在时回退到 persisted completed agent 状态
+  validation: `rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_history_when_live_thread_is_gone`；`rtk cargo test -p app-server limited_replay_keeps_agent_command_execution_items_visible_after_reload`；`rtk cargo build -p app-server --bin app-server`
+  residual_risk: 当前补的是 persisted replay 与 completed-agent fallback；仍建议后续补一条更完整的 app-server reload/integration 测试，串联真实重启后的 thread read/list_agents 行为
 - commit: 61d5d4e18
   summary: 合并 `4baba77cb` 到主线，修正 child completion / `WaitChild` 状态语义，使 direct child 本地 active 状态与 pending completion bookkeeping 解耦
   validation: merge 级集成；沿用 owner 已提交验证结果与 reviewer 通过结论
