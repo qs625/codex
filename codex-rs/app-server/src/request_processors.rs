@@ -163,7 +163,6 @@ use app_server_protocol::ThreadGoalGetResponse;
 use app_server_protocol::ThreadGoalSetParams;
 use app_server_protocol::ThreadGoalSetResponse;
 use app_server_protocol::ThreadGoalUpdatedNotification;
-use thread_history::ThreadHistoryBuilder;
 use app_server_protocol::ThreadIncrementElicitationParams;
 use app_server_protocol::ThreadIncrementElicitationResponse;
 use app_server_protocol::ThreadInjectItemsParams;
@@ -241,14 +240,8 @@ use codex_analytics::TurnSteerRequestError;
 use codex_arg0::Arg0DispatchPaths;
 use codex_auth_types::AuthMode;
 use codex_auth_types::RequestAuthSnapshot;
-use openai_backend_client::AddCreditsNudgeCreditType as BackendAddCreditsNudgeCreditType;
-use openai_backend_client::Client as BackendClient;
 use codex_chatgpt::connectors as chatgpt_connectors;
 use codex_chatgpt::workspace_settings;
-use config_service::project_trust_key;
-use config_service::CloudRequirementsLoadError;
-use config_service::CloudRequirementsLoadErrorCode;
-use config_service::ConfigLayerStack;
 use codex_config_types::McpServerTransportConfig;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::LOCAL_FS;
@@ -280,6 +273,10 @@ use command_service::create_env;
 use command_service_api::ExecCapturePolicy;
 use command_service_api::ExecExpiration;
 use command_service_api::ExecParams;
+use config_service::CloudRequirementsLoadError;
+use config_service::CloudRequirementsLoadErrorCode;
+use config_service::ConfigLayerStack;
+use config_service::project_trust_key;
 use mcp_service as core_connectors;
 use mcp_service::McpServerStatusSnapshot;
 use mcp_service::McpSnapshotDetail;
@@ -293,6 +290,8 @@ use memory_service::clear_memory_roots_contents;
 use model_service::builtin_collaboration_mode_presets;
 use model_service::create_model_provider;
 use model_service_api::ProviderAccountError;
+use openai_backend_client::AddCreditsNudgeCreditType as BackendAddCreditsNudgeCreditType;
+use openai_backend_client::Client as BackendClient;
 use plugin_service::OPENAI_CURATED_MARKETPLACE_NAME;
 use plugin_service::PluginInstallError as CorePluginInstallError;
 use plugin_service::PluginInstallRequest;
@@ -378,6 +377,7 @@ use std::result::Result;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use thread_history::ThreadHistoryBuilder;
 use thread_service::ForkSnapshot;
 use thread_service::NewThread;
 use thread_service::StartThreadOptions;
@@ -537,4 +537,167 @@ pub(crate) fn build_api_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<T
         }
     }
     builder.finish()
+}
+
+#[cfg(test)]
+mod build_api_turns_from_rollout_items_tests {
+    use super::build_api_turns_from_rollout_items;
+    use app_server_protocol::CommandAction;
+    use app_server_protocol::CommandExecutionNotifyOn as ApiCommandExecutionNotifyOn;
+    use app_server_protocol::CommandExecutionSource;
+    use app_server_protocol::CommandExecutionStatus;
+    use app_server_protocol::ThreadItem;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+    use codex_utils_absolute_path::test_support::test_path_buf;
+    use pretty_assertions::assert_eq;
+    use protocol::parse_command::ParsedCommand;
+    use protocol::protocol::EventMsg;
+    use protocol::protocol::ExecCommandBeginEvent;
+    use protocol::protocol::ExecCommandEndEvent;
+    use protocol::protocol::ExecCommandNotifyOn;
+    use protocol::protocol::ExecCommandSource as CoreExecCommandSource;
+    use protocol::protocol::RolloutItem;
+    use protocol::protocol::TurnStartedEvent;
+    use rollout::EventPersistenceMode;
+    use rollout::persisted_rollout_items;
+    use std::time::Duration;
+
+    fn exec_command_begin_event(source: CoreExecCommandSource) -> ExecCommandBeginEvent {
+        ExecCommandBeginEvent {
+            call_id: "exec-1".into(),
+            started_at_ms: 123,
+            process_id: Some("pid-1".into()),
+            turn_id: "turn-1".into(),
+            command: vec!["echo".into(), "hello world".into()],
+            cwd: test_path_buf("/tmp").abs(),
+            parsed_cmd: vec![ParsedCommand::Unknown {
+                cmd: "echo hello world".into(),
+            }],
+            source,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(ExecCommandNotifyOn::Exit),
+        }
+    }
+
+    fn exec_command_end_event(source: CoreExecCommandSource) -> ExecCommandEndEvent {
+        ExecCommandEndEvent {
+            call_id: "exec-1".into(),
+            process_id: Some("pid-1".into()),
+            turn_id: "turn-1".into(),
+            completed_at_ms: 123,
+            command: vec!["echo".into(), "hello world".into()],
+            cwd: test_path_buf("/tmp").abs(),
+            parsed_cmd: vec![ParsedCommand::Unknown {
+                cmd: "echo hello world".into(),
+            }],
+            source,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(ExecCommandNotifyOn::Exit),
+            stdout: "hello world\n".into(),
+            stderr: String::new(),
+            aggregated_output: "hello world\n".into(),
+            exit_code: 0,
+            duration: Duration::from_millis(12),
+            formatted_output: "hello world\n".into(),
+            status: protocol::protocol::ExecCommandStatus::Completed,
+        }
+    }
+
+    #[test]
+    fn limited_replay_keeps_agent_command_execution_items_visible_after_reload() {
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::ExecCommandBegin(exec_command_begin_event(
+                    CoreExecCommandSource::Agent,
+                ))),
+                RolloutItem::EventMsg(EventMsg::ExecCommandEnd(exec_command_end_event(
+                    CoreExecCommandSource::Agent,
+                ))),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CommandExecution {
+                id: "exec-1".into(),
+                command: "echo 'hello world'".into(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: Some("pid-1".into()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::InProgress,
+                initial_wait_ms: Some(1_000),
+                notify_on: Some(ApiCommandExecutionNotifyOn::Exit),
+                command_actions: vec![CommandAction::Unknown {
+                    command: "echo hello world".into(),
+                }],
+                aggregated_output: None,
+                exit_code: None,
+                duration_ms: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn limited_replay_skips_user_shell_command_execution_items() {
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::ExecCommandBegin(exec_command_begin_event(
+                    CoreExecCommandSource::UserShell,
+                ))),
+                RolloutItem::EventMsg(EventMsg::ExecCommandEnd(exec_command_end_event(
+                    CoreExecCommandSource::UserShell,
+                ))),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+    }
+
+    #[test]
+    fn limited_replay_skips_unified_exec_interaction_items() {
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::ExecCommandBegin(exec_command_begin_event(
+                    CoreExecCommandSource::UnifiedExecInteraction,
+                ))),
+                RolloutItem::EventMsg(EventMsg::ExecCommandEnd(exec_command_end_event(
+                    CoreExecCommandSource::UnifiedExecInteraction,
+                ))),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+    }
 }

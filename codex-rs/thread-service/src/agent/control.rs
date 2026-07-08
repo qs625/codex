@@ -18,12 +18,14 @@ use codex_agent_runtime::SpawnAgentOptions;
 use codex_agent_runtime::SpawnReservation;
 use codex_agent_runtime::ThreadSpawnChild;
 use codex_agent_runtime::ThreadSpawnPlanInput;
+use codex_agent_runtime::agent_status_from_event;
 use codex_agent_runtime::agent_subtree_thread_ids;
 use codex_agent_runtime::agent_thread_is_active_from_inputs;
 use codex_agent_runtime::any_agent_thread_active;
 use codex_agent_runtime::build_thread_spawn_children_by_parent;
 use codex_agent_runtime::current_agent_path_for_session;
 use codex_agent_runtime::direct_subagent_paths_from_children;
+use codex_agent_runtime::is_final;
 use codex_agent_runtime::list_agents_plan;
 use codex_agent_runtime::prepare_thread_spawn_plan;
 use codex_agent_runtime::render_input_preview;
@@ -865,14 +867,17 @@ impl AgentControl {
     ) -> CodexResult<Vec<ListedAgent>> {
         let state = self.upgrade()?;
         let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
-        let plan = list_agents_plan(
-            &current_agent_path,
-            path_prefix,
-            self.state.registered_agents(),
-        )
-        .map_err(CodexErr::UnsupportedOperation)?;
-
         let root_path = AgentPath::root();
+        let root_thread_id = self
+            .state
+            .agent_id_for_path(&root_path)
+            .or_else(|| current_agent_path.is_root().then_some(current_thread_id));
+        let registered_agents = self
+            .registered_agents_with_persisted_descendants(root_thread_id)
+            .await;
+        let plan = list_agents_plan(&current_agent_path, path_prefix, registered_agents)
+            .map_err(CodexErr::UnsupportedOperation)?;
+
         let mut agents = Vec::with_capacity(plan.candidates.len().saturating_add(1));
         if plan.include_root
             && let Some(root_thread_id) = self.state.agent_id_for_path(&root_path)
@@ -882,7 +887,11 @@ impl AgentControl {
         }
 
         for candidate in plan.candidates {
-            let Ok(agent_status) = state.live_thread_agent_status(candidate.thread_id).await else {
+            let agent_status = match state.live_thread_agent_status(candidate.thread_id).await {
+                Ok(status) => Some(status),
+                Err(_) => self.persisted_final_agent_status(candidate.thread_id).await,
+            };
+            let Some(agent_status) = agent_status else {
                 continue;
             };
             agents.push(ListedAgent {
@@ -893,6 +902,88 @@ impl AgentControl {
         }
 
         Ok(agents)
+    }
+
+    async fn registered_agents_with_persisted_descendants(
+        &self,
+        root_thread_id: Option<ThreadId>,
+    ) -> Vec<AgentMetadata> {
+        let mut registered_agents = self.state.registered_agents();
+        let Some(root_thread_id) = root_thread_id else {
+            return registered_agents;
+        };
+        let Ok(state) = self.upgrade() else {
+            return registered_agents;
+        };
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return registered_agents;
+        };
+        let Ok(descendant_ids) = state_db_ctx
+            .list_thread_spawn_descendants_with_status(
+                root_thread_id,
+                DirectionalThreadSpawnEdgeStatus::Open,
+            )
+            .await
+        else {
+            return registered_agents;
+        };
+
+        let mut known_thread_ids = registered_agents
+            .iter()
+            .filter_map(|metadata| metadata.agent_id)
+            .collect::<std::collections::HashSet<_>>();
+
+        for descendant_id in descendant_ids {
+            if known_thread_ids.contains(&descendant_id) {
+                continue;
+            }
+            let Ok(Some(metadata)) = state_db_ctx.get_thread(descendant_id).await else {
+                continue;
+            };
+            let Ok(agent_path) = metadata
+                .agent_path
+                .as_deref()
+                .map(|path| AgentPath::from_string(path.to_string()))
+                .transpose()
+            else {
+                continue;
+            };
+            let Some(agent_path) = agent_path else {
+                continue;
+            };
+            if agent_path.is_root() {
+                continue;
+            }
+
+            registered_agents.push(AgentMetadata {
+                agent_id: Some(descendant_id),
+                agent_path: Some(agent_path),
+                agent_nickname: metadata.agent_nickname,
+                agent_role: metadata.agent_role,
+                ..Default::default()
+            });
+            known_thread_ids.insert(descendant_id);
+        }
+
+        registered_agents
+    }
+
+    async fn persisted_final_agent_status(&self, thread_id: ThreadId) -> Option<AgentStatus> {
+        let state = self.upgrade().ok()?;
+        let stored_thread = state
+            .read_stored_thread(ReadThreadParams {
+                thread_id,
+                include_archived: true,
+                include_history: true,
+            })
+            .await
+            .ok()?;
+        let history = stored_thread.history?;
+        let status = history.items.iter().filter_map(|item| match item {
+            protocol::protocol::RolloutItem::EventMsg(event) => agent_status_from_event(event),
+            _ => None,
+        });
+        status.last().filter(is_final)
     }
 
     #[allow(clippy::too_many_arguments)]

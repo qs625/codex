@@ -144,6 +144,19 @@ fn should_persist_event_msg_extended(ev: &EventMsg) -> bool {
     )
 }
 
+fn should_persist_exec_command_begin(
+    event: &protocol::protocol::ExecCommandBeginEvent,
+) -> Option<EventPersistenceMode> {
+    match event.source {
+        protocol::protocol::ExecCommandSource::Agent
+        | protocol::protocol::ExecCommandSource::UnifiedExecStartup => {
+            Some(EventPersistenceMode::Limited)
+        }
+        protocol::protocol::ExecCommandSource::UserShell
+        | protocol::protocol::ExecCommandSource::UnifiedExecInteraction => None,
+    }
+}
+
 /// Returns the minimum persistence mode that includes this event.
 /// `None` means the event should never be persisted.
 fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
@@ -220,7 +233,6 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::RawResponseItem(_)
         | EventMsg::SessionConfigured(_)
         | EventMsg::McpToolCallBegin(_)
-        | EventMsg::ExecCommandBegin(_)
         | EventMsg::TerminalInteraction(_)
         | EventMsg::ExecCommandOutputDelta(_)
         | EventMsg::ExecApprovalRequest(_)
@@ -249,6 +261,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
         | EventMsg::ImageGenerationBegin(_) => None,
+        EventMsg::ExecCommandBegin(event) => should_persist_exec_command_begin(event),
     }
 }
 
@@ -310,6 +323,58 @@ mod tests {
         assert_eq!(
             should_persist_event_msg(&event, EventPersistenceMode::Limited),
             true
+        );
+    }
+
+    #[test]
+    fn limited_mode_persists_agent_exec_command_begin() {
+        let event = EventMsg::ExecCommandBegin(protocol::protocol::ExecCommandBeginEvent {
+            call_id: "exec-1".into(),
+            started_at_ms: 123,
+            process_id: Some("pid-1".into()),
+            turn_id: "turn-1".into(),
+            command: vec!["echo".into(), "hello".into()],
+            cwd: std::path::PathBuf::from("/tmp")
+                .try_into()
+                .expect("absolute path"),
+            parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                cmd: "echo hello".into(),
+            }],
+            source: protocol::protocol::ExecCommandSource::Agent,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+        });
+
+        assert_eq!(
+            should_persist_event_msg(&event, EventPersistenceMode::Limited),
+            true
+        );
+    }
+
+    #[test]
+    fn limited_mode_skips_user_shell_exec_command_begin() {
+        let event = EventMsg::ExecCommandBegin(protocol::protocol::ExecCommandBeginEvent {
+            call_id: "exec-1".into(),
+            started_at_ms: 123,
+            process_id: Some("pid-1".into()),
+            turn_id: "turn-1".into(),
+            command: vec!["echo".into(), "hello".into()],
+            cwd: std::path::PathBuf::from("/tmp")
+                .try_into()
+                .expect("absolute path"),
+            parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                cmd: "echo hello".into(),
+            }],
+            source: protocol::protocol::ExecCommandSource::UserShell,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+        });
+
+        assert_eq!(
+            should_persist_event_msg(&event, EventPersistenceMode::Limited),
+            false
         );
     }
 
