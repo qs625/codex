@@ -9,3 +9,4 @@
 ## Working Style
 - 优先直接修改代码或文档，不要只停留在分析。
 - 对当前项目的 PM/owner 协作规则，应遵循 `.codex/agents/project-pm.agent.md`。
+- 做 compact / memory 维护时，`current-work.md` 应优先保留已读文件中对后续继续工作真正有用的提炼内容，而不是只记录“读过 + 结论”；如果这些内容仍然高价值，可以接受比原先更宽松的篇幅。
