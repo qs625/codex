@@ -1,7 +1,7 @@
 # PM Progress
 
 ## Current Goal
-None
+修复重启客户端后普通 `exec_command` thread item 在 reload 后仍不可见的问题
 
 ## Active Work
 - id: init-context-workflow-instructions
@@ -81,14 +81,18 @@ None
   base_commit: 1b5f3a3961b6113bf6da403724614e0d97545e2d
   pending_sync_from_main:
   status: merged
-  objective: 修复重启客户端后 `exec_command` thread item 丢失，以及 `list_agents` 不显示已 complete thread 的问题；确保 reload 后 command execution 可恢复、已完成 agent 仍能被列出
+  objective: 修复重启客户端后普通 `exec_command` thread item 仍不可见的问题，并保留已完成 agent 在 reload 后仍可列出；同时核对 `poll_event` 对应 thread item 的 live / reload 可见性，确认真实 typed item / reload/read 缺口，而不只停留在 agent command replay
   last_update: 2026-07-08
-  next_action: 已 merge 到主线；空闲时同步 checkout
+  next_action: 已 merge 到主线；空闲时同步 dev-3 checkout
   blockers: 无
-  validation: `rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_history_when_live_thread_is_gone`；`rtk cargo test -p app-server limited_replay_keeps_agent_command_execution_items_visible_after_reload`；`rtk cargo build -p app-server --bin app-server`
-  commit: cce24f0d7
+  validation: `rtk cargo test -p thread-history typed_builtin_tool_history_rebuilds_thread_item`；`rtk cargo test -p app-server limited_replay_keeps_poll_event_builtin_tool_items`；`rtk cargo test -p app-server limited_replay_truncates_large_agent_command_execution_output`；`rtk cargo test -p app-server thread_read_after_restart_keeps_unified_exec_command_execution_items`；`rtk cargo build -p app-server --bin app-server`；`rtk cargo test -p rollout limited_mode_sanitizes_unified_exec_command_end_output -- --exact` 仍被仓库既有无关编译问题阻塞
+  commit: cdc4896c1（dev-3）；33e930678（main merge）
 
 ## Completed
+- commit: 33e930678
+  summary: 合并 `cdc4896c1` 到主线，修复普通 `exec_command` reload/read 丢 completed 态的问题；对进入 `Limited` 的 `ExecCommandEnd` 统一做有界 sanitize；补齐 `thread-history` 对 builtin tool call 的事件分派，使 `poll_event` thread item 在 `thread/read` / reload 路径恢复可见
+  validation: `rtk cargo test -p thread-history typed_builtin_tool_history_rebuilds_thread_item`；`rtk cargo test -p app-server limited_replay_keeps_poll_event_builtin_tool_items`；`rtk cargo test -p app-server limited_replay_truncates_large_agent_command_execution_output`；`rtk cargo test -p app-server thread_read_after_restart_keeps_unified_exec_command_execution_items`；`rtk cargo build -p app-server --bin app-server`
+  residual_risk: `rtk cargo test -p rollout limited_mode_sanitizes_unified_exec_command_end_output -- --exact` 仍被仓库现存无关编译问题阻塞；如果后续还要加固，可再补一条“只有 `BuiltinToolCallStarted`、没有 completed 时 reload 仍保留 `InProgress`”测试
 - commit: 951f010cd611
   summary: 合并 `cce24f0d7` 到主线，补齐 reload 路径对 agent `exec_command` thread item 的 `Limited` 持久化恢复，并让 `list_agents` 在 live thread 不存在时回退到 persisted completed agent 状态
   validation: `rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_history_when_live_thread_is_gone`；`rtk cargo test -p app-server limited_replay_keeps_agent_command_execution_items_visible_after_reload`；`rtk cargo build -p app-server --bin app-server`

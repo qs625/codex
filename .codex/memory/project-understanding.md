@@ -28,6 +28,7 @@
 ## Owner-Level Design Understandings
 - conversation display 的真实设计意图是“事件先 typed 化，再展示”；任何 UI 修复都应先补齐 event/replay/typed item 链路，而不是在前端做字符串补丁。
 - 判断“某条信息为什么丢了”时，要先问它是否进入了正确的持久化层，而不是只看 live path 下是否一度可见。
+- 对稳定的 thread item，长期正确方向应是“live 可见 == reload 可恢复”；如果某类 item 只在 live 可见、reload 缺失，默认视为持久化或 replay 设计不完整，而不是产品预期。
 - thread reload / history replay 默认只消费 rollout `Limited` 视图；因此“重启后能否恢复”本质上是持久化策略问题，不只是 replay 代码问题。
 - `commandExecution` 的历史重建依赖 thread history 对 `ExecCommandBegin` / `ExecCommandEnd` 的重放；如果 rollout limited 缺少所需事件，重启后就无法恢复 `exec_command` thread item。
 - `list_agents` 当前依赖 runtime 的 `registered_agents()` 索引和 `live_thread_agent_status(...)`，不是直接从持久化 thread store 列 completed agent；reload 后如果未把已完成 agent 恢复到 runtime 注册表，`list_agents` 就会缺失它们。
@@ -55,10 +56,14 @@
   - `src/request_processors/thread_processor/ops.rs` 负责 `thread/start` 的 config 派生、thread 创建与初始响应。
   - `src/request_processors.rs` 的 `build_api_turns_from_rollout_items()` 只按 `EventPersistenceMode::Limited` 重建 API thread history。
   - `tests/suite/thread_start.rs` 是 thread/start init context 与 instruction sources 的端到端回归测试位置。
+- `codex-rs/thread-history/`
+  - 是 `app-server thread/read` 与部分 reload 恢复的真实 history builder。
+  - 如果 `app-server-protocol` 的 replay 测试是绿的，但 `app-server thread/read` 仍丢 item，优先检查这里的 `handle_event()` 是否漏分派对应 display event。
 - `codex-rs/rollout/`
   - `src/policy.rs` 定义哪些 `EventMsg` 会进入 rollout `Limited` / `Extended` 持久化；reload 丢 item 时先检查这里。
 - `codex-rs/app-server-protocol/`
   - `src/protocol/thread_history/tool_events.rs` 负责把 persisted event replay 成 typed thread items；`exec_command` 的恢复链路在这里。
+  - 它不是 `app-server thread/read` 的唯一事实来源；与 `thread-history` 之间存在行为漂移风险。
 - `codex-rs/workflow/`
   - workflow runtime bridge 的 agent wait 语义也应统一走 `poll_event`，不要继续依赖独立 `wait_agent` API。
 - `apps/root-worker-prototype/`
@@ -74,6 +79,8 @@
   - replay 是否覆盖该事件
   - runtime 或 renderer 是否正确消费 replay 结果
 - 不能假设 `Extended` 中有事件就足够；如果 reload 路径只读 `Limited`，那对恢复语义来说 `Extended` 等于不存在。
+- 进入 `Limited` 的恢复型事件仍要保持 payload 有界；否则 `thread/read` / reload 会把大输出原样带回客户端。对 `ExecCommandEnd` 这类事件，持久化 sanitize 与展示恢复语义需要一起考虑。
+- `UnifiedExecStartup` / `Agent` 来源的 `ExecCommandBegin` 与 `ExecCommandEnd` 应进入 `Limited` 以支持 reload；`UserShell` / `UnifiedExecInteraction` 不应借此进入可恢复展示路径。
 
 ## Runtime And Agent Lifecycle
 - agent 是否可见、是否 active、是否 complete，不能只从某一个 bookkeeping 字段推断；需要区分本地 active 状态、completion 投递状态，以及 reload 后是否重新注册到 runtime 索引。
