@@ -157,6 +157,21 @@ fn should_persist_exec_command_begin(
     }
 }
 
+fn should_persist_exec_command_end(
+    event: &protocol::protocol::ExecCommandEndEvent,
+) -> Option<EventPersistenceMode> {
+    match event.source {
+        protocol::protocol::ExecCommandSource::Agent
+        | protocol::protocol::ExecCommandSource::UnifiedExecStartup => {
+            Some(EventPersistenceMode::Limited)
+        }
+        protocol::protocol::ExecCommandSource::UserShell
+        | protocol::protocol::ExecCommandSource::UnifiedExecInteraction => {
+            Some(EventPersistenceMode::Extended)
+        }
+    }
+}
+
 /// Returns the minimum persistence mode that includes this event.
 /// `None` means the event should never be persisted.
 fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
@@ -217,10 +232,10 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         }
         EventMsg::Error(_)
         | EventMsg::GuardianAssessment(_)
-        | EventMsg::ExecCommandEnd(_)
         | EventMsg::ViewImageToolCall(_)
         | EventMsg::DynamicToolCallRequest(_)
         | EventMsg::DynamicToolCallResponse(_) => Some(EventPersistenceMode::Extended),
+        EventMsg::ExecCommandEnd(event) => should_persist_exec_command_end(event),
         EventMsg::Warning(_)
         | EventMsg::GuardianWarning(_)
         | EventMsg::RealtimeConversationStarted(_)
@@ -370,6 +385,72 @@ mod tests {
             interaction_input: None,
             initial_wait_ms: Some(1_000),
             notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+        });
+
+        assert_eq!(
+            should_persist_event_msg(&event, EventPersistenceMode::Limited),
+            false
+        );
+    }
+
+    #[test]
+    fn limited_mode_persists_unified_exec_command_end() {
+        let event = EventMsg::ExecCommandEnd(protocol::protocol::ExecCommandEndEvent {
+            call_id: "exec-1".into(),
+            process_id: Some("pid-1".into()),
+            turn_id: "turn-1".into(),
+            completed_at_ms: 456,
+            command: vec!["echo".into(), "hello".into()],
+            cwd: std::path::PathBuf::from("/tmp")
+                .try_into()
+                .expect("absolute path"),
+            parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                cmd: "echo hello".into(),
+            }],
+            source: protocol::protocol::ExecCommandSource::UnifiedExecStartup,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+            stdout: "hello\n".into(),
+            stderr: String::new(),
+            aggregated_output: "hello\n".into(),
+            exit_code: 0,
+            duration: std::time::Duration::from_millis(12),
+            formatted_output: "hello\n".into(),
+            status: protocol::protocol::ExecCommandStatus::Completed,
+        });
+
+        assert_eq!(
+            should_persist_event_msg(&event, EventPersistenceMode::Limited),
+            true
+        );
+    }
+
+    #[test]
+    fn limited_mode_skips_user_shell_exec_command_end() {
+        let event = EventMsg::ExecCommandEnd(protocol::protocol::ExecCommandEndEvent {
+            call_id: "exec-1".into(),
+            process_id: Some("pid-1".into()),
+            turn_id: "turn-1".into(),
+            completed_at_ms: 456,
+            command: vec!["echo".into(), "hello".into()],
+            cwd: std::path::PathBuf::from("/tmp")
+                .try_into()
+                .expect("absolute path"),
+            parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                cmd: "echo hello".into(),
+            }],
+            source: protocol::protocol::ExecCommandSource::UserShell,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+            stdout: "hello\n".into(),
+            stderr: String::new(),
+            aggregated_output: "hello\n".into(),
+            exit_code: 0,
+            duration: std::time::Duration::from_millis(12),
+            formatted_output: "hello\n".into(),
+            status: protocol::protocol::ExecCommandStatus::Completed,
         });
 
         assert_eq!(

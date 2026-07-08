@@ -606,7 +606,7 @@ mod build_api_turns_from_rollout_items_tests {
     }
 
     #[test]
-    fn limited_replay_keeps_agent_command_execution_items_visible_after_reload() {
+    fn limited_replay_keeps_agent_command_execution_items_completed_after_reload() {
         let persisted = persisted_rollout_items(
             &[
                 RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
@@ -636,15 +636,15 @@ mod build_api_turns_from_rollout_items_tests {
                 cwd: test_path_buf("/tmp").abs(),
                 process_id: Some("pid-1".into()),
                 source: CommandExecutionSource::Agent,
-                status: CommandExecutionStatus::InProgress,
+                status: CommandExecutionStatus::Completed,
                 initial_wait_ms: Some(1_000),
                 notify_on: Some(ApiCommandExecutionNotifyOn::Exit),
                 command_actions: vec![CommandAction::Unknown {
                     command: "echo hello world".into(),
                 }],
-                aggregated_output: None,
-                exit_code: None,
-                duration_ms: None,
+                aggregated_output: Some("hello world\n".into()),
+                exit_code: Some(0),
+                duration_ms: Some(12),
             }]
         );
     }
