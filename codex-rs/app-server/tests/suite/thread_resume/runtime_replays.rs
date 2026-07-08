@@ -1,4 +1,47 @@
 use super::*;
+use app_server_protocol::ItemCompletedNotification;
+use app_test_support::create_exec_command_sse_response;
+use app_test_support::create_mock_responses_server_sequence;
+use codex_features::Feature;
+use std::collections::BTreeMap;
+
+fn create_config_toml_with_sandbox(
+    codex_home: &std::path::Path,
+    server_uri: &str,
+    approval_policy: &str,
+    features: &BTreeMap<Feature, bool>,
+    sandbox_mode: &str,
+) -> std::io::Result<()> {
+    let mut feature_lines = String::from("personality = true\n");
+    for (feature, enabled) in features {
+        let name = feature.key();
+        feature_lines.push_str(&format!("{name} = {enabled}\n"));
+    }
+
+    let config_toml = codex_home.join("config.toml");
+    std::fs::write(
+        config_toml,
+        format!(
+            r#"
+model = "gpt-5.3-codex"
+approval_policy = "{approval_policy}"
+sandbox_mode = "{sandbox_mode}"
+
+model_provider = "mock_provider"
+
+[features]
+{feature_lines}
+
+[model_providers.mock_provider]
+name = "Mock provider for test"
+base_url = "{server_uri}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#
+        ),
+    )
+}
 
 #[tokio::test]
 async fn thread_resume_replays_pending_command_execution_request_approval() -> Result<()> {
@@ -653,6 +696,135 @@ async fn thread_resume_supports_history_and_overrides() -> Result<()> {
     assert_eq!(model_provider, "mock_provider");
     assert_eq!(resumed.preview, history_text);
     assert_eq!(resumed.status, ThreadStatus::Complete);
+
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg_attr(windows, ignore = "process id reporting differs on Windows")]
+async fn thread_read_after_restart_keeps_unified_exec_command_execution_items() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let responses = vec![
+        create_exec_command_sse_response("uexec-reload-1")?,
+        create_final_assistant_message_sse_response("done")?,
+    ];
+    let server = create_mock_responses_server_sequence(responses).await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_with_sandbox(
+        codex_home.path(),
+        &server.uri(),
+        "never",
+        &BTreeMap::from([(Feature::UnifiedExec, true)]),
+        "danger-full-access",
+    )?;
+
+    let mut first_mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, first_mcp.initialize()).await??;
+
+    let start_id = first_mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        first_mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+
+    let turn_id = first_mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "run a command".to_string(),
+                text_elements: Vec::new(),
+            }],
+            sandbox_policy: Some(app_server_protocol::SandboxPolicy::DangerFullAccess),
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        first_mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+
+    timeout(DEFAULT_READ_TIMEOUT, async {
+        loop {
+            let notif = first_mcp
+                .read_stream_until_notification_message("item/completed")
+                .await?;
+            let completed: ItemCompletedNotification = serde_json::from_value(
+                notif
+                    .params
+                    .clone()
+                    .expect("item/completed should include params"),
+            )?;
+            if let ThreadItem::CommandExecution { id, .. } = &completed.item
+                && id == "uexec-reload-1"
+            {
+                return Ok::<(), anyhow::Error>(());
+            }
+        }
+    })
+    .await??;
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        first_mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    drop(first_mcp);
+
+    let mut second_mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, second_mcp.initialize()).await??;
+
+    let read_id = second_mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id,
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        second_mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+
+    let command_items = thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .filter_map(|item| match item {
+            ThreadItem::CommandExecution {
+                id,
+                source,
+                status,
+                exit_code,
+                ..
+            } if id == "uexec-reload-1" => Some((
+                id.clone(),
+                source.clone(),
+                status.clone(),
+                *exit_code,
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        command_items,
+        vec![(
+            "uexec-reload-1".to_string(),
+            app_server_protocol::CommandExecutionSource::UnifiedExecStartup,
+            app_server_protocol::CommandExecutionStatus::Completed,
+            Some(0),
+        )]
+    );
 
     Ok(())
 }

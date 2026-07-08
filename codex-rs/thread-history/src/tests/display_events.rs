@@ -1,6 +1,64 @@
 use super::*;
 
     #[test]
+    fn typed_builtin_tool_history_rebuilds_thread_item() {
+        let output = serde_json::json!({
+            "timedOut": false,
+            "sourceHint": "user_input",
+            "waitedMs": 5,
+            "initialTimeoutMs": 50,
+            "currentTimeoutMs": 50,
+            "hardCapTimeoutMs": 1000
+        });
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallStarted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "builtin-1".into(),
+                    tool: "poll_event".into(),
+                    arguments: serde_json::json!({}),
+                    status: protocol::protocol::BuiltinToolCallStatus::InProgress,
+                    output: None,
+                    lifecycle_at_ms: 100,
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "builtin-1".into(),
+                    tool: "poll_event".into(),
+                    arguments: serde_json::json!({}),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(output.clone()),
+                    lifecycle_at_ms: 123,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "builtin-1".into(),
+                tool: "poll_event".into(),
+                arguments: serde_json::json!({}),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(output),
+            }]
+        );
+    }
+
+    #[test]
     fn typed_workflow_progress_history_rebuilds_thread_item() {
         let event = protocol::models::WorkflowRunProgressEvent {
             run_id: "wf_1".into(),
@@ -383,4 +441,3 @@ use super::*;
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
-
