@@ -546,6 +546,7 @@ mod build_api_turns_from_rollout_items_tests {
     use app_server_protocol::CommandExecutionNotifyOn as ApiCommandExecutionNotifyOn;
     use app_server_protocol::CommandExecutionSource;
     use app_server_protocol::CommandExecutionStatus;
+    use app_server_protocol::DynamicToolCallStatus;
     use app_server_protocol::ThreadItem;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
@@ -676,6 +677,52 @@ mod build_api_turns_from_rollout_items_tests {
     }
 
     #[test]
+    fn limited_replay_truncates_large_agent_command_execution_output() {
+        let large_output = "x".repeat(20_000);
+        let mut end_event = exec_command_end_event(CoreExecCommandSource::Agent);
+        end_event.stdout = large_output.clone();
+        end_event.stderr = large_output.clone();
+        end_event.aggregated_output = large_output.clone();
+        end_event.formatted_output = large_output;
+
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::ExecCommandBegin(exec_command_begin_event(
+                    CoreExecCommandSource::Agent,
+                ))),
+                RolloutItem::EventMsg(EventMsg::ExecCommandEnd(end_event)),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 1);
+        let [ThreadItem::CommandExecution {
+            status,
+            aggregated_output,
+            exit_code,
+            ..
+        }] = turns[0].items.as_slice()
+        else {
+            panic!("expected one command execution item");
+        };
+        assert_eq!(*status, CommandExecutionStatus::Completed);
+        assert_eq!(*exit_code, Some(0));
+        let output = aggregated_output
+            .as_ref()
+            .expect("limited replay should keep aggregated output");
+        assert!(output.len() < 20_000);
+        assert!(output.contains("chars truncated"));
+    }
+
+    #[test]
     fn limited_replay_skips_unified_exec_interaction_items() {
         let persisted = persisted_rollout_items(
             &[
@@ -699,5 +746,66 @@ mod build_api_turns_from_rollout_items_tests {
 
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+    }
+
+    #[test]
+    fn limited_replay_keeps_poll_event_builtin_tool_items() {
+        let output = serde_json::json!({
+            "timedOut": false,
+            "sourceHint": "user_input",
+            "waitedMs": 5,
+            "initialTimeoutMs": 50,
+            "currentTimeoutMs": 50,
+            "hardCapTimeoutMs": 1000
+        });
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::BuiltinToolCallStarted(
+                    protocol::protocol::BuiltinToolCallDisplayEvent {
+                        thread_id: protocol::ThreadId::new(),
+                        turn_id: "turn-1".into(),
+                        id: "builtin-1".into(),
+                        tool: "poll_event".into(),
+                        arguments: serde_json::json!({}),
+                        status: protocol::protocol::BuiltinToolCallStatus::InProgress,
+                        output: None,
+                        lifecycle_at_ms: 100,
+                    },
+                )),
+                RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                    protocol::protocol::BuiltinToolCallDisplayEvent {
+                        thread_id: protocol::ThreadId::new(),
+                        turn_id: "turn-1".into(),
+                        id: "builtin-1".into(),
+                        tool: "poll_event".into(),
+                        arguments: serde_json::json!({}),
+                        status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                        output: Some(output.clone()),
+                        lifecycle_at_ms: 123,
+                    },
+                )),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "builtin-1".into(),
+                tool: "poll_event".into(),
+                arguments: serde_json::json!({}),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(output),
+            }]
+        );
     }
 }

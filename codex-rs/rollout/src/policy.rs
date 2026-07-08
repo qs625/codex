@@ -41,12 +41,8 @@ pub fn persisted_rollout_items(
 
 fn sanitize_rollout_item_for_persistence(
     item: RolloutItem,
-    mode: EventPersistenceMode,
+    _mode: EventPersistenceMode,
 ) -> RolloutItem {
-    if mode != EventPersistenceMode::Extended {
-        return item;
-    }
-
     match item {
         RolloutItem::EventMsg(EventMsg::ExecCommandEnd(mut event)) => {
             event.aggregated_output = truncate_middle_chars(
@@ -282,10 +278,14 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
 
 #[cfg(test)]
 mod tests {
+    use codex_utils_string::truncate_middle_chars;
     use pretty_assertions::assert_eq;
 
     use super::EventPersistenceMode;
+    use super::PERSISTED_EXEC_AGGREGATED_OUTPUT_MAX_BYTES;
+    use super::persisted_rollout_items;
     use super::should_persist_event_msg;
+    use crate::rollout_protocol::RolloutItem;
     use protocol::ThreadId;
     use protocol::items::InjectedContextItem;
     use protocol::items::InjectedContextSection;
@@ -424,6 +424,52 @@ mod tests {
             should_persist_event_msg(&event, EventPersistenceMode::Limited),
             true
         );
+    }
+
+    #[test]
+    fn limited_mode_sanitizes_unified_exec_command_end_output() {
+        let large_output = "x".repeat(PERSISTED_EXEC_AGGREGATED_OUTPUT_MAX_BYTES + 100);
+        let expected_truncated = truncate_middle_chars(
+            &large_output,
+            PERSISTED_EXEC_AGGREGATED_OUTPUT_MAX_BYTES,
+        );
+        let persisted = persisted_rollout_items(
+            &[RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
+                protocol::protocol::ExecCommandEndEvent {
+                    call_id: "exec-1".into(),
+                    process_id: Some("pid-1".into()),
+                    turn_id: "turn-1".into(),
+                    completed_at_ms: 456,
+                    command: vec!["echo".into(), "hello".into()],
+                    cwd: std::path::PathBuf::from("/tmp")
+                        .try_into()
+                        .expect("absolute path"),
+                    parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                        cmd: "echo hello".into(),
+                    }],
+                    source: protocol::protocol::ExecCommandSource::UnifiedExecStartup,
+                    interaction_input: None,
+                    initial_wait_ms: Some(1_000),
+                    notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+                    stdout: large_output.clone(),
+                    stderr: large_output.clone(),
+                    aggregated_output: large_output,
+                    exit_code: 0,
+                    duration: std::time::Duration::from_millis(12),
+                    formatted_output: "formatted".repeat(2_000),
+                    status: protocol::protocol::ExecCommandStatus::Completed,
+                },
+            ))],
+            EventPersistenceMode::Limited,
+        );
+
+        let [RolloutItem::EventMsg(EventMsg::ExecCommandEnd(event))] = persisted.as_slice() else {
+            panic!("expected persisted exec command end");
+        };
+        assert_eq!(event.aggregated_output, expected_truncated);
+        assert!(event.stdout.is_empty());
+        assert!(event.stderr.is_empty());
+        assert!(event.formatted_output.is_empty());
     }
 
     #[test]
