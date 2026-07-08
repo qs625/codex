@@ -37,6 +37,7 @@ use protocol::protocol::TurnAbortedEvent;
 use protocol::protocol::TurnCompleteEvent;
 use protocol::protocol::TurnStartedEvent;
 use protocol::user_input::UserInput;
+use state_api::DirectionalThreadSpawnEdgeStatus;
 use state_api::ThreadGoalStatus as StateThreadGoalStatus;
 use tempfile::TempDir;
 use thread_store::LocalThreadStore;
@@ -1590,6 +1591,105 @@ async fn legacy_child_spawn_does_not_register_completion_pending() {
             .session
             .has_pending_direct_child_completions()
             .await
+    );
+}
+
+#[tokio::test]
+async fn list_agents_restores_completed_child_from_persisted_history_when_live_thread_is_gone() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    let state_db = harness
+        .state_db
+        .as_ref()
+        .expect("sqlite state db should be available");
+
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    emit_turn_complete(&worker_thread, "done").await;
+    worker_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let metadata_ready = state_db
+                .get_thread(worker_thread_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|metadata| {
+                    metadata.agent_path.as_deref() == Some(worker_path.as_str())
+                });
+            let edge_ready = state_db
+                .list_thread_spawn_descendants_with_status(
+                    root_thread_id,
+                    DirectionalThreadSpawnEdgeStatus::Open,
+                )
+                .await
+                .ok()
+                .is_some_and(|descendants| descendants.contains(&worker_thread_id));
+            if metadata_ready && edge_ready {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("worker metadata and history should persist before shutdown");
+
+    let _ = harness
+        .control
+        .shutdown_live_agent(worker_thread_id)
+        .await
+        .expect("worker shutdown should succeed");
+    assert_eq!(
+        harness.control.get_status(worker_thread_id).await,
+        AgentStatus::NotFound
+    );
+    assert_eq!(
+        harness
+            .control
+            .persisted_final_agent_status(worker_thread_id)
+            .await,
+        Some(AgentStatus::Completed(Some("done".to_string()))),
+    );
+
+    let listed_agents = harness
+        .control
+        .list_agents(root_thread_id, &SessionSource::Exec, None)
+        .await
+        .expect("list agents should succeed");
+    assert_eq!(
+        listed_agents
+            .into_iter()
+            .find(|agent| agent.agent_name == worker_path.to_string())
+            .expect("persisted worker should be listed")
+            .agent_status,
+        AgentStatus::Completed(Some("done".to_string())),
     );
 }
 
