@@ -518,7 +518,7 @@ pub(super) async fn handle_pending_thread_resume_request(
 ) {
     let active_turn = {
         let state = thread_state.lock().await;
-        state.active_turn_snapshot()
+        state.active_in_progress_turn_snapshot()
     };
     tracing::debug!(
         thread_id = %conversation_id,
