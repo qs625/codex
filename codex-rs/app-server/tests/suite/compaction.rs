@@ -93,7 +93,7 @@ async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()>
     wait_for_compact_context_usage_updated(&mut mcp, &thread_id).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    assert_context_compaction_lifecycle(started, completed, &thread_id, "SECOND_REPLY")?;
+    assert_context_compaction_lifecycle(started, completed, &thread_id)?;
 
     Ok(())
 }
@@ -149,7 +149,7 @@ async fn auto_compaction_with_chatgpt_auth_still_uses_local_compact() -> Result<
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    assert_context_compaction_lifecycle(started, completed, &thread_id, "SECOND_REPLY")?;
+    assert_context_compaction_lifecycle(started, completed, &thread_id)?;
 
     let response_requests = responses_log.requests();
     assert_eq!(response_requests.len(), 4);
@@ -211,7 +211,7 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    assert_context_compaction_lifecycle(started, completed, &thread_id, "MANUAL_COMPACT_SUMMARY")?;
+    assert_context_compaction_lifecycle(started, completed, &thread_id)?;
 
     Ok(())
 }
@@ -366,7 +366,6 @@ fn assert_context_compaction_lifecycle(
     started: ItemStartedNotification,
     completed: ItemCompletedNotification,
     thread_id: &str,
-    expected_summary: &str,
 ) -> Result<()> {
     let ThreadItem::ContextCompaction {
         id: started_id,
@@ -390,10 +389,17 @@ fn assert_context_compaction_lifecycle(
 
     let completed_replacement_history = completed_replacement_history
         .expect("completed compact item should include replacement history");
+    let replacement_history_items = completed_replacement_history
+        .as_array()
+        .expect("replacement history should serialize as an array");
+    assert!(
+        !replacement_history_items.is_empty(),
+        "replacement history should preserve at least one item after compaction"
+    );
     let completed_replacement_history_json = serde_json::to_string(&completed_replacement_history)?;
     assert!(
-        completed_replacement_history_json.contains(expected_summary),
-        "replacement history should contain compact summary {expected_summary:?}: {completed_replacement_history_json}"
+        !completed_replacement_history_json.contains("Memory checkpoint:"),
+        "replacement history should no longer duplicate memory checkpoints: {completed_replacement_history_json}"
     );
 
     Ok(())

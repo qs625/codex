@@ -29,6 +29,7 @@
 - conversation display 的真实设计意图是“事件先 typed 化，再展示”；任何 UI 修复都应先补齐 event/replay/typed item 链路，而不是在前端做字符串补丁。
 - 判断“某条信息为什么丢了”时，要先问它是否进入了正确的持久化层，而不是只看 live path 下是否一度可见。
 - 对稳定的 thread item，长期正确方向应是“live 可见 == reload 可恢复”；如果某类 item 只在 live 可见、reload 缺失，默认视为持久化或 replay 设计不完整，而不是产品预期。
+- 但 live 与 reload 不是同一条实现链：live thread item 主要走 `tool-service/app-server-protocol event_mapping -> server notification -> root-worker thread state`，reload/thread_read 主要走 `rollout Limited -> thread-history/app-server-protocol replay -> thread snapshot`。排查缺 item 时先判断是哪一条链路在丢。
 - thread reload / history replay 默认只消费 rollout `Limited` 视图；因此“重启后能否恢复”本质上是持久化策略问题，不只是 replay 代码问题。
 - `commandExecution` 的历史重建依赖 thread history 对 `ExecCommandBegin` / `ExecCommandEnd` 的重放；如果 rollout limited 缺少所需事件，重启后就无法恢复 `exec_command` thread item。
 - `list_agents` 当前依赖 runtime 的 `registered_agents()` 索引和 `live_thread_agent_status(...)`，不是直接从持久化 thread store 列 completed agent；reload 后如果未把已完成 agent 恢复到 runtime 注册表，`list_agents` 就会缺失它们。
@@ -64,10 +65,12 @@
 - `codex-rs/app-server-protocol/`
   - `src/protocol/thread_history/tool_events.rs` 负责把 persisted event replay 成 typed thread items；`exec_command` 的恢复链路在这里。
   - 它不是 `app-server thread/read` 的唯一事实来源；与 `thread-history` 之间存在行为漂移风险。
+  - `src/protocol/event_mapping.rs` 负责 live event 到 typed thread-item notification 的映射；`BuiltinToolCallStarted/Completed -> ThreadItem::BuiltinToolCall` 这类 live display 缺口要先查这里，而不是 `thread-history`。
 - `codex-rs/workflow/`
   - workflow runtime bridge 的 agent wait 语义也应统一走 `poll_event`，不要继续依赖独立 `wait_agent` API。
 - `apps/root-worker-prototype/`
   - 负责 root-worker prototype 客户端、thread 展示、compact UI 与 renderer 状态。
+  - `src/lib/conversation.ts` 已支持 `ThreadItem::BuiltinToolCall` 的 `poll_event` 展示文案；若 live UI 仍缺失，要先怀疑 server notification / 运行实例版本，而不是前端 summary 缺口。
 
 ## Persistent State And Recovery
 - thread/history 的 reload 恢复能力由两段共同决定：
@@ -86,11 +89,19 @@
 - agent 是否可见、是否 active、是否 complete，不能只从某一个 bookkeeping 字段推断；需要区分本地 active 状态、completion 投递状态，以及 reload 后是否重新注册到 runtime 索引。
 - child completion 相关逻辑的长期目标是“完成态事件投递正确”而不是“靠 bookkeeping 假装 child 仍 active”。
 - `list_agents` 这类查询面向的是 runtime 可见集合；如果需求是“重启后仍能列出已完成 agent”，通常要检查恢复后的 runtime 注册语义，而不是只改查询接口。
+- 当前实现里不存在持久的 `PostTurn` 调度状态；turn 收尾更接近 `active_turn` 锁保护下的一段临界区。`thread_post_turn_state()` 会在 `active_turn.is_some()` 或存在 pending turn input 时直接视为 `ThreadActive`，然后才退化到 goal / child / command 的后续判断。
+- 因此后续修 turn 生命周期竞态时，首先要区分“当前 turn 的 pending_input”和“thread 级 mailbox / queued next-turn input”，以及它们各自是在持锁的哪个阶段被检查或搬运；不要把“有 active turn”误当成“当前 turn 一定还能消费新事件”。
+- turn 调度的当前简化方向是不引入额外 action / async fact 状态来描述“late input 已经到达但当前 turn 还没彻底收尾”。如果 pending input 先拿到锁时 thread 仍显示 active，post-turn 临界区只需把 thread 状态修正到能继续启动下一轮；关键是“不丢事件、不错过下一轮”，不是精确记录该输入最终由哪一段逻辑消费。
+- active turn 下的 async input 不能一律直写 `turn_state.pending_input`：只有 `TurnState::accepts_mailbox_delivery_for_current_turn()` 为真时，mailbox 输入才允许并入当前 turn；`MailboxDeliveryPhase::NextTurn` 下的 late mailbox mail 必须继续留在 mailbox，以保持“答案边界后不再扩展当前 turn”和 mailbox preempt 语义。
+- `on_task_finished()` 收尾时要区分两类“后续还有事可做”的来源：线程级 pending work 与 leftover `pending_input`。只有 leftover 输入经 `inspect_pending_input(...)` 判成 `Accepted` 时才允许直接拉起 follow-up turn；纯 `Blocked` leftover 不应启动空 turn，而应继续走 goal continuation / parent final-status 语义。
+- runtime 内部的 pending-input 入口可以返回“是否需要唤醒 idle turn”的布尔信号，但实际是否启动下一轮仍由调用方在锁外决定；不要在持有调度判定锁时直接起 turn。
 
 ## Compact Understanding
 - compact prompt 支持 workspace 级 `.codex/compact/COMPACT.md` 与 `CODEX_HOME/compact/COMPACT.md`。
 - 如果没有自定义 compact prompt，运行时仍会回退到内置 compact prompt。
 - root-worker prototype 当前对 compact history 采用按需加载，而不是默认常驻保存。
+- compact 的 replacement history 应尽量最小化：只保留 initial context 与最近真实 user messages，不再把 `.codex/memory/*.md` 正文复制成 `Memory checkpoint: ...` user messages 塞回 conversation history。
+- memory 文件在 compact 后仍通过 `instruction_files` / init context 注入后续模型上下文；`CompactedItem.replacement_history` / `ContextCompaction.replacementHistory` 负责的是最小模型可见 history 种子与 persisted/UI compact 事实，不承载整份 memory markdown 的重复副本。
 
 ## Validation Defaults
 - 默认只做最小必要验证，不默认运行全量 `cargo test`、广域 `just fix`、snapshot、schema 或 lockfile workflow。

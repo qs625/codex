@@ -101,7 +101,7 @@ async fn read_memory_bundle_truncates_oversized_memory_files() {
 }
 
 #[test]
-fn replacement_history_is_memory_backed_not_summary_only() {
+fn replacement_history_only_keeps_recent_real_user_messages() {
     let service = FsCompactService::new();
     let history = service.build_replacement_history(ReplacementHistoryInput {
         initial_context: Vec::new(),
@@ -127,7 +127,7 @@ fn replacement_history_is_memory_backed_not_summary_only() {
         recent_real_user_messages: vec!["最近一次真实用户消息".to_string()],
     });
 
-    assert_eq!(history.len(), 4);
+    assert_eq!(history.len(), 1);
     let texts = history
         .into_iter()
         .filter_map(|item| match item {
@@ -144,17 +144,53 @@ fn replacement_history_is_memory_backed_not_summary_only() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(
-        texts
-            .iter()
-            .any(|text| text.contains("Memory checkpoint: current work"))
+    assert_eq!(texts, vec!["最近一次真实用户消息".to_string()]);
+}
+
+#[test]
+fn replacement_history_preserves_initial_context_and_caps_recent_user_messages() {
+    let service = FsCompactService::new();
+    let history = service.build_replacement_history(ReplacementHistoryInput {
+        initial_context: vec![user_message("已有上下文")],
+        memory_bundle: CompactMemoryBundle {
+            snapshots: vec![compact_service_api::CompactMemorySnapshot {
+                role: CompactMemoryRole::CurrentWork,
+                label: "current work".to_string(),
+                content: "# Current Work\n- 不应再复制进 history".to_string(),
+            }],
+        },
+        recent_real_user_messages: vec![
+            "较早的真实用户消息".to_string(),
+            "倒数第二条真实用户消息".to_string(),
+            "最近一条真实用户消息".to_string(),
+        ],
+    });
+
+    let texts = history
+        .into_iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => Some(
+                content
+                    .into_iter()
+                    .filter_map(|content_item| match content_item {
+                        ContentItem::InputText { text } => Some(text),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        texts,
+        vec![
+            "已有上下文".to_string(),
+            "倒数第二条真实用户消息".to_string(),
+            "最近一条真实用户消息".to_string(),
+        ]
     );
-    assert!(
-        texts
-            .iter()
-            .any(|text| text.contains("Memory checkpoint: project understanding"))
-    );
-    assert!(texts.iter().any(|text| text == "最近一次真实用户消息"));
 }
 
 #[test]
