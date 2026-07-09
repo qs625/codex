@@ -188,6 +188,205 @@ use super::*;
     }
 
     #[tokio::test]
+    async fn builtin_poll_event_emits_started_and_completed_thread_items() -> Result<()> {
+        let codex_home = TempDir::new()?;
+        let config = load_default_config_for_test(&codex_home).await;
+        let thread_service = Arc::new(
+            thread_service::test_support::thread_service_with_models_provider_and_home(
+                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.codex_home.to_path_buf(),
+                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            ),
+        );
+        let thread_service::NewThread {
+            thread_id: conversation_id,
+            thread: conversation,
+            ..
+        } = thread_service.start_thread(config).await?;
+        let thread_state = new_thread_state();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = test_outgoing(tx);
+
+        let started = protocol::protocol::BuiltinToolCallDisplayEvent {
+            thread_id: conversation_id,
+            turn_id: "turn-1".to_string(),
+            id: "builtin-poll-1".to_string(),
+            tool: "poll_event".to_string(),
+            arguments: json!({}),
+            status: protocol::protocol::BuiltinToolCallStatus::InProgress,
+            output: None,
+            lifecycle_at_ms: 1234,
+        };
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::BuiltinToolCallStarted(started.clone()),
+            },
+            conversation_id,
+            conversation.clone(),
+            thread_service.clone(),
+            outgoing.clone(),
+            thread_state.clone(),
+            thread_watch_manager.clone(),
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let msg = recv_broadcast_message(&mut rx).await?;
+        match msg {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+                assert_eq!(payload.thread_id, conversation_id.to_string());
+                assert_eq!(payload.turn_id, "turn-1");
+                assert_eq!(payload.started_at_ms, started.lifecycle_at_ms);
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::BuiltinToolCall {
+                        id: "builtin-poll-1".to_string(),
+                        tool: "poll_event".to_string(),
+                        arguments: json!({}),
+                        status: app_server_protocol::DynamicToolCallStatus::InProgress,
+                        output: None,
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        let completed = protocol::protocol::BuiltinToolCallDisplayEvent {
+            thread_id: conversation_id,
+            turn_id: "turn-1".to_string(),
+            id: "builtin-poll-1".to_string(),
+            tool: "poll_event".to_string(),
+            arguments: json!({}),
+            status: protocol::protocol::BuiltinToolCallStatus::Completed,
+            output: Some(json!({
+                "timedOut": false,
+                "sourceHint": "user_input",
+                "waitedMs": 14,
+                "initialTimeoutMs": 50,
+                "currentTimeoutMs": 50,
+                "hardCapTimeoutMs": 1000,
+            })),
+            lifecycle_at_ms: 1248,
+        };
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::BuiltinToolCallCompleted(completed.clone()),
+            },
+            conversation_id,
+            conversation,
+            thread_service,
+            outgoing,
+            thread_state,
+            thread_watch_manager,
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let msg = recv_broadcast_message(&mut rx).await?;
+        match msg {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(payload.thread_id, conversation_id.to_string());
+                assert_eq!(payload.turn_id, "turn-1");
+                assert_eq!(payload.completed_at_ms, completed.lifecycle_at_ms);
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::BuiltinToolCall {
+                        id: "builtin-poll-1".to_string(),
+                        tool: "poll_event".to_string(),
+                        arguments: json!({}),
+                        status: app_server_protocol::DynamicToolCallStatus::Completed,
+                        output: completed.output,
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        assert!(rx.try_recv().is_err(), "no extra messages expected");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn builtin_poll_event_failure_emits_completed_failed_thread_item() -> Result<()> {
+        let codex_home = TempDir::new()?;
+        let config = load_default_config_for_test(&codex_home).await;
+        let thread_service = Arc::new(
+            thread_service::test_support::thread_service_with_models_provider_and_home(
+                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.codex_home.to_path_buf(),
+                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            ),
+        );
+        let thread_service::NewThread {
+            thread_id: conversation_id,
+            thread: conversation,
+            ..
+        } = thread_service.start_thread(config).await?;
+        let thread_state = new_thread_state();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = test_outgoing(tx);
+
+        let failed = protocol::protocol::BuiltinToolCallDisplayEvent {
+            thread_id: conversation_id,
+            turn_id: "turn-1".to_string(),
+            id: "builtin-poll-failed".to_string(),
+            tool: "poll_event".to_string(),
+            arguments: json!({}),
+            status: protocol::protocol::BuiltinToolCallStatus::Failed,
+            output: Some(json!({
+                "error": "thread wait backend unavailable",
+            })),
+            lifecycle_at_ms: 1300,
+        };
+        apply_bespoke_event_handling(
+            Event {
+                id: "turn-1".to_string(),
+                msg: EventMsg::BuiltinToolCallCompleted(failed.clone()),
+            },
+            conversation_id,
+            conversation,
+            thread_service,
+            outgoing,
+            thread_state,
+            thread_watch_manager,
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let msg = recv_broadcast_message(&mut rx).await?;
+        match msg {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemCompleted(payload)) => {
+                assert_eq!(payload.thread_id, conversation_id.to_string());
+                assert_eq!(payload.turn_id, "turn-1");
+                assert_eq!(payload.completed_at_ms, failed.lifecycle_at_ms);
+                assert_eq!(
+                    payload.item,
+                    ThreadItem::BuiltinToolCall {
+                        id: "builtin-poll-failed".to_string(),
+                        tool: "poll_event".to_string(),
+                        arguments: json!({}),
+                        status: app_server_protocol::DynamicToolCallStatus::Failed,
+                        output: failed.output,
+                    }
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        assert!(rx.try_recv().is_err(), "no extra messages expected");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn thread_skills_updated_emits_thread_scoped_notification() -> Result<()> {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;
