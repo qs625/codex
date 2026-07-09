@@ -813,6 +813,137 @@ async fn task_finish_restarts_turn_for_leftover_pending_user_input() {
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compact_task_continues_pending_input_with_regularized_metadata() {
+    #[derive(Clone)]
+    struct CompactContinuationProbeTask {
+        started_tx: Arc<tokio::sync::Mutex<Option<oneshot::Sender<()>>>>,
+        continue_rx: Arc<tokio::sync::Mutex<Option<oneshot::Receiver<()>>>>,
+        observed_regular_phase: Arc<tokio::sync::Mutex<bool>>,
+        drained_inputs: Arc<tokio::sync::Mutex<Vec<PendingInputItem>>>,
+    }
+
+    impl SessionTask for CompactContinuationProbeTask {
+        fn kind(&self) -> TaskKind {
+            TaskKind::Compact
+        }
+
+        fn span_name(&self) -> &'static str {
+            "session_task.compact_probe"
+        }
+
+        async fn run(
+            self: Arc<Self>,
+            session: Arc<SessionTaskContext>,
+            ctx: Arc<TurnContext>,
+            _input: Vec<UserInput>,
+            cancellation_token: CancellationToken,
+        ) -> Option<String> {
+            if let Some(tx) = self.started_tx.lock().await.take() {
+                let _ = tx.send(());
+            }
+            if let Some(rx) = self.continue_rx.lock().await.take() {
+                let _ = rx.await;
+            }
+
+            let observed_regular_phase = Arc::clone(&self.observed_regular_phase);
+            let drained_inputs = Arc::clone(&self.drained_inputs);
+            crate::tasks::continue_compact_turn_after_success(
+                session,
+                ctx,
+                cancellation_token,
+                move |sess, ctx, _turn_extension_data, _cancellation_token| {
+                    let observed_regular_phase = Arc::clone(&observed_regular_phase);
+                    let drained_inputs = Arc::clone(&drained_inputs);
+                    async move {
+                        let active = sess.active_turn.lock().await;
+                        let active_turn = active
+                            .as_ref()
+                            .expect("active turn should exist during compact continuation");
+                        let (sub_id, task) =
+                            active_turn.tasks.first().expect("active task should exist");
+                        *observed_regular_phase.lock().await = *sub_id == ctx.sub_id
+                            && task.kind == TaskKind::Regular
+                            && task.records_turn_token_usage_on_span;
+                        drop(active);
+                        *drained_inputs.lock().await = sess.get_pending_input().await;
+                        Some("continued".to_string())
+                    }
+                },
+            )
+            .await
+        }
+    }
+
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    let (started_tx, started_rx) = oneshot::channel();
+    let (continue_tx, continue_rx) = oneshot::channel();
+    let observed_regular_phase = Arc::new(tokio::sync::Mutex::new(false));
+    let drained_inputs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        CompactContinuationProbeTask {
+            started_tx: Arc::new(tokio::sync::Mutex::new(Some(started_tx))),
+            continue_rx: Arc::new(tokio::sync::Mutex::new(Some(continue_rx))),
+            observed_regular_phase: Arc::clone(&observed_regular_phase),
+            drained_inputs: Arc::clone(&drained_inputs),
+        },
+    )
+    .await;
+
+    started_rx
+        .await
+        .expect("probe compact task should signal that it has started");
+
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "compact mailbox continuation".to_string(),
+        protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(false);
+    sess.enqueue_mailbox_communication(communication.clone()).await;
+
+    continue_tx
+        .send(())
+        .expect("probe compact task should still be waiting for continuation");
+
+    let completed = timeout(Duration::from_secs(5), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::TurnComplete(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("compact continuation probe should complete the same turn");
+
+    assert_eq!(completed.turn_id, tc.sub_id);
+    assert!(
+        *observed_regular_phase.lock().await,
+        "compact continuation should switch the active task metadata to regular before draining pending input"
+    );
+    assert_eq!(
+        *drained_inputs.lock().await,
+        vec![PendingInputItem::from(communication)],
+        "compact continuation should consume the pending mailbox input within the same turn"
+    );
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if sess.active_turn.lock().await.is_none() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("compact continuation probe should eventually clear the active turn");
+}
+
 #[tokio::test]
 async fn trigger_turn_mailbox_input_starts_idle_turn() {
     let (sess, _tc, _rx) = make_session_and_context_with_rx().await;

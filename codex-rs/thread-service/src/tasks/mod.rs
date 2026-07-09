@@ -53,6 +53,8 @@ pub(crate) use rollout_api::interrupted_turn_history_marker;
 
 use codex_features::Feature;
 pub(crate) use compact::CompactTask;
+#[cfg(test)]
+pub(crate) use compact::continue_compact_turn_after_success;
 pub(crate) use regular::RegularTask;
 pub(crate) use review::ReviewTask;
 pub(crate) use user_shell::UserShellCommandMode;
@@ -424,6 +426,7 @@ impl Session {
             done,
             handle: AbortOnDropHandle::new(handle),
             kind: task_kind,
+            records_turn_token_usage_on_span: task.records_turn_token_usage_on_span(),
             task,
             cancellation_token,
             turn_context: Arc::clone(&turn_context),

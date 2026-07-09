@@ -33,6 +33,7 @@ impl Default for ActiveTurn {
 pub(crate) struct RunningTask {
     pub(crate) done: Arc<Notify>,
     pub(crate) kind: TaskKind,
+    pub(crate) records_turn_token_usage_on_span: bool,
     pub(crate) task: Arc<dyn AnySessionTask>,
     pub(crate) cancellation_token: CancellationToken,
     pub(crate) handle: AbortOnDropHandle<()>,
@@ -83,6 +84,10 @@ impl ActiveTasks {
         self.tasks.get(sub_id)
     }
 
+    pub(crate) fn get_mut(&mut self, sub_id: &str) -> Option<&mut RunningTask> {
+        self.tasks.get_mut(sub_id)
+    }
+
     pub(crate) fn first(&self) -> Option<(&String, &RunningTask)> {
         let sub_id = self.order.first()?;
         let task = self.tasks.get(sub_id)?;
@@ -112,12 +117,25 @@ impl ActiveTurn {
 
     pub(crate) fn remove_task(&mut self, sub_id: &str) -> Option<RemovedTask> {
         let task = self.tasks.swap_remove(sub_id)?;
-        let records_turn_token_usage_on_span = task.task.records_turn_token_usage_on_span();
         task.handle.detach();
         Some(RemovedTask {
-            records_turn_token_usage_on_span,
+            records_turn_token_usage_on_span: task.records_turn_token_usage_on_span,
             active_turn_is_empty: self.tasks.is_empty(),
         })
+    }
+
+    pub(crate) fn update_task_metadata(
+        &mut self,
+        sub_id: &str,
+        kind: TaskKind,
+        records_turn_token_usage_on_span: bool,
+    ) -> bool {
+        let Some(task) = self.tasks.get_mut(sub_id) else {
+            return false;
+        };
+        task.kind = kind;
+        task.records_turn_token_usage_on_span = records_turn_token_usage_on_span;
+        true
     }
 
     pub(crate) fn drain_tasks(&mut self) -> Vec<RunningTask> {
