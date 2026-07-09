@@ -9,12 +9,16 @@ import type {
   RightPanelView,
   Thread,
   ThreadPlanUpdate,
+  ThreadStatus,
 } from "../types";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const { RightPanel } = await import("./RightPanel");
 
-function makeThread(items: Thread["turns"][number]["items"]): Thread {
+function makeThread(
+  items: Thread["turns"][number]["items"],
+  status: ThreadStatus = { type: "complete" },
+): Thread {
   return {
     id: "thread-1",
     sessionId: "session-1",
@@ -26,7 +30,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "complete" },
+    status,
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -163,26 +167,29 @@ test("renders thread goal details in thread analysis", () => {
 
 test("renders live commands and schedule subscriptions", () => {
   const markup = renderRightPanel(
-    makeThread([
-      {
-        type: "commandExecution",
-        id: "command-1",
-        command: "tail -f /tmp/out.log",
-        cwd: "/tmp",
-        status: "running",
-        aggregatedOutput: "changed:/tmp/out.log\n",
-        exitCode: null,
-        durationMs: null,
-      },
-      {
-        type: "eventDrivenToolCall",
-        id: "schedule-1",
-        tool: "schedule_subscribe",
-        arguments: { schedule: "once_after:60", label: "standup ping" },
-        status: "completed",
-        output: null,
-      },
-    ]),
+    makeThread(
+      [
+        {
+          type: "commandExecution",
+          id: "command-1",
+          command: "tail -f /tmp/out.log",
+          cwd: "/tmp",
+          status: "running",
+          aggregatedOutput: "changed:/tmp/out.log\n",
+          exitCode: null,
+          durationMs: null,
+        },
+        {
+          type: "eventDrivenToolCall",
+          id: "schedule-1",
+          tool: "schedule_subscribe",
+          arguments: { schedule: "once_after:60", label: "standup ping" },
+          status: "completed",
+          output: null,
+        },
+      ],
+      { type: "idle", reason: "waitCommand" },
+    ),
   );
 
   assert.match(markup, /tail -f \/tmp\/out\.log/);
