@@ -49,7 +49,11 @@ mod thread_processor_behavior_tests {
     use crate::outgoing_message::OutgoingEnvelope;
     use crate::outgoing_message::OutgoingMessage;
     use anyhow::Result;
+    use app_server_protocol::CommandAction;
+    use app_server_protocol::CommandExecutionSource;
+    use app_server_protocol::CommandExecutionStatus;
     use app_server_protocol::ServerRequestPayload;
+    use app_server_protocol::SessionSource as ApiSessionSource;
     use app_server_protocol::ThreadIdleReason;
     use app_server_protocol::ThreadItem;
     use app_server_protocol::ToolRequestUserInputParams;
@@ -347,6 +351,194 @@ mod thread_processor_behavior_tests {
         );
 
         assert_eq!(turns.last(), Some(&active_turn));
+    }
+
+    #[test]
+    fn thread_turns_list_uses_only_in_progress_live_turn_snapshots() {
+        let mut state = ThreadState::default();
+        state.track_current_turn_event(
+            "turn-1",
+            &EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
+                turn_id: "turn-1".to_string(),
+                started_at: Some(1),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+        );
+        state.track_current_turn_event(
+            "turn-1",
+            &EventMsg::ExecCommandBegin(protocol::protocol::ExecCommandBeginEvent {
+                call_id: "exec-1".to_string(),
+                started_at_ms: 1,
+                process_id: Some("pid-1".to_string()),
+                turn_id: "turn-1".to_string(),
+                command: vec!["rtk".to_string(), "cargo".to_string(), "test".to_string()],
+                cwd: test_path_buf("/tmp").abs(),
+                parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                    cmd: "rtk cargo test".to_string(),
+                }],
+                source: protocol::protocol::ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: None,
+                notify_on: None,
+            }),
+        );
+        state.track_current_turn_event(
+            "turn-1",
+            &EventMsg::TurnComplete(protocol::protocol::TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
+                last_agent_message: None,
+                completed_at: Some(2),
+                duration_ms: Some(1),
+                time_to_first_token_ms: None,
+            }),
+        );
+
+        assert_eq!(state.active_in_progress_turn_snapshot(), None);
+
+        let persisted_items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
+                turn_id: "turn-1".to_string(),
+                started_at: Some(1),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
+                protocol::protocol::ExecCommandEndEvent {
+                    call_id: "exec-1".to_string(),
+                    process_id: Some("pid-1".to_string()),
+                    turn_id: "turn-1".to_string(),
+                    completed_at_ms: 123,
+                    command: vec!["rtk".to_string(), "cargo".to_string(), "test".to_string()],
+                    cwd: test_path_buf("/tmp").abs(),
+                    parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                        cmd: "rtk cargo test".to_string(),
+                    }],
+                    source: protocol::protocol::ExecCommandSource::Agent,
+                    interaction_input: None,
+                    initial_wait_ms: None,
+                    notify_on: None,
+                    stdout: "ok\n".to_string(),
+                    stderr: String::new(),
+                    aggregated_output: "ok\n".to_string(),
+                    exit_code: 0,
+                    duration: std::time::Duration::from_millis(12),
+                    formatted_output: "ok\n".to_string(),
+                    status: protocol::protocol::ExecCommandStatus::Completed,
+                },
+            )),
+        ];
+
+        let turns = reconstruct_thread_turns_for_turns_list(
+            &persisted_items,
+            ThreadStatus::Complete,
+            /*has_live_running_thread*/ false,
+            state.active_in_progress_turn_snapshot(),
+        );
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CommandExecution {
+                id: "exec-1".to_string(),
+                command: "rtk cargo test".to_string(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: Some("pid-1".to_string()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::Completed,
+                initial_wait_ms: None,
+                notify_on: None,
+                command_actions: vec![CommandAction::Unknown {
+                    command: "rtk cargo test".to_string(),
+                }],
+                aggregated_output: Some("ok\n".to_string()),
+                exit_code: Some(0),
+                duration_ms: Some(12),
+            }]
+        );
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_keeps_persisted_completed_command_when_no_live_turn() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            status: ThreadStatus::Complete,
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            turns: Vec::new(),
+        };
+        let persisted_items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
+                turn_id: "turn-1".to_string(),
+                started_at: Some(1),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
+                protocol::protocol::ExecCommandEndEvent {
+                    call_id: "exec-1".to_string(),
+                    process_id: Some("pid-1".to_string()),
+                    turn_id: "turn-1".to_string(),
+                    completed_at_ms: 123,
+                    command: vec!["rtk".to_string(), "cargo".to_string(), "test".to_string()],
+                    cwd: test_path_buf("/tmp").abs(),
+                    parsed_cmd: vec![protocol::parse_command::ParsedCommand::Unknown {
+                        cmd: "rtk cargo test".to_string(),
+                    }],
+                    source: protocol::protocol::ExecCommandSource::Agent,
+                    interaction_input: None,
+                    initial_wait_ms: None,
+                    notify_on: None,
+                    stdout: "ok\n".to_string(),
+                    stderr: String::new(),
+                    aggregated_output: "ok\n".to_string(),
+                    exit_code: 0,
+                    duration: std::time::Duration::from_millis(12),
+                    formatted_output: "ok\n".to_string(),
+                    status: protocol::protocol::ExecCommandStatus::Completed,
+                },
+            )),
+        ];
+
+        populate_thread_turns_from_history(&mut thread, &persisted_items, None);
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(
+            thread.turns[0].items,
+            vec![ThreadItem::CommandExecution {
+                id: "exec-1".to_string(),
+                command: "rtk cargo test".to_string(),
+                cwd: test_path_buf("/tmp").abs(),
+                process_id: Some("pid-1".to_string()),
+                source: CommandExecutionSource::Agent,
+                status: CommandExecutionStatus::Completed,
+                initial_wait_ms: None,
+                notify_on: None,
+                command_actions: vec![CommandAction::Unknown {
+                    command: "rtk cargo test".to_string(),
+                }],
+                aggregated_output: Some("ok\n".to_string()),
+                exit_code: Some(0),
+                duration_ms: Some(12),
+            }]
+        );
     }
 
     #[test]

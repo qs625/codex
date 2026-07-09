@@ -403,7 +403,7 @@ impl ThreadRequestProcessor {
             // so merge that in-memory snapshot before paginating.
             let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
             let state = thread_state.lock().await;
-            state.active_turn_snapshot()
+            state.active_in_progress_turn_snapshot()
         } else {
             None
         };
