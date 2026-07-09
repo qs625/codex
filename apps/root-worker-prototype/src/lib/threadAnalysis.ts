@@ -100,6 +100,7 @@ function buildMonitorSections(
   const monitors: MonitorSummary[] = [];
   const eventsByTool = new Map<string, MonitorEvent[]>();
   const commandNotificationsByCommandId = new Map<string, string>();
+  const allowLiveCommandMonitors = threadAllowsLiveCommandMonitors(thread);
 
   if (thread) {
     for (const turn of thread.turns) {
@@ -127,6 +128,7 @@ function buildMonitorSections(
           const commandMonitor = buildCommandMonitorSummary(
             item,
             commandNotificationsByCommandId.get(item.id) ?? null,
+            allowLiveCommandMonitors,
           );
           if (commandMonitor) {
             monitors.push(commandMonitor);
@@ -244,9 +246,10 @@ function buildChangedFiles(thread: Thread | null): ChangedFileSummary[] {
 function buildCommandMonitorSummary(
   item: Extract<ThreadItem, { type: "commandExecution" }>,
   latestNotification: string | null,
+  allowLiveCommandMonitors: boolean,
 ): MonitorSummary | null {
   const status = statusLabel(item.status);
-  if (!isRunningCommandStatus(item.status)) {
+  if (!allowLiveCommandMonitors || !isRunningCommandStatus(item.status)) {
     return null;
   }
   const latestOutput = stringOrNull(item.aggregatedOutput)
@@ -268,6 +271,20 @@ function buildCommandMonitorSummary(
 function isRunningCommandStatus(status: string) {
   const normalized = status.trim().toLowerCase().replace(/[_-]/g, "");
   return normalized === "running" || normalized === "inprogress";
+}
+
+function threadAllowsLiveCommandMonitors(thread: Thread | null) {
+  if (!thread) {
+    return false;
+  }
+  if (thread.status.type === "active") {
+    return thread.status.activeFlags.includes("running");
+  }
+  return (
+    thread.status.type === "idle" &&
+    (thread.status.reason === "waitCommand" ||
+      thread.status.reason === "waitChild")
+  );
 }
 
 function summarizeCommandNotification(

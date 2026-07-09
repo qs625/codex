@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildThreadAnalysis } from "./threadAnalysis";
-import type { Thread } from "../types";
+import type { Thread, ThreadStatus } from "../types";
 
-function makeThread(items: Thread["turns"][number]["items"]): Thread {
+function makeThread(
+  items: Thread["turns"][number]["items"],
+  status: ThreadStatus = { type: "complete" },
+): Thread {
   return {
     id: "thread-1",
     sessionId: "session-1",
@@ -16,7 +19,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "complete" },
+    status,
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -138,18 +141,21 @@ test("ignores incomplete file change items", () => {
 
 test("keeps running command active and records latest output line", () => {
   const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "commandExecution",
-        id: "command-1",
-        command: "tail -f /tmp/build.log",
-        cwd: "/repo",
-        status: "running",
-        aggregatedOutput: "starting\nchanged:/tmp/build.log\n",
-        exitCode: null,
-        durationMs: null,
-      },
-    ]),
+    makeThread(
+      [
+        {
+          type: "commandExecution",
+          id: "command-1",
+          command: "tail -f /tmp/build.log",
+          cwd: "/repo",
+          status: "running",
+          aggregatedOutput: "starting\nchanged:/tmp/build.log\n",
+          exitCode: null,
+          durationMs: null,
+        },
+      ],
+      { type: "active", activeFlags: ["running"] },
+    ),
     0,
   );
 
@@ -171,34 +177,64 @@ test("keeps running command active and records latest output line", () => {
 
 test("keeps in-progress command statuses active", () => {
   const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "commandExecution",
-        id: "command-1",
-        command: "rtk cargo test",
-        cwd: "/repo",
-        status: "inProgress",
-        aggregatedOutput: null,
-        exitCode: null,
-        durationMs: null,
-      },
-      {
-        type: "commandExecution",
-        id: "command-2",
-        command: "rtk pnpm test",
-        cwd: "/repo",
-        status: "in_progress",
-        aggregatedOutput: null,
-        exitCode: null,
-        durationMs: null,
-      },
-    ]),
+    makeThread(
+      [
+        {
+          type: "commandExecution",
+          id: "command-1",
+          command: "rtk cargo test",
+          cwd: "/repo",
+          status: "inProgress",
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+        {
+          type: "commandExecution",
+          id: "command-2",
+          command: "rtk pnpm test",
+          cwd: "/repo",
+          status: "in_progress",
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      ],
+      { type: "idle", reason: "waitCommand" },
+    ),
     0,
   );
 
   assert.equal(analysis.monitors.totalCount, 2);
   assert.equal(analysis.monitors.sections[0]?.monitors[0]?.status, "Running");
   assert.equal(analysis.monitors.sections[0]?.monitors[1]?.status, "Running");
+});
+
+test("keeps live commands visible while thread waits on a child", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread(
+      [
+        {
+          type: "commandExecution",
+          id: "command-1",
+          command: "rtk tail -f /tmp/build.log",
+          cwd: "/repo",
+          status: "running",
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      ],
+      { type: "idle", reason: "waitChild" },
+    ),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 1);
+  assert.equal(
+    analysis.monitors.sections[0]?.monitors[0]?.label,
+    "rtk tail -f /tmp/build.log",
+  );
 });
 
 test("omits failed completed commands from live command index", () => {
@@ -224,28 +260,31 @@ test("omits failed completed commands from live command index", () => {
 
 test("uses command notification as latest live command event", () => {
   const analysis = buildThreadAnalysis(
-    makeThread([
-      {
-        type: "commandExecution",
-        id: "command-1",
-        command: "tail -f /tmp/build.log",
-        cwd: "/repo",
-        status: "running",
-        aggregatedOutput: "older output\n",
-        exitCode: null,
-        durationMs: null,
-      },
-      {
-        type: "commandExecutionNotification",
-        id: "command-1:notification:output:1",
-        commandItemId: "command-1",
-        kind: "output",
-        message: "Command output notification received.",
-        output: "fresh notification",
-        exitCode: null,
-        createdAtMs: 1,
-      },
-    ]),
+    makeThread(
+      [
+        {
+          type: "commandExecution",
+          id: "command-1",
+          command: "tail -f /tmp/build.log",
+          cwd: "/repo",
+          status: "running",
+          aggregatedOutput: "older output\n",
+          exitCode: null,
+          durationMs: null,
+        },
+        {
+          type: "commandExecutionNotification",
+          id: "command-1:notification:output:1",
+          commandItemId: "command-1",
+          kind: "output",
+          message: "Command output notification received.",
+          output: "fresh notification",
+          exitCode: null,
+          createdAtMs: 1,
+        },
+      ],
+      { type: "idle", reason: "waitCommand" },
+    ),
     0,
   );
 
@@ -253,6 +292,51 @@ test("uses command notification as latest live command event", () => {
     analysis.monitors.sections[0]?.monitors[0]?.latestEvent,
     "fresh notification",
   );
+});
+
+test("ignores stale running command residue after reload when thread is complete", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "commandExecution",
+        id: "command-1",
+        command: "rtk cargo test -p app-server",
+        cwd: "/repo",
+        status: "running",
+        aggregatedOutput: "Compiling app-server\n",
+        exitCode: null,
+        durationMs: null,
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+});
+
+test("ignores stale running command residue when thread is only waiting on approval", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread(
+      [
+        {
+          type: "commandExecution",
+          id: "command-1",
+          command: "rtk cargo test -p app-server",
+          cwd: "/repo",
+          status: "running",
+          aggregatedOutput: "Awaiting approval\n",
+          exitCode: null,
+          durationMs: null,
+        },
+      ],
+      { type: "active", activeFlags: ["waitingOnApproval"] },
+    ),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
 });
 
 test("omits successful completed commands from live command index", () => {
