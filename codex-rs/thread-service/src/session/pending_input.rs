@@ -135,6 +135,27 @@ impl Session {
             });
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "pending input routing and active turn checks must remain atomic"
+    )]
+    async fn route_thread_pending_input(&self, input: PendingInputItem) -> bool {
+        let should_start_turn = input.trigger_turn();
+        let mut active = self.active_turn.lock().await;
+        if let Some(active_turn) = active.as_mut() {
+            let mut turn_state = active_turn.turn_state.lock().await;
+            if turn_state.accepts_mailbox_delivery_for_current_turn() {
+                turn_state.push_pending_input(input);
+            } else {
+                self.mailbox.send(input);
+            }
+            return false;
+        }
+
+        self.mailbox.send(input);
+        should_start_turn
+    }
+
     pub(crate) async fn thread_wait_current_window(
         &self,
         initial_timeout_ms: i64,
@@ -165,16 +186,23 @@ impl Session {
         self.thread_wait_backoff.lock().await.reset_after_event();
     }
 
-    pub(crate) fn enqueue_mailbox_communication(&self, communication: InterAgentCommunication) {
+    pub(crate) async fn enqueue_mailbox_communication(
+        &self,
+        communication: InterAgentCommunication,
+    ) -> bool {
         let source = thread_wait_source_for_communication(&communication);
-        self.mailbox.send(PendingInputItem::from(communication));
+        let should_start_turn = self
+            .route_thread_pending_input(PendingInputItem::from(communication))
+            .await;
         self.note_thread_wait_event(source);
+        should_start_turn
     }
 
-    pub(crate) fn enqueue_async_input(&self, input: PendingInputItem) {
+    pub(crate) async fn enqueue_async_input(&self, input: PendingInputItem) -> bool {
         let source = thread_wait_source_for_pending_input_item(&input);
-        self.mailbox.send(input);
+        let should_start_turn = self.route_thread_pending_input(input).await;
         self.note_thread_wait_event(source);
+        should_start_turn
     }
 
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
@@ -183,6 +211,11 @@ impl Session {
 
     pub(crate) async fn has_pending_mailbox_items(&self) -> bool {
         self.mailbox_rx.lock().await.has_pending()
+    }
+
+    pub(crate) async fn has_thread_pending_work(&self) -> bool {
+        !self.idle_pending_input.lock().await.is_empty()
+            || self.mailbox_rx.lock().await.has_pending_trigger_turn()
     }
 
     #[expect(

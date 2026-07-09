@@ -367,10 +367,14 @@ impl CodexThread {
     /// can consume that pending input through the normal turn pipeline.
     pub async fn append_message(&self, message: ResponseItem) -> CodexResult<String> {
         let submission_id = uuid::Uuid::new_v4().to_string();
-        self.codex
+        let should_start_turn = self
+            .codex
             .session
-            .enqueue_async_input(PendingInputItem::from(message));
-        self.codex.session.maybe_start_turn_for_pending_work().await;
+            .enqueue_async_input(PendingInputItem::from(message))
+            .await;
+        if should_start_turn {
+            self.codex.session.maybe_start_turn_for_pending_work().await;
+        }
 
         Ok(submission_id)
     }

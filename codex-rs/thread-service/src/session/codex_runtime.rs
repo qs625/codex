@@ -608,9 +608,13 @@ impl thread_service_api::SessionCommandHandle for Codex {
     ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
         async move {
             let submission_id = uuid::Uuid::new_v4().to_string();
-            self.session
-                .enqueue_async_input(PendingInputItem::from(item));
-            self.session.maybe_start_turn_for_pending_work().await;
+            let should_start_turn = self
+                .session
+                .enqueue_async_input(PendingInputItem::from(item))
+                .await;
+            if should_start_turn {
+                self.session.maybe_start_turn_for_pending_work().await;
+            }
             Ok(submission_id)
         }
     }

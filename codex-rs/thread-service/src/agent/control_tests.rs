@@ -1516,7 +1516,8 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
     worker_thread
         .codex
         .session
-        .enqueue_mailbox_communication(queued_update);
+        .enqueue_mailbox_communication(queued_update)
+        .await;
     assert!(
         worker_thread
             .codex

@@ -770,8 +770,12 @@ impl ThreadSessionCapability for Session {
     ) -> SessionCapabilityFuture<'a, Result<String, String>> {
         Box::pin(async move {
             let submission_id = uuid::Uuid::new_v4().to_string();
-            self.enqueue_async_input(crate::PendingInputItem::from(item));
-            if let Some(session) = self.self_weak.get().and_then(|weak| weak.upgrade()) {
+            let should_start_turn = self
+                .enqueue_async_input(crate::PendingInputItem::from(item))
+                .await;
+            if should_start_turn
+                && let Some(session) = self.self_weak.get().and_then(|weak| weak.upgrade())
+            {
                 session.maybe_start_turn_for_pending_work().await;
             }
             Ok(submission_id)

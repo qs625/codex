@@ -110,6 +110,27 @@ fn bool_tag(value: bool) -> &'static str {
     if value { "true" } else { "false" }
 }
 
+enum FollowUpTurnStart {
+    PendingWork,
+    LeftoverPendingInput,
+}
+
+fn spawn_follow_up_turn_start(session: Arc<Session>, start: FollowUpTurnStart) {
+    let fut: BoxFuture<'static, ()> = Box::pin(async move {
+        match start {
+            FollowUpTurnStart::PendingWork => {
+                session.maybe_start_turn_for_pending_work().await;
+            }
+            FollowUpTurnStart::LeftoverPendingInput => {
+                session
+                    .start_regular_turn_if_idle_with_sub_id(uuid::Uuid::new_v4().to_string())
+                    .await;
+            }
+        }
+    });
+    tokio::spawn(fut);
+}
+
 /// Thin wrapper that exposes the parts of [`Session`] task runners need.
 #[derive(Clone)]
 pub(crate) struct SessionTaskContext {
@@ -424,6 +445,28 @@ impl Session {
             .await;
     }
 
+    fn start_regular_turn_if_idle_with_sub_id(self: &Arc<Self>, sub_id: String) -> BoxFuture<'static, bool> {
+        let session = Arc::clone(self);
+        Box::pin(async move {
+            {
+                let mut active_turn = session.active_turn.lock().await;
+                if active_turn.is_some() {
+                    return false;
+                }
+                *active_turn = Some(ActiveTurn::default());
+            }
+
+            let turn_context = session.new_default_turn_with_sub_id(sub_id).await;
+            session
+                .maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
+                .await;
+            session
+                .start_task(turn_context, Vec::new(), RegularTask::new())
+                .await;
+            true
+        })
+    }
+
     /// Starts a regular turn with the provided sub-id when pending work should wake an idle
     /// session.
     ///
@@ -433,15 +476,12 @@ impl Session {
         self: &Arc<Self>,
         sub_id: String,
     ) {
-        if !self.has_queued_response_items_for_next_turn().await
-            && !self.has_trigger_turn_mailbox_items().await
-        {
-            return;
-        }
-
         {
             let mut active_turn = self.active_turn.lock().await;
             if active_turn.is_some() {
+                return;
+            }
+            if !self.has_thread_pending_work().await {
                 return;
             }
             *active_turn = Some(ActiveTurn::default());
@@ -564,7 +604,6 @@ impl Session {
             .turn_metadata_state
             .cancel_git_enrichment_task();
 
-        let mut pending_input = Vec::<PendingInputItem>::new();
         let mut should_clear_active_turn = false;
         let mut token_usage_at_turn_start = None;
         let mut turn_had_memory_citation = false;
@@ -588,37 +627,10 @@ impl Session {
             }
         };
         if let Some(turn_state) = turn_state.as_ref() {
-            let mut ts = turn_state.lock().await;
-            pending_input = ts.take_pending_input();
+            let ts = turn_state.lock().await;
             turn_had_memory_citation = ts.has_memory_citation;
             turn_tool_calls = ts.tool_calls;
             token_usage_at_turn_start = Some(ts.token_usage_at_turn_start.clone());
-        }
-        if !pending_input.is_empty() {
-            for pending_input_item in pending_input {
-                match inspect_pending_input(
-                    self.as_ref(),
-                    turn_context.as_ref(),
-                    pending_input_item,
-                )
-                .await
-                {
-                    PendingInputHookDisposition::Accepted(pending_input) => {
-                        record_pending_input(self.as_ref(), turn_context.as_ref(), *pending_input)
-                            .await;
-                    }
-                    PendingInputHookDisposition::Blocked {
-                        additional_contexts,
-                    } => {
-                        record_additional_contexts(
-                            self.as_ref(),
-                            turn_context.as_ref(),
-                            additional_contexts,
-                        )
-                        .await;
-                    }
-                }
-            }
         }
         // Emit token usage metrics.
         if let Some(token_usage_at_turn_start) = token_usage_at_turn_start {
@@ -777,7 +789,11 @@ impl Session {
             .clear_turn(&turn_context.sub_id);
 
         if should_clear_active_turn {
-            let cleared_active_turn = {
+            let (
+                cleared_active_turn,
+                pending_input,
+                has_thread_pending_work,
+            ) = {
                 let mut active = self.active_turn.lock().await;
                 if let Some(active_turn) = active.as_ref()
                     && active_turn.tasks.is_empty()
@@ -785,13 +801,63 @@ impl Session {
                         .as_ref()
                         .is_some_and(|turn_state| Arc::ptr_eq(&active_turn.turn_state, turn_state))
                 {
+                    let mut pending_input = Vec::<PendingInputItem>::new();
+                    let mut has_thread_pending_work = false;
+                    if let Some(turn_state) = turn_state.as_ref() {
+                        let mut ts = turn_state.lock().await;
+                        pending_input = ts.take_pending_input();
+                        has_thread_pending_work = self.has_thread_pending_work().await;
+                    }
                     *active = None;
-                    true
+                    (true, pending_input, has_thread_pending_work)
                 } else {
-                    false
+                    (false, Vec::new(), false)
                 }
             };
             if !cleared_active_turn {
+                return;
+            }
+            let mut restart_for_leftover_pending_input = false;
+            if !pending_input.is_empty() {
+                for pending_input_item in pending_input {
+                    match inspect_pending_input(
+                        self.as_ref(),
+                        turn_context.as_ref(),
+                        pending_input_item,
+                    )
+                    .await
+                    {
+                        PendingInputHookDisposition::Accepted(pending_input) => {
+                            restart_for_leftover_pending_input = true;
+                            record_pending_input(
+                                self.as_ref(),
+                                turn_context.as_ref(),
+                                *pending_input,
+                            )
+                            .await;
+                        }
+                        PendingInputHookDisposition::Blocked {
+                            additional_contexts,
+                        } => {
+                            record_additional_contexts(
+                                self.as_ref(),
+                                turn_context.as_ref(),
+                                additional_contexts,
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+            if has_thread_pending_work {
+                spawn_follow_up_turn_start(Arc::clone(self), FollowUpTurnStart::PendingWork);
+                return;
+            }
+            if restart_for_leftover_pending_input {
+                spawn_follow_up_turn_start(
+                    Arc::clone(self),
+                    FollowUpTurnStart::LeftoverPendingInput,
+                );
                 return;
             }
             if let Err(err) = self

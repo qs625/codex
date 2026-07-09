@@ -207,9 +207,7 @@ pub async fn inter_agent_communication(
     sub_id: String,
     communication: InterAgentCommunication,
 ) {
-    let trigger_turn = communication.trigger_turn;
-    sess.enqueue_mailbox_communication(communication);
-    if trigger_turn {
+    if sess.enqueue_mailbox_communication(communication).await {
         sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
             .await;
     }

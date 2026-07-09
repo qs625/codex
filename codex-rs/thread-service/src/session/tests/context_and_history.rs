@@ -767,6 +767,85 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
 }
 
 #[tokio::test]
+async fn task_finish_restarts_turn_for_leftover_pending_user_input() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: false,
+        },
+    )
+    .await;
+
+    sess.inject_hook_inspectable_items(vec![ResponseInputItem::Message {
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "late pending input".to_string(),
+        }],
+        phase: None,
+    }])
+    .await
+    .expect("inject pending input into active turn");
+
+    sess.on_task_finished(Arc::clone(&tc), /*last_agent_message*/ None)
+        .await;
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if sess.active_turn_context_and_cancellation_token().await.is_some() {
+                break;
+            }
+            let event = rx.recv().await.expect("event");
+            if matches!(
+                event.msg,
+                EventMsg::TurnComplete(TurnCompleteEvent { turn_id, .. }) if turn_id != tc.sub_id
+            ) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("late pending input should restart a follow-up turn");
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn trigger_turn_mailbox_input_starts_idle_turn() {
+    let (sess, _tc, _rx) = make_session_and_context_with_rx().await;
+
+    crate::session::handlers::inter_agent_communication(
+        &sess,
+        "idle-trigger-turn".to_string(),
+        InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("worker path should parse"),
+            AgentPath::root(),
+            Vec::new(),
+            "wake idle turn".to_string(),
+            protocol::protocol::InterAgentOperation::Unknown,
+        )
+        .with_trigger_turn(true),
+    )
+    .await;
+
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if sess.active_turn_context_and_cancellation_token().await.is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("trigger-turn mailbox input should start an idle turn");
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
 async fn explicit_record_conversation_items_emits_event_driven_tool_display_event() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let trigger = EventDrivenToolTrigger {
@@ -1919,7 +1998,7 @@ async fn queue_only_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
     .await;
 
     sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone()).await;
 
     assert!(
         !sess.has_pending_input().await,
@@ -1952,7 +2031,8 @@ async fn typed_queue_only_inter_agent_message_does_not_trigger_idle_turn() {
             id: Some("typed-queue-only".to_string()),
             communication: communication.clone(),
         },
-    ));
+    ))
+    .await;
 
     assert!(
         !sess.has_trigger_turn_mailbox_items().await,
@@ -1976,7 +2056,7 @@ async fn pending_mailbox_input_can_be_peeked_without_consuming() {
     )
     .with_trigger_turn(false);
 
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone()).await;
 
     let found = sess
         .find_pending_input(|item| match item {
@@ -2141,7 +2221,7 @@ async fn turn_start_consumes_child_completion_before_parent_visible_complete() {
     .with_status(protocol::protocol::AgentStatus::Completed(Some(
         "done".to_string(),
     )));
-    sess.enqueue_mailbox_communication(communication);
+    sess.enqueue_mailbox_communication(communication).await;
     assert!(sess.has_pending_direct_child_completions().await);
 
     sess.spawn_task(
@@ -2196,8 +2276,8 @@ async fn clearing_stale_child_completion_preserves_non_completion_messages() {
     .with_trigger_turn(false)
     .with_thread_ids(child_thread_id, parent_thread_id);
 
-    sess.enqueue_mailbox_communication(stale_completion);
-    sess.enqueue_mailbox_communication(progress_update.clone());
+    sess.enqueue_mailbox_communication(stale_completion).await;
+    sess.enqueue_mailbox_communication(progress_update.clone()).await;
 
     let removed = sess
         .clear_child_completion_pending_input(child_thread_id)
@@ -2393,7 +2473,8 @@ async fn poll_event_returns_immediately_for_existing_pending_command_output() {
             exit_code: None,
             created_at_ms: 1234,
         },
-    ));
+    ))
+    .await;
 
     let result = sess
         .poll_event(thread_service_api::ThreadPollEventRequest {
@@ -2444,7 +2525,8 @@ async fn poll_event_wakes_for_child_completion() {
             protocol::protocol::InterAgentOperation::ChildCompletion,
         )
         .with_trigger_turn(false),
-    );
+    )
+    .await;
 
     let result = timeout(Duration::from_secs(2), waiter)
         .await
@@ -2492,7 +2574,8 @@ async fn poll_event_wakes_for_command_exit_notification() {
             exit_code: Some(0),
             created_at_ms: 1234,
         },
-    ));
+    ))
+    .await;
 
     let result = timeout(Duration::from_secs(2), waiter)
         .await
@@ -2533,7 +2616,8 @@ async fn poll_event_backoff_is_thread_scoped_and_resets_after_event() {
             text: "wake".to_string(),
         }],
         phase: None,
-    }));
+    }))
+    .await;
     let wake = sess
         .poll_event(request.clone())
         .await
@@ -2616,7 +2700,8 @@ async fn trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
         Vec::new(),
         "late trigger update".to_string(),
         protocol::protocol::InterAgentOperation::Unknown,
-    ));
+    ))
+    .await;
 
     assert!(
         !sess.has_pending_input().await,
@@ -2650,7 +2735,7 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
     .await;
 
     sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone()).await;
     sess.steer_input(
         vec![UserInput::Text {
             text: "follow up".to_string(),
@@ -2696,7 +2781,7 @@ async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
     .await;
 
     sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone()).await;
     sess.steer_input(
         vec![UserInput::Text {
             text: "follow up".to_string(),
@@ -2744,7 +2829,7 @@ async fn tool_calls_reopen_mailbox_delivery_for_current_turn() {
     .await;
 
     sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone()).await;
 
     let item = ResponseItem::FunctionCall {
         id: None,
