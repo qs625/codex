@@ -121,7 +121,6 @@ pub(super) async fn user_input_or_turn_inner(
     let items = submission.items;
     let updates = submission.updates;
     let responsesapi_client_metadata = submission.responsesapi_client_metadata;
-
     let Ok(current_context) = sess.new_turn_with_sub_id(sub_id.clone(), updates).await else {
         // new_turn_with_sub_id already emits the error event.
         return;
@@ -141,6 +140,14 @@ pub(super) async fn user_input_or_turn_inner(
             Some(items)
         }
         Err(SteerInputError::NoActiveTurn(items)) => {
+            if sess
+                .queue_user_input_for_next_turn_if_finishing(items.clone())
+                .await
+                .is_ok()
+            {
+                current_context.session_telemetry.user_prompt(&items);
+                return;
+            }
             if let Some(responsesapi_client_metadata) = responsesapi_client_metadata {
                 current_context
                     .turn_metadata_state
@@ -852,6 +859,7 @@ Approved action:
             items.into_iter().map(PendingInputItem::from).collect(),
         )
         .await;
+        sess.maybe_start_turn_for_pending_work().await;
     }
 }
 

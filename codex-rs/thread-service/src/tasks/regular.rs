@@ -16,11 +16,21 @@ use super::SessionTask;
 use super::SessionTaskContext;
 
 #[derive(Default)]
-pub(crate) struct RegularTask;
+pub(crate) struct RegularTask {
+    allow_empty_input_without_pending: bool,
+}
 
 impl RegularTask {
     pub(crate) fn new() -> Self {
-        Self
+        Self {
+            allow_empty_input_without_pending: false,
+        }
+    }
+
+    pub(crate) fn allow_empty_follow_up() -> Self {
+        Self {
+            allow_empty_input_without_pending: true,
+        }
     }
 }
 
@@ -57,6 +67,7 @@ impl SessionTask for RegularTask {
         });
         sess.send_event(ctx.as_ref(), event).await;
         sess.set_server_reasoning_included(/*included*/ false).await;
+        let allow_empty_input_without_pending = self.allow_empty_input_without_pending;
         let prewarmed_client_session = match sess
             .consume_startup_prewarm_for_regular_turn(&cancellation_token)
             .await
@@ -75,6 +86,7 @@ impl SessionTask for RegularTask {
                 Arc::clone(&ctx),
                 Arc::clone(&turn_extension_data),
                 next_input,
+                allow_empty_input_without_pending,
                 prewarmed_client_session.take(),
                 cancellation_token.child_token(),
             )

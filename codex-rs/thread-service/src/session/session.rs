@@ -76,6 +76,14 @@ pub(crate) struct ThreadWaitBackoffState {
     current_window: Option<Duration>,
 }
 
+#[cfg(test)]
+pub(crate) struct GoalContinuationBeforeLaunchHook {
+    pub(crate) started_tx:
+        Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    pub(crate) continue_rx:
+        Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
 const THREAD_WAIT_BACKOFF_MULTIPLIER: u32 = 2;
 
 impl ThreadWaitBackoffState {
@@ -125,7 +133,11 @@ pub struct Session {
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(super) mailbox: Mailbox,
     pub(super) mailbox_rx: Mutex<MailboxReceiver>,
-    pub(super) idle_pending_input: Mutex<Vec<crate::PendingInputItem>>,
+    pub(crate) idle_pending_input: Mutex<Vec<crate::PendingInputItem>>,
+    pub(crate) scheduler: Mutex<()>,
+    #[cfg(test)]
+    pub(crate) goal_continuation_before_launch_hook:
+        Mutex<Option<Arc<GoalContinuationBeforeLaunchHook>>>,
     pub(crate) goal_runtime: GoalRuntimeState,
     pub(crate) guardian_review_session: approval_review_session_impl::GuardianReviewSessionManager,
     pub(crate) services: SessionServices,

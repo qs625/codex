@@ -677,17 +677,63 @@ impl Session {
         };
 
         let turn_state = {
+            let _scheduler = self.scheduler.lock().await;
+            self.sync_mailbox_pending_buffer().await;
             let mut active_turn = self.active_turn.lock().await;
-            if active_turn.is_some() {
+            if active_turn.is_some() || self.has_thread_pending_work_locked().await {
                 return;
             }
             let active_turn = active_turn.get_or_insert_with(ActiveTurn::default);
             Arc::clone(&active_turn.turn_state)
         };
+        {
+            let mut turn_state = turn_state.lock().await;
+            turn_state.defer_async_input_to_next_turn();
+            for item in candidate.items {
+                turn_state.push_pending_input(PendingInputItem::from(item));
+            }
+        }
+        self.goal_continuation_before_launch_hook().await;
+        if !self
+            .goal_continuation_still_active_after_reservation(&candidate.goal_id, &turn_state)
+            .await
+        {
+            self.maybe_start_turn_for_pending_work().await;
+            return;
+        }
+
+        let turn_context = self
+            .new_default_turn_with_sub_id(uuid::Uuid::new_v4().to_string())
+            .await;
+        self.maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
+            .await;
+        let still_reserved = {
+            let active_turn = self.active_turn.lock().await;
+            active_turn.as_ref().is_some_and(|active_turn| {
+                active_turn.tasks.is_empty() && Arc::ptr_eq(&active_turn.turn_state, &turn_state)
+            })
+        };
+        if !still_reserved {
+            self.clear_reserved_goal_continuation_turn(&turn_state)
+                .await;
+            self.maybe_start_turn_for_pending_work().await;
+            return;
+        }
+        self.mark_thread_goal_continuation_turn_started(turn_context.sub_id.clone())
+            .await;
+        self.start_task_without_external_pending_input(turn_context, Vec::new(), RegularTask::new())
+            .await;
+    }
+
+    pub(crate) async fn goal_continuation_still_active_after_reservation(
+        &self,
+        goal_id: &str,
+        turn_state: &Arc<Mutex<TurnState>>,
+    ) -> bool {
         let goal_is_current = match self.state_db_for_thread_goals().await {
             Ok(Some(state_db)) => match state_db.get_thread_goal(self.conversation_id).await {
                 Ok(Some(goal))
-                    if goal.goal_id == candidate.goal_id
+                    if goal.goal_id == goal_id
                         && goal.status == state_api::ThreadGoalStatus::Active =>
                 {
                     true
@@ -713,38 +759,27 @@ impl Session {
             }
         };
         if !goal_is_current {
-            self.clear_reserved_goal_continuation_turn(&turn_state)
-                .await;
-            return;
+            self.clear_reserved_goal_continuation_turn(turn_state).await;
         }
-        {
-            let mut turn_state = turn_state.lock().await;
-            for item in candidate.items {
-                turn_state.push_pending_input(PendingInputItem::from(item));
-            }
-        }
-
-        let turn_context = self
-            .new_default_turn_with_sub_id(uuid::Uuid::new_v4().to_string())
-            .await;
-        self.maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
-            .await;
-        let still_reserved = {
-            let active_turn = self.active_turn.lock().await;
-            active_turn.as_ref().is_some_and(|active_turn| {
-                active_turn.tasks.is_empty() && Arc::ptr_eq(&active_turn.turn_state, &turn_state)
-            })
-        };
-        if !still_reserved {
-            self.clear_reserved_goal_continuation_turn(&turn_state)
-                .await;
-            return;
-        }
-        self.mark_thread_goal_continuation_turn_started(turn_context.sub_id.clone())
-            .await;
-        self.start_task(turn_context, Vec::new(), RegularTask::new())
-            .await;
+        goal_is_current
     }
+
+    #[cfg(test)]
+    async fn goal_continuation_before_launch_hook(&self) {
+        let hook = self.goal_continuation_before_launch_hook.lock().await.clone();
+        let Some(hook) = hook else {
+            return;
+        };
+        if let Some(tx) = hook.started_tx.lock().await.take() {
+            let _ = tx.send(());
+        }
+        if let Some(rx) = hook.continue_rx.lock().await.take() {
+            let _ = rx.await;
+        }
+    }
+
+    #[cfg(not(test))]
+    async fn goal_continuation_before_launch_hook(&self) {}
 
     async fn goal_continuation_candidate_if_active(
         self: &Arc<Self>,
@@ -796,7 +831,12 @@ impl Session {
     }
 
     pub(crate) async fn thread_post_turn_state(&self) -> ThreadPostTurnState {
-        if self.active_turn.lock().await.is_some() || self.has_pending_turn_input().await {
+        let has_pending_turn_input = {
+            let _scheduler = self.scheduler.lock().await;
+            self.sync_mailbox_pending_buffer().await;
+            self.active_turn.lock().await.is_some() || self.has_pending_turn_input_locked().await
+        };
+        if has_pending_turn_input {
             return select_thread_post_turn_state(ThreadPostTurnInputs {
                 has_pending_turn_input: true,
                 ..ThreadPostTurnInputs::default()

@@ -573,6 +573,9 @@ impl Session {
                 mailbox,
                 mailbox_rx: Mutex::new(mailbox_rx),
                 idle_pending_input: Mutex::new(Vec::new()),
+                scheduler: Mutex::new(()),
+                #[cfg(test)]
+                goal_continuation_before_launch_hook: Mutex::new(None),
                 goal_runtime: GoalRuntimeState::new(),
                 guardian_review_session: GuardianReviewSessionManager::default(),
                 services,
