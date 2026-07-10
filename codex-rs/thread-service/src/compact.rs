@@ -206,6 +206,16 @@ async fn run_compact_task_inner_impl(
     let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(
         thread_service_api::TurnDiffTracker::default(),
     ));
+    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
+        Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let compact_tool_inputs = Arc::new(crate::session::turn::TurnToolInputs {
+        session_capability: Arc::downgrade(&session_capability),
+        mcp_tools: Vec::new(),
+        deferred_mcp_tools: Vec::new(),
+        discoverable_tools: Vec::new(),
+        default_agent_type_description: String::new(),
+        expose_model_visible_tools: false,
+    });
     let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
     loop {
         let turn_input = sess
@@ -216,6 +226,7 @@ async fn run_compact_task_inner_impl(
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
         let attempt_result = crate::session::turn::run_sampling_request(
             crate::session::turn::SamplingRequest {
+                tool_inputs_override: Some(Arc::clone(&compact_tool_inputs)),
                 sess: Arc::clone(&sess),
                 turn_context: Arc::clone(&turn_context),
                 turn_store: Arc::clone(&turn_context.extension_data),
