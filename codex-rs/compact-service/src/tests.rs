@@ -125,26 +125,36 @@ fn replacement_history_only_keeps_recent_real_user_messages() {
             ],
         },
         recent_real_user_messages: vec!["最近一次真实用户消息".to_string()],
+        final_output: Some("compact 最后一条输出".to_string()),
     });
 
-    assert_eq!(history.len(), 1);
-    let texts = history
+    assert_eq!(history.len(), 2);
+    let message_texts = history
         .into_iter()
         .filter_map(|item| match item {
-            ResponseItem::Message { content, .. } => Some(
+            ResponseItem::Message { role, content, .. } => Some((
+                role,
                 content
                     .into_iter()
                     .filter_map(|content_item| match content_item {
-                        ContentItem::InputText { text } => Some(text),
+                        ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                            Some(text)
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n"),
-            ),
+            )),
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(texts, vec!["最近一次真实用户消息".to_string()]);
+    assert_eq!(
+        message_texts,
+        vec![
+            ("user".to_string(), "最近一次真实用户消息".to_string()),
+            ("assistant".to_string(), "compact 最后一条输出".to_string()),
+        ]
+    );
 }
 
 #[test]
@@ -164,31 +174,36 @@ fn replacement_history_preserves_initial_context_and_caps_recent_user_messages()
             "倒数第二条真实用户消息".to_string(),
             "最近一条真实用户消息".to_string(),
         ],
+        final_output: Some("compact 最后一条输出".to_string()),
     });
 
-    let texts = history
+    let message_texts = history
         .into_iter()
         .filter_map(|item| match item {
-            ResponseItem::Message { content, .. } => Some(
+            ResponseItem::Message { role, content, .. } => Some((
+                role,
                 content
                     .into_iter()
                     .filter_map(|content_item| match content_item {
-                        ContentItem::InputText { text } => Some(text),
+                        ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                            Some(text)
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n"),
-            ),
+            )),
             _ => None,
         })
         .collect::<Vec<_>>();
 
     assert_eq!(
-        texts,
+        message_texts,
         vec![
-            "已有上下文".to_string(),
-            "倒数第二条真实用户消息".to_string(),
-            "最近一条真实用户消息".to_string(),
+            ("user".to_string(), "已有上下文".to_string()),
+            ("user".to_string(), "倒数第二条真实用户消息".to_string()),
+            ("user".to_string(), "最近一条真实用户消息".to_string()),
+            ("assistant".to_string(), "compact 最后一条输出".to_string()),
         ]
     );
 }

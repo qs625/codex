@@ -43,6 +43,7 @@ use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
+const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -285,10 +286,13 @@ async fn run_compact_task_inner_impl(
         })?;
     let compact_window_summary =
         compact_service.summarize_compact_window(history_items, SUMMARY_PREFIX);
+    let compacted_message = compact_turn_final_output(history_items, turn_context.compact_prompt())
+        .unwrap_or_else(|| DEFAULT_COMPACTED_MESSAGE.to_string());
     let mut new_history = compact_service.build_replacement_history(ReplacementHistoryInput {
         initial_context: Vec::new(),
         memory_bundle: memory_bundle.clone(),
         recent_real_user_messages: compact_window_summary.recent_real_user_messages,
+        final_output: Some(compacted_message.clone()),
     });
 
     if matches!(
@@ -304,9 +308,6 @@ async fn run_compact_task_inner_impl(
         InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
     };
     let replacement_history = Some(new_history.clone());
-    let compacted_message = last_assistant_message_from_turn(history_items)
-        .filter(|message| !message.trim().is_empty())
-        .unwrap_or_else(|| "Memory-backed checkpoint recorded.".to_string());
     let compacted_item = CompactedItem {
         message: compacted_message.clone(),
         replacement_history: replacement_history.clone(),
@@ -345,6 +346,22 @@ async fn run_compact_task_inner_impl(
     });
     sess.send_event(&turn_context, warning).await;
     Ok(compacted_message)
+}
+
+fn compact_turn_final_output(history_items: &[ResponseItem], compact_prompt: &str) -> Option<String> {
+    let prompt_index = history_items.iter().rposition(|item| {
+        matches!(
+            item,
+            ResponseItem::Message { role, content, .. }
+                if role == "user"
+                    && content.iter().any(|content_item| matches!(
+                        content_item,
+                        protocol::models::ContentItem::InputText { text } if text == compact_prompt
+                    ))
+        )
+    })?;
+    let compact_turn_items = history_items.get(prompt_index + 1..)?;
+    last_assistant_message_from_turn(compact_turn_items)
 }
 
 pub(crate) struct CompactionAnalyticsAttempt {

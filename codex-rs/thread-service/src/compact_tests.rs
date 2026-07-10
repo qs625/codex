@@ -32,6 +32,17 @@ fn user_message(text: &str) -> ResponseItem {
     }
 }
 
+fn assistant_message(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+    }
+}
+
 #[tokio::test]
 async fn process_compacted_history_replaces_developer_messages() {
     let compacted_history = vec![
@@ -74,6 +85,34 @@ async fn process_compacted_history_replaces_developer_messages() {
         phase: None,
     });
     assert_eq!(refreshed, expected);
+}
+
+#[test]
+fn compact_final_output_comes_from_current_compact_turn_only() {
+    let prompt = "Summarize the conversation.";
+    let history = vec![
+        user_message("normal user message"),
+        assistant_message("previous assistant reply"),
+        user_message(prompt),
+        assistant_message("compact final output"),
+    ];
+
+    assert_eq!(
+        compact_turn_final_output(&history, prompt).as_deref(),
+        Some("compact final output")
+    );
+}
+
+#[test]
+fn compact_final_output_does_not_fall_back_to_previous_turn_assistant_message() {
+    let prompt = "Summarize the conversation.";
+    let history = vec![
+        user_message("normal user message"),
+        assistant_message("previous assistant reply"),
+        user_message(prompt),
+    ];
+
+    assert_eq!(compact_turn_final_output(&history, prompt), None);
 }
 
 #[tokio::test]
