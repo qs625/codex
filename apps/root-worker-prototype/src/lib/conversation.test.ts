@@ -5,10 +5,7 @@ import {
   buildConversationEntries,
   buildConversationState,
 } from "./conversation";
-import {
-  buildConversationCells,
-  extractCompactConversationDetails,
-} from "./conversationCompact";
+import { buildConversationCells } from "./conversationCompact";
 import { formatClockTime } from "./thread";
 import type { Thread } from "../types";
 
@@ -1272,37 +1269,7 @@ test("keeps ordinary child completion JSON in event-driven tools as event text",
   );
 });
 
-test("renders context compaction as a compact boundary entry", () => {
-  const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: null,
-      },
-    ]),
-  );
-
-  assert.equal(entries.length, 1);
-  assert.deepEqual(
-    {
-      id: entries[0]?.id,
-      kind: entries[0]?.kind,
-      text: entries[0]?.text,
-      replacementHistoryStatus: entries[0]?.replacementHistoryStatus,
-      replacementHistoryEntries: entries[0]?.replacementHistoryEntries,
-    },
-    {
-      id: "compact-1",
-      kind: "compact",
-      text: "Previous conversation was archived; compacted model context continues below.",
-      replacementHistoryStatus: "missing",
-      replacementHistoryEntries: null,
-    },
-  );
-});
-
-test("renders compact replacement history using readable entries", () => {
+test("does not render context compaction as a visible conversation entry", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -1311,438 +1278,19 @@ test("renders compact replacement history using readable entries", () => {
         replacementHistory: [
           {
             type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: "recent request" }],
-          },
-          {
-            type: "function_call",
-            namespace: "functions",
-            name: "exec_command",
-            arguments: '{"cmd":"pwd"}',
-            call_id: "call-1",
-          },
-          {
-            type: "new_special_item",
-            payload: { ok: true },
+            role: "assistant",
+            content: [{ type: "output_text", text: "compact final output" }],
           },
         ],
       },
     ]),
   );
 
-  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
-
-  assert.equal(entries[0]?.replacementHistoryStatus, "available");
-  assert.equal(entries[0]?.replacementHistoryCount, 3);
-  assert.deepEqual(
-    replacementEntries.map((entry) => ({
-      kind: entry.kind,
-      author: entry.author,
-      text: entry.text,
-      toolName: entry.toolName,
-      toolDetails: entry.toolDetails,
-    })),
-    [
-      {
-        kind: "message",
-        author: "You",
-        text: "recent request",
-        toolName: undefined,
-        toolDetails: undefined,
-      },
-      {
-        kind: "tool",
-        author: "root",
-        text: "Function call call-1",
-        toolName: "functions/exec_command",
-        toolDetails:
-          'Type\nfunction_call\n\nCall ID\ncall-1\n\nName\nexec_command\n\nNamespace\nfunctions\n\nArguments\n{\n  "cmd": "pwd"\n}',
-      },
-      {
-        kind: "tool",
-        author: "root",
-        text: "Unsupported replacement history item. Raw data is preserved below.",
-        toolName: "unsupported new special item",
-        toolDetails:
-          'Raw item\n{\n  "type": "new_special_item",\n  "payload": {\n    "ok": true\n  }\n}',
-      },
-    ],
-  );
+  assert.deepEqual(entries, []);
 });
 
-test("renders common replacement response item variants without dropping them", () => {
+test("hides compact turn entries while preserving later visible items", () => {
   const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: [
-          { type: "reasoning", summary: [{ text: "reasoned" }] },
-          {
-            type: "function_call_output",
-            call_id: "call-1",
-            output: "done",
-          },
-          {
-            type: "custom_tool_call",
-            call_id: "custom-1",
-            name: "patch",
-            input: "edit",
-          },
-          {
-            type: "custom_tool_call_output",
-            call_id: "custom-1",
-            name: "patch",
-            output: "edited",
-          },
-          {
-            type: "local_shell_call",
-            call_id: "shell-1",
-            status: "completed",
-            action: { type: "exec", command: "pwd" },
-          },
-          {
-            type: "tool_search_call",
-            call_id: "search-1",
-            execution: "search",
-            arguments: { q: "docs" },
-          },
-          {
-            type: "tool_search_output",
-            call_id: "search-1",
-            status: "completed",
-            execution: "search",
-            tools: [],
-          },
-          {
-            type: "web_search_call",
-            action: { type: "search", query: "weather" },
-          },
-          {
-            type: "image_generation_call",
-            id: "image-1",
-            status: "completed",
-            result: "image",
-          },
-          {
-            type: "compaction",
-            encrypted_content: "encrypted",
-          },
-          {
-            type: "context_compaction",
-          },
-        ],
-      },
-    ]),
-  );
-
-  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
-
-  assert.deepEqual(
-    replacementEntries.map((entry) => ({
-      kind: entry.kind,
-      text: entry.text,
-      toolName: entry.toolName,
-      isReplacementHistory: entry.isReplacementHistory,
-    })),
-    [
-      {
-        kind: "event",
-        text: "reasoned",
-        toolName: undefined,
-        isReplacementHistory: true,
-      },
-      {
-        kind: "tool",
-        text: "Function output call-1",
-        toolName: "function output",
-        isReplacementHistory: true,
-      },
-      {
-        kind: "tool",
-        text: "Custom tool call custom-1",
-        toolName: "patch",
-        isReplacementHistory: true,
-      },
-      {
-        kind: "tool",
-        text: "Custom tool output custom-1",
-        toolName: "patch",
-        isReplacementHistory: true,
-      },
-      {
-        kind: "tool",
-        text: "Local shell call shell-1",
-        toolName: "local shell",
-        isReplacementHistory: true,
-      },
-      {
-        kind: "tool",
-        text: "Replacement history 6: tool search call",
-        toolName: "tool search call",
-        isReplacementHistory: true,
-      },
-      {
-        kind: "tool",
-        text: "Replacement history 7: tool search output",
-        toolName: "tool search output",
-        isReplacementHistory: true,
-      },
-      {
-        kind: "tool",
-        text: "Web search for weather",
-        toolName: "web search call",
-        isReplacementHistory: true,
-      },
-      {
-        kind: "tool",
-        text: "Replacement history 9: image generation call",
-        toolName: "image generation call",
-        isReplacementHistory: true,
-      },
-      {
-        kind: "event",
-        text: "Compaction summary item included in compacted model context.",
-        toolName: undefined,
-        isReplacementHistory: true,
-      },
-      {
-        kind: "compact",
-        text: "Nested context compaction item included in compacted model context.",
-        toolName: undefined,
-        isReplacementHistory: true,
-      },
-    ],
-  );
-});
-
-test("hides structured wait function output when typed command wait is present", () => {
-  const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: [
-          {
-            type: "function_call",
-            name: "command_wait",
-            arguments: '{"command_id":58732}',
-            call_id: "wait-call-1",
-          },
-          {
-            type: "function_call_output",
-            call_id: "wait-call-1",
-            output:
-              '{"command_id":58732,"status":"completed","notification":"exit","exit_code":0,"wall_time_seconds":277.557113958}',
-          },
-          {
-            type: "command_wait",
-            command_id: "58732",
-            status: "completed",
-            notification: "exit",
-            exit_code: 0,
-            wall_time_seconds: 119.6,
-            wait_timeout_ms: 59_999,
-            created_at_ms: 1234,
-          },
-        ],
-      },
-    ]),
-  );
-
-  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
-
-  assert.deepEqual(
-    replacementEntries.map((entry) => ({
-      text: entry.text,
-      toolName: entry.toolName,
-      toolDetails: entry.toolDetails,
-    })),
-    [
-      {
-        text: "Command wait completed",
-        toolName: "command wait",
-        toolDetails:
-          "Type\ncommand_wait\n\nCommand ID\n58732\n\nStatus\ncompleted\n\nNotification\nexit\n\nExit code\n0\n\nWall time\n2m\n\nWait timeout\n1m",
-      },
-    ],
-  );
-});
-
-test("keeps unmatched structured wait start visible when another wait has typed display", () => {
-  const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: [
-          {
-            type: "function_call",
-            name: "command_wait",
-            arguments: '{"command_id":111}',
-            call_id: "wait-call-1",
-          },
-          {
-            type: "function_call_output",
-            call_id: "wait-call-1",
-            output: '{"command_id":111,"status":"running"}',
-          },
-          {
-            type: "function_call",
-            name: "command_wait",
-            arguments: '{"command_id":222}',
-            call_id: "wait-call-2",
-          },
-          {
-            type: "function_call_output",
-            call_id: "wait-call-2",
-            output: '{"command_id":222,"status":"completed"}',
-          },
-          {
-            type: "command_wait",
-            command_id: "111",
-            status: "running",
-            notification: null,
-            exit_code: null,
-            wall_time_seconds: 0.25,
-            wait_timeout_ms: 250,
-            created_at_ms: 1234,
-          },
-        ],
-      },
-    ]),
-  );
-
-  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
-
-  assert.deepEqual(
-    replacementEntries.map((entry) => ({
-      text: entry.text,
-      toolName: entry.toolName,
-    })),
-    [
-      {
-        text: "command wait 222",
-        toolName: "command wait",
-      },
-      {
-        text: "Command wait running",
-        toolName: "command wait",
-      },
-    ],
-  );
-});
-
-test("renders wait agent replacement fallback without raw output json", () => {
-  const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: [
-          {
-            type: "function_call",
-            name: "wait_agent",
-            arguments: '{"target":"worker"}',
-            call_id: "wait-agent-call-1",
-          },
-          {
-            type: "function_call_output",
-            call_id: "wait-agent-call-1",
-            output:
-              '{"target":"worker","agent_name":"/root/worker","reason":"timeout","timed_out":true}',
-          },
-        ],
-      },
-    ]),
-  );
-
-  const replacementEntries = entries[0]?.replacementHistoryEntries ?? [];
-
-  assert.deepEqual(
-    replacementEntries.map((entry) => ({
-      text: entry.text,
-      toolName: entry.toolName,
-      toolDetails: entry.toolDetails,
-    })),
-    [
-      {
-        text: "wait agent worker",
-        toolName: "wait agent",
-        toolDetails:
-          "Tool\nwait_agent\n\nTarget\nworker\n\nCall ID\nwait-agent-call-1",
-      },
-    ],
-  );
-});
-
-test("keeps compact rows collapsed by default even when replacement history exists", () => {
-  const state = buildConversationState(
-    makeThreadWithTurns([
-      {
-        id: "turn-1",
-        items: [
-          {
-            type: "userMessage",
-            id: "old-user",
-            content: [{ type: "text", text: "old request" }],
-          },
-        ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 1,
-        completedAt: 1,
-        durationMs: 0,
-      },
-      {
-        id: "turn-2",
-        items: [
-          {
-            type: "contextCompaction",
-            id: "compact-1",
-            replacementHistoryStatus: "available",
-            replacementHistoryCount: 2,
-            replacementHistory: null,
-          },
-          {
-            type: "agentMessage",
-            id: "after-compact",
-            text: "continued",
-            phase: null,
-            memoryCitation: null,
-          },
-        ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 2,
-        completedAt: 2,
-        durationMs: 0,
-      },
-    ]),
-  );
-
-  assert.deepEqual(
-    state.cells.map((cell) => [cell.id, cell.kind, cell.entries[0]?.text]),
-    [
-      [
-        "compact-1",
-        "compact",
-        "Previous conversation was archived; compacted model context continues below.",
-      ],
-      ["after-compact", "message", "continued"],
-    ],
-  );
-  assert.deepEqual(
-    state.cells[0]?.entries[0]?.archivedCells?.map((cell) => cell.id),
-    ["old-user"],
-  );
-  assert.equal(state.cells[0]?.entries[0]?.replacementHistoryCells, null);
-});
-
-test("keeps compact turn actions visible while archiving earlier turns", () => {
-  const state = buildConversationState(
     makeThreadWithTurns([
       {
         id: "turn-1",
@@ -1771,22 +1319,22 @@ test("keeps compact turn actions visible while archiving earlier turns", () => {
             memoryCitation: null,
           },
           {
-            type: "dynamicToolCall",
-            id: "compact-tool",
-            namespace: "functions",
-            tool: "summarize_context",
-            arguments: { thread_id: "thread-1" },
-            status: "completed",
-            contentItems: [{ text: "ok" }],
-            success: true,
-            durationMs: 10,
-          },
-          {
             type: "contextCompaction",
             id: "compact-1",
-            replacementHistoryStatus: "available",
-            replacementHistoryCount: 1,
-            replacementHistory: null,
+            replacementHistory: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "compact final output" }],
+              },
+            ],
+          },
+          {
+            type: "agentMessage",
+            id: "after-compact",
+            text: "continued",
+            phase: null,
+            memoryCitation: null,
           },
         ],
         itemsView: "full",
@@ -1800,153 +1348,14 @@ test("keeps compact turn actions visible while archiving earlier turns", () => {
   );
 
   assert.deepEqual(
-    state.cells.map((cell) => [cell.id, cell.kind, cell.entries[0]?.text]),
+    entries.map((entry) => [entry.id, entry.kind, entry.text]),
     [
-      ["compact-summary", "message", "Summarizing previous context."],
-      ["compact-tool", "tool", "functions/summarize_context"],
-      [
-        "compact-1",
-        "compact",
-        "Previous conversation was archived; compacted model context continues below.",
-      ],
-    ],
-  );
-  assert.deepEqual(
-    state.cells[2]?.entries[0]?.archivedCells?.map((cell) => cell.id),
-    ["old-user"],
-  );
-});
-
-test("preserves compact replacement raw child completion when live status update exists", () => {
-  const childCompletionEnvelope = JSON.stringify({
-    author: "/root/worker",
-    recipient: "/root",
-    other_recipients: [],
-    content: "done",
-    operation: "childCompletion",
-    trigger_turn: true,
-    sender_thread_id: "thread-child",
-    recipient_thread_id: "thread-1",
-  });
-  const state = buildConversationState(
-    makeThread([
-      {
-        type: "userMessage",
-        id: "old-user",
-        content: [{ type: "text", text: "old request" }],
-      },
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: [
-          {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: childCompletionEnvelope }],
-          },
-        ],
-      },
-      {
-        type: "collabAgentStatusUpdate",
-        id: "live-completion",
-        senderThreadId: "thread-child",
-        senderPath: "/root/worker",
-        recipientThreadId: "thread-1",
-        recipientPath: "/root",
-        status: {
-          path: "/root/worker",
-          status: "completed",
-          message: "done",
-        },
-      },
-    ]),
-  );
-
-  const details = extractCompactConversationDetails(state.entries, "compact-1");
-  assert.equal(details?.archivedEntryCount, 0);
-  assert.deepEqual(
-    details?.replacementHistoryEntries
-      .filter((entry) => entry.kind === "message" && entry.role === "agent")
-      .map((entry) => entry.text),
-    [childCompletionEnvelope],
-  );
-  assert.deepEqual(
-    state.cells
-      .flatMap((cell) => cell.entries)
-      .filter(
-        (entry) =>
-          entry.toolCategory === "childCompletion" ||
-          entry.toolCategory === "subagentNotification",
-      )
-      .map((entry) => [entry.toolName, entry.text]),
-    [[
-      "/root/worker subagent completion",
-      "/root/worker • completed • done",
-    ]],
-  );
-});
-
-test("does not render compact replacement raw child completion before typed status", () => {
-  const childCompletionEnvelope = JSON.stringify({
-    author: "/root/worker",
-    recipient: "/root",
-    other_recipients: [],
-    content: "first done",
-    operation: "childCompletion",
-    trigger_turn: true,
-    sender_thread_id: "thread-child",
-    recipient_thread_id: "thread-1",
-  });
-  const state = buildConversationState(
-    makeThread([
-      {
-        type: "userMessage",
-        id: "old-user",
-        content: [{ type: "text", text: "old request" }],
-      },
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: [
-          {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: childCompletionEnvelope }],
-          },
-        ],
-      },
-      {
-        type: "collabAgentStatusUpdate",
-        id: "later-completion",
-        senderThreadId: "thread-child",
-        senderPath: "/root/worker",
-        recipientThreadId: "thread-1",
-        recipientPath: "/root",
-        status: {
-          path: "/root/worker",
-          status: "completed",
-          message: "second done",
-        },
-      },
-    ]),
-  );
-
-  assert.deepEqual(
-    state.cells
-      .flatMap((cell) => cell.entries)
-      .filter(
-        (entry) =>
-          entry.toolCategory === "childCompletion" ||
-          entry.toolCategory === "subagentNotification",
-      )
-      .map((entry) => [entry.toolName, entry.text]),
-    [
-      ["/root/worker subagent completion", "/root/worker • completed • second done"],
+      ["after-compact", "message", "continued"],
     ],
   );
 });
 
-test("extracts compact round details with earlier compact rounds grouped into archived history", () => {
+test("multiple compactions keep only entries after the latest hidden compact boundary", () => {
   const entries = buildConversationEntries(
     makeThreadWithTurns([
       {
@@ -1974,10 +1383,17 @@ test("extracts compact round details with earlier compact rounds grouped into ar
             replacementHistory: [
               {
                 type: "message",
-                role: "user",
-                content: [{ type: "input_text", text: "first replacement" }],
+                role: "assistant",
+                content: [{ type: "output_text", text: "first compact output" }],
               },
             ],
+          },
+          {
+            type: "agentMessage",
+            id: "after-first-compact",
+            text: "continued after first compact",
+            phase: null,
+            memoryCitation: null,
           },
         ],
         itemsView: "full",
@@ -1991,9 +1407,20 @@ test("extracts compact round details with earlier compact rounds grouped into ar
         id: "turn-3",
         items: [
           {
+            type: "contextCompaction",
+            id: "compact-2",
+            replacementHistory: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "second compact output" }],
+              },
+            ],
+          },
+          {
             type: "agentMessage",
-            id: "after-compact-1",
-            text: "between compacts",
+            id: "after-second-compact",
+            text: "continued after second compact",
             phase: null,
             memoryCitation: null,
           },
@@ -2005,185 +1432,18 @@ test("extracts compact round details with earlier compact rounds grouped into ar
         completedAt: 3,
         durationMs: 0,
       },
-      {
-        id: "turn-4",
-        items: [
-          {
-            type: "contextCompaction",
-            id: "compact-2",
-            replacementHistory: [
-              {
-                type: "message",
-                role: "user",
-                content: [{ type: "input_text", text: "second replacement" }],
-              },
-            ],
-          },
-        ],
-        itemsView: "full",
-        status: "completed",
-        error: null,
-        startedAt: 4,
-        completedAt: 4,
-        durationMs: 0,
-      },
-    ]),
-  );
-
-  const details = extractCompactConversationDetails(entries, "compact-2");
-
-  assert.deepEqual(
-    details?.replacementHistoryCells.map((cell) => ({
-      id: cell.id,
-      kind: cell.kind,
-      text: cell.entries[0]?.text,
-    })),
-    [
-      {
-        id: "compact-2:replacement:0",
-        kind: "message",
-        text: "second replacement",
-      },
-    ],
-  );
-  assert.equal(details?.archivedEntryCount, 3);
-  assert.deepEqual(
-    details?.archivedCells.map((cell) => [cell.id, cell.kind]),
-    [
-      ["compact-1", "compact"],
-      ["after-compact-1", "message"],
-    ],
-  );
-});
-
-test("hydrates a compact row from loaded details even when the stripped thread has no prior cells", () => {
-  const fullHistoryThread = makeThreadWithTurns([
-    {
-      id: "turn-1",
-      items: [
-        {
-          type: "userMessage",
-          id: "old-user",
-          content: [{ type: "text", text: "old request" }],
-        },
-      ],
-      itemsView: "full",
-      status: "completed",
-      error: null,
-      startedAt: 1,
-      completedAt: 1,
-      durationMs: 0,
-    },
-    {
-      id: "turn-2",
-      items: [
-        {
-          type: "contextCompaction",
-          id: "compact-1",
-          replacementHistory: [
-            {
-              type: "message",
-              role: "user",
-              content: [{ type: "input_text", text: "recent request" }],
-            },
-          ],
-        },
-        {
-          type: "agentMessage",
-          id: "after-compact",
-          text: "continued",
-          phase: null,
-          memoryCitation: null,
-        },
-      ],
-      itemsView: "full",
-      status: "completed",
-      error: null,
-      startedAt: 2,
-      completedAt: 2,
-      durationMs: 0,
-    },
-  ]);
-  const details = extractCompactConversationDetails(
-    buildConversationEntries(fullHistoryThread),
-    "compact-1",
-  );
-  assert.ok(details);
-
-  const strippedThread = makeThreadWithTurns([
-    {
-      id: "turn-2",
-      items: [
-        {
-          type: "contextCompaction",
-          id: "compact-1",
-          replacementHistory: null,
-          replacementHistoryStatus: "available",
-          replacementHistoryCount: 1,
-        },
-        {
-          type: "agentMessage",
-          id: "after-compact",
-          text: "continued",
-          phase: null,
-          memoryCitation: null,
-        },
-      ],
-      itemsView: "full",
-      status: "completed",
-      error: null,
-      startedAt: 2,
-      completedAt: 2,
-      durationMs: 0,
-    },
-  ]);
-
-  const state = buildConversationState(strippedThread, undefined, {
-    compactDetailsById: {
-      "compact-1": details,
-    },
-  });
-
-  assert.deepEqual(
-    state.cells.map((cell) => [cell.id, cell.kind]),
-    [
-      ["compact-1", "compact"],
-      ["after-compact", "message"],
-    ],
-  );
-  assert.equal(state.cells[0]?.entries[0]?.archivedEntryCount, 1);
-  assert.deepEqual(
-    state.cells[0]?.entries[0]?.archivedCells?.map((cell) => cell.id),
-    ["old-user"],
-  );
-  assert.deepEqual(
-    state.cells[0]?.entries[0]?.replacementHistoryCells?.map((cell) => cell.id),
-    ["compact-1:replacement:0"],
-  );
-});
-
-test("distinguishes empty compact replacement history from missing history", () => {
-  const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "contextCompaction",
-        id: "compact-1",
-        replacementHistory: [],
-      },
     ]),
   );
 
   assert.deepEqual(
-    {
-      status: entries[0]?.replacementHistoryStatus,
-      count: entries[0]?.replacementHistoryCount,
-      replacementEntries: entries[0]?.replacementHistoryEntries,
-    },
-    {
-      status: "empty",
-      count: 0,
-      replacementEntries: [],
-    },
+    entries.map((entry) => [entry.id, entry.kind, entry.text]),
+    [
+      [
+        "after-second-compact",
+        "message",
+        "continued after second compact",
+      ],
+    ],
   );
 });
 

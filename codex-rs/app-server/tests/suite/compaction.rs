@@ -93,7 +93,7 @@ async fn auto_compaction_local_emits_started_and_completed_items() -> Result<()>
     wait_for_compact_context_usage_updated(&mut mcp, &thread_id).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    assert_context_compaction_lifecycle(started, completed, &thread_id)?;
+    assert_context_compaction_lifecycle(started, completed, &thread_id, "LOCAL_SUMMARY")?;
 
     Ok(())
 }
@@ -149,7 +149,7 @@ async fn auto_compaction_with_chatgpt_auth_still_uses_local_compact() -> Result<
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    assert_context_compaction_lifecycle(started, completed, &thread_id)?;
+    assert_context_compaction_lifecycle(started, completed, &thread_id, "LOCAL_SUMMARY")?;
 
     let response_requests = responses_log.requests();
     assert_eq!(response_requests.len(), 4);
@@ -211,7 +211,12 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    assert_context_compaction_lifecycle(started, completed, &thread_id)?;
+    assert_context_compaction_lifecycle(
+        started,
+        completed,
+        &thread_id,
+        "MANUAL_COMPACT_SUMMARY",
+    )?;
 
     Ok(())
 }
@@ -366,6 +371,7 @@ fn assert_context_compaction_lifecycle(
     started: ItemStartedNotification,
     completed: ItemCompletedNotification,
     thread_id: &str,
+    expected_final_output: &str,
 ) -> Result<()> {
     let ThreadItem::ContextCompaction {
         id: started_id,
@@ -400,6 +406,10 @@ fn assert_context_compaction_lifecycle(
     assert!(
         !completed_replacement_history_json.contains("Memory checkpoint:"),
         "replacement history should no longer duplicate memory checkpoints: {completed_replacement_history_json}"
+    );
+    assert!(
+        completed_replacement_history_json.contains(expected_final_output),
+        "replacement history should include the compact final output `{expected_final_output}`: {completed_replacement_history_json}"
     );
 
     Ok(())

@@ -102,6 +102,9 @@ export function buildConversationState(
         entries: rebuiltEntries,
       });
       entries.push(...rebuiltEntries);
+      if (item.type === "contextCompaction") {
+        entries.length = 0;
+      }
       flatItemIndex += 1;
     }
   }
@@ -340,37 +343,7 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "contextCompaction") {
-    const replacementHistory = item.replacementHistory;
-    const replacementHistoryEntries = Array.isArray(replacementHistory)
-      ? buildReplacementHistoryEntries(replacementHistory, {
-          author,
-          timestamp,
-          parentId: item.id,
-        })
-      : null;
-    return [
-      {
-        id: item.id,
-        kind: "compact" as const,
-        author,
-        role: "system" as const,
-        text: "Previous conversation was archived; compacted model context continues below.",
-        timestamp,
-        attachments: [],
-        replacementHistoryEntries,
-        replacementHistoryCells: null,
-        replacementHistoryStatus:
-          item.replacementHistoryStatus ??
-          (Array.isArray(replacementHistory)
-            ? replacementHistory.length > 0
-              ? "available"
-              : "empty"
-            : "missing"),
-        replacementHistoryCount:
-          item.replacementHistoryCount ??
-          (Array.isArray(replacementHistory) ? replacementHistory.length : null),
-      },
-    ];
+    return [];
   }
 
   if (item.type === "plan") {

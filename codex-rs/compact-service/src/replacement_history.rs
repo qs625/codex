@@ -19,6 +19,15 @@ pub(super) fn build_replacement_history(input: ReplacementHistoryInput) -> Vec<R
         history.push(user_message(message.clone()));
     }
 
+    if let Some(final_output) = input
+        .final_output
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        history.push(assistant_message(final_output.to_string()));
+    }
+
     history
 }
 
@@ -27,6 +36,15 @@ fn user_message(text: String) -> ResponseItem {
         id: None,
         role: "user".to_string(),
         content: vec![ContentItem::InputText { text }],
+        phase: None,
+    }
+}
+
+fn assistant_message(text: String) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText { text }],
         phase: None,
     }
 }
