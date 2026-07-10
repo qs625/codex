@@ -3,9 +3,12 @@ use app_server::in_process;
 use app_server::in_process::InProcessStartArgs;
 use app_server_protocol::ClientInfo;
 use app_server_protocol::ClientRequest;
+use app_server_protocol::ItemCompletedNotification;
+use app_server_protocol::ItemStartedNotification;
 use app_server_protocol::InitializeCapabilities;
 use app_server_protocol::InitializeParams;
 use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCNotification;
 use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::SessionSource;
@@ -32,6 +35,7 @@ use app_server_protocol::ThreadTurnsItemsListParams;
 use app_server_protocol::ThreadTurnsListParams;
 use app_server_protocol::ThreadTurnsListResponse;
 use app_server_protocol::TurnItemsView;
+use app_server_protocol::TurnCompletedNotification;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
 use app_server_protocol::TurnStatus;
@@ -43,6 +47,7 @@ use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::rollout_path;
 use app_test_support::test_absolute_path;
 use app_test_support::to_response;
+use app_test_support::write_mock_responses_config_toml;
 use codex_arg0::Arg0DispatchPaths;
 use config_service::CloudRequirementsLoader;
 use config_service::LoaderOverrides;
@@ -68,6 +73,7 @@ use protocol::user_input::TextElement;
 use rollout::ARCHIVED_SESSIONS_SUBDIR;
 use serde_json::Value;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::Write;
 use std::path::Path;
@@ -1321,6 +1327,119 @@ async fn thread_read_include_turns_returns_initial_context_for_fresh_loaded_thre
 }
 
 #[tokio::test]
+async fn thread_read_after_auto_compaction_preserves_init_context_without_dup_live_assistant_items(
+) -> Result<()> {
+    let server = responses::start_mock_server().await;
+    let sse1 = responses::sse(vec![
+        responses::ev_assistant_message("m1", "FIRST_REPLY"),
+        responses::ev_completed_with_tokens("r1", /*total_tokens*/ 70_000),
+    ]);
+    let sse2 = responses::sse(vec![
+        responses::ev_assistant_message("m2", "SECOND_REPLY"),
+        responses::ev_completed_with_tokens("r2", /*total_tokens*/ 330_000),
+    ]);
+    let sse3 = responses::sse(vec![
+        responses::ev_assistant_message("m3", "LOCAL_SUMMARY"),
+        responses::ev_completed_with_tokens("r3", /*total_tokens*/ 200),
+    ]);
+    let sse4 = responses::sse(vec![
+        responses::ev_assistant_message("m4", "FINAL_REPLY"),
+        responses::ev_completed_with_tokens("r4", /*total_tokens*/ 120),
+    ]);
+    responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
+
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::default(),
+        /*auto_compact_token_limit*/ 1_000,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        "Summarize the conversation.",
+    )?;
+
+    let workspace = TempDir::new()?;
+    let project_config_dir = workspace.path().join(".codex");
+    std::fs::create_dir_all(&project_config_dir)?;
+    let instruction_dir = workspace.path().join("memory");
+    std::fs::create_dir_all(&instruction_dir)?;
+    std::fs::write(
+        instruction_dir.join("project-understanding.md"),
+        "# Project Understanding\nPersisted init context should survive compaction.",
+    )?;
+    std::fs::write(
+        instruction_dir.join("user-preferences.md"),
+        "# User Preferences\nNever duplicate live assistant output after restoring Init Context.",
+    )?;
+    std::fs::write(
+        project_config_dir.join("config.toml"),
+        r#"
+instruction_files = [
+  "memory/user-preferences.md",
+  "memory/project-understanding.md",
+]
+"#,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(workspace.path().display().to_string()),
+            environments: Some(Vec::new()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+
+    for message in ["first", "second", "third"] {
+        send_turn_and_wait_for_thread_read(&mut mcp, &thread.id, message).await?;
+    }
+    wait_for_context_compaction_started_for_thread_read(&mut mcp).await?;
+    wait_for_context_compaction_completed_for_thread_read(&mut mcp).await?;
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id,
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+
+    assert!(
+        thread
+            .turns
+            .iter()
+            .flat_map(|turn| turn.items.iter())
+            .any(|item| matches!(item, ThreadItem::InjectedContext { .. })),
+        "thread/read should preserve an injected init context item after compaction, got {:?}",
+        thread_visible_texts(&thread)
+    );
+
+    let final_reply_count = thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .filter(|item| matches!(item, ThreadItem::AgentMessage { text, .. } if text == "FINAL_REPLY"))
+        .count();
+    assert_eq!(final_reply_count, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_turns_list_returns_initial_context_for_fresh_loaded_thread() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
@@ -1772,4 +1891,126 @@ stream_max_retries = 0
 "#
         ),
     )
+}
+
+fn create_config_toml_without_approval_policy(
+    codex_home: &Path,
+    server_uri: &str,
+) -> std::io::Result<()> {
+    let config_toml = codex_home.join("config.toml");
+    std::fs::write(
+        config_toml,
+        format!(
+            r#"
+model = "mock-model"
+sandbox_mode = "read-only"
+
+model_provider = "mock_provider"
+
+[model_providers.mock_provider]
+name = "Mock provider for test"
+base_url = "{server_uri}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#
+        ),
+    )
+}
+
+async fn send_turn_and_wait_for_thread_read(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+    text: &str,
+) -> Result<String> {
+    let turn_request_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread_id.to_string(),
+            input: vec![UserInput::Text {
+                text: text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_request_id)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+    wait_for_turn_completed_for_thread_read(mcp, &turn.id).await?;
+    Ok(turn.id)
+}
+
+async fn wait_for_turn_completed_for_thread_read(mcp: &mut McpProcess, turn_id: &str) -> Result<()> {
+    loop {
+        let notification: JSONRPCNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("turn/completed"),
+        )
+        .await??;
+        let completed: TurnCompletedNotification =
+            serde_json::from_value(notification.params.expect("turn/completed params"))?;
+        if completed.turn.id == turn_id {
+            return Ok(());
+        }
+    }
+}
+
+async fn wait_for_context_compaction_started_for_thread_read(
+    mcp: &mut McpProcess,
+) -> Result<ItemStartedNotification> {
+    loop {
+        let notification: JSONRPCNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("item/started"),
+        )
+        .await??;
+        let started: ItemStartedNotification =
+            serde_json::from_value(notification.params.expect("item/started params"))?;
+        if let ThreadItem::ContextCompaction { .. } = started.item {
+            return Ok(started);
+        }
+    }
+}
+
+async fn wait_for_context_compaction_completed_for_thread_read(
+    mcp: &mut McpProcess,
+) -> Result<ItemCompletedNotification> {
+    loop {
+        let notification: JSONRPCNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("item/completed"),
+        )
+        .await??;
+        let completed: ItemCompletedNotification =
+            serde_json::from_value(notification.params.expect("item/completed params"))?;
+        if let ThreadItem::ContextCompaction { .. } = completed.item {
+            return Ok(completed);
+        }
+    }
+}
+
+fn thread_visible_texts(thread: &app_server_protocol::Thread) -> Vec<String> {
+    thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .flat_map(|item| match item {
+            ThreadItem::InjectedContext { sections, .. } => sections
+                .iter()
+                .map(|section| section.text.clone())
+                .collect::<Vec<_>>(),
+            ThreadItem::UserMessage { content, .. } => content
+                .iter()
+                .filter_map(|input| match input {
+                    UserInput::Text { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            ThreadItem::AgentMessage { text, .. } => vec![text.clone()],
+            _ => Vec::new(),
+        })
+        .collect()
 }

@@ -47,7 +47,8 @@ impl<'a> AgentsMdManager<'a> {
         &self,
         fs: &dyn ExecutorFileSystem,
     ) -> Option<String> {
-        let explicit_instruction_docs = self.read_instruction_files(fs).await;
+        let instruction_sources = self.visible_instruction_sources();
+        let explicit_instruction_docs = self.read_instruction_files(fs, &instruction_sources).await;
 
         let mut output = String::new();
 
@@ -85,14 +86,64 @@ impl<'a> AgentsMdManager<'a> {
     /// Returns all explicit instruction source files included in the current
     /// config.
     pub async fn instruction_sources(&self, _fs: &dyn ExecutorFileSystem) -> Vec<AbsolutePathBuf> {
-        self.config.instruction_files.clone()
+        self.visible_instruction_sources()
+    }
+
+    fn visible_instruction_sources(&self) -> Vec<AbsolutePathBuf> {
+        let mut sources = self.config.instruction_files.clone();
+        let mut seen = sources
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        for layer in self.config.config_layer_stack.get_layers(
+            config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ true,
+        ) {
+            let codex_config_types::ConfigLayerSource::Project { dot_codex_folder } = &layer.name
+            else {
+                continue;
+            };
+            if layer.disabled_reason.is_none() {
+                continue;
+            }
+
+            let Some(project_root) = dot_codex_folder.parent() else {
+                continue;
+            };
+            let Ok(project_root) = std::fs::canonicalize(project_root) else {
+                continue;
+            };
+
+            for path in disabled_layer_instruction_paths(&layer.config) {
+                // Disabled project layers still surface UI metadata, but they do
+                // not participate in effective config. Only recover repo-local
+                // instruction files here so initial context can show checked-in
+                // docs without allowing arbitrary out-of-repo file reads.
+                let disabled_path = resolve_project_relative_path(path.as_path(), project_root.as_path());
+                let Some(canonical_path) =
+                    canonical_repo_local_path(disabled_path.as_path(), project_root.as_path())
+                else {
+                    continue;
+                };
+                let Ok(canonical_path) = AbsolutePathBuf::try_from(canonical_path) else {
+                    continue;
+                };
+                if seen.insert(canonical_path.clone()) {
+                    sources.push(canonical_path);
+                }
+            }
+        }
+
+        sources
     }
 
     async fn read_instruction_files(
         &self,
         fs: &dyn ExecutorFileSystem,
+        instruction_files: &[AbsolutePathBuf],
     ) -> io::Result<Option<String>> {
-        if self.config.instruction_files.is_empty() {
+        if instruction_files.is_empty() {
             return Ok(None);
         }
 
@@ -104,7 +155,7 @@ impl<'a> AgentsMdManager<'a> {
         let mut remaining: u64 = max_total as u64;
         let mut parts = Vec::new();
 
-        for path in &self.config.instruction_files {
+        for path in instruction_files {
             if remaining == 0 {
                 break;
             }
@@ -147,6 +198,38 @@ impl<'a> AgentsMdManager<'a> {
             Ok(Some(parts.join("\n\n")))
         }
     }
+}
+
+fn canonical_repo_local_path(
+    path: &std::path::Path,
+    canonical_project_root: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let canonical_path = std::fs::canonicalize(path).ok()?;
+    canonical_path
+        .starts_with(canonical_project_root)
+        .then_some(canonical_path)
+}
+
+fn resolve_project_relative_path(
+    path: &std::path::Path,
+    project_root: &std::path::Path,
+) -> std::path::PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_root.join(path)
+    }
+}
+
+fn disabled_layer_instruction_paths(config: &toml::Value) -> Vec<std::path::PathBuf> {
+    config
+        .get("instruction_files")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .map(std::path::PathBuf::from)
+        .collect()
 }
 
 #[cfg(test)]

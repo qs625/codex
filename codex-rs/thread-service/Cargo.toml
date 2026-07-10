@@ -133,6 +133,7 @@ tokio = { workspace = true, features = [
 tokio-util = { workspace = true, features = ["rt"] }
 toml = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
+tempfile = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4", "v5"] }
 
 # Build OpenSSL from source for musl builds.

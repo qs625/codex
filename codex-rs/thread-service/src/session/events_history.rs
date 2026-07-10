@@ -1,6 +1,76 @@
 use super::*;
 
 impl Session {
+    fn init_context_workflow_registry(
+        &self,
+        turn_context: &TurnContext,
+    ) -> codex_workflow_api::WorkflowRegistry {
+        let trusted_discovery = codex_workflow_api::workflow_discovery_context_from_config_layers(
+            turn_context.config.codex_home.as_path(),
+            turn_context.cwd.as_path(),
+            turn_context
+                .config
+                .config_layer_stack
+                .get_layers(
+                    config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                    /*include_disabled*/ false,
+                )
+                .into_iter()
+                .cloned()
+                .collect(),
+        );
+        let mut registry = codex_workflow_api::load_workflow_registry_from_roots(
+            trusted_discovery.home_root.clone(),
+            trusted_discovery.project_roots.clone(),
+        );
+        let mut _temp_roots = Vec::new();
+        let mut disabled_project_roots = Vec::new();
+        for layer in turn_context.config.config_layer_stack.get_layers(
+            config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ true,
+        ) {
+            let codex_config_types::ConfigLayerSource::Project { dot_codex_folder } = &layer.name
+            else {
+                continue;
+            };
+            if layer.disabled_reason.is_none() {
+                continue;
+            }
+            let Some(project_root) = dot_codex_folder.parent() else {
+                continue;
+            };
+            let workflow_root = dot_codex_folder.join("workflows");
+            if let Some((temp_root, copied_root)) =
+                copy_safe_disabled_workflow_root_for_display(workflow_root.as_path(), &project_root)
+            {
+                _temp_roots.push(temp_root);
+                disabled_project_roots.push(copied_root);
+            }
+        }
+
+        if disabled_project_roots.is_empty() {
+            return registry;
+        }
+
+        let disabled_registry = codex_workflow_api::load_workflow_registry_from_roots(
+            trusted_discovery.home_root,
+            disabled_project_roots,
+        );
+        let trusted_ids = registry
+            .workflows
+            .iter()
+            .map(|workflow| workflow.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        registry.workflows.extend(
+            disabled_registry
+                .workflows
+                .into_iter()
+                .filter(|workflow| !trusted_ids.contains(&workflow.id)),
+        );
+        registry.diagnostics.extend(disabled_registry.diagnostics);
+        registry
+    }
+
     async fn current_agent_role_developer_instructions(
         &self,
         turn_context: &TurnContext,
@@ -1431,8 +1501,7 @@ impl Session {
                 developer_sections.push(skills_instructions.render());
             }
         }
-        let workflow_registry =
-            codex_workflow_api::load_workflow_registry(&turn_context.discovery_context().into());
+        let workflow_registry = self.init_context_workflow_registry(turn_context);
         if let Some(workflow_instructions) =
             AvailableWorkflowsInstructions::from_registry(&workflow_registry)
         {
@@ -1827,4 +1896,90 @@ impl Session {
         });
         self.send_event(turn_context, event).await;
     }
+}
+
+fn copy_safe_disabled_workflow_root_for_display(
+    workflow_root: &std::path::Path,
+    project_root: &std::path::Path,
+) -> Option<(tempfile::TempDir, std::path::PathBuf)> {
+    let canonical_project_root = std::fs::canonicalize(project_root).ok()?;
+    let workflow_root_meta = std::fs::symlink_metadata(workflow_root).ok()?;
+    if !workflow_root_meta.is_dir() || workflow_root_meta.file_type().is_symlink() {
+        return None;
+    }
+    canonical_path_within_root(workflow_root, &canonical_project_root)?;
+
+    let temp_root = tempfile::tempdir().ok()?;
+    let copied_root = temp_root.path().join("workflows");
+    std::fs::create_dir_all(&copied_root).ok()?;
+
+    for entry in std::fs::read_dir(workflow_root).ok()? {
+        let entry = entry.ok()?;
+        let source_path = entry.path();
+        let file_type = entry.file_type().ok()?;
+        if !file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+
+        if canonical_path_within_root(&source_path, &canonical_project_root).is_none() {
+            continue;
+        }
+
+        let destination = copied_root.join(entry.file_name());
+        if copy_directory_without_symlinks(&source_path, &destination, &canonical_project_root)
+            .is_err()
+        {
+            let _ = std::fs::remove_dir_all(&destination);
+        }
+    }
+
+    Some((temp_root, copied_root))
+}
+
+fn copy_directory_without_symlinks(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+    canonical_project_root: &std::path::Path,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = std::fs::symlink_metadata(&source_path)?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err(std::io::Error::other("symlink not allowed"));
+        }
+        if file_type.is_dir() {
+            if canonical_path_within_root(&source_path, canonical_project_root).is_none() {
+                return Err(std::io::Error::other("directory escapes project root"));
+            }
+            copy_directory_without_symlinks(
+                &source_path,
+                &destination_path,
+                canonical_project_root,
+            )?;
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+
+        if canonical_path_within_root(&source_path, canonical_project_root).is_none() {
+            return Err(std::io::Error::other("file escapes project root"));
+        }
+        std::fs::copy(&source_path, &destination_path)?;
+    }
+    Ok(())
+}
+
+fn canonical_path_within_root(
+    path: &std::path::Path,
+    canonical_project_root: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let canonical_path = std::fs::canonicalize(path).ok()?;
+    canonical_path
+        .starts_with(canonical_project_root)
+        .then_some(canonical_path)
 }
