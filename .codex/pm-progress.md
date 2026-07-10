@@ -45,13 +45,13 @@
   files: apps/root-worker-prototype/src/styles.css, apps/root-worker-prototype/src/lib/thread.ts, apps/root-worker-prototype/src/components/Panels.tsx, 相关 thread / panel 测试
   base_commit: daab7b0fa
   pending_sync_from_main:
-  status: in_progress
+  status: merged
   objective: 修复 conversation 顶部状态点与状态文案不一致：`waitChild` 已显示 `Waiting on Subagent`，但 `.status-dot` 缺少 `waiting-subagent` / `waiting-eventtool` 样式导致视觉仍是灰色 complete/inactive；应与 agent tree 的等待状态颜色一致
   last_update: 2026-07-10
-  next_action: owner_dev 实现并提交；PM 验收顶部 status dot 与 tree waiting 状态视觉一致
+  next_action: 已 merge 到主线；空闲 checkout 同步到最新基线
   blockers: 无
-  validation:
-  commit:
+  validation: owner 已跑 `rtk git diff --check`；`rtk pnpm --dir apps/root-worker-prototype build`
+  commit: 0ec9cdd5（dev）；06b377c35（main merge）
 - id: compact-replacement-history-final-output
   owner: /root/project_pm/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
