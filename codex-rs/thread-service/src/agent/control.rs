@@ -866,12 +866,22 @@ impl AgentControl {
         path_prefix: Option<&str>,
     ) -> CodexResult<Vec<ListedAgent>> {
         let state = self.upgrade()?;
-        let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
+        let current_agent_path = self
+            .current_agent_path_with_persisted_metadata(current_thread_id, current_session_source)
+            .await;
         let root_path = AgentPath::root();
         let root_thread_id = self
             .state
             .agent_id_for_path(&root_path)
-            .or_else(|| current_agent_path.is_root().then_some(current_thread_id));
+            .or_else(|| {
+                thread_spawn_parent_thread_id(current_session_source)
+                    .is_none()
+                    .then_some(current_thread_id)
+            });
+        let root_thread_id = match root_thread_id {
+            Some(root_thread_id) => Some(root_thread_id),
+            None => self.persisted_thread_spawn_root(current_thread_id).await,
+        };
         let registered_agents = self
             .registered_agents_with_persisted_descendants(root_thread_id)
             .await;
@@ -932,40 +942,93 @@ impl AgentControl {
             .iter()
             .filter_map(|metadata| metadata.agent_id)
             .collect::<std::collections::HashSet<_>>();
+        let mut known_agent_paths = registered_agents
+            .iter()
+            .filter_map(|metadata| metadata.agent_path.as_ref().map(ToString::to_string))
+            .collect::<std::collections::HashSet<_>>();
 
         for descendant_id in descendant_ids {
             if known_thread_ids.contains(&descendant_id) {
                 continue;
             }
-            let Ok(Some(metadata)) = state_db_ctx.get_thread(descendant_id).await else {
-                continue;
-            };
-            let Ok(agent_path) = metadata
-                .agent_path
-                .as_deref()
-                .map(|path| AgentPath::from_string(path.to_string()))
-                .transpose()
+            let Some(agent_metadata) = self
+                .persisted_agent_metadata(descendant_id, state_db_ctx.as_ref())
+                .await
             else {
                 continue;
             };
-            let Some(agent_path) = agent_path else {
+            if agent_metadata
+                .agent_path
+                .as_ref()
+                .is_some_and(AgentPath::is_root)
+            {
+                continue;
+            }
+            let Some(agent_path) = agent_metadata.agent_path.as_ref() else {
                 continue;
             };
-            if agent_path.is_root() {
+            if !known_agent_paths.insert(agent_path.to_string()) {
                 continue;
             }
 
-            registered_agents.push(AgentMetadata {
-                agent_id: Some(descendant_id),
-                agent_path: Some(agent_path),
-                agent_nickname: metadata.agent_nickname,
-                agent_role: metadata.agent_role,
-                ..Default::default()
-            });
+            registered_agents.push(agent_metadata);
             known_thread_ids.insert(descendant_id);
         }
 
         registered_agents
+    }
+
+    async fn persisted_agent_metadata(
+        &self,
+        thread_id: ThreadId,
+        state_db_ctx: &dyn state_api::ThreadStateRuntime,
+    ) -> Option<AgentMetadata> {
+        let metadata = state_db_ctx.get_thread(thread_id).await.ok().flatten()?;
+        let agent_path = metadata
+            .agent_path
+            .as_deref()
+            .map(|path| AgentPath::from_string(path.to_string()))
+            .transpose()
+            .ok()??;
+
+        Some(AgentMetadata {
+            agent_id: Some(thread_id),
+            agent_path: Some(agent_path),
+            agent_nickname: metadata.agent_nickname,
+            agent_role: metadata.agent_role,
+            ..Default::default()
+        })
+    }
+
+    async fn current_agent_path_with_persisted_metadata(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+    ) -> AgentPath {
+        let current_agent_path =
+            self.current_agent_path(current_thread_id, current_session_source);
+        if !current_agent_path.is_root()
+            || thread_spawn_parent_thread_id(current_session_source).is_none()
+        {
+            return current_agent_path;
+        }
+
+        let Ok(state) = self.upgrade() else {
+            return current_agent_path;
+        };
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return current_agent_path;
+        };
+        self.persisted_agent_metadata(current_thread_id, state_db_ctx.as_ref())
+            .await
+            .and_then(|metadata| metadata.agent_path)
+            .unwrap_or(current_agent_path)
+    }
+
+    async fn persisted_thread_spawn_root(&self, thread_id: ThreadId) -> Option<ThreadId> {
+        let state = self.upgrade().ok()?;
+        let state_db_ctx = state.thread_state_runtime()?;
+        state_db_ctx.find_thread_spawn_root(thread_id).await.ok().flatten()
     }
 
     async fn persisted_final_agent_status(&self, thread_id: ThreadId) -> Option<AgentStatus> {
@@ -1068,16 +1131,62 @@ impl AgentControl {
         &self,
         parent_thread_id: ThreadId,
     ) -> CodexResult<Vec<(ThreadId, AgentMetadata)>> {
+        let state = self.upgrade()?;
         let mut children_by_parent = self.live_thread_spawn_children().await?;
-        Ok(children_by_parent
+        let mut children = children_by_parent
             .remove(&parent_thread_id)
-            .unwrap_or_default())
+            .unwrap_or_default();
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return Ok(children);
+        };
+
+        let mut seen_child_ids = children
+            .iter()
+            .map(|(thread_id, _)| *thread_id)
+            .collect::<std::collections::HashSet<_>>();
+        let mut seen_agent_paths = children
+            .iter()
+            .filter_map(|(_, metadata)| metadata.agent_path.as_ref().map(ToString::to_string))
+            .collect::<std::collections::HashSet<_>>();
+        let child_ids = state_db_ctx
+            .list_thread_spawn_children_with_status(
+                parent_thread_id,
+                DirectionalThreadSpawnEdgeStatus::Open,
+            )
+            .await
+            .unwrap_or_default();
+        for child_thread_id in child_ids {
+            if !seen_child_ids.insert(child_thread_id) {
+                continue;
+            }
+            if let Some(metadata) = self
+                .persisted_agent_metadata(child_thread_id, state_db_ctx.as_ref())
+                .await
+            {
+                if let Some(agent_path) = metadata.agent_path.as_ref()
+                    && !seen_agent_paths.insert(agent_path.to_string())
+                {
+                    continue;
+                }
+                children.push((child_thread_id, metadata));
+            }
+        }
+        children.sort_by(|left, right| {
+            left.1
+                .agent_path
+                .as_deref()
+                .unwrap_or_default()
+                .cmp(right.1.agent_path.as_deref().unwrap_or_default())
+                .then_with(|| left.0.to_string().cmp(&right.0.to_string()))
+        });
+        Ok(children)
     }
 
     async fn live_thread_spawn_children(
         &self,
     ) -> CodexResult<HashMap<ThreadId, Vec<(ThreadId, AgentMetadata)>>> {
         let state = self.upgrade()?;
+        let state_db_ctx = state.thread_state_runtime();
         let mut children = Vec::new();
 
         for thread_id in state.list_live_thread_ids().await {
@@ -1088,15 +1197,43 @@ impl AgentControl {
             else {
                 continue;
             };
+            let mut metadata =
+                self.state
+                    .agent_metadata_for_thread(thread_id)
+                    .unwrap_or(AgentMetadata {
+                        agent_id: Some(thread_id),
+                        ..Default::default()
+                    });
+            if metadata.agent_path.is_none() {
+                metadata.agent_path = snapshot.session_source.get_agent_path();
+            }
+            if metadata.agent_nickname.is_none() {
+                metadata.agent_nickname = snapshot.session_source.get_nickname();
+            }
+            if metadata.agent_role.is_none() {
+                metadata.agent_role = snapshot.session_source.get_agent_role();
+            }
+            if (metadata.agent_path.is_none()
+                || metadata.agent_nickname.is_none()
+                || metadata.agent_role.is_none())
+                && let Some(state_db_ctx) = state_db_ctx.as_ref()
+                && let Some(persisted_metadata) =
+                    self.persisted_agent_metadata(thread_id, state_db_ctx.as_ref()).await
+            {
+                if metadata.agent_path.is_none() {
+                    metadata.agent_path = persisted_metadata.agent_path;
+                }
+                if metadata.agent_nickname.is_none() {
+                    metadata.agent_nickname = persisted_metadata.agent_nickname;
+                }
+                if metadata.agent_role.is_none() {
+                    metadata.agent_role = persisted_metadata.agent_role;
+                }
+            }
             children.push(ThreadSpawnChild {
                 parent_thread_id,
                 thread_id,
-                metadata: self.state.agent_metadata_for_thread(thread_id).unwrap_or(
-                    AgentMetadata {
-                        agent_id: Some(thread_id),
-                        ..Default::default()
-                    },
-                ),
+                metadata,
             });
         }
 

@@ -212,6 +212,13 @@ impl ThreadStateRuntime for StateRuntime {
         )
     }
 
+    fn find_thread_spawn_root(
+        &self,
+        child_thread_id: ThreadId,
+    ) -> StateApiFuture<'_, Option<ThreadId>> {
+        Box::pin(async move { StateRuntime::find_thread_spawn_root(self, child_thread_id).await })
+    }
+
     fn set_thread_spawn_edge_status(
         &self,
         child_thread_id: ThreadId,
