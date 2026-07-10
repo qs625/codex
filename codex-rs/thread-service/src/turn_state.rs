@@ -15,11 +15,9 @@ use protocol::request_permissions::RequestPermissionsResponse;
 use protocol::request_user_input::RequestUserInputResponse;
 use tokio::sync::oneshot;
 
-use crate::MailboxDeliveryPhase;
 use crate::PendingInputItem;
 
 /// Mutable state for a single turn.
-#[derive(Default)]
 pub struct TurnState {
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
     pending_request_permissions: HashMap<String, PendingRequestPermissions>,
@@ -27,12 +25,31 @@ pub struct TurnState {
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
     pending_input: Vec<PendingInputItem>,
-    mailbox_delivery_phase: MailboxDeliveryPhase,
+    accepts_async_input_for_current_turn: bool,
     granted_permissions: Option<AdditionalPermissionProfile>,
     strict_auto_review_enabled: bool,
     pub tool_calls: u64,
     pub has_memory_citation: bool,
     pub token_usage_at_turn_start: TokenUsage,
+}
+
+impl Default for TurnState {
+    fn default() -> Self {
+        Self {
+            pending_approvals: HashMap::default(),
+            pending_request_permissions: HashMap::default(),
+            pending_user_input: HashMap::default(),
+            pending_elicitations: HashMap::default(),
+            pending_dynamic_tools: HashMap::default(),
+            pending_input: Vec::default(),
+            accepts_async_input_for_current_turn: true,
+            granted_permissions: None,
+            strict_auto_review_enabled: false,
+            tool_calls: 0,
+            has_memory_citation: false,
+            token_usage_at_turn_start: TokenUsage::default(),
+        }
+    }
 }
 
 /// Pending response channel for a model-visible request-permissions call.
@@ -180,16 +197,19 @@ impl TurnState {
         !self.pending_input.is_empty()
     }
 
-    pub fn accept_mailbox_delivery_for_current_turn(&mut self) {
-        self.set_mailbox_delivery_phase(MailboxDeliveryPhase::CurrentTurn);
+    pub fn accept_async_input_for_current_turn(&mut self) {
+        self.accepts_async_input_for_current_turn = true;
     }
 
-    pub fn accepts_mailbox_delivery_for_current_turn(&self) -> bool {
-        self.mailbox_delivery_phase == MailboxDeliveryPhase::CurrentTurn
+    pub fn defer_async_input_to_next_turn(&mut self) {
+        if self.has_pending_input() {
+            return;
+        }
+        self.accepts_async_input_for_current_turn = false;
     }
 
-    pub fn set_mailbox_delivery_phase(&mut self, phase: MailboxDeliveryPhase) {
-        self.mailbox_delivery_phase = phase;
+    pub fn accepts_async_input_for_current_turn(&self) -> bool {
+        self.accepts_async_input_for_current_turn
     }
 
     pub fn record_granted_permissions(&mut self, permissions: AdditionalPermissionProfile) {

@@ -117,6 +117,14 @@ enum FollowUpTurnStart {
     LeftoverPendingInput,
 }
 
+enum FinishedTurnNextStep {
+    PendingInputOrIdle {
+        leftover_pending_input: Vec<PendingInputItem>,
+        has_thread_pending_work: bool,
+    },
+    Noop,
+}
+
 fn spawn_follow_up_turn_start(session: Arc<Session>, start: FollowUpTurnStart) {
     let fut: BoxFuture<'static, ()> = Box::pin(async move {
         match start {
@@ -434,6 +442,35 @@ impl Session {
             _timer: timer,
         };
         turn.add_task(running_task);
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "turn teardown must atomically commit active-turn and pending-input state"
+    )]
+    async fn commit_finished_turn_state(
+        &self,
+        turn_state: &Arc<tokio::sync::Mutex<crate::state::TurnState>>,
+    ) -> FinishedTurnNextStep {
+        let mut active = self.active_turn.lock().await;
+        let Some(active_turn) = active.as_ref() else {
+            return FinishedTurnNextStep::Noop;
+        };
+        if !active_turn.tasks.is_empty() || !Arc::ptr_eq(&active_turn.turn_state, turn_state) {
+            return FinishedTurnNextStep::Noop;
+        }
+
+        let leftover_pending_input = {
+            let mut ts = turn_state.lock().await;
+            ts.take_pending_input()
+        };
+        let has_thread_pending_work = self.has_thread_pending_work_excluding_active_turn().await;
+        *active = None;
+
+        FinishedTurnNextStep::PendingInputOrIdle {
+            leftover_pending_input,
+            has_thread_pending_work,
+        }
     }
 
     /// Starts a regular turn when the session is idle and pending work is waiting.
@@ -792,86 +829,69 @@ impl Session {
             .clear_turn(&turn_context.sub_id);
 
         if should_clear_active_turn {
-            let (
-                cleared_active_turn,
-                pending_input,
-                has_thread_pending_work,
-            ) = {
-                let mut active = self.active_turn.lock().await;
-                if let Some(active_turn) = active.as_ref()
-                    && active_turn.tasks.is_empty()
-                    && turn_state
-                        .as_ref()
-                        .is_some_and(|turn_state| Arc::ptr_eq(&active_turn.turn_state, turn_state))
-                {
-                    let mut pending_input = Vec::<PendingInputItem>::new();
-                    let mut has_thread_pending_work = false;
-                    if let Some(turn_state) = turn_state.as_ref() {
-                        let mut ts = turn_state.lock().await;
-                        pending_input = ts.take_pending_input();
-                        has_thread_pending_work = self.has_thread_pending_work().await;
-                    }
-                    *active = None;
-                    (true, pending_input, has_thread_pending_work)
-                } else {
-                    (false, Vec::new(), false)
-                }
+            let next_step = if let Some(turn_state) = turn_state.as_ref() {
+                self.commit_finished_turn_state(turn_state).await
+            } else {
+                FinishedTurnNextStep::Noop
             };
-            if !cleared_active_turn {
-                return;
-            }
-            let mut restart_for_leftover_pending_input = false;
-            if !pending_input.is_empty() {
-                for pending_input_item in pending_input {
-                    match inspect_pending_input(
-                        self.as_ref(),
-                        turn_context.as_ref(),
-                        pending_input_item,
-                    )
-                    .await
-                    {
-                        PendingInputHookDisposition::Accepted(pending_input) => {
-                            restart_for_leftover_pending_input = true;
-                            record_pending_input(
-                                self.as_ref(),
-                                turn_context.as_ref(),
-                                *pending_input,
-                            )
-                            .await;
-                        }
-                        PendingInputHookDisposition::Blocked {
-                            additional_contexts,
-                        } => {
-                            record_additional_contexts(
-                                self.as_ref(),
-                                turn_context.as_ref(),
+            match next_step {
+                FinishedTurnNextStep::Noop => return,
+                FinishedTurnNextStep::PendingInputOrIdle {
+                    leftover_pending_input,
+                    has_thread_pending_work,
+                } => {
+                    let mut restart_for_leftover_pending_input = false;
+                    for pending_input_item in leftover_pending_input {
+                        match inspect_pending_input(
+                            self.as_ref(),
+                            turn_context.as_ref(),
+                            pending_input_item,
+                        )
+                        .await
+                        {
+                            PendingInputHookDisposition::Accepted(pending_input) => {
+                                restart_for_leftover_pending_input = true;
+                                record_pending_input(
+                                    self.as_ref(),
+                                    turn_context.as_ref(),
+                                    *pending_input,
+                                )
+                                .await;
+                            }
+                            PendingInputHookDisposition::Blocked {
                                 additional_contexts,
-                            )
-                            .await;
+                            } => {
+                                record_additional_contexts(
+                                    self.as_ref(),
+                                    turn_context.as_ref(),
+                                    additional_contexts,
+                                )
+                                .await;
+                            }
                         }
                     }
+                    if has_thread_pending_work {
+                        spawn_follow_up_turn_start(Arc::clone(self), FollowUpTurnStart::PendingWork);
+                        return;
+                    }
+                    if restart_for_leftover_pending_input {
+                        spawn_follow_up_turn_start(
+                            Arc::clone(self),
+                            FollowUpTurnStart::LeftoverPendingInput,
+                        );
+                        return;
+                    }
+                    if let Err(err) = self
+                        .services
+                        .goal_service
+                        .maybe_continue_active_goal(self.as_ref())
+                        .await
+                    {
+                        warn!("failed to continue active goal while idle: {err}");
+                    }
+                    Box::pin(self.maybe_notify_parent_of_final_status(turn_context.as_ref())).await;
                 }
             }
-            if has_thread_pending_work {
-                spawn_follow_up_turn_start(Arc::clone(self), FollowUpTurnStart::PendingWork);
-                return;
-            }
-            if restart_for_leftover_pending_input {
-                spawn_follow_up_turn_start(
-                    Arc::clone(self),
-                    FollowUpTurnStart::LeftoverPendingInput,
-                );
-                return;
-            }
-            if let Err(err) = self
-                .services
-                .goal_service
-                .maybe_continue_active_goal(self.as_ref())
-                .await
-            {
-                warn!("failed to continue active goal while idle: {err}");
-            }
-            Box::pin(self.maybe_notify_parent_of_final_status(turn_context.as_ref())).await;
         }
     }
 

@@ -94,11 +94,10 @@
 - `list_agents` 这类查询面向的是 runtime 可见集合；如果需求是“重启后仍能列出已完成 agent”，通常要检查恢复后的 runtime 注册语义，而不是只改查询接口。
 - 当前实现里不存在持久的 `PostTurn` 调度状态；turn 收尾更接近 `active_turn` 锁保护下的一段临界区。`thread_post_turn_state()` 会在 `active_turn.is_some()` 或存在 pending turn input 时直接视为 `ThreadActive`，然后才退化到 goal / child / command 的后续判断。
 - 因此后续修 turn 生命周期竞态时，首先要区分“当前 turn 的 pending_input”和“thread 级 mailbox / queued next-turn input”，以及它们各自是在持锁的哪个阶段被检查或搬运；不要把“有 active turn”误当成“当前 turn 一定还能消费新事件”。
-- active turn 下的 async input 不能一律直写 `turn_state.pending_input`：只有 `TurnState::accepts_mailbox_delivery_for_current_turn()` 为真时，mailbox 输入才允许并入当前 turn；`MailboxDeliveryPhase::NextTurn` 下的 late mailbox mail 必须继续留在 mailbox，以保持“答案边界后不再扩展当前 turn”和 mailbox preempt 语义。
+- active turn 下的 async input 先在 `active_turn` 调度锁保护下判定：若 `TurnState.accepts_async_input_for_current_turn()` 为真则并入 `turn_state.pending_input`，否则继续留在线程级 mailbox，等待后续 turn 消费。
 - `on_task_finished()` 收尾时要区分两类“后续还有事可做”的来源：线程级 pending work 与 leftover `pending_input`。只有 leftover 输入经 `inspect_pending_input(...)` 判成 `Accepted` 时才允许直接拉起 follow-up turn；纯 `Blocked` leftover 不应启动空 turn，而应继续走 goal continuation / parent final-status 语义。
-- 当前实现仍保留 `MailboxDeliveryPhase::{CurrentTurn, NextTurn}`，并让 mailbox 承担“late mail 归当前 turn 还是下一轮”的部分语义；这也是当前 `on_task_finished()` / pending-input 竞态仍可能出现语义裂缝的来源之一。
-- 已确认的长期重构方向是：`on_task_finished()` 应成为唯一的 post-turn 状态提交点，并与 pending-input 路由共用同一把调度锁；在该锁内直接完成“创建下一 active turn / 写入线程级 queue / 清除旧 active turn / 决定 wait-child / wait-command / complete 走向”的状态提交，避免先释放锁再继续做关键 post-turn 判断。
-- 对应地，`MailboxDeliveryPhase` 应被删除；mailbox 退化为纯线程级输入队列，不再承载 current-turn / next-turn 的语义。是否并入当前 turn，应只由统一调度锁下的 active-turn 状态决定。
+- `on_task_finished()` 现在应视为唯一的 post-turn 状态提交点：最后一个 task 结束时，会在 `active_turn` 调度锁内原子取走 leftover pending input、检查线程级 pending work、清除旧 active turn，并生成锁外副作用要执行的 next-step 决议。
+- `MailboxDeliveryPhase` 已删除；取而代之的是 `TurnState.accepts_async_input_for_current_turn()` 这类更直接的 turn-local gating。mailbox 仍只承载线程级 pending input，但“final answer 后的 late async input 不再扩展当前 turn”的边界仍需保留。
 
 ## Compact Understanding
 - compact prompt 支持 workspace 级 `.codex/compact/COMPACT.md` 与 `CODEX_HOME/compact/COMPACT.md`。

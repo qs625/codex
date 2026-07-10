@@ -144,7 +144,6 @@ pub use config_lock::config_lock_to_pretty_toml;
 pub use event_mapping::parse_turn_item;
 pub use installation_id::resolve_installation_id;
 pub use mailbox::Mailbox;
-pub use mailbox::MailboxDeliveryPhase;
 pub use mailbox::MailboxReceiver;
 #[doc(hidden)]
 pub type SharedTurnDiffTracker =

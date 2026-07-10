@@ -50,7 +50,7 @@ impl Session {
         turn_state.push_pending_input(PendingInputItem::from(
             codex_model_input::response_input_item_from_user_input(validated.input),
         ));
-        turn_state.accept_mailbox_delivery_for_current_turn();
+        turn_state.accept_async_input_for_current_turn();
         self.note_thread_wait_event(ThreadWaitSource::UserInput);
         Ok(validated.active_turn_id)
     }
@@ -78,35 +78,28 @@ impl Session {
         }
     }
 
-    pub(crate) async fn defer_mailbox_delivery_to_next_turn(&self, sub_id: &str) {
-        let turn_state = self.turn_state_for_sub_id(sub_id).await;
-        let Some(turn_state) = turn_state else {
-            return;
-        };
-        let mut turn_state = turn_state.lock().await;
-        if turn_state.has_pending_input() {
-            return;
-        }
-        turn_state.set_mailbox_delivery_phase(MailboxDeliveryPhase::NextTurn);
-    }
-
-    pub(crate) async fn accept_mailbox_delivery_for_current_turn(&self, sub_id: &str) {
-        let turn_state = self.turn_state_for_sub_id(sub_id).await;
-        let Some(turn_state) = turn_state else {
-            return;
-        };
-        turn_state
-            .lock()
-            .await
-            .set_mailbox_delivery_phase(MailboxDeliveryPhase::CurrentTurn);
-    }
-
     pub(crate) async fn record_memory_citation_for_turn(&self, sub_id: &str) {
         let turn_state = self.turn_state_for_sub_id(sub_id).await;
         let Some(turn_state) = turn_state else {
             return;
         };
         turn_state.lock().await.has_memory_citation = true;
+    }
+
+    pub(crate) async fn defer_async_input_to_next_turn(&self, sub_id: &str) {
+        let turn_state = self.turn_state_for_sub_id(sub_id).await;
+        let Some(turn_state) = turn_state else {
+            return;
+        };
+        turn_state.lock().await.defer_async_input_to_next_turn();
+    }
+
+    pub(crate) async fn accept_async_input_for_current_turn(&self, sub_id: &str) {
+        let turn_state = self.turn_state_for_sub_id(sub_id).await;
+        let Some(turn_state) = turn_state else {
+            return;
+        };
+        turn_state.lock().await.accept_async_input_for_current_turn();
     }
 
     async fn turn_state_for_sub_id(
@@ -144,7 +137,7 @@ impl Session {
         let mut active = self.active_turn.lock().await;
         if let Some(active_turn) = active.as_mut() {
             let mut turn_state = active_turn.turn_state.lock().await;
-            if turn_state.accepts_mailbox_delivery_for_current_turn() {
+            if turn_state.accepts_async_input_for_current_turn() {
                 turn_state.push_pending_input(input);
             } else {
                 self.mailbox.send(input);
@@ -218,6 +211,11 @@ impl Session {
             || self.mailbox_rx.lock().await.has_pending_trigger_turn()
     }
 
+    pub(crate) async fn has_thread_pending_work_excluding_active_turn(&self) -> bool {
+        !self.idle_pending_input.lock().await.is_empty()
+            || self.mailbox_rx.lock().await.has_pending_trigger_turn()
+    }
+
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state reads must remain atomic"
@@ -226,27 +224,26 @@ impl Session {
     where
         F: FnMut(&PendingInputItem) -> Option<R>,
     {
-        let accepts_mailbox_delivery = {
+        let accepts_async_input_for_current_turn = {
             let active = self.active_turn.lock().await;
-            match active.as_ref() {
-                Some(at) => {
-                    let ts = at.turn_state.lock().await;
-                    if let Some(found) = ts.pending_input().iter().find_map(&mut f) {
-                        return Some(found);
-                    }
-                    ts.accepts_mailbox_delivery_for_current_turn()
+            if let Some(at) = active.as_ref() {
+                let ts = at.turn_state.lock().await;
+                if let Some(found) = ts.pending_input().iter().find_map(&mut f) {
+                    return Some(found);
                 }
-                None => true,
+                ts.accepts_async_input_for_current_turn()
+            } else {
+                true
             }
         };
-        if !accepts_mailbox_delivery {
-            return None;
-        }
         {
             let idle_pending_input = self.idle_pending_input.lock().await;
             if let Some(found) = idle_pending_input.iter().find_map(&mut f) {
                 return Some(found);
             }
+        }
+        if !accepts_async_input_for_current_turn {
+            return None;
         }
         let mut mailbox_rx = self.mailbox_rx.lock().await;
         mailbox_rx.pending().find_map(f)
@@ -317,20 +314,20 @@ impl Session {
         reason = "active turn checks and turn state updates must remain atomic"
     )]
     pub async fn get_pending_input(&self) -> Vec<PendingInputItem> {
-        let (pending_input, accepts_mailbox_delivery) = {
+        let (pending_input, accepts_async_input_for_current_turn) = {
             let mut active = self.active_turn.lock().await;
             match active.as_mut() {
                 Some(at) => {
                     let mut ts = at.turn_state.lock().await;
                     (
                         ts.take_pending_input(),
-                        ts.accepts_mailbox_delivery_for_current_turn(),
+                        ts.accepts_async_input_for_current_turn(),
                     )
                 }
                 None => (Vec::new(), true),
             }
         };
-        if !accepts_mailbox_delivery {
+        if !accepts_async_input_for_current_turn {
             return pending_input;
         }
         let mailbox_items = {
@@ -372,14 +369,14 @@ impl Session {
         reason = "active turn checks and turn state reads must remain atomic"
     )]
     pub async fn has_pending_input(&self) -> bool {
-        let (has_turn_pending_input, accepts_mailbox_delivery) = {
+        let (has_turn_pending_input, accepts_async_input_for_current_turn) = {
             let active = self.active_turn.lock().await;
             match active.as_ref() {
                 Some(at) => {
                     let ts = at.turn_state.lock().await;
                     (
                         ts.has_pending_input(),
-                        ts.accepts_mailbox_delivery_for_current_turn(),
+                        ts.accepts_async_input_for_current_turn(),
                     )
                 }
                 None => (false, true),
@@ -388,7 +385,7 @@ impl Session {
         if has_turn_pending_input {
             return true;
         }
-        if !accepts_mailbox_delivery {
+        if !accepts_async_input_for_current_turn {
             return false;
         }
         self.has_pending_mailbox_items().await

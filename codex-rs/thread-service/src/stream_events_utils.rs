@@ -109,7 +109,7 @@ pub(crate) async fn record_completed_response_item_with_finalized_facts(
 ) {
     sess.record_conversation_items(turn_context, std::slice::from_ref(item))
         .await;
-    let defers_mailbox_delivery = finalized_facts.map_or_else(
+    let defers_async_input = finalized_facts.map_or_else(
         || {
             completed_item_defers_mailbox_delivery_to_next_turn(
                 item,
@@ -118,8 +118,8 @@ pub(crate) async fn record_completed_response_item_with_finalized_facts(
         },
         |facts| facts.defers_mailbox_delivery_to_next_turn,
     );
-    if defers_mailbox_delivery {
-        sess.defer_mailbox_delivery_to_next_turn(&turn_context.sub_id)
+    if defers_async_input {
+        sess.defer_async_input_to_next_turn(&turn_context.sub_id)
             .await;
     }
     mark_thread_memory_mode_polluted_if_external_context(sess, turn_context, item).await;
@@ -267,7 +267,7 @@ pub(crate) async fn handle_output_item_done(
         // The model emitted a tool call; log it, persist the item immediately, and queue the tool execution.
         Ok(Some(call)) => {
             ctx.sess
-                .accept_mailbox_delivery_for_current_turn(&ctx.turn_context.sub_id)
+                .accept_async_input_for_current_turn(&ctx.turn_context.sub_id)
                 .await;
 
             let payload_preview = call.payload.log_payload().into_owned();
