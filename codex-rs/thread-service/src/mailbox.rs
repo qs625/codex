@@ -53,26 +53,23 @@ impl Mailbox {
 }
 
 impl MailboxReceiver {
-    fn sync_pending_mails(&mut self) {
+    pub fn drain_incoming_to_pending(&mut self) {
         while let Ok(mail) = self.rx.try_recv() {
             self.pending_mails.push_back(mail);
         }
     }
 
     pub fn has_pending(&mut self) -> bool {
-        self.sync_pending_mails();
         !self.pending_mails.is_empty()
     }
 
     pub fn has_pending_trigger_turn(&mut self) -> bool {
-        self.sync_pending_mails();
         self.pending_mails
             .iter()
             .any(PendingInputItem::trigger_turn)
     }
 
     pub fn pending(&mut self) -> impl Iterator<Item = &PendingInputItem> {
-        self.sync_pending_mails();
         self.pending_mails.iter()
     }
 
@@ -80,7 +77,6 @@ impl MailboxReceiver {
     where
         F: FnMut(&PendingInputItem) -> bool,
     {
-        self.sync_pending_mails();
         let mut extracted = Vec::new();
         let mut kept = VecDeque::with_capacity(self.pending_mails.len());
         while let Some(item) = self.pending_mails.pop_front() {
@@ -95,7 +91,6 @@ impl MailboxReceiver {
     }
 
     pub fn drain(&mut self) -> Vec<PendingInputItem> {
-        self.sync_pending_mails();
         self.pending_mails.drain(..).collect()
     }
 }
@@ -163,6 +158,7 @@ mod tests {
 
         mailbox.send(PendingInputItem::from(mail_one.clone()));
         mailbox.send(PendingInputItem::from(mail_two.clone()));
+        receiver.drain_incoming_to_pending();
 
         assert_eq!(
             receiver.drain(),
@@ -184,6 +180,7 @@ mod tests {
             "queued",
             /*trigger_turn*/ false,
         )));
+        receiver.drain_incoming_to_pending();
         assert!(!receiver.has_pending_trigger_turn());
 
         mailbox.send(PendingInputItem::from(make_mail(
@@ -192,6 +189,25 @@ mod tests {
             "wake",
             /*trigger_turn*/ true,
         )));
+        receiver.drain_incoming_to_pending();
+        assert!(receiver.has_pending_trigger_turn());
+    }
+
+    #[tokio::test]
+    async fn mailbox_queries_do_not_implicitly_drain_incoming_mail() {
+        let (mailbox, mut receiver) = Mailbox::new();
+        mailbox.send(PendingInputItem::from(make_mail(
+            AgentPath::root(),
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            "queued",
+            /*trigger_turn*/ true,
+        )));
+
+        assert!(!receiver.has_pending());
+        assert!(!receiver.has_pending_trigger_turn());
+
+        receiver.drain_incoming_to_pending();
+        assert!(receiver.has_pending());
         assert!(receiver.has_pending_trigger_turn());
     }
 }

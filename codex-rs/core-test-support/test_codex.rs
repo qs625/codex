@@ -597,6 +597,9 @@ impl TestCodexBuilder {
         };
         config.cwd = cwd_override;
         config.model_provider = model_provider;
+        config
+            .model_providers
+            .insert(config.model_provider_id.clone(), config.model_provider.clone());
         if let Ok(path) = codex_utils_cargo_bin::cargo_bin("codex") {
             config.codex_self_exe = Some(path);
         } else if let Ok(path) = codex_utils_cargo_bin::cargo_bin("codex-exec") {

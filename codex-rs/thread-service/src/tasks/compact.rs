@@ -101,6 +101,7 @@ impl SessionTask for CompactTask {
                     ctx,
                     turn_extension_data,
                     Vec::new(),
+                    /*allow_empty_input_without_pending*/ false,
                     /*prewarmed_client_session*/ None,
                     cancellation_token,
                 )

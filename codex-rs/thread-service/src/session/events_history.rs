@@ -205,8 +205,9 @@ impl Session {
     }
 
     pub(crate) async fn has_pending_turn_input(&self) -> bool {
-        self.has_queued_response_items_for_next_turn().await
-            || self.has_pending_mailbox_items().await
+        let _scheduler = self.scheduler.lock().await;
+        self.sync_mailbox_pending_buffer().await;
+        self.has_pending_turn_input_locked().await
     }
 
     pub(crate) async fn has_active_direct_child(&self) -> bool {

@@ -4,6 +4,24 @@ use super::*;
 use tokio::time::Instant;
 
 impl Session {
+    pub(crate) async fn sync_mailbox_pending_buffer(&self) {
+        self.mailbox_rx.lock().await.drain_incoming_to_pending();
+    }
+
+    pub(crate) async fn has_thread_pending_work_locked(&self) -> bool {
+        if !self.idle_pending_input.lock().await.is_empty() {
+            return true;
+        }
+        self.mailbox_rx.lock().await.has_pending_trigger_turn()
+    }
+
+    pub(crate) async fn has_pending_turn_input_locked(&self) -> bool {
+        if !self.idle_pending_input.lock().await.is_empty() {
+            return true;
+        }
+        self.mailbox_rx.lock().await.has_pending()
+    }
+
     /// Inject additional user input into the currently active turn.
     ///
     /// Returns the active turn id when accepted.
@@ -55,6 +73,36 @@ impl Session {
         Ok(validated.active_turn_id)
     }
 
+    pub(crate) async fn queue_user_input_for_next_turn_if_finishing(
+        &self,
+        input: Vec<UserInput>,
+    ) -> Result<(), Vec<UserInput>> {
+        let _scheduler = self.scheduler.lock().await;
+        let active = self.active_turn.lock().await;
+        let Some(active_turn) = active.as_ref() else {
+            return Err(input);
+        };
+        if !active_turn.tasks.is_empty() {
+            return Err(input);
+        }
+        if active_turn
+            .turn_state
+            .lock()
+            .await
+            .accepts_async_input_for_current_turn()
+        {
+            return Err(input);
+        }
+        self.idle_pending_input
+            .lock()
+            .await
+            .push(PendingInputItem::from(
+                codex_model_input::response_input_item_from_user_input(input),
+            ));
+        self.note_thread_wait_event(ThreadWaitSource::UserInput);
+        Ok(())
+    }
+
     /// Returns the input if there was no task running to inject into.
     #[expect(
         clippy::await_holding_invalid_type,
@@ -68,6 +116,9 @@ impl Session {
         match active.as_mut() {
             Some(at) => {
                 let mut ts = at.turn_state.lock().await;
+                if at.tasks.is_empty() || !ts.accepts_async_input_for_current_turn() {
+                    return Err(input);
+                }
                 for item in input {
                     ts.push_pending_input(PendingInputItem::from(item));
                 }
@@ -133,6 +184,7 @@ impl Session {
         reason = "pending input routing and active turn checks must remain atomic"
     )]
     async fn route_thread_pending_input(&self, input: PendingInputItem) -> bool {
+        let _scheduler = self.scheduler.lock().await;
         let should_start_turn = input.trigger_turn();
         let mut active = self.active_turn.lock().await;
         if let Some(active_turn) = active.as_mut() {
@@ -141,11 +193,16 @@ impl Session {
                 turn_state.push_pending_input(input);
             } else {
                 self.mailbox.send(input);
+                drop(turn_state);
+                drop(active);
+                self.sync_mailbox_pending_buffer().await;
             }
             return false;
         }
 
         self.mailbox.send(input);
+        drop(active);
+        self.sync_mailbox_pending_buffer().await;
         should_start_turn
     }
 
@@ -199,21 +256,27 @@ impl Session {
     }
 
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
+        let _scheduler = self.scheduler.lock().await;
+        self.sync_mailbox_pending_buffer().await;
         self.mailbox_rx.lock().await.has_pending_trigger_turn()
     }
 
     pub(crate) async fn has_pending_mailbox_items(&self) -> bool {
+        let _scheduler = self.scheduler.lock().await;
+        self.sync_mailbox_pending_buffer().await;
         self.mailbox_rx.lock().await.has_pending()
     }
 
     pub(crate) async fn has_thread_pending_work(&self) -> bool {
-        !self.idle_pending_input.lock().await.is_empty()
-            || self.mailbox_rx.lock().await.has_pending_trigger_turn()
+        let _scheduler = self.scheduler.lock().await;
+        self.sync_mailbox_pending_buffer().await;
+        self.has_thread_pending_work_locked().await
     }
 
     pub(crate) async fn has_thread_pending_work_excluding_active_turn(&self) -> bool {
-        !self.idle_pending_input.lock().await.is_empty()
-            || self.mailbox_rx.lock().await.has_pending_trigger_turn()
+        let _scheduler = self.scheduler.lock().await;
+        self.sync_mailbox_pending_buffer().await;
+        self.has_thread_pending_work_locked().await
     }
 
     #[expect(
@@ -245,6 +308,8 @@ impl Session {
         if !accepts_async_input_for_current_turn {
             return None;
         }
+        let _scheduler = self.scheduler.lock().await;
+        self.sync_mailbox_pending_buffer().await;
         let mut mailbox_rx = self.mailbox_rx.lock().await;
         mailbox_rx.pending().find_map(f)
     }
@@ -257,6 +322,7 @@ impl Session {
         &self,
         child_thread_id: ThreadId,
     ) -> usize {
+        let _scheduler = self.scheduler.lock().await;
         let mut removed = Vec::new();
         {
             let mut active = self.active_turn.lock().await;
@@ -281,6 +347,7 @@ impl Session {
         }
         {
             let mut mailbox_rx = self.mailbox_rx.lock().await;
+            mailbox_rx.drain_incoming_to_pending();
             removed.extend(
                 mailbox_rx.extract_matching(|item| matches_child_completion(item, child_thread_id)),
             );
@@ -314,6 +381,7 @@ impl Session {
         reason = "active turn checks and turn state updates must remain atomic"
     )]
     pub async fn get_pending_input(&self) -> Vec<PendingInputItem> {
+        let _scheduler = self.scheduler.lock().await;
         let (pending_input, accepts_async_input_for_current_turn) = {
             let mut active = self.active_turn.lock().await;
             match active.as_mut() {
@@ -332,6 +400,7 @@ impl Session {
         }
         let mailbox_items = {
             let mut mailbox_rx = self.mailbox_rx.lock().await;
+            mailbox_rx.drain_incoming_to_pending();
             mailbox_rx.drain()
         };
         if pending_input.is_empty() {
@@ -351,8 +420,10 @@ impl Session {
             return;
         }
 
-        let mut idle_pending_input = self.idle_pending_input.lock().await;
-        idle_pending_input.extend(items);
+        {
+            let _scheduler = self.scheduler.lock().await;
+            self.idle_pending_input.lock().await.extend(items);
+        }
         self.note_thread_wait_event(ThreadWaitSource::QueuedInput);
     }
 

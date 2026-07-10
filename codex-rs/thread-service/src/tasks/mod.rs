@@ -117,12 +117,50 @@ enum FollowUpTurnStart {
     LeftoverPendingInput,
 }
 
-enum FinishedTurnNextStep {
-    PendingInputOrIdle {
+enum FinishedTurnAction {
+    Noop,
+    StartPendingWork,
+    StartLeftoverPendingInput,
+    ContinueGoalOrNotifyParent,
+}
+
+enum FinishedTurnPreparation {
+    Ready {
         leftover_pending_input: Vec<PendingInputItem>,
-        has_thread_pending_work: bool,
     },
     Noop,
+}
+
+impl FinishedTurnPreparation {
+    async fn record_leftover(
+        self,
+        sess: &Session,
+        turn_context: &TurnContext,
+    ) -> Option<bool> {
+        match self {
+            FinishedTurnPreparation::Noop => None,
+            FinishedTurnPreparation::Ready {
+                leftover_pending_input,
+            } => {
+                let mut restart_for_leftover_pending_input = false;
+                for pending_input_item in leftover_pending_input {
+                    match inspect_pending_input(sess, turn_context, pending_input_item).await {
+                        PendingInputHookDisposition::Accepted(pending_input) => {
+                            restart_for_leftover_pending_input = true;
+                            record_pending_input(sess, turn_context, *pending_input).await;
+                        }
+                        PendingInputHookDisposition::Blocked {
+                            additional_contexts,
+                        } => {
+                            record_additional_contexts(sess, turn_context, additional_contexts)
+                                .await;
+                        }
+                    }
+                }
+                Some(restart_for_leftover_pending_input)
+            }
+        }
+    }
 }
 
 fn spawn_follow_up_turn_start(session: Arc<Session>, start: FollowUpTurnStart) {
@@ -307,6 +345,37 @@ impl Session {
         input: Vec<UserInput>,
         task: T,
     ) {
+        self.start_task_with_pending_input_policy(
+            turn_context,
+            input,
+            task,
+            /*consume_external_pending_input*/ true,
+        )
+        .await;
+    }
+
+    pub(crate) async fn start_task_without_external_pending_input<T: SessionTask>(
+        self: &Arc<Self>,
+        turn_context: Arc<TurnContext>,
+        input: Vec<UserInput>,
+        task: T,
+    ) {
+        self.start_task_with_pending_input_policy(
+            turn_context,
+            input,
+            task,
+            /*consume_external_pending_input*/ false,
+        )
+        .await;
+    }
+
+    async fn start_task_with_pending_input_policy<T: SessionTask>(
+        self: &Arc<Self>,
+        turn_context: Arc<TurnContext>,
+        input: Vec<UserInput>,
+        task: T,
+        consume_external_pending_input: bool,
+    ) {
         let task: Arc<dyn AnySessionTask> = Arc::new(task);
         let task_kind = task.kind();
         let span_name = task.span_name();
@@ -341,12 +410,17 @@ impl Session {
         {
             warn!("failed to begin turn goal accounting: {err}");
         }
-        let queued_response_items = self.take_queued_response_items_for_next_turn().await;
-        let mailbox_items = self.get_pending_input().await;
-        self.mark_direct_child_completions_received_from_pending_input(
-            queued_response_items.iter().chain(mailbox_items.iter()),
-        )
-        .await;
+        let (queued_response_items, mailbox_items) = if consume_external_pending_input {
+            let queued_response_items = self.take_queued_response_items_for_next_turn().await;
+            let mailbox_items = self.get_pending_input().await;
+            self.mark_direct_child_completions_received_from_pending_input(
+                queued_response_items.iter().chain(mailbox_items.iter()),
+            )
+            .await;
+            (queued_response_items, mailbox_items)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let turn_state = {
             let mut active = self.active_turn.lock().await;
             let turn = active.get_or_insert_with(ActiveTurn::default);
@@ -362,6 +436,7 @@ impl Session {
             for item in mailbox_items {
                 turn_state.push_pending_input(item);
             }
+            turn_state.accept_async_input_for_current_turn();
         }
         self.emit_turn_start_lifecycle(turn_context.extension_data.as_ref());
 
@@ -377,6 +452,7 @@ impl Session {
         let ctx = Arc::clone(&turn_context);
         let task_for_run = Arc::clone(&task);
         let task_cancellation_token = cancellation_token.child_token();
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
         // Task-owned turn spans keep a core-owned span open for the
         // full task lifecycle after the submission dispatch span ends.
         let reasoning_effort = turn_context.effective_reasoning_effort_for_tracing();
@@ -396,6 +472,7 @@ impl Session {
         );
         let handle = tokio::spawn(
             async move {
+                let _ = start_rx.await;
                 let ctx_for_finish = Arc::clone(&ctx);
                 let last_agent_message = task_for_run
                     .run(
@@ -442,35 +519,59 @@ impl Session {
             _timer: timer,
         };
         turn.add_task(running_task);
+        let _ = start_tx.send(());
     }
 
     #[expect(
         clippy::await_holding_invalid_type,
-        reason = "turn teardown must atomically commit active-turn and pending-input state"
+        reason = "turn teardown must atomically prepare pending-input state"
     )]
-    async fn commit_finished_turn_state(
+    async fn prepare_finished_turn_state(
         &self,
         turn_state: &Arc<tokio::sync::Mutex<crate::state::TurnState>>,
-    ) -> FinishedTurnNextStep {
-        let mut active = self.active_turn.lock().await;
+    ) -> FinishedTurnPreparation {
+        let _scheduler = self.scheduler.lock().await;
+        let active = self.active_turn.lock().await;
         let Some(active_turn) = active.as_ref() else {
-            return FinishedTurnNextStep::Noop;
+            return FinishedTurnPreparation::Noop;
         };
         if !active_turn.tasks.is_empty() || !Arc::ptr_eq(&active_turn.turn_state, turn_state) {
-            return FinishedTurnNextStep::Noop;
+            return FinishedTurnPreparation::Noop;
         }
 
         let leftover_pending_input = {
             let mut ts = turn_state.lock().await;
-            ts.take_pending_input()
+            let pending_input = ts.take_pending_input();
+            ts.defer_async_input_to_next_turn();
+            pending_input
         };
-        let has_thread_pending_work = self.has_thread_pending_work_excluding_active_turn().await;
-        *active = None;
 
-        FinishedTurnNextStep::PendingInputOrIdle {
+        FinishedTurnPreparation::Ready {
             leftover_pending_input,
-            has_thread_pending_work,
         }
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "turn teardown must atomically clear active-turn and pending-input state"
+    )]
+    async fn finalize_finished_turn_state(
+        &self,
+        turn_state: &Arc<tokio::sync::Mutex<crate::state::TurnState>>,
+    ) -> Option<bool> {
+        let _scheduler = self.scheduler.lock().await;
+        let mut active = self.active_turn.lock().await;
+        let Some(active_turn) = active.as_ref() else {
+            return None;
+        };
+        if !active_turn.tasks.is_empty() || !Arc::ptr_eq(&active_turn.turn_state, turn_state) {
+            return None;
+        }
+
+        self.sync_mailbox_pending_buffer().await;
+        let has_thread_pending_work = self.has_thread_pending_work_locked().await;
+        *active = None;
+        Some(has_thread_pending_work)
     }
 
     /// Starts a regular turn when the session is idle and pending work is waiting.
@@ -485,10 +586,11 @@ impl Session {
             .await;
     }
 
-    fn start_regular_turn_if_idle_with_sub_id(self: &Arc<Self>, sub_id: String) -> BoxFuture<'static, bool> {
+    pub(crate) fn start_regular_turn_if_idle_with_sub_id(self: &Arc<Self>, sub_id: String) -> BoxFuture<'static, bool> {
         let session = Arc::clone(self);
         Box::pin(async move {
             {
+                let _scheduler = session.scheduler.lock().await;
                 let mut active_turn = session.active_turn.lock().await;
                 if active_turn.is_some() {
                     return false;
@@ -501,7 +603,7 @@ impl Session {
                 .maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
                 .await;
             session
-                .start_task(turn_context, Vec::new(), RegularTask::new())
+                .start_task(turn_context, Vec::new(), RegularTask::allow_empty_follow_up())
                 .await;
             true
         })
@@ -517,11 +619,13 @@ impl Session {
         sub_id: String,
     ) {
         {
+            let _scheduler = self.scheduler.lock().await;
+            self.sync_mailbox_pending_buffer().await;
             let mut active_turn = self.active_turn.lock().await;
             if active_turn.is_some() {
                 return;
             }
-            if !self.has_thread_pending_work().await {
+            if !self.has_thread_pending_work_locked().await {
                 return;
             }
             *active_turn = Some(ActiveTurn::default());
@@ -814,6 +918,19 @@ impl Session {
         {
             warn!("failed to finish turn goal accounting: {err}");
         }
+        let restart_for_leftover_pending_input = if should_clear_active_turn {
+            let preparation = if let Some(turn_state) = turn_state.as_ref() {
+                self.prepare_finished_turn_state(turn_state).await
+            } else {
+                FinishedTurnPreparation::Noop
+            };
+            preparation
+                .record_leftover(self.as_ref(), turn_context.as_ref())
+                .await
+        } else {
+            None
+        };
+
         let event = EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: turn_context.sub_id.clone(),
             last_agent_message,
@@ -828,69 +945,44 @@ impl Session {
             .await
             .clear_turn(&turn_context.sub_id);
 
-        if should_clear_active_turn {
-            let next_step = if let Some(turn_state) = turn_state.as_ref() {
-                self.commit_finished_turn_state(turn_state).await
-            } else {
-                FinishedTurnNextStep::Noop
-            };
-            match next_step {
-                FinishedTurnNextStep::Noop => return,
-                FinishedTurnNextStep::PendingInputOrIdle {
-                    leftover_pending_input,
-                    has_thread_pending_work,
-                } => {
-                    let mut restart_for_leftover_pending_input = false;
-                    for pending_input_item in leftover_pending_input {
-                        match inspect_pending_input(
-                            self.as_ref(),
-                            turn_context.as_ref(),
-                            pending_input_item,
-                        )
+        let finished_turn_action = match restart_for_leftover_pending_input {
+            Some(restart_for_leftover_pending_input) => {
+                let has_thread_pending_work = if let Some(turn_state) = turn_state.as_ref() {
+                    self.finalize_finished_turn_state(turn_state)
                         .await
-                        {
-                            PendingInputHookDisposition::Accepted(pending_input) => {
-                                restart_for_leftover_pending_input = true;
-                                record_pending_input(
-                                    self.as_ref(),
-                                    turn_context.as_ref(),
-                                    *pending_input,
-                                )
-                                .await;
-                            }
-                            PendingInputHookDisposition::Blocked {
-                                additional_contexts,
-                            } => {
-                                record_additional_contexts(
-                                    self.as_ref(),
-                                    turn_context.as_ref(),
-                                    additional_contexts,
-                                )
-                                .await;
-                            }
-                        }
-                    }
-                    if has_thread_pending_work {
-                        spawn_follow_up_turn_start(Arc::clone(self), FollowUpTurnStart::PendingWork);
-                        return;
-                    }
-                    if restart_for_leftover_pending_input {
-                        spawn_follow_up_turn_start(
-                            Arc::clone(self),
-                            FollowUpTurnStart::LeftoverPendingInput,
-                        );
-                        return;
-                    }
-                    if let Err(err) = self
-                        .services
-                        .goal_service
-                        .maybe_continue_active_goal(self.as_ref())
-                        .await
-                    {
-                        warn!("failed to continue active goal while idle: {err}");
-                    }
-                    Box::pin(self.maybe_notify_parent_of_final_status(turn_context.as_ref())).await;
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                if has_thread_pending_work {
+                    FinishedTurnAction::StartPendingWork
+                } else if restart_for_leftover_pending_input {
+                    FinishedTurnAction::StartLeftoverPendingInput
+                } else {
+                    FinishedTurnAction::ContinueGoalOrNotifyParent
                 }
+            }
+            None => FinishedTurnAction::Noop,
+        };
+
+        match finished_turn_action {
+            FinishedTurnAction::Noop => {}
+            FinishedTurnAction::StartPendingWork => {
+                spawn_follow_up_turn_start(Arc::clone(self), FollowUpTurnStart::PendingWork);
+            }
+            FinishedTurnAction::StartLeftoverPendingInput => {
+                spawn_follow_up_turn_start(Arc::clone(self), FollowUpTurnStart::LeftoverPendingInput);
+            }
+            FinishedTurnAction::ContinueGoalOrNotifyParent => {
+                if let Err(err) = self
+                    .services
+                    .goal_service
+                    .maybe_continue_active_goal(self.as_ref())
+                    .await
+                {
+                    warn!("failed to continue active goal while idle: {err}");
+                }
+                Box::pin(self.maybe_notify_parent_of_final_status(turn_context.as_ref())).await;
             }
         }
     }

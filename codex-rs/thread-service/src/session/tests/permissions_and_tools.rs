@@ -1341,6 +1341,8 @@ where
         mailbox,
         mailbox_rx: Mutex::new(mailbox_rx),
         idle_pending_input: Mutex::new(Vec::new()),
+        scheduler: Mutex::new(()),
+        goal_continuation_before_launch_hook: Mutex::new(None),
         goal_runtime: codex_agent_runtime::GoalRuntimeState::new(),
         guardian_review_session: crate::session::session::approval_review_session_impl::GuardianReviewSessionManager::default(),
         services,
@@ -1393,6 +1395,237 @@ async fn make_goal_session_and_context_with_rx() -> (
     .await;
     upsert_goal_test_thread(session.as_ref()).await;
     (session, turn_context, rx, codex_home)
+}
+
+#[tokio::test]
+async fn active_goal_runtime_can_reserve_idle_turn_for_continuation() -> anyhow::Result<()> {
+    let (sess, tc, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
+    GoalService
+        .create_thread_goal(
+            sess.as_ref(),
+            tc.as_ref(),
+            "Write a benchmark note".to_string(),
+            None,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+
+    sess.maybe_continue_goal_if_idle_runtime().await;
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if sess.active_turn.lock().await.is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("goal continuation should reserve an idle turn");
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn goal_continuation_reservation_clears_if_goal_stops_before_launch() -> anyhow::Result<()> {
+    let (sess, tc, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
+    GoalService
+        .create_thread_goal(
+            sess.as_ref(),
+            tc.as_ref(),
+            "Write a benchmark note".to_string(),
+            None,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    let state_db = goal_test_state_db(sess.as_ref()).await?;
+    let goal = state_db
+        .get_thread_goal(sess.conversation_id)
+        .await?
+        .expect("goal should be persisted");
+    let goal_id = goal.goal_id.clone();
+
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (continue_tx, continue_rx) = tokio::sync::oneshot::channel();
+    *sess.goal_continuation_before_launch_hook.lock().await = Some(Arc::new(
+        crate::session::session::GoalContinuationBeforeLaunchHook {
+            started_tx: Mutex::new(Some(started_tx)),
+            continue_rx: Mutex::new(Some(continue_rx)),
+        },
+    ));
+
+    let continuation = {
+        let sess = Arc::clone(&sess);
+        tokio::spawn(async move {
+            sess.maybe_continue_goal_if_idle_runtime().await;
+        })
+    };
+    started_rx.await.expect("continuation should reserve before launch");
+
+    state_db
+        .update_thread_goal(
+            sess.conversation_id,
+            state_api::ThreadGoalUpdate {
+                objective: None,
+                status: Some(state_api::ThreadGoalStatus::Paused),
+                token_budget: None,
+                expected_goal_id: Some(goal_id.clone()),
+            },
+        )
+        .await?
+        .expect("goal pause should succeed");
+
+    continue_tx
+        .send(())
+        .expect("continuation hook should still be waiting");
+    continuation.await.expect("continuation task should exit");
+    assert!(
+        sess.active_turn.lock().await.is_none(),
+        "stale goal continuation reservation should be cleared"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn goal_continuation_reservation_keeps_new_mailbox_input_out_of_reserved_turn() -> anyhow::Result<()> {
+    let (sess, tc, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
+    GoalService
+        .create_thread_goal(
+            sess.as_ref(),
+            tc.as_ref(),
+            "Write a benchmark note".to_string(),
+            None,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (continue_tx, continue_rx) = tokio::sync::oneshot::channel();
+    *sess.goal_continuation_before_launch_hook.lock().await = Some(Arc::new(
+        crate::session::session::GoalContinuationBeforeLaunchHook {
+            started_tx: Mutex::new(Some(started_tx)),
+            continue_rx: Mutex::new(Some(continue_rx)),
+        },
+    ));
+
+    let continuation = {
+        let sess = Arc::clone(&sess);
+        tokio::spawn(async move {
+            sess.maybe_continue_goal_if_idle_runtime().await;
+        })
+    };
+    started_rx.await.expect("continuation should reserve before launch");
+
+    let reserved_turn_state = {
+        let active_turn = sess.active_turn.lock().await;
+        let active_turn = active_turn
+            .as_ref()
+            .expect("goal continuation should reserve an active turn");
+        assert!(
+            active_turn.tasks.is_empty(),
+            "hook should pause before start_task launches the continuation task"
+        );
+        Arc::clone(&active_turn.turn_state)
+    };
+
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/root/worker").expect("worker path should parse"),
+        AgentPath::root(),
+        Vec::new(),
+        "new mailbox input".to_string(),
+        protocol::protocol::InterAgentOperation::Unknown,
+    )
+    .with_trigger_turn(true);
+    assert!(
+        !sess.enqueue_mailbox_communication(communication).await,
+        "reserved continuation should not claim that mailbox input started a turn"
+    );
+    assert!(
+        sess.has_pending_mailbox_items().await,
+        "new mailbox input should remain buffered for a later turn"
+    );
+
+    let reserved_pending_input = reserved_turn_state.lock().await.pending_input().to_vec();
+    assert_eq!(1, reserved_pending_input.len());
+    let PendingInputItem::HookInspectable(ResponseItem::Message { content, .. }) =
+        &reserved_pending_input[0]
+    else {
+        panic!("expected reserved continuation input to stay isolated");
+    };
+    let [ContentItem::InputText { text }] = content.as_slice() else {
+        panic!("expected one goal continuation text item");
+    };
+    assert!(text.contains("<goal_context>"));
+
+    continue_tx
+        .send(())
+        .expect("continuation hook should still be waiting");
+    continuation.await.expect("continuation task should finish launching");
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn goal_continuation_reservation_keeps_queued_input_for_follow_up_turn() -> anyhow::Result<()> {
+    let (sess, tc, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
+    GoalService
+        .create_thread_goal(
+            sess.as_ref(),
+            tc.as_ref(),
+            "Write a benchmark note".to_string(),
+            None,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (continue_tx, continue_rx) = tokio::sync::oneshot::channel();
+    *sess.goal_continuation_before_launch_hook.lock().await = Some(Arc::new(
+        crate::session::session::GoalContinuationBeforeLaunchHook {
+            started_tx: Mutex::new(Some(started_tx)),
+            continue_rx: Mutex::new(Some(continue_rx)),
+        },
+    ));
+
+    let continuation = {
+        let sess = Arc::clone(&sess);
+        tokio::spawn(async move {
+            sess.maybe_continue_goal_if_idle_runtime().await;
+        })
+    };
+    started_rx.await.expect("continuation should reserve before launch");
+
+    let queued_item = PendingInputItem::from(ResponseInputItem::Message {
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "queued after reservation".to_string(),
+        }],
+        phase: None,
+    });
+    sess.queue_response_items_for_next_turn(vec![queued_item]).await;
+    assert!(
+        sess.has_queued_response_items_for_next_turn().await,
+        "queued input should remain pending until a later regular turn"
+    );
+
+    continue_tx
+        .send(())
+        .expect("continuation hook should still be waiting");
+    continuation.await.expect("continuation task should finish launching");
+    assert!(
+        sess.has_queued_response_items_for_next_turn().await,
+        "continuation launch should not consume queued next-turn input"
+    );
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+
+    Ok(())
 }
 
 async fn upsert_goal_test_thread(session: &Session) {
