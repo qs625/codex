@@ -20,6 +20,7 @@
 - 不要从 raw marker、assistant JSON envelope 或 legacy 解析路径反解客户端展示项。
 - 等待模型的长期方向已确定为统一收口到 `poll_event`；`wait_agent` / `command_wait` 应删除，不再作为独立 tool surface 保留。
 - `poll_event` 需要支持在同一个 turn 内等待并在 event 到达后继续执行；runtime 不应维护会影响状态机的硬性等待目标，event 应直接作为 pending input 注入当前 turn，并携带来源信息供模型判断。
+- `poll_event` 对模型暴露的是空参数对象；默认 `initial_timeout_ms` / `hard_cap_timeout_ms` 由 thread runtime 从 `TurnContext.config.multi_agent_v2` 注入，再结合 thread-scoped backoff 计算每次调用的 `current_timeout_ms`。
 - command output / exit、child completion、inter-agent completion 应复用同一套 pending-input 唤醒链路；不要再为某一类等待事件维护平行 wait API。
 - parent-side child completion bookkeeping 只用于 completion envelope 的投递、去重和清理，不应定义 child 当前是否 active；`WaitChild` / `IdleWaitChild` 只应由 direct child thread 的本地 active 状态驱动。
 - thread init context 中的 workflow discovery 依赖 `TurnContext::discovery_context()`，其 project workflows 来自 `config.config_layer_stack` 中各 project layer 的 `.codex/workflows`。
@@ -32,6 +33,7 @@
 - 但 live 与 reload 不是同一条实现链：live thread item 主要走 `tool-service/app-server-protocol event_mapping -> server notification -> root-worker thread state`，reload/thread_read 主要走 `rollout Limited -> thread-history/app-server-protocol replay -> thread snapshot`。排查缺 item 时先判断是哪一条链路在丢。
 - thread reload / history replay 默认只消费 rollout `Limited` 视图；因此“重启后能否恢复”本质上是持久化策略问题，不只是 replay 代码问题。
 - `commandExecution` 的历史重建依赖 thread history 对 `ExecCommandBegin` / `ExecCommandEnd` 的重放；如果 rollout limited 缺少所需事件，重启后就无法恢复 `exec_command` thread item。
+- 对 `thread/read` / `thread/resume` / `thread/turns/list` 这类“persisted history + live turn merge”路径，只有仍处于 in-progress 的 live turn snapshot 才能覆盖 persisted history；带 fallback 语义的“最后一个 turn 快照”不能当作 live turn merge 回去，否则会把已完成 command 或其他 finished item 重新盖回成 stale live residue。
 - `list_agents` 当前依赖 runtime 的 `registered_agents()` 索引和 `live_thread_agent_status(...)`，不是直接从持久化 thread store 列 completed agent；reload 后如果未把已完成 agent 恢复到 runtime 注册表，`list_agents` 就会缺失它们。
 - owner 在处理“看起来像前端问题”的缺失、重复、状态错乱时，应默认检查 `rollout policy -> thread history replay -> runtime registration -> renderer` 这条链，而不是直接改 renderer。
 
@@ -71,6 +73,7 @@
 - `apps/root-worker-prototype/`
   - 负责 root-worker prototype 客户端、thread 展示、compact UI 与 renderer 状态。
   - `src/lib/conversation.ts` 已支持 `ThreadItem::BuiltinToolCall` 的 `poll_event` 展示文案；若 live UI 仍缺失，要先怀疑 server notification / 运行实例版本，而不是前端 summary 缺口。
+  - `poll_event` 的主文案当前只展示 `sourceHint` / `timeout` / `failed` 等输出态，不会在 summary 文案里额外展开 arguments；而且该 tool 的 arguments 按设计本来就是 `{}`。
 
 ## Persistent State And Recovery
 - thread/history 的 reload 恢复能力由两段共同决定：
@@ -91,17 +94,24 @@
 - `list_agents` 这类查询面向的是 runtime 可见集合；如果需求是“重启后仍能列出已完成 agent”，通常要检查恢复后的 runtime 注册语义，而不是只改查询接口。
 - 当前实现里不存在持久的 `PostTurn` 调度状态；turn 收尾更接近 `active_turn` 锁保护下的一段临界区。`thread_post_turn_state()` 会在 `active_turn.is_some()` 或存在 pending turn input 时直接视为 `ThreadActive`，然后才退化到 goal / child / command 的后续判断。
 - 因此后续修 turn 生命周期竞态时，首先要区分“当前 turn 的 pending_input”和“thread 级 mailbox / queued next-turn input”，以及它们各自是在持锁的哪个阶段被检查或搬运；不要把“有 active turn”误当成“当前 turn 一定还能消费新事件”。
-- turn 调度的当前简化方向是不引入额外 action / async fact 状态来描述“late input 已经到达但当前 turn 还没彻底收尾”。如果 pending input 先拿到锁时 thread 仍显示 active，post-turn 临界区只需把 thread 状态修正到能继续启动下一轮；关键是“不丢事件、不错过下一轮”，不是精确记录该输入最终由哪一段逻辑消费。
 - active turn 下的 async input 不能一律直写 `turn_state.pending_input`：只有 `TurnState::accepts_mailbox_delivery_for_current_turn()` 为真时，mailbox 输入才允许并入当前 turn；`MailboxDeliveryPhase::NextTurn` 下的 late mailbox mail 必须继续留在 mailbox，以保持“答案边界后不再扩展当前 turn”和 mailbox preempt 语义。
 - `on_task_finished()` 收尾时要区分两类“后续还有事可做”的来源：线程级 pending work 与 leftover `pending_input`。只有 leftover 输入经 `inspect_pending_input(...)` 判成 `Accepted` 时才允许直接拉起 follow-up turn；纯 `Blocked` leftover 不应启动空 turn，而应继续走 goal continuation / parent final-status 语义。
-- runtime 内部的 pending-input 入口可以返回“是否需要唤醒 idle turn”的布尔信号，但实际是否启动下一轮仍由调用方在锁外决定；不要在持有调度判定锁时直接起 turn。
+- 当前实现仍保留 `MailboxDeliveryPhase::{CurrentTurn, NextTurn}`，并让 mailbox 承担“late mail 归当前 turn 还是下一轮”的部分语义；这也是当前 `on_task_finished()` / pending-input 竞态仍可能出现语义裂缝的来源之一。
+- 已确认的长期重构方向是：`on_task_finished()` 应成为唯一的 post-turn 状态提交点，并与 pending-input 路由共用同一把调度锁；在该锁内直接完成“创建下一 active turn / 写入线程级 queue / 清除旧 active turn / 决定 wait-child / wait-command / complete 走向”的状态提交，避免先释放锁再继续做关键 post-turn 判断。
+- 对应地，`MailboxDeliveryPhase` 应被删除；mailbox 退化为纯线程级输入队列，不再承载 current-turn / next-turn 的语义。是否并入当前 turn，应只由统一调度锁下的 active-turn 状态决定。
 
 ## Compact Understanding
 - compact prompt 支持 workspace 级 `.codex/compact/COMPACT.md` 与 `CODEX_HOME/compact/COMPACT.md`。
 - 如果没有自定义 compact prompt，运行时仍会回退到内置 compact prompt。
+- compact prompt 仍是独立的 compact-phase 输入来源；即使收紧 compact 的公开 turn 语义，也不能回退到删除或绕过 `COMPACT.md`。
 - root-worker prototype 当前对 compact history 采用按需加载，而不是默认常驻保存。
 - compact 的 replacement history 应尽量最小化：只保留 initial context 与最近真实 user messages，不再把 `.codex/memory/*.md` 正文复制成 `Memory checkpoint: ...` user messages 塞回 conversation history。
+- 当前主线已进一步收紧 compact 语义：
+  - replacement history 现在会追加“当前 compact turn 的最后一条 assistant 输出”，作为后续 continuation seed
+  - root-worker 主会话不再把 compact turn / compact row 当作公开对话展示
+- compact 继续复用普通 `run_sampling_request()` / `build_prompt()` 链，但会在 compact 调用点显式覆盖为空的 `TurnToolInputs`，从而对模型隐藏全部 model-visible tools；这条限制只适用于 compact，不应误伤普通 turn 的 tool visibility。
 - memory 文件在 compact 后仍通过 `instruction_files` / init context 注入后续模型上下文；`CompactedItem.replacement_history` / `ContextCompaction.replacementHistory` 负责的是最小模型可见 history 种子与 persisted/UI compact 事实，不承载整份 memory markdown 的重复副本。
+- compact final output 的提取必须限定在“当前 compact turn、最后一次 compact prompt 之后”的 assistant 输出；不能从整段历史扫描最后 assistant message，否则会误吸上一轮普通回复。
 
 ## Validation Defaults
 - 默认只做最小必要验证，不默认运行全量 `cargo test`、广域 `just fix`、snapshot、schema 或 lockfile workflow。

@@ -3,7 +3,6 @@
 instruction_files = [
   "memory/user-preferences.md",
   "memory/project-understanding.md",
-  "memory/current-work.md",
 ]
 
 [memories]

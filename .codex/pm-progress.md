@@ -1,9 +1,90 @@
 # PM Progress
 
 ## Current Goal
-修复重启客户端后普通 `exec_command` thread item 在 reload 后仍不可见的问题
+None
 
 ## Active Work
+- None
+- id: compact-replacement-history-final-output
+  owner: /root/project_pm/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: fix/compact-replacement-history-final-output
+  task_type: bugfix
+  depends_on: poll-event-live-thread-item-missing 已 merge；compact continuation 修复已 merge
+  files: codex-rs/compact-service/**, codex-rs/thread-service/**, codex-rs/app-server/**, apps/root-worker-prototype/**, 必要时相关 compaction / conversation 测试
+  base_commit: 3ade42e397
+  pending_sync_from_main:
+  status: merged
+  objective: 回退 compact 的公开 turn 语义，只保留 `COMPACT.md` prompt 与 replacement history 注入；compact 最后一条输出应进入 replacement history，客户端不再展示 compact turn
+  last_update: 2026-07-10
+  next_action: 已 merge 到主线；空闲时同步 checkout
+  blockers: 无
+  validation: `rtk cargo test -p compact-service`；`rtk cargo test -p thread-service compact_final_output`；`rtk pnpm --dir apps/root-worker-prototype test src/lib/conversation.test.ts`；`rtk cargo test -p app-server thread_compact_start_triggers_compaction_and_returns_empty_response`；`rtk cargo build -p app-server --bin app-server`
+  commit: 17bb4bb3a（dev）；2c8ecb39e2（main merge）
+- id: on-task-finished-leftover-pending-input
+  owner: /root/project_pm/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: fix/on-task-finished-leftover-pending-input-v2
+  task_type: bugfix
+  depends_on: 无
+  files: codex-rs/thread-service/src/tasks/mod.rs, codex-rs/thread-service/src/tasks/compact.rs, codex-rs/thread-service/src/session/tests/context_and_history.rs, 必要时 codex-rs/thread-service/src/session/turn.rs / codex-rs/thread-service/src/compact.rs 用于确认 continuation 语义
+  base_commit: 6553aaea7
+  pending_sync_from_main:
+  status: merged
+  objective: 重新定位并修复 compact 结束后 thread 停机的问题；先确认 compact 应继续当前 turn 还是进入统一收尾，再在正确层级修复 leftover pending input / continuation 断链
+  last_update: 2026-07-09
+  next_action: 已 merge 到主线；空闲时同步 checkout
+  blockers: 无
+  validation: `rtk cargo test -p thread-service compact_task_continues_pending_input_with_regularized_metadata`；`rtk cargo test -p thread-service task_finish_restarts_turn_for_leftover_pending_user_input`；`rtk cargo build -p app-server --bin app-server`；已确认 `rtk cargo test -p thread-service task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input` 在主线同样失败，属于既有测试基线问题而非本次回归
+  commit: 9faeaebbd0c9f94e8fbef4c96d447e5b0874f610（dev）；3ade42e397（main merge）
+- id: poll-event-live-thread-item-missing
+  owner: /root/project_pm/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: fix/poll-event-live-thread-item-missing
+  task_type: bugfix
+  depends_on: 无
+  files: codex-rs/thread-service/**, codex-rs/app-server-protocol/**, apps/root-worker-prototype/**, 必要时相关 thread item / conversation 测试
+  base_commit: c82a07700
+  pending_sync_from_main:
+  status: merged
+  objective: 查明并修复 `poll_event` 实际执行阻塞等待时，客户端仍不显示对应 live thread item 的链路缺口
+  last_update: 2026-07-09
+  next_action: 已 merge 到主线；空闲时同步 checkout
+  blockers: 无
+  validation: `rtk cargo test -p app-server builtin_poll_event_emits_started_and_completed_thread_items`；`rtk cargo test -p app-server builtin_poll_event_failure_emits_completed_failed_thread_item`；`rtk cargo build -p app-server --bin app-server`
+  commit: 40576a385（dev）；6553aaea71（main merge）
+- id: reload-live-command-backend-root-fix
+  owner: /root/project_pm/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: fix/reload-live-command-backend-root-fix
+  task_type: bugfix
+  depends_on: reload-live-command-residue 已 merge；后续应评估是否回收该前端兜底
+  files: codex-rs/app-server-protocol/**, codex-rs/thread-history/**, codex-rs/app-server/**, 必要时 apps/root-worker-prototype/** 仅用于删除/收紧前端兜底与补测试
+  base_commit: 6f03f8854
+  pending_sync_from_main:
+  status: merged
+  objective: 找出并修复 reload/read 路径仍会把已完成 command 恢复为 stale running item 的后端根因；在后端事实修好后，移除或最小化前端 live-command 兜底逻辑
+  last_update: 2026-07-09
+  next_action: 已 merge 到主线；`dev-2` / `dev-3` 已同步到 `c82a07700`
+  blockers: 无
+  validation: `rtk cargo test -p app-server thread_turns_list_uses_only_in_progress_live_turn_snapshots`；`rtk cargo test -p app-server populate_thread_turns_from_history_keeps_persisted_completed_command_when_no_live_turn`；`rtk cargo test -p app-server thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is_idle`；`rtk cargo build -p app-server --bin app-server`
+  commit: 88568729a（dev）；c82a07700（main merge）
+- id: reload-live-command-residue
+  owner: /root/project_pm/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: fix/reload-live-command-residue
+  task_type: bugfix
+  depends_on: 无
+  files: apps/root-worker-prototype/**, 如需定位 reload 数据来源可只读检查 codex-rs/app-server-protocol/** 与相关测试
+  base_commit: c32bf3efd9f42f28306b0e6c4fe208811846cfe3
+  pending_sync_from_main:
+  status: merged
+  objective: 修复客户端重启后 `Live Commands` 错误展示一批已完成 command 为 `Running` 的问题，优先排查 reload snapshot / merge 保留逻辑，而不是新增前端文案补丁
+  last_update: 2026-07-09
+  next_action: 已 merge 到主线；`dev-2` / `dev-3` 已同步到 `6f03f8854`
+  blockers: 无
+  validation: `rtk pnpm --dir apps/root-worker-prototype test src/lib/threadAnalysis.test.ts src/components/RightPanel.test.tsx`
+  commit: 38e340fc0（dev）；6f03f8854（main merge）
 - id: init-context-workflow-instructions
   owner: /root/project_pm/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
@@ -89,6 +170,26 @@
   commit: cdc4896c1（dev-3）；33e930678（main merge）
 
 ## Completed
+- commit: 36aed5f41
+  summary: 合并 `0f837f012` 到主线，让 compact turn 构造 prompt 时不再携带 model-visible tools；`COMPACT.md` prompt、replacement history final output 与“客户端不展示 compact turn”行为保持不变；按用户要求停止 `owner_dev_3`，由 `owner_dev_2` 独占完成该任务
+  validation: `rtk cargo test -p thread-service compact_turn_hides_model_visible_tools_without_affecting_regular_turns`；`rtk cargo test -p thread-service compact_final_output`；`rtk cargo build -p app-server --bin app-server`；独立 reviewer 结论为“通过/可继续”
+  residual_risk: 当前回归主要锁住 `thread-service` prompt build 分支；仍缺一条更完整的 compact 调用链测试，直接覆盖“compact 无 tools + replacement history final output 保留 + compact turn 继续隐藏”的组合语义；`dev-2` 已 fast-forward 到 `36aed5f41`，`dev` 与 `dev-3` 因各自未提交脏改暂未同步
+- commit: c82a07700
+  summary: 合并 `88568729a` 到主线，修复 reload/read 路径把 finished fallback turn 当成 live turn merge 回 persisted history 的问题；`thread/resume` 与 `thread/turns/list` 现在都只接受 `active_in_progress_turn_snapshot()`，不再把已完成 command 盖回成 stale running residue
+  validation: `rtk cargo test -p app-server thread_turns_list_uses_only_in_progress_live_turn_snapshots`；`rtk cargo test -p app-server populate_thread_turns_from_history_keeps_persisted_completed_command_when_no_live_turn`；`rtk cargo test -p app-server thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is_idle`；`rtk cargo build -p app-server --bin app-server`
+  residual_risk: 当前回归已锁住核心 merge 误用，但更细的 listener/resume 排队时序仍主要靠现有 suite 近邻覆盖；若后续再改该链路，建议补一条更贴近真实接口时序的回归
+- commit: 6f03f8854
+  summary: 合并 `38e340fc0` 到主线，修复客户端重启后的 reload 路径中 `Live Commands` 错把 stale running `commandExecution` residue 当作 live command 的问题；仅在线程顶层状态仍可能承载真实 live command（`active.running`、`idle.waitCommand`、`idle.waitChild`）时才展示
+  validation: `rtk pnpm --dir apps/root-worker-prototype test src/lib/threadAnalysis.test.ts src/components/RightPanel.test.tsx`
+  residual_risk: `waitingOnUserInput` 未单列一条对称测试，但与 `waitingOnApproval` 共享 `activeFlags.includes("running")` gate；若后续该状态也出现类似 residue，可再补一条更显式回归
+- commit: c32bf3efd9f42f28306b0e6c4fe208811846cfe3
+  summary: 将 compact 后的 replacement history 收缩为仅保留 `initial_context` 与最近最多两条真实 user message；不再把 memory 文件正文复制成 `Memory checkpoint: ...` user messages；compact persisted/UI 事实链路保持不变
+  validation: `rtk cargo test -p compact-service replacement_history`；`rtk cargo test -p app-server thread_compact_start_triggers_compaction_and_returns_empty_response`
+  residual_risk: `auto_compaction_local_emits_started_and_completed_items` 在等待 compact lifecycle notification 时超时，未覆盖到本次新语义；当前以更稳定的手动 compact 集成用例兜底
+- commit: 4cb22849494c39acf76f35a3ca19c3acbfca2346
+  summary: 收口 `pending input` / `on_task_finished()` 调度临界区：pending input 路由与 active turn 检查走统一原子区；post-turn 收尾区分线程级 pending work 与 leftover pending input；仅 `Accepted` leftover 会重启 follow-up turn，纯 `Blocked` leftover 不会误启空 turn
+  validation: owner/reviewer 已确认 `NextTurn` 下 late mailbox mail 不再扩展当前 turn、mailbox preempt 路径恢复、leftover pending input 仅在 `inspect_pending_input(...)` 返回 `Accepted` 时触发 follow-up turn；相关回归位于 `codex-rs/thread-service/src/session/tests/context_and_history.rs`
+  residual_risk: progress file 此前长期滞后，缺少一条集中记录的 owner 命令级验证；若后续继续加固，优先补两条建议测试：`Blocked` leftover 不启动 follow-up turn，以及“线程级 pending work 与 accepted leftover 同时存在时优先走 pending work 分支”
 - commit: 33e930678
   summary: 合并 `cdc4896c1` 到主线，修复普通 `exec_command` reload/read 丢 completed 态的问题；对进入 `Limited` 的 `ExecCommandEnd` 统一做有界 sanitize；补齐 `thread-history` 对 builtin tool call 的事件分派，使 `poll_event` thread item 在 `thread/read` / reload 路径恢复可见
   validation: `rtk cargo test -p thread-history typed_builtin_tool_history_rebuilds_thread_item`；`rtk cargo test -p app-server limited_replay_keeps_poll_event_builtin_tool_items`；`rtk cargo test -p app-server limited_replay_truncates_large_agent_command_execution_output`；`rtk cargo test -p app-server thread_read_after_restart_keeps_unified_exec_command_execution_items`；`rtk cargo build -p app-server --bin app-server`
