@@ -316,6 +316,7 @@ pub(crate) fn test_tool_inputs(
         deferred_mcp_tools: Vec::new(),
         discoverable_tools: Vec::new(),
         default_agent_type_description,
+        expose_model_visible_tools: true,
     };
     let _ = (session, turn_context);
     Arc::new(result)
@@ -368,6 +369,55 @@ async fn built_tools_include_custom_agent_roles_in_spawn_agent_schema() {
         .expect("spawn_agent agent_type description");
 
     assert!(spawn_agent_type_description.contains("custom: {\nCustom agent role.\n}"));
+}
+
+#[tokio::test]
+async fn compact_turn_hides_model_visible_tools_without_affecting_regular_turns() {
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |_config| {},
+    )
+    .await;
+
+    let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let regular_tool_inputs = crate::session::turn::built_tools(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::downgrade(&session_capability),
+        &[],
+        &std::collections::HashSet::new(),
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("build regular tool inputs");
+    assert!(
+        regular_tool_inputs.expose_model_visible_tools,
+        "regular turns should keep model-visible tools enabled by default"
+    );
+
+    let compact_session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
+        Arc::clone(&session) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+    let compact_tool_inputs = crate::session::turn::TurnToolInputs {
+        session_capability: Arc::downgrade(&compact_session_capability),
+        mcp_tools: Vec::new(),
+        deferred_mcp_tools: Vec::new(),
+        discoverable_tools: Vec::new(),
+        default_agent_type_description: String::new(),
+        expose_model_visible_tools: false,
+    };
+    assert!(
+        !compact_tool_inputs.expose_model_visible_tools,
+        "compact turns should disable model-visible tools"
+    );
+    let compact_specs =
+        crate::session::turn::model_visible_tool_specs(&session, &turn_context, &compact_tool_inputs);
+    assert!(
+        compact_specs.is_empty(),
+        "compact turns should not expose model-visible tools"
+    );
 }
 
 pub(crate) async fn dispatch_exec_command_via_tool_service(

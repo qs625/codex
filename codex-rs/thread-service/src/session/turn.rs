@@ -521,6 +521,7 @@ pub(crate) async fn run_turn(
             .collect::<Vec<String>>();
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
         match run_sampling_request(SamplingRequest {
+            tool_inputs_override: None,
             sess: Arc::clone(&sess),
             turn_context: Arc::clone(&turn_context),
             turn_store: Arc::clone(&turn_extension_data),
@@ -961,6 +962,7 @@ pub(crate) async fn run_sampling_request(
     request: SamplingRequest<'_>,
 ) -> CodexResult<SamplingRequestResult> {
     let SamplingRequest {
+        tool_inputs_override,
         sess,
         turn_context,
         turn_store,
@@ -974,18 +976,21 @@ pub(crate) async fn run_sampling_request(
     } = request;
     let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
         Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadSessionCapability>;
-    let tool_inputs = Arc::new(
-        built_tools(
-            Arc::clone(&sess),
-            Arc::clone(&turn_context),
-            Arc::downgrade(&session_capability),
-            &input,
-            explicitly_enabled_connectors,
-            skills_outcome,
-            &cancellation_token,
-        )
-        .await?,
-    );
+    let tool_inputs = match tool_inputs_override {
+        Some(tool_inputs) => tool_inputs,
+        None => Arc::new(
+            built_tools(
+                Arc::clone(&sess),
+                Arc::clone(&turn_context),
+                Arc::downgrade(&session_capability),
+                &input,
+                explicitly_enabled_connectors,
+                skills_outcome,
+                &cancellation_token,
+            )
+            .await?,
+        ),
+    };
 
     let base_instructions = sess.get_base_instructions().await;
     let _code_mode_worker = crate::code_mode_turn_bridge::start_turn_worker(
@@ -1007,10 +1012,7 @@ pub(crate) async fn run_sampling_request(
         };
         let prompt = build_prompt(PromptBuildParams {
             input: prompt_input,
-            tools: sess
-                .services
-                .tool_service
-                .model_visible_specs(tool_service_request(&sess, &turn_context, &tool_inputs)),
+            tools: model_visible_tool_specs(&sess, &turn_context, &tool_inputs),
             parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
             base_instructions: base_instructions.clone(),
             personality: turn_context.personality,
@@ -1210,6 +1212,7 @@ pub(crate) async fn built_tools(
         deferred_mcp_tools: deferred_mcp_tools.unwrap_or_default(),
         discoverable_tools: discoverable_tools.unwrap_or_default(),
         default_agent_type_description,
+        expose_model_visible_tools: true,
     })
 }
 
@@ -1219,6 +1222,7 @@ pub(crate) struct TurnToolInputs {
     pub(crate) deferred_mcp_tools: Vec<mcp_types::ToolInfo>,
     pub(crate) discoverable_tools: Vec<tool_service_api::DiscoverableTool>,
     pub(crate) default_agent_type_description: String,
+    pub(crate) expose_model_visible_tools: bool,
 }
 
 pub(crate) fn tool_service_request<'a>(
@@ -1251,6 +1255,19 @@ pub(crate) fn tool_service_request<'a>(
             default_agent_type_description: &tool_inputs.default_agent_type_description,
         },
     }
+}
+
+pub(crate) fn model_visible_tool_specs(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    tool_inputs: &TurnToolInputs,
+) -> Vec<tool_service_api::ToolSpec> {
+    if !tool_inputs.expose_model_visible_tools {
+        return Vec::new();
+    }
+    sess.services
+        .tool_service
+        .model_visible_specs(tool_service_request(sess, turn_context, tool_inputs))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1404,6 +1421,7 @@ pub(crate) struct SamplingRequestResult {
 }
 
 pub(crate) struct SamplingRequest<'a> {
+    pub(crate) tool_inputs_override: Option<Arc<TurnToolInputs>>,
     pub(crate) sess: Arc<Session>,
     pub(crate) turn_context: Arc<TurnContext>,
     pub(crate) turn_store: Arc<codex_extension_api::ExtensionData>,
