@@ -37,18 +37,18 @@
   validation:
   commit:
 - id: root-worker-header-wait-status-dot
-  owner: TBD
-  checkout: TBD
+  owner: /root/project_pm/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
   branch: fix/root-worker-header-wait-status-dot
   task_type: bugfix
-  depends_on: 无；任一空闲 dev checkout 同步到 `103d3e7b7` 后可派发
+  depends_on: 无
   files: apps/root-worker-prototype/src/styles.css, apps/root-worker-prototype/src/lib/thread.ts, apps/root-worker-prototype/src/components/Panels.tsx, 相关 thread / panel 测试
-  base_commit: 103d3e7b7
+  base_commit: daab7b0fa
   pending_sync_from_main:
-  status: planned
+  status: in_progress
   objective: 修复 conversation 顶部状态点与状态文案不一致：`waitChild` 已显示 `Waiting on Subagent`，但 `.status-dot` 缺少 `waiting-subagent` / `waiting-eventtool` 样式导致视觉仍是灰色 complete/inactive；应与 agent tree 的等待状态颜色一致
   last_update: 2026-07-10
-  next_action: 可派给空闲的 `dev` 或 `dev-3`；最小修复预计在 `styles.css` 为 `.status-dot.waiting-subagent` / `.status-dot.waiting-eventtool` 补颜色和必要 pulse
+  next_action: owner_dev 实现并提交；PM 验收顶部 status dot 与 tree waiting 状态视觉一致
   blockers: 无
   validation:
   commit:
