@@ -16,8 +16,8 @@
   status: planned
   objective: 让 `list_agents` 重启后仍能看到持久化历史中的已完成 agent thread；runtime 初始化或 thread 恢复时应从持久化恢复 agent registry，并保证 conversation 顶部 `Waiting on Subagent` 状态与 agent tree 中可见子 agent 一致
   last_update: 2026-07-10
-  next_action: `dev-2` checkout 当前空闲且已在 `e170f6894`；待 init-context 任务拿到稳定结论后派发，避免同时争用 app-server/thread read 语义热点
-  blockers: 无
+  next_action: 暂不派发；`dev-2` checkout 正在执行 `post-turn-scheduler-mailbox-linearization`，该任务未完成且无可合并 commit
+  blockers: 等待 `post-turn-scheduler-mailbox-linearization` 在同一 checkout 收口并合并/释放
   validation:
   commit:
 - id: post-turn-scheduler-mailbox-linearization
@@ -29,12 +29,12 @@
   files: codex-rs/thread-service/src/tasks/mod.rs, codex-rs/thread-service/src/session/pending_input.rs, codex-rs/thread-service/src/mailbox.rs, codex-rs/thread-service/src/goal.rs, codex-rs/thread-service/src/session/session.rs, codex-rs/thread-service/src/session/tests/context_and_history.rs, codex-rs/thread-service/src/agent/control_tests.rs, 必要时相关 goal / mailbox / command wait 测试
   base_commit: e170f6894
   pending_sync_from_main:
-  status: in_progress
+  status: blocked
   objective: 将 turn finish 后的 post-turn 状态决策、mailbox rx drain/buffer 消费、pending work 启动、goal continuation 输入归一到同一个 scheduler 顺序里；外部 mailbox tx 不阻塞，但 mailbox buffer 的写入/读取/turn 消费必须和 `on_task_finished` post-turn transition 互斥，避免旧 `WaitChild`/goal 状态与新 turn 启动交错
   last_update: 2026-07-10
-  next_action: 已准备派发给 `/root/project_pm/owner_dev_2`；设计方向由用户确认：mailbox tx 可无锁写入，rx drain 到 buffer 及 buffer 消费拿 scheduler 锁；goal continuation 不直接自启动 turn，而是输入到统一 mailbox/pending work，由同一路径启动
-  blockers: 无
-  validation:
+  next_action: 发回 `/root/project_pm/owner_dev_2` 继续返工；先修 `codex-rs/thread-service/src/goal.rs` 中 continuation reserve 后、`start_task()` 前缺少“当前 goal 仍是同一个 active goal”的二次校验，再继续最窄定位 Goals feature 下 mock-driven 集成测试 0 model requests 的启动链断点
+  blockers: Goals feature 打开时 `pending_request_user_input_does_not_spawn_extra_goal_continuation`、`active_goal_continuation_runs_again_after_no_tool_turn`、`completed_goal_accounts_current_turn_tokens_before_tool_response` 仍失败；同一 reviewer `/root/project_pm/owner_dev_2/scheduler_mailbox_review` 发现 `goal.rs` launch 前二次校验缺失，review 未通过
+  validation: 已通过 `rtk cargo test -p thread-service mailbox::tests::mailbox_queries_do_not_implicitly_drain_incoming_mail -- --exact`；`rtk cargo test -p thread-service trigger_turn_mailbox_input_starts_idle_turn`；`rtk cargo test -p thread-service task_finish_restarts_turn_for_leftover_pending_user_input`；`rtk cargo test -p thread-service task_finish_prioritizes_thread_pending_work_without_losing_leftover_input`；`rtk cargo test -p thread-service trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary`；`rtk cargo test -p thread-service active_goal_runtime_can_reserve_idle_turn_for_continuation`；`rtk cargo build -p app-server --bin app-server`。失败：`rtk cargo test -p thread-service pending_request_user_input_does_not_spawn_extra_goal_continuation` 超时；`rtk cargo test -p thread-service completed_goal_accounts_current_turn_tokens_before_tool_response` 期望 3 次请求实际 0 次；`rtk cargo test -p thread-service active_goal_continuation_runs_again_after_no_tool_turn` 期望 5 次请求实际 0 次
   commit:
 
 ## Completed
