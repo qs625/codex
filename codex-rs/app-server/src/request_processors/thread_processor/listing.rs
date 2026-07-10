@@ -159,10 +159,10 @@ impl ThreadRequestProcessor {
         let live_snapshot = self.live_threads.live_thread_snapshot(thread_id).await.ok();
         let (mut thread, has_live_in_progress_turn) = if include_turns {
             if let Some(live_snapshot) = live_snapshot.as_ref() {
-                // Loaded thread with turns: use persisted metadata when it exists,
-                // but reconstruct turns from the live ThreadStore history.
+                // Loaded thread with turns: keep the persisted turn projection available
+                // so richer init-context items survive live-history reconstruction.
                 let persisted_thread = self
-                    .load_persisted_thread_for_read(thread_id, /*include_turns*/ false)
+                    .load_persisted_thread_for_read(thread_id, /*include_turns*/ true)
                     .await?;
                 self.load_live_thread_view(
                     thread_id,
@@ -290,6 +290,10 @@ impl ThreadRequestProcessor {
             ));
         }
         let fallback_thread = build_thread_from_live_snapshot(thread_id, live_snapshot);
+        let persisted_turns = persisted_thread
+            .as_ref()
+            .map(|thread| thread.turns.clone())
+            .unwrap_or_default();
         let mut thread = if let Some(mut thread) = persisted_thread {
             if thread.path.is_none() {
                 thread.path = fallback_thread.path.clone();
@@ -303,6 +307,9 @@ impl ThreadRequestProcessor {
         let has_live_in_progress_turn = self
             .apply_thread_read_store_fields(thread_id, &mut thread, include_turns)
             .await?;
+        if include_turns {
+            restore_persisted_injected_context_turns(&mut thread, &persisted_turns);
+        }
         Ok((thread, has_live_in_progress_turn))
     }
 
@@ -730,5 +737,197 @@ impl ThreadRequestProcessor {
                 "thread",
             );
         }
+    }
+}
+
+fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
+    for (persisted_index, persisted_turn) in persisted_turns.iter().enumerate() {
+        let persisted_injected_items: Vec<_> = persisted_turn
+            .items
+            .iter()
+            .filter(|item| matches!(item, ThreadItem::InjectedContext { .. }))
+            .cloned()
+            .collect();
+        if persisted_injected_items.is_empty() {
+            continue;
+        }
+
+        if let Some(live_turn) = thread.turns.iter_mut().find(|turn| turn.id == persisted_turn.id) {
+            restore_persisted_injected_context_items(live_turn, &persisted_injected_items);
+            continue;
+        }
+
+        let mut injected_context_turn = persisted_turn.clone();
+        injected_context_turn.items = persisted_injected_items;
+        injected_context_turn.items_view = TurnItemsView::Full;
+        thread
+            .turns
+            .insert(persisted_index.min(thread.turns.len()), injected_context_turn);
+    }
+}
+
+fn restore_persisted_injected_context_items(
+    live_turn: &mut Turn,
+    persisted_injected_items: &[ThreadItem],
+) {
+    let mut injected_insert_index = live_turn
+        .items
+        .iter()
+        .position(|item| !matches!(item, ThreadItem::InjectedContext { .. }))
+        .unwrap_or(live_turn.items.len());
+
+    for persisted_item in persisted_injected_items {
+        let persisted_id = persisted_item.id().to_string();
+        if let Some(existing_index) = live_turn
+            .items
+            .iter()
+            .position(|item| item.id() == persisted_id)
+        {
+            live_turn.items[existing_index] = persisted_item.clone();
+            injected_insert_index = injected_insert_index.max(existing_index + 1);
+        } else {
+            live_turn
+                .items
+                .insert(injected_insert_index, persisted_item.clone());
+            injected_insert_index += 1;
+        }
+    }
+
+    if live_turn
+        .items
+        .iter()
+        .any(|item| matches!(item, ThreadItem::InjectedContext { .. }))
+    {
+        live_turn.items_view = TurnItemsView::Full;
+    }
+}
+
+#[cfg(test)]
+mod restore_persisted_injected_context_turns_tests {
+    use super::*;
+    use app_server_protocol::InjectedContextSection;
+    use app_server_protocol::SessionSource;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+
+    fn thread_with_turns(turns: Vec<Turn>) -> Thread {
+        Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: String::new(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            status: ThreadStatus::Complete,
+            path: None,
+            cwd: codex_utils_absolute_path::test_support::test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: SessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            turns,
+        }
+    }
+
+    fn injected_context_item(id: &str, text: &str) -> ThreadItem {
+        ThreadItem::InjectedContext {
+            id: id.to_string(),
+            title: "Init Context".to_string(),
+            preview: "Init Context".to_string(),
+            sections: vec![InjectedContextSection {
+                label: "Instructions".to_string(),
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    fn agent_message_item(id: &str, text: &str) -> ThreadItem {
+        ThreadItem::AgentMessage {
+            id: id.to_string(),
+            text: text.to_string(),
+            phase: None,
+            memory_citation: None,
+        }
+    }
+
+    fn turn(id: &str, items: Vec<ThreadItem>) -> Turn {
+        Turn {
+            id: id.to_string(),
+            items,
+            items_view: TurnItemsView::Full,
+            status: TurnStatus::Completed,
+            error: None,
+            started_at: Some(1),
+            completed_at: Some(2),
+            duration_ms: Some(100),
+        }
+    }
+
+    #[test]
+    fn restore_persisted_injected_context_turns_replaces_live_sections_with_persisted_item() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-1",
+            vec![injected_context_item("ctx-1", "live init context")],
+        )]);
+        let persisted_turns = vec![turn(
+            "turn-1",
+            vec![injected_context_item("ctx-1", "persisted instruction_files text")],
+        )];
+
+        restore_persisted_injected_context_turns(&mut thread, &persisted_turns);
+
+        assert_eq!(
+            thread.turns[0].items,
+            vec![injected_context_item(
+                "ctx-1",
+                "persisted instruction_files text"
+            )]
+        );
+    }
+
+    #[test]
+    fn restore_persisted_injected_context_turns_inserts_missing_turn_without_dup_agent_items() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-2",
+            vec![agent_message_item("msg-1", "final assistant output")],
+        )]);
+        let persisted_turns = vec![
+            turn(
+                "turn-1",
+                vec![injected_context_item("ctx-1", "persisted instruction_files text")],
+            ),
+            turn(
+                "turn-2",
+                vec![
+                    injected_context_item("ctx-2", "persisted compact init context"),
+                    agent_message_item("msg-1", "older assistant output"),
+                ],
+            ),
+        ];
+
+        restore_persisted_injected_context_turns(&mut thread, &persisted_turns);
+
+        assert_eq!(thread.turns.len(), 2);
+        assert_eq!(
+            thread.turns[0].items,
+            vec![injected_context_item(
+                "ctx-1",
+                "persisted instruction_files text"
+            )]
+        );
+        assert_eq!(
+            thread.turns[1].items,
+            vec![
+                injected_context_item("ctx-2", "persisted compact init context"),
+                agent_message_item("msg-1", "final assistant output"),
+            ]
+        );
     }
 }

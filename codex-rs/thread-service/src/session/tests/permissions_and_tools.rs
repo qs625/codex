@@ -2174,6 +2174,396 @@ Use this workflow when feature work needs a structured process.
     );
 }
 
+#[tokio::test]
+async fn build_initial_context_loads_disabled_project_workflows_for_display_only() {
+    fn write_workflow(root: &Path, id: &str, description: &str) {
+        let workflow_dir = root.join(id);
+        std::fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+        std::fs::write(workflow_dir.join("workflow.ts"), "export default {};")
+            .expect("write workflow entry");
+        std::fs::write(
+            workflow_dir.join("WORKFLOW.md"),
+            format!(
+                r#"---
+id: {id}
+name: Feature Development
+description: {description}
+entry: workflow.ts
+when_to_use:
+  - feature work
+inputs:
+  objective:
+    type: string
+    description: Goal
+---
+Use this workflow when feature work needs a structured process.
+"#
+            ),
+        )
+        .expect("write workflow markdown");
+    }
+
+    let codex_home = tempfile::tempdir().expect("create codex home");
+    let repo_cwd = codex_home.path().join("repo");
+    let dot_codex = repo_cwd.join(".codex");
+    let active_cwd = codex_home.path().join("active-cwd");
+    std::fs::create_dir_all(&active_cwd).expect("create active cwd");
+    std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
+    write_workflow(
+        &dot_codex.join("workflows"),
+        "feature-dev",
+        "structured feature workflow",
+    );
+
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        codex_home.path(),
+        |config| {
+            config.cwd = active_cwd.abs();
+            config.config_layer_stack = config_service::ConfigLayerStack::new(
+                vec![config_service::ConfigLayerEntry::new_disabled(
+                    codex_config_types::ConfigLayerSource::Project {
+                        dot_codex_folder: dot_codex.abs(),
+                    },
+                    toml::Value::Table(toml::map::Map::new()),
+                    "disabled".to_string(),
+                )],
+                Default::default(),
+                Default::default(),
+            )
+            .expect("config layer stack");
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text.contains("<workflows_instructions>")
+                && text.contains("- feature-dev (project)")
+                && text.contains("structured feature workflow")),
+        "expected disabled project workflow in initial context, got {developer_texts:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn build_initial_context_skips_disabled_project_workflow_symlinks_that_escape_repo() {
+    fn write_workflow(root: &Path, id: &str, description: &str) {
+        let workflow_dir = root.join(id);
+        std::fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+        std::fs::write(workflow_dir.join("workflow.ts"), "export default {};")
+            .expect("write workflow entry");
+        std::fs::write(
+            workflow_dir.join("WORKFLOW.md"),
+            format!(
+                r#"---
+id: {id}
+name: Feature Development
+description: {description}
+entry: workflow.ts
+when_to_use:
+  - feature work
+inputs:
+  objective:
+    type: string
+    description: Goal
+---
+Use this workflow when feature work needs a structured process.
+"#
+            ),
+        )
+        .expect("write workflow markdown");
+    }
+
+    let codex_home = tempfile::tempdir().expect("create codex home");
+    let repo_cwd = codex_home.path().join("repo");
+    let dot_codex = repo_cwd.join(".codex");
+    let external_root = codex_home.path().join("external-workflow");
+    let active_cwd = codex_home.path().join("active-cwd");
+    std::fs::create_dir_all(&active_cwd).expect("create active cwd");
+    std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
+    std::fs::create_dir_all(dot_codex.join("workflows")).expect("create workflows root");
+    write_workflow(&external_root, "feature-dev", "structured feature workflow");
+    std::os::unix::fs::symlink(
+        &external_root,
+        dot_codex.join("workflows").join("feature-dev"),
+    )
+    .expect("create escaping workflow symlink");
+
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        codex_home.path(),
+        |config| {
+            config.cwd = active_cwd.abs();
+            config.config_layer_stack = config_service::ConfigLayerStack::new(
+                vec![config_service::ConfigLayerEntry::new_disabled(
+                    codex_config_types::ConfigLayerSource::Project {
+                        dot_codex_folder: dot_codex.abs(),
+                    },
+                    toml::Value::Table(toml::map::Map::new()),
+                    "disabled".to_string(),
+                )],
+                Default::default(),
+                Default::default(),
+            )
+            .expect("config layer stack");
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        developer_texts
+            .iter()
+            .all(|text| !text.contains("- feature-dev (project)")),
+        "expected escaping workflow symlink to stay out of initial context, got {developer_texts:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn build_initial_context_skips_disabled_project_workflow_markdown_symlinks_that_escape_repo() {
+    fn write_workflow_entry(workflow_dir: &Path) {
+        std::fs::create_dir_all(workflow_dir).expect("create workflow dir");
+        std::fs::write(workflow_dir.join("workflow.ts"), "export default {};")
+            .expect("write workflow entry");
+    }
+
+    let codex_home = tempfile::tempdir().expect("create codex home");
+    let repo_cwd = codex_home.path().join("repo");
+    let dot_codex = repo_cwd.join(".codex");
+    let workflow_dir = dot_codex.join("workflows").join("feature-dev");
+    let external_markdown_dir = codex_home.path().join("external-workflow-doc");
+    let active_cwd = codex_home.path().join("active-cwd");
+    std::fs::create_dir_all(&active_cwd).expect("create active cwd");
+    std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
+    std::fs::create_dir_all(&external_markdown_dir).expect("create external workflow doc dir");
+    write_workflow_entry(&workflow_dir);
+    std::fs::write(
+        external_markdown_dir.join("WORKFLOW.md"),
+        r#"---
+id: feature-dev
+name: Feature Development
+description: escaped workflow
+entry: workflow.ts
+when_to_use:
+  - feature work
+inputs:
+  objective:
+    type: string
+    description: Goal
+---
+Use this workflow when feature work needs a structured process.
+"#,
+    )
+    .expect("write external workflow markdown");
+    std::os::unix::fs::symlink(
+        external_markdown_dir.join("WORKFLOW.md"),
+        workflow_dir.join("WORKFLOW.md"),
+    )
+    .expect("create escaping workflow markdown symlink");
+
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        codex_home.path(),
+        |config| {
+            config.cwd = active_cwd.abs();
+            config.config_layer_stack = config_service::ConfigLayerStack::new(
+                vec![config_service::ConfigLayerEntry::new_disabled(
+                    codex_config_types::ConfigLayerSource::Project {
+                        dot_codex_folder: dot_codex.abs(),
+                    },
+                    toml::Value::Table(toml::map::Map::new()),
+                    "disabled".to_string(),
+                )],
+                Default::default(),
+                Default::default(),
+            )
+            .expect("config layer stack");
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        developer_texts
+            .iter()
+            .all(|text| !text.contains("- feature-dev (project)")),
+        "expected escaping workflow markdown symlink to stay out of initial context, got {developer_texts:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn build_initial_context_skips_disabled_project_workflow_entry_symlinks_that_escape_repo() {
+    let codex_home = tempfile::tempdir().expect("create codex home");
+    let repo_cwd = codex_home.path().join("repo");
+    let dot_codex = repo_cwd.join(".codex");
+    let workflow_dir = dot_codex.join("workflows").join("feature-dev");
+    let external_entry_dir = codex_home.path().join("external-workflow-entry");
+    let active_cwd = codex_home.path().join("active-cwd");
+    std::fs::create_dir_all(&active_cwd).expect("create active cwd");
+    std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
+    std::fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+    std::fs::create_dir_all(&external_entry_dir).expect("create external workflow entry dir");
+    std::fs::write(
+        workflow_dir.join("WORKFLOW.md"),
+        r#"---
+id: feature-dev
+name: Feature Development
+description: escaped workflow entry
+entry: workflow.ts
+when_to_use:
+  - feature work
+inputs:
+  objective:
+    type: string
+    description: Goal
+---
+Use this workflow when feature work needs a structured process.
+"#,
+    )
+    .expect("write workflow markdown");
+    std::fs::write(
+        external_entry_dir.join("workflow.ts"),
+        "export default { external: true };",
+    )
+    .expect("write external workflow entry");
+    std::os::unix::fs::symlink(
+        external_entry_dir.join("workflow.ts"),
+        workflow_dir.join("workflow.ts"),
+    )
+    .expect("create escaping workflow entry symlink");
+
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        codex_home.path(),
+        |config| {
+            config.cwd = active_cwd.abs();
+            config.config_layer_stack = config_service::ConfigLayerStack::new(
+                vec![config_service::ConfigLayerEntry::new_disabled(
+                    codex_config_types::ConfigLayerSource::Project {
+                        dot_codex_folder: dot_codex.abs(),
+                    },
+                    toml::Value::Table(toml::map::Map::new()),
+                    "disabled".to_string(),
+                )],
+                Default::default(),
+                Default::default(),
+            )
+            .expect("config layer stack");
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+
+    assert!(
+        developer_texts
+            .iter()
+            .all(|text| !text.contains("- feature-dev (project)")),
+        "expected escaping workflow entry symlink to stay out of initial context, got {developer_texts:?}"
+    );
+}
+
+#[tokio::test]
+async fn build_initial_context_keeps_enabled_workflow_when_disabled_project_duplicates_id() {
+    fn write_workflow(root: &Path, id: &str, description: &str) {
+        let workflow_dir = root.join(id);
+        std::fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+        std::fs::write(workflow_dir.join("workflow.ts"), "export default {};")
+            .expect("write workflow entry");
+        std::fs::write(
+            workflow_dir.join("WORKFLOW.md"),
+            format!(
+                r#"---
+id: {id}
+name: Feature Development
+description: {description}
+entry: workflow.ts
+when_to_use:
+  - feature work
+inputs:
+  objective:
+    type: string
+    description: Goal
+---
+Use this workflow when feature work needs a structured process.
+"#
+            ),
+        )
+        .expect("write workflow markdown");
+    }
+
+    let codex_home = tempfile::tempdir().expect("create codex home");
+    let repo_cwd = codex_home.path().join("repo");
+    let repo_dot_codex = repo_cwd.join(".codex");
+    let disabled_repo_root = codex_home.path().join("disabled-repo");
+    let disabled_dot_codex = disabled_repo_root.join(".codex");
+    std::fs::create_dir_all(&repo_cwd).expect("create repo cwd");
+    write_workflow(
+        &repo_dot_codex.join("workflows"),
+        "feature-dev",
+        "enabled workflow description",
+    );
+    write_workflow(
+        &disabled_dot_codex.join("workflows"),
+        "feature-dev",
+        "disabled workflow description",
+    );
+
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        codex_home.path(),
+        |config| {
+            config.cwd = repo_cwd.abs();
+            config.config_layer_stack = config_service::ConfigLayerStack::new(
+                vec![config_service::ConfigLayerEntry::new_disabled(
+                    codex_config_types::ConfigLayerSource::Project {
+                        dot_codex_folder: disabled_dot_codex.abs(),
+                    },
+                    toml::Value::Table(toml::map::Map::new()),
+                    "disabled".to_string(),
+                )],
+                Default::default(),
+                Default::default(),
+            )
+            .expect("config layer stack");
+        },
+    )
+    .await;
+
+    let initial_context = session.build_initial_context(turn_context.as_ref()).await;
+    let developer_texts = developer_input_texts(&initial_context);
+    let workflow_section = developer_texts
+        .iter()
+        .find(|text| text.contains("<workflows_instructions>"))
+        .expect("expected workflows instructions section");
+
+    assert!(
+        workflow_section.contains("enabled workflow description"),
+        "expected enabled workflow to remain visible, got {workflow_section:?}"
+    );
+    assert!(
+        !workflow_section.contains("disabled workflow description"),
+        "expected disabled duplicate workflow to stay hidden, got {workflow_section:?}"
+    );
+}
+
 #[test]
 fn emit_thread_start_skill_metrics_records_enabled_kept_and_truncated_values() {
     let session_telemetry = test_session_telemetry_without_metadata();

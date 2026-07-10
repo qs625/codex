@@ -3,6 +3,9 @@ use crate::config::ConfigBuilder;
 use codex_features::Feature;
 use codex_file_system::LOCAL_FS;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use config_service::ConfigLayerEntry;
+use config_service::ConfigLayerStack;
+use config_service::config_toml::ConfigToml;
 use core_test_support::TempDirExt;
 use pretty_assertions::assert_eq;
 use std::fs;
@@ -24,6 +27,12 @@ async fn make_config(root: &TempDir, limit: usize, instructions: Option<&str>) -
 
     config.cwd = root.abs();
     config.project_doc_max_bytes = limit;
+    config.config_layer_stack = ConfigLayerStack::new(
+        Vec::new(),
+        Default::default(),
+        Default::default(),
+    )
+    .expect("empty config layer stack");
 
     config.user_instructions = instructions.map(ToOwned::to_owned);
     config
@@ -210,6 +219,160 @@ async fn instruction_sources_match_configured_files() {
             AbsolutePathBuf::try_from(user_instruction).expect("absolute path"),
         ]
     );
+}
+
+#[tokio::test]
+async fn instruction_sources_include_repo_local_files_from_disabled_project_layers() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path().join("repo");
+    let dot_codex = repo_root.join(".codex");
+    let instruction_path = repo_root.join("memory").join("project.md");
+    fs::create_dir_all(instruction_path.parent().expect("instruction parent")).unwrap();
+    fs::create_dir_all(&dot_codex).unwrap();
+    fs::write(&instruction_path, "project doc").unwrap();
+
+    let mut config = make_config(&tmp, 4096, None).await;
+    config.config_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new_disabled(
+            codex_config_types::ConfigLayerSource::Project {
+                dot_codex_folder: AbsolutePathBuf::try_from(dot_codex).expect("absolute path"),
+            },
+            toml::Value::try_from(ConfigToml {
+                instruction_files: Some(vec![
+                    AbsolutePathBuf::try_from(instruction_path.clone()).expect("absolute path"),
+                ]),
+                ..Default::default()
+            })
+            .expect("serialize config"),
+            "disabled".to_string(),
+        )],
+        Default::default(),
+        Default::default(),
+    )
+    .expect("config layer stack");
+
+    let sources = AgentsMdManager::new(&config)
+        .instruction_sources(LOCAL_FS.as_ref())
+        .await;
+    assert_eq!(
+        sources,
+        vec![
+            AbsolutePathBuf::try_from(std::fs::canonicalize(instruction_path).expect("canonical path"))
+                .expect("absolute path")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn instruction_sources_resolve_relative_files_from_disabled_project_layers() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path().join("repo");
+    let dot_codex = repo_root.join(".codex");
+    let instruction_path = repo_root.join("memory").join("project.md");
+    fs::create_dir_all(instruction_path.parent().expect("instruction parent")).unwrap();
+    fs::create_dir_all(&dot_codex).unwrap();
+    fs::write(&instruction_path, "project doc").unwrap();
+
+    let mut config = make_config(&tmp, 4096, None).await;
+    config.config_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new_disabled(
+            codex_config_types::ConfigLayerSource::Project {
+                dot_codex_folder: AbsolutePathBuf::try_from(dot_codex).expect("absolute path"),
+            },
+            toml::from_str("instruction_files = [\"memory/project.md\"]")
+                .expect("serialize config"),
+            "disabled".to_string(),
+        )],
+        Default::default(),
+        Default::default(),
+    )
+    .expect("config layer stack");
+
+    let sources = AgentsMdManager::new(&config)
+        .instruction_sources(LOCAL_FS.as_ref())
+        .await;
+    assert_eq!(
+        sources,
+        vec![
+            AbsolutePathBuf::try_from(std::fs::canonicalize(instruction_path).expect("canonical path"))
+                .expect("absolute path")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn disabled_project_instruction_files_skip_paths_outside_repo_root() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path().join("repo");
+    let dot_codex = repo_root.join(".codex");
+    let external_path = tmp.path().join("outside.md");
+    fs::create_dir_all(&dot_codex).unwrap();
+    fs::write(&external_path, "secret").unwrap();
+
+    let mut config = make_config(&tmp, 4096, None).await;
+    config.config_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new_disabled(
+            codex_config_types::ConfigLayerSource::Project {
+                dot_codex_folder: AbsolutePathBuf::try_from(dot_codex).expect("absolute path"),
+            },
+            toml::Value::try_from(ConfigToml {
+                instruction_files: Some(vec![
+                    AbsolutePathBuf::try_from(external_path).expect("absolute path"),
+                ]),
+                ..Default::default()
+            })
+            .expect("serialize config"),
+            "disabled".to_string(),
+        )],
+        Default::default(),
+        Default::default(),
+    )
+    .expect("config layer stack");
+
+    let sources = AgentsMdManager::new(&config)
+        .instruction_sources(LOCAL_FS.as_ref())
+        .await;
+    assert_eq!(sources, Vec::<AbsolutePathBuf>::new());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn disabled_project_instruction_files_skip_symlinks_that_escape_repo_root() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_root = tmp.path().join("repo");
+    let dot_codex = repo_root.join(".codex");
+    let memory_dir = repo_root.join("memory");
+    let external_path = tmp.path().join("outside.md");
+    let linked_path = memory_dir.join("linked.md");
+    fs::create_dir_all(&dot_codex).unwrap();
+    fs::create_dir_all(&memory_dir).unwrap();
+    fs::write(&external_path, "secret").unwrap();
+    std::os::unix::fs::symlink(&external_path, &linked_path).unwrap();
+
+    let mut config = make_config(&tmp, 4096, None).await;
+    config.config_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new_disabled(
+            codex_config_types::ConfigLayerSource::Project {
+                dot_codex_folder: AbsolutePathBuf::try_from(dot_codex).expect("absolute path"),
+            },
+            toml::Value::try_from(ConfigToml {
+                instruction_files: Some(vec![
+                    AbsolutePathBuf::try_from(linked_path).expect("absolute path"),
+                ]),
+                ..Default::default()
+            })
+            .expect("serialize config"),
+            "disabled".to_string(),
+        )],
+        Default::default(),
+        Default::default(),
+    )
+    .expect("config layer stack");
+
+    let sources = AgentsMdManager::new(&config)
+        .instruction_sources(LOCAL_FS.as_ref())
+        .await;
+    assert_eq!(sources, Vec::<AbsolutePathBuf>::new());
 }
 
 #[tokio::test]
