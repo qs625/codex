@@ -23,27 +23,6 @@ pub struct MailboxReceiver {
     pending_mails: VecDeque<PendingInputItem>,
 }
 
-/// Whether mailbox deliveries should still be folded into the current turn.
-///
-/// State machine:
-/// - A turn starts in `CurrentTurn`, so queued child mail can join the next
-///   model request for that turn.
-/// - After user-visible terminal output is recorded, we switch to `NextTurn`
-///   to leave late child mail queued instead of extending an already shown
-///   answer.
-/// - If the same task later gets explicit same-turn work again (a steered user
-///   prompt or a tool call after an untagged preamble), we reopen `CurrentTurn`
-///   so that pending child mail is drained into that follow-up request.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum MailboxDeliveryPhase {
-    /// Incoming mailbox messages can still be consumed by the current turn.
-    #[default]
-    CurrentTurn,
-    /// The current turn already emitted visible final answer text; mailbox
-    /// messages should remain queued for a later turn.
-    NextTurn,
-}
-
 impl Mailbox {
     pub fn new() -> (Self, MailboxReceiver) {
         let (tx, rx) = mpsc::unbounded_channel();

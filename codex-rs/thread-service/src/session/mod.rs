@@ -9,7 +9,6 @@ use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
 use crate::Mailbox;
-use crate::MailboxDeliveryPhase;
 use crate::MailboxReceiver;
 use crate::PendingInputItem;
 use crate::agent::AgentControl;

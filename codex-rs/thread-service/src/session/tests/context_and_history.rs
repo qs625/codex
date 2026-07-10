@@ -813,6 +813,78 @@ async fn task_finish_restarts_turn_for_leftover_pending_user_input() {
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
 
+#[tokio::test]
+async fn task_finish_prioritizes_thread_pending_work_without_losing_leftover_input() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: false,
+        },
+    )
+    .await;
+
+    sess.queue_response_items_for_next_turn(vec![PendingInputItem::from(
+        ResponseInputItem::Message {
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "queued next turn work".to_string(),
+            }],
+            phase: None,
+        },
+    )])
+    .await;
+
+    sess.inject_hook_inspectable_items(vec![ResponseInputItem::Message {
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "late pending input".to_string(),
+        }],
+        phase: None,
+    }])
+    .await
+    .expect("inject pending input into active turn");
+
+    sess.on_task_finished(Arc::clone(&tc), /*last_agent_message*/ None)
+        .await;
+
+    let history = sess.clone_history().await;
+    let expected = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "late pending input".to_string(),
+        }],
+        phase: None,
+    };
+    assert!(
+        history.raw_items().iter().any(|item| item == &expected),
+        "expected leftover pending input to be persisted before the follow-up turn starts"
+    );
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if sess.active_turn_context_and_cancellation_token().await.is_some() {
+                break;
+            }
+            let event = rx.recv().await.expect("event");
+            if matches!(
+                event.msg,
+                EventMsg::TurnComplete(TurnCompleteEvent { turn_id, .. }) if turn_id != tc.sub_id
+            ) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("thread-level pending work should restart a follow-up turn");
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compact_task_continues_pending_input_with_regularized_metadata() {
     #[derive(Clone)]
@@ -2128,7 +2200,7 @@ async fn queue_only_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
     )
     .await;
 
-    sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
+    sess.defer_async_input_to_next_turn(&tc.sub_id).await;
     sess.enqueue_mailbox_communication(communication.clone()).await;
 
     assert!(
@@ -2824,14 +2896,15 @@ async fn trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
     )
     .await;
 
-    sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
+    sess.defer_async_input_to_next_turn(&tc.sub_id).await;
     sess.enqueue_mailbox_communication(InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("worker path should parse"),
         AgentPath::root(),
         Vec::new(),
         "late trigger update".to_string(),
         protocol::protocol::InterAgentOperation::Unknown,
-    ))
+    )
+    .with_trigger_turn(true))
     .await;
 
     assert!(
@@ -2845,7 +2918,7 @@ async fn trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
 }
 
 #[tokio::test]
-async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
+async fn steered_input_reopens_async_input_for_current_turn() {
     let (sess, tc, _rx) = make_session_and_context_with_rx().await;
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("worker path should parse"),
@@ -2865,7 +2938,7 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
     )
     .await;
 
-    sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
+    sess.defer_async_input_to_next_turn(&tc.sub_id).await;
     sess.enqueue_mailbox_communication(communication.clone()).await;
     sess.steer_input(
         vec![UserInput::Text {
@@ -2891,7 +2964,7 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
 }
 
 #[tokio::test]
-async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
+async fn stale_defer_async_input_does_not_override_steered_input() {
     let (sess, tc, _rx) = make_session_and_context_with_rx().await;
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("worker path should parse"),
@@ -2911,7 +2984,7 @@ async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
     )
     .await;
 
-    sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
+    sess.defer_async_input_to_next_turn(&tc.sub_id).await;
     sess.enqueue_mailbox_communication(communication.clone()).await;
     sess.steer_input(
         vec![UserInput::Text {
@@ -2924,7 +2997,7 @@ async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
     .await
     .expect("steered input should be accepted");
 
-    sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
+    sess.defer_async_input_to_next_turn(&tc.sub_id).await;
 
     assert_eq!(
         sess.get_pending_input().await,
@@ -2939,7 +3012,7 @@ async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
 }
 
 #[tokio::test]
-async fn tool_calls_reopen_mailbox_delivery_for_current_turn() {
+async fn tool_calls_reopen_async_input_for_current_turn() {
     let (sess, tc, _rx) = make_session_and_context_with_rx().await;
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("worker path should parse"),
@@ -2959,7 +3032,7 @@ async fn tool_calls_reopen_mailbox_delivery_for_current_turn() {
     )
     .await;
 
-    sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
+    sess.defer_async_input_to_next_turn(&tc.sub_id).await;
     sess.enqueue_mailbox_communication(communication.clone()).await;
 
     let item = ResponseItem::FunctionCall {

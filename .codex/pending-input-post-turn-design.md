@@ -13,9 +13,13 @@
 ## Design Summary
 - mailbox 只保留“线程级异步输入入口”的职责，不再区分 current-turn / next-turn delivery。
 - 所有 pending input 写入路径与 `on_task_finished()` 的最后收尾，共用 `active_turn` 这把同步锁来决定：
-  - 当前有 active turn：写入当前 `turn_state.pending_input`
+  - 当前有 active turn：根据 turn-local gating 决定写入当前 `turn_state.pending_input`，还是继续留在线程级 mailbox
   - 当前 idle：把输入保留在线程级 pending 容器，并在锁外启动新 turn
-- `on_task_finished()` 在清理最后一个 task 时，也必须获取同一把锁，再检查一次 pending input 作为兜底。
+- `on_task_finished()` 在清理最后一个 task 时，也必须获取同一把锁，原子完成：
+  - 取走当前 turn leftover pending input
+  - 检查线程级 pending queue / mailbox 是否已有待处理工作
+  - 清掉旧 active turn
+  - 产出锁外副作用所需的 next-step 决议
 - 如果收尾时发现仍有 pending input，则跳过 goal continuation / final-status completion 这类“线程已空闲”的后续逻辑，转而让下一轮 turn 启动。
 
 ## Why Change The Current Model
@@ -41,12 +45,15 @@
 - 所有异步输入都先进入统一的线程级入口。
 - 入口在写入时获取 `active_turn` 锁。
 - 在锁内只做判定，不直接启动 turn：
-  - 若存在 active turn：把输入写入该 turn 的 `turn_state.pending_input`
+  - 若存在 active turn：根据 turn-local gating 把输入写入该 turn 的 `turn_state.pending_input` 或线程级 mailbox
   - 若不存在 active turn：把输入放到线程级 pending queue，并设置 `should_start_turn = true`
 - 解锁后，若 `should_start_turn = true`，调用 `maybe_start_turn_for_pending_work()`
 
 ### 2. Mailbox Semantics
 - mailbox 不再区分“当前 turn 收”还是“下一轮收”。
+- turn 仍可保留一个更直接的 turn-local gating，例如 `accepts_async_input_for_current_turn`：
+  - `true`：late async input 仍可并入当前 turn
+  - `false`：late async input 留在线程级 mailbox，等待下一轮
 - 若保留 mailbox：
   - 它只是线程级 pending queue 的一种实现
   - `trigger_turn` 仍可保留为 wakeup hint
@@ -55,14 +62,16 @@
 
 ### 3. Turn Finish Fallback
 - `on_task_finished()` 在移除 task 后，如果这是最后一个 task，必须再次拿 `active_turn` 锁完成最后收尾。
-- 锁内需要做的不是“判断历史归属”，而是：
-  - 查看当前 turn 的 `turn_state.pending_input`
-  - 查看线程级 pending queue 是否已有输入
-  - 若任一非空，则记录 `should_start_next_turn = true`
+- 锁内需要做的不是直接执行后续逻辑，而是提交一个明确的决议：
+  - 取走当前 turn 的 leftover `turn_state.pending_input`
+  - 检查线程级 pending queue / mailbox 是否已有待处理工作
   - 清掉旧 `active_turn`
+  - 返回 `pending input + has_thread_pending_work` 这种锁外可消费的 next-step 决议
 - 解锁后：
-  - 若 `should_start_next_turn = true`，立即调用 `maybe_start_turn_for_pending_work()`，并跳过 goal continuation / final completion 逻辑
-  - 若没有 pending input，才继续 goal / parent-final-status / wait-command 判断
+  - 先 inspect / record leftover pending input
+  - 若 `has_thread_pending_work = true`，优先调用 `maybe_start_turn_for_pending_work()`，并跳过 goal continuation / final completion 逻辑
+  - 否则仅在 leftover 中存在 accepted input 时启动 follow-up turn
+  - 若两者都没有，才继续 goal / parent-final-status / wait-command 判断
 
 ### 4. Ordering Rules
 - 推荐顺序：
@@ -81,15 +90,14 @@
 - 否则会把 turn 启动、事件发送、甚至后续回调重新带回同一个临界区，放大死锁和重入风险。
 
 ## Behavioral Consequence
-- 这套设计接受一个语义变化：
-  - 只要 active turn 还没真正 finish，late async input 可以直接写入当前 `turn_state.pending_input`
-  - 系统不再依赖 mailbox delivery phase 来强制它“必须属于下一轮”
-- 如果后续仍想保留“answer boundary 之后不再扩展当前 turn”的产品语义，也应通过 turn 内一个更直接的 `accepts_async_input` 判定位来做，而不是让 mailbox 承担 turn 归属语义。
+- 这套设计接受一个实现变化：
+  - 系统不再依赖 mailbox delivery phase 来强制 late async input 的归属
+  - 如果要保留“answer boundary 之后不再扩展当前 turn”的产品语义，应通过 turn 内一个更直接的 `accepts_async_input` 判定位来做，而不是让 mailbox 承担 turn 归属语义
 
 ## Required Code Changes
-- 移除或弱化 `MailboxDeliveryPhase::CurrentTurn/NextTurn` 对 pending-input 消费路径的控制。
+- 删除 `MailboxDeliveryPhase::CurrentTurn/NextTurn` 对 pending-input 消费路径的控制。
 - 给 async input / mailbox input 提供统一 helper：
-  - 锁内决定写 active turn 或线程级 queue
+  - 锁内根据 turn-local gating 决定写 active turn 或线程级 queue
   - 锁外决定是否起 turn
 - 重写 `on_task_finished()` 的最后收尾：
   - 在最后一个 task 结束时获取同一把锁
@@ -107,4 +115,4 @@
 ## Open Questions
 - mailbox 是否还值得保留为独立结构，还是直接并入线程级 pending queue。
 - `trigger_turn` 是继续留在 `PendingInputItem` 上，还是改成单独的 wakeup bit。
-- 如果保留“最终答复后不再扩展当前 turn”的语义，最小额外状态应该放在 `TurnState` 还是 task-level runtime。
+- 目前已采用 turn-local `accepts_async_input_for_current_turn` gating；若后续继续收敛，这个状态是否还能进一步下沉到 task-level runtime。
