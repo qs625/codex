@@ -134,6 +134,19 @@ impl AgentControlHarness {
             .expect("start thread");
         (new_thread.thread_id, new_thread.thread)
     }
+
+    fn restarted_manager_and_control(&self) -> (ThreadService, AgentControl) {
+        let manager = ThreadService::with_models_provider_home_and_state_for_tests(
+            CodexAuth::from_api_key("dummy"),
+            self.config.model_provider.clone(),
+            crate::test_support::model_provider_factory_for_tests(),
+            self.config.codex_home.to_path_buf(),
+            std::sync::Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            self.state_db.clone(),
+        );
+        let control = manager.agent_control();
+        (manager, control)
+    }
 }
 
 fn has_subagent_notification(history_items: &[ResponseItem]) -> bool {
@@ -1695,6 +1708,72 @@ async fn list_agents_restores_completed_child_from_persisted_history_when_live_t
 }
 
 #[tokio::test]
+async fn list_agents_restores_completed_child_from_persisted_root_when_registry_is_empty() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(worker_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("worker".to_string()),
+    });
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(worker_source.clone()),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    emit_turn_complete(&worker_thread, "done").await;
+    worker_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let restored_worker_source_without_path =
+        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: root_thread_id,
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        });
+    let listed_agents = restarted_control
+        .list_agents(
+            worker_thread_id,
+            &restored_worker_source_without_path,
+            None,
+        )
+        .await
+        .expect("list agents should succeed from restored subagent source without path");
+
+    assert_eq!(
+        listed_agents
+            .into_iter()
+            .find(|agent| agent.agent_name == worker_path.to_string())
+            .expect("persisted worker should be listed after registry loss")
+            .agent_status,
+        AgentStatus::Completed(Some("done".to_string())),
+    );
+}
+
+#[tokio::test]
 async fn completed_agent_path_can_still_receive_followup_while_registered() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
@@ -3042,6 +3121,146 @@ async fn direct_subagent_paths_returns_only_immediate_canonical_paths() {
         .await;
 
     assert_eq!(direct_paths, vec![reviewer_path, worker_path]);
+}
+
+#[tokio::test]
+async fn direct_subagent_paths_include_persisted_children_when_registry_is_empty() {
+    let harness = AgentControlHarness::new().await;
+    let (parent_thread_id, _parent_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    wait_for_live_thread_spawn_children(&harness.control, parent_thread_id, &[worker_thread_id])
+        .await;
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let direct_paths = restarted_control
+        .direct_subagent_paths(parent_thread_id)
+        .await;
+
+    assert_eq!(direct_paths, vec![worker_path]);
+}
+
+#[tokio::test]
+async fn direct_subagent_paths_use_live_source_when_registry_metadata_is_missing() {
+    let harness = AgentControlHarness::new().await;
+    let (parent_thread_id, _parent_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    wait_for_live_thread_spawn_children(&harness.control, parent_thread_id, &[worker_thread_id])
+        .await;
+
+    harness.control.state.release_spawned_thread(worker_thread_id);
+
+    let direct_paths = harness.control.direct_subagent_paths(parent_thread_id).await;
+    assert_eq!(direct_paths, vec![worker_path]);
+}
+
+#[tokio::test]
+async fn persisted_agent_restore_deduplicates_by_path_with_live_registry_preferred() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let old_worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello old worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("old worker spawn should succeed");
+    let old_worker_thread = harness
+        .manager
+        .get_thread(old_worker_thread_id)
+        .await
+        .expect("old worker thread should exist");
+    persist_thread_for_tree_resume(&old_worker_thread, "old worker persisted").await;
+    emit_turn_complete(&old_worker_thread, "old done").await;
+    old_worker_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("old worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[old_worker_thread_id])
+        .await;
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let new_worker_thread_id = restarted_control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello new worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("new worker spawn should succeed");
+    assert_ne!(old_worker_thread_id, new_worker_thread_id);
+
+    let listed_agents = restarted_control
+        .list_agents(root_thread_id, &SessionSource::Exec, None)
+        .await
+        .expect("list agents should succeed");
+    let matching_agents = listed_agents
+        .iter()
+        .filter(|agent| agent.agent_name == worker_path.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(matching_agents.len(), 1);
+    assert_ne!(
+        matching_agents[0].agent_status,
+        AgentStatus::Completed(Some("old done".to_string())),
+        "live registry entry should win over stale persisted entry with the same path",
+    );
+
+    let direct_paths = restarted_control
+        .direct_subagent_paths(root_thread_id)
+        .await;
+    assert_eq!(direct_paths, vec![worker_path]);
 }
 
 #[tokio::test]

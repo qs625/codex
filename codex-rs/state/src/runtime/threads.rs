@@ -209,6 +209,43 @@ ON CONFLICT(child_thread_id) DO UPDATE SET
             .await
     }
 
+    /// Find the root ancestor for a thread-spawn child, if the thread is in a persisted spawn tree.
+    pub async fn find_thread_spawn_root(
+        &self,
+        child_thread_id: ThreadId,
+    ) -> anyhow::Result<Option<ThreadId>> {
+        let rows = sqlx::query(
+            r#"
+WITH RECURSIVE ancestors(parent_thread_id, child_thread_id, depth, path) AS (
+    SELECT parent_thread_id, child_thread_id, 1, printf(',%s,%s,', parent_thread_id, child_thread_id)
+    FROM thread_spawn_edges
+    WHERE child_thread_id = ?
+    UNION ALL
+    SELECT edge.parent_thread_id,
+           edge.child_thread_id,
+           ancestors.depth + 1,
+           ancestors.path || edge.parent_thread_id || ','
+    FROM thread_spawn_edges AS edge
+    JOIN ancestors ON edge.child_thread_id = ancestors.parent_thread_id
+    WHERE instr(ancestors.path, ',' || edge.parent_thread_id || ',') = 0
+)
+SELECT parent_thread_id
+FROM ancestors
+ORDER BY depth DESC
+LIMIT 1
+            "#,
+        )
+        .bind(child_thread_id.to_string())
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        Ok(Some(ThreadId::try_from(row.try_get::<String, _>(
+            "parent_thread_id",
+        )?)?))
+    }
+
     /// Find a direct spawned child of `parent_thread_id` by canonical agent path.
     pub async fn find_thread_spawn_child_by_path(
         &self,
@@ -2156,6 +2193,18 @@ mod tests {
             .await
             .expect("all descendants should load");
         assert_eq!(all_descendants, vec![child_thread_id, grandchild_thread_id]);
+
+        let grandchild_root = runtime
+            .find_thread_spawn_root(grandchild_thread_id)
+            .await
+            .expect("spawn root lookup should load");
+        assert_eq!(grandchild_root, Some(parent_thread_id));
+
+        let parent_root = runtime
+            .find_thread_spawn_root(parent_thread_id)
+            .await
+            .expect("missing spawn root lookup should load");
+        assert_eq!(parent_root, None);
     }
 
     #[tokio::test]
