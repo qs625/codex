@@ -1,10 +1,57 @@
 # PM Progress
 
 ## Current Goal
-None
+收口 `on_task_finished()` 与 pending input 的并发模型：最后 task 结束时必须在同一把调度锁内完成 thread 状态提交和后续走向判定，而不是只在取 pending input 时短暂持锁。
 
 ## Active Work
-- None
+- id: on-task-finished-atomic-thread-state
+  owner: /root/project_pm/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: fix/on-task-finished-atomic-thread-state
+  task_type: bugfix
+  depends_on: 无
+  files: codex-rs/thread-service/src/tasks/mod.rs, codex-rs/thread-service/src/session/pending_input.rs, codex-rs/thread-service/src/turn_state.rs, codex-rs/thread-service/src/mailbox.rs, codex-rs/thread-service/src/session/tests/context_and_history.rs, .codex/pending-input-post-turn-design.md, .codex/memory/project-understanding.md
+  base_commit: 4d8e542a5
+  pending_sync_from_main:
+  status: merged
+  objective: 让 `on_task_finished()` 在最后 task 收尾时持有完整调度锁来提交 thread 状态，原子决定 pending input、follow-up turn、goal continuation、final-status 等后续走向；继续弱化/移除 mailbox current-turn/next-turn 归属语义
+  last_update: 2026-07-10
+  next_action: 已 merge 到主线；同步空闲 checkout 后继续 planned bug
+  blockers: 无
+  validation: owner 已跑 `rtk cargo test -p thread-service task_finish_restarts_turn_for_leftover_pending_user_input`；`rtk cargo test -p thread-service compact_task_continues_pending_input_with_regularized_metadata`；`rtk cargo test -p thread-service prepend_pending_input_keeps_older_tail_ahead_of_newer_input`；`rtk cargo test -p thread-service task_finish_prioritizes_thread_pending_work_without_losing_leftover_input`；`rtk cargo test -p thread-service queue_only_mailbox_mail_waits_for_next_turn_after_answer_boundary`；`rtk cargo test -p thread-service trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary`；`rtk cargo build -p app-server --bin app-server`
+  commit: 144f240eb（dev-2）；103d3e7b7（main merge）
+- id: restore-persisted-agent-registry
+  owner: /root/project_pm/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: fix/restore-persisted-agent-registry
+  task_type: bugfix
+  depends_on: on-task-finished-atomic-thread-state 已 merge 到主线 `103d3e7b7`
+  files: codex-rs/thread-service/**, codex-rs/thread-history/**, codex-rs/thread-store/**, codex-rs/app-server/**, apps/root-worker-prototype/**, 相关 list_agents / reload / persisted history / agent tree 状态一致性测试
+  base_commit: 103d3e7b7
+  pending_sync_from_main: 等待派发 checkout 同步到 `103d3e7b7`
+  status: planned
+  objective: 让 `list_agents` 重启后仍能看到持久化历史中的已完成 agent thread；runtime 初始化或 thread 恢复时应从持久化恢复 agent registry，并保证 conversation 顶部 `Waiting on Subagent` 状态与 agent tree 中可见子 agent 一致
+  last_update: 2026-07-10
+  next_action: 选择空闲 checkout 派发；修复点应在 persisted thread/agent registry 恢复语义，并让 app-server/root-worker 的 thread snapshot 与 agent tree 数据源一致，不是只改 `list_agents` 查询表面
+  blockers: 无
+  validation:
+  commit:
+- id: root-worker-header-wait-status-dot
+  owner: TBD
+  checkout: TBD
+  branch: fix/root-worker-header-wait-status-dot
+  task_type: bugfix
+  depends_on: 无；任一空闲 dev checkout 同步到 `103d3e7b7` 后可派发
+  files: apps/root-worker-prototype/src/styles.css, apps/root-worker-prototype/src/lib/thread.ts, apps/root-worker-prototype/src/components/Panels.tsx, 相关 thread / panel 测试
+  base_commit: 103d3e7b7
+  pending_sync_from_main:
+  status: planned
+  objective: 修复 conversation 顶部状态点与状态文案不一致：`waitChild` 已显示 `Waiting on Subagent`，但 `.status-dot` 缺少 `waiting-subagent` / `waiting-eventtool` 样式导致视觉仍是灰色 complete/inactive；应与 agent tree 的等待状态颜色一致
+  last_update: 2026-07-10
+  next_action: 可派给空闲的 `dev` 或 `dev-3`；最小修复预计在 `styles.css` 为 `.status-dot.waiting-subagent` / `.status-dot.waiting-eventtool` 补颜色和必要 pulse
+  blockers: 无
+  validation:
+  commit:
 - id: compact-replacement-history-final-output
   owner: /root/project_pm/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
