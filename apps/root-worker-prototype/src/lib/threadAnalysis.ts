@@ -3,7 +3,11 @@ import {
   type ContextUsageAnalysis,
 } from "./contextUsage";
 import type { Thread, ThreadItem } from "../types";
-import { formatScheduleArgument } from "./scheduleDisplay";
+import {
+  buildScheduleOccurrences,
+  formatScheduleArgument,
+  formatScheduleRule,
+} from "./scheduleDisplay";
 
 export type MonitorKind = "command" | "schedule";
 
@@ -16,6 +20,12 @@ export type MonitorSummary = {
   status: string;
   eventCount: number;
   latestEvent: string | null;
+};
+
+type InternalMonitorSummary = MonitorSummary & {
+  schedule?: unknown;
+  scheduleRule?: string | null;
+  nextFireAt?: string | null;
 };
 
 export type MonitorSection = {
@@ -38,8 +48,31 @@ export type ThreadAnalysis = {
     totalCount: number;
     eventCount: number;
     sections: MonitorSection[];
+    scheduleAgenda: ScheduleAgendaGroup[];
   };
   changedFiles: ChangedFileSummary[];
+};
+
+export type ScheduleAgendaGroup = {
+  dateKey: string;
+  dateLabel: string;
+  items: ScheduleAgendaItem[];
+};
+
+export type ScheduleAgendaItem = {
+  id: string;
+  subscriptionId: string | null;
+  label: string;
+  rule: string;
+  startsAt: string;
+  timeLabel: string;
+};
+
+export type ThreadAnalysisOptions = {
+  now?: Date | string | number;
+  agendaLimit?: number;
+  agendaHorizonDays?: number;
+  agendaTimeZone?: string;
 };
 
 type MonitorEvent = {
@@ -76,13 +109,14 @@ export function buildThreadAnalysis(
   thread: Thread | null,
   totalSkillMetadataCount: number,
   modelContextWindowOverride?: number | null,
+  options: ThreadAnalysisOptions = {},
 ): ThreadAnalysis {
   const contextUsage = buildContextUsageAnalysis(
     thread,
     totalSkillMetadataCount,
     modelContextWindowOverride,
   );
-  const monitors = buildMonitorSections(thread);
+  const monitors = buildMonitorSections(thread, options);
 
   return {
     contextUsage,
@@ -92,13 +126,14 @@ export function buildThreadAnalysis(
 }
 
 export function hasActiveMonitors(thread: Thread | null) {
-  return buildMonitorSections(thread).totalCount > 0;
+  return buildMonitorSections(thread, {}).totalCount > 0;
 }
 
 function buildMonitorSections(
   thread: Thread | null,
+  options: ThreadAnalysisOptions,
 ): ThreadAnalysis["monitors"] {
-  const monitors: MonitorSummary[] = [];
+  const monitors: InternalMonitorSummary[] = [];
   const eventsByTool = new Map<string, MonitorEvent[]>();
   const commandNotificationsByCommandId = new Map<string, string>();
   const allowLiveCommandMonitors = threadAllowsLiveCommandMonitors(thread);
@@ -156,7 +191,7 @@ function buildMonitorSections(
     }
   }
 
-  const activeMonitors: MonitorSummary[] = [];
+  const activeMonitors: InternalMonitorSummary[] = [];
   for (const monitor of monitors) {
     const tool = toolFromMonitorKind(monitor.kind);
     const events = tool ? (eventsByTool.get(tool) ?? []) : [];
@@ -183,9 +218,10 @@ function buildMonitorSections(
     activeMonitors.push(monitor);
   }
 
+  const publicMonitors = activeMonitors.map(toPublicMonitorSummary);
   const sections = MONITOR_SECTIONS.map((section) => ({
     ...section,
-    monitors: activeMonitors.filter((monitor) => monitor.kind === section.kind),
+    monitors: publicMonitors.filter((monitor) => monitor.kind === section.kind),
   }));
 
   return {
@@ -196,6 +232,7 @@ function buildMonitorSections(
         .filter((monitor) => monitor.kind === "command")
         .reduce((sum, monitor) => sum + monitor.eventCount, 0),
     sections,
+    scheduleAgenda: buildScheduleAgenda(activeMonitors, options),
   };
 }
 
@@ -248,7 +285,7 @@ function buildCommandMonitorSummary(
   item: Extract<ThreadItem, { type: "commandExecution" }>,
   latestNotification: string | null,
   allowLiveCommandMonitors: boolean,
-): MonitorSummary | null {
+): InternalMonitorSummary | null {
   const status = statusLabel(item.status);
   if (!allowLiveCommandMonitors || !isRunningCommandStatus(item.status)) {
     return null;
@@ -304,13 +341,15 @@ function summarizeCommandNotification(
 
 function buildMonitorSummary(
   item: Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }>,
-): MonitorSummary | null {
+): InternalMonitorSummary | null {
   const subscriptionId = subscriptionIdFromOutput(item.output);
   if (item.status !== "completed" || !subscriptionId) {
     return null;
   }
   const args = objectRecord(item.arguments);
+  const output = objectRecord(item.output);
   const kind = MONITOR_TOOLS[item.tool as keyof typeof MONITOR_TOOLS];
+  const schedule = args.schedule;
 
   return {
     id: item.id,
@@ -321,11 +360,14 @@ function buildMonitorSummary(
     status: item.status === "completed" ? "Listening" : statusLabel(item.status),
     eventCount: 0,
     latestEvent: null,
+    schedule,
+    scheduleRule: kind === "schedule" ? formatScheduleRule(schedule) : null,
+    nextFireAt: kind === "schedule" ? stringOrNull(output.next_fire_at) : null,
   };
 }
 
 function removeUnsubscribedMonitor(
-  monitors: MonitorSummary[],
+  monitors: InternalMonitorSummary[],
   item: Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }>,
 ) {
   if (item.status !== "completed" || objectRecord(item.output).unsubscribed !== true) {
@@ -343,6 +385,16 @@ function removeUnsubscribedMonitor(
   if (monitorIndex !== -1) {
     monitors.splice(monitorIndex, 1);
   }
+}
+
+function toPublicMonitorSummary(monitor: InternalMonitorSummary): MonitorSummary {
+  const {
+    schedule: _schedule,
+    scheduleRule: _scheduleRule,
+    nextFireAt: _nextFireAt,
+    ...summary
+  } = monitor;
+  return summary;
 }
 
 function monitorLabel(_kind: MonitorKind, args: Record<string, unknown>) {
@@ -366,6 +418,115 @@ function monitorDetail(
     displayUnknown(args.schedule) ??
     "schedule unavailable"
   );
+}
+
+function buildScheduleAgenda(
+  monitors: InternalMonitorSummary[],
+  options: ThreadAnalysisOptions,
+) {
+  const now = normalizeDate(options.now) ?? new Date();
+  const limit = options.agendaLimit ?? 20;
+  const horizonDays = options.agendaHorizonDays ?? 7;
+  const timeZone = options.agendaTimeZone;
+  const items = monitors
+    .filter((monitor) => monitor.kind === "schedule")
+    .flatMap((monitor) => {
+      const rule = monitor.scheduleRule ?? formatScheduleArgument(monitor.schedule);
+      if (!rule) {
+        return [];
+      }
+      return buildScheduleOccurrences(monitor.schedule, {
+        now,
+        nextFireAt: monitor.nextFireAt,
+        limit,
+        horizonDays,
+      }).map((occurrence) => ({
+        id: `${monitor.id}:${occurrence.startsAt}`,
+        subscriptionId: monitor.subscriptionId,
+        label: monitor.label,
+        rule,
+        startsAt: occurrence.startsAt,
+        timeLabel: formatAgendaTime(occurrence.startsAt, timeZone),
+      }));
+    })
+    .sort((left, right) => left.startsAt.localeCompare(right.startsAt))
+    .slice(0, limit);
+
+  const groups = new Map<string, ScheduleAgendaGroup>();
+  for (const item of items) {
+    const dateKey = formatAgendaDateKey(item.startsAt, timeZone);
+    const existing = groups.get(dateKey);
+    if (existing) {
+      existing.items.push(item);
+      continue;
+    }
+    groups.set(dateKey, {
+      dateKey,
+      dateLabel: formatAgendaDateLabel(item.startsAt, now, timeZone),
+      items: [item],
+    });
+  }
+  return [...groups.values()];
+}
+
+function formatAgendaTime(value: string, timeZone: string | undefined) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+  }).format(new Date(value));
+}
+
+function formatAgendaDateKey(value: string, timeZone: string | undefined) {
+  const parts = agendaDateParts(new Date(value), timeZone);
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+function formatAgendaDateLabel(
+  value: string,
+  now: Date,
+  timeZone: string | undefined,
+) {
+  const date = new Date(value);
+  const dateKey = formatAgendaDateKey(value, timeZone);
+  const todayKey = formatAgendaDateKey(now.toISOString(), timeZone);
+  const tomorrowKey = formatAgendaDateKey(
+    new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    timeZone,
+  );
+  if (dateKey === todayKey) {
+    return "Today";
+  }
+  if (dateKey === tomorrowKey) {
+    return "Tomorrow";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone,
+  }).format(date);
+}
+
+function agendaDateParts(date: Date, timeZone: string | undefined) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  });
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  return {
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+  };
 }
 
 function buildMonitorEvent(
@@ -452,6 +613,17 @@ function stringOrNull(value: unknown) {
 
 function subscriptionIdFromOutput(output: unknown) {
   return stringOrNull(objectRecord(output).subscription_id);
+}
+
+function normalizeDate(value: Date | string | number | undefined) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
 }
 
 function displayUnknown(value: unknown) {

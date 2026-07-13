@@ -417,10 +417,49 @@ test("keeps schedule subscriptions separate from command sessions", () => {
       },
     ]),
     0,
+    null,
+    {
+      now: "2026-07-13T08:00:00Z",
+      agendaTimeZone: "UTC",
+      agendaLimit: 3,
+      agendaHorizonDays: 1,
+    },
   );
 
   assert.equal(analysis.monitors.totalCount, 1);
   assert.equal(analysis.monitors.eventCount, 1);
+  assert.deepEqual(analysis.monitors.scheduleAgenda, [
+    {
+      dateKey: "2026-07-13",
+      dateLabel: "Today",
+      items: [
+        {
+          id: "schedule-1:2026-07-13T09:35:37.570Z",
+          subscriptionId: "sub-schedule",
+          label: "standup ping",
+          rule: "Every 6 hours",
+          startsAt: "2026-07-13T09:35:37.570Z",
+          timeLabel: "09:35",
+        },
+        {
+          id: "schedule-1:2026-07-13T15:35:37.570Z",
+          subscriptionId: "sub-schedule",
+          label: "standup ping",
+          rule: "Every 6 hours",
+          startsAt: "2026-07-13T15:35:37.570Z",
+          timeLabel: "15:35",
+        },
+        {
+          id: "schedule-1:2026-07-13T21:35:37.570Z",
+          subscriptionId: "sub-schedule",
+          label: "standup ping",
+          rule: "Every 6 hours",
+          startsAt: "2026-07-13T21:35:37.570Z",
+          timeLabel: "21:35",
+        },
+      ],
+    },
+  ]);
   assert.deepEqual(analysis.monitors.sections[1]?.monitors, [
     {
       id: "schedule-1",
@@ -458,6 +497,135 @@ test("falls back to schedule output summary when arguments are unavailable", () 
   assert.equal(
     analysis.monitors.sections[1]?.monitors[0]?.detail,
     "every 21600000 ms",
+  );
+  assert.deepEqual(analysis.monitors.scheduleAgenda, []);
+});
+
+test("skips stale interval occurrences without iterative catch-up", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "schedule-1",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+          label: "cleanup",
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule",
+          next_fire_at: "2026-07-01T00:00:00Z",
+        },
+      },
+    ]),
+    0,
+    null,
+    {
+      now: "2026-07-13T08:00:00Z",
+      agendaTimeZone: "UTC",
+      agendaLimit: 2,
+      agendaHorizonDays: 1,
+    },
+  );
+
+  assert.deepEqual(
+    analysis.monitors.scheduleAgenda.flatMap((group) =>
+      group.items.map((item) => item.startsAt),
+    ),
+    ["2026-07-13T12:00:00.000Z", "2026-07-13T18:00:00.000Z"],
+  );
+});
+
+test("builds agenda entries for one-shot daily and weekly schedules", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "once",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "once_at", run_at: "2026-07-13T08:30:00Z" },
+          label: "deploy",
+        },
+        status: "completed",
+        output: { subscription_id: "once-sub" },
+      },
+      {
+        type: "builtinToolCall",
+        id: "daily",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "every_day_at", time: "09:00:15", timezone: "UTC" },
+          label: "daily digest",
+        },
+        status: "completed",
+        output: { subscription_id: "daily-sub" },
+      },
+      {
+        type: "builtinToolCall",
+        id: "weekly",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: {
+            kind: "every_week_at",
+            weekdays: ["mon", "wed"],
+            time: "10:00:30",
+            timezone: "UTC",
+          },
+          label: "weekly sync",
+        },
+        status: "completed",
+        output: { subscription_id: "weekly-sub" },
+      },
+      {
+        type: "builtinToolCall",
+        id: "past-once",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "once_at", run_at: "2026-07-13T07:00:00Z" },
+          label: "past deploy",
+        },
+        status: "completed",
+        output: { subscription_id: "past-once-sub" },
+      },
+    ]),
+    0,
+    null,
+    {
+      now: "2026-07-13T08:00:00Z",
+      agendaTimeZone: "UTC",
+      agendaLimit: 5,
+      agendaHorizonDays: 3,
+    },
+  );
+
+  assert.deepEqual(
+    analysis.monitors.scheduleAgenda.flatMap((group) =>
+      group.items.map(
+        (item) =>
+          `${group.dateLabel} ${item.timeLabel} ${item.label} ${item.rule}`,
+      ),
+    ),
+    [
+      "Today 08:30 deploy Once",
+      "Today 09:00 daily digest Daily 09:00:15 UTC",
+      "Today 10:00 weekly sync Weekly mon,wed 10:00:30 UTC",
+      "Tomorrow 09:00 daily digest Daily 09:00:15 UTC",
+      "Wed, Jul 15 09:00 daily digest Daily 09:00:15 UTC",
+    ],
+  );
+  assert.deepEqual(
+    analysis.monitors.scheduleAgenda.flatMap((group) =>
+      group.items.map((item) => item.startsAt),
+    ),
+    [
+      "2026-07-13T08:30:00.000Z",
+      "2026-07-13T09:00:15.000Z",
+      "2026-07-13T10:00:30.000Z",
+      "2026-07-14T09:00:15.000Z",
+      "2026-07-15T09:00:15.000Z",
+    ],
   );
 });
 
@@ -497,6 +665,7 @@ test("removes builtin schedule subscriptions after unsubscribe", () => {
 
   assert.equal(analysis.monitors.totalCount, 0);
   assert.deepEqual(analysis.monitors.sections[1]?.monitors, []);
+  assert.deepEqual(analysis.monitors.scheduleAgenda, []);
 });
 
 test("keeps schedules active while unsubscribe has not succeeded", () => {

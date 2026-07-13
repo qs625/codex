@@ -18,6 +18,7 @@ import { getContextUsageCategoryColor } from "../lib/contextUsage";
 import {
   buildThreadAnalysis,
   type MonitorSummary,
+  type ScheduleAgendaGroup,
   type ThreadAnalysis,
 } from "../lib/threadAnalysis";
 import type {
@@ -292,7 +293,7 @@ function ThreadAnalysisPanel({
         <div className="panel-content-copy">
           <span className="panel-eyebrow">Thread Analysis</span>
           <h2>Thread Analysis</h2>
-          <p>Context mix, loaded skills, and live command activity.</p>
+          <p>Context mix, loaded skills, and live monitor activity.</p>
         </div>
       </header>
 
@@ -368,7 +369,7 @@ function ThreadAnalysisPanel({
         <section className="context-section-card">
           <div className="context-section-header">
             <div>
-              <span className="context-section-eyebrow">Command Activity</span>
+              <span className="context-section-eyebrow">Monitor Activity</span>
               <strong>Live Index</strong>
             </div>
             <span className="context-inline-metric">
@@ -376,6 +377,8 @@ function ThreadAnalysisPanel({
               {monitors.totalCount === 1 ? "" : "s"}
             </span>
           </div>
+
+          <ScheduleAgenda groups={monitors.scheduleAgenda} />
 
           <div className="monitor-section-list">
             {monitors.sections.map((section) => (
@@ -411,7 +414,7 @@ function ThreadAnalysisPanel({
                           <strong title={monitor.label}>{monitor.label}</strong>
                           <span title={monitor.detail}>{monitor.detail}</span>
                           {shouldRenderMonitorLatestEvent(monitor) ? (
-                            <span title={monitor.latestEvent}>
+                            <span title={monitor.latestEvent ?? undefined}>
                               {monitor.latestEvent}
                             </span>
                           ) : null}
@@ -462,6 +465,36 @@ function ThreadAnalysisPanel({
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function ScheduleAgenda({ groups }: { groups: ScheduleAgendaGroup[] }) {
+  if (groups.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="schedule-agenda" aria-label="Upcoming schedule events">
+      <div className="schedule-agenda-title">Upcoming</div>
+      {groups.map((group) => (
+        <div key={group.dateKey} className="schedule-agenda-group">
+          <div className="schedule-agenda-date">{group.dateLabel}</div>
+          <div className="schedule-agenda-items">
+            {group.items.map((item) => (
+              <div key={item.id} className="schedule-agenda-row">
+                <time dateTime={item.startsAt}>{item.timeLabel}</time>
+                <span className="schedule-agenda-label" title={item.label}>
+                  {item.label}
+                </span>
+                <span className="schedule-agenda-rule" title={item.rule}>
+                  {item.rule}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

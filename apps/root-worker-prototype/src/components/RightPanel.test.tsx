@@ -203,6 +203,8 @@ test("renders live commands and schedule subscriptions", () => {
   assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);
   assert.match(markup, /every_interval 6h/);
+  assert.match(markup, /Upcoming/);
+  assert.match(markup, /Every 6 hours/);
   assert.doesNotMatch(markup, /every 21600000 ms/);
 });
 
