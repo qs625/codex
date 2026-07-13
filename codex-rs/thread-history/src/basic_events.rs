@@ -1,9 +1,10 @@
 use super::PendingAgentMessageResponse;
 use super::ThreadHistoryBuilder;
 use app_server_protocol::ProjectedEventItem;
-use app_server_protocol::project_event_msg_item;
 use app_server_protocol::MemoryCitation;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::is_legacy_structured_assistant_message_text;
+use app_server_protocol::project_event_msg_item;
 use protocol::models::MessagePhase;
 use protocol::protocol::AgentReasoningEvent;
 use protocol::protocol::AgentReasoningRawContentEvent;
@@ -24,38 +25,6 @@ fn assistant_message_thread_item(
         phase,
         memory_citation,
     }
-}
-
-fn is_wrapped_marker(trimmed: &str, start_marker: &str, end_marker: &str) -> bool {
-    trimmed.starts_with(start_marker) && trimmed.ends_with(end_marker)
-}
-
-fn is_legacy_structured_assistant_message_text(text: &str) -> bool {
-    let trimmed = text.trim();
-    if is_wrapped_marker(trimmed, "<event_driven_tool>", "</event_driven_tool>")
-        || is_wrapped_marker(trimmed, "<event_command>", "</event_command>")
-        || is_wrapped_marker(
-            trimmed,
-            "<subagent_notification>",
-            "</subagent_notification>",
-        )
-    {
-        return true;
-    }
-
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return false;
-    };
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    if !object.contains_key("author") || !object.contains_key("recipient") {
-        return false;
-    }
-    matches!(
-        object.get("operation").and_then(serde_json::Value::as_str),
-        Some("spawnAgent" | "sendMessage" | "send_message" | "followupTask" | "childCompletion")
-    )
 }
 
 impl ThreadHistoryBuilder {

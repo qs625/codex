@@ -27,6 +27,8 @@ pub use protocol::event_item_projection::*;
 pub use protocol::event_mapping::*;
 pub use protocol::guardian_auto_approval_review_notification;
 #[doc(hidden)]
+pub use protocol::response_item_projection::is_legacy_structured_assistant_message_text;
+#[doc(hidden)]
 pub use protocol::response_item_projection::thread_item_from_inter_agent_communication;
 pub use protocol::*;
 #[cfg(feature = "schema-export")]

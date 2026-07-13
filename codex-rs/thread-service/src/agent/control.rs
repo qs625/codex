@@ -40,6 +40,8 @@ use codex_agent_runtime::thread_spawn_descendants;
 use codex_agent_runtime::thread_spawn_parent_thread_id;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
+use chrono::DateTime;
+use chrono::Utc;
 use protocol::AgentPath;
 use protocol::SessionId;
 use protocol::ThreadId;
@@ -93,6 +95,12 @@ struct PersistedAgentTarget {
     thread_id: ThreadId,
     parent_thread_id: ThreadId,
     depth: i32,
+}
+
+struct PersistedAgentPathCandidate {
+    target: PersistedAgentTarget,
+    updated_at: DateTime<Utc>,
+    final_status: Option<AgentStatus>,
 }
 
 impl AgentControl {
@@ -415,6 +423,10 @@ impl AgentControl {
             return Ok(resumed_thread_id);
         };
 
+        let tree_root_thread_id = self
+            .persisted_thread_spawn_root(thread_id)
+            .await
+            .unwrap_or(thread_id);
         let mut resume_queue = VecDeque::from([(thread_id, root_depth)]);
         while let Some((parent_thread_id, parent_depth)) = resume_queue.pop_front() {
             let child_ids = match state_db_ctx
@@ -434,6 +446,16 @@ impl AgentControl {
             };
 
             for child_thread_id in child_ids {
+                if !self
+                    .persisted_child_is_auto_resumable_generation(
+                        tree_root_thread_id,
+                        child_thread_id,
+                        state_db_ctx.as_ref(),
+                    )
+                    .await
+                {
+                    continue;
+                }
                 let child_depth = parent_depth + 1;
                 let child_resumed = if state
                     .live_thread_config_snapshot(child_thread_id)
@@ -472,6 +494,41 @@ impl AgentControl {
         }
 
         Ok(resumed_thread_id)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    async fn persisted_child_is_auto_resumable_generation(
+        &self,
+        tree_root_thread_id: ThreadId,
+        child_thread_id: ThreadId,
+        state_db_ctx: &dyn state_api::ThreadStateRuntime,
+    ) -> bool {
+        let Some(metadata) = state_db_ctx.get_thread(child_thread_id).await.ok().flatten() else {
+            return false;
+        };
+        if metadata.archived_at.is_some() {
+            return false;
+        }
+        let Some(agent_path) = metadata
+            .agent_path
+            .and_then(|path| AgentPath::from_string(path).ok())
+        else {
+            return true;
+        };
+        match self
+            .persisted_agent_target_for_path(tree_root_thread_id, &agent_path)
+            .await
+        {
+            Ok(Some(target)) => target.thread_id == child_thread_id,
+            Ok(None) => false,
+            Err(err) => {
+                warn!(
+                    "skipping persisted child {child_thread_id}: failed to resolve selected generation for path {}: {err}",
+                    agent_path.as_str()
+                );
+                false
+            }
+        }
     }
 
     async fn resume_single_agent_from_rollout(
@@ -993,10 +1050,19 @@ impl AgentControl {
                     continue;
                 }
                 let depth = parent_depth + 1;
+                let child_metadata = state_db_ctx.get_thread(child_thread_id).await.ok().flatten();
                 if child_thread_id == target_thread_id {
-                    if self
-                        .persisted_agent_metadata(child_thread_id, state_db_ctx.as_ref())
-                        .await
+                    let Some(metadata) = child_metadata.as_ref() else {
+                        return Err(CodexErr::UnsupportedOperation(format!(
+                            "agent thread `{target_thread_id}` is missing persisted agent metadata"
+                        )));
+                    };
+                    if metadata.archived_at.is_some() {
+                        return Err(CodexErr::UnsupportedOperation(format!(
+                            "agent thread `{target_thread_id}` is archived"
+                        )));
+                    }
+                    if persisted_agent_metadata_from_state_metadata(child_thread_id, metadata)
                         .is_none()
                     {
                         return Err(CodexErr::UnsupportedOperation(format!(
@@ -1008,6 +1074,12 @@ impl AgentControl {
                         parent_thread_id,
                         depth,
                     }));
+                }
+                let Some(metadata) = child_metadata else {
+                    continue;
+                };
+                if metadata.archived_at.is_some() {
+                    continue;
                 }
                 queue.push_back((child_thread_id, depth));
             }
@@ -1042,7 +1114,7 @@ impl AgentControl {
         };
         let mut queue = VecDeque::from([(root_thread_id, 0)]);
         let mut seen = HashSet::from([root_thread_id]);
-        let mut found = None;
+        let mut candidates = Vec::new();
         while let Some((parent_thread_id, parent_depth)) = queue.pop_front() {
             let child_ids = state_db_ctx
                 .list_thread_spawn_children_with_status(
@@ -1060,30 +1132,100 @@ impl AgentControl {
                     continue;
                 }
                 let depth = parent_depth + 1;
-                let Some(metadata) = self
-                    .persisted_agent_metadata(child_thread_id, state_db_ctx.as_ref())
-                    .await
+                let Some(metadata) = state_db_ctx.get_thread(child_thread_id).await.ok().flatten()
                 else {
-                    queue.push_back((child_thread_id, depth));
                     continue;
                 };
-                if metadata.agent_path.as_ref() == Some(agent_path) {
+                if metadata.archived_at.is_some() {
+                    continue;
+                }
+                if metadata.agent_path.as_deref() == Some(agent_path.as_str()) {
                     let target = PersistedAgentTarget {
                         thread_id: child_thread_id,
                         parent_thread_id,
                         depth,
                     };
-                    if found.replace(target).is_some() {
-                        return Err(CodexErr::UnsupportedOperation(format!(
-                            "agent path `{}` is ambiguous in persisted agent registry",
-                            agent_path.as_str()
-                        )));
-                    }
+                    candidates.push(PersistedAgentPathCandidate {
+                        target,
+                        updated_at: metadata.updated_at,
+                        final_status: self.persisted_final_agent_status(child_thread_id).await,
+                    });
                 }
                 queue.push_back((child_thread_id, depth));
             }
         }
-        Ok(found)
+        self.select_persisted_agent_path_target(agent_path, candidates)
+    }
+
+    fn select_persisted_agent_path_target(
+        &self,
+        agent_path: &AgentPath,
+        mut candidates: Vec<PersistedAgentPathCandidate>,
+    ) -> CodexResult<Option<PersistedAgentTarget>> {
+        match candidates.len() {
+            0 => return Ok(None),
+            1 => return Ok(candidates.pop().map(|candidate| candidate.target)),
+            _ => {}
+        }
+
+        let non_final_indices = candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(index, candidate)| {
+                candidate.final_status.is_none().then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if non_final_indices.len() == 1
+            && candidates
+                .iter()
+                .enumerate()
+                .all(|(index, candidate)| {
+                    index == non_final_indices[0] || candidate.final_status.is_some()
+                })
+        {
+            return Ok(Some(candidates.swap_remove(non_final_indices[0]).target));
+        }
+        if non_final_indices.len() > 1 {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "agent path `{}` is ambiguous in persisted agent registry",
+                agent_path.as_str()
+            )));
+        }
+
+        let Some(parent_thread_id) = candidates
+            .first()
+            .map(|candidate| candidate.target.parent_thread_id)
+        else {
+            return Ok(None);
+        };
+        if !candidates
+            .iter()
+            .all(|candidate| candidate.target.parent_thread_id == parent_thread_id)
+        {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "agent path `{}` is ambiguous in persisted agent registry",
+                agent_path.as_str()
+            )));
+        }
+
+        candidates.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| right.target.thread_id.to_string().cmp(&left.target.thread_id.to_string()))
+        });
+        let newest = &candidates[0];
+        if candidates
+            .get(1)
+            .is_some_and(|next| next.updated_at == newest.updated_at)
+        {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "agent path `{}` is ambiguous in persisted agent registry",
+                agent_path.as_str()
+            )));
+        }
+
+        Ok(Some(candidates.swap_remove(0).target))
     }
 
     /// Subscribe to status updates for `agent_id`, yielding the latest value and changes.
@@ -1225,20 +1367,7 @@ impl AgentControl {
         state_db_ctx: &dyn state_api::ThreadStateRuntime,
     ) -> Option<AgentMetadata> {
         let metadata = state_db_ctx.get_thread(thread_id).await.ok().flatten()?;
-        let agent_path = metadata
-            .agent_path
-            .as_deref()
-            .map(|path| AgentPath::from_string(path.to_string()))
-            .transpose()
-            .ok()??;
-
-        Some(AgentMetadata {
-            agent_id: Some(thread_id),
-            agent_path: Some(agent_path),
-            agent_nickname: metadata.agent_nickname,
-            agent_role: metadata.agent_role,
-            ..Default::default()
-        })
+        persisted_agent_metadata_from_state_metadata(thread_id, &metadata)
     }
 
     async fn current_agent_path_with_persisted_metadata(
@@ -1493,12 +1622,44 @@ impl AgentControl {
         let Some(parent_thread_id) = session_source.and_then(thread_spawn_parent_thread_id) else {
             return;
         };
+        let child_agent_path = session_source.and_then(SessionSource::get_agent_path);
         let Ok(state) = self.upgrade() else {
             return;
         };
         let Some(state_db_ctx) = state.thread_state_runtime() else {
             return;
         };
+        if let Some(child_agent_path) = child_agent_path.as_ref()
+            && let Ok(open_child_ids) = state_db_ctx
+                .list_thread_spawn_children_with_status(
+                    parent_thread_id,
+                    DirectionalThreadSpawnEdgeStatus::Open,
+                )
+                .await
+        {
+            for open_child_id in open_child_ids {
+                if open_child_id == child_thread_id {
+                    continue;
+                }
+                let has_same_path = state_db_ctx
+                    .get_thread(open_child_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|metadata| metadata.agent_path)
+                    .is_some_and(|path| path == child_agent_path.as_str());
+                if has_same_path
+                    && let Err(err) = state_db_ctx
+                        .set_thread_spawn_edge_status(
+                            open_child_id,
+                            DirectionalThreadSpawnEdgeStatus::Closed,
+                        )
+                        .await
+                {
+                    warn!("failed to close superseded thread-spawn edge for {open_child_id}: {err}");
+                }
+            }
+        }
         if let Err(err) = state_db_ctx
             .upsert_thread_spawn_edge(
                 parent_thread_id,
@@ -1520,6 +1681,29 @@ impl AgentControl {
             self.live_thread_spawn_children().await?,
         ))
     }
+}
+
+fn persisted_agent_metadata_from_state_metadata(
+    thread_id: ThreadId,
+    metadata: &state_api::ThreadMetadata,
+) -> Option<AgentMetadata> {
+    if metadata.archived_at.is_some() {
+        return None;
+    }
+    let agent_path = metadata
+        .agent_path
+        .as_deref()
+        .map(|path| AgentPath::from_string(path.to_string()))
+        .transpose()
+        .ok()??;
+
+    Some(AgentMetadata {
+        agent_id: Some(thread_id),
+        agent_path: Some(agent_path),
+        agent_nickname: metadata.agent_nickname.clone(),
+        agent_role: metadata.agent_role.clone(),
+        ..Default::default()
+    })
 }
 
 #[cfg(test)]

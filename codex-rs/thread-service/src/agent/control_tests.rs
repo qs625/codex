@@ -228,6 +228,32 @@ async fn persist_thread_for_tree_resume(thread: &Arc<CodexThread>, message: &str
         .expect("test thread rollout should flush");
 }
 
+async fn archive_thread_for_test(harness: &AgentControlHarness, thread_id: ThreadId) {
+    let store = LocalThreadStore::new(
+        LocalThreadStoreConfig::from_config(&harness.config),
+        harness.state_db.clone(),
+    );
+    store
+        .archive_thread(ArchiveThreadParams { thread_id })
+        .await
+        .expect("test thread should archive");
+}
+
+async fn delete_thread_metadata_for_test(harness: &AgentControlHarness, thread_id: ThreadId) {
+    let state_db = harness
+        .state_db
+        .as_ref()
+        .expect("sqlite state db should be available");
+    assert_eq!(
+        state_db
+            .delete_thread(thread_id)
+            .await
+            .expect("test thread metadata should delete"),
+        1,
+        "test should delete exactly one thread metadata row",
+    );
+}
+
 async fn wait_for_live_thread_spawn_children(
     control: &AgentControl,
     parent_thread_id: ThreadId,
@@ -2062,6 +2088,589 @@ async fn followup_task_by_thread_id_restores_persisted_child_after_restart() {
 }
 
 #[tokio::test]
+async fn followup_task_by_path_does_not_restore_archived_persisted_child() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    emit_turn_complete(&worker_thread, "done").await;
+    worker_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+    harness
+        .control
+        .shutdown_live_agent(worker_thread_id)
+        .await
+        .expect("worker shutdown should release the live path");
+    archive_thread_for_test(&harness, worker_thread_id).await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    Box::pin(restarted_control.resume_single_agent_from_rollout(
+        harness.config.clone(),
+        root_thread_id,
+        SessionSource::Exec,
+    ))
+    .await
+    .expect("root should resume without restoring the archived child");
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be live after restart");
+    let root_turn = restored_root_thread.codex.session.new_default_turn().await;
+    let err = crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&restored_root_thread.codex.session),
+        root_turn,
+        "call-followup".to_string(),
+        worker_path.as_str().to_string(),
+        "followup after restart".to_string(),
+    )
+    .await
+    .expect_err("followup_task should not restore an archived persisted child by path");
+
+    assert!(
+        err.to_string().contains("not found") || err.to_string().contains("unsupported"),
+        "unexpected error: {err}",
+    );
+    assert!(
+        restarted_manager.get_thread(worker_thread_id).await.is_err(),
+        "archived child should remain non-live after failed path followup",
+    );
+}
+
+#[tokio::test]
+async fn followup_task_by_thread_id_does_not_restore_archived_persisted_child() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    emit_turn_complete(&worker_thread, "done").await;
+    worker_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+    harness
+        .control
+        .shutdown_live_agent(worker_thread_id)
+        .await
+        .expect("worker shutdown should release the live path");
+    archive_thread_for_test(&harness, worker_thread_id).await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    Box::pin(restarted_control.resume_single_agent_from_rollout(
+        harness.config.clone(),
+        root_thread_id,
+        SessionSource::Exec,
+    ))
+    .await
+    .expect("root should resume without restoring the archived child");
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be live after restart");
+    let root_turn = restored_root_thread.codex.session.new_default_turn().await;
+    let err = crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&restored_root_thread.codex.session),
+        root_turn,
+        "call-followup".to_string(),
+        worker_thread_id.to_string(),
+        "followup after restart".to_string(),
+    )
+    .await
+    .expect_err("followup_task should not restore an archived persisted child by thread id");
+
+    assert!(
+        err.to_string().contains("archived"),
+        "unexpected error: {err}",
+    );
+    assert!(
+        restarted_manager.get_thread(worker_thread_id).await.is_err(),
+        "archived child should remain non-live after failed thread-id followup",
+    );
+}
+
+#[tokio::test]
+async fn followup_task_by_path_does_not_restore_deleted_metadata_child() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+    harness
+        .control
+        .shutdown_live_agent(worker_thread_id)
+        .await
+        .expect("worker shutdown should release the live path");
+    delete_thread_metadata_for_test(&harness, worker_thread_id).await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    Box::pin(restarted_control.resume_single_agent_from_rollout(
+        harness.config.clone(),
+        root_thread_id,
+        SessionSource::Exec,
+    ))
+    .await
+    .expect("root should resume without restoring the deleted child");
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be live after restart");
+    let root_turn = restored_root_thread.codex.session.new_default_turn().await;
+    let err = crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&restored_root_thread.codex.session),
+        root_turn,
+        "call-followup".to_string(),
+        worker_path.as_str().to_string(),
+        "followup after restart".to_string(),
+    )
+    .await
+    .expect_err("followup_task should not restore a deleted metadata child by path");
+
+    assert!(
+        err.to_string().contains("not found") || err.to_string().contains("unsupported"),
+        "unexpected error: {err}",
+    );
+    assert!(
+        restarted_manager.get_thread(worker_thread_id).await.is_err(),
+        "deleted child should remain non-live after failed path followup",
+    );
+}
+
+#[tokio::test]
+async fn followup_task_by_thread_id_does_not_restore_deleted_metadata_child() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+    harness
+        .control
+        .shutdown_live_agent(worker_thread_id)
+        .await
+        .expect("worker shutdown should release the live path");
+    delete_thread_metadata_for_test(&harness, worker_thread_id).await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    Box::pin(restarted_control.resume_single_agent_from_rollout(
+        harness.config.clone(),
+        root_thread_id,
+        SessionSource::Exec,
+    ))
+    .await
+    .expect("root should resume without restoring the deleted child");
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be live after restart");
+    let root_turn = restored_root_thread.codex.session.new_default_turn().await;
+    let err = crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&restored_root_thread.codex.session),
+        root_turn,
+        "call-followup".to_string(),
+        worker_thread_id.to_string(),
+        "followup after restart".to_string(),
+    )
+    .await
+    .expect_err("followup_task should not restore a deleted metadata child by thread id");
+
+    assert!(
+        err.to_string().contains("missing persisted agent metadata"),
+        "unexpected error: {err}",
+    );
+    assert!(
+        restarted_manager.get_thread(worker_thread_id).await.is_err(),
+        "deleted child should remain non-live after failed thread-id followup",
+    );
+}
+
+#[tokio::test]
+async fn followup_task_by_path_restores_latest_completed_generation_after_stale_duplicate() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let first_worker_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello first worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("first worker spawn should succeed");
+    let first_worker = harness
+        .manager
+        .get_thread(first_worker_id)
+        .await
+        .expect("first worker thread should exist");
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&first_worker, "first worker persisted").await;
+    emit_turn_complete(&first_worker, "old done").await;
+    first_worker
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("first worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[first_worker_id]).await;
+    harness
+        .control
+        .shutdown_live_agent(first_worker_id)
+        .await
+        .expect("first worker shutdown should release the live path");
+
+    sleep(Duration::from_millis(10)).await;
+    let second_worker_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello second worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("second worker spawn should succeed");
+    let second_worker = harness
+        .manager
+        .get_thread(second_worker_id)
+        .await
+        .expect("second worker thread should exist");
+    persist_thread_for_tree_resume(&second_worker, "second worker persisted").await;
+    emit_turn_complete(&second_worker, "new done").await;
+    second_worker
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("second worker rollout should flush");
+
+    let state_db = harness
+        .state_db
+        .as_ref()
+        .expect("sqlite state db should be available");
+    state_db
+        .set_thread_spawn_edge_status(first_worker_id, DirectionalThreadSpawnEdgeStatus::Open)
+        .await
+        .expect("test should simulate a stale open edge from an older server");
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    Box::pin(
+        restarted_control.resume_agent_from_rollout(
+            harness.config.clone(),
+            root_thread_id,
+            SessionSource::Exec,
+        ),
+    )
+    .await
+    .expect("full tree resume should skip the stale duplicate generation");
+
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be live after restart");
+    assert!(
+        restarted_manager.get_thread(first_worker_id).await.is_err(),
+        "full tree resume should not restore the stale duplicate generation",
+    );
+    assert!(
+        restarted_manager.get_thread(second_worker_id).await.is_ok(),
+        "full tree resume should restore the latest generation",
+    );
+    let root_turn = restored_root_thread.codex.session.new_default_turn().await;
+    crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&restored_root_thread.codex.session),
+        root_turn,
+        "call-followup".to_string(),
+        worker_path.as_str().to_string(),
+        "followup after restart".to_string(),
+    )
+    .await
+    .expect("followup_task should select the latest completed generation");
+
+    let restored_second_worker = restarted_manager
+        .get_thread(second_worker_id)
+        .await
+        .expect("latest generation should remain live for followup_task");
+    let expected_communication = InterAgentCommunication::new(
+        AgentPath::root(),
+        worker_path.clone(),
+        Vec::new(),
+        "followup after restart".to_string(),
+        protocol::protocol::InterAgentOperation::FollowupTask,
+    )
+    .with_thread_ids(root_thread_id, second_worker_id)
+    .with_trigger_turn(true);
+    let expected = (
+        second_worker_id,
+        Op::InterAgentCommunication {
+            communication: expected_communication.clone(),
+        },
+    );
+    assert!(
+        restarted_manager
+            .captured_ops()
+            .into_iter()
+            .any(|entry| entry == expected),
+        "followup_task should submit to the latest generation through the normal inter-agent path",
+    );
+    assert_eq!(
+        restored_second_worker
+            .codex
+            .session
+            .get_pending_input()
+            .await,
+        vec![PendingInputItem::from(expected_communication)],
+    );
+}
+
+#[tokio::test]
+async fn followup_task_by_path_ignores_archived_old_generation() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let archived_worker_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello archived worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("archived worker spawn should succeed");
+    let archived_worker = harness
+        .manager
+        .get_thread(archived_worker_id)
+        .await
+        .expect("archived worker thread should exist");
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&archived_worker, "archived worker persisted").await;
+    emit_turn_complete(&archived_worker, "old done").await;
+    archived_worker
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("archived worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[archived_worker_id])
+        .await;
+    harness
+        .control
+        .shutdown_live_agent(archived_worker_id)
+        .await
+        .expect("archived worker shutdown should release the live path");
+    archive_thread_for_test(&harness, archived_worker_id).await;
+
+    let current_worker_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello current worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("current worker spawn should succeed");
+    let current_worker = harness
+        .manager
+        .get_thread(current_worker_id)
+        .await
+        .expect("current worker thread should exist");
+    persist_thread_for_tree_resume(&current_worker, "current worker persisted").await;
+    emit_turn_complete(&current_worker, "new done").await;
+    current_worker
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("current worker rollout should flush");
+
+    let state_db = harness
+        .state_db
+        .as_ref()
+        .expect("sqlite state db should be available");
+    state_db
+        .set_thread_spawn_edge_status(archived_worker_id, DirectionalThreadSpawnEdgeStatus::Open)
+        .await
+        .expect("test should simulate a stale open edge for archived generation");
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    Box::pin(
+        restarted_control.resume_agent_from_rollout(
+            harness.config.clone(),
+            root_thread_id,
+            SessionSource::Exec,
+        ),
+    )
+    .await
+    .expect("full tree resume should skip archived old generation");
+
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be live after restart");
+    assert!(
+        restarted_manager.get_thread(archived_worker_id).await.is_err(),
+        "full tree resume should not restore archived generation",
+    );
+    assert!(
+        restarted_manager.get_thread(current_worker_id).await.is_ok(),
+        "full tree resume should restore current non-archived generation",
+    );
+    let root_turn = restored_root_thread.codex.session.new_default_turn().await;
+    crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&restored_root_thread.codex.session),
+        root_turn,
+        "call-followup".to_string(),
+        worker_path.as_str().to_string(),
+        "followup after restart".to_string(),
+    )
+    .await
+    .expect("followup_task should select the current non-archived generation");
+
+    let expected_communication = InterAgentCommunication::new(
+        AgentPath::root(),
+        worker_path.clone(),
+        Vec::new(),
+        "followup after restart".to_string(),
+        protocol::protocol::InterAgentOperation::FollowupTask,
+    )
+    .with_thread_ids(root_thread_id, current_worker_id)
+    .with_trigger_turn(true);
+    let expected = (
+        current_worker_id,
+        Op::InterAgentCommunication {
+            communication: expected_communication.clone(),
+        },
+    );
+    assert!(
+        restarted_manager
+            .captured_ops()
+            .into_iter()
+            .any(|entry| entry == expected),
+        "followup_task should submit to the current generation",
+    );
+}
+
+#[tokio::test]
 async fn restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
@@ -2119,6 +2728,10 @@ async fn restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates()
         .state_db
         .as_ref()
         .expect("sqlite state db should be available");
+    state_db
+        .set_thread_spawn_edge_status(first_worker_id, DirectionalThreadSpawnEdgeStatus::Open)
+        .await
+        .expect("test should simulate two effective open duplicate edges");
     timeout(Duration::from_secs(5), async {
         loop {
             let descendants = state_db
