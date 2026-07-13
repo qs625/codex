@@ -23,6 +23,7 @@ use compact_service_api::CompactMemoryRole;
 use compact_service_api::CompactReplacementFile;
 use compact_service_api::ReplacementHistoryInput;
 use compact_service_api::SoftCompactInputs;
+use compact_service_api::SoftCompactThresholds;
 use hooks::PostCompactHookOutcome;
 use hooks::PreCompactHookOutcome;
 use hooks::run_post_compact_hooks;
@@ -516,7 +517,8 @@ pub(crate) async fn should_auto_compact_in_soft_window(
         return Ok(false);
     }
     let usage_ratio = total_usage_tokens as f64 / auto_compact_limit as f64;
-    if !(0.70..0.85).contains(&usage_ratio) {
+    let thresholds = auto_compact_thresholds(turn_context);
+    if !should_evaluate_auto_compact_decision(usage_ratio, thresholds) {
         return Ok(false);
     }
 
@@ -539,6 +541,7 @@ pub(crate) async fn should_auto_compact_in_soft_window(
     };
     let decision = compact_service.evaluate_soft_compact(SoftCompactInputs {
         usage_ratio,
+        thresholds,
         turns_since_last_compact: compact_window.turns_since_last_compact,
         recent_file_read_search_count: compact_window.recent_file_read_search_count,
         recent_tool_output_bytes: compact_window.recent_tool_output_bytes,
@@ -547,6 +550,21 @@ pub(crate) async fn should_auto_compact_in_soft_window(
         cooldown_bytes_satisfied: compact_window.recent_tool_output_bytes >= 8_000,
     });
     Ok(decision.should_compact)
+}
+
+fn auto_compact_thresholds(turn_context: &TurnContext) -> SoftCompactThresholds {
+    SoftCompactThresholds::resolve(
+        turn_context.config.model_auto_compact_soft_ratio,
+        turn_context.config.model_auto_compact_hard_ratio,
+    )
+    .expect("auto compact thresholds are validated during config load")
+}
+
+fn should_evaluate_auto_compact_decision(
+    usage_ratio: f64,
+    thresholds: SoftCompactThresholds,
+) -> bool {
+    usage_ratio >= thresholds.soft_lower_bound
 }
 
 fn compact_replacement_files(turn_context: &TurnContext) -> Vec<CompactReplacementFile> {

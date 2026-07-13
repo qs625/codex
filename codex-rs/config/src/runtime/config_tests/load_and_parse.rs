@@ -92,6 +92,76 @@ async fn load_config_reads_explicit_instruction_files() -> std::io::Result<()> {
 }
 
 #[tokio::test]
+async fn load_config_reads_auto_compact_ratios() -> std::io::Result<()> {
+    let codex_home = tempdir()?;
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+model_auto_compact_token_limit = 100000
+model_auto_compact_soft_ratio = 0.62
+model_auto_compact_hard_ratio = 0.88
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.model_auto_compact_token_limit, Some(100_000));
+    assert_eq!(config.model_auto_compact_soft_ratio, Some(0.62));
+    assert_eq!(config.model_auto_compact_hard_ratio, Some(0.88));
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_rejects_invalid_auto_compact_ratios() -> std::io::Result<()> {
+    let cases = [
+        (
+            Some(0.0),
+            Some(0.90),
+            "model_auto_compact_soft_ratio must be in range (0.0, 1.0)",
+        ),
+        (
+            Some(0.80),
+            Some(1.1),
+            "model_auto_compact_hard_ratio must be in range (0.0, 1.0]",
+        ),
+        (
+            Some(0.90),
+            Some(0.80),
+            "model_auto_compact_hard_ratio must be greater than model_auto_compact_soft_ratio",
+        ),
+    ];
+
+    for (soft_ratio, hard_ratio, expected_message) in cases {
+        let codex_home = tempdir()?;
+        let cfg = ConfigToml {
+            model_auto_compact_soft_ratio: soft_ratio,
+            model_auto_compact_hard_ratio: hard_ratio,
+            ..Default::default()
+        };
+
+        let err = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.abs(),
+        )
+        .await
+        .expect_err("invalid auto compact ratios should fail config load");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            err.to_string().contains(expected_message),
+            "expected {expected_message:?}, got {err}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_toml_parsing() {
     let history_with_persistence = r#"
 [history]

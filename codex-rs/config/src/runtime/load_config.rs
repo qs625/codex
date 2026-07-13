@@ -37,6 +37,11 @@ impl Config {
 
         validate_model_providers(&cfg.model_providers)
             .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+        compact_service_api::SoftCompactThresholds::resolve(
+            cfg.model_auto_compact_soft_ratio,
+            cfg.model_auto_compact_hard_ratio,
+        )
+        .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
         // Ensure that every field of ConfigRequirements is applied to the final
         // Config.
         let ConfigRequirements {
@@ -1030,6 +1035,8 @@ impl Config {
             review_model,
             model_context_window: cfg.model_context_window,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
+            model_auto_compact_soft_ratio: cfg.model_auto_compact_soft_ratio,
+            model_auto_compact_hard_ratio: cfg.model_auto_compact_hard_ratio,
             model_provider_id,
             model_provider,
             model_options,
