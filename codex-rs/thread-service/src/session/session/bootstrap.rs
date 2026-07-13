@@ -92,6 +92,7 @@ impl Session {
             &initial_history,
             session_configuration.persist_extended_history,
         );
+        let child_completion = child_completion_state_for_initial_history(&initial_history);
         let thread_persistence_fut = async {
             if config.ephemeral {
                 Ok::<_, anyhow::Error>(None)
@@ -580,7 +581,7 @@ impl Session {
                 guardian_review_session: GuardianReviewSessionManager::default(),
                 services,
                 next_internal_sub_id: AtomicU64::new(0),
-                child_completion: ChildCompletionState::new(),
+                child_completion,
                 thread_wait_events,
                 thread_wait_backoff: Mutex::new(ThreadWaitBackoffState::default()),
             });
@@ -663,6 +664,30 @@ impl Session {
                 Err(err)
             }
         }
+    }
+}
+
+fn child_completion_state_for_initial_history(
+    initial_history: &InitialHistory,
+) -> ChildCompletionState {
+    let InitialHistory::Resumed(resumed_history) = initial_history else {
+        return ChildCompletionState::new();
+    };
+    let final_status = resumed_history
+        .history
+        .iter()
+        .filter_map(|item| match item {
+            protocol::protocol::RolloutItem::EventMsg(event) => {
+                codex_agent_runtime::agent_status_from_event(event)
+            }
+            _ => None,
+        })
+        .next_back()
+        .is_some_and(|status| codex_agent_runtime::is_final(&status));
+    if final_status {
+        ChildCompletionState::inactive()
+    } else {
+        ChildCompletionState::new()
     }
 }
 
