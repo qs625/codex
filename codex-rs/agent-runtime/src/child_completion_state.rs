@@ -17,8 +17,16 @@ pub struct ChildCompletionState {
 
 impl ChildCompletionState {
     pub fn new() -> Self {
+        Self::with_delivery_active(true)
+    }
+
+    pub fn inactive() -> Self {
+        Self::with_delivery_active(false)
+    }
+
+    fn with_delivery_active(delivery_active: bool) -> Self {
         Self {
-            delivery_active: AtomicBool::new(true),
+            delivery_active: AtomicBool::new(delivery_active),
             pending_direct_child_completions: Mutex::new(HashMap::new()),
         }
     }
