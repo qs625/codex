@@ -467,23 +467,14 @@ pub(crate) fn thread_from_stored_thread(
 pub(super) async fn sync_active_event_subscriptions(
     active_event_subscriptions: &ActiveEventSubscriptionTracker,
     thread_watch_manager: &ThreadWatchManager,
-    final_status_notifier: Option<&dyn FinalStatusNotifier>,
     thread_id: ThreadId,
     active_count: usize,
 ) {
-    let previous_count = active_event_subscriptions.active_count(thread_id);
     active_event_subscriptions.set_active_count(thread_id, active_count);
     let thread_id_str = thread_id.to_string();
     thread_watch_manager
         .note_active_event_subscriptions(thread_id_str.as_str(), active_count)
         .await;
-    if previous_count != active_count
-        && let Some(final_status_notifier) = final_status_notifier
-    {
-        final_status_notifier
-            .maybe_notify_parent_of_final_status(thread_id)
-            .await;
-    }
 }
 
 pub(super) fn persisted_subscription_count(thread: &StoredThread) -> usize {

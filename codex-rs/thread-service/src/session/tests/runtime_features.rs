@@ -2319,7 +2319,6 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         guardian_review_session: crate::session::session::approval_review_session_impl::GuardianReviewSessionManager::default(),
         services,
         next_internal_sub_id: AtomicU64::new(0),
-        child_completion: codex_agent_runtime::ChildCompletionState::new(),
         thread_wait_events,
         thread_wait_backoff: Mutex::new(crate::session::session::ThreadWaitBackoffState::default()),
     };

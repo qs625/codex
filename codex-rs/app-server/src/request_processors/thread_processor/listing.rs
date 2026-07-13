@@ -705,7 +705,6 @@ impl ThreadRequestProcessor {
                 sync_active_event_subscriptions(
                     active_event_subscriptions.as_ref(),
                     &self.thread_watch_manager,
-                    Some(self.thread_lifecycle_runtime.as_ref() as &dyn FinalStatusNotifier),
                     thread_id,
                     persisted_subscription_count,
                 )

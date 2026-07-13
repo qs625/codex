@@ -63,7 +63,6 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Weak;
 use thread_service_api::LiveThreadActivitySource;
-use thread_service_api::LiveThreadChildCompletionRuntime;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadShutdownRuntime;
@@ -275,34 +274,10 @@ impl AgentControl {
         )
         .await;
 
-        let parent_thread_id_for_completion = match notification_source.as_ref() {
-            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                parent_thread_id, ..
-            })) => Some(*parent_thread_id),
-            _ => None,
-        };
-        if agent_metadata.agent_mode != AgentMode::Management
-            && let Some(parent_thread_id) = parent_thread_id_for_completion
-        {
-            state
-                .mark_direct_child_completion_pending_if_enabled(
-                    parent_thread_id,
-                    new_thread.thread_id,
-                )
-                .await;
-        }
         if let Err(err) = self
             .send_input(new_thread.thread_id, initial_operation)
             .await
         {
-            if let Some(parent_thread_id) = parent_thread_id_for_completion {
-                state
-                    .mark_direct_child_completion_received_and_notify(
-                        parent_thread_id,
-                        new_thread.thread_id,
-                    )
-                    .await;
-            }
             return Err(err);
         }
         Ok(LiveAgent {

@@ -88,7 +88,6 @@ mod thread_processor_behavior_tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::Mutex;
     use tempfile::TempDir;
     use thread_store::StoredThread;
 
@@ -222,7 +221,6 @@ mod thread_processor_behavior_tests {
         sync_active_event_subscriptions(
             &active_event_subscriptions,
             &thread_watch_manager,
-            None,
             thread_id,
             /*active_count*/ 2,
         )
@@ -241,7 +239,6 @@ mod thread_processor_behavior_tests {
         sync_active_event_subscriptions(
             &active_event_subscriptions,
             &thread_watch_manager,
-            None,
             thread_id,
             /*active_count*/ 0,
         )
@@ -252,66 +249,6 @@ mod thread_processor_behavior_tests {
                 .loaded_status_for_thread(&thread_id.to_string())
                 .await,
             ThreadStatus::Complete
-        );
-    }
-
-    #[derive(Default)]
-    struct RecordingFinalStatusNotifier {
-        notified_thread_ids: Mutex<Vec<ThreadId>>,
-    }
-
-    impl FinalStatusNotifier for RecordingFinalStatusNotifier {
-        fn maybe_notify_parent_of_final_status<'a>(
-            &'a self,
-            thread_id: ThreadId,
-        ) -> futures::future::BoxFuture<'a, ()> {
-            Box::pin(async move {
-                self.notified_thread_ids
-                    .lock()
-                    .expect("notifier mutex should not be poisoned")
-                    .push(thread_id);
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn sync_active_event_subscriptions_retries_final_status_on_count_changes() {
-        let active_event_subscriptions = ActiveEventSubscriptionTracker::default();
-        let thread_watch_manager = ThreadWatchManager::new();
-        let notifier = RecordingFinalStatusNotifier::default();
-        let thread_id = ThreadId::new();
-
-        sync_active_event_subscriptions(
-            &active_event_subscriptions,
-            &thread_watch_manager,
-            Some(&notifier),
-            thread_id,
-            /*active_count*/ 1,
-        )
-        .await;
-        assert_eq!(
-            *notifier
-                .notified_thread_ids
-                .lock()
-                .expect("notifier mutex should not be poisoned"),
-            vec![thread_id],
-        );
-
-        sync_active_event_subscriptions(
-            &active_event_subscriptions,
-            &thread_watch_manager,
-            Some(&notifier),
-            thread_id,
-            /*active_count*/ 1,
-        )
-        .await;
-        assert_eq!(
-            notifier
-                .notified_thread_ids
-                .lock()
-                .expect("notifier mutex should not be poisoned")
-                .len(),
-            1,
         );
     }
 

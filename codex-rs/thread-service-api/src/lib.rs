@@ -247,25 +247,6 @@ pub trait LiveThreadShutdownRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<String>> + Send + '_;
 }
 
-/// Direct child-completion lifecycle surface for multi-agent parent threads.
-///
-/// Implementations own feature checks, parent lookup, pending/received state
-/// mutation, and parent final-status recheck. Callers should use this trait
-/// when they only know parent and child thread ids.
-pub trait LiveThreadChildCompletionRuntime: Send + Sync {
-    fn mark_direct_child_completion_pending_if_enabled(
-        &self,
-        parent_thread_id: ThreadId,
-        child_thread_id: ThreadId,
-    ) -> impl Future<Output = bool> + Send + '_;
-
-    fn mark_direct_child_completion_received_and_notify(
-        &self,
-        parent_thread_id: ThreadId,
-        child_thread_id: ThreadId,
-    ) -> impl Future<Output = bool> + Send + '_;
-}
-
 /// Status surface for live threads without exposing concrete thread handles.
 ///
 /// Implementations own the mapping from runtime lifecycle state to
