@@ -221,7 +221,6 @@ mod thread_processor_behavior_tests {
         sync_active_event_subscriptions(
             &active_event_subscriptions,
             &thread_watch_manager,
-            None,
             thread_id,
             /*active_count*/ 2,
         )
@@ -233,14 +232,13 @@ mod thread_processor_behavior_tests {
         assert_eq!(
             status,
             ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitCommand,
+                reason: ThreadIdleReason::WaitEventSubscription,
             }
         );
 
         sync_active_event_subscriptions(
             &active_event_subscriptions,
             &thread_watch_manager,
-            None,
             thread_id,
             /*active_count*/ 0,
         )

@@ -1,6 +1,5 @@
 use crate::StateDbHandle;
 use crate::agent::AgentControl;
-use crate::agent::status::is_final;
 use crate::environment_selection::default_thread_environment_selections;
 use crate::environment_selection::resolve_environment_selections;
 use crate::runtime_shell_snapshot::ShellSnapshot;
@@ -1865,56 +1864,6 @@ impl thread_service_api::LiveThreadShutdownRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadChildCompletionRuntime for ThreadServiceState {
-    fn mark_direct_child_completion_pending_if_enabled(
-        &self,
-        parent_thread_id: ThreadId,
-        child_thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = bool> + Send + '_ {
-        async move {
-            let Ok(parent_thread) = self.get_thread(parent_thread_id).await else {
-                return false;
-            };
-            if !parent_thread.enabled(Feature::MultiAgentV2) {
-                return false;
-            }
-            parent_thread
-                .codex
-                .session
-                .mark_direct_child_completion_pending(child_thread_id)
-                .await;
-            true
-        }
-    }
-
-    fn mark_direct_child_completion_received_and_notify(
-        &self,
-        parent_thread_id: ThreadId,
-        child_thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = bool> + Send + '_ {
-        async move {
-            let Ok(parent_thread) = self.get_thread(parent_thread_id).await else {
-                return false;
-            };
-            if !parent_thread
-                .codex
-                .session
-                .mark_direct_child_completion_received(child_thread_id)
-                .await
-            {
-                return false;
-            }
-            parent_thread
-                .codex
-                .session
-                .maybe_notify_parent_of_final_status_for_current_source()
-                .await;
-            true
-        }
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadStatusRuntime for ThreadServiceState {
     fn live_thread_agent_status(
         &self,
@@ -1922,15 +1871,7 @@ impl thread_service_api::LiveThreadStatusRuntime for ThreadServiceState {
     ) -> impl std::future::Future<Output = CodexResult<AgentStatus>> + Send + '_ {
         async move {
             let thread = self.get_thread(thread_id).await?;
-            let status = thread.agent_status().await;
-            if is_final(&status) {
-                thread
-                    .codex
-                    .session
-                    .maybe_notify_parent_of_final_status_for_current_source()
-                    .await;
-            }
-            Ok(status)
+            Ok(thread.agent_status().await)
         }
     }
 

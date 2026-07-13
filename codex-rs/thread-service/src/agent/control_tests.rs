@@ -215,6 +215,26 @@ async fn wait_for_subagent_notification(parent_thread: &Arc<CodexThread>) -> boo
     timeout(Duration::from_secs(10), wait).await.is_ok()
 }
 
+async fn no_subagent_notification(parent_thread: &Arc<CodexThread>) -> bool {
+    !timeout(Duration::from_millis(200), async {
+        loop {
+            let history_items = parent_thread
+                .codex
+                .session
+                .clone_history()
+                .await
+                .raw_items()
+                .to_vec();
+            if has_subagent_notification(&history_items) {
+                return;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
 async fn persist_thread_for_tree_resume(thread: &Arc<CodexThread>, message: &str) {
     thread
         .inject_user_message_without_turn(message.to_string())
@@ -1299,7 +1319,7 @@ async fn resume_agent_releases_slot_after_resume_failure() {
 }
 
 #[tokio::test]
-async fn spawn_child_completion_notifies_parent_history() {
+async fn child_shutdown_does_not_notify_parent_history() {
     let harness = AgentControlHarness::new().await;
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
 
@@ -1329,7 +1349,10 @@ async fn spawn_child_completion_notifies_parent_history() {
         .await
         .expect("child shutdown should submit");
 
-    assert_eq!(wait_for_subagent_notification(&parent_thread).await, true);
+    assert!(
+        no_subagent_notification(&parent_thread).await,
+        "direct shutdown records child final status without simulating the child's post-turn finalization"
+    );
 }
 
 #[tokio::test]
@@ -1437,7 +1460,7 @@ async fn multi_agent_v2_completion_ignores_dead_direct_parent() {
 }
 
 #[tokio::test]
-async fn raw_final_status_wakes_parent_with_child_completion() {
+async fn raw_final_status_does_not_notify_parent_with_child_completion() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, root_thread) = harness.start_thread().await;
     let mut config = harness.config.clone();
@@ -1482,7 +1505,6 @@ async fn raw_final_status_wakes_parent_with_child_completion() {
         !has_subagent_notification(&root_history_items),
         "interrupted setup should not notify parent before the raw final status"
     );
-    worker_thread.codex.session.mark_child_completion_active();
     let worker_turn = worker_thread.codex.session.new_default_turn().await;
 
     worker_thread
@@ -1500,14 +1522,9 @@ async fn raw_final_status_wakes_parent_with_child_completion() {
         })
         .await;
 
-    assert_eq!(wait_for_subagent_notification(&root_thread).await, true);
     assert!(
-        !root_thread
-            .codex
-            .session
-            .has_pending_direct_child_completions()
-            .await,
-        "parent should consume the typed child completion during its automatic wakeup turn"
+        no_subagent_notification(&root_thread).await,
+        "raw status recording is not the child on_task_finished finalization path"
     );
 }
 
@@ -1561,7 +1578,7 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         worker_thread
             .codex
             .session
-            .has_pending_mailbox_items()
+            .has_pending_input()
             .await
     );
     let baseline_op_count = harness.manager.captured_ops().len();
@@ -1577,7 +1594,6 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         &AgentPath::root(),
     ));
 
-    let _ = worker_thread.codex.session.get_pending_input().await;
     let listed_agents = harness
         .control
         .list_agents(root_thread_id, &SessionSource::Exec, None)
@@ -1599,12 +1615,13 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
             &worker_path,
             &AgentPath::root(),
         ),
-        1
+        0,
+        "status/list reads should not deliver child completion"
     );
 }
 
 #[tokio::test]
-async fn legacy_child_spawn_does_not_register_completion_pending() {
+async fn child_spawn_does_not_register_completion_pending() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, root_thread) = harness.start_thread().await;
     let worker_path = AgentPath::root().join("worker").expect("worker path");
@@ -1625,13 +1642,7 @@ async fn legacy_child_spawn_does_not_register_completion_pending() {
         .await
         .expect("legacy worker spawn should succeed");
 
-    assert!(
-        !root_thread
-            .codex
-            .session
-            .has_pending_direct_child_completions()
-            .await
-    );
+    assert!(no_subagent_notification(&root_thread).await);
 }
 
 #[tokio::test]
@@ -1889,10 +1900,17 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         .await
         .expect("resolver should restore the original worker thread");
     let baseline_op_count = harness.manager.captured_ops().len();
-    harness
-        .manager
-        .maybe_notify_parent_of_final_status(worker_thread_id)
-        .await;
+    let listed_agents = harness
+        .control
+        .list_agents(root_thread_id, &SessionSource::Exec, None)
+        .await
+        .expect("list agents should succeed from live restored tree");
+    assert!(
+        listed_agents
+            .iter()
+            .any(|agent| agent.agent_name == worker_path.to_string()
+                && agent.agent_status == AgentStatus::Completed(Some("done".to_string())))
+    );
     let captured_ops = harness.manager.captured_ops();
     assert_eq!(
         count_captured_child_completions(
@@ -1902,7 +1920,7 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
             &AgentPath::root(),
         ),
         0,
-        "restoring a completed child must not re-arm its old completion envelope",
+        "status/list inspection must not deliver an old completion envelope",
     );
 
     let communication = InterAgentCommunication::new(
@@ -2851,7 +2869,65 @@ async fn completed_agent_path_can_still_receive_followup_while_registered() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
+async fn followup_task_to_completed_child_does_not_emit_old_completion() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    emit_turn_complete(&worker_thread, "done").await;
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    let turn = root_thread.codex.session.new_default_turn().await;
+    crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&root_thread.codex.session),
+        turn,
+        "followup-call".to_string(),
+        worker_path.to_string(),
+        "please continue".to_string(),
+    )
+    .await
+    .expect("followup_task should enqueue input for completed child");
+
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        0,
+        "followup_task and its status read must not deliver an old completion",
+    );
+    assert!(
+        worker_thread.codex.session.has_pending_input().await,
+        "followup_task should still enqueue pending input for the child"
+    );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_completion_allows_active_event_subscription() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
     let mut config = harness.config.clone();
@@ -2905,20 +2981,6 @@ async fn multi_agent_v2_completion_waits_for_active_event_subscription() {
         )
         .await;
     *worker_thread.codex.session.active_turn.lock().await = None;
-    sleep(Duration::from_millis(100)).await;
-    let captured_ops = harness.manager.captured_ops();
-
-    assert!(!captured_child_completion(
-        &captured_ops[baseline_op_count..],
-        root_thread_id,
-        &worker_path,
-        &AgentPath::root(),
-    ));
-
-    harness
-        .manager
-        .active_event_subscriptions()
-        .set_active_count(worker_thread_id, 0);
     harness
         .manager
         .maybe_notify_parent_of_final_status(worker_thread_id)
@@ -2945,7 +3007,7 @@ async fn goal_post_turn_state_continues_despite_live_direct_child() {
         .expect("parent thread should start");
     let parent_thread_id = parent.thread_id;
     let parent_thread = parent.thread;
-    let (child_thread_id, child_thread) = harness.start_thread().await;
+    let (_child_thread_id, child_thread) = harness.start_thread().await;
     replace_thread_goal(
         harness.state_db.as_ref().expect("state db should exist"),
         parent_thread_id,
@@ -2953,12 +3015,6 @@ async fn goal_post_turn_state_continues_despite_live_direct_child() {
     )
     .await;
     emit_turn_complete(&parent_thread, "parent turn done").await;
-    parent_thread
-        .codex
-        .session
-        .mark_direct_child_completion_pending(child_thread_id)
-        .await;
-
     let goal_id = harness
         .state_db
         .as_ref()
@@ -2984,23 +3040,6 @@ async fn goal_post_turn_state_continues_despite_live_direct_child() {
         }
     );
 
-    let child_completion = InterAgentCommunication::new(
-        AgentPath::root().join("child").expect("child path"),
-        AgentPath::root(),
-        Vec::new(),
-        "child complete".to_string(),
-        protocol::protocol::InterAgentOperation::ChildCompletion,
-    )
-    .with_thread_ids(child_thread_id, parent_thread_id)
-    .with_status(protocol::protocol::AgentStatus::Completed(Some(
-        "child done".to_string(),
-    )));
-    let pending_child_completion = PendingInputItem::from(child_completion);
-    parent_thread
-        .codex
-        .session
-        .mark_direct_child_completions_received_from_pending_input([&pending_child_completion])
-        .await;
     assert_eq!(
         parent_thread.codex.session.thread_post_turn_state().await,
         ThreadPostTurnState::GoContextContinuation { goal_id }
@@ -3030,6 +3069,10 @@ async fn post_turn_state_waits_for_active_direct_child_without_active_goal() {
         .await
         .expect("worker spawn should succeed");
     emit_turn_complete(&root_thread, "parent turn done").await;
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(root_thread_id, 1);
 
     assert_eq!(
         root_thread.codex.session.thread_post_turn_state().await,
@@ -3038,7 +3081,7 @@ async fn post_turn_state_waits_for_active_direct_child_without_active_goal() {
 }
 
 #[tokio::test]
-async fn pending_child_completion_bookkeeping_does_not_trigger_wait_child() {
+async fn inactive_child_completion_input_does_not_trigger_wait_child() {
     let harness = AgentControlHarness::new().await;
     let parent = harness
         .manager
@@ -3046,21 +3089,7 @@ async fn pending_child_completion_bookkeeping_does_not_trigger_wait_child() {
         .await
         .expect("parent thread should start");
     let parent_thread = parent.thread;
-    let child_thread_id = ThreadId::new();
     emit_turn_complete(&parent_thread, "parent turn done").await;
-    parent_thread
-        .codex
-        .session
-        .mark_direct_child_completion_pending(child_thread_id)
-        .await;
-
-    assert!(
-        parent_thread
-            .codex
-            .session
-            .has_pending_direct_child_completions()
-            .await
-    );
     assert_eq!(
         parent_thread.codex.session.thread_post_turn_state().await,
         ThreadPostTurnState::ThreadCompletion
@@ -3106,7 +3135,7 @@ async fn goal_post_turn_state_continues_despite_active_event_subscription() {
 }
 
 #[tokio::test]
-async fn post_turn_state_waits_for_active_event_subscription_without_active_goal() {
+async fn post_turn_state_reports_active_event_subscription_without_active_goal() {
     let harness = AgentControlHarness::new().await;
     let thread = harness
         .manager
@@ -3121,12 +3150,12 @@ async fn post_turn_state_waits_for_active_event_subscription_without_active_goal
 
     assert_eq!(
         thread.thread.codex.session.thread_post_turn_state().await,
-        ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand)
+        ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitEventSubscription)
     );
 }
 
 #[tokio::test]
-async fn multi_agent_v2_completion_waits_for_active_goal_continuation() {
+async fn multi_agent_v2_completion_waits_for_next_turn_after_active_goal_continuation() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
     let mut config = harness.config.clone();
@@ -3195,13 +3224,15 @@ async fn multi_agent_v2_completion_waits_for_active_goal_continuation() {
             &worker_path,
             &AgentPath::root(),
         ),
-        1
+        0,
+        "external goal completion is not a child on_task_finished completion point"
     );
 
+    let next_turn = emit_turn_complete(&worker_thread, "goal follow-up done").await;
     worker_thread
         .codex
         .session
-        .maybe_notify_parent_of_final_status(completed_turn.as_ref())
+        .maybe_notify_parent_of_final_status(next_turn.as_ref())
         .await;
     let captured_ops = harness.manager.captured_ops();
     assert_eq!(
@@ -3278,7 +3309,7 @@ async fn multi_agent_v2_completion_allows_paused_and_budget_limited_goals() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_restored_event_subscription_blocks_completion_until_cleared() {
+async fn multi_agent_v2_restored_event_subscription_allows_completion() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
     let mut config = harness.config.clone();
@@ -3307,45 +3338,26 @@ async fn multi_agent_v2_restored_event_subscription_blocks_completion_until_clea
         .await
         .expect("worker thread should exist");
 
-    // Simulates app-server startup restoring a persisted event command subscription.
+    // Simulates app-server startup restoring a persisted event subscription.
     harness
         .manager
         .active_event_subscriptions()
         .set_active_count(worker_thread_id, 1);
     let baseline_op_count = harness.manager.captured_ops().len();
 
-    emit_turn_complete(&worker_thread, "waiting for event command").await;
+    emit_turn_complete(&worker_thread, "waiting for event subscription").await;
     *worker_thread.codex.session.active_turn.lock().await = None;
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
     let captured_ops = harness.manager.captured_ops();
-    assert!(!captured_child_completion(
+    assert!(captured_child_completion(
         &captured_ops[baseline_op_count..],
         root_thread_id,
         &worker_path,
         &AgentPath::root(),
     ));
-
-    harness
-        .manager
-        .active_event_subscriptions()
-        .set_active_count(worker_thread_id, 0);
-    harness
-        .manager
-        .maybe_notify_parent_of_final_status(worker_thread_id)
-        .await;
-    harness
-        .manager
-        .maybe_notify_parent_of_final_status(worker_thread_id)
-        .await;
-    let captured_ops = harness.manager.captured_ops();
-    assert_eq!(
-        count_captured_child_completions(
-            &captured_ops[baseline_op_count..],
-            root_thread_id,
-            &worker_path,
-            &AgentPath::root(),
-        ),
-        1
-    );
 }
 
 #[tokio::test]

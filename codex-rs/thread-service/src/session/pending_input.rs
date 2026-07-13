@@ -315,6 +315,7 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "active turn checks and pending input updates must remain atomic"
     )]
+    #[cfg(test)]
     pub(crate) async fn clear_child_completion_pending_input(
         &self,
         child_thread_id: ThreadId,
@@ -352,8 +353,6 @@ impl Session {
         if removed.is_empty() {
             return 0;
         }
-        self.mark_direct_child_completions_received_from_pending_input(removed.iter())
-            .await;
         removed.len()
     }
 
@@ -579,6 +578,7 @@ impl Session {
     }
 }
 
+#[cfg(test)]
 fn matches_child_completion(item: &PendingInputItem, child_thread_id: ThreadId) -> bool {
     match item {
         PendingInputItem::InterAgentCommunication(communication)

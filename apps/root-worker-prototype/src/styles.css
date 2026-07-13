@@ -346,6 +346,11 @@ svg {
   background: #9333ea;
 }
 
+.tree-inline-status.waiting-subscription {
+  color: #0891b2;
+  background: #0891b2;
+}
+
 .tree-inline-status.blocked {
   background: #d97706;
 }
@@ -377,6 +382,11 @@ svg {
 .status-dot.waiting-eventtool {
   color: #9333ea;
   background: #9333ea;
+}
+
+.status-dot.waiting-subscription {
+  color: #0891b2;
+  background: #0891b2;
 }
 
 .status-dot.blocked {
@@ -3571,8 +3581,10 @@ svg {
 
 .status-dot.waiting-subagent,
 .status-dot.waiting-eventtool,
+.status-dot.waiting-subscription,
 .tree-inline-status.waiting-subagent,
-.tree-inline-status.waiting-eventtool {
+.tree-inline-status.waiting-eventtool,
+.tree-inline-status.waiting-subscription {
   animation: tree-status-waiting-pulse 2s ease-in-out infinite;
 }
 

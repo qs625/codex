@@ -1,23 +1,5 @@
 use super::*;
 
-pub(crate) trait FinalStatusNotifier: Send + Sync {
-    fn maybe_notify_parent_of_final_status<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> futures::future::BoxFuture<'a, ()>;
-}
-
-impl FinalStatusNotifier for ThreadService {
-    fn maybe_notify_parent_of_final_status<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> futures::future::BoxFuture<'a, ()> {
-        Box::pin(ThreadService::maybe_notify_parent_of_final_status(
-            self, thread_id,
-        ))
-    }
-}
-
 pub(crate) trait ThreadProcessorMetadataRuntime: Send + Sync {
     fn update_thread_metadata<'a>(
         &'a self,
@@ -43,7 +25,7 @@ impl ThreadProcessorMetadataRuntime for ThreadService {
     }
 }
 
-pub(crate) trait ThreadProcessorLifecycleRuntime: FinalStatusNotifier {
+pub(crate) trait ThreadProcessorLifecycleRuntime: Send + Sync {
     fn shutdown_all_threads_bounded<'a>(
         &'a self,
         timeout: Duration,

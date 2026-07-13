@@ -41,6 +41,7 @@ use codex_agent_runtime::BudgetLimitSteering;
 use codex_agent_runtime::ListedAgent;
 use codex_agent_runtime::LiveAgent;
 use codex_agent_runtime::TerminalMetricEmission;
+use codex_agent_runtime::ThreadIdleReason;
 use codex_agent_runtime::ThreadPostTurnState;
 use codex_analytics_api::AnalyticsEventsClient;
 use codex_analytics_api::AppInvocation;

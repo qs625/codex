@@ -116,10 +116,6 @@ impl Session {
                 }
             }
         }
-        if plan.notify_parent_final_status {
-            self.maybe_notify_parent_of_final_status_for_current_source()
-                .await;
-        }
     }
 
     pub(crate) async fn clear_stopped_thread_goal_runtime_state(&self) {
@@ -895,6 +891,7 @@ impl Session {
         }
         select_thread_post_turn_state(ThreadPostTurnInputs {
             has_wait_command: Box::pin(self.has_wait_command()).await,
+            has_active_event_subscription: self.has_active_event_subscription(),
             ..ThreadPostTurnInputs::default()
         })
     }

@@ -2352,8 +2352,14 @@ async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> a
     let immediate_completed = timeout(Duration::from_millis(200), async {
         loop {
             let event = rx_event.recv().await?;
-            if let EventMsg::ItemCompleted(completed) = event.msg {
-                return anyhow::Ok(completed);
+            match event.msg {
+                EventMsg::InterAgentCommunicationCompleted(_) => return anyhow::Ok(()),
+                EventMsg::ItemCompleted(completed)
+                    if matches!(completed.item, protocol::items::TurnItem::CollabAgentMessage(_)) =>
+                {
+                    return anyhow::Ok(());
+                }
+                _ => {}
             }
         }
     })
@@ -2375,8 +2381,16 @@ async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> a
     let completed = timeout(Duration::from_secs(2), async {
         loop {
             let event = rx_event.recv().await?;
-            if let EventMsg::ItemCompleted(completed) = event.msg {
-                return anyhow::Ok(completed);
+            match event.msg {
+                EventMsg::InterAgentCommunicationCompleted(completed) => {
+                    return anyhow::Ok(completed);
+                }
+                EventMsg::ItemCompleted(completed)
+                    if matches!(completed.item, protocol::items::TurnItem::CollabAgentMessage(_)) =>
+                {
+                    anyhow::bail!("child completion should use InterAgentCommunicationCompleted, not legacy ItemCompleted");
+                }
+                _ => {}
             }
         }
     })
@@ -2384,16 +2398,19 @@ async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> a
     assert_eq!(completed.thread_id, parent_thread_id);
     assert_eq!(completed.turn_id, turn_context.sub_id.clone());
     assert!(completed.completed_at_ms > 0);
-    let protocol::items::TurnItem::CollabAgentMessage(item) = completed.item else {
-        panic!("expected completed collab agent message item");
-    };
-    assert_eq!(item.communication, communication);
+    assert_eq!(completed.communication, communication);
 
     let duplicate_completed = timeout(Duration::from_millis(200), async {
         loop {
             let event = rx_event.recv().await?;
-            if let EventMsg::ItemCompleted(completed) = event.msg {
-                return anyhow::Ok(completed);
+            match event.msg {
+                EventMsg::InterAgentCommunicationCompleted(_) => return anyhow::Ok(()),
+                EventMsg::ItemCompleted(completed)
+                    if matches!(completed.item, protocol::items::TurnItem::CollabAgentMessage(_)) =>
+                {
+                    return anyhow::Ok(());
+                }
+                _ => {}
             }
         }
     })
@@ -2407,11 +2424,9 @@ async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> a
 }
 
 #[tokio::test]
-async fn turn_start_consumes_child_completion_before_parent_visible_complete() {
+async fn turn_start_consumes_child_completion_like_other_pending_input() {
     let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
     let child_thread_id = ThreadId::new();
-    sess.mark_direct_child_completion_pending(child_thread_id)
-        .await;
     let communication = InterAgentCommunication::new(
         AgentPath::try_from("/root/worker").expect("worker path should parse"),
         AgentPath::root(),
@@ -2425,7 +2440,6 @@ async fn turn_start_consumes_child_completion_before_parent_visible_complete() {
         "done".to_string(),
     )));
     sess.enqueue_mailbox_communication(communication).await;
-    assert!(sess.has_pending_direct_child_completions().await);
 
     sess.spawn_task(
         Arc::clone(&tc),
@@ -2438,12 +2452,8 @@ async fn turn_start_consumes_child_completion_before_parent_visible_complete() {
     .await;
 
     assert!(
-        !sess.has_pending_direct_child_completions().await,
-        "child completion should become parent-visible when the parent turn consumes mailbox input"
-    );
-    assert!(
         !sess.has_pending_mailbox_items().await,
-        "turn start should drain the consumed child completion from the mailbox"
+        "turn start should drain child completion from the mailbox like any other pending input"
     );
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
@@ -2454,8 +2464,6 @@ async fn clearing_stale_child_completion_preserves_non_completion_messages() {
     let parent_thread_id = sess.thread_id();
     let child_thread_id = ThreadId::new();
     let child_agent_path = AgentPath::try_from("/root/worker").expect("worker path should parse");
-    sess.mark_direct_child_completion_pending(child_thread_id)
-        .await;
 
     let stale_completion = InterAgentCommunication::new(
         child_agent_path.clone(),
@@ -2487,31 +2495,21 @@ async fn clearing_stale_child_completion_preserves_non_completion_messages() {
         .await;
 
     assert_eq!(removed, 1);
-    assert!(
-        !sess.has_pending_direct_child_completions().await,
-        "dropping a stale child completion should also clear its pending delivery state"
-    );
     assert_eq!(
         sess.get_pending_input().await,
         vec![PendingInputItem::from(progress_update)],
         "only the stale child completion should be removed"
     );
 
-    sess.mark_direct_child_completion_pending(child_thread_id)
-        .await;
-    assert!(
-        sess.has_pending_direct_child_completions().await,
-        "a new followup should still be able to arm completion tracking again"
-    );
     assert_eq!(
         sess.get_pending_input().await,
         Vec::new(),
-        "re-arming completion tracking must not resurrect the old child completion"
+        "removing child completion input must not resurrect the old child completion"
     );
 }
 
 #[tokio::test]
-async fn aborting_turn_clears_pending_child_completion_tracking_from_turn_state() {
+async fn aborting_turn_drops_turn_scoped_child_completion_input() {
     let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
     let parent_thread_id = sess.thread_id();
     let child_thread_id = ThreadId::new();
@@ -2537,19 +2535,15 @@ async fn aborting_turn_clears_pending_child_completion_tracking_from_turn_state(
         },
     )
     .await;
-    sess.mark_direct_child_completion_pending(child_thread_id)
-        .await;
     sess.prepend_pending_input(vec![PendingInputItem::from(stale_completion)])
         .await
         .expect("active turn should accept pending input");
 
-    assert!(sess.has_pending_direct_child_completions().await);
-
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 
     assert!(
-        !sess.has_pending_direct_child_completions().await,
-        "dropping turn-scoped child completion input must reconcile parent-visible completion state"
+        !sess.has_pending_input().await,
+        "aborting the turn should drop turn-scoped child completion input"
     );
 }
 
@@ -2559,8 +2553,6 @@ async fn clearing_stale_child_completion_from_idle_queue_preserves_other_idle_in
     let parent_thread_id = sess.thread_id();
     let child_thread_id = ThreadId::new();
     let child_agent_path = AgentPath::try_from("/root/worker").expect("worker path should parse");
-    sess.mark_direct_child_completion_pending(child_thread_id)
-        .await;
 
     let stale_completion = InterAgentCommunication::new(
         child_agent_path.clone(),
@@ -2595,10 +2587,6 @@ async fn clearing_stale_child_completion_from_idle_queue_preserves_other_idle_in
         .await;
 
     assert_eq!(removed, 1);
-    assert!(
-        !sess.has_pending_direct_child_completions().await,
-        "dropping an idle stale completion should clear its pending delivery state"
-    );
     assert_eq!(
         sess.take_queued_response_items_for_next_turn().await,
         vec![PendingInputItem::from(progress_update)],

@@ -98,6 +98,9 @@ impl CodexThread {
             ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild) => {
                 ThreadRuntimeStatus::IdleWaitChild
             }
+            ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitEventSubscription) => {
+                ThreadRuntimeStatus::IdleWaitEventSubscription
+            }
             ThreadPostTurnState::ThreadCompletion => ThreadRuntimeStatus::Complete,
         }
     }

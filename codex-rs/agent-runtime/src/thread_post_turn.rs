@@ -17,6 +17,7 @@ pub enum ThreadPostTurnState {
 pub enum ThreadIdleReason {
     WaitCommand,
     WaitChild,
+    WaitEventSubscription,
 }
 
 /// Snapshot of runtime facts needed to select the next post-turn scheduler state.
@@ -26,6 +27,7 @@ pub struct ThreadPostTurnInputs {
     pub active_goal_id: Option<String>,
     pub has_active_direct_child: bool,
     pub has_wait_command: bool,
+    pub has_active_event_subscription: bool,
 }
 
 /// Selects the canonical post-turn state from already-collected runtime facts.
@@ -48,6 +50,9 @@ pub fn select_thread_post_turn_state(inputs: ThreadPostTurnInputs) -> ThreadPost
     if inputs.has_wait_command {
         return ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand);
     }
+    if inputs.has_active_event_subscription {
+        return ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitEventSubscription);
+    }
     ThreadPostTurnState::ThreadCompletion
 }
 
@@ -63,6 +68,7 @@ mod tests {
                 active_goal_id: Some("goal-1".to_string()),
                 has_active_direct_child: true,
                 has_wait_command: true,
+                has_active_event_subscription: true,
             }),
             ThreadPostTurnState::ThreadActive
         );
@@ -100,9 +106,21 @@ mod tests {
         assert_eq!(
             select_thread_post_turn_state(ThreadPostTurnInputs {
                 has_wait_command: true,
+                has_active_event_subscription: true,
                 ..ThreadPostTurnInputs::default()
             }),
             ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand)
+        );
+    }
+
+    #[test]
+    fn event_subscription_wait_is_selected_after_command_waits() {
+        assert_eq!(
+            select_thread_post_turn_state(ThreadPostTurnInputs {
+                has_active_event_subscription: true,
+                ..ThreadPostTurnInputs::default()
+            }),
+            ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitEventSubscription)
         );
     }
 

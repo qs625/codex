@@ -12,7 +12,6 @@ use crate::SessionSettingsApplyCurrent;
 use crate::build_session_settings_apply_plan;
 use crate::initial_thread_skills;
 use crate::merge_thread_skills;
-use codex_agent_runtime::ChildCompletionState;
 use codex_agent_runtime::GoalRuntimeState;
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_approval_service_api::ApprovalSessionCapability;
@@ -142,7 +141,6 @@ pub struct Session {
     pub(crate) guardian_review_session: approval_review_session_impl::GuardianReviewSessionManager,
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
-    pub(super) child_completion: ChildCompletionState,
     pub(super) thread_wait_events: watch::Sender<ThreadWaitEventSnapshot>,
     pub(super) thread_wait_backoff: Mutex<ThreadWaitBackoffState>,
 }

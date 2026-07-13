@@ -386,7 +386,10 @@ export type ThreadActiveFlag =
   | "waitingOnApproval"
   | "waitingOnUserInput";
 
-export type ThreadIdleReason = "waitCommand" | "waitChild";
+export type ThreadIdleReason =
+  | "waitCommand"
+  | "waitChild"
+  | "waitEventSubscription";
 
 export type ThreadStatus =
   | { type: "notLoaded" }

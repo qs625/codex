@@ -1,4 +1,3 @@
-mod child_completion_state;
 mod control_plan;
 mod fork_history;
 mod goal_context;
@@ -14,7 +13,6 @@ mod status;
 mod thread_post_turn;
 mod tool_session_api;
 
-pub use child_completion_state::ChildCompletionState;
 pub use control_plan::AgentThreadActivityInputs;
 pub use control_plan::ListAgentsPlan;
 pub use control_plan::ListedAgent;

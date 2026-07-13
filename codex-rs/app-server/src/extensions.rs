@@ -75,11 +75,7 @@ impl FileSubscriptionThreadHost for ThreadService {
         Box::pin(async move {
             let active_event_subscriptions: Arc<ActiveEventSubscriptionTracker> =
                 self.active_event_subscriptions();
-            let previous_count = active_event_subscriptions.active_count(thread_id);
             active_event_subscriptions.set_active_count(thread_id, active_count);
-            if previous_count > 0 && active_count == 0 {
-                self.maybe_notify_parent_of_final_status(thread_id).await;
-            }
         })
     }
 

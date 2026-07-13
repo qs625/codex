@@ -14589,7 +14589,8 @@
     "ThreadIdleReason": {
       "enum": [
         "waitCommand",
-        "waitChild"
+        "waitChild",
+        "waitEventSubscription"
       ],
       "type": "string"
     },

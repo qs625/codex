@@ -93,18 +93,6 @@ pub(crate) async fn followup_task_tool(
             .into(),
         )
         .await;
-    let receiver_is_direct_child = is_direct_child(&sender_agent_path, &receiver_agent_path);
-    let receiver_will_send_completion =
-        receiver_agent.agent_mode != crate::agent::AgentMode::Management;
-    if receiver_is_direct_child && receiver_will_send_completion {
-        session
-            .clear_child_completion_pending_input(receiver_thread_id)
-            .await;
-        session
-            .mark_direct_child_completion_pending(receiver_thread_id)
-            .await;
-    }
-
     let communication = InterAgentCommunication::new(
         sender_agent_path.clone(),
         receiver_agent_path,
@@ -136,19 +124,7 @@ pub(crate) async fn followup_task_tool(
             .into(),
         )
         .await;
-    if let Err(err) = result {
-        if receiver_is_direct_child
-            && receiver_will_send_completion
-            && session
-                .mark_direct_child_completion_received(receiver_thread_id)
-                .await
-        {
-            session
-                .maybe_notify_parent_of_final_status_for_current_source()
-                .await;
-        }
-        return Err(err);
-    }
+    result?;
     Ok(())
 }
 
@@ -169,7 +145,6 @@ pub(crate) async fn close_agent_tool(
     let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
         FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
     })?;
-    let receiver_is_direct_child = is_direct_child(&sender_agent_path, &receiver_agent_path);
     session
         .send_event(
             turn.as_ref(),
@@ -207,15 +182,6 @@ pub(crate) async fn close_agent_tool(
         )
         .await;
     result?;
-    if receiver_is_direct_child
-        && session
-            .clear_direct_child_completion_pending(agent_id)
-            .await
-    {
-        session
-            .maybe_notify_parent_of_final_status_for_current_source()
-            .await;
-    }
 
     Ok(CloseAgentToolResult {
         previous_status: status,
@@ -290,13 +256,6 @@ fn reject_root_agent(
         return Err(FunctionCallError::RespondToModel(message.to_string()));
     }
     Ok(())
-}
-
-fn is_direct_child(sender_agent_path: &AgentPath, receiver_agent_path: &AgentPath) -> bool {
-    receiver_agent_path
-        .as_str()
-        .rsplit_once('/')
-        .is_some_and(|(parent, _)| parent == sender_agent_path.as_str())
 }
 
 fn message_content(message: String) -> Result<String, FunctionCallError> {

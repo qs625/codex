@@ -413,10 +413,6 @@ impl Session {
         let (queued_response_items, mailbox_items) = if consume_external_pending_input {
             let queued_response_items = self.take_queued_response_items_for_next_turn().await;
             let mailbox_items = self.get_pending_input().await;
-            self.mark_direct_child_completions_received_from_pending_input(
-                queued_response_items.iter().chain(mailbox_items.iter()),
-            )
-            .await;
             (queued_response_items, mailbox_items)
         } else {
             (Vec::new(), Vec::new())
@@ -681,9 +677,7 @@ impl Session {
         if let Some(active_turn) = active_turn_to_clear {
             // Let interrupted tasks observe cancellation before dropping pending approvals, or an
             // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
-            let pending_input = active_turn.clear_pending().await;
-            self.mark_direct_child_completions_received_from_pending_input(pending_input.iter())
-                .await;
+            let _ = active_turn.clear_pending().await;
         }
         if reason == TurnAbortReason::Interrupted && aborted_turn {
             self.maybe_start_turn_for_pending_work().await;
@@ -734,9 +728,7 @@ impl Session {
         }
         // Let interrupted tasks observe cancellation before dropping pending approvals, or an
         // in-flight approval wait can surface as a model-visible rejection before TurnAborted.
-        let pending_input = active_turn.clear_pending().await;
-        self.mark_direct_child_completions_received_from_pending_input(pending_input.iter())
-            .await;
+        let _ = active_turn.clear_pending().await;
 
         if reason == TurnAbortReason::Interrupted {
             self.maybe_start_turn_for_pending_work().await;

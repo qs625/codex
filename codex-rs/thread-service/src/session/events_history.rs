@@ -115,7 +115,6 @@ impl Session {
             msg,
         };
         self.send_event_raw(event).await;
-        Box::pin(self.maybe_notify_parent_of_final_status(turn_context)).await;
         self.maybe_mirror_event_text_to_realtime(&legacy_source)
             .await;
         self.maybe_clear_realtime_handoff_for_event(&legacy_source)
@@ -177,29 +176,22 @@ impl Session {
             return;
         }
         match Box::pin(self.thread_post_turn_state()).await {
-            ThreadPostTurnState::ThreadCompletion => {}
+            ThreadPostTurnState::ThreadCompletion
+            | ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitEventSubscription) => {}
             ThreadPostTurnState::ThreadActive
-            | ThreadPostTurnState::ThreadIdle(_)
-            | ThreadPostTurnState::GoContextContinuation { .. } => {
-                self.child_completion.mark_delivery_active();
-                return;
-            }
+            | ThreadPostTurnState::ThreadIdle(
+                ThreadIdleReason::WaitChild | ThreadIdleReason::WaitCommand,
+            )
+            | ThreadPostTurnState::GoContextContinuation { .. } => return,
         }
 
-        if !self.child_completion.try_begin_delivery() {
-            return;
-        }
-
-        if !Box::pin(self.forward_child_completion_to_parent(
+        let _ = Box::pin(self.forward_child_completion_to_parent(
             sub_id,
             *parent_thread_id,
             child_agent_path,
             status,
         ))
-        .await
-        {
-            self.child_completion.mark_delivery_active();
-        }
+        .await;
     }
 
     /// Sends the standard completion envelope from a spawned MultiAgentV2 child to its parent.
@@ -272,67 +264,16 @@ impl Session {
 
     pub(crate) async fn has_wait_command(&self) -> bool {
         self.services
+            .command_service_state
+            .has_running_process_for_thread(self.conversation_id)
+            .await
+    }
+
+    pub(crate) fn has_active_event_subscription(&self) -> bool {
+        self.services
             .active_event_subscriptions
             .active_count(self.conversation_id)
             > 0
-            || self
-                .services
-                .command_service_state
-                .has_running_process_for_thread(self.conversation_id)
-                .await
-    }
-
-    pub(crate) async fn mark_direct_child_completion_pending(&self, child_thread_id: ThreadId) {
-        self.child_completion.mark_pending(child_thread_id).await;
-    }
-
-    pub(crate) async fn mark_direct_child_completion_received(
-        &self,
-        child_thread_id: ThreadId,
-    ) -> bool {
-        self.child_completion.mark_received(child_thread_id).await
-    }
-
-    pub(crate) async fn clear_direct_child_completion_pending(
-        &self,
-        child_thread_id: ThreadId,
-    ) -> bool {
-        self.child_completion.clear_pending(child_thread_id).await
-    }
-
-    pub(crate) fn mark_child_completion_active(&self) {
-        self.child_completion.mark_delivery_active();
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn has_pending_direct_child_completions(&self) -> bool {
-        self.child_completion.has_pending().await
-    }
-
-    pub(crate) async fn mark_direct_child_completions_received_from_pending_input<'a>(
-        &self,
-        pending_input: impl IntoIterator<Item = &'a PendingInputItem>,
-    ) {
-        let child_thread_ids = pending_input
-            .into_iter()
-            .filter_map(|item| match item {
-                PendingInputItem::InterAgentCommunication(communication)
-                    if matches!(
-                        communication.operation,
-                        InterAgentOperation::ChildCompletion
-                    ) =>
-                {
-                    communication.sender_thread_id
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        if child_thread_ids.is_empty() {
-            return;
-        }
-        self.child_completion
-            .mark_received_many(child_thread_ids)
-            .await;
     }
 
     async fn maybe_mirror_event_text_to_realtime(&self, msg: &EventMsg) {
@@ -360,7 +301,6 @@ impl Session {
     }
 
     pub(crate) async fn send_event_raw(&self, event: Event) {
-        let status_update = agent_status_from_event(&event.msg);
         // Persist the event into rollout storage (the store filters as needed).
         let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
         self.persist_rollout_items(&rollout_items).await;
@@ -368,9 +308,6 @@ impl Session {
             .rollout_thread_trace
             .record_protocol_event(&event.msg);
         self.deliver_event_raw(event).await;
-        if status_update.as_ref().is_some_and(is_final) {
-            Box::pin(self.maybe_notify_parent_of_final_status_for_current_source()).await;
-        }
     }
 
     pub(crate) async fn deliver_event_raw(&self, event: Event) {

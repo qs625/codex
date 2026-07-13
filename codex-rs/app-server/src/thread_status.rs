@@ -148,6 +148,7 @@ impl ThreadWatchManager {
             runtime.running = true;
             runtime.post_turn_wait_child = false;
             runtime.post_turn_wait_command = false;
+            runtime.post_turn_wait_event_subscription = false;
             runtime.has_system_error = false;
         })
         .await;
@@ -163,11 +164,13 @@ impl ThreadWatchManager {
         active: bool,
         wait_child: bool,
         wait_command: bool,
+        wait_event_subscription: bool,
     ) {
         self.update_runtime_for_thread(thread_id, move |runtime| {
             runtime.running = active;
             runtime.post_turn_wait_child = wait_child;
             runtime.post_turn_wait_command = wait_command;
+            runtime.post_turn_wait_event_subscription = wait_event_subscription;
         })
         .await;
     }
@@ -184,6 +187,7 @@ impl ThreadWatchManager {
             runtime.pending_event_subscription_count = 0;
             runtime.post_turn_wait_child = false;
             runtime.post_turn_wait_command = false;
+            runtime.post_turn_wait_event_subscription = false;
             runtime.is_loaded = false;
         })
         .await;
@@ -197,6 +201,7 @@ impl ThreadWatchManager {
             runtime.pending_event_subscription_count = 0;
             runtime.post_turn_wait_child = false;
             runtime.post_turn_wait_command = false;
+            runtime.post_turn_wait_event_subscription = false;
             runtime.has_system_error = true;
         })
         .await;
@@ -210,6 +215,9 @@ impl ThreadWatchManager {
         self.update_runtime_for_thread(thread_id, move |runtime| {
             runtime.is_loaded = true;
             runtime.pending_event_subscription_count = active_count.try_into().unwrap_or(u32::MAX);
+            if active_count == 0 {
+                runtime.post_turn_wait_event_subscription = false;
+            }
         })
         .await;
     }
@@ -466,6 +474,7 @@ struct RuntimeFacts {
     pending_event_subscription_count: u32,
     post_turn_wait_command: bool,
     post_turn_wait_child: bool,
+    post_turn_wait_event_subscription: bool,
     has_system_error: bool,
 }
 
@@ -498,9 +507,14 @@ fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadStatus {
             reason: ThreadIdleReason::WaitChild,
         };
     }
-    if runtime.pending_event_subscription_count > 0 || runtime.post_turn_wait_command {
+    if runtime.post_turn_wait_command {
         return ThreadStatus::Idle {
             reason: ThreadIdleReason::WaitCommand,
+        };
+    }
+    if runtime.pending_event_subscription_count > 0 || runtime.post_turn_wait_event_subscription {
+        return ThreadStatus::Idle {
+            reason: ThreadIdleReason::WaitEventSubscription,
         };
     }
 
@@ -639,7 +653,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_subscriptions_keep_thread_active_after_turn_completion() {
+    async fn event_subscriptions_keep_thread_subscription_idle_after_turn_completion() {
         let manager = ThreadWatchManager::new();
         manager
             .upsert_thread(test_thread(
@@ -655,13 +669,22 @@ mod tests {
         manager
             .note_turn_completed(INTERACTIVE_THREAD_ID, false)
             .await;
+        manager
+            .note_post_turn_runtime_status(
+                INTERACTIVE_THREAD_ID,
+                /*active*/ false,
+                /*wait_child*/ false,
+                /*wait_command*/ false,
+                /*wait_event_subscription*/ true,
+            )
+            .await;
 
         assert_eq!(
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
             ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitCommand,
+                reason: ThreadIdleReason::WaitEventSubscription,
             },
         );
 
@@ -673,6 +696,39 @@ mod tests {
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
             ThreadStatus::Complete,
+        );
+    }
+
+    #[tokio::test]
+    async fn post_turn_command_wait_overrides_event_subscription_idle() {
+        let manager = ThreadWatchManager::new();
+        manager
+            .upsert_thread(test_thread(
+                INTERACTIVE_THREAD_ID,
+                app_server_protocol::SessionSource::Cli,
+            ))
+            .await;
+
+        manager
+            .note_active_event_subscriptions(INTERACTIVE_THREAD_ID, 1)
+            .await;
+        manager
+            .note_post_turn_runtime_status(
+                INTERACTIVE_THREAD_ID,
+                /*active*/ false,
+                /*wait_child*/ false,
+                /*wait_command*/ true,
+                /*wait_event_subscription*/ true,
+            )
+            .await;
+
+        assert_eq!(
+            manager
+                .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
+                .await,
+            ThreadStatus::Idle {
+                reason: ThreadIdleReason::WaitCommand,
+            },
         );
     }
 
@@ -696,6 +752,7 @@ mod tests {
                 /*active*/ true,
                 /*wait_child*/ false,
                 /*wait_command*/ false,
+                /*wait_event_subscription*/ false,
             )
             .await;
 
@@ -804,7 +861,7 @@ mod tests {
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
             ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitCommand,
+                reason: ThreadIdleReason::WaitEventSubscription,
             },
         );
 
@@ -967,7 +1024,7 @@ mod tests {
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
                 status: ThreadStatus::Idle {
-                    reason: ThreadIdleReason::WaitCommand,
+                    reason: ThreadIdleReason::WaitEventSubscription,
                 },
             },
         );
