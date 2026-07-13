@@ -13,7 +13,7 @@ import type {
 } from "../types";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
-const { RightPanel } = await import("./RightPanel");
+const { RightPanel, ScheduleAgendaDateGroup } = await import("./RightPanel");
 
 function makeThread(
   items: Thread["turns"][number]["items"],
@@ -204,8 +204,117 @@ test("renders live commands and schedule subscriptions", () => {
   assert.match(markup, /standup ping/);
   assert.match(markup, /every_interval 6h/);
   assert.match(markup, /Upcoming/);
+  assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /1 item/);
   assert.match(markup, /Every 6 hours/);
   assert.doesNotMatch(markup, /every 21600000 ms/);
+});
+
+test("renders schedule agenda groups expanded by default", () => {
+  const markup = renderToStaticMarkup(
+    <ScheduleAgendaDateGroup
+      group={{
+        dateKey: "2026-07-13",
+        dateLabel: "Today",
+        items: [
+          {
+            id: "schedule-1:2026-07-13T09:00:00.000Z",
+            subscriptionId: "schedule-1",
+            label: "standup ping",
+            rule: "Every 6 hours",
+            startsAt: "2026-07-13T09:00:00.000Z",
+            timeLabel: "09:00",
+          },
+        ],
+      }}
+      collapsed={false}
+      onToggle={() => {}}
+    />,
+  );
+
+  assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /aria-controls="schedule-agenda-items-2026-07-13"/);
+  assert.match(markup, /Today/);
+  assert.match(markup, /standup ping/);
+  assert.match(markup, /Every 6 hours/);
+});
+
+test("toggles schedule agenda groups from the date header", () => {
+  let clicked = false;
+  const element = ScheduleAgendaDateGroup({
+    group: {
+      dateKey: "2026-07-13",
+      dateLabel: "Today",
+      items: [
+        {
+          id: "schedule-1:2026-07-13T09:00:00.000Z",
+          subscriptionId: "schedule-1",
+          label: "standup ping",
+          rule: "Every 6 hours",
+          startsAt: "2026-07-13T09:00:00.000Z",
+          timeLabel: "09:00",
+        },
+      ],
+    },
+    collapsed: false,
+    onToggle: () => {
+      clicked = true;
+    },
+  });
+  const [button] = React.Children.toArray(
+    (element.props as { children: React.ReactNode }).children,
+  ) as React.ReactElement<{ onClick: () => void }>[];
+
+  button.props.onClick();
+  assert.equal(clicked, true);
+});
+
+test("collapses one schedule agenda date without hiding other dates", () => {
+  const collapsedMarkup = renderToStaticMarkup(
+    <ScheduleAgendaDateGroup
+      group={{
+        dateKey: "2026-07-13",
+        dateLabel: "Today",
+        items: [
+          {
+            id: "schedule-1:2026-07-13T09:00:00.000Z",
+            subscriptionId: "schedule-1",
+            label: "standup ping",
+            rule: "Every 6 hours",
+            startsAt: "2026-07-13T09:00:00.000Z",
+            timeLabel: "09:00",
+          },
+        ],
+      }}
+      collapsed={true}
+      onToggle={() => {}}
+    />,
+  );
+  const expandedMarkup = renderToStaticMarkup(
+    <ScheduleAgendaDateGroup
+      group={{
+        dateKey: "2026-07-14",
+        dateLabel: "Tomorrow",
+        items: [
+          {
+            id: "schedule-2:2026-07-14T10:00:00.000Z",
+            subscriptionId: "schedule-2",
+            label: "daily digest",
+            rule: "Daily 10:00 UTC",
+            startsAt: "2026-07-14T10:00:00.000Z",
+            timeLabel: "10:00",
+          },
+        ],
+      }}
+      collapsed={false}
+      onToggle={() => {}}
+    />,
+  );
+
+  assert.match(collapsedMarkup, /aria-expanded="false"/);
+  assert.doesNotMatch(collapsedMarkup, /standup ping/);
+  assert.match(expandedMarkup, /aria-expanded="true"/);
+  assert.match(expandedMarkup, /daily digest/);
 });
 
 test("renders the current thread plan in the todo panel", () => {
