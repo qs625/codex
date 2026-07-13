@@ -604,16 +604,22 @@ test("builds agenda entries for one-shot daily and weekly schedules", () => {
     analysis.monitors.scheduleAgenda.flatMap((group) =>
       group.items.map(
         (item) =>
-          `${group.dateLabel} ${item.timeLabel} ${item.label} ${item.rule}`,
+          `${group.dateKey} ${item.timeLabel} ${item.label} ${item.rule}`,
       ),
     ),
     [
-      "Today 08:30 deploy Once",
-      "Today 09:00 daily digest Daily 09:00:15 UTC",
-      "Today 10:00 weekly sync Weekly mon,wed 10:00:30 UTC",
-      "Tomorrow 09:00 daily digest Daily 09:00:15 UTC",
-      "Wed, Jul 15 09:00 daily digest Daily 09:00:15 UTC",
+      "2026-07-13 08:30 deploy Once",
+      "2026-07-13 09:00 daily digest Daily 09:00:15 UTC",
+      "2026-07-13 10:00 weekly sync Weekly mon,wed 10:00:30 UTC",
+      "2026-07-14 09:00 daily digest Daily 09:00:15 UTC",
+      "2026-07-15 09:00 daily digest Daily 09:00:15 UTC",
     ],
+  );
+  assert.deepEqual(
+    analysis.monitors.scheduleAgenda
+      .slice(0, 2)
+      .map((group) => group.dateLabel),
+    ["Today", "Tomorrow"],
   );
   assert.deepEqual(
     analysis.monitors.scheduleAgenda.flatMap((group) =>
