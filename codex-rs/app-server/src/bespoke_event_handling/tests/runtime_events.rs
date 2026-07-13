@@ -208,6 +208,11 @@ use super::*;
         let thread_watch_manager = ThreadWatchManager::new();
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
         let outgoing = test_outgoing(tx);
+        let started_output = json!({
+            "initialTimeoutMs": 50,
+            "currentTimeoutMs": 50,
+            "hardCapTimeoutMs": 1000,
+        });
 
         let started = protocol::protocol::BuiltinToolCallDisplayEvent {
             thread_id: conversation_id,
@@ -216,7 +221,7 @@ use super::*;
             tool: "poll_event".to_string(),
             arguments: json!({}),
             status: protocol::protocol::BuiltinToolCallStatus::InProgress,
-            output: None,
+            output: Some(started_output.clone()),
             lifecycle_at_ms: 1234,
         };
         apply_bespoke_event_handling(
@@ -248,7 +253,7 @@ use super::*;
                         tool: "poll_event".to_string(),
                         arguments: json!({}),
                         status: app_server_protocol::DynamicToolCallStatus::InProgress,
-                        output: None,
+                        output: Some(started_output),
                     }
                 );
             }

@@ -1503,6 +1503,37 @@ svg {
   padding-top: 0;
 }
 
+.poll-event-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 14px;
+}
+
+.poll-event-progress-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #57534e;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.poll-event-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(68, 64, 60, 0.14);
+}
+
+.poll-event-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+  transition: width 180ms ease;
+}
+
 .tool-card-body pre {
   margin: 0;
   padding-top: 14px;

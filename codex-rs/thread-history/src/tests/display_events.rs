@@ -2,6 +2,11 @@ use super::*;
 
     #[test]
     fn typed_builtin_tool_history_rebuilds_thread_item() {
+        let started_output = serde_json::json!({
+            "initialTimeoutMs": 50,
+            "currentTimeoutMs": 50,
+            "hardCapTimeoutMs": 1000
+        });
         let output = serde_json::json!({
             "timedOut": false,
             "sourceHint": "user_input",
@@ -25,7 +30,7 @@ use super::*;
                     tool: "poll_event".into(),
                     arguments: serde_json::json!({}),
                     status: protocol::protocol::BuiltinToolCallStatus::InProgress,
-                    output: None,
+                    output: Some(started_output),
                     lifecycle_at_ms: 100,
                 },
             )),
@@ -53,6 +58,49 @@ use super::*;
                 tool: "poll_event".into(),
                 arguments: serde_json::json!({}),
                 status: DynamicToolCallStatus::Completed,
+                output: Some(output),
+            }]
+        );
+    }
+
+    #[test]
+    fn typed_builtin_tool_started_history_keeps_poll_event_timeout_metadata() {
+        let output = serde_json::json!({
+            "initialTimeoutMs": 50,
+            "currentTimeoutMs": 50,
+            "hardCapTimeoutMs": 1000
+        });
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallStarted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "builtin-1".into(),
+                    tool: "poll_event".into(),
+                    arguments: serde_json::json!({}),
+                    status: protocol::protocol::BuiltinToolCallStatus::InProgress,
+                    output: Some(output.clone()),
+                    lifecycle_at_ms: 100,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "builtin-1".into(),
+                tool: "poll_event".into(),
+                arguments: serde_json::json!({}),
+                status: DynamicToolCallStatus::InProgress,
                 output: Some(output),
             }]
         );

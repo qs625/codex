@@ -280,6 +280,7 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "builtinToolCall") {
+    const pollEventProgress = buildPollEventProgress(item);
     return [
       {
         id: item.id,
@@ -292,6 +293,7 @@ function buildConversationItemEntries(
         toolName: item.tool,
         toolStatus: item.status,
         toolDetails: formatStructuredToolDetails(item.arguments, item.output),
+        pollEventProgress,
         toolCategory: toolCategoryForName(item.tool),
       },
     ];
@@ -1180,14 +1182,15 @@ function summarizeBuiltinToolCall(
   item: Extract<ThreadItem, { type: "builtinToolCall" }>,
 ) {
   if (item.tool === "poll_event") {
-    const output =
-      item.output && typeof item.output === "object" && !Array.isArray(item.output)
-        ? (item.output as Record<string, unknown>)
-        : null;
+    const output = objectOrNull(item.output);
     const error = stringOrNull(output?.error);
     const sourceHint = stringOrNull(output?.sourceHint);
     if (item.status === "failed" || error) {
       return error ? `poll_event • failed: ${error}` : "poll_event • failed";
+    }
+    const currentTimeoutMs = numberOrNull(output?.currentTimeoutMs);
+    if (isToolStatusInProgress(item.status) && currentTimeoutMs !== null) {
+      return `poll_event • waiting up to ${formatMillisecondsDuration(currentTimeoutMs)}`;
     }
     if (output?.timedOut === true) {
       return "poll_event • timeout";
@@ -1199,6 +1202,25 @@ function summarizeBuiltinToolCall(
   }
   const details = extractEventDrivenSummaryDetails(item.tool, item.arguments);
   return details ? `${item.tool} • ${details}` : item.tool;
+}
+
+function buildPollEventProgress(
+  item: Extract<ThreadItem, { type: "builtinToolCall" }>,
+) {
+  if (item.tool !== "poll_event" || !isToolStatusInProgress(item.status)) {
+    return undefined;
+  }
+  const currentTimeoutMs = numberOrNull(
+    objectOrNull(item.output)?.currentTimeoutMs,
+  );
+  const startedAtMs = numberOrNull(item.startedAtMs);
+  if (currentTimeoutMs === null || startedAtMs === null) {
+    return undefined;
+  }
+  return {
+    startedAtMs,
+    currentTimeoutMs,
+  };
 }
 
 function summarizeCollabAgentToolCall(
@@ -2017,6 +2039,28 @@ function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function numberOrNull(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function isToolStatusInProgress(status: unknown) {
+  const normalized = stringOrNull(status)
+    ?.toLowerCase()
+    .replace(/[_\s-]+/gu, "");
+  return (
+    normalized === "inprogress" ||
+    normalized === "running" ||
+    normalized === "pending" ||
+    normalized === "started"
+  );
 }
 
 function stringOrNumberId(value: unknown) {

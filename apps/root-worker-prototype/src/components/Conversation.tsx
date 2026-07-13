@@ -753,6 +753,9 @@ export const ToolRow = memo(function ToolRow({
         {hasSingleEntry ? (
           isOpen && firstEntry.toolDetails ? (
             <div className="tool-card-body tool-card-item-body">
+              {firstEntry.pollEventProgress ? (
+                <PollEventProgress progress={firstEntry.pollEventProgress} />
+              ) : null}
               <pre>{firstEntry.toolDetails}</pre>
             </div>
           ) : null
@@ -784,6 +787,9 @@ export const ToolRow = memo(function ToolRow({
                   </button>
                   {isSelected && entry.toolDetails ? (
                     <div className="tool-card-body tool-card-item-body">
+                      {entry.pollEventProgress ? (
+                        <PollEventProgress progress={entry.pollEventProgress} />
+                      ) : null}
                       <pre>{entry.toolDetails}</pre>
                     </div>
                   ) : null}
@@ -796,6 +802,69 @@ export const ToolRow = memo(function ToolRow({
     </article>
   );
 }, areToolRowPropsEqual);
+
+function PollEventProgress({
+  progress,
+}: {
+  progress: NonNullable<ConversationEntry["pollEventProgress"]>;
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const elapsedMs = Math.max(0, nowMs - progress.startedAtMs);
+  const remainingMs = Math.max(0, progress.currentTimeoutMs - elapsedMs);
+  const percent =
+    progress.currentTimeoutMs > 0
+      ? Math.min(
+          100,
+          Math.max(0, (elapsedMs / progress.currentTimeoutMs) * 100),
+        )
+      : 0;
+
+  return (
+    <div className="poll-event-progress">
+      <div className="poll-event-progress-labels">
+        <span>Elapsed {formatProgressDuration(elapsedMs)}</span>
+        <span>Remaining {formatProgressDuration(remainingMs)}</span>
+      </div>
+      <div
+        className="poll-event-progress-track"
+        role="progressbar"
+        aria-label="poll_event wait progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(percent)}
+      >
+        <span style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function formatProgressDuration(totalMilliseconds: number) {
+  if (!Number.isFinite(totalMilliseconds) || totalMilliseconds <= 0) {
+    return "0s";
+  }
+  if (totalMilliseconds < 1000) {
+    return `${Math.round(totalMilliseconds)}ms`;
+  }
+  const roundedSeconds = Math.round(totalMilliseconds / 1000);
+  if (roundedSeconds >= 60) {
+    const minutes = Math.floor(roundedSeconds / 60);
+    const remainingSeconds = roundedSeconds % 60;
+    return remainingSeconds === 0
+      ? `${minutes}m`
+      : `${minutes}m ${remainingSeconds}s`;
+  }
+  return `${roundedSeconds}s`;
+}
 
 export const CompactRow = memo(function CompactRow({
   entry,

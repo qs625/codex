@@ -251,6 +251,14 @@ pub struct ThreadPollEventResult {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ThreadPollEventTimeoutMetadata {
+    pub initial_timeout_ms: i64,
+    pub current_timeout_ms: i64,
+    pub hard_cap_timeout_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ThreadCloseAgentResult {
     pub previous_status: AgentStatus,
 }
@@ -677,6 +685,12 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         turn: Arc<dyn ThreadTurnCapability>,
         request: ThreadPollEventRequest,
     ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>>;
+
+    fn poll_event_timeout_metadata<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventTimeoutMetadata, FunctionCallError>>;
 
     fn reset_thread_wait_backoff<'a>(
         &'a self,

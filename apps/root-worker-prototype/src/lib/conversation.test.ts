@@ -1539,6 +1539,48 @@ test("builds visible entries for poll_event builtin tools", () => {
   );
 });
 
+test("builds in-progress poll_event entries with timeout progress metadata", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "builtin-poll",
+        tool: "poll_event",
+        arguments: {},
+        status: "inProgress",
+        output: {
+          initialTimeoutMs: 50,
+          currentTimeoutMs: 5000,
+          hardCapTimeoutMs: 10000,
+        },
+        startedAtMs: 1_700_000_000_000,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      pollEventProgress: entry.pollEventProgress,
+    })),
+    [
+      {
+        id: "builtin-poll",
+        kind: "tool",
+        text: "poll_event • waiting up to 5s",
+        toolName: "poll_event",
+        pollEventProgress: {
+          startedAtMs: 1_700_000_000_000,
+          currentTimeoutMs: 5000,
+        },
+      },
+    ],
+  );
+});
+
 test("summarizes structured weekly and once-at schedule arguments", () => {
   const entries = buildConversationEntries(
     makeThread([
