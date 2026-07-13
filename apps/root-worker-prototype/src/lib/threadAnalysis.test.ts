@@ -427,12 +427,38 @@ test("keeps schedule subscriptions separate from command sessions", () => {
       subscriptionId: "sub-schedule",
       kind: "schedule",
       label: "standup ping",
-      detail: "every 21600000 ms",
+      detail: "every_interval 6h",
       status: "Listening",
       eventCount: 1,
       latestEvent: "[Schedule subscription (standup ping)] Trigger fired",
     },
   ]);
+});
+
+test("falls back to schedule output summary when arguments are unavailable", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "schedule-1",
+        tool: "schedule_subscribe",
+        arguments: {
+          label: "legacy schedule",
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule",
+          schedule_summary: "every 21600000 ms",
+        },
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(
+    analysis.monitors.sections[1]?.monitors[0]?.detail,
+    "every 21600000 ms",
+  );
 });
 
 test("removes builtin schedule subscriptions after unsubscribe", () => {
