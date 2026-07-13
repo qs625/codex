@@ -1944,13 +1944,64 @@ function extractEventDrivenSummaryDetails(tool: string, args: unknown) {
       }
       return stringOrNull(record.path);
     case "schedule_subscribe":
+      const schedule = formatScheduleArgument(record.schedule);
       if (label) {
-        return `${label} • ${stringOrNull(record.schedule) ?? "schedule"}`;
+        return `${label} • ${schedule ?? "schedule"}`;
       }
-      return stringOrNull(record.schedule);
+      return schedule;
     default:
       return label;
   }
+}
+
+function formatScheduleArgument(value: unknown) {
+  const text = stringOrNull(value);
+  if (text) {
+    return text;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const kind = stringOrNull(record.kind);
+  if (!kind) {
+    return safeJson(value);
+  }
+  switch (kind) {
+    case "every_interval":
+      return typeof record.interval_ms === "number"
+        ? `${kind} ${formatWaitTimeout(record.interval_ms)}`
+        : kind;
+    case "once_after":
+      return typeof record.delay_ms === "number"
+        ? `${kind} ${formatWaitTimeout(record.delay_ms)}`
+        : kind;
+    case "every_day_at":
+      return [kind, stringOrNull(record.time), stringOrNull(record.timezone)]
+        .filter(Boolean)
+        .join(" ");
+    case "every_week_at":
+      return [
+        kind,
+        formatScheduleWeekdays(record.weekdays),
+        stringOrNull(record.time),
+        stringOrNull(record.timezone),
+      ]
+        .filter(Boolean)
+        .join(" ");
+    case "once_at":
+      return [kind, stringOrNull(record.run_at)].filter(Boolean).join(" ");
+    default:
+      return kind;
+  }
+}
+
+function formatScheduleWeekdays(value: unknown) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const weekdays = value.map(stringOrNull).filter(Boolean);
+  return weekdays.length > 0 ? weekdays.join(",") : null;
 }
 
 function toolCategoryForName(tool: string, namespace?: string | null) {

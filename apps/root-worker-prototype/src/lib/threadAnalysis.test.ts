@@ -394,15 +394,19 @@ test("keeps schedule subscriptions separate from command sessions", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
       {
-        type: "eventDrivenToolCall",
+        type: "builtinToolCall",
         id: "schedule-1",
         tool: "schedule_subscribe",
         arguments: {
-          schedule: { once_after: { seconds: 60 } },
+          schedule: { kind: "every_interval", interval_ms: 21_600_000 },
           label: "standup ping",
         },
         status: "completed",
-        output: { schedule_summary: "once after 60s" },
+        output: {
+          subscription_id: "sub-schedule",
+          schedule_summary: "every 21600000 ms",
+          next_fire_at: "2026-07-13T09:35:37.570867+00:00",
+        },
       },
       {
         type: "eventDrivenTool",
@@ -420,13 +424,112 @@ test("keeps schedule subscriptions separate from command sessions", () => {
   assert.deepEqual(analysis.monitors.sections[1]?.monitors, [
     {
       id: "schedule-1",
-      subscriptionId: null,
+      subscriptionId: "sub-schedule",
       kind: "schedule",
       label: "standup ping",
-      detail: "once after 60s",
+      detail: "every 21600000 ms",
       status: "Listening",
       eventCount: 1,
       latestEvent: "[Schedule subscription (standup ping)] Trigger fired",
     },
   ]);
+});
+
+test("removes builtin schedule subscriptions after unsubscribe", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "schedule-1",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+          label: "cargo clean",
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule",
+          schedule_summary: "every 21600000 ms",
+        },
+      },
+      {
+        type: "builtinToolCall",
+        id: "schedule-unsub-1",
+        tool: "schedule_unsubscribe",
+        arguments: {
+          subscription_id: "sub-schedule",
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule",
+          unsubscribed: true,
+        },
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 0);
+  assert.deepEqual(analysis.monitors.sections[1]?.monitors, []);
+});
+
+test("keeps schedules active while unsubscribe has not succeeded", () => {
+  const analysis = buildThreadAnalysis(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "schedule-1",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+          label: "cargo clean",
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule",
+          schedule_summary: "every 21600000 ms",
+        },
+      },
+      {
+        type: "builtinToolCall",
+        id: "schedule-unsub-started",
+        tool: "schedule_unsubscribe",
+        arguments: { subscription_id: "sub-schedule" },
+        status: "inProgress",
+        output: null,
+      },
+      {
+        type: "builtinToolCall",
+        id: "schedule-unsub-failed",
+        tool: "schedule_unsubscribe",
+        arguments: { subscription_id: "sub-schedule" },
+        status: "failed",
+        output: { subscription_id: "sub-schedule", error: "not removed" },
+      },
+      {
+        type: "builtinToolCall",
+        id: "schedule-unsub-false",
+        tool: "schedule_unsubscribe",
+        arguments: { subscription_id: "sub-schedule" },
+        status: "completed",
+        output: { subscription_id: "sub-schedule", unsubscribed: false },
+      },
+      {
+        type: "builtinToolCall",
+        id: "schedule-failed",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: { kind: "once_after", delay_ms: 0 },
+          label: "bad schedule",
+        },
+        status: "failed",
+        output: { error: "delay_ms must be greater than zero" },
+      },
+    ]),
+    0,
+  );
+
+  assert.equal(analysis.monitors.totalCount, 1);
+  assert.equal(analysis.monitors.sections[1]?.monitors[0]?.subscriptionId, "sub-schedule");
+  assert.equal(analysis.monitors.sections[1]?.monitors[0]?.label, "cargo clean");
 });

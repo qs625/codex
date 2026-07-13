@@ -180,12 +180,18 @@ test("renders live commands and schedule subscriptions", () => {
           durationMs: null,
         },
         {
-          type: "eventDrivenToolCall",
+          type: "builtinToolCall",
           id: "schedule-1",
           tool: "schedule_subscribe",
-          arguments: { schedule: "once_after:60", label: "standup ping" },
+          arguments: {
+            schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+            label: "standup ping",
+          },
           status: "completed",
-          output: null,
+          output: {
+            subscription_id: "sub-schedule",
+            schedule_summary: "every 21600000 ms",
+          },
         },
       ],
       { type: "idle", reason: "waitCommand" },
@@ -196,7 +202,7 @@ test("renders live commands and schedule subscriptions", () => {
   assert.doesNotMatch(markup, /changed:\/tmp\/out\.log/);
   assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);
-  assert.match(markup, /once_after:60/);
+  assert.match(markup, /every 21600000 ms/);
 });
 
 test("renders the current thread plan in the todo panel", () => {

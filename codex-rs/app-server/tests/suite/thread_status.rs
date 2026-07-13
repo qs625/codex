@@ -6,6 +6,7 @@ use app_server_protocol::JSONRPCNotification;
 use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::ThreadIdleReason;
+use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadLoadedListParams;
@@ -288,7 +289,7 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
     let thread_read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id.clone(),
-            include_turns: false,
+            include_turns: true,
         })
         .await?;
     let thread_read_resp: JSONRPCResponse = timeout(
@@ -303,6 +304,28 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
         ThreadStatus::Idle {
             reason: ThreadIdleReason::WaitCommand,
         },
+    );
+    let schedule_item = thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .find(|item| {
+            matches!(
+                item,
+                ThreadItem::BuiltinToolCall {
+                    id,
+                    tool,
+                    status,
+                    output: Some(_),
+                    ..
+                } if id == "call-schedule"
+                    && tool == "schedule_subscribe"
+                    && *status == app_server_protocol::DynamicToolCallStatus::Completed
+            )
+        });
+    assert!(
+        schedule_item.is_some(),
+        "schedule_subscribe should be replayed as a builtin tool thread item"
     );
 
     Ok(())
