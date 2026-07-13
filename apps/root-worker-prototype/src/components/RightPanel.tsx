@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, type ReactNode } from "react";
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
@@ -470,31 +470,82 @@ function ThreadAnalysisPanel({
 }
 
 function ScheduleAgenda({ groups }: { groups: ScheduleAgendaGroup[] }) {
+  const [collapsedDateKeys, setCollapsedDateKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+
   if (groups.length === 0) {
     return null;
   }
+
+  const toggleDateKey = (dateKey: string) => {
+    setCollapsedDateKeys((current) => {
+      const next = new Set(current);
+      if (next.has(dateKey)) {
+        next.delete(dateKey);
+      } else {
+        next.add(dateKey);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="schedule-agenda" aria-label="Upcoming schedule events">
       <div className="schedule-agenda-title">Upcoming</div>
       {groups.map((group) => (
-        <div key={group.dateKey} className="schedule-agenda-group">
-          <div className="schedule-agenda-date">{group.dateLabel}</div>
-          <div className="schedule-agenda-items">
-            {group.items.map((item) => (
-              <div key={item.id} className="schedule-agenda-row">
-                <time dateTime={item.startsAt}>{item.timeLabel}</time>
-                <span className="schedule-agenda-label" title={item.label}>
-                  {item.label}
-                </span>
-                <span className="schedule-agenda-rule" title={item.rule}>
-                  {item.rule}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ScheduleAgendaDateGroup
+          key={group.dateKey}
+          group={group}
+          collapsed={collapsedDateKeys.has(group.dateKey)}
+          onToggle={() => toggleDateKey(group.dateKey)}
+        />
       ))}
+    </div>
+  );
+}
+
+export function ScheduleAgendaDateGroup({
+  group,
+  collapsed,
+  onToggle,
+}: {
+  group: ScheduleAgendaGroup;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const itemsId = `schedule-agenda-items-${group.dateKey}`;
+
+  return (
+    <div className="schedule-agenda-group">
+      <button
+        type="button"
+        className="schedule-agenda-date"
+        aria-expanded={!collapsed}
+        aria-controls={itemsId}
+        onClick={onToggle}
+      >
+        <span className="schedule-agenda-chevron" aria-hidden="true" />
+        <span>{group.dateLabel}</span>
+        <span className="schedule-agenda-count">
+          {group.items.length} item{group.items.length === 1 ? "" : "s"}
+        </span>
+      </button>
+      {collapsed ? null : (
+        <div id={itemsId} className="schedule-agenda-items">
+          {group.items.map((item) => (
+            <div key={item.id} className="schedule-agenda-row">
+              <time dateTime={item.startsAt}>{item.timeLabel}</time>
+              <span className="schedule-agenda-label" title={item.label}>
+                {item.label}
+              </span>
+              <span className="schedule-agenda-rule" title={item.rule}>
+                {item.rule}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

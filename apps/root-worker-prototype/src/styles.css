@@ -2559,10 +2559,52 @@ svg {
 }
 
 .schedule-agenda-date {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: #a16207;
+  cursor: pointer;
   font-size: 10px;
   font-weight: 700;
+  line-height: 1.2;
+  padding: 3px 2px;
+  text-align: left;
   text-transform: uppercase;
+}
+
+.schedule-agenda-date:hover {
+  background: rgba(161, 98, 7, 0.08);
+}
+
+.schedule-agenda-date:focus-visible {
+  outline: 2px solid rgba(161, 98, 7, 0.35);
+  outline-offset: 1px;
+}
+
+.schedule-agenda-chevron {
+  width: 0;
+  height: 0;
+  border-top: 4px solid #a16207;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  transform: rotate(0deg);
+  transition: transform 0.12s ease;
+}
+
+.schedule-agenda-date[aria-expanded="false"] .schedule-agenda-chevron {
+  transform: rotate(-90deg);
+}
+
+.schedule-agenda-count {
+  margin-left: auto;
+  color: #78716c;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: none;
 }
 
 .schedule-agenda-items {
