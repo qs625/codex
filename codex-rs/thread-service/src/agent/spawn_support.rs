@@ -1,9 +1,12 @@
 use crate::config::Config;
+use crate::config::ConfigBuilder;
+use crate::config::ConfigOverrides;
 use crate::config::agent_roles::merge_agent_roles_from_dirs;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use codex_file_system::LOCAL_FS;
 use codex_git_info::resolve_root_git_project_for_trust;
+use config_service::LocalConfigLayerLoader;
 use protocol::AgentPath;
 use protocol::ThreadId;
 use protocol::error::CodexErr;
@@ -108,21 +111,46 @@ pub(crate) fn parse_collab_input(
 
 /// Builds the base config snapshot for a newly spawned sub-agent.
 ///
-/// The returned config starts from the parent's effective config and then refreshes the
-/// runtime-owned fields carried on `turn`, including model selection, reasoning settings,
-/// approval policy, sandbox, and cwd. Role-specific overrides are layered after this step;
-/// skipping this helper and cloning stale config state directly can send the child agent out with
-/// the wrong provider or runtime policy.
+/// The returned config reloads cwd-scoped layers from the child cwd, preserves session flags, and
+/// then reapplies runtime-owned fields carried on `turn`, including model selection, reasoning
+/// settings, approval policy, and sandbox. Role-specific overrides are layered after this step.
 use codex_utils_absolute_path::AbsolutePathBuf;
 
-pub(crate) fn build_agent_spawn_config(
+pub(crate) async fn build_agent_spawn_config(
     base_instructions: &BaseInstructions,
     turn: &TurnContext,
     cwd: Option<AbsolutePathBuf>,
 ) -> Result<Config, FunctionCallError> {
-    let mut config = build_agent_shared_config(turn, cwd)?;
+    let inherited_config = build_agent_shared_config(turn, cwd.clone())?;
+    let mut config = reload_spawn_cwd_config(&inherited_config).await?;
+    turn.apply_agent_shared_config(&mut config, cwd)?;
     config.base_instructions = Some(base_instructions.text.clone());
     Ok(config)
+}
+
+async fn reload_spawn_cwd_config(config: &Config) -> Result<Config, FunctionCallError> {
+    let refreshed_config = ConfigBuilder::default()
+        .codex_home(config.codex_home.to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(config.cwd.to_path_buf()),
+            ..Default::default()
+        })
+        .config_layer_loader(std::sync::Arc::new(LocalConfigLayerLoader::default()))
+        .build()
+        .await
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "failed to reload config for child cwd: {err}"
+            ))
+        })?;
+    config
+        .rebuild_preserving_session_layers(&refreshed_config)
+        .await
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!(
+                "failed to rebase config for child cwd: {err}"
+            ))
+        })
 }
 
 pub(crate) async fn refresh_spawn_cwd_agent_roles(
@@ -315,4 +343,126 @@ fn validate_spawn_agent_reasoning_effort(
     Err(FunctionCallError::RespondToModel(format!(
         "Reasoning effort `{requested_reasoning_effort}` is not supported for model `{model}`. Supported reasoning efforts: {supported}"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AgentsMdManager;
+    use crate::agent::role::apply_role_to_config;
+    use crate::config::AgentRoleConfig;
+    use codex_config_types::ConfigLayerSource;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+    use config_service::ConfigLayerStackOrdering;
+    use pretty_assertions::assert_eq;
+
+    #[tokio::test]
+    async fn reload_spawn_cwd_config_replaces_parent_project_layer_and_keeps_session_flags() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let codex_home = temp.path().join("codex-home");
+        let parent_cwd = temp.path().join("parent");
+        let parent_instruction = parent_cwd.join("parent.md");
+        let child_cwd = temp.path().join("child");
+        let child_dot_codex = child_cwd.join(".codex");
+        let child_instruction = child_dot_codex.join("memory/project.md");
+        let role_config = child_dot_codex.join("agents/project-pm.toml");
+        std::fs::create_dir_all(&codex_home).expect("create codex home");
+        std::fs::create_dir_all(&parent_cwd).expect("create parent cwd");
+        std::fs::write(
+            codex_home.join("config.toml"),
+            format!(
+                "[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                child_cwd.display()
+            ),
+        )
+        .expect("trust child project");
+        std::fs::write(&parent_instruction, "parent instructions")
+            .expect("write parent instruction file");
+        std::fs::create_dir_all(child_instruction.parent().expect("instruction parent"))
+            .expect("create child instruction directory");
+        std::fs::write(&child_instruction, "child project instructions")
+            .expect("write child instruction file");
+        std::fs::create_dir_all(role_config.parent().expect("role parent"))
+            .expect("create role directory");
+        std::fs::write(
+            &role_config,
+            "developer_instructions = \"project pm instructions\"\n",
+        )
+        .expect("write role config");
+        std::fs::write(
+            child_dot_codex.join("config.toml"),
+            concat!(
+                "model = \"child-project-model\"\n",
+                "project_doc_max_bytes = 4321\n",
+                "instruction_files = [\"memory/project.md\"]\n",
+            ),
+        )
+        .expect("write child project config");
+
+        let mut config = ConfigBuilder::default()
+            .codex_home(codex_home)
+            .cli_overrides(vec![(
+                "model".to_string(),
+                toml::Value::String("session-model".to_string()),
+            )])
+            .fallback_cwd(Some(parent_cwd))
+            .build()
+            .await
+            .expect("build parent config");
+        config.instruction_files = vec![
+            AbsolutePathBuf::from_absolute_path(parent_instruction)
+                .expect("absolute parent instruction"),
+        ];
+        config.cwd = AbsolutePathBuf::from_absolute_path(&child_cwd).expect("absolute child cwd");
+
+        let mut config = reload_spawn_cwd_config(&config)
+            .await
+            .expect("reload config from child cwd");
+        config.agent_roles.insert(
+            "project-pm".to_string(),
+            AgentRoleConfig {
+                config_file: Some(role_config),
+                ..Default::default()
+            },
+        );
+
+        apply_role_to_config(&mut config, Some("project-pm"))
+            .await
+            .expect("apply child role config");
+
+        assert_eq!(config.model.as_deref(), Some("session-model"));
+        assert_eq!(config.project_doc_max_bytes, 4321);
+        let project_config_dirs = config
+            .config_layer_stack
+            .get_layers(
+                ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                /*include_disabled*/ true,
+            )
+            .iter()
+            .filter_map(|layer| match &layer.name {
+                ConfigLayerSource::Project { dot_codex_folder } => Some(dot_codex_folder.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            project_config_dirs,
+            vec![
+                AbsolutePathBuf::from_absolute_path(child_dot_codex)
+                    .expect("absolute child config directory")
+            ]
+        );
+        assert_eq!(
+            config.instruction_files,
+            vec![
+                AbsolutePathBuf::from_absolute_path(child_instruction)
+                    .expect("absolute instruction")
+            ]
+        );
+        let user_instructions = AgentsMdManager::new(&config)
+            .user_instructions_with_fs(LOCAL_FS.as_ref())
+            .await
+            .expect("child instructions should load");
+        assert!(user_instructions.contains("child project instructions"));
+        assert!(!user_instructions.contains("parent instructions"));
+    }
 }

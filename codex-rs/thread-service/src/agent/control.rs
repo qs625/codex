@@ -1042,11 +1042,11 @@ impl AgentControl {
             .await
             .ok()?;
         let history = stored_thread.history?;
-        let status = history.items.iter().filter_map(|item| match item {
+        let mut status = history.items.iter().filter_map(|item| match item {
             protocol::protocol::RolloutItem::EventMsg(event) => agent_status_from_event(event),
             _ => None,
         });
-        status.last().filter(is_final)
+        status.next_back().filter(is_final)
     }
 
     #[allow(clippy::too_many_arguments)]

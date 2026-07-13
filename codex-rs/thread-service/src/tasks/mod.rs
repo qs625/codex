@@ -561,9 +561,7 @@ impl Session {
     ) -> Option<bool> {
         let _scheduler = self.scheduler.lock().await;
         let mut active = self.active_turn.lock().await;
-        let Some(active_turn) = active.as_ref() else {
-            return None;
-        };
+        let active_turn = active.as_ref()?;
         if !active_turn.tasks.is_empty() || !Arc::ptr_eq(&active_turn.turn_state, turn_state) {
             return None;
         }
@@ -586,6 +584,10 @@ impl Session {
             .await;
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "regular turn reservation must atomically check and set active-turn state"
+    )]
     pub(crate) fn start_regular_turn_if_idle_with_sub_id(self: &Arc<Self>, sub_id: String) -> BoxFuture<'static, bool> {
         let session = Arc::clone(self);
         Box::pin(async move {
@@ -614,6 +616,10 @@ impl Session {
     ///
     /// The turn is created only when there are queued next-turn items or mailbox mail marked with
     /// `trigger_turn`, and only if the session is currently idle.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "pending-work turn reservation must atomically drain mailbox input and set active-turn state"
+    )]
     pub(crate) async fn maybe_start_turn_for_pending_work_with_sub_id(
         self: &Arc<Self>,
         sub_id: String,

@@ -5,20 +5,7 @@ impl Session {
         &self,
         turn_context: &TurnContext,
     ) -> codex_workflow_api::WorkflowRegistry {
-        let trusted_discovery = codex_workflow_api::workflow_discovery_context_from_config_layers(
-            turn_context.config.codex_home.as_path(),
-            turn_context.cwd.as_path(),
-            turn_context
-                .config
-                .config_layer_stack
-                .get_layers(
-                    config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                    /*include_disabled*/ false,
-                )
-                .into_iter()
-                .cloned()
-                .collect(),
-        );
+        let trusted_discovery = turn_context.discovery_context();
         let mut registry = codex_workflow_api::load_workflow_registry_from_roots(
             trusted_discovery.home_root.clone(),
             trusted_discovery.project_roots.clone(),
@@ -274,12 +261,6 @@ impl Session {
         true
     }
 
-    pub(crate) async fn has_pending_turn_input(&self) -> bool {
-        let _scheduler = self.scheduler.lock().await;
-        self.sync_mailbox_pending_buffer().await;
-        self.has_pending_turn_input_locked().await
-    }
-
     pub(crate) async fn has_active_direct_child(&self) -> bool {
         Box::pin(
             self.services
@@ -323,6 +304,7 @@ impl Session {
         self.child_completion.mark_delivery_active();
     }
 
+    #[cfg(test)]
     pub(crate) async fn has_pending_direct_child_completions(&self) -> bool {
         self.child_completion.has_pending().await
     }

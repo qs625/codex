@@ -667,6 +667,10 @@ impl Session {
         self.maybe_start_goal_continuation_turn().await;
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "goal continuation reservation must atomically check pending work and reserve the active turn"
+    )]
     async fn maybe_start_goal_continuation_turn(self: &Arc<Self>) {
         let Ok(_continuation_guard) = self.goal_runtime.continuation_lock.acquire().await else {
             tracing::warn!("goal continuation semaphore closed");
@@ -830,6 +834,10 @@ impl Session {
         })
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "post-turn state selection must atomically drain mailbox input under the scheduler lock"
+    )]
     pub(crate) async fn thread_post_turn_state(&self) -> ThreadPostTurnState {
         let has_pending_turn_input = {
             let _scheduler = self.scheduler.lock().await;

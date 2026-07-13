@@ -1893,31 +1893,6 @@ stream_max_retries = 0
     )
 }
 
-fn create_config_toml_without_approval_policy(
-    codex_home: &Path,
-    server_uri: &str,
-) -> std::io::Result<()> {
-    let config_toml = codex_home.join("config.toml");
-    std::fs::write(
-        config_toml,
-        format!(
-            r#"
-model = "mock-model"
-sandbox_mode = "read-only"
-
-model_provider = "mock_provider"
-
-[model_providers.mock_provider]
-name = "Mock provider for test"
-base_url = "{server_uri}/v1"
-wire_api = "responses"
-request_max_retries = 0
-stream_max_retries = 0
-"#
-        ),
-    )
-}
-
 async fn send_turn_and_wait_for_thread_read(
     mcp: &mut McpProcess,
     thread_id: &str,
@@ -1951,7 +1926,9 @@ async fn wait_for_turn_completed_for_thread_read(mcp: &mut McpProcess, turn_id: 
         )
         .await??;
         let completed: TurnCompletedNotification =
-            serde_json::from_value(notification.params.expect("turn/completed params"))?;
+            serde_json::from_value(notification.params.ok_or_else(|| {
+                anyhow::anyhow!("turn/completed params missing")
+            })?)?;
         if completed.turn.id == turn_id {
             return Ok(());
         }
@@ -1968,7 +1945,9 @@ async fn wait_for_context_compaction_started_for_thread_read(
         )
         .await??;
         let started: ItemStartedNotification =
-            serde_json::from_value(notification.params.expect("item/started params"))?;
+            serde_json::from_value(notification.params.ok_or_else(|| {
+                anyhow::anyhow!("item/started params missing")
+            })?)?;
         if let ThreadItem::ContextCompaction { .. } = started.item {
             return Ok(started);
         }
@@ -1985,7 +1964,9 @@ async fn wait_for_context_compaction_completed_for_thread_read(
         )
         .await??;
         let completed: ItemCompletedNotification =
-            serde_json::from_value(notification.params.expect("item/completed params"))?;
+            serde_json::from_value(notification.params.ok_or_else(|| {
+                anyhow::anyhow!("item/completed params missing")
+            })?)?;
         if let ThreadItem::ContextCompaction { .. } = completed.item {
             return Ok(completed);
         }

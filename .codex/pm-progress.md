@@ -1,43 +1,28 @@
 # PM Progress
 
 ## Current Goal
-收口 post-turn scheduler、mailbox buffer 和 goal continuation 的调度顺序，避免旧 post-turn 状态与新 turn 启动交错。
+None
 
 ## Active Work
-- id: restore-persisted-agent-registry
-  owner: /root/project_pm/owner_dev_2
-  checkout: /Users/bytedance/Projects/my-codex-dev-2
-  branch: fix/restore-persisted-agent-registry
-  task_type: bugfix
-  depends_on: 无
-  files: codex-rs/thread-service/**, codex-rs/thread-history/**, codex-rs/thread-store/**, codex-rs/app-server/**, apps/root-worker-prototype/**, 相关 list_agents / reload / persisted history / agent tree 状态一致性测试
-  base_commit: e170f6894
-  pending_sync_from_main:
-  status: planned
-  objective: 让 `list_agents` 重启后仍能看到持久化历史中的已完成 agent thread；runtime 初始化或 thread 恢复时应从持久化恢复 agent registry，并保证 conversation 顶部 `Waiting on Subagent` 状态与 agent tree 中可见子 agent 一致
-  last_update: 2026-07-10
-  next_action: 暂不派发；`dev-2` checkout 正在执行 `post-turn-scheduler-mailbox-linearization`，该任务未完成且无可合并 commit
-  blockers: 等待 `post-turn-scheduler-mailbox-linearization` 在同一 checkout 收口并合并/释放
-  validation:
-  commit:
-- id: post-turn-scheduler-mailbox-linearization
-  owner: /root/project_pm/owner_dev_2
-  checkout: /Users/bytedance/Projects/my-codex-dev-2
-  branch: fix/post-turn-scheduler-mailbox-linearization
-  task_type: bugfix
-  depends_on: 无
-  files: codex-rs/thread-service/src/tasks/mod.rs, codex-rs/thread-service/src/session/pending_input.rs, codex-rs/thread-service/src/mailbox.rs, codex-rs/thread-service/src/goal.rs, codex-rs/thread-service/src/session/session.rs, codex-rs/thread-service/src/session/tests/context_and_history.rs, codex-rs/thread-service/src/agent/control_tests.rs, 必要时相关 goal / mailbox / command wait 测试
-  base_commit: e170f6894
-  pending_sync_from_main:
-  status: blocked
-  objective: 将 turn finish 后的 post-turn 状态决策、mailbox rx drain/buffer 消费、pending work 启动、goal continuation 输入归一到同一个 scheduler 顺序里；外部 mailbox tx 不阻塞，但 mailbox buffer 的写入/读取/turn 消费必须和 `on_task_finished` post-turn transition 互斥，避免旧 `WaitChild`/goal 状态与新 turn 启动交错
-  last_update: 2026-07-10
-  next_action: 发回 `/root/project_pm/owner_dev_2` 继续返工；先修 `codex-rs/thread-service/src/goal.rs` 中 continuation reserve 后、`start_task()` 前缺少“当前 goal 仍是同一个 active goal”的二次校验，再继续最窄定位 Goals feature 下 mock-driven 集成测试 0 model requests 的启动链断点
-  blockers: Goals feature 打开时 `pending_request_user_input_does_not_spawn_extra_goal_continuation`、`active_goal_continuation_runs_again_after_no_tool_turn`、`completed_goal_accounts_current_turn_tokens_before_tool_response` 仍失败；同一 reviewer `/root/project_pm/owner_dev_2/scheduler_mailbox_review` 发现 `goal.rs` launch 前二次校验缺失，review 未通过
-  validation: 已通过 `rtk cargo test -p thread-service mailbox::tests::mailbox_queries_do_not_implicitly_drain_incoming_mail -- --exact`；`rtk cargo test -p thread-service trigger_turn_mailbox_input_starts_idle_turn`；`rtk cargo test -p thread-service task_finish_restarts_turn_for_leftover_pending_user_input`；`rtk cargo test -p thread-service task_finish_prioritizes_thread_pending_work_without_losing_leftover_input`；`rtk cargo test -p thread-service trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary`；`rtk cargo test -p thread-service active_goal_runtime_can_reserve_idle_turn_for_continuation`；`rtk cargo build -p app-server --bin app-server`。失败：`rtk cargo test -p thread-service pending_request_user_input_does_not_spawn_extra_goal_continuation` 超时；`rtk cargo test -p thread-service completed_goal_accounts_current_turn_tokens_before_tool_response` 期望 3 次请求实际 0 次；`rtk cargo test -p thread-service active_goal_continuation_runs_again_after_no_tool_turn` 期望 5 次请求实际 0 次
-  commit:
+None
 
 ## Completed
+- commit: n/a
+  summary: 将普通 app-server SQLite log DB subscriber 默认 filter 从 `Level::TRACE` 降为 `Level::WARN`，减少 TRACE/DEBUG/INFO 级别事件默认进入本地 log DB 队列和 SQLite batch 写入；stderr `RUST_LOG`、feedback、OTEL、rollout-trace 均未改动
+  validation: owner 已通过 `rtk cargo build -p app-server --bin app-server` 和 `rtk git diff --check`，独立 review 通过；PM 侧确认 `codex-rs/app-server/src/lib.rs` 仅一行 `Level::TRACE -> Level::WARN`，`EnvFilter::from_default_env()` 与 OTEL layer 未变，`rtk git diff --check` 通过
+  residual_risk: 未新增专门覆盖 log DB 默认 filter 的测试，因改动是 `tracing_subscriber::filter::Targets` 级别常量替换，风险较低；主 checkout 仍有此前未提交的其他脏改，本任务未提交 commit
+- commit: n/a
+  summary: 修复主 checkout 当前 `rtk cargo clippy -p app-server --bin app-server --all-targets -- -D warnings` 失败项；包含 clippy 机械修复、删除已无生产调用的 `wait_agent_tool` 兼容 facade 及 helper、将 workflow registry discovery 改用 `TurnContext::discovery_context()`、对仅测试使用 helper 加 `#[cfg(test)]`、对必须保持 scheduler 原子语义的锁内 await 使用局部 `#[expect(..., reason = ...)]`
+  validation: owner 已通过 `rtk cargo clippy -p app-server --bin app-server --all-targets -- -D warnings` 和 `rtk git diff --check`；PM 侧复跑 `rtk cargo clippy -p app-server --bin app-server --all-targets -- -D warnings` 输出 `cargo clippy: No issues found`，`rtk git diff --check` 通过；独立 reviewer 多轮通过，覆盖 wait_agent 删除、workflow discovery、scheduler expect、websocket 分支、测试侧 clippy 修复
+  residual_risk: 本任务未提交 commit，改动仍留在主 checkout 工作树；`multi_agent.rs` 属于既有脏文件且本任务共同触碰，主要行为风险是删除旧 `wait_agent` 兼容壳，但 reviewer/owner 已确认生产 tool surface 无残留调用，项目长期方向也是等待统一走 `poll_event`
+- commit: 6d5a76b65
+  summary: 合并 `048c163dc` 到主线，修复 reload/restart 或 live runtime 丢失后 completed subagent 从 `list_agents` / agent tree 缺失的问题；`AgentControl` 现在用 persisted `thread_spawn_edges` 与 thread metadata 补充 registry view，支持从子线程反查 spawn root、按 canonical path 去重并保持 live registry 优先；direct subagent paths 合并 persisted open children，但 active 判断仍走 live runtime，不把 completed child 伪装成 active
+  validation: owner 已通过 `rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_root_when_registry_is_empty -- --nocapture`；`rtk cargo test -p thread-service direct_subagent_paths_ -- --nocapture`；`rtk cargo test -p thread-service persisted_agent_restore_deduplicates_by_path_with_live_registry_preferred -- --nocapture`；`rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_history_when_live_thread_is_gone -- --nocapture`；`rtk cargo build -p app-server --bin app-server`；`rtk git diff --check`。PM merge 后补跑 `rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_root_when_registry_is_empty -- --nocapture`、`rtk cargo build -p app-server --bin app-server`、`rtk git diff --check` 均通过。
+  residual_risk: `rtk cargo test -p state thread_spawn_edges_track_directional_status -- --nocapture` 仍被 state crate 既有编译问题阻塞（`state/src/log_db.rs` 缺 `StateRuntime` import、memory tests `assert_eq` 宏歧义等），新增 state 层断言未能单独执行；损坏或缺失 persisted metadata 时会安全降级为不列出 pathless persisted child
+- commit: bf7e727ad
+  summary: 合并 `729efa464` 到主线，线性化 post-turn pending input 调度：mailbox 查询不再隐式 drain，`on_task_finished()` 拆成 prepare/record-leftover/TurnComplete/finalize/后续副作用，goal continuation reserve 后复核 active goal identity，finishing/no-task active turn 下 late user/hook input 转入 next-turn pending
+  validation: owner 已通过 `rtk cargo test -p thread-service task_finish -- --nocapture`；`rtk cargo test -p thread-service active_goal_continuation_runs_again_after_no_tool_turn -- --nocapture`；`rtk cargo test -p thread-service pending_request_user_input_does_not_spawn_extra_goal_continuation -- --nocapture`；`rtk cargo test -p thread-service completed_goal_accounts_current_turn_tokens_before_tool_response -- --nocapture`；`rtk cargo test -p thread-service goal_continuation_reservation -- --nocapture`；`rtk cargo test -p thread-service mailbox_queries_do_not_implicitly_drain_incoming_mail -- --nocapture`；`rtk cargo build -p app-server --bin app-server`；`rtk git diff --check`；PM 已按 brief 核对 goal identity 二次校验、finishing late input 排队、TurnComplete 前后顺序
+  residual_risk: finishing 窗口并发路径仍复杂，建议后续补更直接的受控并发测试；`rtk cargo test -p model-service resolve_provider_for_selection` 仍有既有缺文件问题，fmt check 也受既有格式差异干扰
 - commit: 5a2e47483
   summary: 合并 `1432b8ac2` 到主线，修复 compact/reconstruction 后 `thread/read` live+persisted merge 过度恢复 persisted assistant items 导致 compact 返回/后续 assistant 输出重复可见的问题；merge 现在只回填 persisted `InjectedContext`。同时恢复 disabled project 的 repo-local instruction/workflow init context，并补 canonical containment，避免 instruction/workflow symlink 逃逸和 disabled duplicate workflow 挤掉 enabled workflow
   validation: owner 已跑 `rtk cargo test -p app-server restore_persisted_injected_context_turns -- --nocapture`；`rtk cargo test -p app-server thread_read_after_auto_compaction_preserves_init_context_without_dup_live_assistant_items`；`rtk cargo test -p thread-service instruction_sources_`；`rtk cargo test -p thread-service disabled_project_instruction_files_`；`rtk cargo test -p thread-service build_initial_context_skips_disabled_project_workflow`；`rtk cargo test -p thread-service build_initial_context_keeps_enabled_workflow_when_disabled_project_duplicates_id`；`rtk cargo build -p app-server --bin app-server`

@@ -774,7 +774,7 @@ impl ThreadSessionCapability for Session {
                 .enqueue_async_input(crate::PendingInputItem::from(item))
                 .await;
             if should_start_turn
-                && let Some(session) = self.self_weak.get().and_then(|weak| weak.upgrade())
+                && let Some(session) = self.self_weak.get().and_then(std::sync::Weak::upgrade)
             {
                 session.maybe_start_turn_for_pending_work().await;
             }

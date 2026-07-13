@@ -73,6 +73,10 @@ impl Session {
         Ok(validated.active_turn_id)
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "finishing-turn checks and next-turn queueing must remain scheduler-atomic"
+    )]
     pub(crate) async fn queue_user_input_for_next_turn_if_finishing(
         &self,
         input: Vec<UserInput>,
@@ -255,28 +259,21 @@ impl Session {
         should_start_turn
     }
 
+    #[cfg(test)]
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
         let _scheduler = self.scheduler.lock().await;
         self.sync_mailbox_pending_buffer().await;
         self.mailbox_rx.lock().await.has_pending_trigger_turn()
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "mailbox pending checks must drain under the scheduler lock"
+    )]
     pub(crate) async fn has_pending_mailbox_items(&self) -> bool {
         let _scheduler = self.scheduler.lock().await;
         self.sync_mailbox_pending_buffer().await;
         self.mailbox_rx.lock().await.has_pending()
-    }
-
-    pub(crate) async fn has_thread_pending_work(&self) -> bool {
-        let _scheduler = self.scheduler.lock().await;
-        self.sync_mailbox_pending_buffer().await;
-        self.has_thread_pending_work_locked().await
-    }
-
-    pub(crate) async fn has_thread_pending_work_excluding_active_turn(&self) -> bool {
-        let _scheduler = self.scheduler.lock().await;
-        self.sync_mailbox_pending_buffer().await;
-        self.has_thread_pending_work_locked().await
     }
 
     #[expect(
@@ -415,6 +412,10 @@ impl Session {
     }
 
     /// Queue response items to be injected into the next active turn created for this session.
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "next-turn queueing must remain scheduler-atomic"
+    )]
     pub(crate) async fn queue_response_items_for_next_turn(&self, items: Vec<PendingInputItem>) {
         if items.is_empty() {
             return;
@@ -431,6 +432,7 @@ impl Session {
         std::mem::take(&mut *self.idle_pending_input.lock().await)
     }
 
+    #[cfg(test)]
     pub(crate) async fn has_queued_response_items_for_next_turn(&self) -> bool {
         !self.idle_pending_input.lock().await.is_empty()
     }

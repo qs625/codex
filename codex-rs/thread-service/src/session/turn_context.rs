@@ -352,6 +352,15 @@ impl TurnContext {
         cwd: Option<AbsolutePathBuf>,
     ) -> Result<Config, FunctionCallError> {
         let mut config = (*self.config).clone();
+        self.apply_agent_shared_config(&mut config, cwd)?;
+        Ok(config)
+    }
+
+    pub(crate) fn apply_agent_shared_config(
+        &self,
+        config: &mut Config,
+        cwd: Option<AbsolutePathBuf>,
+    ) -> Result<(), FunctionCallError> {
         config.model = Some(self.model_info.slug.clone());
         config.model_provider = self.provider.info().clone();
         config.model_reasoning_effort = self
@@ -360,12 +369,12 @@ impl TurnContext {
         config.model_reasoning_summary = Some(self.reasoning_summary);
         config.developer_instructions = self.developer_instructions.clone();
         config.compact_prompt = self.compact_prompt.clone();
-        self.apply_spawn_agent_runtime_overrides(&mut config)?;
+        self.apply_spawn_agent_runtime_overrides(config)?;
         if let Some(cwd) = cwd {
             config.cwd = cwd;
         }
 
-        Ok(config)
+        Ok(())
     }
 
     pub(crate) fn apply_spawn_agent_runtime_overrides(

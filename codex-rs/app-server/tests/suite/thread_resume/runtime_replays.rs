@@ -809,7 +809,7 @@ async fn thread_read_after_restart_keeps_unified_exec_command_execution_items() 
                 ..
             } if id == "uexec-reload-1" => Some((
                 id.clone(),
-                source.clone(),
+                *source,
                 status.clone(),
                 *exit_code,
             )),

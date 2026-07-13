@@ -1143,42 +1143,45 @@ pub(super) async fn connect_remote_control_websocket(
     match connect_async(request).await {
         Ok((websocket_stream, response)) => Ok((websocket_stream, response.map(|_| ()))),
         Err(err) => {
-            match &err {
-                tungstenite::Error::Http(response) if response.status().as_u16() == 404 => {
-                    info!(
-                        "remote control websocket returned HTTP 404; clearing stale enrollment before re-enrolling: websocket_url={}, account_id={}, server_id={}, environment_id={}",
-                        remote_control_target.websocket_url,
-                        auth.account_id,
-                        enrollment_ref.server_id,
-                        enrollment_ref.environment_id
-                    );
-                    if let Err(clear_err) = update_persisted_remote_control_enrollment(
-                        Some(state_db),
-                        remote_control_target,
-                        &auth.account_id,
-                        connect_options.app_server_client_name,
-                        /*enrollment*/ None,
-                    )
-                    .await
-                    {
-                        warn!(
-                            "failed to clear stale remote control enrollment in sqlite state db: {clear_err}"
+            if let tungstenite::Error::Http(response) = &err {
+                let status = response.status().as_u16();
+                let recovered_auth = match status {
+                    401 | 403 => recover_remote_control_auth(auth_recovery).await,
+                    _ => false,
+                };
+                match (status, recovered_auth) {
+                    (404, _) => {
+                        info!(
+                            "remote control websocket returned HTTP 404; clearing stale enrollment before re-enrolling: websocket_url={}, account_id={}, server_id={}, environment_id={}",
+                            remote_control_target.websocket_url,
+                            auth.account_id,
+                            enrollment_ref.server_id,
+                            enrollment_ref.environment_id
                         );
+                        if let Err(clear_err) = update_persisted_remote_control_enrollment(
+                            Some(state_db),
+                            remote_control_target,
+                            &auth.account_id,
+                            connect_options.app_server_client_name,
+                            /*enrollment*/ None,
+                        )
+                        .await
+                        {
+                            warn!(
+                                "failed to clear stale remote control enrollment in sqlite state db: {clear_err}"
+                            );
+                        }
+                        *enrollment = None;
+                        status_publisher.publish_environment_id(/*environment_id*/ None);
                     }
-                    *enrollment = None;
-                    status_publisher.publish_environment_id(/*environment_id*/ None);
-                }
-                tungstenite::Error::Http(response)
-                    if matches!(response.status().as_u16(), 401 | 403) =>
-                {
-                    if recover_remote_control_auth(auth_recovery).await {
+                    (401 | 403, true) => {
                         return Err(io::Error::other(format!(
                             "remote control websocket auth failed with HTTP {}; retrying after auth recovery",
                             response.status()
                         )));
                     }
+                    _ => {}
                 }
-                _ => {}
             }
             Err(io::Error::other(
                 format_remote_control_websocket_connect_error(

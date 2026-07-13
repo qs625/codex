@@ -205,7 +205,7 @@ async fn run_jobs(
     claimed_candidates: Vec<Stage1JobClaim>,
     stage_one_context: StageOneRequestContext,
 ) -> Vec<JobResult> {
-    futures::stream::iter(claimed_candidates.into_iter())
+    futures::stream::iter(claimed_candidates)
         .map(|claim| {
             let context = Arc::clone(&context);
             let settings: Arc<MemoryStartupSettings> = Arc::clone(&settings);

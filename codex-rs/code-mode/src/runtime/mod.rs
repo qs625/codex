@@ -261,12 +261,9 @@ fn run_runtime(
     }
 
     let mut pending_promise = pending_promise;
-    loop {
-        let Some(command) = next_runtime_command(&event_tx, &command_rx, &control_rx, pending_mode)
-        else {
-            break;
-        };
-
+    while let Some(command) =
+        next_runtime_command(&event_tx, &command_rx, &control_rx, pending_mode)
+    {
         match command {
             RuntimeCommand::Terminate => break,
             RuntimeCommand::ToolResponse { id, result } => {

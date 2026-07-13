@@ -62,7 +62,7 @@ impl SessionAgentJobCaller for Session {
             );
             let base_instructions = self.get_base_instructions().await;
             let spawn_config =
-                build_agent_spawn_config(&base_instructions, turn, /*cwd*/ None)?;
+                build_agent_spawn_config(&base_instructions, turn, /*cwd*/ None).await?;
             Ok(AgentJobRunnerOptions {
                 max_concurrency,
                 spawn_config: Arc::new(spawn_config) as thread_service_api::AgentJobSpawnConfig,
