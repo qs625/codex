@@ -7,6 +7,10 @@ None
 None
 
 ## Completed
+- commit: f4a1f73c2
+  summary: 合并 `0073579c2` 与 `a1e4eb37` 到主线，拆分 schedule subscription idle 状态为 `waitEventSubscription`，不再把长期/周期 schedule 当成 `WaitCommand` 阻塞 completion；同时删除 parent-side child completion pending/received/dedupe bookkeeping，使 completion 只由 child turn `on_task_finished()` finalization path 投递，followup/status/list/send_event/goal/subscription count change 不再重放旧 completion。
+  validation: `rtk cargo test -q -p codex-agent-runtime thread_post_turn` -> 6 passed；`rtk cargo test -q -p thread-service child_completion` -> 8 passed；`rtk cargo test -q -p app-server thread_status` -> 17 + 4 passed；`rtk cargo build -q -p app-server --bin app-server` -> passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed；`rtk git diff --check` -> passed；owner targeted completion matrix passed；independent reviewer passed.
+  residual_risk: `child_completion` filtered test run emits two dead_code warnings for helpers unused under that filter; no functional failure. `maybe_notify_parent_of_final_status_for_current_source` remains as explicit finalization/test helper, but status/read/list production paths no longer call it.
 - commit: 8b1ad9614
   summary: 合并 `569a6ba3e` 到主线，`poll_event` started display event 现在携带 `initialTimeoutMs/currentTimeoutMs/hardCapTimeoutMs` metadata，模型可见 arguments 仍保持 `{}`；root-worker 对 in-progress `poll_event` 展示 waiting up to 文案、elapsed/remaining 和 progressbar；并记录 dormant app-server-protocol thread_history tests 未接入的项目事实。
   validation: `rtk cargo test -p thread-service poll_event_ -- --nocapture` -> 5 passed；`rtk cargo test -p app-server limited_replay_keeps_in_progress_poll_event_timeout_metadata -- --nocapture` -> 1 passed；`rtk cargo test -p app-server builtin_poll_event_emits_started_and_completed_thread_items -- --nocapture` -> 1 passed；`rtk cargo test -p thread-history typed_builtin_tool_started_history_keeps_poll_event_timeout_metadata -- --nocapture` -> 1 passed；`rtk pnpm --dir apps/root-worker-prototype test -- src/lib/conversation.test.ts src/components/Conversation.test.tsx` -> 52 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk git diff --check` -> passed
