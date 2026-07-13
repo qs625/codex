@@ -1886,7 +1886,7 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         "followup after restart".to_string(),
         protocol::protocol::InterAgentOperation::FollowupTask,
     )
-    .with_trigger_turn(true);
+    .with_trigger_turn(false);
     let submission_id = harness
         .control
         .send_inter_agent_communication(resolved_thread_id, communication.clone())
@@ -1907,7 +1907,21 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         .find(|entry| *entry == expected);
     assert_eq!(captured, Some(expected));
 
-    let _ = restored_worker_thread.codex.session.get_pending_input().await;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if restored_worker_thread.codex.session.has_pending_input().await {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("restored child should receive followup pending input");
+    assert_eq!(
+        restored_worker_thread.codex.session.get_pending_input().await,
+        vec![PendingInputItem::from(communication)],
+        "restored child should receive and consume the followup before its next completion",
+    );
     emit_turn_complete(&restored_worker_thread, "new done").await;
     harness
         .manager
