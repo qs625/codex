@@ -226,8 +226,6 @@ impl ThreadAuthRuntimes {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-#[allow(dead_code)]
 pub(crate) struct ResumeThreadWithHistoryOptions {
     pub(crate) config: Config,
     pub(crate) initial_history: InitialHistory,
@@ -1482,8 +1480,6 @@ impl ThreadServiceState {
         .await
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    #[allow(dead_code)]
     pub(crate) async fn resume_thread_with_history_with_source(
         &self,
         options: ResumeThreadWithHistoryOptions,
@@ -1745,8 +1741,6 @@ impl ThreadServiceState {
             .send(ThreadCreatedEvent::Started(thread_id));
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    #[allow(dead_code)]
     pub(crate) fn notify_thread_resumed(&self, thread_id: ThreadId) {
         let _ = self
             .thread_created_tx
