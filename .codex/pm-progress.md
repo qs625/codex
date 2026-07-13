@@ -7,7 +7,15 @@ None
 None
 
 ## Completed
-- commit: current merge commit (HEAD)
+- commit: 8b1ad9614
+  summary: 合并 `569a6ba3e` 到主线，`poll_event` started display event 现在携带 `initialTimeoutMs/currentTimeoutMs/hardCapTimeoutMs` metadata，模型可见 arguments 仍保持 `{}`；root-worker 对 in-progress `poll_event` 展示 waiting up to 文案、elapsed/remaining 和 progressbar；并记录 dormant app-server-protocol thread_history tests 未接入的项目事实。
+  validation: `rtk cargo test -p thread-service poll_event_ -- --nocapture` -> 5 passed；`rtk cargo test -p app-server limited_replay_keeps_in_progress_poll_event_timeout_metadata -- --nocapture` -> 1 passed；`rtk cargo test -p app-server builtin_poll_event_emits_started_and_completed_thread_items -- --nocapture` -> 1 passed；`rtk cargo test -p thread-history typed_builtin_tool_started_history_keeps_poll_event_timeout_metadata -- --nocapture` -> 1 passed；`rtk pnpm --dir apps/root-worker-prototype test -- src/lib/conversation.test.ts src/components/Conversation.test.tsx` -> 52 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk git diff --check` -> passed
+  residual_risk: started metadata 与实际 wait 使用同一 current-window 计算路径但分两次读取，风险较低；`app-server-protocol` dormant thread_history tests 仍是既有技术债，当前有效覆盖在 app-server/thread-history/root-worker 实际消费路径。
+- commit: 7cc00da55
+  summary: 合并 `ae148b2b4` 到主线，修复 fixed owner/canonical path 的 persisted registry 恢复：同 parent stale generation 会被新 generation 取代，archived/missing metadata child 不会通过 path、thread-id 或 full-tree lazy resume 自动恢复；unknown/null legacy inter-agent JSON envelope 不再裸显成普通 assistant text。
+  validation: `rtk cargo test -p thread-service does_not_restore -- --nocapture` -> 4 passed；`rtk cargo test -p thread-service followup_task_by_path_ignores_archived_old_generation -- --nocapture` -> 1 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk git diff --check` -> passed
+  residual_risk: 无 metadata 的旧 agent edge 现在按 deleted 处理，不会自动恢复；这是用户明确要求的删除/归档不可恢复语义。显式 archived rollout read/resume 由 owner 侧回归覆盖。
+- commit: 860ee00fa
   summary: 合并 `5302c02c5` 及其前置修复到主线，修复 restored completed child 在 `followup_task` 后的 completion 投递语义：恢复 completed child 不会重新投递历史 completion envelope；真实 followup pending input 到达并完成新 turn 后，新的 child completion 仍会投递一次。PM merge 时保留运行时修复，并将回归测试改为关闭自动 turn 调度、等待 pending input 到达后手动完成新 turn，避免 submission 队列竞态。
   validation: `rtk cargo test -p thread-service restored_completed_child_path_resolves_and_receives_followup_after_registry_loss -- --nocapture` -> 1 passed；`rtk cargo test -p thread-service restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates -- --nocapture` -> 1 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk git diff --check` -> passed；owner independent review passed
   residual_risk: 覆盖了 restored completed child 的 canonical followup path 和 ambiguous duplicate path；其他 restored child 重新接收输入的入口若绕过相同 pending-input path，后续仍需按具体 bug 增补测试
