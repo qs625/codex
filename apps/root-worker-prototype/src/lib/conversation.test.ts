@@ -1462,7 +1462,10 @@ test("builds visible entries for empty reasoning and builtin schedule tools", ()
         tool: "schedule_subscribe",
         arguments: {
           label: "daily digest",
-          schedule: "every_day_at 09:00 Asia/Shanghai",
+          schedule: {
+            kind: "every_interval",
+            interval_ms: 21_600_000,
+          },
         },
         status: "completed",
         output: { subscription_id: "sub-1" },
@@ -1489,7 +1492,7 @@ test("builds visible entries for empty reasoning and builtin schedule tools", ()
       {
         id: "builtin-schedule",
         kind: "tool",
-        text: "schedule_subscribe • daily digest • every_day_at 09:00 Asia/Shanghai",
+        text: "schedule_subscribe • daily digest • every_interval 6h",
         toolName: "schedule_subscribe",
         toolCategory: "eventDrivenSubscription",
       },
@@ -1532,6 +1535,50 @@ test("builds visible entries for poll_event builtin tools", () => {
         text: "poll_event • mailbox_message",
         toolName: "poll_event",
       },
+    ],
+  );
+});
+
+test("summarizes structured weekly and once-at schedule arguments", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "builtin-weekly-schedule",
+        tool: "schedule_subscribe",
+        arguments: {
+          label: "weekly sync",
+          schedule: {
+            kind: "every_week_at",
+            weekdays: ["mon", "wed"],
+            time: "09:00",
+            timezone: "Asia/Shanghai",
+          },
+        },
+        status: "completed",
+        output: { subscription_id: "sub-weekly" },
+      },
+      {
+        type: "builtinToolCall",
+        id: "builtin-once-schedule",
+        tool: "schedule_subscribe",
+        arguments: {
+          schedule: {
+            kind: "once_at",
+            run_at: "2026-07-14T09:00:00Z",
+          },
+        },
+        status: "completed",
+        output: { subscription_id: "sub-once" },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => entry.text),
+    [
+      "schedule_subscribe • weekly sync • every_week_at mon,wed 09:00 Asia/Shanghai",
+      "schedule_subscribe • once_at 2026-07-14T09:00:00Z",
     ],
   );
 });

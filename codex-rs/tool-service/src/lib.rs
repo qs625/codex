@@ -135,7 +135,10 @@ impl ToolServiceApi for ToolService {
             .params
             .discoverable_tools
             .map(<[tool_service_api::DiscoverableTool]>::to_vec);
-        let mcp_tools = tool_request.params.mcp_tools.map(<[mcp_types::ToolInfo]>::to_vec);
+        let mcp_tools = tool_request
+            .params
+            .mcp_tools
+            .map(<[mcp_types::ToolInfo]>::to_vec);
         let deferred_mcp_tools = tool_request
             .params
             .deferred_mcp_tools
@@ -207,6 +210,8 @@ impl ToolServiceApi for ToolService {
                         ));
                     };
                     domains::extension::dispatch(
+                        Arc::clone(&session),
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         extension_executor?,
                         call,
                     )

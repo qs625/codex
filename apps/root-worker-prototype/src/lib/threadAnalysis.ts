@@ -105,15 +105,15 @@ function buildMonitorSections(
   if (thread) {
     for (const turn of thread.turns) {
       for (const item of turn.items) {
-        if (item.type === "eventDrivenToolCall" && isMonitorTool(item.tool)) {
-          monitors.push(buildMonitorSummary(item));
+        if (isMonitorToolCall(item)) {
+          const monitor = buildMonitorSummary(item);
+          if (monitor) {
+            monitors.push(monitor);
+          }
           continue;
         }
 
-        if (
-          item.type === "eventDrivenToolCall" &&
-          isUnsubscribeTool(item.tool)
-        ) {
+        if (isUnsubscribeToolCall(item)) {
           removeUnsubscribedMonitor(monitors, item);
           continue;
         }
@@ -302,14 +302,18 @@ function summarizeCommandNotification(
 }
 
 function buildMonitorSummary(
-  item: Extract<ThreadItem, { type: "eventDrivenToolCall" }>,
-): MonitorSummary {
+  item: Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }>,
+): MonitorSummary | null {
+  const subscriptionId = subscriptionIdFromOutput(item.output);
+  if (item.status !== "completed" || !subscriptionId) {
+    return null;
+  }
   const args = objectRecord(item.arguments);
   const kind = MONITOR_TOOLS[item.tool as keyof typeof MONITOR_TOOLS];
 
   return {
     id: item.id,
-    subscriptionId: subscriptionIdFromOutput(item.output),
+    subscriptionId,
     kind,
     label: monitorLabel(kind, args),
     detail: monitorDetail(kind, args, item.output),
@@ -321,8 +325,11 @@ function buildMonitorSummary(
 
 function removeUnsubscribedMonitor(
   monitors: MonitorSummary[],
-  item: Extract<ThreadItem, { type: "eventDrivenToolCall" }>,
+  item: Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }>,
 ) {
+  if (item.status !== "completed" || objectRecord(item.output).unsubscribed !== true) {
+    return;
+  }
   const args = objectRecord(item.arguments);
   const subscriptionId = stringOrNull(args.subscription_id);
   if (!subscriptionId) {
@@ -397,6 +404,24 @@ function isUnsubscribeTool(
   tool: string,
 ): tool is keyof typeof UNSUBSCRIBE_TOOLS {
   return Object.prototype.hasOwnProperty.call(UNSUBSCRIBE_TOOLS, tool);
+}
+
+function isMonitorToolCall(
+  item: ThreadItem,
+): item is Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }> {
+  return (
+    (item.type === "eventDrivenToolCall" || item.type === "builtinToolCall") &&
+    isMonitorTool(item.tool)
+  );
+}
+
+function isUnsubscribeToolCall(
+  item: ThreadItem,
+): item is Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }> {
+  return (
+    (item.type === "eventDrivenToolCall" || item.type === "builtinToolCall") &&
+    isUnsubscribeTool(item.tool)
+  );
 }
 
 function toolFromMonitorKind(kind: MonitorKind) {
