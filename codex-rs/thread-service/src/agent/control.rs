@@ -856,6 +856,49 @@ impl AgentControl {
         )))
     }
 
+    pub(crate) async fn resolve_agent_thread_id(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+        config: Option<config_service::Config>,
+        target_thread_id: ThreadId,
+    ) -> CodexResult<ThreadId> {
+        let state = self.upgrade()?;
+        if state
+            .live_thread_config_snapshot(target_thread_id)
+            .await
+            .is_ok()
+        {
+            return Ok(target_thread_id);
+        }
+
+        if let Some(config) = config
+            && let Some(target) = self
+                .persisted_agent_target_for_thread_id(
+                    current_thread_id,
+                    current_session_source,
+                    target_thread_id,
+                )
+                .await?
+        {
+            let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: target.parent_thread_id,
+                depth: target.depth,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            });
+            Box::pin(self.resume_single_agent_from_rollout(
+                config,
+                target.thread_id,
+                session_source,
+            ))
+            .await?;
+        }
+
+        Ok(target_thread_id)
+    }
+
     async fn resolve_persisted_agent_reference(
         &self,
         current_thread_id: ThreadId,
@@ -884,8 +927,12 @@ impl AgentControl {
                 agent_nickname: None,
                 agent_role: None,
             });
-            self.resume_single_agent_from_rollout(config, target.thread_id, session_source)
-                .await?;
+            Box::pin(self.resume_single_agent_from_rollout(
+                config,
+                target.thread_id,
+                session_source,
+            ))
+            .await?;
         }
 
         self.state
@@ -897,6 +944,75 @@ impl AgentControl {
                     agent_path.as_str()
                 ))
             })
+    }
+
+    async fn persisted_agent_target_for_thread_id(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+        target_thread_id: ThreadId,
+    ) -> CodexResult<Option<PersistedAgentTarget>> {
+        let Some(root_thread_id) = self
+            .root_thread_id_for_persisted_agent_lookup(current_thread_id, current_session_source)
+            .await
+        else {
+            return Ok(None);
+        };
+        if target_thread_id == root_thread_id {
+            return Ok(None);
+        }
+        self.persisted_agent_target_for_thread_id_from_root(root_thread_id, target_thread_id)
+            .await
+    }
+
+    async fn persisted_agent_target_for_thread_id_from_root(
+        &self,
+        root_thread_id: ThreadId,
+        target_thread_id: ThreadId,
+    ) -> CodexResult<Option<PersistedAgentTarget>> {
+        let state = self.upgrade()?;
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return Ok(None);
+        };
+        let mut queue = VecDeque::from([(root_thread_id, 0)]);
+        let mut seen = HashSet::from([root_thread_id]);
+        while let Some((parent_thread_id, parent_depth)) = queue.pop_front() {
+            let child_ids = state_db_ctx
+                .list_thread_spawn_children_with_status(
+                    parent_thread_id,
+                    DirectionalThreadSpawnEdgeStatus::Open,
+                )
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!(
+                        "failed to load persisted thread-spawn children: {err}"
+                    ))
+                })?;
+            for child_thread_id in child_ids {
+                if !seen.insert(child_thread_id) {
+                    continue;
+                }
+                let depth = parent_depth + 1;
+                if child_thread_id == target_thread_id {
+                    if self
+                        .persisted_agent_metadata(child_thread_id, state_db_ctx.as_ref())
+                        .await
+                        .is_none()
+                    {
+                        return Err(CodexErr::UnsupportedOperation(format!(
+                            "agent thread `{target_thread_id}` is missing persisted agent metadata"
+                        )));
+                    }
+                    return Ok(Some(PersistedAgentTarget {
+                        thread_id: child_thread_id,
+                        parent_thread_id,
+                        depth,
+                    }));
+                }
+                queue.push_back((child_thread_id, depth));
+            }
+        }
+        Ok(None)
     }
 
     async fn root_thread_id_for_persisted_agent_lookup(
