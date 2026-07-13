@@ -552,6 +552,23 @@ impl Session {
             .await
     }
 
+    pub(crate) async fn resolve_agent_thread_id_for_turn(
+        &self,
+        turn: &TurnContext,
+        target_thread_id: ThreadId,
+    ) -> CodexResult<ThreadId> {
+        let config = self.get_config().await.as_ref().clone();
+        self.services
+            .agent_control
+            .resolve_agent_thread_id(
+                self.conversation_id,
+                &turn.session_source(),
+                Some(config),
+                target_thread_id,
+            )
+            .await
+    }
+
     pub(crate) fn agent_metadata(&self, thread_id: ThreadId) -> AgentMetadata {
         self.services
             .agent_control

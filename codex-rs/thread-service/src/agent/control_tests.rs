@@ -1941,6 +1941,127 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
 }
 
 #[tokio::test]
+async fn followup_task_by_thread_id_restores_persisted_child_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    emit_turn_complete(&worker_thread, "done").await;
+    worker_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    Box::pin(restarted_control.resume_single_agent_from_rollout(
+        harness.config.clone(),
+        root_thread_id,
+        SessionSource::Exec,
+    ))
+    .await
+    .expect("root should resume without manually resuming the child");
+    assert!(
+        restarted_manager
+            .get_thread(worker_thread_id)
+            .await
+            .is_err(),
+        "worker should not be live before followup_task resolves it",
+    );
+
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be live after restart");
+    let root_turn = restored_root_thread.codex.session.new_default_turn().await;
+    crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&restored_root_thread.codex.session),
+        root_turn,
+        "call-followup".to_string(),
+        worker_thread_id.to_string(),
+        "followup after restart".to_string(),
+    )
+    .await
+    .expect("followup_task should restore and deliver to persisted child thread id");
+
+    let restored_worker_thread = restarted_manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("followup_task should restore the worker thread");
+    let expected_communication = InterAgentCommunication::new(
+        AgentPath::root(),
+        worker_path.clone(),
+        Vec::new(),
+        "followup after restart".to_string(),
+        protocol::protocol::InterAgentOperation::FollowupTask,
+    )
+    .with_thread_ids(root_thread_id, worker_thread_id)
+    .with_trigger_turn(true);
+    let expected = (
+        worker_thread_id,
+        Op::InterAgentCommunication {
+            communication: expected_communication.clone(),
+        },
+    );
+    assert!(
+        restarted_manager
+            .captured_ops()
+            .into_iter()
+            .any(|entry| entry == expected),
+        "followup_task should submit the restored child through the normal inter-agent path",
+    );
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if restored_worker_thread
+                .codex
+                .session
+                .has_pending_input()
+                .await
+            {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("restored child should receive followup pending input");
+    assert_eq!(
+        restored_worker_thread
+            .codex
+            .session
+            .get_pending_input()
+            .await,
+        vec![PendingInputItem::from(expected_communication)],
+    );
+}
+
+#[tokio::test]
 async fn restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
