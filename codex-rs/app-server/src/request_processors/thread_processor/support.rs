@@ -477,8 +477,7 @@ pub(super) async fn sync_active_event_subscriptions(
     thread_watch_manager
         .note_active_event_subscriptions(thread_id_str.as_str(), active_count)
         .await;
-    if previous_count > 0
-        && active_count == 0
+    if previous_count != active_count
         && let Some(final_status_notifier) = final_status_notifier
     {
         final_status_notifier

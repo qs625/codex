@@ -1055,6 +1055,7 @@ pub enum ThreadStatus {
 pub enum ThreadIdleReason {
     WaitCommand,
     WaitChild,
+    WaitEventSubscription,
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]

@@ -284,6 +284,9 @@ export function getPresenceLabel(status: ThreadStatus) {
       if (status.reason === "waitChild") {
         return "Waiting on Subagent";
       }
+      if (status.reason === "waitEventSubscription") {
+        return "Waiting on Subscription";
+      }
       return "Complete";
     case "complete":
       return "Complete";
@@ -1144,6 +1147,9 @@ export function threadStatusClass(status: ThreadStatus) {
       if (status.reason === "waitChild") {
         return "waiting-subagent";
       }
+      if (status.reason === "waitEventSubscription") {
+        return "waiting-subscription";
+      }
       return "todo";
     case "systemError":
       return "blocked";
@@ -1158,7 +1164,8 @@ export type TreeThreadStatusClass =
   | "blocked"
   | "done"
   | "waiting-subagent"
-  | "waiting-eventtool";
+  | "waiting-eventtool"
+  | "waiting-subscription";
 
 export function treeThreadStatusClass(node: TreeNode): TreeThreadStatusClass {
   return node.thread ? selfTreeThreadStatusClass(node.thread) : "todo";
@@ -1172,6 +1179,8 @@ export function treeThreadStatusLabel(statusClass: TreeThreadStatusClass) {
       return "Waiting on subagent";
     case "waiting-eventtool":
       return "Waiting on event tool";
+    case "waiting-subscription":
+      return "Waiting on subscription";
     case "blocked":
       return "System error";
     case "done":
@@ -1191,6 +1200,9 @@ function selfTreeThreadStatusClass(thread: Thread): TreeThreadStatusClass {
     }
     if (thread.status.reason === "waitChild") {
       return "waiting-subagent";
+    }
+    if (thread.status.reason === "waitEventSubscription") {
+      return "waiting-subscription";
     }
     return "todo";
   }

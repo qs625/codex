@@ -895,6 +895,7 @@ impl Session {
         }
         select_thread_post_turn_state(ThreadPostTurnInputs {
             has_wait_command: Box::pin(self.has_wait_command()).await,
+            has_active_event_subscription: self.has_active_event_subscription(),
             ..ThreadPostTurnInputs::default()
         })
     }

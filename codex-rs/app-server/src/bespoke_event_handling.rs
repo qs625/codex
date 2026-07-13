@@ -182,6 +182,10 @@ pub(crate) async fn apply_bespoke_event_handling(
                     matches!(runtime_status, ThreadRuntimeStatus::Active),
                     matches!(runtime_status, ThreadRuntimeStatus::IdleWaitChild),
                     matches!(runtime_status, ThreadRuntimeStatus::IdleWaitCommand),
+                    matches!(
+                        runtime_status,
+                        ThreadRuntimeStatus::IdleWaitEventSubscription
+                    ),
                 )
                 .await;
             handle_turn_complete(

@@ -109,6 +109,7 @@ pub enum ThreadRuntimeStatus {
     Active,
     IdleWaitCommand,
     IdleWaitChild,
+    IdleWaitEventSubscription,
     Complete,
 }
 

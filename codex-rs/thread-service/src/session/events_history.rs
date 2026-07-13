@@ -177,9 +177,12 @@ impl Session {
             return;
         }
         match Box::pin(self.thread_post_turn_state()).await {
-            ThreadPostTurnState::ThreadCompletion => {}
+            ThreadPostTurnState::ThreadCompletion
+            | ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitEventSubscription) => {}
             ThreadPostTurnState::ThreadActive
-            | ThreadPostTurnState::ThreadIdle(_)
+            | ThreadPostTurnState::ThreadIdle(
+                ThreadIdleReason::WaitChild | ThreadIdleReason::WaitCommand,
+            )
             | ThreadPostTurnState::GoContextContinuation { .. } => {
                 self.child_completion.mark_delivery_active();
                 return;
@@ -272,14 +275,16 @@ impl Session {
 
     pub(crate) async fn has_wait_command(&self) -> bool {
         self.services
+            .command_service_state
+            .has_running_process_for_thread(self.conversation_id)
+            .await
+    }
+
+    pub(crate) fn has_active_event_subscription(&self) -> bool {
+        self.services
             .active_event_subscriptions
             .active_count(self.conversation_id)
             > 0
-            || self
-                .services
-                .command_service_state
-                .has_running_process_for_thread(self.conversation_id)
-                .await
     }
 
     pub(crate) async fn mark_direct_child_completion_pending(&self, child_thread_id: ThreadId) {
