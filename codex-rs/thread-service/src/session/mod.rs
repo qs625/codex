@@ -540,9 +540,15 @@ impl Session {
         turn: &TurnContext,
         target: &str,
     ) -> CodexResult<ThreadId> {
+        let config = self.get_config().await.as_ref().clone();
         self.services
             .agent_control
-            .resolve_agent_reference(self.conversation_id, &turn.session_source(), target)
+            .resolve_agent_reference(
+                self.conversation_id,
+                &turn.session_source(),
+                Some(config),
+                target,
+            )
             .await
     }
 

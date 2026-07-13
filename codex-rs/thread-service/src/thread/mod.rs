@@ -13,7 +13,6 @@ pub use thread_service_api::ThreadCreatedEvent;
 pub use thread_service_api::ThreadRuntimeStatus;
 pub use thread_service_api::ThreadShutdownReport;
 
-#[cfg(any(test, feature = "test-support"))]
 pub(crate) use manager::ResumeThreadWithHistoryOptions;
 pub(crate) use manager::ThreadServiceState;
 #[cfg(any(test, feature = "test-support"))]

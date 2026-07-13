@@ -1774,6 +1774,206 @@ async fn list_agents_restores_completed_child_from_persisted_root_when_registry_
 }
 
 #[tokio::test]
+async fn restored_completed_child_path_resolves_and_receives_followup_after_registry_loss() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    emit_turn_complete(&worker_thread, "done").await;
+    worker_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    assert!(
+        restarted_manager
+            .get_thread(worker_thread_id)
+            .await
+            .is_err(),
+        "restarted manager should start without a live worker handle"
+    );
+    let listed_agents = restarted_control
+        .list_agents(root_thread_id, &SessionSource::Exec, None)
+        .await
+        .expect("list agents should succeed from persisted tree");
+    assert_eq!(
+        listed_agents
+            .iter()
+            .find(|agent| agent.agent_name == worker_path.to_string())
+            .expect("persisted worker should be listed")
+            .agent_status,
+        AgentStatus::Completed(Some("done".to_string())),
+    );
+
+    let resolved_thread_id = restarted_control
+        .resolve_agent_reference(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some(harness.config.clone()),
+            worker_path.as_str(),
+        )
+        .await
+        .expect("persisted worker path should resolve after registry loss");
+    assert_eq!(resolved_thread_id, worker_thread_id);
+    assert_eq!(
+        restarted_control
+            .get_agent_metadata(worker_thread_id)
+            .and_then(|metadata| metadata.agent_path),
+        Some(worker_path.clone()),
+        "resolver should re-register metadata needed by followup_task events",
+    );
+
+    restarted_manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("resolver should restore the original worker thread");
+    let communication = InterAgentCommunication::new(
+        AgentPath::root(),
+        worker_path.clone(),
+        Vec::new(),
+        "followup after restart".to_string(),
+        protocol::protocol::InterAgentOperation::FollowupTask,
+    )
+    .with_trigger_turn(true);
+    let submission_id = restarted_control
+        .send_inter_agent_communication(resolved_thread_id, communication.clone())
+        .await
+        .expect("followup should route to restored worker");
+    assert!(!submission_id.is_empty());
+
+    let expected = (
+        worker_thread_id,
+        Op::InterAgentCommunication {
+            communication: communication.clone(),
+        },
+    );
+    let captured = restarted_manager
+        .captured_ops()
+        .into_iter()
+        .find(|entry| *entry == expected);
+    assert_eq!(captured, Some(expected));
+}
+
+#[tokio::test]
+async fn restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let first_worker_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello first worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("first worker spawn should succeed");
+    let first_worker = harness
+        .manager
+        .get_thread(first_worker_id)
+        .await
+        .expect("first worker thread should exist");
+    persist_thread_for_tree_resume(&first_worker, "first worker persisted").await;
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[first_worker_id]).await;
+    harness
+        .control
+        .shutdown_live_agent(first_worker_id)
+        .await
+        .expect("first worker shutdown should release the live path");
+
+    let second_worker_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello second worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("second worker spawn should succeed");
+    let second_worker = harness
+        .manager
+        .get_thread(second_worker_id)
+        .await
+        .expect("second worker thread should exist");
+    persist_thread_for_tree_resume(&second_worker, "second worker persisted").await;
+    let state_db = harness
+        .state_db
+        .as_ref()
+        .expect("sqlite state db should be available");
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let descendants = state_db
+                .list_thread_spawn_descendants_with_status(
+                    root_thread_id,
+                    DirectionalThreadSpawnEdgeStatus::Open,
+                )
+                .await
+                .expect("persisted descendants should load");
+            if descendants.contains(&first_worker_id) && descendants.contains(&second_worker_id) {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both duplicate worker edges should persist");
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let err = restarted_control
+        .resolve_agent_reference(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some(harness.config.clone()),
+            worker_path.as_str(),
+        )
+        .await
+        .expect_err("duplicate persisted path should be rejected");
+    assert!(
+        err.to_string().contains("ambiguous"),
+        "unexpected error: {err}",
+    );
+}
+
+#[tokio::test]
 async fn completed_agent_path_can_still_receive_followup_while_registered() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
@@ -1804,7 +2004,12 @@ async fn completed_agent_path_can_still_receive_followup_while_registered() {
 
     let resolved_thread_id = harness
         .control
-        .resolve_agent_reference(root_thread_id, &SessionSource::Exec, worker_path.as_str())
+        .resolve_agent_reference(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some(harness.config.clone()),
+            worker_path.as_str(),
+        )
         .await
         .expect("completed worker path should still resolve");
     assert_eq!(resolved_thread_id, worker_thread_id);

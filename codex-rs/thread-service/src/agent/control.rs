@@ -2,7 +2,6 @@ use crate::agent::AgentStatus;
 use crate::runtime_shell_snapshot::ShellSnapshot;
 use crate::session::emit_subagent_session_started;
 use crate::thread::NewThread;
-#[cfg(any(test, feature = "test-support"))]
 use crate::thread::ResumeThreadWithHistoryOptions;
 use crate::thread::ThreadConfigSnapshot;
 use crate::thread::ThreadServiceState;
@@ -51,14 +50,13 @@ use protocol::models::ResponseItem;
 use protocol::protocol::InitialHistory;
 use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::Op;
-#[cfg(any(test, feature = "test-support"))]
 use protocol::protocol::ResumedHistory;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
 use protocol::protocol::ThreadSource;
 use state_api::DirectionalThreadSpawnEdgeStatus;
 use std::collections::HashMap;
-#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Weak;
@@ -89,6 +87,12 @@ pub(crate) struct AgentControl {
     /// `ThreadServiceState -> CodexThread -> Session -> SessionServices -> ThreadServiceState`.
     manager: Weak<ThreadServiceState>,
     state: Arc<AgentRegistry>,
+}
+
+struct PersistedAgentTarget {
+    thread_id: ThreadId,
+    parent_thread_id: ThreadId,
+    depth: i32,
 }
 
 impl AgentControl {
@@ -393,7 +397,6 @@ impl AgentControl {
 
     /// Resume an existing agent thread from a recorded rollout file.
     #[cfg(any(test, feature = "test-support"))]
-    #[allow(dead_code)]
     pub(crate) async fn resume_agent_from_rollout(
         &self,
         config: config_service::Config,
@@ -471,8 +474,6 @@ impl AgentControl {
         Ok(resumed_thread_id)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    #[allow(dead_code)]
     async fn resume_single_agent_from_rollout(
         &self,
         config: config_service::Config,
@@ -828,6 +829,7 @@ impl AgentControl {
         &self,
         current_thread_id: ThreadId,
         current_session_source: &SessionSource,
+        config: Option<config_service::Config>,
         agent_reference: &str,
     ) -> CodexResult<ThreadId> {
         let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
@@ -836,10 +838,136 @@ impl AgentControl {
         if let Some(thread_id) = self.state.agent_id_for_path(&agent_path) {
             return Ok(thread_id);
         }
+        if let Some(config) = config
+            && let Some(thread_id) = self
+                .resolve_persisted_agent_reference(
+                    current_thread_id,
+                    current_session_source,
+                    config,
+                    &agent_path,
+                )
+                .await?
+        {
+            return Ok(thread_id);
+        }
         Err(CodexErr::UnsupportedOperation(format!(
             "agent path `{}` not found",
             agent_path.as_str()
         )))
+    }
+
+    async fn resolve_persisted_agent_reference(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+        config: config_service::Config,
+        agent_path: &AgentPath,
+    ) -> CodexResult<Option<ThreadId>> {
+        let Some(root_thread_id) = self
+            .root_thread_id_for_persisted_agent_lookup(current_thread_id, current_session_source)
+            .await
+        else {
+            return Ok(None);
+        };
+        let Some(target) = self
+            .persisted_agent_target_for_path(root_thread_id, agent_path)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        if self.state.agent_id_for_path(agent_path).is_none() {
+            let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: target.parent_thread_id,
+                depth: target.depth,
+                agent_path: Some(agent_path.clone()),
+                agent_nickname: None,
+                agent_role: None,
+            });
+            self.resume_single_agent_from_rollout(config, target.thread_id, session_source)
+                .await?;
+        }
+
+        self.state
+            .agent_id_for_path(agent_path)
+            .map(Some)
+            .ok_or_else(|| {
+                CodexErr::UnsupportedOperation(format!(
+                    "agent path `{}` could not be restored",
+                    agent_path.as_str()
+                ))
+            })
+    }
+
+    async fn root_thread_id_for_persisted_agent_lookup(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+    ) -> Option<ThreadId> {
+        let root_path = AgentPath::root();
+        if let Some(root_thread_id) = self.state.agent_id_for_path(&root_path).or_else(|| {
+            thread_spawn_parent_thread_id(current_session_source)
+                .is_none()
+                .then_some(current_thread_id)
+        }) {
+            return Some(root_thread_id);
+        }
+        self.persisted_thread_spawn_root(current_thread_id).await
+    }
+
+    async fn persisted_agent_target_for_path(
+        &self,
+        root_thread_id: ThreadId,
+        agent_path: &AgentPath,
+    ) -> CodexResult<Option<PersistedAgentTarget>> {
+        let state = self.upgrade()?;
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return Ok(None);
+        };
+        let mut queue = VecDeque::from([(root_thread_id, 0)]);
+        let mut seen = HashSet::from([root_thread_id]);
+        let mut found = None;
+        while let Some((parent_thread_id, parent_depth)) = queue.pop_front() {
+            let child_ids = state_db_ctx
+                .list_thread_spawn_children_with_status(
+                    parent_thread_id,
+                    DirectionalThreadSpawnEdgeStatus::Open,
+                )
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!(
+                        "failed to load persisted thread-spawn children: {err}"
+                    ))
+                })?;
+            for child_thread_id in child_ids {
+                if !seen.insert(child_thread_id) {
+                    continue;
+                }
+                let depth = parent_depth + 1;
+                let Some(metadata) = self
+                    .persisted_agent_metadata(child_thread_id, state_db_ctx.as_ref())
+                    .await
+                else {
+                    queue.push_back((child_thread_id, depth));
+                    continue;
+                };
+                if metadata.agent_path.as_ref() == Some(agent_path) {
+                    let target = PersistedAgentTarget {
+                        thread_id: child_thread_id,
+                        parent_thread_id,
+                        depth,
+                    };
+                    if found.replace(target).is_some() {
+                        return Err(CodexErr::UnsupportedOperation(format!(
+                            "agent path `{}` is ambiguous in persisted agent registry",
+                            agent_path.as_str()
+                        )));
+                    }
+                }
+                queue.push_back((child_thread_id, depth));
+            }
+        }
+        Ok(found)
     }
 
     /// Subscribe to status updates for `agent_id`, yielding the latest value and changes.
@@ -870,14 +998,11 @@ impl AgentControl {
             .current_agent_path_with_persisted_metadata(current_thread_id, current_session_source)
             .await;
         let root_path = AgentPath::root();
-        let root_thread_id = self
-            .state
-            .agent_id_for_path(&root_path)
-            .or_else(|| {
-                thread_spawn_parent_thread_id(current_session_source)
-                    .is_none()
-                    .then_some(current_thread_id)
-            });
+        let root_thread_id = self.state.agent_id_for_path(&root_path).or_else(|| {
+            thread_spawn_parent_thread_id(current_session_source)
+                .is_none()
+                .then_some(current_thread_id)
+        });
         let root_thread_id = match root_thread_id {
             Some(root_thread_id) => Some(root_thread_id),
             None => self.persisted_thread_spawn_root(current_thread_id).await,
@@ -1005,8 +1130,7 @@ impl AgentControl {
         current_thread_id: ThreadId,
         current_session_source: &SessionSource,
     ) -> AgentPath {
-        let current_agent_path =
-            self.current_agent_path(current_thread_id, current_session_source);
+        let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
         if !current_agent_path.is_root()
             || thread_spawn_parent_thread_id(current_session_source).is_none()
         {
@@ -1028,7 +1152,11 @@ impl AgentControl {
     async fn persisted_thread_spawn_root(&self, thread_id: ThreadId) -> Option<ThreadId> {
         let state = self.upgrade().ok()?;
         let state_db_ctx = state.thread_state_runtime()?;
-        state_db_ctx.find_thread_spawn_root(thread_id).await.ok().flatten()
+        state_db_ctx
+            .find_thread_spawn_root(thread_id)
+            .await
+            .ok()
+            .flatten()
     }
 
     async fn persisted_final_agent_status(&self, thread_id: ThreadId) -> Option<AgentStatus> {
@@ -1217,8 +1345,9 @@ impl AgentControl {
                 || metadata.agent_nickname.is_none()
                 || metadata.agent_role.is_none())
                 && let Some(state_db_ctx) = state_db_ctx.as_ref()
-                && let Some(persisted_metadata) =
-                    self.persisted_agent_metadata(thread_id, state_db_ctx.as_ref()).await
+                && let Some(persisted_metadata) = self
+                    .persisted_agent_metadata(thread_id, state_db_ctx.as_ref())
+                    .await
             {
                 if metadata.agent_path.is_none() {
                     metadata.agent_path = persisted_metadata.agent_path;
