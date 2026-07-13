@@ -132,15 +132,59 @@ pub fn is_legacy_structured_assistant_message_text(text: &str) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
-    if !object.contains_key("author") || !object.contains_key("recipient") {
-        return false;
-    }
-    matches!(
-        object.get("operation").and_then(serde_json::Value::as_str),
-        Some("spawnAgent" | "sendMessage" | "send_message" | "followupTask" | "childCompletion")
-    )
+    object.contains_key("author")
+        && object.contains_key("recipient")
+        && object.contains_key("content")
+        && object.contains_key("operation")
 }
 
 fn is_wrapped_marker(trimmed: &str, start_marker: &str, end_marker: &str) -> bool {
     trimmed.starts_with(start_marker) && trimmed.ends_with(end_marker)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_legacy_structured_assistant_message_text;
+
+    #[test]
+    fn legacy_structured_message_filter_handles_unknown_inter_agent_operations() {
+        for operation in [
+            serde_json::Value::Null,
+            serde_json::Value::String("mysteryOperation".to_string()),
+            serde_json::Value::Number(1.into()),
+        ] {
+            let message = serde_json::json!({
+                "author": "/root/worker",
+                "recipient": "/root",
+                "content": "legacy message",
+                "operation": operation,
+            })
+            .to_string();
+
+            assert!(is_legacy_structured_assistant_message_text(&message));
+        }
+    }
+
+    #[test]
+    fn legacy_structured_message_filter_preserves_non_envelope_json() {
+        let missing_operation = serde_json::json!({
+            "author": "/root/worker",
+            "recipient": "/root",
+            "content": "plain assistant json",
+        })
+        .to_string();
+        assert!(!is_legacy_structured_assistant_message_text(
+            &missing_operation
+        ));
+
+        let ordinary_tool_json = serde_json::json!({
+            "tool": "process_exit_subscribe",
+            "title": "Process exited",
+            "text": "[Process exit subscription] Session 42 exited with code 0",
+        })
+        .to_string();
+        assert!(!is_legacy_structured_assistant_message_text(
+            &ordinary_tool_json
+        ));
+    }
 }

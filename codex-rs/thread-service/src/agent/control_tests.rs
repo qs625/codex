@@ -2062,6 +2062,156 @@ async fn followup_task_by_thread_id_restores_persisted_child_after_restart() {
 }
 
 #[tokio::test]
+async fn followup_task_by_path_restores_latest_completed_generation_after_stale_duplicate() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let first_worker_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello first worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("first worker spawn should succeed");
+    let first_worker = harness
+        .manager
+        .get_thread(first_worker_id)
+        .await
+        .expect("first worker thread should exist");
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&first_worker, "first worker persisted").await;
+    emit_turn_complete(&first_worker, "old done").await;
+    first_worker
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("first worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[first_worker_id]).await;
+    harness
+        .control
+        .shutdown_live_agent(first_worker_id)
+        .await
+        .expect("first worker shutdown should release the live path");
+
+    sleep(Duration::from_millis(10)).await;
+    let second_worker_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello second worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("second worker spawn should succeed");
+    let second_worker = harness
+        .manager
+        .get_thread(second_worker_id)
+        .await
+        .expect("second worker thread should exist");
+    persist_thread_for_tree_resume(&second_worker, "second worker persisted").await;
+    emit_turn_complete(&second_worker, "new done").await;
+    second_worker
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("second worker rollout should flush");
+
+    let state_db = harness
+        .state_db
+        .as_ref()
+        .expect("sqlite state db should be available");
+    state_db
+        .set_thread_spawn_edge_status(first_worker_id, DirectionalThreadSpawnEdgeStatus::Open)
+        .await
+        .expect("test should simulate a stale open edge from an older server");
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    Box::pin(
+        restarted_control.resume_agent_from_rollout(
+            harness.config.clone(),
+            root_thread_id,
+            SessionSource::Exec,
+        ),
+    )
+    .await
+    .expect("full tree resume should skip the stale duplicate generation");
+
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be live after restart");
+    assert!(
+        restarted_manager.get_thread(first_worker_id).await.is_err(),
+        "full tree resume should not restore the stale duplicate generation",
+    );
+    assert!(
+        restarted_manager.get_thread(second_worker_id).await.is_ok(),
+        "full tree resume should restore the latest generation",
+    );
+    let root_turn = restored_root_thread.codex.session.new_default_turn().await;
+    crate::agent::multi_agent::followup_task_tool(
+        Arc::clone(&restored_root_thread.codex.session),
+        root_turn,
+        "call-followup".to_string(),
+        worker_path.as_str().to_string(),
+        "followup after restart".to_string(),
+    )
+    .await
+    .expect("followup_task should select the latest completed generation");
+
+    let restored_second_worker = restarted_manager
+        .get_thread(second_worker_id)
+        .await
+        .expect("latest generation should remain live for followup_task");
+    let expected_communication = InterAgentCommunication::new(
+        AgentPath::root(),
+        worker_path.clone(),
+        Vec::new(),
+        "followup after restart".to_string(),
+        protocol::protocol::InterAgentOperation::FollowupTask,
+    )
+    .with_thread_ids(root_thread_id, second_worker_id)
+    .with_trigger_turn(true);
+    let expected = (
+        second_worker_id,
+        Op::InterAgentCommunication {
+            communication: expected_communication.clone(),
+        },
+    );
+    assert!(
+        restarted_manager
+            .captured_ops()
+            .into_iter()
+            .any(|entry| entry == expected),
+        "followup_task should submit to the latest generation through the normal inter-agent path",
+    );
+    assert_eq!(
+        restored_second_worker
+            .codex
+            .session
+            .get_pending_input()
+            .await,
+        vec![PendingInputItem::from(expected_communication)],
+    );
+}
+
+#[tokio::test]
 async fn restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
@@ -2119,6 +2269,10 @@ async fn restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates()
         .state_db
         .as_ref()
         .expect("sqlite state db should be available");
+    state_db
+        .set_thread_spawn_edge_status(first_worker_id, DirectionalThreadSpawnEdgeStatus::Open)
+        .await
+        .expect("test should simulate two effective open duplicate edges");
     timeout(Duration::from_secs(5), async {
         loop {
             let descendants = state_db

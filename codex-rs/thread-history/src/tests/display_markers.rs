@@ -88,6 +88,36 @@ use super::*;
     }
 
     #[test]
+    fn filters_raw_inter_agent_envelope_with_unknown_or_null_operation() {
+        for operation in [
+            serde_json::Value::Null,
+            serde_json::Value::String("mysteryOperation".to_string()),
+            serde_json::Value::Number(1.into()),
+        ] {
+            let message = serde_json::json!({
+                "author": "/root/worker",
+                "recipient": "/root",
+                "content": "legacy message",
+                "operation": operation,
+            })
+            .to_string();
+            let events = [EventMsg::AgentMessage(AgentMessageEvent {
+                message,
+                phase: None,
+                memory_citation: None,
+            })];
+
+            let mut builder = ThreadHistoryBuilder::new();
+            for event in &events {
+                builder.handle_event(event);
+            }
+            let turns = builder.finish();
+
+            assert!(turns.is_empty());
+        }
+    }
+
+    #[test]
     fn filters_raw_send_message_envelope_as_agent_message() {
         for operation in ["sendMessage", "send_message"] {
             let message = serde_json::json!({
@@ -231,4 +261,3 @@ use super::*;
             }
         );
     }
-
