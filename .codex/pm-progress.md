@@ -7,14 +7,42 @@ None
 None
 
 ## Completed
-- commit: n/a
+- commit: current merge commit (HEAD)
+  summary: 合并 `5302c02c5` 及其前置修复到主线，修复 restored completed child 在 `followup_task` 后的 completion 投递语义：恢复 completed child 不会重新投递历史 completion envelope；真实 followup pending input 到达并完成新 turn 后，新的 child completion 仍会投递一次。PM merge 时保留运行时修复，并将回归测试改为关闭自动 turn 调度、等待 pending input 到达后手动完成新 turn，避免 submission 队列竞态。
+  validation: `rtk cargo test -p thread-service restored_completed_child_path_resolves_and_receives_followup_after_registry_loss -- --nocapture` -> 1 passed；`rtk cargo test -p thread-service restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates -- --nocapture` -> 1 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk git diff --check` -> passed；owner independent review passed
+  residual_risk: 覆盖了 restored completed child 的 canonical followup path 和 ambiguous duplicate path；其他 restored child 重新接收输入的入口若绕过相同 pending-input path，后续仍需按具体 bug 增补测试
+- commit: a96d6e921
+  summary: 合并 `9674ea252` 到主线，让 root-worker 右侧 Schedules agenda 的每个日期分组可折叠；默认展开，日期 header 是带 `aria-expanded` / `aria-controls` 的 button，折叠状态用组件本地 `Set<dateKey>` 维护，不影响 active schedule list、agenda 数据或 recurrence 计算
+  validation: `rtk pnpm --filter @my-codex/root-worker-prototype exec tsx --test src/components/RightPanel.test.tsx` -> 10 passed；`rtk git diff --check`
+  residual_risk: 现有测试栈主要用 static markup，未覆盖完整 DOM 层父组件 state 点击交互；已通过组件边界测试覆盖默认展开、toggle 回调和单组折叠不影响其他日期
+- commit: 6d3ef1ae2
+  summary: 合并 schedule agenda view 到主线；`RightPanel` 的 Schedules 区域新增 `Upcoming` agenda，按日期分组展示未来有限 schedule occurrences，同时保留 active schedule list。实现为 root-worker 纯客户端派生视图，默认最多 20 条、未来 7 天；支持 every_interval、once_after、once_at、every_day_at、every_week_at，并保持 unsubscribe 后 active/agenda 都移除。该完成项包含 `c766afb5b` 合并 `19d6bedd8`，以及 `6d3ef1ae2` 合并 `231d5c195` 的 locale-stable test fix。
+  validation: `rtk pnpm --filter @my-codex/root-worker-prototype exec tsx --test src/lib/threadAnalysis.test.ts src/components/RightPanel.test.tsx` -> 25 passed；`rtk git diff --check`；owner 侧 `rtk pnpm --filter @my-codex/root-worker-prototype exec tsc --noEmit` 仍有既有 unrelated TS errors in `App.tsx`, `conversationCompact.ts`, `slashMenu.test.ts`
+  residual_risk: daily/weekly 的复杂 DST 边界仍依赖浏览器 Intl；agenda 日期 label 跟随用户默认 locale，测试通过 dateKey 保持稳定；旧历史缺 typed schedule args 时只显示 active fallback，不生成 agenda
+- commit: 2b555fe46
+  summary: 合并 `fd77a5912` 到主线，优化 root-worker schedule 展示文案；Conversation 和 RightPanel 共用 `scheduleDisplay.ts`，RightPanel 优先使用 typed `arguments.schedule` 显示 `every_interval 6h`，缺 structured args 的旧历史仍 fallback 到原 `schedule_summary`
+  validation: `rtk pnpm --filter @my-codex/root-worker-prototype exec tsx --test src/lib/conversation.test.ts src/lib/threadAnalysis.test.ts src/components/RightPanel.test.tsx` -> 59 passed；`rtk rg -n "every 21600000 ms" apps/root-worker-prototype/src/lib apps/root-worker-prototype/src/components` -> only test input/fallback/doesNotMatch；`rtk git diff --check`
+  residual_risk: 文案仍采用当前工具式 `every_interval 6h` 风格；后续若做 calendar/agenda 视图，可再统一成更产品化的 `Every 6 hours`
+- commit: 51df8798a
+  summary: 合并 `74ee8ce60` 到主线，修复 `schedule_subscribe` 成功后 conversation/thread item 不展示、右侧 Schedules 不显示的问题；schedule extension tools 现在只对白名单 `schedule_subscribe` / `schedule_unsubscribe` 发 typed builtin display lifecycle event，root-worker Schedules 面板消费 builtin/eventDriven schedule item 并只在 completed + subscription id / completed unsubscribe true 时增删 active schedule。
+  validation: `rtk cargo test -p app-server thread_read_stays_active_while_event_subscription_is_pending -- --nocapture`；`rtk pnpm test src/lib/threadAnalysis.test.ts src/lib/conversation.test.ts src/components/RightPanel.test.tsx`；`rtk cargo build -p app-server --bin app-server`；`rtk git diff --check`；independent review passed
+  residual_risk: 未补完整 dispatch/replay 层测试证明 `memories/read` 不会产生 display event；当前由 schedule-only guard 单测和代码审查兜底，风险较低
+- commit: 8bd08cbef
+  summary: 合并 `b14f41bd4` 到主线，新增 `model_auto_compact_soft_ratio` / `model_auto_compact_hard_ratio`，默认 auto compact usage ratio 从旧 `0.70/0.85` 调整为 `0.80/0.90`；`model_auto_compact_token_limit` 仍保持 token 数语义
+  validation: `rtk cargo test -p compact-service soft_compact -- --nocapture`；`rtk cargo test -p compact-service-api -- --nocapture`；`rtk cargo test -p thread-service auto_compact_decision_gate -- --nocapture`；`rtk cargo build -p app-server --bin app-server`；`rtk rg -n "0\\.70|0\\.85" codex-rs/thread-service/src codex-rs/compact-service/src codex-rs/config/src` 无命中；`rtk git diff --check`
+  residual_risk: `rtk cargo test -p config-service load_config_reads_auto_compact_ratios -- --nocapture` 被既有 config-service 编译问题阻塞
+- commit: 675b750b7
+  summary: 合并 `7242b918c` 到主线，修复 reload 后 persisted/listed subagent canonical path 不能被 `followup_task` 复用的问题；resolver live miss 后可按 persisted spawn tree lazy restore 原 child thread 并注册 path metadata，duplicate persisted path 显式 ambiguous
+  validation: `rtk cargo test -p thread-service restored_completed_child_path_resolves_and_receives_followup_after_registry_loss -- --nocapture`；`rtk cargo test -p thread-service restored_agent_path_resolution_rejects_ambiguous_persisted_duplicates -- --nocapture`；`rtk cargo test -p thread-service resume_agent_respects_max_threads_limit -- --nocapture`；`rtk cargo build -p app-server --bin app-server`；`rtk git diff --check`
+  residual_risk: 只覆盖 canonical path restore/ambiguous/max_threads 的目标路径；更广义 runtime registry 恢复仍需后续按具体问题补测试
+- commit: dd09a6b3a
   summary: 将普通 app-server SQLite log DB subscriber 默认 filter 从 `Level::TRACE` 降为 `Level::WARN`，减少 TRACE/DEBUG/INFO 级别事件默认进入本地 log DB 队列和 SQLite batch 写入；stderr `RUST_LOG`、feedback、OTEL、rollout-trace 均未改动
   validation: owner 已通过 `rtk cargo build -p app-server --bin app-server` 和 `rtk git diff --check`，独立 review 通过；PM 侧确认 `codex-rs/app-server/src/lib.rs` 仅一行 `Level::TRACE -> Level::WARN`，`EnvFilter::from_default_env()` 与 OTEL layer 未变，`rtk git diff --check` 通过
-  residual_risk: 未新增专门覆盖 log DB 默认 filter 的测试，因改动是 `tracing_subscriber::filter::Targets` 级别常量替换，风险较低；主 checkout 仍有此前未提交的其他脏改，本任务未提交 commit
-- commit: n/a
+  residual_risk: 未新增专门覆盖 log DB 默认 filter 的测试，因改动是 `tracing_subscriber::filter::Targets` 级别常量替换，风险较低
+- commit: 8b0a760e6
   summary: 修复主 checkout 当前 `rtk cargo clippy -p app-server --bin app-server --all-targets -- -D warnings` 失败项；包含 clippy 机械修复、删除已无生产调用的 `wait_agent_tool` 兼容 facade 及 helper、将 workflow registry discovery 改用 `TurnContext::discovery_context()`、对仅测试使用 helper 加 `#[cfg(test)]`、对必须保持 scheduler 原子语义的锁内 await 使用局部 `#[expect(..., reason = ...)]`
   validation: owner 已通过 `rtk cargo clippy -p app-server --bin app-server --all-targets -- -D warnings` 和 `rtk git diff --check`；PM 侧复跑 `rtk cargo clippy -p app-server --bin app-server --all-targets -- -D warnings` 输出 `cargo clippy: No issues found`，`rtk git diff --check` 通过；独立 reviewer 多轮通过，覆盖 wait_agent 删除、workflow discovery、scheduler expect、websocket 分支、测试侧 clippy 修复
-  residual_risk: 本任务未提交 commit，改动仍留在主 checkout 工作树；`multi_agent.rs` 属于既有脏文件且本任务共同触碰，主要行为风险是删除旧 `wait_agent` 兼容壳，但 reviewer/owner 已确认生产 tool surface 无残留调用，项目长期方向也是等待统一走 `poll_event`
+  residual_risk: `multi_agent.rs` 属于既有脏文件且本任务共同触碰，主要行为风险是删除旧 `wait_agent` 兼容壳，但 reviewer/owner 已确认生产 tool surface 无残留调用，项目长期方向也是等待统一走 `poll_event`
 - commit: 6d5a76b65
   summary: 合并 `048c163dc` 到主线，修复 reload/restart 或 live runtime 丢失后 completed subagent 从 `list_agents` / agent tree 缺失的问题；`AgentControl` 现在用 persisted `thread_spawn_edges` 与 thread metadata 补充 registry view，支持从子线程反查 spawn root、按 canonical path 去重并保持 live registry 优先；direct subagent paths 合并 persisted open children，但 active 判断仍走 live runtime，不把 completed child 伪装成 active
   validation: owner 已通过 `rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_root_when_registry_is_empty -- --nocapture`；`rtk cargo test -p thread-service direct_subagent_paths_ -- --nocapture`；`rtk cargo test -p thread-service persisted_agent_restore_deduplicates_by_path_with_live_registry_preferred -- --nocapture`；`rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_history_when_live_thread_is_gone -- --nocapture`；`rtk cargo build -p app-server --bin app-server`；`rtk git diff --check`。PM merge 后补跑 `rtk cargo test -p thread-service list_agents_restores_completed_child_from_persisted_root_when_registry_is_empty -- --nocapture`、`rtk cargo build -p app-server --bin app-server`、`rtk git diff --check` 均通过。

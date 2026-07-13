@@ -1810,16 +1810,21 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         .expect("worker rollout should flush");
     wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
         .await;
-
-    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    harness
+        .control
+        .shutdown_live_agent(worker_thread_id)
+        .await
+        .expect("worker shutdown should release the live path");
     assert!(
-        restarted_manager
+        harness
+            .manager
             .get_thread(worker_thread_id)
             .await
             .is_err(),
-        "restarted manager should start without a live worker handle"
+        "worker should be absent from the live registry"
     );
-    let listed_agents = restarted_control
+    let listed_agents = harness
+        .control
         .list_agents(root_thread_id, &SessionSource::Exec, None)
         .await
         .expect("list agents should succeed from persisted tree");
@@ -1832,7 +1837,8 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         AgentStatus::Completed(Some("done".to_string())),
     );
 
-    let resolved_thread_id = restarted_control
+    let resolved_thread_id = harness
+        .control
         .resolve_agent_reference(
             root_thread_id,
             &SessionSource::Exec,
@@ -1843,22 +1849,25 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         .expect("persisted worker path should resolve after registry loss");
     assert_eq!(resolved_thread_id, worker_thread_id);
     assert_eq!(
-        restarted_control
+        harness
+            .control
             .get_agent_metadata(worker_thread_id)
             .and_then(|metadata| metadata.agent_path),
         Some(worker_path.clone()),
         "resolver should re-register metadata needed by followup_task events",
     );
 
-    let restored_worker_thread = restarted_manager
+    let restored_worker_thread = harness
+        .manager
         .get_thread(worker_thread_id)
         .await
         .expect("resolver should restore the original worker thread");
-    let baseline_op_count = restarted_manager.captured_ops().len();
-    restarted_manager
+    let baseline_op_count = harness.manager.captured_ops().len();
+    harness
+        .manager
         .maybe_notify_parent_of_final_status(worker_thread_id)
         .await;
-    let captured_ops = restarted_manager.captured_ops();
+    let captured_ops = harness.manager.captured_ops();
     assert_eq!(
         count_captured_child_completions(
             &captured_ops[baseline_op_count..],
@@ -1877,8 +1886,9 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         "followup after restart".to_string(),
         protocol::protocol::InterAgentOperation::FollowupTask,
     )
-    .with_trigger_turn(true);
-    let submission_id = restarted_control
+    .with_trigger_turn(false);
+    let submission_id = harness
+        .control
         .send_inter_agent_communication(resolved_thread_id, communication.clone())
         .await
         .expect("followup should route to restored worker");
@@ -1890,18 +1900,34 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
             communication: communication.clone(),
         },
     );
-    let captured = restarted_manager
+    let captured = harness
+        .manager
         .captured_ops()
         .into_iter()
         .find(|entry| *entry == expected);
     assert_eq!(captured, Some(expected));
 
-    let _ = restored_worker_thread.codex.session.get_pending_input().await;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if restored_worker_thread.codex.session.has_pending_input().await {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("restored child should receive followup pending input");
+    assert_eq!(
+        restored_worker_thread.codex.session.get_pending_input().await,
+        vec![PendingInputItem::from(communication)],
+        "restored child should receive and consume the followup before its next completion",
+    );
     emit_turn_complete(&restored_worker_thread, "new done").await;
-    restarted_manager
+    harness
+        .manager
         .maybe_notify_parent_of_final_status(worker_thread_id)
         .await;
-    let captured_ops = restarted_manager.captured_ops();
+    let captured_ops = harness.manager.captured_ops();
     assert_eq!(
         count_captured_child_completions(
             &captured_ops[baseline_op_count..],
