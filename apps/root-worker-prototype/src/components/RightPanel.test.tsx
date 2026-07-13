@@ -202,7 +202,8 @@ test("renders live commands and schedule subscriptions", () => {
   assert.doesNotMatch(markup, /changed:\/tmp\/out\.log/);
   assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);
-  assert.match(markup, /every 21600000 ms/);
+  assert.match(markup, /every_interval 6h/);
+  assert.doesNotMatch(markup, /every 21600000 ms/);
 });
 
 test("renders the current thread plan in the todo panel", () => {

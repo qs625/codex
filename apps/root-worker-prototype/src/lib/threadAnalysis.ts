@@ -3,6 +3,7 @@ import {
   type ContextUsageAnalysis,
 } from "./contextUsage";
 import type { Thread, ThreadItem } from "../types";
+import { formatScheduleArgument } from "./scheduleDisplay";
 
 export type MonitorKind = "command" | "schedule";
 
@@ -360,6 +361,7 @@ function monitorDetail(
 ) {
   const outputRecord = objectRecord(output);
   return (
+    formatScheduleArgument(args.schedule) ??
     stringOrNull(outputRecord.schedule_summary) ??
     displayUnknown(args.schedule) ??
     "schedule unavailable"
