@@ -43,6 +43,31 @@ fn assistant_message(text: &str) -> ResponseItem {
     }
 }
 
+#[test]
+fn auto_compact_decision_gate_includes_hard_threshold() {
+    let thresholds = SoftCompactThresholds::default();
+    assert!(!should_evaluate_auto_compact_decision(
+        thresholds.soft_lower_bound - 0.01,
+        thresholds
+    ));
+    assert!(should_evaluate_auto_compact_decision(
+        thresholds.soft_lower_bound,
+        thresholds
+    ));
+    assert!(should_evaluate_auto_compact_decision(
+        thresholds.hard_bound,
+        thresholds
+    ));
+}
+
+#[test]
+fn auto_compact_decision_gate_uses_custom_thresholds() {
+    let thresholds = SoftCompactThresholds::resolve(Some(0.60), Some(0.75)).unwrap();
+
+    assert!(!should_evaluate_auto_compact_decision(0.59, thresholds));
+    assert!(should_evaluate_auto_compact_decision(0.60, thresholds));
+}
+
 #[tokio::test]
 async fn process_compacted_history_replaces_developer_messages() {
     let compacted_history = vec![

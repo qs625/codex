@@ -82,6 +82,12 @@ pub struct Config {
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,
 
+    /// Usage ratio at which auto-compaction may start considering soft signals.
+    pub model_auto_compact_soft_ratio: Option<f64>,
+
+    /// Usage ratio at which auto-compaction triggers regardless of soft signals.
+    pub model_auto_compact_hard_ratio: Option<f64>,
+
     /// Key into the model_providers map that specifies which provider to use.
     pub model_provider_id: String,
 

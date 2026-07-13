@@ -4714,6 +4714,16 @@
       "format": "int64",
       "type": "integer"
     },
+    "model_auto_compact_soft_ratio": {
+      "description": "Usage ratio at which auto-compaction may start considering soft signals.",
+      "format": "double",
+      "type": "number"
+    },
+    "model_auto_compact_hard_ratio": {
+      "description": "Usage ratio at which auto-compaction triggers regardless of soft signals.",
+      "format": "double",
+      "type": "number"
+    },
     "model_catalog_json": {
       "allOf": [
         {

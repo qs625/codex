@@ -4,8 +4,6 @@ use compact_service_api::SoftCompactInputs;
 use protocol::models::ResponseItem;
 
 const MEMORY_CHECKPOINT_PREFIX: &str = "Memory checkpoint:";
-const SOFT_COMPACT_LOWER_BOUND: f64 = 0.70;
-const HARD_COMPACT_BOUND: f64 = 0.85;
 const HEAVY_TOOL_OUTPUT_BYTES: usize = 24_000;
 const HEAVY_FILE_READ_SEARCH_COUNT: usize = 6;
 const MIN_TURNS_SINCE_LAST_COMPACT: usize = 2;
@@ -35,10 +33,10 @@ pub(super) fn summarize_compact_window(
 }
 
 pub(super) fn evaluate_soft_compact(inputs: SoftCompactInputs) -> SoftCompactDecision {
-    if inputs.usage_ratio < SOFT_COMPACT_LOWER_BOUND {
+    if inputs.usage_ratio < inputs.thresholds.soft_lower_bound {
         return decision(false, "usage below soft compact threshold");
     }
-    if inputs.usage_ratio >= HARD_COMPACT_BOUND {
+    if inputs.usage_ratio >= inputs.thresholds.hard_bound {
         return decision(true, "usage reached hard compact threshold");
     }
     if !inputs.cooldown_turns_satisfied && !inputs.cooldown_bytes_satisfied {

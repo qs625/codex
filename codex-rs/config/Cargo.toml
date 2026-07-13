@@ -15,6 +15,7 @@ anyhow = { workspace = true }
 base64 = { workspace = true }
 codex-agent-roles = { workspace = true }
 codex-auth-types = { workspace = true }
+compact-service-api = { workspace = true }
 command-service-api = { workspace = true }
 codex-config-permissions = { workspace = true }
 codex-config-requirements = { workspace = true }

@@ -4184,6 +4184,7 @@ dependencies = [
  "codex-utils-home-dir",
  "codex-utils-path",
  "command-service-api",
+ "compact-service-api",
  "core-foundation 0.9.4",
  "dirs",
  "dns-lookup",

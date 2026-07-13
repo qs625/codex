@@ -3,6 +3,7 @@ use compact_service_api::CompactMemoryRole;
 use compact_service_api::CompactReplacementFile;
 use compact_service_api::ReplacementHistoryInput;
 use compact_service_api::SoftCompactInputs;
+use compact_service_api::SoftCompactThresholds;
 use pretty_assertions::assert_eq;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
@@ -294,38 +295,109 @@ fn current_work_completeness_ignores_missing_snapshot() {
     assert_eq!(completeness, 0.0);
 }
 
-#[test]
-fn soft_compact_prefers_incomplete_current_work_inside_soft_window() {
-    let service = FsCompactService::new();
-    let decision = service.evaluate_soft_compact(SoftCompactInputs {
-        usage_ratio: 0.76,
+fn soft_compact_inputs(usage_ratio: f64) -> SoftCompactInputs {
+    SoftCompactInputs {
+        usage_ratio,
+        thresholds: SoftCompactThresholds::default(),
         turns_since_last_compact: 3,
-        recent_file_read_search_count: 2,
-        recent_tool_output_bytes: 1024,
-        current_work_completeness: 0.2,
-        cooldown_turns_satisfied: true,
-        cooldown_bytes_satisfied: true,
-    });
-    assert_eq!(decision.should_compact, true);
-    assert_eq!(decision.reason, "local current-work memory is incomplete");
-}
-
-#[test]
-fn soft_compact_treats_missing_current_work_as_neutral() {
-    let service = FsCompactService::new();
-    let decision = service.evaluate_soft_compact(SoftCompactInputs {
-        usage_ratio: 0.76,
-        turns_since_last_compact: 1,
         recent_file_read_search_count: 0,
         recent_tool_output_bytes: 1_024,
         current_work_completeness: 1.0,
         cooldown_turns_satisfied: true,
         cooldown_bytes_satisfied: true,
+    }
+}
+
+#[test]
+fn soft_compact_skips_usage_below_new_soft_threshold() {
+    let service = FsCompactService::new();
+    let decision = service.evaluate_soft_compact(SoftCompactInputs {
+        recent_file_read_search_count: 2,
+        current_work_completeness: 0.2,
+        ..soft_compact_inputs(0.79)
+    });
+
+    assert_eq!(decision.should_compact, false);
+    assert_eq!(decision.reason, "usage below soft compact threshold");
+}
+
+#[test]
+fn soft_compact_skips_old_soft_window_with_enough_progress() {
+    let service = FsCompactService::new();
+    let decision = service.evaluate_soft_compact(soft_compact_inputs(0.76));
+
+    assert_eq!(decision.should_compact, false);
+    assert_eq!(decision.reason, "usage below soft compact threshold");
+}
+
+#[test]
+fn soft_compact_prefers_incomplete_current_work_inside_new_soft_window() {
+    let service = FsCompactService::new();
+    let decision = service.evaluate_soft_compact(SoftCompactInputs {
+        recent_file_read_search_count: 2,
+        current_work_completeness: 0.2,
+        ..soft_compact_inputs(0.81)
+    });
+
+    assert_eq!(decision.should_compact, true);
+    assert_eq!(decision.reason, "local current-work memory is incomplete");
+}
+
+#[test]
+fn soft_compact_treats_missing_current_work_as_neutral_inside_new_soft_window() {
+    let service = FsCompactService::new();
+    let decision = service.evaluate_soft_compact(SoftCompactInputs {
+        turns_since_last_compact: 1,
+        ..soft_compact_inputs(0.81)
     });
 
     assert_eq!(decision.should_compact, false);
     assert_eq!(
         decision.reason,
         "too little new user progress since last compact"
+    );
+}
+
+#[test]
+fn soft_compact_hard_threshold_ignores_cooldown() {
+    let service = FsCompactService::new();
+    let decision = service.evaluate_soft_compact(SoftCompactInputs {
+        turns_since_last_compact: 0,
+        recent_tool_output_bytes: 0,
+        cooldown_turns_satisfied: false,
+        cooldown_bytes_satisfied: false,
+        ..soft_compact_inputs(0.90)
+    });
+
+    assert_eq!(decision.should_compact, true);
+    assert_eq!(decision.reason, "usage reached hard compact threshold");
+}
+
+#[test]
+fn soft_compact_uses_custom_thresholds() {
+    let service = FsCompactService::new();
+    let thresholds = SoftCompactThresholds::resolve(Some(0.60), Some(0.75)).unwrap();
+
+    let soft_decision = service.evaluate_soft_compact(SoftCompactInputs {
+        thresholds,
+        ..soft_compact_inputs(0.61)
+    });
+    assert_eq!(soft_decision.should_compact, true);
+    assert_eq!(
+        soft_decision.reason,
+        "soft compact window exceeded with enough new progress"
+    );
+
+    let hard_decision = service.evaluate_soft_compact(SoftCompactInputs {
+        thresholds,
+        turns_since_last_compact: 0,
+        cooldown_turns_satisfied: false,
+        cooldown_bytes_satisfied: false,
+        ..soft_compact_inputs(0.75)
+    });
+    assert_eq!(hard_decision.should_compact, true);
+    assert_eq!(
+        hard_decision.reason,
+        "usage reached hard compact threshold"
     );
 }
