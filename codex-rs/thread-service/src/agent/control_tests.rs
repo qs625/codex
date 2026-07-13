@@ -1850,10 +1850,26 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         "resolver should re-register metadata needed by followup_task events",
     );
 
-    restarted_manager
+    let _restored_worker_thread = restarted_manager
         .get_thread(worker_thread_id)
         .await
         .expect("resolver should restore the original worker thread");
+    let baseline_op_count = restarted_manager.captured_ops().len();
+    restarted_manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = restarted_manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        0,
+        "restoring a completed child must not re-arm its old completion envelope",
+    );
+
     let communication = InterAgentCommunication::new(
         AgentPath::root(),
         worker_path.clone(),
@@ -1879,6 +1895,7 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         .into_iter()
         .find(|entry| *entry == expected);
     assert_eq!(captured, Some(expected));
+
 }
 
 #[tokio::test]
