@@ -607,6 +607,10 @@ export type ConversationEntry = {
   toolName?: string;
   toolStatus?: string;
   toolDetails?: string;
+  pollEventProgress?: {
+    startedAtMs: number;
+    currentTimeoutMs: number;
+  };
   toolCategory?:
     | "command"
     | "eventDrivenSubscription"

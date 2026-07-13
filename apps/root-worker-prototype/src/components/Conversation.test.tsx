@@ -172,6 +172,38 @@ test("single tool rows render a single inline item and auto-expand details with 
   assert.equal(expandedMarkup.match(/first summary/g)?.length ?? 0, 1);
 });
 
+test("expanded poll_event tool rows render current wait progress", () => {
+  const markup = renderToStaticMarkup(
+    <ToolRow
+      entries={[
+        {
+          id: "poll-event",
+          kind: "tool",
+          author: "root",
+          role: "system",
+          text: "poll_event • waiting up to 10s",
+          timestamp: "09:41",
+          attachments: [],
+          toolName: "poll_event",
+          toolStatus: "inProgress",
+          toolDetails: "Output\ncurrentTimeoutMs: 10000",
+          toolCategory: "multiAgent",
+          pollEventProgress: {
+            startedAtMs: Date.now() - 2_000,
+            currentTimeoutMs: 10_000,
+          },
+        },
+      ]}
+      isOpen
+    />,
+  );
+
+  assert.match(markup, /Elapsed/);
+  assert.match(markup, /Remaining/);
+  assert.match(markup, /role="progressbar"/);
+  assert.match(markup, /poll-event-progress-track/);
+});
+
 test("tool rows treat partially completed lists as in progress", () => {
   const mixedEntries: ConversationEntry[] = [
     entries[0]!,

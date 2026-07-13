@@ -1,7 +1,7 @@
 use super::session::ThreadWaitEventSnapshot;
 use super::session::ThreadWaitSource;
 use super::*;
-use tokio::time::Instant;
+use tokio::time::{Duration, Instant};
 
 impl Session {
     pub(crate) async fn sync_mailbox_pending_buffer(&self) {
@@ -488,23 +488,12 @@ impl Session {
         request: thread_service_api::ThreadPollEventRequest,
     ) -> Result<thread_service_api::ThreadPollEventResult, tool_service_api::FunctionCallError>
     {
-        let initial_timeout_ms = request.initial_timeout_ms.ok_or_else(|| {
-            tool_service_api::FunctionCallError::Fatal(
-                "poll_event requires initial_timeout_ms to be resolved by the thread runtime"
-                    .to_string(),
-            )
-        })?;
-        let hard_cap_timeout_ms = request.hard_cap_timeout_ms.ok_or_else(|| {
-            tool_service_api::FunctionCallError::Fatal(
-                "poll_event requires hard_cap_timeout_ms to be resolved by the thread runtime"
-                    .to_string(),
-            )
-        })?;
+        let metadata = self.poll_event_timeout_metadata(request).await?;
+        let initial_timeout_ms = metadata.initial_timeout_ms;
+        let current_timeout_ms = metadata.current_timeout_ms;
+        let hard_cap_timeout_ms = metadata.hard_cap_timeout_ms;
+        let current_timeout = Duration::from_millis(current_timeout_ms as u64);
         let started = Instant::now();
-        let current_timeout = self
-            .thread_wait_current_window(initial_timeout_ms, hard_cap_timeout_ms)
-            .await;
-        let current_timeout_ms = current_timeout.as_millis() as i64;
         let mut thread_wait_rx = self.subscribe_thread_wait_events();
         let wait_snapshot = *thread_wait_rx.borrow_and_update();
         if let Some(source_hint) = self.pending_thread_input_source_hint().await {
@@ -557,6 +546,36 @@ impl Session {
                 })
             }
         }
+    }
+
+    pub(crate) async fn poll_event_timeout_metadata(
+        &self,
+        request: thread_service_api::ThreadPollEventRequest,
+    ) -> Result<
+        thread_service_api::ThreadPollEventTimeoutMetadata,
+        tool_service_api::FunctionCallError,
+    > {
+        let initial_timeout_ms = request.initial_timeout_ms.ok_or_else(|| {
+            tool_service_api::FunctionCallError::Fatal(
+                "poll_event requires initial_timeout_ms to be resolved by the thread runtime"
+                    .to_string(),
+            )
+        })?;
+        let hard_cap_timeout_ms = request.hard_cap_timeout_ms.ok_or_else(|| {
+            tool_service_api::FunctionCallError::Fatal(
+                "poll_event requires hard_cap_timeout_ms to be resolved by the thread runtime"
+                    .to_string(),
+            )
+        })?;
+        let current_timeout = self
+            .thread_wait_current_window(initial_timeout_ms, hard_cap_timeout_ms)
+            .await;
+        let current_timeout_ms = current_timeout.as_millis() as i64;
+        Ok(thread_service_api::ThreadPollEventTimeoutMetadata {
+            initial_timeout_ms,
+            current_timeout_ms,
+            hard_cap_timeout_ms,
+        })
     }
 }
 

@@ -68,6 +68,7 @@
   - `src/protocol/thread_history/tool_events.rs` 负责把 persisted event replay 成 typed thread items；`exec_command` 的恢复链路在这里。
   - 它不是 `app-server thread/read` 的唯一事实来源；与 `thread-history` 之间存在行为漂移风险。
   - `src/protocol/event_mapping.rs` 负责 live event 到 typed thread-item notification 的映射；`BuiltinToolCallStarted/Completed -> ThreadItem::BuiltinToolCall` 这类 live display 缺口要先查这里，而不是 `thread-history`。
+  - `src/protocol/thread_history/tests/` 当前未接入 `app-server-protocol` crate 测试树；直接接入会暴露既有缺失 import/type 的编译问题。不要把这里的新增用例当作有效验证，除非先修复并接入整套测试。
 - `codex-rs/workflow/`
   - workflow runtime bridge 的 agent wait 语义也应统一走 `poll_event`，不要继续依赖独立 `wait_agent` API。
 - `apps/root-worker-prototype/`

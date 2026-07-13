@@ -127,6 +127,22 @@ pub(crate) async fn dispatch(
         POLL_EVENT_TOOL_NAME => {
             let item_id = format!("builtin-tool-{}", uuid::Uuid::new_v4());
             let arguments = json!({});
+            let timeout_metadata = thread_service_api
+                .poll_event_timeout_metadata(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    thread_service_api::ThreadPollEventRequest {
+                        initial_timeout_ms: None,
+                        hard_cap_timeout_ms: None,
+                    },
+                )
+                .await;
+            let started_output = match timeout_metadata {
+                Ok(timeout_metadata) => Some(
+                    serde_json::to_value(&timeout_metadata)
+                        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?,
+                ),
+                Err(_) => None,
+            };
             session_capability
                 .emit_event(
                     turn.as_ref(),
@@ -137,7 +153,7 @@ pub(crate) async fn dispatch(
                         tool: POLL_EVENT_TOOL_NAME.to_string(),
                         arguments: arguments.clone(),
                         status: BuiltinToolCallStatus::InProgress,
-                        output: None,
+                        output: started_output,
                         lifecycle_at_ms: now_unix_timestamp_ms(),
                     }),
                 )
@@ -430,6 +446,7 @@ mod tests {
     use thread_service_api::ThreadListAgentsResult;
     use thread_service_api::ThreadPollEventRequest;
     use thread_service_api::ThreadPollEventResult;
+    use thread_service_api::ThreadPollEventTimeoutMetadata;
     use thread_service_api::ThreadServiceFuture;
     use thread_service_api::ThreadSpawnAgentRequest;
     use thread_service_api::ThreadSpawnAgentResult;
@@ -467,6 +484,17 @@ mod tests {
             _request: ThreadPollEventRequest,
         ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>> {
             Box::pin(async { unreachable!("poll_event should not be called in this test") })
+        }
+
+        fn poll_event_timeout_metadata<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _request: ThreadPollEventRequest,
+        ) -> ThreadServiceFuture<'a, Result<ThreadPollEventTimeoutMetadata, FunctionCallError>>
+        {
+            Box::pin(async {
+                unreachable!("poll_event_timeout_metadata should not be called in this test")
+            })
         }
 
         fn close_agent<'a>(
