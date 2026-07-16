@@ -20,9 +20,12 @@ pub(super) fn parse_thread_start_agent(
         .filter(|value| !value.is_empty());
 
     if let Some(task_name) = task_name {
-        let agent_path = AgentPath::derive(None, task_name.as_str()).map_err(|err| {
-            invalid_request(format!("invalid taskName `{task_name}`: {err}"))
-        })?;
+        let agent_path = if task_name.starts_with('/') {
+            AgentPath::try_from(task_name.as_str())
+        } else {
+            AgentPath::derive(None, task_name.as_str())
+        }
+        .map_err(|err| invalid_request(format!("invalid taskName `{task_name}`: {err}")))?;
         return Ok(Some(ThreadStartAgent {
             agent_path: Some(agent_path),
             agent_role,
@@ -1175,6 +1178,22 @@ mod tests {
             Some("feature-owner".to_string()),
         )
         .expect("valid agent")
+        .expect("agent metadata");
+
+        assert_eq!(
+            agent.agent_path.as_ref().map(ToString::to_string),
+            Some("/owner_dev".to_string())
+        );
+        assert_eq!(agent.agent_role.as_deref(), Some("feature-owner"));
+    }
+
+    #[test]
+    fn parse_thread_start_agent_accepts_root_level_agent_path() {
+        let agent = parse_thread_start_agent(
+            Some("/owner_dev".to_string()),
+            Some("feature-owner".to_string()),
+        )
+        .expect("valid agent path")
         .expect("agent metadata");
 
         assert_eq!(
