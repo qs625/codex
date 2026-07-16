@@ -1863,7 +1863,7 @@ function App() {
     try {
       const thread = threads.find((candidate) => candidate.id === threadId);
       if (thread && isRootThread(thread)) {
-        throw new Error("Root agent cannot be deleted.");
+        throw new Error("Project PM cannot be deleted from the subagent menu.");
       }
       const archive = window.codexDesktop.archiveThread;
       if (typeof archive !== "function") {
@@ -2530,7 +2530,7 @@ function App() {
           fileTreeEntriesByPath={fileTreeEntriesByPath}
           fileTreeErrorsByPath={fileTreeErrorsByPath}
           fileTreeLoadingPath={fileTreeLoadingPath}
-          onCreateRootThread={() => void openWorkspaceProject()}
+          onOpenProjectPm={() => void openWorkspaceProject()}
           onNavigateToSymbol={(destination, sourceLocation) =>
             void handleNavigateToSymbol(destination, sourceLocation)
           }

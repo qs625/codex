@@ -68,7 +68,7 @@ function formatTokenCount(value: number | null) {
 export function RightPanel({
   activeView,
   availableSkillCount,
-  onCreateRootThread,
+  onOpenProjectPm,
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
@@ -102,7 +102,7 @@ export function RightPanel({
 }: {
   activeView: RightPanelView;
   availableSkillCount: number;
-  onCreateRootThread: () => void;
+  onOpenProjectPm: () => void;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
@@ -149,7 +149,7 @@ export function RightPanel({
           {activeView === "todo" ? (
             <TodoPanel
               stats={todoStats}
-              onCreateRootThread={onCreateRootThread}
+              onOpenProjectPm={onOpenProjectPm}
               onSelectTaskThread={onSelectTaskThread}
               onSetTaskFilter={onSetTaskFilter}
               planUpdate={planUpdate}
@@ -705,7 +705,7 @@ function statusClassName(status: string) {
 
 function TodoPanel({
   stats,
-  onCreateRootThread,
+  onOpenProjectPm,
   onSelectTaskThread,
   onSetTaskFilter,
   planUpdate,
@@ -714,7 +714,7 @@ function TodoPanel({
   todoItems,
 }: {
   stats: ReturnType<typeof buildTodoStats>;
-  onCreateRootThread: () => void;
+  onOpenProjectPm: () => void;
   onSelectTaskThread: (threadId: string) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
   planUpdate: ThreadPlanUpdate | null;
@@ -728,11 +728,11 @@ function TodoPanel({
         <div className="panel-content-copy">
           <span className="panel-eyebrow">Todo List</span>
           <h2>Execution Queue</h2>
-          <p>Direct child tasks for the selected thread.</p>
+          <p>Direct child work coordinated by the selected PM or agent.</p>
         </div>
-        <button type="button" className="panel-inline-action" onClick={onCreateRootThread}>
+        <button type="button" className="panel-inline-action" onClick={onOpenProjectPm}>
           <PlusIcon />
-          <span>New Task</span>
+          <span>Open PM</span>
         </button>
       </header>
 
