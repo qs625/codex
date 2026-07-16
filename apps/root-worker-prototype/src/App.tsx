@@ -1354,7 +1354,6 @@ function App() {
         cwd: projectCwd,
         name,
         taskName: draft?.taskName,
-        agentPath: draft?.agentPath,
         agentType: draft?.agentType,
         model: draft?.model,
         modelProvider: draft?.modelProvider,

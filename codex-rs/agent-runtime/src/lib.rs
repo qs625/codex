@@ -68,6 +68,7 @@ pub use goal_mutation_plan::set_thread_goal_mutation_plan;
 pub use goal_runtime_state::GoalRuntimeState;
 pub use registry::AgentMetadata;
 pub use registry::AgentMode;
+pub use registry::AgentPathReservation;
 pub use registry::AgentRegistry;
 pub use registry::SpawnReservation;
 pub use registry::exceeds_thread_spawn_depth_limit;

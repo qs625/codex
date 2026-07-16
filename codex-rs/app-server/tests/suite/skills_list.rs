@@ -616,7 +616,6 @@ async fn skills_changed_notification_is_emitted_after_skill_change() -> Result<(
             service_tier: None,
             cwd: None,
             task_name: None,
-            agent_path: None,
             agent_type: None,
             runtime_workspace_roots: None,
             approval_policy: None,

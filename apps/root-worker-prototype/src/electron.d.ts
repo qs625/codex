@@ -33,7 +33,6 @@ declare global {
         cwd?: string;
         name?: string;
         taskName?: string | null;
-        agentPath?: string | null;
         agentType?: string | null;
         model?: string | null;
         modelProvider?: string | null;

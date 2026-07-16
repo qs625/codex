@@ -48,6 +48,7 @@ pub struct AgentMetadata {
     pub agent_role: Option<String>,
     pub agent_mode: AgentMode,
     pub last_task_message: Option<String>,
+    pub counted: bool,
 }
 
 fn format_agent_nickname(name: &str, nickname_reset_count: usize) -> String {
@@ -105,6 +106,18 @@ impl AgentRegistry {
         })
     }
 
+    pub fn reserve_agent_path_registration(
+        self: &Arc<Self>,
+        agent_path: &AgentPath,
+    ) -> Result<AgentPathReservation> {
+        self.reserve_agent_path(agent_path)?;
+        Ok(AgentPathReservation {
+            state: Arc::clone(self),
+            active: true,
+            reserved_agent_path: Some(agent_path.clone()),
+        })
+    }
+
     pub fn release_spawned_thread(&self, thread_id: ThreadId) {
         let removed_counted_agent = {
             let mut active_agents = self
@@ -118,12 +131,27 @@ impl AgentRegistry {
                 .cloned();
             removed_key
                 .and_then(|key| active_agents.agent_tree.remove(key.as_str()))
-                .is_some_and(|metadata| {
-                    !metadata.agent_path.as_ref().is_some_and(AgentPath::is_root)
-                })
+                .is_some_and(|metadata| metadata.counted)
         };
         if removed_counted_agent {
             self.total_count.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    pub fn release_uncounted_thread_metadata(&self, thread_id: ThreadId) {
+        let mut active_agents = self
+            .active_agents
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let removed_key = active_agents
+            .agent_tree
+            .iter()
+            .find_map(|(key, metadata)| {
+                (metadata.agent_id == Some(thread_id) && !metadata.counted).then_some(key)
+            })
+            .cloned();
+        if let Some(key) = removed_key {
+            active_agents.agent_tree.remove(key.as_str());
         }
     }
 
@@ -309,6 +337,31 @@ pub struct SpawnReservation {
     reserved_agent_path: Option<AgentPath>,
 }
 
+pub struct AgentPathReservation {
+    state: Arc<AgentRegistry>,
+    active: bool,
+    reserved_agent_path: Option<AgentPath>,
+}
+
+impl AgentPathReservation {
+    pub fn commit(mut self, mut agent_metadata: AgentMetadata) {
+        agent_metadata.counted = false;
+        self.reserved_agent_path = None;
+        self.state.register_spawned_thread(agent_metadata);
+        self.active = false;
+    }
+}
+
+impl Drop for AgentPathReservation {
+    fn drop(&mut self) {
+        if self.active
+            && let Some(agent_path) = self.reserved_agent_path.take()
+        {
+            self.state.release_reserved_agent_path(&agent_path);
+        }
+    }
+}
+
 impl SpawnReservation {
     pub fn reserve_agent_nickname_with_preference(
         &mut self,
@@ -331,7 +384,8 @@ impl SpawnReservation {
         Ok(())
     }
 
-    pub fn commit(mut self, agent_metadata: AgentMetadata) {
+    pub fn commit(mut self, mut agent_metadata: AgentMetadata) {
+        agent_metadata.counted = true;
         self.reserved_agent_nickname = None;
         self.reserved_agent_path = None;
         self.state.register_spawned_thread(agent_metadata);

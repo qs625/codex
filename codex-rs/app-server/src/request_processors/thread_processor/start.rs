@@ -17,7 +17,6 @@ impl ThreadRequestProcessor {
             service_tier,
             cwd,
             task_name,
-            agent_path,
             agent_type,
             runtime_workspace_roots,
             approval_policy,
@@ -47,7 +46,7 @@ impl ThreadRequestProcessor {
                 .await;
         }
         let environment_selections = self.parse_environment_selections(environments)?;
-        let thread_start_agent = parse_thread_start_agent(task_name, agent_path, agent_type)?;
+        let thread_start_agent = parse_thread_start_agent(task_name, agent_type)?;
         if let Some(reasoning_effort) = reasoning_effort {
             request_overrides
                 .get_or_insert_with(std::collections::HashMap::new)

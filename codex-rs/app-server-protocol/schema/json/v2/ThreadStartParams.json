@@ -190,12 +190,6 @@
         "null"
       ]
     },
-    "agentPath": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "agentType": {
       "type": [
         "string",

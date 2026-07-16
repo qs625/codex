@@ -4,6 +4,7 @@ use crate::installation_id::INSTALLATION_ID_FILENAME;
 use crate::session::SessionSettingsUpdate;
 use crate::session::tests::make_session_and_context;
 use crate::state_db_bridge::init_state_db;
+use codex_agent_runtime::AgentMetadata;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
 use core_test_support::PathBufExt;
@@ -13,6 +14,7 @@ use model_service_api::ModelCatalogRefresh;
 use pretty_assertions::assert_eq;
 use protocol::models::ContentItem;
 use protocol::models::ReasoningItemReasoningSummary;
+use protocol::AgentPath;
 use protocol::models::ResponseItem;
 use protocol::openai_models::ModelsResponse;
 use protocol::protocol::AgentMessageEvent;
@@ -497,6 +499,209 @@ args = ["dev", "cd /tmp && true"]
     assert!(dev_position < local_position);
     assert!(!environment_context.contains("\n  <cwd>"));
     assert!(!environment_context.contains("\n  <shell>"));
+}
+
+#[tokio::test]
+async fn start_thread_rejects_duplicate_root_scope_agent_path() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let manager = ThreadService::with_models_provider_and_home_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        crate::test_support::model_provider_factory_for_tests(),
+        config.codex_home.to_path_buf(),
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+    );
+    let agent_path = AgentPath::try_from("/project_alpha").expect("agent path");
+    let start_options = || StartThreadOptions {
+        config: config.clone(),
+        initial_history: InitialHistory::New,
+        session_source: None,
+        agent_metadata: Some(AgentMetadata {
+            agent_path: Some(agent_path.clone()),
+            ..Default::default()
+        }),
+        thread_source: None,
+        dynamic_tools: Vec::new(),
+        persist_extended_history: false,
+        metrics_service_name: None,
+        parent_trace: None,
+        environments: Vec::new(),
+    };
+
+    manager
+        .start_thread_with_options(start_options())
+        .await
+        .expect("first thread should start");
+    let duplicate = manager.start_thread_with_options(start_options()).await;
+
+    let Err(error) = duplicate else {
+        panic!("duplicate agent path should fail");
+    };
+    assert!(error.to_string().contains("already exists"));
+    assert_eq!(manager.list_thread_ids().await.len(), 1);
+}
+
+#[tokio::test]
+async fn removed_root_scope_agent_path_can_be_reused() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let manager = ThreadService::with_models_provider_and_home_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        crate::test_support::model_provider_factory_for_tests(),
+        config.codex_home.to_path_buf(),
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+    );
+    let agent_path = AgentPath::try_from("/project_alpha").expect("agent path");
+    let start_options = || StartThreadOptions {
+        config: config.clone(),
+        initial_history: InitialHistory::New,
+        session_source: None,
+        agent_metadata: Some(AgentMetadata {
+            agent_path: Some(agent_path.clone()),
+            ..Default::default()
+        }),
+        thread_source: None,
+        dynamic_tools: Vec::new(),
+        persist_extended_history: false,
+        metrics_service_name: None,
+        parent_trace: None,
+        environments: Vec::new(),
+    };
+
+    let first = manager
+        .start_thread_with_options(start_options())
+        .await
+        .expect("first thread should start");
+    let removed = manager.remove_thread(&first.thread_id).await;
+    assert!(removed.is_some());
+
+    manager
+        .start_thread_with_options(start_options())
+        .await
+        .expect("agent path should be reusable after live removal");
+}
+
+#[tokio::test]
+async fn shutdown_root_scope_agent_path_can_be_reused() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let manager = ThreadService::with_models_provider_and_home_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        crate::test_support::model_provider_factory_for_tests(),
+        config.codex_home.to_path_buf(),
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+    );
+    let agent_path = AgentPath::try_from("/project_alpha").expect("agent path");
+    let start_options = || StartThreadOptions {
+        config: config.clone(),
+        initial_history: InitialHistory::New,
+        session_source: None,
+        agent_metadata: Some(AgentMetadata {
+            agent_path: Some(agent_path.clone()),
+            ..Default::default()
+        }),
+        thread_source: None,
+        dynamic_tools: Vec::new(),
+        persist_extended_history: false,
+        metrics_service_name: None,
+        parent_trace: None,
+        environments: Vec::new(),
+    };
+
+    let first = manager
+        .start_thread_with_options(start_options())
+        .await
+        .expect("first thread should start");
+    let report = manager
+        .shutdown_all_threads_bounded(Duration::from_secs(10))
+        .await;
+    assert_eq!(report.completed, vec![first.thread_id]);
+    assert!(report.submit_failed.is_empty());
+    assert!(report.timed_out.is_empty());
+
+    manager
+        .start_thread_with_options(start_options())
+        .await
+        .expect("agent path should be reusable after shutdown removal");
+}
+
+#[tokio::test]
+async fn root_scope_project_agent_path_is_not_listed_under_root_prefix() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let manager = ThreadService::with_models_provider_and_home_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        crate::test_support::model_provider_factory_for_tests(),
+        config.codex_home.to_path_buf(),
+        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+    );
+    let alpha_path = AgentPath::try_from("/project_alpha").expect("agent path");
+    let beta_path = AgentPath::try_from("/project_beta").expect("agent path");
+    let start_root = |agent_path: AgentPath| StartThreadOptions {
+        config: config.clone(),
+        initial_history: InitialHistory::New,
+        session_source: None,
+        agent_metadata: Some(AgentMetadata {
+            agent_path: Some(agent_path),
+            ..Default::default()
+        }),
+        thread_source: None,
+        dynamic_tools: Vec::new(),
+        persist_extended_history: false,
+        metrics_service_name: None,
+        parent_trace: None,
+        environments: Vec::new(),
+    };
+    let alpha_thread = manager
+        .start_thread_with_options(start_root(alpha_path.clone()))
+        .await
+        .expect("alpha thread should start");
+    manager
+        .start_thread_with_options(start_root(beta_path.clone()))
+        .await
+        .expect("beta thread should start");
+
+    let control = manager.agent_control();
+    let root_prefixed = control
+        .list_agents(alpha_thread.thread_id, &SessionSource::Exec, Some("/root"))
+        .await
+        .expect("list root prefix");
+    assert!(root_prefixed.is_empty());
+
+    let all_agents = control
+        .list_agents(alpha_thread.thread_id, &SessionSource::Exec, None)
+        .await
+        .expect("list all agents");
+    assert!(
+        all_agents
+            .iter()
+            .any(|agent| agent.agent_name == alpha_path.to_string())
+    );
+    assert!(
+        all_agents
+            .iter()
+            .all(|agent| agent.agent_name != beta_path.to_string())
+    );
 }
 
 #[tokio::test]

@@ -215,38 +215,28 @@ export function NewThreadPopover({
   const [mode, setMode] = useState<NewThreadDraft["mode"]>("project");
   const [projectPath, setProjectPath] = useState(workspacePath);
   const [title, setTitle] = useState("Project chat");
-  const [taskName, setTaskName] = useState("project_chat");
-  const [agentPath, setAgentPath] = useState("/root/project_chat");
+  const initialThreadStartParams = defaultNewThreadStartParams(workspacePath);
+  const [taskName, setTaskName] = useState(initialThreadStartParams.taskName);
   const [agentType, setAgentType] = useState("");
   const [model, setModel] = useState("");
   const [modelProvider, setModelProvider] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState("");
   const [serviceTier, setServiceTier] = useState("");
   const hasSeededWorkspacePathRef = useRef(Boolean(workspacePath.trim()));
+  const hasManualThreadStartParamsRef = useRef(false);
   const trimmedProjectPath = projectPath.trim();
+  const defaultThreadStartParams = defaultNewThreadStartParams(trimmedProjectPath);
   const trimmedTaskName = taskName.trim();
-  const trimmedAgentPath = agentPath.trim();
-  const derivedAgentPath = trimmedTaskName ? `/root/${trimmedTaskName}` : "";
+  const pathPreview = trimmedTaskName ? `/${trimmedTaskName}` : "";
   const taskNameError =
     trimmedTaskName && !isValidAgentPathSegment(trimmedTaskName)
       ? "Task name must use lowercase letters, digits, and underscores, and cannot be root."
       : "";
-  const agentPathError =
-    trimmedAgentPath && !isValidNewThreadAgentPath(trimmedAgentPath)
-      ? "Agent path must start with /root or /morpheus and use non-root lowercase path segments."
-      : "";
-  const agentPathConflict =
-    derivedAgentPath &&
-    trimmedAgentPath &&
-    derivedAgentPath !== trimmedAgentPath
-      ? `taskName resolves to ${derivedAgentPath}.`
-      : "";
   const canCreate =
     mode === "project" &&
     trimmedProjectPath.length > 0 &&
-    !taskNameError &&
-    !agentPathError &&
-    !agentPathConflict;
+    trimmedTaskName.length > 0 &&
+    !taskNameError;
 
   useEffect(() => {
     if (
@@ -259,6 +249,17 @@ export function NewThreadPopover({
     }
   }, [projectPath, workspacePath]);
 
+  useEffect(() => {
+    const nextParams = resolveNewThreadStartParamsForProject({
+      currentTaskName: taskName,
+      hasManualThreadStartParams: hasManualThreadStartParamsRef.current,
+      projectPath: trimmedProjectPath,
+    });
+    if (nextParams.taskName !== taskName) {
+      setTaskName(nextParams.taskName);
+    }
+  }, [taskName, trimmedProjectPath]);
+
   const submitDraft = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canCreate) {
@@ -267,7 +268,6 @@ export function NewThreadPopover({
     onSubmit(
       buildNewThreadDraft(mode, trimmedProjectPath, title, {
         taskName,
-        agentPath,
         agentType,
         model,
         modelProvider,
@@ -343,10 +343,10 @@ export function NewThreadPopover({
         <input
           onChange={(event) => {
             const nextTaskName = event.target.value;
+            hasManualThreadStartParamsRef.current = true;
             setTaskName(nextTaskName);
-            setAgentPath(nextTaskName.trim() ? `/root/${nextTaskName.trim()}` : "");
           }}
-          placeholder="project_chat"
+          placeholder={defaultThreadStartParams.taskName}
           value={taskName}
         />
         {taskNameError ? (
@@ -355,17 +355,8 @@ export function NewThreadPopover({
       </label>
 
       <label className="sidebar-create-field">
-        <span>agentPath</span>
-        <input
-          onChange={(event) => setAgentPath(event.target.value)}
-          placeholder="/root/project_chat"
-          value={agentPath}
-        />
-        {agentPathError || agentPathConflict ? (
-          <em className="sidebar-create-error">
-            {agentPathError || agentPathConflict}
-          </em>
-        ) : null}
+        <span>Path preview</span>
+        <input readOnly value={pathPreview} />
       </label>
 
       <label className="sidebar-create-field">
@@ -442,7 +433,6 @@ export function buildNewThreadDraft(
     Pick<
       NewThreadDraft,
       | "taskName"
-      | "agentPath"
       | "agentType"
       | "model"
       | "modelProvider"
@@ -452,15 +442,13 @@ export function buildNewThreadDraft(
   > = {},
 ): NewThreadDraft {
   const requestedTaskName = params.taskName?.trim();
-  const requestedAgentPath = params.agentPath?.trim();
-  const taskName =
-    requestedTaskName ?? (requestedAgentPath ? "" : "project_chat");
+  const defaultParams = defaultNewThreadStartParams(projectPath);
+  const taskName = requestedTaskName ?? defaultParams.taskName;
   return {
     mode,
     projectPath: projectPath.trim(),
     title: title.trim() || "Project chat",
     taskName,
-    agentPath: requestedAgentPath || (taskName ? `/root/${taskName}` : ""),
     agentType: optionalThreadStartParam(params.agentType),
     model: optionalThreadStartParam(params.model),
     modelProvider: optionalThreadStartParam(params.modelProvider),
@@ -482,15 +470,60 @@ export function isValidNewThreadAgentPath(path: string) {
   if (!path.startsWith("/")) {
     return false;
   }
-  if (path === "/morpheus") {
-    return true;
+  if (path === "/" || path.endsWith("/")) {
+    return false;
   }
   const segments = path.split("/").slice(1);
   const root = segments[0];
-  if (root !== "root") {
-    return false;
+  if (root === "root") {
+    return segments.slice(1).every(isValidAgentPathSegment);
   }
-  return segments.slice(1).every(isValidAgentPathSegment);
+  return segments.every(isValidAgentPathSegment);
+}
+
+export function defaultNewThreadStartParams(projectPath: string) {
+  const normalizedProjectPath = projectPath.trim();
+  const basename = normalizedProjectPath.split(/[\\/]+/).filter(Boolean).pop() ?? "";
+  const prefix = sanitizeAgentPathSegment(basename) || "project";
+  const hash = stablePathHash(normalizedProjectPath || "project");
+  const taskName = `${prefix}_${hash}`;
+  return {
+    taskName,
+    pathPreview: `/${taskName}`,
+  };
+}
+
+export function resolveNewThreadStartParamsForProject({
+  currentTaskName,
+  hasManualThreadStartParams,
+  projectPath,
+}: {
+  currentTaskName: string;
+  hasManualThreadStartParams: boolean;
+  projectPath: string;
+}) {
+  if (hasManualThreadStartParams) {
+    return {
+      taskName: currentTaskName,
+      pathPreview: currentTaskName.trim() ? `/${currentTaskName.trim()}` : "",
+    };
+  }
+  return defaultNewThreadStartParams(projectPath);
+}
+
+function sanitizeAgentPathSegment(value: string) {
+  const sanitized = value.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+  const trimmed = sanitized.replace(/^_+|_+$/g, "").replace(/_+/g, "_");
+  return isValidAgentPathSegment(trimmed) ? trimmed : "";
+}
+
+function stablePathHash(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36).padStart(6, "0").slice(0, 6);
 }
 
 function ProjectSection({

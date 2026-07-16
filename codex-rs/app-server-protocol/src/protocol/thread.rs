@@ -121,8 +121,6 @@ pub struct ThreadStartParams {
     #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
     pub task_name: Option<String>,
     #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
-    pub agent_path: Option<String>,
-    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
     pub agent_type: Option<String>,
     /// Replace the thread's runtime workspace roots. Relative paths are
     /// resolved against the effective cwd for the thread.

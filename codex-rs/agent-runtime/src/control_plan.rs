@@ -142,6 +142,7 @@ pub fn prepare_thread_spawn_plan(
         agent_role,
         agent_mode,
         last_task_message: None,
+        counted: true,
     };
     Ok((session_source, agent_metadata))
 }
@@ -249,10 +250,6 @@ pub fn thread_spawn_depth(session_source: &SessionSource) -> Option<i32> {
 }
 
 pub fn agent_matches_prefix(agent_path: Option<&AgentPath>, prefix: &AgentPath) -> bool {
-    if prefix.is_root() {
-        return true;
-    }
-
     agent_path.is_some_and(|agent_path| {
         agent_path == prefix
             || agent_path
@@ -293,9 +290,10 @@ pub fn list_agents_plan(
     });
 
     let root_path = AgentPath::root();
-    let include_root = resolved_prefix
-        .as_ref()
-        .is_none_or(|prefix| agent_matches_prefix(Some(&root_path), prefix));
+    let include_root = match resolved_prefix.as_ref() {
+        Some(prefix) => agent_matches_prefix(Some(&root_path), prefix),
+        None => agent_matches_prefix(Some(current_agent_path), &root_path),
+    };
     let candidates = live_agents
         .into_iter()
         .filter_map(|metadata| {
@@ -405,11 +403,13 @@ mod tests {
         let worker = AgentPath::try_from("/root/worker").expect("agent path");
         let nested = AgentPath::try_from("/root/worker/reviewer").expect("agent path");
         let sibling = AgentPath::try_from("/root/owner").expect("agent path");
+        let project = AgentPath::try_from("/project").expect("project path");
 
         assert!(agent_matches_prefix(Some(&worker), &root));
         assert!(agent_matches_prefix(Some(&worker), &worker));
         assert!(agent_matches_prefix(Some(&nested), &worker));
         assert!(!agent_matches_prefix(Some(&sibling), &worker));
+        assert!(!agent_matches_prefix(Some(&project), &root));
         assert!(!agent_matches_prefix(None, &worker));
     }
 
@@ -531,6 +531,68 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn list_agents_plan_root_prefix_does_not_match_project_root_paths() {
+        let root = AgentPath::root();
+        let root_worker = AgentPath::try_from("/root/worker").expect("root worker path");
+        let project = AgentPath::try_from("/project").expect("project path");
+        let root_thread = ThreadId::new();
+        let project_thread = ThreadId::new();
+
+        let root_plan = list_agents_plan(
+            &project,
+            Some("/root"),
+            vec![
+                AgentMetadata {
+                    agent_id: Some(project_thread),
+                    agent_path: Some(project.clone()),
+                    ..Default::default()
+                },
+                AgentMetadata {
+                    agent_id: Some(root_thread),
+                    agent_path: Some(root_worker.clone()),
+                    ..Default::default()
+                },
+            ],
+        )
+        .expect("root prefix plan");
+
+        assert!(root_plan.include_root);
+        assert_eq!(
+            root_plan.candidates,
+            vec![ListedAgentCandidate {
+                thread_id: root_thread,
+                agent_name: root_worker.to_string(),
+                last_task_message: None,
+            }]
+        );
+
+        let all_plan = list_agents_plan(
+            &project,
+            None,
+            vec![AgentMetadata {
+                agent_id: Some(project_thread),
+                agent_path: Some(project.clone()),
+                ..Default::default()
+            }],
+        )
+        .expect("all agents plan");
+        assert!(!all_plan.include_root);
+        assert_eq!(
+            all_plan.candidates,
+            vec![ListedAgentCandidate {
+                thread_id: project_thread,
+                agent_name: project.to_string(),
+                last_task_message: None,
+            }]
+        );
+
+        let legacy_root_child = AgentPath::try_from("/root/worker").expect("root worker path");
+        let legacy_plan = list_agents_plan(&legacy_root_child, None, Vec::new())
+            .expect("legacy root plan");
+        assert!(legacy_plan.include_root);
     }
 
     #[test]

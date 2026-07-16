@@ -622,7 +622,6 @@ export type NewThreadDraft = {
   projectPath: string;
   title: string;
   taskName: string;
-  agentPath: string;
   agentType: string | null;
   model: string | null;
   modelProvider: string | null;
