@@ -1,27 +1,16 @@
 # PM Progress
 
 ## Current Goal
-将 root-worker 的 `New` popup 改为居中显示，避免被左侧 tree/sidebar 容器截断，并保持创建 project/chat 的现有行为。
+当前没有新的主开发任务在推进。root-worker `New` popup 已改为居中显示，并合并到主线 `26792815c`。
 
 ## Active Work
-- id: root-worker-new-popup-centered
-  owner: /root/my_codex_pm/owner_dev
-  checkout: /Users/bytedance/Projects/my-codex-dev
-  branch: fix/new-popup-clipping
-  task_type: bugfix
-  depends_on: none
-  files: apps/root-worker-prototype/src/components/Panels.tsx; apps/root-worker-prototype/src/components/Panels.test.tsx; apps/root-worker-prototype/src/styles.css
-  base_commit: 9244702c39ee5e4d53b9d01c8b19cd26124b9120
-  pending_sync_from_main: n/a
-  status: in_progress
-  objective: `New` popup 从左侧 tree 内联浮层改为居中显示的弹层/对话框，不能被 sidebar/tree 容器裁切；保留现有 taskName/path preview、agentType、model、reasoning、service tier、project/chat 创建语义。
-  last_update: 2026-07-16: 用户反馈实际 UI 里 `New` popup 仍在左侧显示；PM 已补充通知 owner_dev，强验收标准是点击左侧 `New` 后弹层必须在应用/viewport 中央显示，不接受只修 clipping、z-index 或仍 anchored 在 sidebar 内的 popover。
-  next_action: 等待 owner_dev 交付真正居中 overlay/dialog 实现、固定 reviewer 结论和 targeted frontend 验证；PM 后续按实际居中显示与 path payload 不变量验收。
-  blockers: none
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: 26792815c
+  summary: 合并 `430e65e71` 到主线，将 root-worker 左侧 `New` popup 改为应用中央 dialog：`NewThreadDialog` 通过 React portal 渲染到 `document.body`，外层 fixed overlay 居中显示，原 `NewThreadPopover` 继续承载表单与创建参数逻辑；增加 Escape、backdrop、Cancel 关闭和窄 viewport 内部滚动。创建 payload 仍沿用 taskName/path name 语义，不提交 canonical `agentPath`。
+  validation: owner 固定 reviewer `/root/my_codex_pm/owner_dev/reviewer` 通过；owner `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 10 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning；owner `rtk git diff --check` -> passed；owner CSS smoke 确认 `.new-thread-dialog-layer` 为 `position: fixed` 且 dialog centerX 等于 viewport centerX、不在 sidebar 水平范围内。PM `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 10 passed；PM `rtk git diff --check` -> passed。
+  residual_risk: 未做完整 Electron/Playwright 点击 Escape/backdrop 自动化；组件测试覆盖结构，CSS smoke 覆盖居中和脱离 sidebar。`/Users/bytedance/Projects/my-codex-dev` 仍停在已合并分支 `fix/new-popup-clipping`，下次派发前需从当前主线重新开分支。
 - commit: 8ffc4ccf5
   summary: 修复 compact 后客户端偶发看不到 init context item：定位为 root-worker replacement history hydration/render 层，`contextCompaction` 现在生成 typed compact row 并携带 replacement history 状态与条目；replacement history 中 `role: "developer"` 的 initial context 显示为 `Init Context` context tool row；compact cells 负责归档旧 turn 内容，并丢弃同 turn compact 前内部噪声，避免泄漏到归档计数。
   validation: owner 固定 reviewer `/root/my_codex_pm/owner_main/reviewer` 首轮发现同 turn pre-compact cell 泄漏，返修后复审通过；owner `rtk pnpm test src/lib/conversation.test.ts` -> 38 passed；owner `rtk pnpm test src/components/Conversation.test.tsx` -> 15 passed；owner `rtk git diff --check` -> passed。PM 验收确认实现不靠字符串伪造 init context，不修改后端 model reinject；PM `rtk pnpm --dir apps/root-worker-prototype test src/lib/conversation.test.ts src/components/Conversation.test.tsx src/lib/thread.test.ts` -> 153 passed；PM `rtk git diff --check` -> passed。
