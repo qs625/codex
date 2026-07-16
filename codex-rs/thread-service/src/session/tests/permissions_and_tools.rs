@@ -1119,6 +1119,7 @@ where
         app_server_client_version: None,
         session_source: SessionSource::Exec,
         thread_source: None,
+        root_agent_metadata: None,
         dynamic_tools,
         persist_extended_history: false,
         inherited_shell_snapshot: None,
@@ -2025,6 +2026,34 @@ async fn build_initial_context_emits_standalone_multiagent_context() {
         multiagent_context
             .contains("<current_thread_canonical_path>/root</current_thread_canonical_path>"),
         "expected root canonical path in multiagent context, got {multiagent_context}"
+    );
+}
+
+#[tokio::test]
+async fn build_initial_context_uses_root_scope_agent_metadata_path() {
+    let (session, turn_context) = make_session_and_context().await;
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.root_agent_metadata = Some(codex_agent_runtime::AgentMetadata {
+            agent_path: Some(
+                protocol::AgentPath::try_from("/owner_dev").expect("valid agent path"),
+            ),
+            agent_role: Some("feature-owner".to_string()),
+            ..Default::default()
+        });
+    }
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let user_texts = user_input_texts(&initial_context);
+    let multiagent_context = user_texts
+        .iter()
+        .find(|text| text.contains("<multiagent_context>"))
+        .expect("expected multiagent context");
+
+    assert!(
+        multiagent_context
+            .contains("<current_thread_canonical_path>/owner_dev</current_thread_canonical_path>"),
+        "expected root-scope agent canonical path in multiagent context, got {multiagent_context}"
     );
 }
 

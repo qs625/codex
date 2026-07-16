@@ -12,6 +12,7 @@ use crate::SessionSettingsApplyCurrent;
 use crate::build_session_settings_apply_plan;
 use crate::initial_thread_skills;
 use crate::merge_thread_skills;
+use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::GoalRuntimeState;
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_approval_service_api::ApprovalSessionCapability;
@@ -205,6 +206,13 @@ pub(crate) struct SessionConfiguration {
     pub(super) session_source: SessionSource,
     /// Optional analytics source classification for this thread.
     pub(super) thread_source: Option<ThreadSource>,
+    /// Metadata for a root-scope agent supplied at thread creation time.
+    ///
+    /// Root-scope agent threads are not represented as `SessionSource::SubAgent`,
+    /// and their registry entry cannot be keyed by thread id until after the
+    /// session has spawned. Keep the creation-time metadata here so initial
+    /// context materialized during spawn can still use the real canonical path.
+    pub(super) root_agent_metadata: Option<AgentMetadata>,
     pub(super) dynamic_tools: Vec<DynamicToolSpec>,
     pub(super) persist_extended_history: bool,
     pub(super) inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
