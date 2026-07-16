@@ -1,12 +1,20 @@
 # PM Progress
 
 ## Current Goal
-None
+当前没有新的主开发任务在推进。root-worker sidebar `New` 入口 / `thread/start` 扩展任务已合并到主线 `601b2dd3a`；compact prompt 控制上下文 bug 已在主线修复为 `8f2a272ec`。
 
 ## Active Work
 None
 
 ## Completed
+- commit: 601b2dd3a
+  summary: 合并 `03e1143d9`、`5d7348de6`、`c28bbaa2d` 到主线，完成 root-worker sidebar/agent tree `New` 入口与真实 `thread/start` 参数链路：客户端显示 project path、taskName/path preview、agentType、model/modelProvider、reasoningEffort、serviceTier；客户端只提交 path name/taskName，后端派生 canonical root-level path（无父节点时 `taskName -> /taskName`）；`Thread.agentPath` 作为 typed 返回字段供 root-worker tree 使用；删除 `spawn_agent` 外部 `agent_mode/agentMode` 参数面；扩展 root-level `AgentPath` grammar、registry duplicate protection、root-scope metadata cleanup 和 list scope 隔离。
+  validation: owner 侧固定 reviewer 多轮复审通过；PM 侧 `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 9 passed；`rtk cargo test -p protocol agent_path` -> 7 passed；`rtk cargo test -p app-server parse_thread_start_agent` -> 3 passed；`rtk cargo test -p app-server duplicate_agent_path_create_error_is_invalid_request` -> 1 passed；`rtk cargo test -p thread-service root_scope_agent_path` -> 3 passed；`rtk cargo test -p thread-service root_scope_project_agent_path_is_not_listed_under_root_prefix` -> 1 passed；`rtk cargo test -p thread-service shutdown_all_threads_bounded_submits_shutdown_to_every_thread` -> 1 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk jq empty codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json` -> passed；`rtk git diff --check` -> passed.
+  residual_risk: duplicate path protection currently covers live registry; if an unarchived persisted thread owns the same path but is not loaded, this merge does not scan and reject it. Root-level project path plus legacy `/root` coexistence should still get one real root-worker smoke run after app-server restart.
+- commit: 8f2a272ec
+  summary: 修复 compact prompt / replacement history 语义：runtime 不再把 `COMPACT.md` / compact prompt 作为普通 `user` message 注入 compact turn，而是作为 `developer` control item 参与 compact sampling；`compact_turn_final_output()` 以该 control item 为边界提取本次 compact assistant final output。replacement history 继续保留真实 recent user messages 和 assistant continuation seed，但不会把 runtime compact prompt 当成用户输入带入后续 context。
+  validation: owner `rtk cargo test -p compact-service replacement_history` -> 2 passed；`rtk cargo test -p thread-service compact_` -> 8 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk git diff --check` -> passed。PM 验收 `git show` 确认改动仅限 `codex-rs/thread-service/src/compact.rs`、`codex-rs/thread-service/src/compact_tests.rs`、`codex-rs/compact-service/src/tests.rs`，实现符合用户要求“user prompt 只是用户输入”。
+  residual_risk: 旧历史中已经持久化的 compact user prompt 不会被追溯改写；真实用户手写 checkpoint 文本仍被视为真实用户输入，不做猜测过滤。空闲 dev checkout 尚未同步到 `8f2a272ec`，因为当前均停在 feature 分支现场，后续派发前需同步。
 - commit: bc62c5413
   summary: 合并 `06b9b09b1` 到主线，修正 root-worker project sidebar 为单一 `New` 入口 + project/chat 选择菜单；project chat thread 本身作为 project tree root，Project 展开后只渲染该 root 的 subagents，不再额外显示 `PM` / `Project PM` / root row；右侧 Todo action 改为 `Open Project`，设计文档同步为 chat-root 模型。
   validation: PM 侧 `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/slashMenu.test.ts` -> 129 passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning；`rtk git diff --check dd2f965b5..06b9b09b1` -> passed；fixed reviewer `/root/my_codex_pm/owner_dev/reviewer` 已确认复用规则，`review_project_sidebar_single_entry` 复审通过。
@@ -161,4 +169,5 @@ None
   residual_risk: 仍缺少更贴近真实 DOM 副作用的滚动交互测试
 
 ## Known Issues
+- 用户报告 compact 后客户端有时看不到 init context item。初步判断更可能是 display/replay/hydration 链路问题，而不是模型上下文未 reinject：需要区分 `replacement_history` 是否包含 initial context、`ContextCompactionItem.replacementHistory` 是否持久化、root-worker compact 按需加载是否展开了 injected context item，以及 `process_compacted_history_reinjects_full_initial_context` 覆盖的是 model history 还是客户端可见 item。若优先修复，应作为主 checkout 独占 runtime/display bugfix 派给 `owner_main`，不要混入当前 `root-worker-new-thread-popover` dev 分支。
 - 原 `.codex/pm-progress.md` 中记录的 thread 重构上下文已过期，且引用的 `spec/` 文档已删除；后续若继续推进该主题，需要重新建立可执行拆分计划。
