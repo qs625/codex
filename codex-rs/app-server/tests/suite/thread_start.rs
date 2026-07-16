@@ -10,6 +10,8 @@ use app_server_protocol::RequestId;
 use app_server_protocol::SandboxMode;
 use app_server_protocol::ServerNotification;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
@@ -317,6 +319,73 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
         Some("injectedContext"),
         "thread/start should replay initial context as a typed item/completed notification"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_preserves_client_supplied_root_agent_path() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            task_name: Some("/owner_dev".to_string()),
+            ..Default::default()
+        })
+        .await?;
+
+    let resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(req_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(resp)?;
+    assert_eq!(thread.agent_path.as_deref(), Some("/owner_dev"));
+
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/started"),
+    )
+    .await??;
+    let started: ThreadStartedNotification = serde_json::from_value(
+        notification
+            .params
+            .expect("thread/started params should be present"),
+    )?;
+    assert_eq!(started.thread.id, thread.id);
+    assert_eq!(started.thread.agent_path.as_deref(), Some("/owner_dev"));
+
+    let list_req_id = mcp
+        .send_thread_list_request(ThreadListParams {
+            cursor: None,
+            limit: None,
+            sort_key: None,
+            sort_direction: None,
+            model_providers: None,
+            source_kinds: None,
+            archived: None,
+            cwd: None,
+            use_state_db_only: false,
+            search_term: None,
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_req_id)),
+    )
+    .await??;
+    let listed = to_response::<ThreadListResponse>(list_resp)?
+        .data
+        .into_iter()
+        .find(|listed| listed.id == thread.id)
+        .expect("created thread should appear in thread/list");
+    assert_eq!(listed.agent_path.as_deref(), Some("/owner_dev"));
 
     Ok(())
 }
