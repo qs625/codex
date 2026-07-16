@@ -187,17 +187,31 @@ svg {
   white-space: nowrap;
 }
 
+.new-thread-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(28, 25, 23, 0.18);
+}
+
+.new-thread-dialog-shell {
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+  overflow: auto;
+  outline: none;
+}
+
 .sidebar-create-popover {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 6px);
-  right: 0;
-  width: min(300px, calc(100vw - 24px));
-  padding: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
   border: 1px solid rgba(16, 24, 40, 0.12);
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 12px 28px rgba(16, 24, 40, 0.14);
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.16);
 }
 
 .sidebar-create-popover-header {
