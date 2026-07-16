@@ -9,6 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { AgentTreeNode } from "./AgentTree";
 import { ThinkingIndicator } from "./Conversation";
@@ -136,7 +137,7 @@ export function SidebarPanel({
             <span>New</span>
           </button>
           {isCreateMenuOpen ? (
-            <NewThreadPopover
+            <NewThreadDialog
               existingProjectPaths={projectPaths}
               onCancel={() => setIsCreateMenuOpen(false)}
               onSubmit={submitNewThreadDraft}
@@ -199,6 +200,64 @@ export function SidebarPanel({
       </button>
     </aside>
   );
+}
+
+export function NewThreadDialog({
+  existingProjectPaths,
+  onCancel,
+  onSubmit,
+  workspacePath,
+}: {
+  existingProjectPaths: string[];
+  onCancel: () => void;
+  onSubmit: (draft: NewThreadDraft) => void;
+  workspacePath: string;
+}) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    window.setTimeout(() => dialogRef.current?.focus(), 0);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel]);
+
+  const dialog = (
+    <div
+      className="new-thread-dialog-layer"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onCancel();
+        }
+      }}
+    >
+      <div
+        ref={dialogRef}
+        aria-label="New conversation"
+        aria-modal="true"
+        className="new-thread-dialog-shell"
+        role="dialog"
+        tabIndex={-1}
+      >
+        <NewThreadPopover
+          existingProjectPaths={existingProjectPaths}
+          onCancel={onCancel}
+          onSubmit={onSubmit}
+          workspacePath={workspacePath}
+        />
+      </div>
+    </div>
+  );
+
+  if (typeof document === "undefined") {
+    return dialog;
+  }
+  return createPortal(dialog, document.body);
 }
 
 export function NewThreadPopover({

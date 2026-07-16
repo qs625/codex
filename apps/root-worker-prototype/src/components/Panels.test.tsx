@@ -12,6 +12,7 @@ import type {
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const {
+  NewThreadDialog,
   NewThreadPopover,
   SidebarPanel,
   buildNewThreadDraft,
@@ -189,6 +190,26 @@ test("NewThreadPopover renders thread/start parameter fields", () => {
   assert.match(markup, /No-project chat needs backend support/);
   assert.match(markup, /Chat without project/);
   assert.match(markup, /disabled=""/);
+});
+
+test("NewThreadDialog renders centered overlay around the existing form", () => {
+  const markup = renderToStaticMarkup(
+    <NewThreadDialog
+      existingProjectPaths={["/work/alpha", "/work/beta"]}
+      onCancel={() => {}}
+      onSubmit={() => {}}
+      workspacePath="/work/alpha"
+    />,
+  );
+
+  assert.match(markup, /class="new-thread-dialog-layer"/);
+  assert.match(markup, /class="new-thread-dialog-shell"/);
+  assert.match(markup, /role="dialog"/);
+  assert.match(markup, /aria-modal="true"/);
+  assert.match(markup, /id="new-thread-popover"/);
+  assert.match(markup, /Project path/);
+  assert.match(markup, /taskName/);
+  assert.match(markup, /Path preview/);
 });
 
 test("buildNewThreadDraft trims thread start params", () => {
