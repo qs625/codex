@@ -15,8 +15,8 @@
   pending_sync_from_main: n/a
   status: in_progress
   objective: `New` popup 从左侧 tree 内联浮层改为居中显示的弹层/对话框，不能被 sidebar/tree 容器裁切；保留现有 taskName/path preview、agentType、model、reasoning、service tier、project/chat 创建语义。
-  last_update: 2026-07-16: PM 已派发 owner_dev，将 `New` popup 改为居中弹层；brief 明确要求避免 sidebar/tree clipping、复用现有表单状态、不改后端 path/API 语义。
-  next_action: 等待 owner_dev 交付实现、固定 reviewer 结论和 targeted frontend 验证；PM 后续按居中弹层设计与 path payload 不变量验收。
+  last_update: 2026-07-16: 用户反馈实际 UI 里 `New` popup 仍在左侧显示；PM 已补充通知 owner_dev，强验收标准是点击左侧 `New` 后弹层必须在应用/viewport 中央显示，不接受只修 clipping、z-index 或仍 anchored 在 sidebar 内的 popover。
+  next_action: 等待 owner_dev 交付真正居中 overlay/dialog 实现、固定 reviewer 结论和 targeted frontend 验证；PM 后续按实际居中显示与 path payload 不变量验收。
   blockers: none
   validation: pending
   commit:
