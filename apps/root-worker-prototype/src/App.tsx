@@ -744,30 +744,10 @@ function App() {
     const selectedAncestorIds = new Set(
       getThreadAncestorIds(threads, selectedThreadId),
     );
-    const expandSelectedAncestors = () => {
-      setCollapsedPaths((current) =>
-        current.filter((threadId) => !selectedAncestorIds.has(threadId)),
-      );
-    };
-    const selectedProject = projectSidebar.projects.find((project) =>
-      getThreadSubtreeIds(threads, project.tree.threadId).has(selectedThreadId),
+    setCollapsedPaths((current) =>
+      current.filter((threadId) => !selectedAncestorIds.has(threadId)),
     );
-    if (selectedProject) {
-      setCollapsedProjectIds((current) =>
-        current.filter((projectId) => projectId !== selectedProject.id),
-      );
-      expandSelectedAncestors();
-      return;
-    }
-    if (
-      projectSidebar.chat.conversations.some((conversation) =>
-        getThreadSubtreeIds(threads, conversation.threadId).has(selectedThreadId),
-      )
-    ) {
-      setIsChatCollapsed(false);
-      expandSelectedAncestors();
-    }
-  }, [projectSidebar, selectedThreadId, threads]);
+  }, [selectedThreadId, threads]);
 
   async function loadBootstrap() {
     try {
@@ -1899,10 +1879,37 @@ function App() {
     );
   }
 
-  function selectProject(projectId: string, threadId: string) {
-    setCollapsedProjectIds((current) =>
-      current.filter((value) => value !== projectId),
+  function revealThreadInSidebar(threadId: string) {
+    const selectedAncestorIds = new Set(getThreadAncestorIds(threads, threadId));
+    setCollapsedPaths((current) =>
+      current.filter((value) => !selectedAncestorIds.has(value)),
     );
+
+    const selectedProject = projectSidebar.projects.find((project) =>
+      getThreadSubtreeIds(threads, project.tree.threadId).has(threadId),
+    );
+    if (selectedProject) {
+      setCollapsedProjectIds((current) =>
+        current.filter((projectId) => projectId !== selectedProject.id),
+      );
+      return;
+    }
+
+    if (
+      projectSidebar.chat.conversations.some((conversation) =>
+        getThreadSubtreeIds(threads, conversation.threadId).has(threadId),
+      )
+    ) {
+      setIsChatCollapsed(false);
+    }
+  }
+
+  function selectThread(threadId: string) {
+    revealThreadInSidebar(threadId);
+    setSelectedThreadId(threadId);
+  }
+
+  function selectProject(_projectId: string, threadId: string) {
     setSelectedThreadId(threadId);
   }
 
@@ -2465,7 +2472,7 @@ function App() {
           onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}
           onSelectProject={selectProject}
-          onSelectThread={setSelectedThreadId}
+          onSelectThread={selectThread}
           onSetNewProjectName={setNewProjectName}
           onSubmitNewThreadDraft={(draft) => void submitNewThreadDraft(draft)}
           onToggleChat={() => setIsChatCollapsed((current) => !current)}
@@ -2542,7 +2549,7 @@ function App() {
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onOpenTreeFile={handleOpenTreeFile}
-          onSelectTaskThread={setSelectedThreadId}
+          onSelectTaskThread={selectThread}
           onSelectCommandMonitor={(commandItemId) =>
             setFocusedConversationItem((current) => ({
               itemId: commandItemId,

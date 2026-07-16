@@ -49,6 +49,26 @@ function makeThread(id: string, cwd: string, name: string): Thread {
   };
 }
 
+function makeSubagentThread(
+  id: string,
+  cwd: string,
+  name: string,
+  parentThreadId: string,
+): Thread {
+  return {
+    ...makeThread(id, cwd, name),
+    source: {
+      subAgent: {
+        thread_spawn: {
+          parent_thread_id: parentThreadId,
+          agent_path: `/${name}`,
+        },
+      },
+    },
+    threadSource: "subagent",
+  };
+}
+
 function makeNode(thread: Thread, children: TreeNode[] = []): TreeNode {
   return {
     key: thread.id,
@@ -145,10 +165,97 @@ test("SidebarPanel renders projects with nested subagents and no extra root row"
   assert.match(markup, /alpha/);
   assert.match(markup, /beta/);
   assert.match(markup, /owner_dev/);
+  assert.match(markup, /class="tree-node tree-node-root project-tree-root"/);
+  assert.match(markup, /class="tree-node-button project-tree-button"/);
+  assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /\/work\/alpha/);
   assert.doesNotMatch(markup, /Alpha chat/);
   assert.doesNotMatch(markup, /Beta chat/);
   assert.doesNotMatch(markup, /Agent Tree/);
   assert.doesNotMatch(markup, /New Root/);
+});
+
+test("SidebarPanel indents project subagents relative to the project header", () => {
+  const owner = makeNode(
+    makeSubagentThread("owner-alpha", "/work/alpha", "owner_dev", "root-alpha"),
+    [
+      makeNode(
+        makeSubagentThread(
+          "reviewer-alpha",
+          "/work/alpha",
+          "reviewer",
+          "owner-alpha",
+        ),
+      ),
+    ],
+  );
+  const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
+    owner,
+  ]);
+  const sidebar: ProjectAgentSidebar = {
+    projects: [makeProject("project:/work/alpha", "alpha", root)],
+    chat: {
+      id: "chat",
+      statusClass: "todo",
+      updatedAt: 0,
+      conversations: [makeNode(makeThread("chat-1", "", "General Q&A"))],
+    },
+  };
+
+  const markup = renderSidebar(sidebar);
+
+  assert.match(
+    markup,
+    /class="tree-node " style="--depth:1"[\s\S]*owner_dev/,
+  );
+  assert.match(
+    markup,
+    /class="tree-node " style="--depth:2"[\s\S]*reviewer/,
+  );
+  assert.match(
+    markup,
+    /class="tree-node tree-node-root" style="--depth:0"[\s\S]*General Q&amp;A/,
+  );
+});
+
+test("SidebarPanel keeps collapsed project children hidden across sidebar updates", () => {
+  const child = makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev"));
+  const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
+    child,
+  ]);
+  const baseSidebar: ProjectAgentSidebar = {
+    projects: [makeProject("project:/work/alpha", "alpha", root)],
+    chat: {
+      id: "chat",
+      statusClass: "todo",
+      updatedAt: 0,
+      conversations: [],
+    },
+  };
+  const updatedSidebar: ProjectAgentSidebar = {
+    ...baseSidebar,
+    projects: [
+      makeProject("project:/work/alpha", "alpha", root, {
+        activeCount: 1,
+        waitingCount: 1,
+        descendantCount: 1,
+      }),
+    ],
+  };
+
+  const baseMarkup = renderSidebar(baseSidebar, {
+    collapsedProjects: ["project:/work/alpha"],
+  });
+  const updatedMarkup = renderSidebar(updatedSidebar, {
+    collapsedProjects: ["project:/work/alpha"],
+  });
+
+  assert.match(baseMarkup, /aria-expanded="false"/);
+  assert.doesNotMatch(baseMarkup, /owner_dev/);
+  assert.match(updatedMarkup, /aria-expanded="false"/);
+  assert.match(updatedMarkup, /active/);
+  assert.match(updatedMarkup, /waiting/);
+  assert.doesNotMatch(updatedMarkup, /owner_dev/);
 });
 
 test("SidebarPanel exposes one create button", () => {
