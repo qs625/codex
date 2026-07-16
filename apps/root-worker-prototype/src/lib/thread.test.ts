@@ -6,6 +6,7 @@ import {
   appendAgentDelta,
   applyInitializedThreadUpdate,
   applyPendingThreadUpdates,
+  buildProjectAgentSidebar,
   buildCurrentThreadTodoItems,
   formatUpdatedLabel,
   getPresenceLabel,
@@ -13,9 +14,11 @@ import {
   getThreadPresenceLabel,
   getThreadItemNotificationSyntheticTurnStatus,
   getThreadItemNotificationTargetThreadIds,
+  getThreadAncestorIds,
   getThreadPath,
   isThreadThinking,
   mergeThreadSnapshot,
+  pickInitialProjectPmThread,
   queuePendingThreadUpdate,
   threadDisplayStatusClass,
   threadStatusClass,
@@ -130,6 +133,44 @@ function makeThread(): Thread {
   };
 }
 
+function makeSidebarThread(overrides: Partial<Thread>): Thread {
+  return {
+    ...makeThread(),
+    ...overrides,
+    turns: overrides.turns ?? [],
+    skills: overrides.skills ?? [],
+  };
+}
+
+function makeSubagentThread(
+  id: string,
+  parentThreadId: string,
+  agentPath: string,
+  overrides: Partial<Thread> = {},
+): Thread {
+  return makeSidebarThread({
+    id,
+    sessionId: `session-${id}`,
+    cwd: overrides.cwd ?? "/other/cwd/that/should/not/group",
+    createdAt: overrides.createdAt ?? 10,
+    updatedAt: overrides.updatedAt ?? 10,
+    source: {
+      subAgent: {
+        thread_spawn: {
+          parent_thread_id: parentThreadId,
+          depth: 1,
+          agent_path: agentPath,
+          agent_nickname: agentPath.split("/").at(-1) ?? id,
+          agent_role: overrides.agentRole ?? "worker",
+        },
+      },
+    },
+    threadSource: "subagent",
+    agentRole: overrides.agentRole ?? "worker",
+    ...overrides,
+  });
+}
+
 function makeTreeNode(
   thread: Thread | null,
   children: TreeNode[] = [],
@@ -144,6 +185,189 @@ function makeTreeNode(
     children,
   };
 }
+
+test("buildProjectAgentSidebar groups parentless project PMs by cwd", () => {
+  const projectA = makeSidebarThread({
+    id: "pm-a",
+    name: "Alpha PM",
+    cwd: "/work/alpha",
+    createdAt: 1,
+    updatedAt: 4,
+  });
+  const projectB = makeSidebarThread({
+    id: "pm-b",
+    name: "Beta PM",
+    cwd: "/work/beta",
+    createdAt: 2,
+    updatedAt: 8,
+  });
+  const owner = makeSubagentThread("owner-a", "pm-a", "/root/owner");
+
+  const sidebar = buildProjectAgentSidebar([projectA, projectB, owner]);
+
+  assert.deepEqual(
+    sidebar.projects.map((project) => project.label),
+    ["alpha", "beta"],
+  );
+  const alpha = sidebar.projects.find((project) => project.cwd === "/work/alpha");
+  assert.equal(alpha?.pmTree.threadId, "pm-a");
+  assert.equal(alpha?.pmTree.label, "PM");
+  assert.equal(alpha?.pmTree.children[0]?.threadId, "owner-a");
+  assert.equal(alpha?.descendantCount, 1);
+});
+
+test("buildProjectAgentSidebar places no-cwd parentless threads in Chat", () => {
+  const project = makeSidebarThread({ id: "pm", cwd: "/work/project" });
+  const chatA = makeSidebarThread({
+    id: "chat-a",
+    name: "API question",
+    cwd: "",
+    updatedAt: 4,
+  });
+  const chatB = makeSidebarThread({
+    id: "chat-b",
+    name: "General Q&A",
+    cwd: "   ",
+    updatedAt: 7,
+  });
+
+  const sidebar = buildProjectAgentSidebar([project, chatA, chatB]);
+
+  assert.equal(sidebar.projects.length, 1);
+  assert.deepEqual(
+    sidebar.chat.conversations.map((node) => node.threadId),
+    ["chat-b", "chat-a"],
+  );
+  assert.equal(sidebar.chat.conversations[0]?.label, "General Q&A");
+});
+
+test("buildProjectAgentSidebar keeps Chat conversation subagents visible", () => {
+  const chat = makeSidebarThread({
+    id: "chat",
+    name: "General Q&A",
+    cwd: "",
+  });
+  const helper = makeSubagentThread("chat-helper", "chat", "/root/helper", {
+    cwd: "/work/project",
+  });
+
+  const sidebar = buildProjectAgentSidebar([chat, helper]);
+
+  assert.equal(sidebar.projects.length, 0);
+  assert.equal(sidebar.chat.conversations[0]?.threadId, "chat");
+  assert.equal(
+    sidebar.chat.conversations[0]?.children[0]?.threadId,
+    "chat-helper",
+  );
+});
+
+test("getThreadAncestorIds returns ancestors for selected Chat subagents", () => {
+  const chat = makeSidebarThread({
+    id: "chat",
+    name: "General Q&A",
+    cwd: "",
+  });
+  const helper = makeSubagentThread("chat-helper", "chat", "/root/helper");
+  const reviewer = makeSubagentThread(
+    "chat-reviewer",
+    "chat-helper",
+    "/root/helper/reviewer",
+  );
+
+  assert.deepEqual(getThreadAncestorIds([chat, helper, reviewer], "chat-reviewer"), [
+    "chat-helper",
+    "chat",
+  ]);
+});
+
+test("buildProjectAgentSidebar hides duplicate parentless PMs for the same project", () => {
+  const olderPm = makeSidebarThread({
+    id: "older-pm",
+    cwd: "/work/project",
+    updatedAt: 2,
+  });
+  const activePm = makeSidebarThread({
+    id: "active-pm",
+    cwd: "/work/project/",
+    updatedAt: 1,
+    status: { type: "active", activeFlags: ["running"] },
+  });
+
+  const sidebar = buildProjectAgentSidebar([olderPm, activePm]);
+
+  assert.equal(sidebar.projects.length, 1);
+  assert.equal(sidebar.projects[0]?.pmTree.threadId, "active-pm");
+  assert.deepEqual(sidebar.projects[0]?.duplicatePmThreadIds, ["older-pm"]);
+});
+
+test("pickInitialProjectPmThread follows sidebar canonical PM selection", () => {
+  const olderPm = makeSidebarThread({
+    id: "older-pm",
+    cwd: "/work/project",
+    updatedAt: 9,
+  });
+  const activePm = makeSidebarThread({
+    id: "active-pm",
+    cwd: "/work/project",
+    updatedAt: 1,
+    status: { type: "active", activeFlags: ["running"] },
+  });
+
+  const picked = pickInitialProjectPmThread([olderPm, activePm]);
+
+  assert.equal(picked?.id, "active-pm");
+});
+
+test("buildProjectAgentSidebar makes subagents inherit their PM project", () => {
+  const pm = makeSidebarThread({ id: "pm", cwd: "/work/project" });
+  const owner = makeSubagentThread("owner", "pm", "/root/owner", {
+    cwd: "/another/repo",
+  });
+  const reviewer = makeSubagentThread("reviewer", "owner", "/root/owner/reviewer");
+
+  const sidebar = buildProjectAgentSidebar([pm, owner, reviewer]);
+  const project = sidebar.projects[0];
+
+  assert.equal(project?.cwd, "/work/project");
+  assert.equal(project?.pmTree.children[0]?.threadId, "owner");
+  assert.equal(project?.pmTree.children[0]?.children[0]?.threadId, "reviewer");
+  assert.equal(sidebar.projects.length, 1);
+});
+
+test("buildProjectAgentSidebar aggregates project status counts", () => {
+  const pm = makeSidebarThread({
+    id: "pm",
+    cwd: "/work/project",
+    status: { type: "complete" },
+  });
+  const activeOwner = makeSubagentThread("owner", "pm", "/root/owner", {
+    status: { type: "active", activeFlags: ["running"] },
+  });
+  const waitingReviewer = makeSubagentThread(
+    "reviewer",
+    "pm",
+    "/root/reviewer",
+    {
+      status: { type: "idle", reason: "waitChild" },
+    },
+  );
+  const failedWorker = makeSubagentThread("worker", "pm", "/root/worker", {
+    status: { type: "systemError" },
+  });
+
+  const sidebar = buildProjectAgentSidebar([
+    pm,
+    activeOwner,
+    waitingReviewer,
+    failedWorker,
+  ]);
+  const project = sidebar.projects[0];
+
+  assert.equal(project?.statusClass, "blocked");
+  assert.equal(project?.activeCount, 1);
+  assert.equal(project?.waitingCount, 1);
+  assert.equal(project?.failedCount, 1);
+});
 
 test("mergeThreadSnapshot preserves usage fields when thread/read omits them", () => {
   const existing = makeThread();

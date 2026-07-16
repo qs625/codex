@@ -75,7 +75,7 @@ function renderRightPanel(
       fileTreeEntriesByPath={options?.fileTreeEntriesByPath ?? {}}
       fileTreeErrorsByPath={{}}
       fileTreeLoadingPath={null}
-      onCreateRootThread={() => {}}
+      onOpenProjectPm={() => {}}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
@@ -122,7 +122,7 @@ test("renders thread goal details in thread analysis", () => {
       fileTreeEntriesByPath={{}}
       fileTreeErrorsByPath={{}}
       fileTreeLoadingPath={null}
-      onCreateRootThread={() => {}}
+      onOpenProjectPm={() => {}}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
@@ -163,6 +163,15 @@ test("renders thread goal details in thread analysis", () => {
   assert.match(markup, /Pause/);
   assert.match(markup, /Ship the slash goal display\./);
   assert.match(markup, /12K \/ 50K tokens/);
+});
+
+test("renders project PM action in the todo panel", () => {
+  const markup = renderRightPanel(makeThread([]), "todo");
+
+  assert.match(markup, /Execution Queue/);
+  assert.match(markup, /Direct child work coordinated by the selected PM or agent\./);
+  assert.match(markup, /Open PM/);
+  assert.doesNotMatch(markup, /New Task/);
 });
 
 test("renders live commands and schedule subscriptions", () => {
@@ -408,7 +417,7 @@ test("renders directory-specific cwd tree errors instead of empty state", () => 
       }}
       fileTreeErrorsByPath={{ "/tmp/src": "Permission denied" }}
       fileTreeLoadingPath={null}
-      onCreateRootThread={() => {}}
+      onOpenProjectPm={() => {}}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}

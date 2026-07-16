@@ -61,8 +61,9 @@ import {
   appendCommandExecutionDelta,
   applyInitializedThreadUpdate,
   applyPendingThreadUpdates,
-  buildAgentTree,
   buildCurrentThreadTodoItems,
+  buildProjectAgentSidebar,
+  getThreadAncestorIds,
   getThreadItemNotificationSyntheticTurnStatus,
   getThreadSubtreeIds,
   getThreadItemNotificationTargetThreadIds,
@@ -70,8 +71,9 @@ import {
   getThreadDepth,
   isRootThread,
   isSubagentThread,
+  normalizeProjectCwd,
   normalizeThreadSnapshot,
-  pickInitialRootThread,
+  pickInitialProjectPmThread,
   pickInitialThread,
   queuePendingThreadUpdate,
   updateThreadItem,
@@ -123,7 +125,7 @@ import type {
   WorkflowSummary,
 } from "./types";
 
-let initialRootThreadPromise: Promise<Thread> | null = null;
+let initialProjectThreadPromise: Promise<Thread> | null = null;
 
 const LEFT_PANEL_WIDTH_RATIO = 0.17;
 const RIGHT_PANEL_WIDTH_RATIO = 0.31;
@@ -179,10 +181,12 @@ function App() {
   const [isSending, setIsSending] = useState(false);
   const [isStoppingTurn, setIsStoppingTurn] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
-  const [newRootName, setNewRootName] = useState("root");
+  const [newProjectName, setNewProjectName] = useState("PM");
   const [error, setError] = useState<string | null>(null);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<string[]>([]);
+  const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const [treeMenu, setTreeMenu] = useState<TreeMenuState | null>(null);
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>(
     readStoredRightPanelView,
@@ -719,9 +723,9 @@ function App() {
         getTreeRootThreadId(threads, thread.id) === selectedTreeRootId,
     );
   }, [selectedTreeRootId, threads]);
-  const agentTree = useMemo(
-    () => buildAgentTree(sessionThreads, selectedTreeRootId),
-    [selectedTreeRootId, sessionThreads],
+  const projectSidebar = useMemo(
+    () => buildProjectAgentSidebar(threads),
+    [threads],
   );
   const todoItems = useMemo(
     () =>
@@ -729,6 +733,42 @@ function App() {
     [selectedThreadId, sessionThreads, taskFilter],
   );
   const collapsedSet = useMemo(() => new Set(collapsedPaths), [collapsedPaths]);
+  const collapsedProjectSet = useMemo(
+    () => new Set(collapsedProjectIds),
+    [collapsedProjectIds],
+  );
+
+  useEffect(() => {
+    if (!selectedThreadId) {
+      return;
+    }
+    const selectedAncestorIds = new Set(
+      getThreadAncestorIds(threads, selectedThreadId),
+    );
+    const expandSelectedAncestors = () => {
+      setCollapsedPaths((current) =>
+        current.filter((threadId) => !selectedAncestorIds.has(threadId)),
+      );
+    };
+    const selectedProject = projectSidebar.projects.find((project) =>
+      getThreadSubtreeIds(threads, project.pmTree.threadId).has(selectedThreadId),
+    );
+    if (selectedProject) {
+      setCollapsedProjectIds((current) =>
+        current.filter((projectId) => projectId !== selectedProject.id),
+      );
+      expandSelectedAncestors();
+      return;
+    }
+    if (
+      projectSidebar.chat.conversations.some((conversation) =>
+        getThreadSubtreeIds(threads, conversation.threadId).has(selectedThreadId),
+      )
+    ) {
+      setIsChatCollapsed(false);
+      expandSelectedAncestors();
+    }
+  }, [projectSidebar, selectedThreadId, threads]);
 
   async function loadBootstrap() {
     try {
@@ -737,12 +777,12 @@ function App() {
       setWorkspace(payload.workspace);
       const normalizedThreads = payload.threads.map(normalizeThreadSnapshot);
       setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
-      const preferredRoot = pickInitialRootThread(normalizedThreads);
-      if (preferredRoot) {
-        setSelectedThreadId(preferredRoot.id);
+      const preferredProjectPm = pickInitialProjectPmThread(normalizedThreads);
+      if (preferredProjectPm) {
+        setSelectedThreadId(preferredProjectPm.id);
         return;
       }
-      const rootThread = await ensureInitialRootThread(payload.workspace);
+      const rootThread = await ensureInitialProjectThread(payload.workspace);
       markThreadLoaded(rootThread.id);
       markThreadSubscribed(rootThread.id);
       setThreads((current) => upsertThreadWithPending(current, rootThread));
@@ -927,7 +967,7 @@ function App() {
       const next = current.filter((thread) => !threadIdSet.has(thread.id));
       setSelectedThreadId((selected) =>
         selected && threadIdSet.has(selected)
-          ? (pickInitialRootThread(next)?.id ?? null)
+          ? (pickInitialProjectPmThread(next)?.id ?? null)
           : selected,
       );
       return next;
@@ -1252,14 +1292,35 @@ function App() {
     }
   }
 
-  async function createRootThread(
-    name = newRootName.trim() || "root",
-    cwd = workspace,
-  ) {
+  async function openWorkspaceProject() {
+    const projectCwd = normalizeProjectCwd(workspace);
+    if (!projectCwd) {
+      setError("Open Project needs a workspace path from the app server.");
+      return;
+    }
+    const existingProject = projectCwd
+      ? projectSidebar.projects.find((project) => project.cwd === projectCwd)
+      : null;
+    if (existingProject) {
+      setCollapsedProjectIds((current) =>
+        current.filter((projectId) => projectId !== existingProject.id),
+      );
+      setSelectedThreadId(existingProject.pmTree.threadId);
+      return;
+    }
+    await createProjectThread(newProjectName.trim() || "PM", projectCwd);
+  }
+
+  async function createProjectThread(name = "PM", cwd = workspace) {
+    const projectCwd = normalizeProjectCwd(cwd);
+    if (!projectCwd) {
+      setError("Open Project needs a workspace path from the app server.");
+      return;
+    }
     setError(null);
     try {
       const payload = (await window.codexDesktop.createThread({
-        cwd,
+        cwd: projectCwd,
         name,
       })) as { thread: Thread };
       markThreadLoaded(payload.thread.id);
@@ -1271,20 +1332,30 @@ function App() {
     }
   }
 
-  async function ensureInitialRootThread(cwd: string) {
-    if (!initialRootThreadPromise) {
-      initialRootThreadPromise = window.codexDesktop
+  function createChatThread() {
+    setError(
+      "New Chat is unavailable in this build because createThread defaults missing cwd to the workspace. Chat mode needs backend support for no-project threads.",
+    );
+  }
+
+  async function ensureInitialProjectThread(cwd: string) {
+    const projectCwd = normalizeProjectCwd(cwd);
+    if (!projectCwd) {
+      throw new Error("Initial project needs a workspace path from the app server.");
+    }
+    if (!initialProjectThreadPromise) {
+      initialProjectThreadPromise = window.codexDesktop
         .createThread({
-          cwd,
-          name: "root",
+          cwd: projectCwd,
+          name: "PM",
         })
         .then((payload) => (payload as { thread: Thread }).thread)
         .finally(() => {
-          initialRootThreadPromise = null;
+          initialProjectThreadPromise = null;
         });
     }
 
-    return initialRootThreadPromise;
+    return initialProjectThreadPromise;
   }
 
   async function clearCurrentRootSession() {
@@ -1315,7 +1386,7 @@ function App() {
       );
       setSelectedThreadId(null);
       clearComposerDraftsForThreads(threadIdsToArchive);
-      await createRootThread(replacementName);
+      await createProjectThread(replacementName);
     } catch (clearError) {
       setError(toErrorMessage(clearError));
     } finally {
@@ -1792,7 +1863,7 @@ function App() {
     try {
       const thread = threads.find((candidate) => candidate.id === threadId);
       if (thread && isRootThread(thread)) {
-        throw new Error("Root agent cannot be deleted.");
+        throw new Error("Project PM cannot be deleted from the subagent menu.");
       }
       const archive = window.codexDesktop.archiveThread;
       if (typeof archive !== "function") {
@@ -1813,6 +1884,21 @@ function App() {
         ? current.filter((value) => value !== threadId)
         : [...current, threadId],
     );
+  }
+
+  function toggleProject(projectId: string) {
+    setCollapsedProjectIds((current) =>
+      current.includes(projectId)
+        ? current.filter((value) => value !== projectId)
+        : [...current, projectId],
+    );
+  }
+
+  function selectProjectPm(projectId: string, threadId: string) {
+    setCollapsedProjectIds((current) =>
+      current.filter((value) => value !== projectId),
+    );
+    setSelectedThreadId(threadId);
   }
 
   function handleStreamEvent(payload: NotificationEnvelope) {
@@ -2367,14 +2453,20 @@ function App() {
         }}
       >
         <SidebarPanel
-          agentTree={agentTree}
           collapsedSet={collapsedSet}
-          newRootName={newRootName}
-          onCreateRootThread={() => void createRootThread()}
+          collapsedProjectSet={collapsedProjectSet}
+          isChatCollapsed={isChatCollapsed}
+          newProjectName={newProjectName}
+          onCreateChatThread={createChatThread}
+          onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}
+          onSelectProjectPm={selectProjectPm}
           onSelectThread={setSelectedThreadId}
-          onSetNewRootName={setNewRootName}
+          onSetNewProjectName={setNewProjectName}
+          onToggleChat={() => setIsChatCollapsed((current) => !current)}
+          onToggleProject={toggleProject}
           onToggleTreeNode={toggleTreeNode}
+          projectSidebar={projectSidebar}
           selectedThreadId={selectedThreadId}
         />
         <div
@@ -2438,7 +2530,7 @@ function App() {
           fileTreeEntriesByPath={fileTreeEntriesByPath}
           fileTreeErrorsByPath={fileTreeErrorsByPath}
           fileTreeLoadingPath={fileTreeLoadingPath}
-          onCreateRootThread={() => void createRootThread()}
+          onOpenProjectPm={() => void openWorkspaceProject()}
           onNavigateToSymbol={(destination, sourceLocation) =>
             void handleNavigateToSymbol(destination, sourceLocation)
           }

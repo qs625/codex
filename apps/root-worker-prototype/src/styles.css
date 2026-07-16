@@ -152,6 +152,40 @@ svg {
   font-size: 11px;
 }
 
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  max-width: 118px;
+  padding: 4px 8px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #44403c;
+  font-size: 11px;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+.sidebar-action-button svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.sidebar-action-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -181,6 +215,73 @@ svg {
 .tree-scroll {
   flex: 1;
   padding: 8px 10px 12px 10px;
+}
+
+.project-section {
+  padding: 2px 0 8px;
+}
+
+.project-section + .project-section {
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+  padding-top: 8px;
+}
+
+.project-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-header:hover,
+.project-header.contains-selected {
+  background: rgba(28, 25, 23, 0.05);
+}
+
+.project-header-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-header-copy strong,
+.project-header-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-header-copy strong {
+  color: #18181b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-header-copy span {
+  color: #78716c;
+  font-size: 10px;
+}
+
+.project-counts {
+  max-width: 84px;
+  overflow: hidden;
+  color: #78716c;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-empty {
+  padding: 8px 9px 10px 35px;
+  color: #a8a29e;
+  font-size: 11px;
 }
 
 .tree-node {
