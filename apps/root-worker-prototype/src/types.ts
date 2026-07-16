@@ -596,12 +596,12 @@ export type SidebarProjectNode = {
   cwd: string;
   statusClass: SidebarStatusClass;
   updatedAt: number;
-  pmTree: TreeNode;
+  tree: TreeNode;
   descendantCount: number;
   activeCount: number;
   waitingCount: number;
   failedCount: number;
-  duplicatePmThreadIds: string[];
+  duplicateRootThreadIds: string[];
 };
 
 export type SidebarChatGroup = {

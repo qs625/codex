@@ -153,6 +153,7 @@ svg {
 }
 
 .sidebar-actions {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -184,6 +185,53 @@ svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-create-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 190px;
+  padding: 5px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(16, 24, 40, 0.14);
+}
+
+.sidebar-create-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-create-menu button:hover {
+  background: rgba(28, 25, 23, 0.05);
+}
+
+.sidebar-create-menu strong,
+.sidebar-create-menu span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-create-menu strong {
+  color: #18181b;
+  font-size: 11px;
+}
+
+.sidebar-create-menu span {
+  margin-top: 2px;
+  color: #78716c;
+  font-size: 10px;
 }
 
 .icon-button {

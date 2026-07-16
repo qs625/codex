@@ -31,6 +31,7 @@ import {
 import {
   getThreadSubtreeIds,
   getAgentRoleLabel,
+  getRootThreadConversationTitle,
   getThreadPresenceLabel,
   getThreadPath,
   isThreadThinking,
@@ -76,7 +77,7 @@ export function SidebarPanel({
   onCreateChatThread,
   onCreateProjectThread,
   onOpenMenu,
-  onSelectProjectPm,
+  onSelectProject,
   onSelectThread,
   onSetNewProjectName,
   onToggleChat,
@@ -92,7 +93,7 @@ export function SidebarPanel({
   onCreateChatThread: () => void;
   onCreateProjectThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
-  onSelectProjectPm: (projectId: string, threadId: string) => void;
+  onSelectProject: (projectId: string, threadId: string) => void;
   onSelectThread: (threadId: string) => void;
   onSetNewProjectName: (value: string) => void;
   onToggleChat: () => void;
@@ -101,8 +102,17 @@ export function SidebarPanel({
   projectSidebar: ProjectAgentSidebar;
   selectedThreadId: string | null;
 }) {
+  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const projectCount = projectSidebar.projects.length;
   const chatCount = projectSidebar.chat.conversations.length;
+  const chooseProjectChat = () => {
+    setIsCreateMenuOpen(false);
+    onCreateProjectThread();
+  };
+  const choosePlainChat = () => {
+    setIsCreateMenuOpen(false);
+    onCreateChatThread();
+  };
 
   return (
     <aside className="sidebar">
@@ -117,19 +127,24 @@ export function SidebarPanel({
           <button
             type="button"
             className="sidebar-action-button"
-            onClick={onCreateProjectThread}
+            onClick={() => setIsCreateMenuOpen((current) => !current)}
+            aria-expanded={isCreateMenuOpen}
           >
             <PlusIcon />
-            <span>Open Project</span>
+            <span>New</span>
           </button>
-          <button
-            type="button"
-            className="sidebar-action-button"
-            onClick={onCreateChatThread}
-            title="New Chat needs no-project thread support from the backend."
-          >
-            <span>New Chat</span>
-          </button>
+          {isCreateMenuOpen ? (
+            <div className="sidebar-create-menu">
+              <button type="button" onClick={chooseProjectChat}>
+                <strong>Current workspace</strong>
+                <span>Open project chat</span>
+              </button>
+              <button type="button" onClick={choosePlainChat}>
+                <strong>Chat without project</strong>
+                <span>Needs backend support</span>
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -141,7 +156,7 @@ export function SidebarPanel({
               collapsedProjectSet={collapsedProjectSet}
               collapsedSet={collapsedSet}
               onOpenMenu={onOpenMenu}
-              onSelectProjectPm={onSelectProjectPm}
+              onSelectProject={onSelectProject}
               onSelectThread={onSelectThread}
               onToggleProject={onToggleProject}
               onToggleTreeNode={onToggleTreeNode}
@@ -156,10 +171,10 @@ export function SidebarPanel({
               <input
                 value={newProjectName}
                 onChange={(event) => onSetNewProjectName(event.target.value)}
-                placeholder="PM"
+                placeholder="Project chat"
               />
               <button type="button" onClick={onCreateProjectThread}>
-                Open Project
+                Open
               </button>
             </div>
           </div>
@@ -192,7 +207,7 @@ function ProjectSection({
   collapsedProjectSet,
   collapsedSet,
   onOpenMenu,
-  onSelectProjectPm,
+  onSelectProject,
   onSelectThread,
   onToggleProject,
   onToggleTreeNode,
@@ -202,7 +217,7 @@ function ProjectSection({
   collapsedProjectSet: Set<string>;
   collapsedSet: Set<string>;
   onOpenMenu: (menu: TreeMenuState | null) => void;
-  onSelectProjectPm: (projectId: string, threadId: string) => void;
+  onSelectProject: (projectId: string, threadId: string) => void;
   onSelectThread: (threadId: string) => void;
   onToggleProject: (projectId: string) => void;
   onToggleTreeNode: (threadId: string) => void;
@@ -211,7 +226,7 @@ function ProjectSection({
 }) {
   const isCollapsed = collapsedProjectSet.has(project.id);
   const containsSelected =
-    selectedThreadId != null && treeContainsThread(project.pmTree, selectedThreadId);
+    selectedThreadId != null && treeContainsThread(project.tree, selectedThreadId);
   const counts = [
     project.failedCount > 0 ? `${project.failedCount} failed` : null,
     project.activeCount > 0 ? `${project.activeCount} active` : null,
@@ -224,7 +239,7 @@ function ProjectSection({
       <button
         type="button"
         className={`project-header ${containsSelected ? "contains-selected" : ""}`}
-        onClick={() => onSelectProjectPm(project.id, project.pmTree.threadId)}
+        onClick={() => onSelectProject(project.id, project.tree.threadId)}
       >
         <span
           className={`tree-toggle ${isCollapsed ? "collapsed" : ""}`}
@@ -249,15 +264,20 @@ function ProjectSection({
         ) : null}
       </button>
       {!isCollapsed ? (
-        <AgentTreeNode
-          collapsedSet={collapsedSet}
-          depth={0}
-          node={project.pmTree}
-          onSelect={onSelectThread}
-          onToggle={onToggleTreeNode}
-          onOpenMenu={onOpenMenu}
-          selectedThreadId={selectedThreadId}
-        />
+        project.tree.children.length > 0 ? (
+          project.tree.children.map((child) => (
+            <AgentTreeNode
+              key={child.key}
+              collapsedSet={collapsedSet}
+              depth={0}
+              node={child}
+              onSelect={onSelectThread}
+              onToggle={onToggleTreeNode}
+              onOpenMenu={onOpenMenu}
+              selectedThreadId={selectedThreadId}
+            />
+          ))
+        ) : null
       ) : null}
     </section>
   );
@@ -657,7 +677,7 @@ export function ConversationPanel({
             <h1>
               {selectedThread
                 ? isRootThread(selectedThread)
-                  ? "Project PM"
+                  ? getRootThreadConversationTitle(selectedThread)
                   : getThreadPath(selectedThread)
                 : "Select a project"}
             </h1>
@@ -666,9 +686,7 @@ export function ConversationPanel({
             />
             <span>
               {selectedThread
-                ? isRootThread(selectedThread)
-                  ? "Project PM"
-                  : getAgentRoleLabel(selectedThread)
+                ? getAgentRoleLabel(selectedThread)
                 : "No thread selected"}
             </span>
             <span className="subtitle-separator">•</span>
