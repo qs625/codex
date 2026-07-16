@@ -285,7 +285,6 @@ export function NewThreadPopover({
 }) {
   const [mode, setMode] = useState<NewThreadDraft["mode"]>("project");
   const [projectPath, setProjectPath] = useState(workspacePath);
-  const [title, setTitle] = useState("Project chat");
   const initialThreadStartParams = defaultNewThreadStartParams(workspacePath);
   const [taskName, setTaskName] = useState(initialThreadStartParams.taskName);
   const [agentType, setAgentType] = useState("");
@@ -453,7 +452,7 @@ export function NewThreadPopover({
       return;
     }
     onSubmit(
-      buildNewThreadDraft(mode, trimmedProjectPath, title, {
+      buildNewThreadDraft(mode, trimmedProjectPath, {
         taskName,
         agentType,
         model: selectedRunModel?.model ?? "",
@@ -526,15 +525,6 @@ export function NewThreadPopover({
               <option key={path} value={path} />
             ))}
         </datalist>
-      </label>
-
-      <label className="sidebar-create-field">
-        <span>Title</span>
-        <input
-          onChange={(event) => setTitle(event.target.value)}
-          placeholder="Project chat"
-          value={title}
-        />
       </label>
 
       <label className="sidebar-create-field">
@@ -666,7 +656,6 @@ export function NewThreadPopover({
 export function buildNewThreadDraft(
   mode: NewThreadDraft["mode"],
   projectPath: string,
-  title: string,
   params: Partial<
     Pick<
       NewThreadDraft,
@@ -685,7 +674,6 @@ export function buildNewThreadDraft(
   return {
     mode,
     projectPath: projectPath.trim(),
-    title: title.trim() || "Project chat",
     taskName,
     agentType: optionalThreadStartParam(params.agentType),
     model: optionalThreadStartParam(params.model),
@@ -726,9 +714,7 @@ export function isValidNewThreadAgentPath(path: string) {
 export function defaultNewThreadStartParams(projectPath: string) {
   const normalizedProjectPath = projectPath.trim();
   const basename = normalizedProjectPath.split(/[\\/]+/).filter(Boolean).pop() ?? "";
-  const prefix = sanitizeAgentPathSegment(basename) || "project";
-  const hash = stablePathHash(normalizedProjectPath || "project");
-  const taskName = `${prefix}_${hash}`;
+  const taskName = sanitizeAgentPathSegment(basename) || "project";
   return {
     taskName,
     pathPreview: `/${taskName}`,
@@ -757,15 +743,6 @@ function sanitizeAgentPathSegment(value: string) {
   const sanitized = value.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
   const trimmed = sanitized.replace(/^_+|_+$/g, "").replace(/_+/g, "_");
   return isValidAgentPathSegment(trimmed) ? trimmed : "";
-}
-
-function stablePathHash(value: string) {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36).padStart(6, "0").slice(0, 6);
 }
 
 function ProjectSection({

@@ -24,12 +24,13 @@ test("readStoredRightPanelView restores a valid stored view", () => {
 });
 
 test("readStoredRightPanelView falls back for invalid stored values", () => {
-  assert.equal(readStoredRightPanelView(makeStorage("unknown")), "todo");
-  assert.equal(readStoredRightPanelView(makeStorage(null)), "todo");
+  assert.equal(readStoredRightPanelView(makeStorage("unknown")), "skills");
+  assert.equal(readStoredRightPanelView(makeStorage("todo")), "skills");
+  assert.equal(readStoredRightPanelView(makeStorage(null)), "skills");
 });
 
 test("readStoredRightPanelView falls back when localStorage is unavailable", () => {
-  assert.equal(readStoredRightPanelView(), "todo");
+  assert.equal(readStoredRightPanelView(), "skills");
 });
 
 test("readStoredRightPanelView falls back when localStorage access throws", () => {
@@ -45,7 +46,7 @@ test("readStoredRightPanelView falls back when localStorage access throws", () =
   });
 
   try {
-    assert.equal(readStoredRightPanelView(), "todo");
+    assert.equal(readStoredRightPanelView(), "skills");
   } finally {
     if (originalWindow === undefined) {
       Reflect.deleteProperty(globalThis, "window");

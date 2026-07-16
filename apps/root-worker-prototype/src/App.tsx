@@ -1288,7 +1288,7 @@ function App() {
 
   async function submitNewThreadDraft(draft: NewThreadDraft) {
     if (draft.mode === "chat") {
-      await createProjectThread(draft.title || "Chat", undefined, draft);
+      await createProjectThread(draft.taskName || "Chat", undefined, draft);
       return;
     }
     const projectCwd = normalizeProjectCwd(draft.projectPath);
@@ -1307,7 +1307,7 @@ function App() {
       setSelectedThreadId(existingProject.tree.threadId);
       return;
     }
-    await createProjectThread(draft.title || "Project chat", projectCwd, draft);
+    await createProjectThread(draft.taskName || "Project chat", projectCwd, draft);
   }
 
   async function createProjectThread(

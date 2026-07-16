@@ -6,7 +6,6 @@ import {
   BranchIcon,
   ClockIcon,
   DocumentIcon,
-  FilterIcon,
   GridIcon,
   GearIcon,
   OpenIcon,
@@ -146,27 +145,24 @@ export function RightPanel({
     <aside className="right-panel">
       <div className="right-panel-body">
         <div className="right-panel-content">
-          {activeView === "todo" ? (
-            <TodoPanel
-              stats={todoStats}
-              onOpenProjectChat={onOpenProjectChat}
-              onSelectTaskThread={onSelectTaskThread}
-              onSetTaskFilter={onSetTaskFilter}
-              planUpdate={planUpdate}
-              selectedThreadId={selectedThreadId}
-              taskFilter={taskFilter}
-              todoItems={todoItems}
-            />
-          ) : activeView === "skills" ? (
+          {activeView === "skills" ? (
             <ThreadAnalysisPanel
               analysis={threadAnalysis}
               goal={goal}
               goalAction={goalAction}
               goalActionError={goalActionError}
               onCancelGoal={onCancelGoal}
+              onOpenProjectChat={onOpenProjectChat}
               onPauseGoal={onPauseGoal}
               onResumeGoal={onResumeGoal}
               onSelectCommandMonitor={onSelectCommandMonitor}
+              onSelectTaskThread={onSelectTaskThread}
+              onSetTaskFilter={onSetTaskFilter}
+              planUpdate={planUpdate}
+              selectedThreadId={selectedThreadId}
+              taskFilter={taskFilter}
+              todoItems={todoItems}
+              todoStats={todoStats}
             />
           ) : activeView === "git" ? (
             <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
@@ -194,21 +190,17 @@ export function RightPanel({
           {(
             [
               {
-                view: "todo",
-                label: "Todo Board",
-                icon: <FilterIcon />,
-                badge: String(todoStats.openCount),
-              },
-              {
                 view: "skills",
                 label: "Thread Analysis",
                 icon: <GearIcon />,
                 badge:
-                  threadAnalysis.monitors.totalCount > 0
-                    ? String(threadAnalysis.monitors.totalCount)
-                    : contextUsage.loadedSkills > 0
-                      ? String(contextUsage.loadedSkills)
-                      : "",
+                  todoStats.openCount > 0
+                    ? String(todoStats.openCount)
+                    : threadAnalysis.monitors.totalCount > 0
+                      ? String(threadAnalysis.monitors.totalCount)
+                      : contextUsage.loadedSkills > 0
+                        ? String(contextUsage.loadedSkills)
+                        : "",
               },
               {
                 view: "preview",
@@ -272,18 +264,34 @@ function ThreadAnalysisPanel({
   goalAction,
   goalActionError,
   onCancelGoal,
+  onOpenProjectChat,
   onPauseGoal,
   onResumeGoal,
   onSelectCommandMonitor,
+  onSelectTaskThread,
+  onSetTaskFilter,
+  planUpdate,
+  selectedThreadId,
+  taskFilter,
+  todoItems,
+  todoStats,
 }: {
   analysis: ThreadAnalysis;
   goal: ThreadGoal | null;
   goalAction: GoalActionKind | null;
   goalActionError: string | null;
   onCancelGoal: () => void;
+  onOpenProjectChat: () => void;
   onPauseGoal: () => void;
   onResumeGoal: () => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
+  onSelectTaskThread: (threadId: string) => void;
+  onSetTaskFilter: (value: TaskFilter) => void;
+  planUpdate: ThreadPlanUpdate | null;
+  selectedThreadId: string | null;
+  taskFilter: TaskFilter;
+  todoItems: TodoCardItem[];
+  todoStats: ReturnType<typeof buildTodoStats>;
 }) {
   const { contextUsage, monitors } = analysis;
 
@@ -326,6 +334,18 @@ function ThreadAnalysisPanel({
           onCancel={onCancelGoal}
           onPause={onPauseGoal}
           onResume={onResumeGoal}
+        />
+
+        <CurrentPlanCard planUpdate={planUpdate} />
+
+        <ThreadAnalysisQueueSection
+          stats={todoStats}
+          onOpenProjectChat={onOpenProjectChat}
+          onSelectTaskThread={onSelectTaskThread}
+          onSetTaskFilter={onSetTaskFilter}
+          selectedThreadId={selectedThreadId}
+          taskFilter={taskFilter}
+          todoItems={todoItems}
         />
 
         <section className="context-budget-card">
@@ -703,12 +723,11 @@ function statusClassName(status: string) {
   return status.toLowerCase().replace(/\s+/g, "-");
 }
 
-function TodoPanel({
+function ThreadAnalysisQueueSection({
   stats,
   onOpenProjectChat,
   onSelectTaskThread,
   onSetTaskFilter,
-  planUpdate,
   selectedThreadId,
   taskFilter,
   todoItems,
@@ -717,32 +736,28 @@ function TodoPanel({
   onOpenProjectChat: () => void;
   onSelectTaskThread: (threadId: string) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
-  planUpdate: ThreadPlanUpdate | null;
   selectedThreadId: string | null;
   taskFilter: TaskFilter;
   todoItems: TodoCardItem[];
 }) {
   return (
-    <div className="todo-panel">
-      <header className="panel-content-header">
-        <div className="panel-content-copy">
-          <span className="panel-eyebrow">Todo List</span>
-          <h2>Execution Queue</h2>
-          <p>Direct child work coordinated by the selected project or agent.</p>
+    <section className="context-section-card thread-analysis-queue">
+      <div className="context-section-header">
+        <div>
+          <span className="context-section-eyebrow">Plan Work</span>
+          <strong>Execution Queue</strong>
         </div>
         <button type="button" className="panel-inline-action" onClick={onOpenProjectChat}>
           <PlusIcon />
           <span>Open Project</span>
         </button>
-      </header>
+      </div>
 
       <div className="todo-overview-grid">
         <OverviewMetric label="Open" value={stats.openCount} tone="open" />
         <OverviewMetric label="Running" value={stats.doing} tone="doing" />
         <OverviewMetric label="Blocked" value={stats.blocked} tone="blocked" />
       </div>
-
-      <CurrentPlanCard planUpdate={planUpdate} />
 
       <div className="todo-filters">
         {(
@@ -798,7 +813,7 @@ function TodoPanel({
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
