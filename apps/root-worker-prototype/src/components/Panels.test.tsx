@@ -55,7 +55,7 @@ function makeNode(thread: Thread, children: TreeNode[] = []): TreeNode {
 function makeProject(
   id: string,
   label: string,
-  pmTree: TreeNode,
+  tree: TreeNode,
   overrides: Partial<SidebarProjectNode> = {},
 ): SidebarProjectNode {
   return {
@@ -65,12 +65,12 @@ function makeProject(
     cwd: `/work/${label}`,
     statusClass: "todo",
     updatedAt: 1,
-    pmTree,
+    tree,
     descendantCount: 0,
     activeCount: 0,
     waitingCount: 0,
     failedCount: 0,
-    duplicatePmThreadIds: [],
+    duplicateRootThreadIds: [],
     ...overrides,
   };
 }
@@ -89,11 +89,11 @@ function renderSidebar(
       collapsedProjectSet={new Set(options?.collapsedProjects ?? [])}
       collapsedSet={new Set(options?.collapsedTreeNodes ?? [])}
       isChatCollapsed={options?.chatCollapsed ?? false}
-      newProjectName="PM"
+      newProjectName="Project chat"
       onCreateChatThread={() => {}}
       onCreateProjectThread={() => {}}
       onOpenMenu={() => {}}
-      onSelectProjectPm={() => {}}
+      onSelectProject={() => {}}
       onSelectThread={() => {}}
       onSetNewProjectName={() => {}}
       onToggleChat={() => {}}
@@ -105,20 +105,20 @@ function renderSidebar(
   );
 }
 
-test("SidebarPanel renders projects with PM and nested subagents", () => {
-  const pm = makeNode(makeThread("pm-alpha", "/work/alpha", "PM"), [
+test("SidebarPanel renders projects with nested subagents and no extra root row", () => {
+  const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
     makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev")),
   ]);
   const sidebar: ProjectAgentSidebar = {
     projects: [
-      makeProject("project:/work/alpha", "alpha", pm, {
+      makeProject("project:/work/alpha", "alpha", root, {
         descendantCount: 1,
         activeCount: 1,
       }),
       makeProject(
         "project:/work/beta",
         "beta",
-        makeNode(makeThread("pm-beta", "/work/beta", "PM")),
+        makeNode(makeThread("root-beta", "/work/beta", "Beta chat")),
       ),
     ],
     chat: {
@@ -134,10 +134,29 @@ test("SidebarPanel renders projects with PM and nested subagents", () => {
   assert.match(markup, /Projects/);
   assert.match(markup, /alpha/);
   assert.match(markup, /beta/);
-  assert.match(markup, /PM/);
   assert.match(markup, /owner_dev/);
+  assert.doesNotMatch(markup, /Alpha chat/);
+  assert.doesNotMatch(markup, /Beta chat/);
   assert.doesNotMatch(markup, /Agent Tree/);
   assert.doesNotMatch(markup, /New Root/);
+});
+
+test("SidebarPanel exposes one create button", () => {
+  const sidebar: ProjectAgentSidebar = {
+    projects: [],
+    chat: {
+      id: "chat",
+      statusClass: "todo",
+      updatedAt: 0,
+      conversations: [],
+    },
+  };
+
+  const markup = renderSidebar(sidebar);
+
+  assert.match(markup, /New/);
+  assert.doesNotMatch(markup, /New Chat/);
+  assert.doesNotMatch(markup, /Open Project/);
 });
 
 test("SidebarPanel renders Chat group conversations separately", () => {
@@ -163,10 +182,14 @@ test("SidebarPanel renders Chat group conversations separately", () => {
 });
 
 test("SidebarPanel keeps project and tree collapse independent", () => {
-  const child = makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev"));
-  const pm = makeNode(makeThread("pm-alpha", "/work/alpha", "PM"), [child]);
+  const child = makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev"), [
+    makeNode(makeThread("reviewer-alpha", "/work/alpha", "reviewer")),
+  ]);
+  const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
+    child,
+  ]);
   const sidebar: ProjectAgentSidebar = {
-    projects: [makeProject("project:/work/alpha", "alpha", pm)],
+    projects: [makeProject("project:/work/alpha", "alpha", root)],
     chat: {
       id: "chat",
       statusClass: "todo",
@@ -179,12 +202,13 @@ test("SidebarPanel keeps project and tree collapse independent", () => {
     collapsedProjects: ["project:/work/alpha"],
   });
   const treeCollapsed = renderSidebar(sidebar, {
-    collapsedTreeNodes: ["pm-alpha"],
+    collapsedTreeNodes: ["owner-alpha"],
   });
   const chatCollapsed = renderSidebar(sidebar, { chatCollapsed: true });
 
   assert.doesNotMatch(projectCollapsed, /owner_dev/);
-  assert.doesNotMatch(treeCollapsed, /owner_dev/);
+  assert.match(treeCollapsed, /owner_dev/);
+  assert.doesNotMatch(treeCollapsed, /reviewer/);
   assert.match(treeCollapsed, /Chat/);
   assert.doesNotMatch(chatCollapsed, /General Q&amp;A/);
   assert.match(chatCollapsed, /alpha/);

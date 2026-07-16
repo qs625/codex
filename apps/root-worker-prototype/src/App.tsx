@@ -73,7 +73,7 @@ import {
   isSubagentThread,
   normalizeProjectCwd,
   normalizeThreadSnapshot,
-  pickInitialProjectPmThread,
+  pickInitialProjectThread,
   pickInitialThread,
   queuePendingThreadUpdate,
   updateThreadItem,
@@ -181,7 +181,7 @@ function App() {
   const [isSending, setIsSending] = useState(false);
   const [isStoppingTurn, setIsStoppingTurn] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("PM");
+  const [newProjectName, setNewProjectName] = useState("Project chat");
   const [error, setError] = useState<string | null>(null);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
@@ -751,7 +751,7 @@ function App() {
       );
     };
     const selectedProject = projectSidebar.projects.find((project) =>
-      getThreadSubtreeIds(threads, project.pmTree.threadId).has(selectedThreadId),
+      getThreadSubtreeIds(threads, project.tree.threadId).has(selectedThreadId),
     );
     if (selectedProject) {
       setCollapsedProjectIds((current) =>
@@ -777,9 +777,9 @@ function App() {
       setWorkspace(payload.workspace);
       const normalizedThreads = payload.threads.map(normalizeThreadSnapshot);
       setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
-      const preferredProjectPm = pickInitialProjectPmThread(normalizedThreads);
-      if (preferredProjectPm) {
-        setSelectedThreadId(preferredProjectPm.id);
+      const preferredProjectThread = pickInitialProjectThread(normalizedThreads);
+      if (preferredProjectThread) {
+        setSelectedThreadId(preferredProjectThread.id);
         return;
       }
       const rootThread = await ensureInitialProjectThread(payload.workspace);
@@ -967,7 +967,7 @@ function App() {
       const next = current.filter((thread) => !threadIdSet.has(thread.id));
       setSelectedThreadId((selected) =>
         selected && threadIdSet.has(selected)
-          ? (pickInitialProjectPmThread(next)?.id ?? null)
+          ? (pickInitialProjectThread(next)?.id ?? null)
           : selected,
       );
       return next;
@@ -1295,7 +1295,7 @@ function App() {
   async function openWorkspaceProject() {
     const projectCwd = normalizeProjectCwd(workspace);
     if (!projectCwd) {
-      setError("Open Project needs a workspace path from the app server.");
+      setError("Project chat needs a workspace path from the app server.");
       return;
     }
     const existingProject = projectCwd
@@ -1305,16 +1305,16 @@ function App() {
       setCollapsedProjectIds((current) =>
         current.filter((projectId) => projectId !== existingProject.id),
       );
-      setSelectedThreadId(existingProject.pmTree.threadId);
+      setSelectedThreadId(existingProject.tree.threadId);
       return;
     }
-    await createProjectThread(newProjectName.trim() || "PM", projectCwd);
+    await createProjectThread(newProjectName.trim() || "Project chat", projectCwd);
   }
 
-  async function createProjectThread(name = "PM", cwd = workspace) {
+  async function createProjectThread(name = "Project chat", cwd = workspace) {
     const projectCwd = normalizeProjectCwd(cwd);
     if (!projectCwd) {
-      setError("Open Project needs a workspace path from the app server.");
+      setError("Project chat needs a workspace path from the app server.");
       return;
     }
     setError(null);
@@ -1334,7 +1334,7 @@ function App() {
 
   function createChatThread() {
     setError(
-      "New Chat is unavailable in this build because createThread defaults missing cwd to the workspace. Chat mode needs backend support for no-project threads.",
+      "Choose the current workspace to open a project chat. No-project chat is unavailable in this build because createThread defaults missing cwd to the workspace.",
     );
   }
 
@@ -1347,7 +1347,7 @@ function App() {
       initialProjectThreadPromise = window.codexDesktop
         .createThread({
           cwd: projectCwd,
-          name: "PM",
+          name: "Project chat",
         })
         .then((payload) => (payload as { thread: Thread }).thread)
         .finally(() => {
@@ -1863,7 +1863,7 @@ function App() {
     try {
       const thread = threads.find((candidate) => candidate.id === threadId);
       if (thread && isRootThread(thread)) {
-        throw new Error("Project PM cannot be deleted from the subagent menu.");
+        throw new Error("Project chat cannot be deleted from the subagent menu.");
       }
       const archive = window.codexDesktop.archiveThread;
       if (typeof archive !== "function") {
@@ -1894,7 +1894,7 @@ function App() {
     );
   }
 
-  function selectProjectPm(projectId: string, threadId: string) {
+  function selectProject(projectId: string, threadId: string) {
     setCollapsedProjectIds((current) =>
       current.filter((value) => value !== projectId),
     );
@@ -2460,7 +2460,7 @@ function App() {
           onCreateChatThread={createChatThread}
           onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}
-          onSelectProjectPm={selectProjectPm}
+          onSelectProject={selectProject}
           onSelectThread={setSelectedThreadId}
           onSetNewProjectName={setNewProjectName}
           onToggleChat={() => setIsChatCollapsed((current) => !current)}
@@ -2530,7 +2530,7 @@ function App() {
           fileTreeEntriesByPath={fileTreeEntriesByPath}
           fileTreeErrorsByPath={fileTreeErrorsByPath}
           fileTreeLoadingPath={fileTreeLoadingPath}
-          onOpenProjectPm={() => void openWorkspaceProject()}
+          onOpenProjectChat={() => void openWorkspaceProject()}
           onNavigateToSymbol={(destination, sourceLocation) =>
             void handleNavigateToSymbol(destination, sourceLocation)
           }

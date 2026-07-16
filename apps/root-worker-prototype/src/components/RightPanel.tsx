@@ -68,7 +68,7 @@ function formatTokenCount(value: number | null) {
 export function RightPanel({
   activeView,
   availableSkillCount,
-  onOpenProjectPm,
+  onOpenProjectChat,
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
@@ -102,7 +102,7 @@ export function RightPanel({
 }: {
   activeView: RightPanelView;
   availableSkillCount: number;
-  onOpenProjectPm: () => void;
+  onOpenProjectChat: () => void;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
@@ -149,7 +149,7 @@ export function RightPanel({
           {activeView === "todo" ? (
             <TodoPanel
               stats={todoStats}
-              onOpenProjectPm={onOpenProjectPm}
+              onOpenProjectChat={onOpenProjectChat}
               onSelectTaskThread={onSelectTaskThread}
               onSetTaskFilter={onSetTaskFilter}
               planUpdate={planUpdate}
@@ -705,7 +705,7 @@ function statusClassName(status: string) {
 
 function TodoPanel({
   stats,
-  onOpenProjectPm,
+  onOpenProjectChat,
   onSelectTaskThread,
   onSetTaskFilter,
   planUpdate,
@@ -714,7 +714,7 @@ function TodoPanel({
   todoItems,
 }: {
   stats: ReturnType<typeof buildTodoStats>;
-  onOpenProjectPm: () => void;
+  onOpenProjectChat: () => void;
   onSelectTaskThread: (threadId: string) => void;
   onSetTaskFilter: (value: TaskFilter) => void;
   planUpdate: ThreadPlanUpdate | null;
@@ -728,11 +728,11 @@ function TodoPanel({
         <div className="panel-content-copy">
           <span className="panel-eyebrow">Todo List</span>
           <h2>Execution Queue</h2>
-          <p>Direct child work coordinated by the selected PM or agent.</p>
+          <p>Direct child work coordinated by the selected project or agent.</p>
         </div>
-        <button type="button" className="panel-inline-action" onClick={onOpenProjectPm}>
+        <button type="button" className="panel-inline-action" onClick={onOpenProjectChat}>
           <PlusIcon />
-          <span>Open PM</span>
+          <span>Open Project</span>
         </button>
       </header>
 

@@ -9,8 +9,10 @@ import {
   buildProjectAgentSidebar,
   buildCurrentThreadTodoItems,
   formatUpdatedLabel,
+  getAgentRoleLabel,
   getPresenceLabel,
   getParentThreadId,
+  getRootThreadConversationTitle,
   getThreadPresenceLabel,
   getThreadItemNotificationSyntheticTurnStatus,
   getThreadItemNotificationTargetThreadIds,
@@ -18,7 +20,7 @@ import {
   getThreadPath,
   isThreadThinking,
   mergeThreadSnapshot,
-  pickInitialProjectPmThread,
+  pickInitialProjectThread,
   queuePendingThreadUpdate,
   threadDisplayStatusClass,
   threadStatusClass,
@@ -186,22 +188,22 @@ function makeTreeNode(
   };
 }
 
-test("buildProjectAgentSidebar groups parentless project PMs by cwd", () => {
+test("buildProjectAgentSidebar groups parentless project chat roots by cwd", () => {
   const projectA = makeSidebarThread({
-    id: "pm-a",
-    name: "Alpha PM",
+    id: "project-a",
+    name: "Alpha chat",
     cwd: "/work/alpha",
     createdAt: 1,
     updatedAt: 4,
   });
   const projectB = makeSidebarThread({
-    id: "pm-b",
-    name: "Beta PM",
+    id: "project-b",
+    name: "Beta chat",
     cwd: "/work/beta",
     createdAt: 2,
     updatedAt: 8,
   });
-  const owner = makeSubagentThread("owner-a", "pm-a", "/root/owner");
+  const owner = makeSubagentThread("owner-a", "project-a", "/root/owner");
 
   const sidebar = buildProjectAgentSidebar([projectA, projectB, owner]);
 
@@ -210,9 +212,9 @@ test("buildProjectAgentSidebar groups parentless project PMs by cwd", () => {
     ["alpha", "beta"],
   );
   const alpha = sidebar.projects.find((project) => project.cwd === "/work/alpha");
-  assert.equal(alpha?.pmTree.threadId, "pm-a");
-  assert.equal(alpha?.pmTree.label, "PM");
-  assert.equal(alpha?.pmTree.children[0]?.threadId, "owner-a");
+  assert.equal(alpha?.tree.threadId, "project-a");
+  assert.equal(alpha?.tree.label, "Alpha chat");
+  assert.equal(alpha?.tree.children[0]?.threadId, "owner-a");
   assert.equal(alpha?.descendantCount, 1);
 });
 
@@ -261,6 +263,24 @@ test("buildProjectAgentSidebar keeps Chat conversation subagents visible", () =>
   );
 });
 
+test("root thread labels distinguish project roots from no-project chats", () => {
+  const project = makeSidebarThread({
+    id: "project",
+    name: "Project chat",
+    cwd: "/work/project",
+  });
+  const chat = makeSidebarThread({
+    id: "chat",
+    name: "General Q&A",
+    cwd: "",
+  });
+
+  assert.equal(getRootThreadConversationTitle(project), "Project chat");
+  assert.equal(getAgentRoleLabel(project), "Project chat");
+  assert.equal(getRootThreadConversationTitle(chat), "General Q&A");
+  assert.equal(getAgentRoleLabel(chat), "Chat");
+});
+
 test("getThreadAncestorIds returns ancestors for selected Chat subagents", () => {
   const chat = makeSidebarThread({
     id: "chat",
@@ -280,57 +300,57 @@ test("getThreadAncestorIds returns ancestors for selected Chat subagents", () =>
   ]);
 });
 
-test("buildProjectAgentSidebar hides duplicate parentless PMs for the same project", () => {
-  const olderPm = makeSidebarThread({
-    id: "older-pm",
+test("buildProjectAgentSidebar hides duplicate parentless roots for the same project", () => {
+  const olderRoot = makeSidebarThread({
+    id: "older-root",
     cwd: "/work/project",
     updatedAt: 2,
   });
-  const activePm = makeSidebarThread({
-    id: "active-pm",
+  const activeRoot = makeSidebarThread({
+    id: "active-root",
     cwd: "/work/project/",
     updatedAt: 1,
     status: { type: "active", activeFlags: ["running"] },
   });
 
-  const sidebar = buildProjectAgentSidebar([olderPm, activePm]);
+  const sidebar = buildProjectAgentSidebar([olderRoot, activeRoot]);
 
   assert.equal(sidebar.projects.length, 1);
-  assert.equal(sidebar.projects[0]?.pmTree.threadId, "active-pm");
-  assert.deepEqual(sidebar.projects[0]?.duplicatePmThreadIds, ["older-pm"]);
+  assert.equal(sidebar.projects[0]?.tree.threadId, "active-root");
+  assert.deepEqual(sidebar.projects[0]?.duplicateRootThreadIds, ["older-root"]);
 });
 
-test("pickInitialProjectPmThread follows sidebar canonical PM selection", () => {
-  const olderPm = makeSidebarThread({
-    id: "older-pm",
+test("pickInitialProjectThread follows sidebar canonical project root selection", () => {
+  const olderRoot = makeSidebarThread({
+    id: "older-root",
     cwd: "/work/project",
     updatedAt: 9,
   });
-  const activePm = makeSidebarThread({
-    id: "active-pm",
+  const activeRoot = makeSidebarThread({
+    id: "active-root",
     cwd: "/work/project",
     updatedAt: 1,
     status: { type: "active", activeFlags: ["running"] },
   });
 
-  const picked = pickInitialProjectPmThread([olderPm, activePm]);
+  const picked = pickInitialProjectThread([olderRoot, activeRoot]);
 
-  assert.equal(picked?.id, "active-pm");
+  assert.equal(picked?.id, "active-root");
 });
 
-test("buildProjectAgentSidebar makes subagents inherit their PM project", () => {
-  const pm = makeSidebarThread({ id: "pm", cwd: "/work/project" });
-  const owner = makeSubagentThread("owner", "pm", "/root/owner", {
+test("buildProjectAgentSidebar makes subagents inherit their project root", () => {
+  const root = makeSidebarThread({ id: "project-root", cwd: "/work/project" });
+  const owner = makeSubagentThread("owner", "project-root", "/root/owner", {
     cwd: "/another/repo",
   });
   const reviewer = makeSubagentThread("reviewer", "owner", "/root/owner/reviewer");
 
-  const sidebar = buildProjectAgentSidebar([pm, owner, reviewer]);
+  const sidebar = buildProjectAgentSidebar([root, owner, reviewer]);
   const project = sidebar.projects[0];
 
   assert.equal(project?.cwd, "/work/project");
-  assert.equal(project?.pmTree.children[0]?.threadId, "owner");
-  assert.equal(project?.pmTree.children[0]?.children[0]?.threadId, "reviewer");
+  assert.equal(project?.tree.children[0]?.threadId, "owner");
+  assert.equal(project?.tree.children[0]?.children[0]?.threadId, "reviewer");
   assert.equal(sidebar.projects.length, 1);
 });
 
