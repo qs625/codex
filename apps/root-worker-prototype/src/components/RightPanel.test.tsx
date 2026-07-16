@@ -64,6 +64,7 @@ function renderRightPanel(
     filePanelView?: FilePanelView;
     fileTreeEntriesByPath?: Record<string, FileTreeEntry[]>;
     expandedTreeDirectories?: string[];
+    todoItems?: React.ComponentProps<typeof RightPanel>["todoItems"];
   },
 ) {
   return renderToStaticMarkup(
@@ -98,7 +99,7 @@ function renderRightPanel(
       selectedThreadId={null}
       thread={thread}
       taskFilter="all"
-      todoItems={[]}
+      todoItems={options?.todoItems ?? []}
     />,
   );
 }
@@ -165,13 +166,15 @@ test("renders thread goal details in thread analysis", () => {
   assert.match(markup, /12K \/ 50K tokens/);
 });
 
-test("renders project chat action in the todo panel", () => {
-  const markup = renderRightPanel(makeThread([]), "todo");
+test("renders project chat action inside thread analysis", () => {
+  const markup = renderRightPanel(makeThread([]), "skills");
 
+  assert.match(markup, /Thread Analysis/);
   assert.match(markup, /Execution Queue/);
-  assert.match(markup, /Direct child work coordinated by the selected project or agent\./);
   assert.match(markup, /Open Project/);
   assert.doesNotMatch(markup, /New Task/);
+  assert.doesNotMatch(markup, /Todo List/);
+  assert.doesNotMatch(markup, /Todo Board/);
 });
 
 test("renders live commands and schedule subscriptions", () => {
@@ -214,7 +217,7 @@ test("renders live commands and schedule subscriptions", () => {
   assert.match(markup, /every_interval 6h/);
   assert.match(markup, /Upcoming/);
   assert.match(markup, /aria-expanded="true"/);
-  assert.match(markup, /1 item/);
+  assert.match(markup, /2 items/);
   assert.match(markup, /Every 6 hours/);
   assert.doesNotMatch(markup, /every 21600000 ms/);
 });
@@ -326,7 +329,7 @@ test("collapses one schedule agenda date without hiding other dates", () => {
   assert.match(expandedMarkup, /daily digest/);
 });
 
-test("renders the current thread plan in the todo panel", () => {
+test("renders the current thread plan in thread analysis", () => {
   const planUpdate = {
     threadId: "thread-1",
     turnId: "turn-1",
@@ -339,15 +342,41 @@ test("renders the current thread plan in the todo panel", () => {
   } satisfies ThreadPlanUpdate;
   const markup = renderRightPanel(
     makeThread([]),
-    "todo",
+    "skills",
     planUpdate,
   );
 
+  assert.match(markup, /Thread Analysis/);
   assert.match(markup, /Keep the change scoped\./);
   assert.match(markup, /Filter direct child tasks/);
   assert.match(markup, /Render current thread plan/);
   assert.match(markup, /Run validation/);
   assert.match(markup, /In progress/);
+  assert.doesNotMatch(markup, /Todo List/);
+});
+
+test("renders todo items inside thread analysis without a separate todo panel", () => {
+  const markup = renderRightPanel(makeThread([]), "skills", null, {
+    todoItems: [
+      {
+        id: "task-1",
+        title: "Wire plan into analysis",
+        ownerPath: "/my_codex/owner_dev",
+        status: "doing",
+        statusLabel: "Running",
+        updatedLabel: "just now",
+        summary: "Move the existing work queue into the analysis view.",
+        threadId: "thread-1",
+      },
+    ],
+  });
+
+  assert.match(markup, /Thread Analysis/);
+  assert.match(markup, /Wire plan into analysis/);
+  assert.match(markup, /Move the existing work queue into the analysis view\./);
+  assert.match(markup, /\/my_codex\/owner_dev/);
+  assert.doesNotMatch(markup, /Todo List/);
+  assert.doesNotMatch(markup, /Todo Board/);
 });
 
 test("renders git panel with deduped thread file changes", () => {

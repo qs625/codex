@@ -268,6 +268,7 @@ test("root thread labels distinguish project roots from no-project chats", () =>
     id: "project",
     name: "Project chat",
     cwd: "/work/project",
+    agentPath: "/my_codex",
   });
   const chat = makeSidebarThread({
     id: "chat",
@@ -275,8 +276,8 @@ test("root thread labels distinguish project roots from no-project chats", () =>
     cwd: "",
   });
 
-  assert.equal(getRootThreadConversationTitle(project), "Project chat");
-  assert.equal(getAgentRoleLabel(project), "Project chat");
+  assert.equal(getRootThreadConversationTitle(project), "/my_codex");
+  assert.equal(getAgentRoleLabel(project), "/my_codex");
   assert.equal(getRootThreadConversationTitle(chat), "General Q&A");
   assert.equal(getAgentRoleLabel(chat), "Chat");
 });

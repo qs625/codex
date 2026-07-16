@@ -630,7 +630,6 @@ export type ProjectAgentSidebar = {
 export type NewThreadDraft = {
   mode: "project" | "chat";
   projectPath: string;
-  title: string;
   taskName: string;
   agentType: string | null;
   model: string | null;
@@ -719,7 +718,7 @@ export type DraftSkill = {
   path: string;
 };
 
-export type RightPanelView = "todo" | "preview" | "skills" | "git";
+export type RightPanelView = "preview" | "skills" | "git";
 
 export type FilePanelView = "preview" | "tree";
 

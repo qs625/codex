@@ -289,6 +289,7 @@ test("NewThreadPopover renders thread/start parameter fields", () => {
   assert.match(markup, /New conversation/);
   assert.match(markup, /Project path/);
   assert.match(markup, /aria-label="Choose project folder"/);
+  assert.doesNotMatch(markup, /<span>Title<\/span>/);
   assert.match(markup, /taskName/);
   assert.match(markup, /Path preview/);
   assert.match(markup, /agentType/);
@@ -324,7 +325,7 @@ test("NewThreadDialog renders centered overlay around the existing form", () => 
 
 test("buildNewThreadDraft trims thread start params", () => {
   assert.deepEqual(
-    buildNewThreadDraft("project", "  /work/new  ", "  Launch pad  ", {
+    buildNewThreadDraft("project", "  /work/new  ", {
       taskName: "  owner_dev  ",
       agentType: "  feature-owner  ",
       model: "  gpt-5.4  ",
@@ -335,7 +336,6 @@ test("buildNewThreadDraft trims thread start params", () => {
     {
       mode: "project",
       projectPath: "/work/new",
-      title: "Launch pad",
       taskName: "owner_dev",
       agentType: "feature-owner",
       model: "gpt-5.4",
@@ -345,27 +345,22 @@ test("buildNewThreadDraft trims thread start params", () => {
     },
   );
   assert.equal(
-    buildNewThreadDraft("project", "/work/new", "   ").title,
-    "Project chat",
-  );
-  assert.equal(
-    buildNewThreadDraft("project", "/work/new", "Launch").taskName,
+    buildNewThreadDraft("project", "/work/new").taskName,
     defaultNewThreadStartParams("/work/new").taskName,
   );
   assert.equal(
-    buildNewThreadDraft("project", "/work/new", "Launch", {
+    buildNewThreadDraft("project", "/work/new", {
       model: "   ",
     }).model,
     null,
   );
   assert.deepEqual(
-    buildNewThreadDraft("project", "/work/new", "Launch", {
+    buildNewThreadDraft("project", "/work/new", {
       taskName: " ",
     }),
     {
       mode: "project",
       projectPath: "/work/new",
-      title: "Launch",
       taskName: "",
       agentType: null,
       model: null,
@@ -395,13 +390,14 @@ test("new thread agent path validation matches backend path rules", () => {
   assert.equal(isValidNewThreadAgentPath("/"), false);
 });
 
-test("new thread project defaults use root-level stable paths", () => {
+test("new thread project defaults use sanitized cwd basename paths", () => {
   const alpha = defaultNewThreadStartParams("/work/alpha-project");
   const beta = defaultNewThreadStartParams("/work/beta-project");
 
-  assert.match(alpha.taskName, /^alpha_project_[a-z0-9]+$/);
-  assert.equal(alpha.pathPreview, `/${alpha.taskName}`);
-  assert.equal(beta.pathPreview, `/${beta.taskName}`);
+  assert.equal(alpha.taskName, "alpha_project");
+  assert.equal(alpha.pathPreview, "/alpha_project");
+  assert.equal(beta.taskName, "beta_project");
+  assert.equal(beta.pathPreview, "/beta_project");
   assert.notEqual(alpha.taskName, beta.taskName);
   assert.equal(
     defaultNewThreadStartParams("/work/alpha-project").taskName,
@@ -436,8 +432,10 @@ test("new thread defaults preserve manual task path edits", () => {
     hasManualThreadStartParams: false,
     projectPath: "/work/new-project",
   });
-  assert.equal(automatic.pathPreview, `/${automatic.taskName}`);
-  assert.match(automatic.taskName, /^new_project_[a-z0-9]+$/);
+  assert.deepEqual(automatic, {
+    taskName: "new_project",
+    pathPreview: "/new_project",
+  });
 });
 
 test("SidebarPanel renders Chat group conversations separately", () => {

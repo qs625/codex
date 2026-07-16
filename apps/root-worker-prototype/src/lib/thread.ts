@@ -359,13 +359,13 @@ export function getAgentRoleLabel(thread: Thread) {
     return "Worker Agent";
   }
   if (isProjectRootThread(thread)) {
-    return "Project chat";
+    return getThreadPath(thread);
   }
   return "Chat";
 }
 
 export function getRootThreadConversationTitle(thread: Thread) {
-  return isProjectRootThread(thread) ? "Project chat" : getThreadLabel(thread);
+  return isProjectRootThread(thread) ? getThreadPath(thread) : getThreadLabel(thread);
 }
 
 export function isProjectRootThread(thread: Thread) {

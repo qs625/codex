@@ -2,7 +2,8 @@ import type { RightPanelView } from "../types";
 
 const RIGHT_PANEL_VIEW_STORAGE_KEY = "root-worker-prototype:right-panel-view";
 
-const RIGHT_PANEL_VIEWS = new Set<RightPanelView>(["todo", "preview", "skills", "git"]);
+const DEFAULT_RIGHT_PANEL_VIEW: RightPanelView = "skills";
+const RIGHT_PANEL_VIEWS = new Set<RightPanelView>(["preview", "skills", "git"]);
 
 type PanelViewStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -10,14 +11,14 @@ export function readStoredRightPanelView(
   storage: PanelViewStorage | null | undefined = getLocalStorage(),
 ): RightPanelView {
   if (!storage) {
-    return "todo";
+    return DEFAULT_RIGHT_PANEL_VIEW;
   }
 
   try {
     const stored = storage.getItem(RIGHT_PANEL_VIEW_STORAGE_KEY);
-    return isRightPanelView(stored) ? stored : "todo";
+    return isRightPanelView(stored) ? stored : DEFAULT_RIGHT_PANEL_VIEW;
   } catch {
-    return "todo";
+    return DEFAULT_RIGHT_PANEL_VIEW;
   }
 }
 
