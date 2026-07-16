@@ -13,10 +13,10 @@
   files: codex-rs/thread-service/src/compact.rs; codex-rs/thread-service/src/compact_tests.rs; codex-rs/app-server/src/request_processors.rs; codex-rs/thread-history/; codex-rs/app-server-protocol/src/protocol/thread_data.rs; apps/root-worker-prototype/src/lib/conversation.ts; compact history request/render tests
   base_commit: f174838c92c65a861cf611043dd56280cdda7e2e
   pending_sync_from_main: n/a
-  status: planned
+  status: in_progress
   objective: compact 后客户端可见的 init context / injected context item 在 live、reload、按需展开 compact history 路径中语义一致；修复不能退化模型可见的 initial context reinject。
-  last_update: 2026-07-16: 用户报告 compact 后客户端有时看不到 init context item；PM 已将 Known Issue 提升为 owner_main 独占 bugfix，待派发。
-  next_action: 向 owner_main 派发完整 runtime/display brief，要求先定位 item 丢失发生在 persisted replacement history、thread/read/reload replay、root-worker compact history hydration 还是 renderer rendering，再按 typed event/item 链路收口。
+  last_update: 2026-07-16: PM 已向 owner_main 派发完整 runtime/display brief，要求先定位 item 丢失发生在 persisted replacement history、thread/read/reload replay、root-worker compact history hydration 还是 renderer rendering，再按 typed event/item 链路收口。
+  next_action: 等待 owner_main 交付定位、实现、固定 reviewer 结论和最小回归验证；PM 将按设计约束先验收实现层级，再看测试结果。
   blockers: none
   validation: pending
   commit:
