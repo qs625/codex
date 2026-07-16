@@ -13,10 +13,10 @@
   files: apps/root-worker-prototype/src/components/Panels.tsx; apps/root-worker-prototype/src/components/Panels.test.tsx; apps/root-worker-prototype/src/styles.css
   base_commit: 9244702c39ee5e4d53b9d01c8b19cd26124b9120
   pending_sync_from_main: n/a
-  status: planned
+  status: in_progress
   objective: `New` popup 从左侧 tree 内联浮层改为居中显示的弹层/对话框，不能被 sidebar/tree 容器裁切；保留现有 taskName/path preview、agentType、model、reasoning、service tier、project/chat 创建语义。
-  last_update: 2026-07-16: 用户先报告 `New` popup 在左侧 tree 被截断显示不全，随后明确要求“把 new 的 popup 在中央显示”；PM 已将 `/Users/bytedance/Projects/my-codex-dev` 从当前主线开到 `fix/new-popup-clipping`，待派发给 owner_dev。
-  next_action: 派发 owner_dev 将 `New` popup 改为居中弹层，优先复用现有 root-worker modal/popover 样式和状态流，补最小组件或 DOM 测试。
+  last_update: 2026-07-16: PM 已派发 owner_dev，将 `New` popup 改为居中弹层；brief 明确要求避免 sidebar/tree clipping、复用现有表单状态、不改后端 path/API 语义。
+  next_action: 等待 owner_dev 交付实现、固定 reviewer 结论和 targeted frontend 验证；PM 后续按居中弹层设计与 path payload 不变量验收。
   blockers: none
   validation: pending
   commit:
