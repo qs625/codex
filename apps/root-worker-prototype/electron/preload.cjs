@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   bootstrap: () => ipcRenderer.invoke("codex:bootstrap"),
   listThreads: (cwd) => ipcRenderer.invoke("codex:listThreads", cwd),
   listModels: () => ipcRenderer.invoke("codex:listModels"),
+  listAgentTypes: (cwd) => ipcRenderer.invoke("codex:listAgentTypes", cwd),
+  selectProjectDirectory: (defaultPath) =>
+    ipcRenderer.invoke("codex:selectProjectDirectory", defaultPath),
   listSkills: (cwd) => ipcRenderer.invoke("codex:listSkills", cwd),
   listWorkflows: (cwd) => ipcRenderer.invoke("codex:listWorkflows", cwd),
   createThread: (payload) => ipcRenderer.invoke("codex:createThread", payload),

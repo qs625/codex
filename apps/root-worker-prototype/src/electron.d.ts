@@ -21,6 +21,16 @@ declare global {
       }>;
       listThreads: (cwd?: string) => Promise<{ data: unknown[] }>;
       listModels: () => Promise<unknown>;
+      listAgentTypes: (cwd?: string) => Promise<{
+        data: Array<{
+          name: string;
+          description?: string | null;
+          builtIn?: boolean;
+        }>;
+      }>;
+      selectProjectDirectory: (
+        defaultPath?: string,
+      ) => Promise<{ path: string | null }>;
       listSkills: (cwd?: string) => Promise<{
         skills: unknown[];
         errors: string[];

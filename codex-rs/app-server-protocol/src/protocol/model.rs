@@ -10,6 +10,7 @@ use protocol::protocol::ModelVerification as CoreModelVerification;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
+use std::path::PathBuf;
 #[cfg(feature = "schema-export")]
 #[cfg(feature = "schema-export")]
 use ts_rs::TS;
@@ -56,6 +57,34 @@ pub struct ModelListParams {
     /// When true, include models that are hidden from the default picker list.
     #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
     pub include_hidden: Option<bool>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct AgentTypeListParams {
+    /// Workspace path whose config should be used for agent role discovery.
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub cwd: Option<PathBuf>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct AgentType {
+    pub name: String,
+    pub description: Option<String>,
+    pub built_in: bool,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct AgentTypeListResponse {
+    pub data: Vec<AgentType>,
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]

@@ -15,7 +15,13 @@ import { AgentTreeNode } from "./AgentTree";
 import { ThinkingIndicator } from "./Conversation";
 import { ConversationVirtualList } from "./ConversationVirtualList";
 import { RunConfigPicker } from "./RunConfigPicker";
-import type { RunConfigSelection } from "../lib/runConfig";
+import {
+  getRunModelLabel,
+  normalizeModelListResponse,
+  resolveReasoningEffortForModel,
+  type RunConfigSelection,
+} from "../lib/runConfig";
+import { toErrorMessage } from "../lib/shared";
 import {
   ChevronDownIcon,
   CodeIcon,
@@ -58,8 +64,12 @@ import type {
   ComposerImage,
   ConversationCell,
   DraftSkill,
+  AgentTypeListResponse,
+  AgentTypeOption,
   NewThreadDraft,
   ProjectAgentSidebar,
+  RunModel,
+  RunModelListResponse,
   SidebarProjectNode,
   Thread,
   ThreadGoal,
@@ -279,6 +289,13 @@ export function NewThreadPopover({
   const [agentType, setAgentType] = useState("");
   const [model, setModel] = useState("");
   const [modelProvider, setModelProvider] = useState("");
+  const [agentTypes, setAgentTypes] = useState<AgentTypeOption[]>([]);
+  const [agentTypesError, setAgentTypesError] = useState<string | null>(null);
+  const [isLoadingAgentTypes, setIsLoadingAgentTypes] = useState(false);
+  const [models, setModels] = useState<RunModel[]>([]);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [isChoosingProjectPath, setIsChoosingProjectPath] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState("");
   const [serviceTier, setServiceTier] = useState("");
   const hasSeededWorkspacePathRef = useRef(Boolean(workspacePath.trim()));
@@ -287,6 +304,23 @@ export function NewThreadPopover({
   const defaultThreadStartParams = defaultNewThreadStartParams(trimmedProjectPath);
   const trimmedTaskName = taskName.trim();
   const pathPreview = trimmedTaskName ? `/${trimmedTaskName}` : "";
+  const modelProviders = useMemo(
+    () =>
+      [
+        ...new Set(
+          models
+            .map((modelOption) => modelOption.modelProvider)
+            .filter((provider): provider is string => Boolean(provider)),
+        ),
+      ].sort(),
+    [models],
+  );
+  const selectableModels = modelProvider
+    ? models.filter((modelOption) => modelOption.modelProvider === modelProvider)
+    : models;
+  const selectedRunModel =
+    models.find((modelOption) => getNewThreadModelKey(modelOption) === model) ??
+    null;
   const taskNameError =
     trimmedTaskName && !isValidAgentPathSegment(trimmedTaskName)
       ? "Task name must use lowercase letters, digits, and underscores, and cannot be root."
@@ -319,6 +353,99 @@ export function NewThreadPopover({
     }
   }, [taskName, trimmedProjectPath]);
 
+  useEffect(() => {
+    if (!trimmedProjectPath) {
+      setAgentTypes([]);
+      setAgentTypesError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingAgentTypes(true);
+    setAgentTypesError(null);
+    window.codexDesktop
+      .listAgentTypes(trimmedProjectPath)
+      .then((response: AgentTypeListResponse) => {
+        if (!cancelled) {
+          setAgentTypes(response.data ?? []);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setAgentTypes([]);
+          setAgentTypesError(toErrorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingAgentTypes(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trimmedProjectPath]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingModels(true);
+    setModelsError(null);
+    window.codexDesktop
+      .listModels()
+      .then((response: RunModelListResponse) => {
+        if (!cancelled) {
+          setModels(normalizeModelListResponse(response));
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setModels([]);
+          setModelsError(toErrorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingModels(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const chooseProjectPath = async () => {
+    if (isChoosingProjectPath) {
+      return;
+    }
+    setIsChoosingProjectPath(true);
+    try {
+      const response = await window.codexDesktop.selectProjectDirectory(
+        trimmedProjectPath || workspacePath,
+      );
+      if (response.path) {
+        setProjectPath(response.path);
+      }
+    } finally {
+      setIsChoosingProjectPath(false);
+    }
+  };
+
+  const selectModel = (nextModelKey: string) => {
+    const nextModel =
+      models.find(
+        (modelOption) => getNewThreadModelKey(modelOption) === nextModelKey,
+      ) ?? null;
+    if (!nextModel) {
+      setModel("");
+      return;
+    }
+    setModel(getNewThreadModelKey(nextModel));
+    setModelProvider(nextModel.modelProvider ?? "");
+    setReasoningEffort(resolveReasoningEffortForModel(nextModel, reasoningEffort));
+  };
+
   const submitDraft = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canCreate) {
@@ -328,8 +455,8 @@ export function NewThreadPopover({
       buildNewThreadDraft(mode, trimmedProjectPath, title, {
         taskName,
         agentType,
-        model,
-        modelProvider,
+        model: selectedRunModel?.model ?? "",
+        modelProvider: selectedRunModel?.modelProvider ?? modelProvider,
         reasoningEffort,
         serviceTier,
       }),
@@ -374,12 +501,24 @@ export function NewThreadPopover({
 
       <label className="sidebar-create-field">
         <span>Project path</span>
-        <input
-          list="sidebar-existing-projects"
-          onChange={(event) => setProjectPath(event.target.value)}
-          placeholder="/path/to/project"
-          value={projectPath}
-        />
+        <div className="sidebar-create-path-control">
+          <input
+            list="sidebar-existing-projects"
+            onChange={(event) => setProjectPath(event.target.value)}
+            placeholder="/path/to/project"
+            value={projectPath}
+          />
+          <button
+            aria-label="Choose project folder"
+            className="icon-button"
+            disabled={isChoosingProjectPath}
+            onClick={chooseProjectPath}
+            title="Choose project folder"
+            type="button"
+          >
+            <OpenIcon />
+          </button>
+        </div>
         <datalist id="sidebar-existing-projects">
           {[...new Set([workspacePath, ...existingProjectPaths].filter(Boolean))]
             .map((path) => (
@@ -420,29 +559,68 @@ export function NewThreadPopover({
 
       <label className="sidebar-create-field">
         <span>agentType</span>
-        <input
+        <select
           onChange={(event) => setAgentType(event.target.value)}
-          placeholder="default"
           value={agentType}
-        />
+        >
+          <option value="">
+            {isLoadingAgentTypes ? "Loading agent types..." : "Use default"}
+          </option>
+          {agentTypes.map((agentTypeOption) => (
+            <option key={agentTypeOption.name} value={agentTypeOption.name}>
+              {agentTypeOption.name}
+              {agentTypeOption.description
+                ? ` - ${agentTypeOption.description}`
+                : ""}
+            </option>
+          ))}
+        </select>
+        {agentTypesError ? (
+          <em className="sidebar-create-error">{agentTypesError}</em>
+        ) : null}
       </label>
 
       <div className="sidebar-create-disabled-grid">
         <label className="sidebar-create-field">
-          <span>model</span>
-          <input
-            onChange={(event) => setModel(event.target.value)}
-            placeholder="default"
-            value={model}
-          />
+          <span>modelProvider</span>
+          <select
+            onChange={(event) => {
+              setModelProvider(event.target.value);
+              setModel("");
+            }}
+            value={modelProvider}
+          >
+            <option value="">
+              {isLoadingModels ? "Loading providers..." : "Use default"}
+            </option>
+            {modelProviders.map((provider) => (
+              <option key={provider} value={provider}>
+                {provider}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="sidebar-create-field">
-          <span>modelProvider</span>
-          <input
-            onChange={(event) => setModelProvider(event.target.value)}
-            placeholder="default"
-            value={modelProvider}
-          />
+          <span>model</span>
+          <select
+            onChange={(event) => selectModel(event.target.value)}
+            value={model}
+          >
+            <option value="">
+              {isLoadingModels ? "Loading models..." : "Use default"}
+            </option>
+            {selectableModels.map((modelOption) => (
+              <option
+                key={getNewThreadModelKey(modelOption)}
+                value={getNewThreadModelKey(modelOption)}
+              >
+                {getRunModelLabel(modelOption)}
+              </option>
+            ))}
+          </select>
+          {modelsError ? (
+            <em className="sidebar-create-error">{modelsError}</em>
+          ) : null}
         </label>
       </div>
 
@@ -519,6 +697,10 @@ export function buildNewThreadDraft(
 function optionalThreadStartParam(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function getNewThreadModelKey(model: RunModel) {
+  return `${model.modelProvider ?? ""}:${model.model}`;
 }
 
 export function isValidAgentPathSegment(segment: string) {

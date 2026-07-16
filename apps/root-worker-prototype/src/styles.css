@@ -292,6 +292,20 @@ svg {
   background: rgba(16, 24, 40, 0.04);
 }
 
+.sidebar-create-path-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 6px;
+  align-items: center;
+}
+
+.sidebar-create-path-control .icon-button {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  box-shadow: none;
+}
+
 .sidebar-create-error {
   color: #b42318;
   font-size: 10px;

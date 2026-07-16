@@ -414,6 +414,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "codex-agent-roles",
  "codex-agent-runtime",
  "codex-analytics",
  "codex-arg0",

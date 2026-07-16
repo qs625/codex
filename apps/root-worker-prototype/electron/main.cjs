@@ -3,6 +3,7 @@ const fs = require("node:fs/promises");
 const {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   session,
   shell,
@@ -147,6 +148,23 @@ ipcMain.handle("codex:listThreads", async (_event, cwd = defaultWorkspace) => {
 ipcMain.handle("codex:listModels", async () => {
   await ensureDefaultWorkspace();
   return appServerClient.request("model/list", { includeHidden: false });
+});
+
+ipcMain.handle("codex:listAgentTypes", async (_event, cwd = defaultWorkspace) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("agentType/list", { cwd });
+});
+
+ipcMain.handle("codex:selectProjectDirectory", async (event, defaultPath) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(window ?? undefined, {
+    defaultPath: typeof defaultPath === "string" ? defaultPath : defaultWorkspace,
+    properties: ["openDirectory"],
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return { path: null };
+  }
+  return { path: result.filePaths[0] };
 });
 
 ipcMain.handle("codex:listSkills", async (_event, cwd = defaultWorkspace) => {

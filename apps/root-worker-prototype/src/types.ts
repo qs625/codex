@@ -493,6 +493,16 @@ export type RunModelListResponse = {
   data: RunModel[];
 };
 
+export type AgentTypeOption = {
+  name: string;
+  description?: string | null;
+  builtIn?: boolean;
+};
+
+export type AgentTypeListResponse = {
+  data: AgentTypeOption[];
+};
+
 export type NotificationEnvelope = {
   type: "notification" | "status" | "ready";
   notification?: {

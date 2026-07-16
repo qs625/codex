@@ -1,5 +1,7 @@
 use super::*;
 use crate::models::ModelCatalogRuntime;
+use codex_agent_roles::DEFAULT_ROLE_NAME;
+use codex_agent_roles::built_in_configs;
 use futures::StreamExt;
 use protocol::config_types::CollaborationModeMask;
 use skill_service_api::SharedSkillServiceApi;
@@ -174,6 +176,15 @@ impl CatalogRequestProcessor {
             .map(|response| Some(response.into()))
     }
 
+    pub(crate) async fn agent_type_list(
+        &self,
+        params: AgentTypeListParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.list_agent_types(params)
+            .await
+            .map(|response| Some(response.into()))
+    }
+
     pub(crate) async fn experimental_feature_list(
         &self,
         params: ExperimentalFeatureListParams,
@@ -300,6 +311,47 @@ impl CatalogRequestProcessor {
             data: items,
             next_cursor,
         })
+    }
+
+    async fn list_agent_types(
+        &self,
+        params: AgentTypeListParams,
+    ) -> Result<AgentTypeListResponse, JSONRPCErrorError> {
+        let AgentTypeListParams { cwd } = params;
+        let config = self.load_latest_config(cwd).await?;
+        let mut items = built_in_configs()
+            .iter()
+            .map(|(name, role)| AgentType {
+                name: name.clone(),
+                description: role.description.clone(),
+                built_in: true,
+            })
+            .collect::<Vec<_>>();
+
+        for (name, role) in &config.agent_roles {
+            if let Some(item) = items.iter_mut().find(|item| item.name == *name) {
+                item.description = role.description.clone();
+                item.built_in = false;
+            } else {
+                items.push(AgentType {
+                    name: name.clone(),
+                    description: role.description.clone(),
+                    built_in: false,
+                });
+            }
+        }
+
+        items.sort_by(|left, right| {
+            if left.name == DEFAULT_ROLE_NAME && right.name != DEFAULT_ROLE_NAME {
+                return std::cmp::Ordering::Less;
+            }
+            if right.name == DEFAULT_ROLE_NAME && left.name != DEFAULT_ROLE_NAME {
+                return std::cmp::Ordering::Greater;
+            }
+            left.name.cmp(&right.name)
+        });
+
+        Ok(AgentTypeListResponse { data: items })
     }
 
     async fn list_collaboration_modes(

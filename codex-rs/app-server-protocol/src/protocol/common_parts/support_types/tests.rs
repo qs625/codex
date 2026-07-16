@@ -858,6 +858,25 @@ fn serialize_list_models() -> Result<()> {
 }
 
 #[test]
+fn serialize_list_agent_types() -> Result<()> {
+    let request = ClientRequest::AgentTypeList {
+        request_id: RequestId::Integer(7),
+        params: v2::AgentTypeListParams::default(),
+    };
+    assert_eq!(
+        json!({
+            "method": "agentType/list",
+            "id": 7,
+            "params": {
+                "cwd": null
+            }
+        }),
+        serde_json::to_value(&request)?,
+    );
+    Ok(())
+}
+
+#[test]
 fn serialize_model_provider_capabilities_read() -> Result<()> {
     let request = ClientRequest::ModelProviderCapabilitiesRead {
         request_id: RequestId::Integer(7),
@@ -1144,10 +1163,11 @@ fn serialize_thread_realtime_start_prompt_default_and_null() -> Result<()> {
 
 #[test]
 fn serialize_thread_status_changed_notification() -> Result<()> {
-    let notification = ServerNotification::ThreadStatusChanged(v2::ThreadStatusChangedNotification {
-        thread_id: "thr_123".to_string(),
-        status: v2::ThreadStatus::Complete,
-    });
+    let notification =
+        ServerNotification::ThreadStatusChanged(v2::ThreadStatusChangedNotification {
+            thread_id: "thr_123".to_string(),
+            status: v2::ThreadStatus::Complete,
+        });
     assert_eq!(
         json!({
             "method": "thread/status/changed",
@@ -1333,13 +1353,12 @@ fn thread_goal_notifications_are_marked_experimental() {
 
 #[test]
 fn thread_realtime_started_notification_is_marked_experimental() {
-    let notification = ServerNotification::ThreadRealtimeStarted(
-        v2::ThreadRealtimeStartedNotification {
+    let notification =
+        ServerNotification::ThreadRealtimeStarted(v2::ThreadRealtimeStartedNotification {
             thread_id: "thr_123".to_string(),
             realtime_session_id: Some("sess_456".to_string()),
             version: RealtimeConversationVersion::V1,
-        },
-    );
+        });
     let reason = crate::experimental_api::ExperimentalApi::experimental_reason(&notification);
     assert_eq!(reason, Some("thread/realtime/started"));
 }

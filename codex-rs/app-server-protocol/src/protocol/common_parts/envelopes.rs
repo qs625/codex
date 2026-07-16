@@ -738,6 +738,11 @@ client_request_definitions! {
         serialization: None,
         response: v2::ModelListResponse,
     },
+    AgentTypeList => "agentType/list" {
+        params: v2::AgentTypeListParams,
+        serialization: None,
+        response: v2::AgentTypeListResponse,
+    },
     ModelProviderCapabilitiesRead => "modelProvider/capabilities/read" {
         params: v2::ModelProviderCapabilitiesReadParams,
         serialization: None,
@@ -1143,7 +1148,7 @@ macro_rules! server_request_definitions {
         #[cfg(feature = "schema-export")]
         #[allow(clippy::vec_init_then_push)]
         pub fn export_server_response_schemas(
-            out_dir: &Path,
+            out_dir: &::std::path::Path,
         ) -> ::anyhow::Result<Vec<GeneratedSchema>> {
             let mut schemas = Vec::new();
             $(
@@ -1158,7 +1163,7 @@ macro_rules! server_request_definitions {
         #[cfg(feature = "schema-export")]
         #[allow(clippy::vec_init_then_push)]
         pub fn export_server_param_schemas(
-            out_dir: &Path,
+            out_dir: &::std::path::Path,
         ) -> ::anyhow::Result<Vec<GeneratedSchema>> {
             let mut schemas = Vec::new();
             $(

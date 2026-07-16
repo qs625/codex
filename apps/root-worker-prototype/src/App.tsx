@@ -126,8 +126,6 @@ import type {
   WorkflowSummary,
 } from "./types";
 
-let initialProjectThreadPromise: Promise<Thread> | null = null;
-
 const LEFT_PANEL_WIDTH_RATIO = 0.17;
 const RIGHT_PANEL_WIDTH_RATIO = 0.31;
 const LEFT_PANEL_MIN_RATIO = 0.13;
@@ -783,11 +781,7 @@ function App() {
         setSelectedThreadId(preferredProjectThread.id);
         return;
       }
-      const rootThread = await ensureInitialProjectThread(payload.workspace);
-      markThreadLoaded(rootThread.id);
-      markThreadSubscribed(rootThread.id);
-      setThreads((current) => upsertThreadWithPending(current, rootThread));
-      setSelectedThreadId(rootThread.id);
+      setSelectedThreadId(null);
     } catch (loadError) {
       setError(toErrorMessage(loadError));
     }
@@ -1367,26 +1361,6 @@ function App() {
     } catch (createError) {
       setError(toErrorMessage(createError));
     }
-  }
-
-  async function ensureInitialProjectThread(cwd: string) {
-    const projectCwd = normalizeProjectCwd(cwd);
-    if (!projectCwd) {
-      throw new Error("Initial project needs a workspace path from the app server.");
-    }
-    if (!initialProjectThreadPromise) {
-      initialProjectThreadPromise = window.codexDesktop
-        .createThread({
-          cwd: projectCwd,
-          name: "Project chat",
-        })
-        .then((payload) => (payload as { thread: Thread }).thread)
-        .finally(() => {
-          initialProjectThreadPromise = null;
-        });
-    }
-
-    return initialProjectThreadPromise;
   }
 
   async function clearCurrentRootSession() {

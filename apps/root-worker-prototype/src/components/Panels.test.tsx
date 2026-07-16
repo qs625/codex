@@ -181,10 +181,13 @@ test("NewThreadPopover renders thread/start parameter fields", () => {
 
   assert.match(markup, /New conversation/);
   assert.match(markup, /Project path/);
+  assert.match(markup, /aria-label="Choose project folder"/);
   assert.match(markup, /taskName/);
   assert.match(markup, /Path preview/);
   assert.match(markup, /agentType/);
   assert.match(markup, /modelProvider/);
+  assert.match(markup, /<select>/);
+  assert.match(markup, /Use default/);
   assert.match(markup, /reasoningEffort/);
   assert.match(markup, /serviceTier/);
   assert.match(markup, /No-project chat needs backend support/);
