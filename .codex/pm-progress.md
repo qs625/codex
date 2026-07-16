@@ -1,27 +1,16 @@
 # PM Progress
 
 ## Current Goal
-并行修复两个相关问题：app-server root-level thread path 派生，以及 root-worker project thread 下 subagent tree 缩进。
+None
 
 ## Active Work
-- id: fix-project-subagent-tree-indent
-  owner: /my_codex/owner_dev_2
-  checkout: /Users/bytedance/Projects/my-codex-dev-2
-  branch: fix/project-subagent-tree-indent
-  task_type: bugfix
-  depends_on: 无；可与 fix-root-agent-path-from-client 并行，文件范围不重叠
-  files: apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/thread.test.ts; apps/root-worker-prototype/src/components/Panels.tsx 或相邻 sidebar/tree render/CSS 文件；必要时检查 styles.css
-  base_commit: 82ec71d709359ac47375e6247a6935da686403ed
-  pending_sync_from_main: c2f0a9574；暂不同步原因：owner 在旧基线完成 UI bugfix，主 checkout 当前目标 UI 文件存在未提交改动，需先处理集成现场再同步/合并
-  status: blocked
-  objective: project thread 创建的 subagent 在左侧 tree 展示时应按层级缩进；project thread 折叠状态应尊重用户操作，不能自动展开；project thread row 与 subagent row 视觉语言应统一。
-  last_update: 2026-07-16 owner_dev_2 已完成并提交 `82eb5370d`，固定 reviewer 两轮通过；PM 复验 targeted Panels test、build、diff check 均通过。主 checkout 目标 UI 文件已有未提交改动，暂不能安全 merge。
-  next_action: 等主 checkout 中 apps/root-worker-prototype/src/App.tsx、Panels.tsx、Panels.test.tsx、styles.css 的未提交改动完成/归档/明确允许暂存后，由 PM merge `82eb5370d` 并处理与 `c2f0a9574` 的同步。
-  blockers: 主 checkout 目标 UI 文件存在未提交改动，不能覆盖或混合用户现场。
-  validation: owner `rtk pnpm install --frozen-lockfile` -> passed；owner `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 12/12 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning；owner reviewer `/my_codex/owner_dev_2/reviewer` 两轮通过；PM `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 12/12 passed；PM `rtk git diff --check 82ec71d709359ac47375e6247a6935da686403ed..82eb5370df992481656985571fac1a5be5e0d910` -> passed；PM `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning。
-  commit: 82eb5370df992481656985571fac1a5be5e0d910
+None
 
 ## Completed
+- commit: 77d082ad8
+  summary: 先提交主 checkout 当前现场为 `8e4e91892`，再合并 `82eb5370d` 到主线，修复 root-worker project tree：project first-level subagent 从 depth 1 开始缩进、grandchild 继续递增；普通 selection/status/sidebar rebuild 不再自动展开用户手动折叠的 project；显式选择 child/RightPanel task 入口走 `selectThread()` reveal；project row 复用 tree row 视觉结构并保留 cwd/count/status。
+  validation: owner `rtk pnpm install --frozen-lockfile` -> passed；owner `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 12/12 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning；owner reviewer `/my_codex/owner_dev_2/reviewer` 两轮通过；PM 合并前 `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 12/12 passed；PM 合并前 `rtk git diff --check 82ec71d709359ac47375e6247a6935da686403ed..82eb5370df992481656985571fac1a5be5e0d910` -> passed；PM 合并前 `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning；PM 合并后 `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 12/12 passed；PM 合并后 `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning。
+  residual_risk: 仍缺完整 App 层交互测试直接模拟“折叠 project 后从右侧 task 选择 child 自动 reveal”；RightPanel 现有日期断言失败为既有/独立问题，未纳入本次验证。
 - commit: c2f0a9574
   summary: 合并 `b712cefef` 到主线，修复 app-server `thread/start` 在客户端通过 `taskName` 显式提供绝对 root-level agent path 时的解析语义；`taskName` 以 `/` 开头时按 `AgentPath::try_from` 校验并保留 `/owner_dev`，普通 name 仍走 `AgentPath::derive(None, ...)`，role-only 不生成 synthetic path；新增 response、`thread/started` notification、`thread/list` 一致性回归。
   validation: owner 固定 reviewer `/my_codex/owner_dev/reviewer` 两轮通过；owner `rtk cargo test -p app-server parse_thread_start_agent_accepts_root_level_agent_path` -> 1 passed；owner `rtk cargo test -p app-server --test all thread_start_preserves_client_supplied_root_agent_path` -> 1 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk git diff --check` -> passed；PM 复跑 `rtk cargo test -p app-server parse_thread_start_agent_accepts_root_level_agent_path` -> 1 passed；PM 复跑 `rtk cargo test -p app-server --test all thread_start_preserves_client_supplied_root_agent_path` -> 1 passed；PM `rtk cargo build -p app-server --bin app-server` -> passed。
