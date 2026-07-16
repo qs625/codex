@@ -88,6 +88,7 @@ impl MemoryServiceHost for ThreadService {
                     session_source: Some(SessionSource::Internal(
                         InternalSessionSource::MemoryConsolidation,
                     )),
+                    agent_metadata: None,
                     thread_source: Some(ThreadSource::MemoryConsolidation),
                     dynamic_tools: Vec::new(),
                     persist_extended_history: false,

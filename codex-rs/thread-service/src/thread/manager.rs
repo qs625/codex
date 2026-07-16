@@ -10,6 +10,8 @@ use crate::session::INITIAL_SUBMIT_ID;
 use crate::session::SteerInputError;
 use crate::tasks::interrupted_turn_history_marker_from_config;
 use crate::thread::CodexThread;
+use codex_agent_runtime::AgentMetadata;
+use codex_agent_runtime::AgentRegistry;
 use codex_agent_runtime::LiveAgentShutdownAction;
 use codex_agent_runtime::live_agent_shutdown_action;
 use codex_analytics_api::AnalyticsEventsClient;
@@ -187,6 +189,7 @@ pub struct StartThreadOptions {
     pub config: Config,
     pub initial_history: InitialHistory,
     pub session_source: Option<SessionSource>,
+    pub agent_metadata: Option<AgentMetadata>,
     pub thread_source: Option<ThreadSource>,
     pub dynamic_tools: Vec<protocol::dynamic_tools::DynamicToolSpec>,
     pub persist_extended_history: bool,
@@ -259,6 +262,7 @@ pub(crate) struct ThreadServiceState {
     extensions: Arc<ExtensionRegistry<Config>>,
     thread_store: Arc<dyn ThreadStore>,
     live_thread_factory: Arc<dyn LiveThreadFactory>,
+    root_agent_registry: Arc<AgentRegistry>,
     attestation_provider: Option<Arc<dyn AttestationProvider>>,
     session_source: SessionSource,
     terminal_type: StdRwLock<String>,
@@ -454,6 +458,7 @@ impl ThreadService {
                 extensions,
                 thread_store,
                 live_thread_factory,
+                root_agent_registry: Arc::new(AgentRegistry::default()),
                 attestation_provider,
                 auth_runtime,
                 session_source,
@@ -603,6 +608,7 @@ impl ThreadService {
                 extensions: empty_extension_registry(),
                 thread_store,
                 live_thread_factory: Arc::new(thread_store::DefaultLiveThreadFactory),
+                root_agent_registry: Arc::new(AgentRegistry::default()),
                 attestation_provider: None,
                 auth_runtime,
                 session_source: SessionSource::Exec,
@@ -921,6 +927,7 @@ impl ThreadService {
             config,
             initial_history: InitialHistory::New,
             session_source: None,
+            agent_metadata: None,
             thread_source: None,
             dynamic_tools,
             persist_extended_history,
@@ -941,7 +948,13 @@ impl ThreadService {
         let thread_source = options
             .thread_source
             .or_else(|| options.initial_history.get_resumed_thread_source());
-        Box::pin(self.state.spawn_thread_with_source(
+        let agent_metadata = options.agent_metadata;
+        let mut agent_path_reservation = agent_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.agent_path.as_ref())
+            .map(|agent_path| self.agent_control().reserve_root_scope_agent_path(agent_path))
+            .transpose()?;
+        let new_thread = Box::pin(self.state.spawn_thread_with_source(
             options.config,
             options.initial_history,
             self.agent_control(),
@@ -956,7 +969,31 @@ impl ThreadService {
             options.environments,
             /*user_shell_override*/ None,
         ))
-        .await
+        .await?;
+        if let Some(mut agent_metadata) = agent_metadata {
+            agent_metadata.agent_id = Some(new_thread.thread_id);
+            if let Some(reservation) = agent_path_reservation.take() {
+                reservation.commit(agent_metadata.clone());
+            } else {
+                self.agent_control()
+                    .register_root_scope_agent_metadata(agent_metadata.clone());
+            }
+            new_thread
+                .thread
+                .update_thread_metadata(
+                    ThreadMetadataPatch {
+                        agent_role: Some(agent_metadata.agent_role),
+                        agent_path: Some(agent_metadata.agent_path.map(Into::into)),
+                        ..Default::default()
+                    },
+                    /*include_archived*/ false,
+                )
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!("failed to persist root agent metadata: {err}"))
+                })?;
+        }
+        Ok(new_thread)
     }
 
     // TODO(jif) merge with fork_agent
@@ -1077,12 +1114,35 @@ impl ThreadService {
         session_source: SessionSource,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
+        self.resume_thread_with_history_source_and_agent_metadata(
+            config,
+            initial_history,
+            session_source,
+            None,
+            parent_trace,
+        )
+        .await
+    }
+
+    pub async fn resume_thread_with_history_source_and_agent_metadata(
+        &self,
+        config: Config,
+        initial_history: InitialHistory,
+        session_source: SessionSource,
+        agent_metadata: Option<AgentMetadata>,
+        parent_trace: Option<W3cTraceContext>,
+    ) -> CodexResult<NewThread> {
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let mut agent_path_reservation = agent_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.agent_path.as_ref())
+            .map(|agent_path| self.agent_control().reserve_root_scope_agent_path(agent_path))
+            .transpose()?;
         let thread_source = initial_history.get_resumed_thread_source();
-        Box::pin(self.state.spawn_thread_with_source(
+        let new_thread = Box::pin(self.state.spawn_thread_with_source(
             config,
             initial_history,
             self.agent_control(),
@@ -1097,7 +1157,17 @@ impl ThreadService {
             environments,
             /*user_shell_override*/ None,
         ))
-        .await
+        .await?;
+        if let Some(mut agent_metadata) = agent_metadata {
+            agent_metadata.agent_id = Some(new_thread.thread_id);
+            if let Some(reservation) = agent_path_reservation.take() {
+                reservation.commit(agent_metadata);
+            } else {
+                self.agent_control()
+                    .register_root_scope_agent_metadata(agent_metadata);
+            }
+        }
+        Ok(new_thread)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1157,7 +1227,13 @@ impl ThreadService {
     /// as `Arc<CodexThread>`, it is possible that other references to it exist elsewhere.
     /// Returns the thread if the thread was found and removed.
     pub async fn remove_thread(&self, thread_id: &ThreadId) -> Option<Arc<CodexThread>> {
-        self.state.threads.write().await.remove(thread_id)
+        let removed = self.state.threads.write().await.remove(thread_id);
+        if removed.is_some() {
+            self.state
+                .root_agent_registry
+                .release_uncounted_thread_metadata(*thread_id);
+        }
+        removed
     }
 
     /// Tries to shut down all tracked threads concurrently within the provided timeout.
@@ -1196,7 +1272,11 @@ impl ThreadService {
 
         let mut tracked_threads = self.state.threads.write().await;
         for thread_id in &report.completed {
-            tracked_threads.remove(thread_id);
+            if tracked_threads.remove(thread_id).is_some() {
+                self.state
+                    .root_agent_registry
+                    .release_uncounted_thread_metadata(*thread_id);
+            }
         }
 
         report
@@ -1313,7 +1393,10 @@ impl ThreadService {
     }
 
     pub(crate) fn agent_control(&self) -> AgentControl {
-        AgentControl::new(Arc::downgrade(&self.state))
+        AgentControl::new_with_registry(
+            Arc::downgrade(&self.state),
+            Arc::clone(&self.state.root_agent_registry),
+        )
     }
 
     #[cfg(test)]

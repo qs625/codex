@@ -303,6 +303,7 @@ pub(crate) fn summary_to_thread(
         cli_version,
         agent_nickname: source.get_nickname(),
         agent_role: source.get_agent_role(),
+        agent_path: source.get_agent_path().map(Into::into),
         source: source.into(),
         thread_source: None,
         git_info,

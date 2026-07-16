@@ -73,6 +73,10 @@ agentNickname: string | null,
  */
 agentRole: string | null,
 /**
+ * Optional canonical agent path assigned to this thread.
+ */
+agentPath: string | null,
+/**
  * Optional Git metadata captured when the thread was created.
  */
 gitInfo: GitInfo | null,

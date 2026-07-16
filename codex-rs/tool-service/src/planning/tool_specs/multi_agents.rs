@@ -323,22 +323,11 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
                 SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION.to_string(),
             )),
         ),
-        ("agent_mode".to_string(), agent_mode_schema()),
     ])
 }
 
 fn spawn_agent_type_description(agent_type_description: &str) -> String {
     format!("{agent_type_description}\n\n{SPAWN_AGENT_CWD_AGENT_TYPE_DESCRIPTION}")
-}
-
-fn agent_mode_schema() -> JsonSchema {
-    JsonSchema::string_enum(
-        vec![json!("normal"), json!("management")],
-        Some(
-            "Agent mode. Defaults to `normal`. Use `management` for a long-running project-management agent whose terminal turn should not notify or trigger its parent thread."
-                .to_string(),
-        ),
-    )
 }
 
 fn hide_spawn_agent_metadata_options(properties: &mut BTreeMap<String, JsonSchema>) {

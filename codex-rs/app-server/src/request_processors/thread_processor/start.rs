@@ -1,4 +1,5 @@
 use super::*;
+use crate::request_processors::thread_processor::ops::parse_thread_start_agent;
 
 impl ThreadRequestProcessor {
     pub(super) async fn thread_start_inner(
@@ -12,14 +13,17 @@ impl ThreadRequestProcessor {
         let ThreadStartParams {
             model,
             model_provider,
+            reasoning_effort,
             service_tier,
             cwd,
+            task_name,
+            agent_type,
             runtime_workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
             permissions,
-            config,
+            config: mut request_overrides,
             service_name,
             base_instructions,
             developer_instructions,
@@ -42,6 +46,15 @@ impl ThreadRequestProcessor {
                 .await;
         }
         let environment_selections = self.parse_environment_selections(environments)?;
+        let thread_start_agent = parse_thread_start_agent(task_name, agent_type)?;
+        if let Some(reasoning_effort) = reasoning_effort {
+            request_overrides
+                .get_or_insert_with(std::collections::HashMap::new)
+                .insert(
+                    "model_reasoning_effort".to_string(),
+                    serde_json::Value::String(reasoning_effort.to_string()),
+                );
+        }
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
@@ -84,9 +97,10 @@ impl ThreadRequestProcessor {
                 request_id,
                 app_server_client_name,
                 app_server_client_version,
-                config,
+                request_overrides,
                 typesafe_overrides,
                 dynamic_tools,
+                thread_start_agent,
                 session_start_source,
                 thread_source.map(Into::into),
                 environment_selections,
@@ -255,6 +269,7 @@ impl ThreadRequestProcessor {
                     config.clone(),
                     thread_history,
                     session_source,
+                    None,
                     parent_trace,
                 )
                 .await

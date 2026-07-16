@@ -8,7 +8,6 @@ use protocol::protocol::InterAgentCommunication;
 use serde::Serialize;
 use tool_service_api::FunctionCallError;
 
-use crate::AgentMode;
 use crate::ListedAgent;
 use crate::SpawnAgentForkMode;
 
@@ -21,7 +20,6 @@ pub struct SpawnAgentToolRequest {
     pub model: Option<String>,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub service_tier: Option<String>,
-    pub agent_mode: Option<AgentMode>,
     pub fork_mode: Option<SpawnAgentForkMode>,
 }
 

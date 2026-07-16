@@ -27,6 +27,18 @@ impl AgentPath {
         Self(Self::MORPHEUS.to_string())
     }
 
+    pub fn from_root_name(agent_name: &str) -> Result<Self, String> {
+        validate_agent_name(agent_name)?;
+        Self::from_string(format!("/{agent_name}"))
+    }
+
+    pub fn derive(parent: Option<&Self>, agent_name: &str) -> Result<Self, String> {
+        match parent {
+            Some(parent) => parent.join(agent_name),
+            None => Self::from_root_name(agent_name),
+        }
+    }
+
     pub fn from_string(path: String) -> Result<Self, String> {
         validate_absolute_path(path.as_str())?;
         Ok(Self(path))
@@ -147,23 +159,26 @@ fn validate_agent_name(agent_name: &str) -> Result<(), String> {
 }
 
 fn validate_absolute_path(path: &str) -> Result<(), String> {
-    if path == AgentPath::MORPHEUS {
-        return Ok(());
-    }
-
     let Some(stripped) = path.strip_prefix('/') else {
-        return Err("absolute agent paths must start with `/root` or be `/morpheus`".to_string());
+        return Err("absolute agent paths must start with `/`".to_string());
     };
-    let mut segments = stripped.split('/');
-    let Some(root) = segments.next() else {
+    if stripped.is_empty() {
         return Err("absolute agent path must not be empty".to_string());
-    };
-    if root != AgentPath::ROOT_SEGMENT {
-        return Err("absolute agent paths must start with `/root` or be `/morpheus`".to_string());
     }
     if stripped.ends_with('/') {
         return Err("absolute agent path must not end with `/`".to_string());
     }
+    let mut segments = stripped.split('/');
+    let Some(root) = segments.next() else {
+        return Err("absolute agent path must not be empty".to_string());
+    };
+    if root == AgentPath::ROOT_SEGMENT {
+        for segment in segments {
+            validate_agent_name(segment)?;
+        }
+        return Ok(());
+    }
+    validate_agent_name(root)?;
     for segment in segments {
         validate_agent_name(segment)?;
     }
@@ -207,14 +222,32 @@ mod tests {
         let child = root.join("researcher").expect("child path");
         assert_eq!(child.as_str(), "/root/researcher");
         assert_eq!(child.name(), "researcher");
+
+        let project = AgentPath::try_from("/project").expect("project path");
+        let project_child = project.join("worker").expect("project child path");
+        assert_eq!(project_child.as_str(), "/project/worker");
+        assert_eq!(project_child.name(), "worker");
+    }
+
+    #[test]
+    fn derive_builds_paths_from_root_or_parent() {
+        assert_eq!(
+            AgentPath::derive(None, "project").expect("root project path"),
+            AgentPath::try_from("/project").expect("project path")
+        );
+        let project = AgentPath::try_from("/project").expect("project path");
+        assert_eq!(
+            AgentPath::derive(Some(&project), "worker").expect("child path"),
+            AgentPath::try_from("/project/worker").expect("worker path")
+        );
     }
 
     #[test]
     fn resolve_supports_relative_and_absolute_references() {
-        let current = AgentPath::try_from("/root/researcher").expect("path");
+        let current = AgentPath::try_from("/project").expect("path");
         assert_eq!(
             current.resolve("worker").expect("relative path"),
-            AgentPath::try_from("/root/researcher/worker").expect("path")
+            AgentPath::try_from("/project/worker").expect("path")
         );
         assert_eq!(
             current.resolve("/root/other").expect("absolute path"),
@@ -229,12 +262,50 @@ mod tests {
             Err("agent_name must use only lowercase letters, digits, and underscores".to_string())
         );
         assert_eq!(
-            AgentPath::try_from("/not-root"),
-            Err("absolute agent paths must start with `/root` or be `/morpheus`".to_string())
+            AgentPath::try_from("/Project"),
+            Err("agent_name must use only lowercase letters, digits, and underscores".to_string())
+        );
+        assert_eq!(
+            AgentPath::try_from("/project/"),
+            Err("absolute agent path must not end with `/`".to_string())
+        );
+        assert_eq!(
+            AgentPath::try_from("/"),
+            Err("absolute agent path must not be empty".to_string())
+        );
+        assert_eq!(
+            AgentPath::try_from("/project/root"),
+            Err("agent_name `root` is reserved".to_string())
         );
         assert_eq!(
             AgentPath::root().resolve("../sibling"),
             Err("agent_name `..` is reserved".to_string())
+        );
+    }
+
+    #[test]
+    fn root_level_project_paths_are_supported() {
+        assert_eq!(
+            AgentPath::try_from("/project").expect("project path").as_str(),
+            "/project"
+        );
+        assert_eq!(
+            AgentPath::try_from("/project/worker")
+                .expect("project child path")
+                .as_str(),
+            "/project/worker"
+        );
+        assert_eq!(
+            AgentPath::try_from(AgentPath::ROOT)
+                .expect("root compatibility")
+                .as_str(),
+            AgentPath::ROOT
+        );
+        assert_eq!(
+            AgentPath::try_from(AgentPath::MORPHEUS)
+                .expect("morpheus compatibility")
+                .as_str(),
+            AgentPath::MORPHEUS
         );
     }
 }

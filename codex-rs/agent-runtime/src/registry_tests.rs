@@ -327,6 +327,60 @@ fn reserved_agent_path_is_released_when_spawn_fails() {
 }
 
 #[test]
+fn root_scope_agent_path_registration_rejects_duplicates_until_released() {
+    let registry = Arc::new(AgentRegistry::default());
+    let first = registry
+        .reserve_agent_path_registration(&agent_path("/root/project_alpha"))
+        .expect("reserve first path");
+
+    let duplicate = registry.reserve_agent_path_registration(&agent_path("/root/project_alpha"));
+    let Err(error) = duplicate else {
+        panic!("duplicate path should fail");
+    };
+    assert!(error.to_string().contains("already exists"));
+
+    drop(first);
+    registry
+        .reserve_agent_path_registration(&agent_path("/root/project_alpha"))
+        .expect("released reservation should free the path");
+}
+
+#[test]
+fn committed_root_scope_agent_path_stays_reserved() {
+    let registry = Arc::new(AgentRegistry::default());
+    let reservation = registry
+        .reserve_agent_path_registration(&agent_path("/root/project_alpha"))
+        .expect("reserve path");
+    reservation.commit(AgentMetadata {
+        agent_id: Some(ThreadId::new()),
+        agent_path: Some(agent_path("/root/project_alpha")),
+        ..Default::default()
+    });
+
+    let duplicate = registry.reserve_agent_path_registration(&agent_path("/root/project_alpha"));
+    assert!(duplicate.is_err());
+}
+
+#[test]
+fn releasing_root_scope_agent_path_does_not_decrement_spawn_count() {
+    let registry = Arc::new(AgentRegistry::default());
+    let thread_id = ThreadId::new();
+    let reservation = registry
+        .reserve_agent_path_registration(&agent_path("/project_alpha"))
+        .expect("reserve path");
+    reservation.commit(AgentMetadata {
+        agent_id: Some(thread_id),
+        agent_path: Some(agent_path("/project_alpha")),
+        ..Default::default()
+    });
+
+    registry.release_spawned_thread(thread_id);
+    registry
+        .reserve_spawn_slot(Some(1))
+        .expect("root-scope release should not underflow spawn count");
+}
+
+#[test]
 fn committed_agent_path_is_indexed_until_release() {
     let registry = Arc::new(AgentRegistry::default());
     let thread_id = ThreadId::new();

@@ -15994,6 +15994,13 @@
               "null"
             ]
           },
+        "agentPath": {
+          "description": "Optional canonical agent path assigned to this thread.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
           "cliVersion": {
             "description": "Version of the CLI that created the thread.",
             "type": "string"
@@ -18966,6 +18973,12 @@
               "null"
             ]
           },
+          "agentType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "developerInstructions": {
             "type": [
               "string",
@@ -18988,6 +19001,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/v2/ReasoningEffort"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "personality": {
@@ -19017,6 +19040,12 @@
             ]
           },
           "serviceTier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "taskName": {
             "type": [
               "string",
               "null"

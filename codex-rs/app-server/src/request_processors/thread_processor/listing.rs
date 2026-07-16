@@ -646,6 +646,9 @@ impl ThreadRequestProcessor {
         }
 
         let session_source = stored_thread_session_source_with_agent_metadata(&stored_thread);
+        let agent_metadata = stored_thread_root_agent_metadata(&stored_thread);
+        let stored_agent_path = stored_thread.agent_path.clone();
+        let stored_agent_role = stored_thread.agent_role.clone();
         let history_cwd = thread_history.session_cwd();
         let mut request_overrides = None;
         let mut typesafe_overrides = self.build_thread_config_overrides(
@@ -680,6 +683,7 @@ impl ThreadRequestProcessor {
                 config,
                 thread_history,
                 session_source,
+                agent_metadata,
                 /*parent_trace*/ None,
             )
             .await
@@ -691,11 +695,16 @@ impl ThreadRequestProcessor {
                 ..
             }) => {
                 let config_snapshot = thread.config_snapshot().await;
-                let loaded_thread = build_thread_from_snapshot(
+                let mut loaded_thread = build_thread_from_snapshot(
                     thread_id,
                     thread.session_configured().session_id.to_string(),
                     &config_snapshot,
                     session_configured.rollout_path,
+                );
+                apply_stored_agent_metadata_to_loaded_thread(
+                    &mut loaded_thread,
+                    stored_agent_path,
+                    stored_agent_role,
                 );
                 self.thread_watch_manager
                     .upsert_thread_silently(loaded_thread)
@@ -736,6 +745,19 @@ impl ThreadRequestProcessor {
                 "thread",
             );
         }
+    }
+}
+
+fn apply_stored_agent_metadata_to_loaded_thread(
+    loaded_thread: &mut Thread,
+    stored_agent_path: Option<String>,
+    stored_agent_role: Option<String>,
+) {
+    if stored_agent_path.is_some() {
+        loaded_thread.agent_path = stored_agent_path;
+    }
+    if stored_agent_role.is_some() {
+        loaded_thread.agent_role = stored_agent_role;
     }
 }
 
@@ -826,6 +848,7 @@ mod restore_persisted_injected_context_turns_tests {
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
+            agent_path: None,
             git_info: None,
             name: None,
             skills: Vec::new(),
@@ -928,5 +951,35 @@ mod restore_persisted_injected_context_turns_tests {
                 agent_message_item("msg-1", "final assistant output"),
             ]
         );
+    }
+
+    #[test]
+    fn stored_agent_metadata_preserves_snapshot_path_when_stored_path_is_missing() {
+        let mut thread = thread_with_turns(Vec::new());
+        thread.agent_path = Some("/root/legacy_child".to_string());
+        thread.agent_role = Some("default".to_string());
+
+        apply_stored_agent_metadata_to_loaded_thread(
+            &mut thread,
+            None,
+            Some("feature-owner".to_string()),
+        );
+
+        assert_eq!(thread.agent_path.as_deref(), Some("/root/legacy_child"));
+        assert_eq!(thread.agent_role.as_deref(), Some("feature-owner"));
+    }
+
+    #[test]
+    fn stored_agent_metadata_overrides_snapshot_path_when_stored_path_exists() {
+        let mut thread = thread_with_turns(Vec::new());
+        thread.agent_path = Some("/root/from_source".to_string());
+
+        apply_stored_agent_metadata_to_loaded_thread(
+            &mut thread,
+            Some("/root/from_metadata".to_string()),
+            None,
+        );
+
+        assert_eq!(thread.agent_path.as_deref(), Some("/root/from_metadata"));
     }
 }

@@ -87,12 +87,7 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     assert!(properties.contains_key("message"));
     assert!(properties.contains_key("cwd"));
     assert!(properties.contains_key("fork_turns"));
-    assert_eq!(
-        properties
-            .get("agent_mode")
-            .and_then(|schema| schema.enum_values.as_ref()),
-        Some(&vec![json!("normal"), json!("management")])
-    );
+    assert!(!properties.contains_key("agent_mode"));
     assert!(!properties.contains_key("items"));
     assert!(!properties.contains_key("fork_context"));
     let agent_type_description = properties

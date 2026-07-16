@@ -32,6 +32,12 @@ declare global {
       createThread: (payload: {
         cwd?: string;
         name?: string;
+        taskName?: string | null;
+        agentType?: string | null;
+        model?: string | null;
+        modelProvider?: string | null;
+        reasoningEffort?: string | null;
+        serviceTier?: string | null;
       }) => Promise<{ thread: unknown }>;
       archiveThread: (threadId: string) => Promise<{ ok: boolean }>;
       readThread: (

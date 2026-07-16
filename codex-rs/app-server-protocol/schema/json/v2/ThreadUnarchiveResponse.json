@@ -849,6 +849,13 @@
             "null"
           ]
         },
+        "agentPath": {
+          "description": "Optional canonical agent path assigned to this thread.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cliVersion": {
           "description": "Version of the CLI that created the thread.",
           "type": "string"

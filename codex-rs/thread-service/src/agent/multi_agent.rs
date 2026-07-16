@@ -364,7 +364,7 @@ async fn handle_spawn_agent_request(
                 fork_parent_spawn_call_id: request.fork_mode.as_ref().map(|_| call_id.clone()),
                 fork_mode: request.fork_mode,
                 environments: Some(turn.spawn_agent_environment_selections(request.cwd.as_ref())),
-                agent_mode: request.agent_mode.unwrap_or_default(),
+                agent_mode: Default::default(),
             },
         ))
         .await

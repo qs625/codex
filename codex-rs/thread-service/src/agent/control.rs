@@ -9,6 +9,7 @@ use codex_agent_roles::DEFAULT_ROLE_NAME;
 use codex_agent_roles::resolve_role_config;
 use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::AgentMode;
+use codex_agent_runtime::AgentPathReservation;
 use codex_agent_runtime::AgentRegistry;
 use codex_agent_runtime::AgentThreadActivityInputs;
 use codex_agent_runtime::ListedAgent;
@@ -32,7 +33,6 @@ use codex_agent_runtime::resolve_agent_reference_path;
 use codex_agent_runtime::root_listed_agent;
 use codex_agent_runtime::select_forked_rollout_items;
 use codex_agent_runtime::should_ignore_descendant_shutdown_error;
-use codex_agent_runtime::should_register_session_root;
 use codex_agent_runtime::should_release_agent_after_thread_request_error;
 #[cfg(any(test, feature = "test-support"))]
 use codex_agent_runtime::thread_spawn_depth;
@@ -103,10 +103,13 @@ struct PersistedAgentPathCandidate {
 }
 
 impl AgentControl {
-    /// Construct a new `AgentControl` that can spawn/message agents via the given manager state.
-    pub(crate) fn new(manager: Weak<ThreadServiceState>) -> Self {
+    pub(crate) fn new_with_registry(
+        manager: Weak<ThreadServiceState>,
+        state: Arc<AgentRegistry>,
+    ) -> Self {
         Self {
             manager,
+            state,
             ..Default::default()
         }
     }
@@ -812,12 +815,24 @@ impl AgentControl {
 
     pub(crate) fn register_session_root(
         &self,
-        current_thread_id: ThreadId,
-        current_session_source: &SessionSource,
+        _current_thread_id: ThreadId,
+        _current_session_source: &SessionSource,
     ) {
-        if should_register_session_root(current_session_source) {
-            self.state.register_root_thread(current_thread_id);
-        }
+        // Root-scope project threads may have canonical paths like `/project`.
+        // Registering every root session as `/root` would create a second alias
+        // for those threads. Legacy `/root` registration is handled when a root
+        // thread actually spawns a child and has no canonical metadata.
+    }
+
+    pub(crate) fn register_root_scope_agent_metadata(&self, agent_metadata: AgentMetadata) {
+        self.state.register_agent_metadata(agent_metadata);
+    }
+
+    pub(crate) fn reserve_root_scope_agent_path(
+        &self,
+        agent_path: &AgentPath,
+    ) -> CodexResult<AgentPathReservation> {
+        self.state.reserve_agent_path_registration(agent_path)
     }
 
     pub(crate) fn get_agent_metadata(&self, agent_id: ThreadId) -> Option<AgentMetadata> {
@@ -1067,15 +1082,12 @@ impl AgentControl {
         current_thread_id: ThreadId,
         current_session_source: &SessionSource,
     ) -> Option<ThreadId> {
-        let root_path = AgentPath::root();
-        if let Some(root_thread_id) = self.state.agent_id_for_path(&root_path).or_else(|| {
-            thread_spawn_parent_thread_id(current_session_source)
-                .is_none()
-                .then_some(current_thread_id)
-        }) {
-            return Some(root_thread_id);
+        if thread_spawn_parent_thread_id(current_session_source).is_none() {
+            return Some(current_thread_id);
         }
-        self.persisted_thread_spawn_root(current_thread_id).await
+        self.persisted_thread_spawn_root(current_thread_id)
+            .await
+            .or_else(|| self.state.agent_id_for_path(&AgentPath::root()))
     }
 
     async fn persisted_agent_target_for_path(
@@ -1230,15 +1242,12 @@ impl AgentControl {
         let current_agent_path = self
             .current_agent_path_with_persisted_metadata(current_thread_id, current_session_source)
             .await;
-        let root_path = AgentPath::root();
-        let root_thread_id = self.state.agent_id_for_path(&root_path).or_else(|| {
-            thread_spawn_parent_thread_id(current_session_source)
-                .is_none()
-                .then_some(current_thread_id)
-        });
-        let root_thread_id = match root_thread_id {
-            Some(root_thread_id) => Some(root_thread_id),
-            None => self.persisted_thread_spawn_root(current_thread_id).await,
+        let root_thread_id = if thread_spawn_parent_thread_id(current_session_source).is_none() {
+            Some(current_thread_id)
+        } else {
+            self.persisted_thread_spawn_root(current_thread_id)
+                .await
+                .or_else(|| self.state.agent_id_for_path(&AgentPath::root()))
         };
         let registered_agents = self
             .registered_agents_with_persisted_descendants(root_thread_id)
@@ -1247,6 +1256,7 @@ impl AgentControl {
             .map_err(CodexErr::UnsupportedOperation)?;
 
         let mut agents = Vec::with_capacity(plan.candidates.len().saturating_add(1));
+        let root_path = AgentPath::root();
         if plan.include_root
             && let Some(root_thread_id) = self.state.agent_id_for_path(&root_path)
             && let Ok(agent_status) = state.live_thread_agent_status(root_thread_id).await
@@ -1280,6 +1290,15 @@ impl AgentControl {
         let Some(root_thread_id) = root_thread_id else {
             return registered_agents;
         };
+        let mut scoped_thread_ids = HashSet::from([root_thread_id]);
+        if let Ok(descendant_ids) = self.live_thread_spawn_descendants(root_thread_id).await {
+            scoped_thread_ids.extend(descendant_ids);
+        }
+        registered_agents.retain(|metadata| {
+            metadata
+                .agent_id
+                .is_some_and(|thread_id| scoped_thread_ids.contains(&thread_id))
+        });
         let Ok(state) = self.upgrade() else {
             return registered_agents;
         };
@@ -1409,7 +1428,13 @@ impl AgentControl {
         agent_mode: AgentMode,
         preferred_agent_nickname: Option<String>,
     ) -> CodexResult<(SessionSource, AgentMetadata)> {
-        if depth == 1 {
+        if depth == 1
+            && self
+                .state
+                .agent_metadata_for_thread(parent_thread_id)
+                .and_then(|metadata| metadata.agent_path)
+                .is_none()
+        {
             self.state.register_root_thread(parent_thread_id);
         }
         let role_name = agent_role.as_deref().unwrap_or(DEFAULT_ROLE_NAME);

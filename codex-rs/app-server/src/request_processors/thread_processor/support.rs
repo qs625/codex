@@ -1,4 +1,6 @@
 use super::*;
+use codex_agent_runtime::AgentMetadata;
+use protocol::AgentPath;
 
 pub(super) fn xcode_26_4_mcp_elicitations_auto_deny(
     client_name: Option<&str>,
@@ -409,11 +411,34 @@ pub(super) fn stored_thread_session_source_with_agent_metadata(
     )
 }
 
+pub(super) fn stored_thread_root_agent_metadata(thread: &StoredThread) -> Option<AgentMetadata> {
+    if thread.source.is_non_root_agent() {
+        return None;
+    }
+    let agent_path = thread.agent_path.as_ref().and_then(|path| {
+        AgentPath::try_from(path.as_str())
+            .map_err(|err| {
+                warn!("stored root thread agent_path is invalid and will be ignored: {err}");
+            })
+            .ok()
+    });
+    if agent_path.is_none() {
+        return None;
+    }
+    Some(AgentMetadata {
+        agent_path,
+        agent_role: thread.agent_role.clone(),
+        ..Default::default()
+    })
+}
+
 pub(crate) fn thread_from_stored_thread(
     thread: StoredThread,
     fallback_provider: &str,
     fallback_cwd: &AbsolutePathBuf,
 ) -> (Thread, Option<thread_store::StoredThreadHistory>) {
+    let stored_agent_path = thread.agent_path.clone();
+    let stored_agent_role = thread.agent_role.clone();
     let source = stored_thread_session_source_with_agent_metadata(&thread);
     let path = thread.rollout_path;
     let git_info = thread.git_info.map(|info| ApiGitInfo {
@@ -448,7 +473,8 @@ pub(crate) fn thread_from_stored_thread(
         cwd,
         cli_version: thread.cli_version,
         agent_nickname: source.get_nickname(),
-        agent_role: source.get_agent_role(),
+        agent_role: stored_agent_role.or_else(|| source.get_agent_role()),
+        agent_path: stored_agent_path.or_else(|| source.get_agent_path().map(Into::into)),
         source: source.into(),
         thread_source: thread.thread_source.map(Into::into),
         git_info,
@@ -721,6 +747,10 @@ pub(super) fn build_thread_from_snapshot(
         cli_version: env!("CARGO_PKG_VERSION").to_string(),
         agent_nickname: config_snapshot.session_source.get_nickname(),
         agent_role: config_snapshot.session_source.get_agent_role(),
+        agent_path: config_snapshot
+            .session_source
+            .get_agent_path()
+            .map(Into::into),
         source: config_snapshot.session_source.clone().into(),
         thread_source: config_snapshot.thread_source.map(Into::into),
         git_info: None,

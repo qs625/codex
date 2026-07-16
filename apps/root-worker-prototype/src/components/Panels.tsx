@@ -5,6 +5,7 @@ import {
   useState,
   type ChangeEvent,
   type ClipboardEvent,
+  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
@@ -56,6 +57,7 @@ import type {
   ComposerImage,
   ConversationCell,
   DraftSkill,
+  NewThreadDraft,
   ProjectAgentSidebar,
   SidebarProjectNode,
   Thread,
@@ -74,44 +76,43 @@ export function SidebarPanel({
   collapsedProjectSet,
   isChatCollapsed,
   newProjectName,
-  onCreateChatThread,
   onCreateProjectThread,
   onOpenMenu,
   onSelectProject,
   onSelectThread,
   onSetNewProjectName,
+  onSubmitNewThreadDraft,
   onToggleChat,
   onToggleProject,
   onToggleTreeNode,
   projectSidebar,
   selectedThreadId,
+  workspacePath,
 }: {
   collapsedSet: Set<string>;
   collapsedProjectSet: Set<string>;
   isChatCollapsed: boolean;
   newProjectName: string;
-  onCreateChatThread: () => void;
   onCreateProjectThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
   onSelectProject: (projectId: string, threadId: string) => void;
   onSelectThread: (threadId: string) => void;
   onSetNewProjectName: (value: string) => void;
+  onSubmitNewThreadDraft: (draft: NewThreadDraft) => void;
   onToggleChat: () => void;
   onToggleProject: (projectId: string) => void;
   onToggleTreeNode: (threadId: string) => void;
   projectSidebar: ProjectAgentSidebar;
   selectedThreadId: string | null;
+  workspacePath: string;
 }) {
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const projectCount = projectSidebar.projects.length;
   const chatCount = projectSidebar.chat.conversations.length;
-  const chooseProjectChat = () => {
+  const projectPaths = projectSidebar.projects.map((project) => project.cwd);
+  const submitNewThreadDraft = (draft: NewThreadDraft) => {
     setIsCreateMenuOpen(false);
-    onCreateProjectThread();
-  };
-  const choosePlainChat = () => {
-    setIsCreateMenuOpen(false);
-    onCreateChatThread();
+    onSubmitNewThreadDraft(draft);
   };
 
   return (
@@ -128,22 +129,19 @@ export function SidebarPanel({
             type="button"
             className="sidebar-action-button"
             onClick={() => setIsCreateMenuOpen((current) => !current)}
+            aria-controls="new-thread-popover"
             aria-expanded={isCreateMenuOpen}
           >
             <PlusIcon />
             <span>New</span>
           </button>
           {isCreateMenuOpen ? (
-            <div className="sidebar-create-menu">
-              <button type="button" onClick={chooseProjectChat}>
-                <strong>Current workspace</strong>
-                <span>Open project chat</span>
-              </button>
-              <button type="button" onClick={choosePlainChat}>
-                <strong>Chat without project</strong>
-                <span>Needs backend support</span>
-              </button>
-            </div>
+            <NewThreadPopover
+              existingProjectPaths={projectPaths}
+              onCancel={() => setIsCreateMenuOpen(false)}
+              onSubmit={submitNewThreadDraft}
+              workspacePath={workspacePath}
+            />
           ) : null}
         </div>
       </div>
@@ -201,6 +199,331 @@ export function SidebarPanel({
       </button>
     </aside>
   );
+}
+
+export function NewThreadPopover({
+  existingProjectPaths,
+  onCancel,
+  onSubmit,
+  workspacePath,
+}: {
+  existingProjectPaths: string[];
+  onCancel: () => void;
+  onSubmit: (draft: NewThreadDraft) => void;
+  workspacePath: string;
+}) {
+  const [mode, setMode] = useState<NewThreadDraft["mode"]>("project");
+  const [projectPath, setProjectPath] = useState(workspacePath);
+  const [title, setTitle] = useState("Project chat");
+  const initialThreadStartParams = defaultNewThreadStartParams(workspacePath);
+  const [taskName, setTaskName] = useState(initialThreadStartParams.taskName);
+  const [agentType, setAgentType] = useState("");
+  const [model, setModel] = useState("");
+  const [modelProvider, setModelProvider] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState("");
+  const [serviceTier, setServiceTier] = useState("");
+  const hasSeededWorkspacePathRef = useRef(Boolean(workspacePath.trim()));
+  const hasManualThreadStartParamsRef = useRef(false);
+  const trimmedProjectPath = projectPath.trim();
+  const defaultThreadStartParams = defaultNewThreadStartParams(trimmedProjectPath);
+  const trimmedTaskName = taskName.trim();
+  const pathPreview = trimmedTaskName ? `/${trimmedTaskName}` : "";
+  const taskNameError =
+    trimmedTaskName && !isValidAgentPathSegment(trimmedTaskName)
+      ? "Task name must use lowercase letters, digits, and underscores, and cannot be root."
+      : "";
+  const canCreate =
+    mode === "project" &&
+    trimmedProjectPath.length > 0 &&
+    trimmedTaskName.length > 0 &&
+    !taskNameError;
+
+  useEffect(() => {
+    if (
+      !hasSeededWorkspacePathRef.current &&
+      !projectPath.trim() &&
+      workspacePath.trim()
+    ) {
+      hasSeededWorkspacePathRef.current = true;
+      setProjectPath(workspacePath);
+    }
+  }, [projectPath, workspacePath]);
+
+  useEffect(() => {
+    const nextParams = resolveNewThreadStartParamsForProject({
+      currentTaskName: taskName,
+      hasManualThreadStartParams: hasManualThreadStartParamsRef.current,
+      projectPath: trimmedProjectPath,
+    });
+    if (nextParams.taskName !== taskName) {
+      setTaskName(nextParams.taskName);
+    }
+  }, [taskName, trimmedProjectPath]);
+
+  const submitDraft = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canCreate) {
+      return;
+    }
+    onSubmit(
+      buildNewThreadDraft(mode, trimmedProjectPath, title, {
+        taskName,
+        agentType,
+        model,
+        modelProvider,
+        reasoningEffort,
+        serviceTier,
+      }),
+    );
+  };
+
+  return (
+    <form
+      id="new-thread-popover"
+      className="sidebar-create-popover"
+      onSubmit={submitDraft}
+    >
+      <header className="sidebar-create-popover-header">
+        <strong>New conversation</strong>
+        <span>Choose the project chat to open or create.</span>
+      </header>
+
+      <fieldset className="sidebar-create-mode">
+        <legend>Target</legend>
+        <label>
+          <input
+            checked={mode === "project"}
+            name="new-thread-mode"
+            onChange={() => setMode("project")}
+            type="radio"
+            value="project"
+          />
+          <span>Project chat</span>
+        </label>
+        <label className="disabled">
+          <input
+            disabled
+            name="new-thread-mode"
+            onChange={() => setMode("chat")}
+            type="radio"
+            value="chat"
+          />
+          <span>Chat without project</span>
+        </label>
+        <p>No-project chat needs backend support before it can be created.</p>
+      </fieldset>
+
+      <label className="sidebar-create-field">
+        <span>Project path</span>
+        <input
+          list="sidebar-existing-projects"
+          onChange={(event) => setProjectPath(event.target.value)}
+          placeholder="/path/to/project"
+          value={projectPath}
+        />
+        <datalist id="sidebar-existing-projects">
+          {[...new Set([workspacePath, ...existingProjectPaths].filter(Boolean))]
+            .map((path) => (
+              <option key={path} value={path} />
+            ))}
+        </datalist>
+      </label>
+
+      <label className="sidebar-create-field">
+        <span>Title</span>
+        <input
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="Project chat"
+          value={title}
+        />
+      </label>
+
+      <label className="sidebar-create-field">
+        <span>taskName</span>
+        <input
+          onChange={(event) => {
+            const nextTaskName = event.target.value;
+            hasManualThreadStartParamsRef.current = true;
+            setTaskName(nextTaskName);
+          }}
+          placeholder={defaultThreadStartParams.taskName}
+          value={taskName}
+        />
+        {taskNameError ? (
+          <em className="sidebar-create-error">{taskNameError}</em>
+        ) : null}
+      </label>
+
+      <label className="sidebar-create-field">
+        <span>Path preview</span>
+        <input readOnly value={pathPreview} />
+      </label>
+
+      <label className="sidebar-create-field">
+        <span>agentType</span>
+        <input
+          onChange={(event) => setAgentType(event.target.value)}
+          placeholder="default"
+          value={agentType}
+        />
+      </label>
+
+      <div className="sidebar-create-disabled-grid">
+        <label className="sidebar-create-field">
+          <span>model</span>
+          <input
+            onChange={(event) => setModel(event.target.value)}
+            placeholder="default"
+            value={model}
+          />
+        </label>
+        <label className="sidebar-create-field">
+          <span>modelProvider</span>
+          <input
+            onChange={(event) => setModelProvider(event.target.value)}
+            placeholder="default"
+            value={modelProvider}
+          />
+        </label>
+      </div>
+
+      <div className="sidebar-create-disabled-grid">
+        <label className="sidebar-create-field">
+          <span>reasoningEffort</span>
+          <select
+            onChange={(event) => setReasoningEffort(event.target.value)}
+            value={reasoningEffort}
+          >
+            <option value="">Use default</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+          </select>
+        </label>
+        <label className="sidebar-create-field">
+          <span>serviceTier</span>
+          <select
+            onChange={(event) => setServiceTier(event.target.value)}
+            value={serviceTier}
+          >
+            <option value="">Use default</option>
+            <option value="priority">priority</option>
+          </select>
+        </label>
+      </div>
+
+      <footer className="sidebar-create-actions">
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" disabled={!canCreate}>
+          Create or Open
+        </button>
+      </footer>
+    </form>
+  );
+}
+
+export function buildNewThreadDraft(
+  mode: NewThreadDraft["mode"],
+  projectPath: string,
+  title: string,
+  params: Partial<
+    Pick<
+      NewThreadDraft,
+      | "taskName"
+      | "agentType"
+      | "model"
+      | "modelProvider"
+      | "reasoningEffort"
+      | "serviceTier"
+    >
+  > = {},
+): NewThreadDraft {
+  const requestedTaskName = params.taskName?.trim();
+  const defaultParams = defaultNewThreadStartParams(projectPath);
+  const taskName = requestedTaskName ?? defaultParams.taskName;
+  return {
+    mode,
+    projectPath: projectPath.trim(),
+    title: title.trim() || "Project chat",
+    taskName,
+    agentType: optionalThreadStartParam(params.agentType),
+    model: optionalThreadStartParam(params.model),
+    modelProvider: optionalThreadStartParam(params.modelProvider),
+    reasoningEffort: optionalThreadStartParam(params.reasoningEffort),
+    serviceTier: optionalThreadStartParam(params.serviceTier),
+  };
+}
+
+function optionalThreadStartParam(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+export function isValidAgentPathSegment(segment: string) {
+  return /^[a-z0-9_]+$/.test(segment) && segment !== "root";
+}
+
+export function isValidNewThreadAgentPath(path: string) {
+  if (!path.startsWith("/")) {
+    return false;
+  }
+  if (path === "/" || path.endsWith("/")) {
+    return false;
+  }
+  const segments = path.split("/").slice(1);
+  const root = segments[0];
+  if (root === "root") {
+    return segments.slice(1).every(isValidAgentPathSegment);
+  }
+  return segments.every(isValidAgentPathSegment);
+}
+
+export function defaultNewThreadStartParams(projectPath: string) {
+  const normalizedProjectPath = projectPath.trim();
+  const basename = normalizedProjectPath.split(/[\\/]+/).filter(Boolean).pop() ?? "";
+  const prefix = sanitizeAgentPathSegment(basename) || "project";
+  const hash = stablePathHash(normalizedProjectPath || "project");
+  const taskName = `${prefix}_${hash}`;
+  return {
+    taskName,
+    pathPreview: `/${taskName}`,
+  };
+}
+
+export function resolveNewThreadStartParamsForProject({
+  currentTaskName,
+  hasManualThreadStartParams,
+  projectPath,
+}: {
+  currentTaskName: string;
+  hasManualThreadStartParams: boolean;
+  projectPath: string;
+}) {
+  if (hasManualThreadStartParams) {
+    return {
+      taskName: currentTaskName,
+      pathPreview: currentTaskName.trim() ? `/${currentTaskName.trim()}` : "",
+    };
+  }
+  return defaultNewThreadStartParams(projectPath);
+}
+
+function sanitizeAgentPathSegment(value: string) {
+  const sanitized = value.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+  const trimmed = sanitized.replace(/^_+|_+$/g, "").replace(/_+/g, "_");
+  return isValidAgentPathSegment(trimmed) ? trimmed : "";
+}
+
+function stablePathHash(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36).padStart(6, "0").slice(0, 6);
 }
 
 function ProjectSection({

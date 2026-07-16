@@ -1,4 +1,39 @@
 use super::*;
+use codex_agent_runtime::AgentMetadata;
+use protocol::AgentPath;
+
+#[derive(Debug, Clone)]
+pub(super) struct ThreadStartAgent {
+    pub(super) agent_path: Option<AgentPath>,
+    pub(super) agent_role: Option<String>,
+}
+
+pub(super) fn parse_thread_start_agent(
+    task_name: Option<String>,
+    agent_type: Option<String>,
+) -> Result<Option<ThreadStartAgent>, JSONRPCErrorError> {
+    let task_name = task_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let agent_role = agent_type
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(task_name) = task_name {
+        let agent_path = AgentPath::derive(None, task_name.as_str()).map_err(|err| {
+            invalid_request(format!("invalid taskName `{task_name}`: {err}"))
+        })?;
+        return Ok(Some(ThreadStartAgent {
+            agent_path: Some(agent_path),
+            agent_role,
+        }));
+    }
+
+    Ok(agent_role.map(|agent_role| ThreadStartAgent {
+        agent_path: None,
+        agent_role: Some(agent_role),
+    }))
+}
 
 impl ThreadRequestProcessor {
     pub(super) async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
@@ -245,6 +280,7 @@ impl ThreadRequestProcessor {
         config_overrides: Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: ConfigOverrides,
         dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
+        thread_start_agent: Option<ThreadStartAgent>,
         session_start_source: Option<app_server_protocol::ThreadStartSource>,
         thread_source: Option<protocol::protocol::ThreadSource>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
@@ -322,6 +358,14 @@ impl ThreadRequestProcessor {
                 .await
                 .map_err(|err| config_load_error(&err))?;
         }
+        if let Some(agent_role) = thread_start_agent
+            .as_ref()
+            .and_then(|agent| agent.agent_role.as_deref())
+        {
+            codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role))
+                .await
+                .map_err(invalid_request)?;
+        }
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let environments = environments
@@ -359,6 +403,14 @@ impl ThreadRequestProcessor {
                     app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
                 },
                 session_source: None,
+                agent_metadata: thread_start_agent
+                    .clone()
+                    .map(|agent| AgentMetadata {
+                        agent_path: agent.agent_path,
+                        agent_role: agent.agent_role,
+                        ..Default::default()
+                    })
+                    .filter(|metadata| metadata.agent_path.is_some()),
                 thread_source,
                 dynamic_tools: core_dynamic_tools,
                 persist_extended_history: false,
@@ -373,10 +425,7 @@ impl ThreadRequestProcessor {
                 thread_start.persist_extended_history = false,
             ))
             .await
-            .map_err(|err| match err {
-                CodexErr::InvalidRequest(message) => invalid_request(message),
-                err => internal_error(format!("error creating thread: {err}")),
-            })?;
+            .map_err(thread_start_create_error)?;
         created_thread.record_startup_phase(
             "thread_start_create_thread",
             create_thread_started_at.elapsed(),
@@ -417,6 +466,12 @@ impl ThreadRequestProcessor {
             &config_snapshot,
             session_configured.rollout_path.clone(),
         );
+        if let Some(agent) = thread_start_agent.as_ref() {
+            if let Some(agent_path) = agent.agent_path.as_ref() {
+                thread.agent_path = Some(agent_path.to_string());
+                thread.agent_role = agent.agent_role.clone();
+            }
+        }
 
         // Auto-attach a thread listener when starting a thread.
         log_listener_attach_result(
@@ -1094,5 +1149,66 @@ impl ThreadRequestProcessor {
         )
         .await?;
         Ok(ThreadApproveGuardianDeniedActionResponse {})
+    }
+}
+
+fn thread_start_create_error(err: CodexErr) -> JSONRPCErrorError {
+    match err {
+        CodexErr::InvalidRequest(message) => invalid_request(message),
+        CodexErr::UnsupportedOperation(message)
+            if message.contains("agent path") && message.contains("already exists") =>
+        {
+            invalid_request(message)
+        }
+        err => internal_error(format!("error creating thread: {err}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_thread_start_agent_derives_path_from_task_name() {
+        let agent = parse_thread_start_agent(
+            Some("owner_dev".to_string()),
+            Some("feature-owner".to_string()),
+        )
+        .expect("valid agent")
+        .expect("agent metadata");
+
+        assert_eq!(
+            agent.agent_path.as_ref().map(ToString::to_string),
+            Some("/owner_dev".to_string())
+        );
+        assert_eq!(agent.agent_role.as_deref(), Some("feature-owner"));
+    }
+
+    #[test]
+    fn parse_thread_start_agent_rejects_invalid_task_name() {
+        let error = parse_thread_start_agent(Some("OwnerDev".to_string()), None)
+            .expect_err("invalid task name should fail");
+
+        assert!(error.message.contains("invalid taskName"));
+    }
+
+    #[test]
+    fn parse_thread_start_agent_role_only_does_not_create_root_metadata() {
+        let agent = parse_thread_start_agent(None, Some("feature-owner".to_string()))
+            .expect("valid role")
+            .expect("role should be preserved");
+
+        assert!(agent.agent_path.is_none());
+        assert_eq!(agent.agent_role.as_deref(), Some("feature-owner"));
+    }
+
+    #[test]
+    fn duplicate_agent_path_create_error_is_invalid_request() {
+        let error = thread_start_create_error(CodexErr::UnsupportedOperation(
+            "agent path `/project` already exists".to_string(),
+        ));
+
+        assert_eq!(error.code, -32600);
+        assert!(error.message.contains("already exists"));
     }
 }

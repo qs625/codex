@@ -4,10 +4,8 @@ use crate::agent::multi_agent;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::thread::ThreadService;
-use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::SpawnAgentForkMode;
 use protocol::models::ResponseItem;
-use thread_service_api::ThreadAgentMode;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadListedAgent;
@@ -45,10 +43,6 @@ fn to_runtime_spawn_request(
         model: request.model,
         reasoning_effort: request.reasoning_effort,
         service_tier: request.service_tier,
-        agent_mode: request.agent_mode.map(|mode| match mode {
-            ThreadAgentMode::Normal => AgentMode::Normal,
-            ThreadAgentMode::Management => AgentMode::Management,
-        }),
         fork_mode: request.fork_mode.map(|mode| match mode {
             ThreadSpawnAgentForkMode::FullHistory => SpawnAgentForkMode::FullHistory,
             ThreadSpawnAgentForkMode::LastNTurns { last_n_turns } => {

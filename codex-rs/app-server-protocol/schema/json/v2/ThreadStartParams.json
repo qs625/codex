@@ -98,6 +98,18 @@
       ],
       "type": "string"
     },
+    "ReasoningEffort": {
+      "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
+      "enum": [
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "type": "string"
+    },
     "SandboxMode": {
       "enum": [
         "read-only",
@@ -178,6 +190,12 @@
         "null"
       ]
     },
+    "agentType": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "developerInstructions": {
       "type": [
         "string",
@@ -200,6 +218,16 @@
       "type": [
         "string",
         "null"
+      ]
+    },
+    "reasoningEffort": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ReasoningEffort"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "personality": {
@@ -229,6 +257,12 @@
       ]
     },
     "serviceTier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "taskName": {
       "type": [
         "string",
         "null"

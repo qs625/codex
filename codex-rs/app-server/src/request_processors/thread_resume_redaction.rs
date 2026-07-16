@@ -207,6 +207,7 @@ mod tests {
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
+            agent_path: None,
             git_info: None,
             name: None,
             skills: Vec::new(),
