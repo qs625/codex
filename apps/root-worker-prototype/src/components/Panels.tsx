@@ -5,6 +5,7 @@ import {
   useState,
   type ChangeEvent,
   type ClipboardEvent,
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
@@ -20,6 +21,7 @@ import {
   ChevronDownIcon,
   CodeIcon,
   GearIcon,
+  GridIcon,
   ImageIcon,
   MicrophoneIcon,
   MoreIcon,
@@ -607,8 +609,17 @@ function ProjectSection({
   selectedThreadId: string | null;
 }) {
   const isCollapsed = collapsedProjectSet.has(project.id);
+  const isSelected = project.tree.threadId === selectedThreadId;
   const containsSelected =
     selectedThreadId != null && treeContainsThread(project.tree, selectedThreadId);
+  const buttonClassName = [
+    "tree-node-button",
+    "project-tree-button",
+    isSelected ? "selected" : null,
+    !isSelected && containsSelected ? "contains-selected" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
   const counts = [
     project.failedCount > 0 ? `${project.failedCount} failed` : null,
     project.activeCount > 0 ? `${project.activeCount} active` : null,
@@ -618,40 +629,55 @@ function ProjectSection({
 
   return (
     <section className="project-section">
-      <button
-        type="button"
-        className={`project-header ${containsSelected ? "contains-selected" : ""}`}
-        onClick={() => onSelectProject(project.id, project.tree.threadId)}
+      <div
+        className="tree-node tree-node-root project-tree-root"
+        style={{ "--depth": 0 } as CSSProperties}
       >
-        <span
-          className={`tree-toggle ${isCollapsed ? "collapsed" : ""}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleProject(project.id);
-          }}
+        <button
+          type="button"
+          className={buttonClassName}
+          aria-expanded={!isCollapsed}
+          onClick={() => onSelectProject(project.id, project.tree.threadId)}
         >
-          <ChevronDownIcon />
-        </span>
-        <span
-          className={`tree-inline-status ${project.statusClass}`}
-          title={project.statusClass}
-          aria-label={project.statusClass}
-        />
-        <span className="project-header-copy">
-          <strong>{project.label}</strong>
-          <span>{project.subtitle}</span>
-        </span>
-        {counts.length > 0 ? (
-          <span className="project-counts">{counts.join(" · ")}</span>
-        ) : null}
-      </button>
+          <span className="tree-node-leading">
+            <span
+              className={`tree-toggle ${isCollapsed ? "collapsed" : ""}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleProject(project.id);
+              }}
+            >
+              <ChevronDownIcon />
+            </span>
+            <span className="tree-agent-column">
+              <span className="tree-agent-icon project-agent-icon">
+                <GridIcon />
+              </span>
+              <span
+                className={`tree-inline-status ${project.statusClass}`}
+                title={project.statusClass}
+                aria-label={project.statusClass}
+              />
+            </span>
+          </span>
+          <span className="tree-node-copy project-tree-copy">
+            <strong>{project.label}</strong>
+            <span>{project.subtitle}</span>
+          </span>
+          {counts.length > 0 ? (
+            <span className="tree-count project-tree-count">
+              {counts.join(" · ")}
+            </span>
+          ) : null}
+        </button>
+      </div>
       {!isCollapsed ? (
         project.tree.children.length > 0 ? (
           project.tree.children.map((child) => (
             <AgentTreeNode
               key={child.key}
               collapsedSet={collapsedSet}
-              depth={0}
+              depth={1}
               node={child}
               onSelect={onSelectThread}
               onToggle={onToggleTreeNode}

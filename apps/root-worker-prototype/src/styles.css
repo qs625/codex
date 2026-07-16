@@ -482,6 +482,10 @@ svg {
   background: rgba(28, 25, 23, 0.05);
 }
 
+.tree-node-button.contains-selected {
+  background: rgba(28, 25, 23, 0.04);
+}
+
 .tree-node-leading {
   display: flex;
   align-items: flex-start;
@@ -536,6 +540,13 @@ svg {
   color: #57534e;
   font-size: 10px;
   text-align: center;
+}
+
+.project-tree-count {
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tree-spacer {
