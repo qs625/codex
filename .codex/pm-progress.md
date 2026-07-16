@@ -7,6 +7,10 @@ None
 None
 
 ## Completed
+- commit: 9468eebc8
+  summary: 合并 `1f8a1d9bb` 与 `52186fea0` 到主线，实现 root-worker 左侧栏 project PM 模型：左侧根节点改为多个 Project，每个 Project 由一个 PM 管理入口表示，PM 下保留现有 subagent tree；无 project cwd 的 conversations 进入独立 Chat group；同 project 重复 parentless thread 不暴露成多个主 root conversations；New Chat 因后端 no-project thread 语义未确认而明确 gated，不用 workspace cwd 伪造 chat。返修同时清理用户可见 root 文案残留，并将右侧 Todo action 对齐为 Open PM。
+  validation: PM 侧 `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/slashMenu.test.ts` -> 127 passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning；owner `rtk git diff --check` -> passed；independent reviewer passed。owner reported full frontend test has unrelated existing `src/lib/contextUsage.test.ts` failure `3582 !== 19900`.
+  residual_risk: Chat mode 仍等待后端明确支持 no-project thread；当前 UI 只 gate/报错，不伪造。未新增 App effect 级集成测试，主要由 pure helper/rendering tests 覆盖；右侧部分内部 prop/legacy helper 名仍可能保留 root 字样但不作为用户概念展示。
 - commit: f4a1f73c2
   summary: 合并 `0073579c2` 与 `a1e4eb37` 到主线，拆分 schedule subscription idle 状态为 `waitEventSubscription`，不再把长期/周期 schedule 当成 `WaitCommand` 阻塞 completion；同时删除 parent-side child completion pending/received/dedupe bookkeeping，使 completion 只由 child turn `on_task_finished()` finalization path 投递，followup/status/list/send_event/goal/subscription count change 不再重放旧 completion。
   validation: `rtk cargo test -q -p codex-agent-runtime thread_post_turn` -> 6 passed；`rtk cargo test -q -p thread-service child_completion` -> 8 passed；`rtk cargo test -q -p app-server thread_status` -> 17 + 4 passed；`rtk cargo build -q -p app-server --bin app-server` -> passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed；`rtk git diff --check` -> passed；owner targeted completion matrix passed；independent reviewer passed.
