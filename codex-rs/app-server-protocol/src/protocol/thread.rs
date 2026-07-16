@@ -106,6 +106,8 @@ pub struct ThreadStartParams {
     pub model: Option<String>,
     #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
     pub model_provider: Option<String>,
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub reasoning_effort: Option<ReasoningEffort>,
     #[serde(
         default,
         deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
@@ -116,6 +118,12 @@ pub struct ThreadStartParams {
     pub service_tier: Option<Option<String>>,
     #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
     pub cwd: Option<String>,
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub task_name: Option<String>,
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub agent_path: Option<String>,
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub agent_type: Option<String>,
     /// Replace the thread's runtime workspace roots. Relative paths are
     /// resolved against the effective cwd for the thread.
     #[experimental("thread/start.runtimeWorkspaceRoots")]

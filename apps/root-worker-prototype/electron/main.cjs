@@ -163,6 +163,16 @@ ipcMain.handle("codex:createThread", async (_event, payload) => {
   await ensureDefaultWorkspace();
   const params = withRealtimeConversationFeature({
     cwd: payload?.cwd ?? defaultWorkspace,
+    taskName: payload?.taskName || undefined,
+    agentPath: payload?.agentPath || undefined,
+    agentType: payload?.agentType || undefined,
+    model: payload?.model || undefined,
+    modelProvider: payload?.modelProvider || undefined,
+    reasoningEffort: payload?.reasoningEffort || undefined,
+    serviceTier:
+      payload && Object.prototype.hasOwnProperty.call(payload, "serviceTier")
+        ? payload.serviceTier
+        : undefined,
     approvalPolicy: "never",
     sandbox: "danger-full-access",
     threadSource: "user",

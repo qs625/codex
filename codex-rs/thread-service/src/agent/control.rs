@@ -820,6 +820,10 @@ impl AgentControl {
         }
     }
 
+    pub(crate) fn register_root_scope_agent_metadata(&self, agent_metadata: AgentMetadata) {
+        self.state.register_agent_metadata(agent_metadata);
+    }
+
     pub(crate) fn get_agent_metadata(&self, agent_id: ThreadId) -> Option<AgentMetadata> {
         self.state.agent_metadata_for_thread(agent_id)
     }

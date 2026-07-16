@@ -298,6 +298,8 @@ pub struct Thread {
     pub agent_nickname: Option<String>,
     /// Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.
     pub agent_role: Option<String>,
+    /// Optional canonical agent path assigned to this thread.
+    pub agent_path: Option<String>,
     /// Optional Git metadata captured when the thread was created.
     pub git_info: Option<GitInfo>,
     /// Optional user-facing thread title.

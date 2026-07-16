@@ -405,8 +405,6 @@ export interface WorkflowAgentOptions {
   reasoning_effort?: string;
   serviceTier?: string;
   service_tier?: string;
-  agentMode?: string;
-  agent_mode?: string;
   forkTurns?: string;
   fork_turns?: string;
 }

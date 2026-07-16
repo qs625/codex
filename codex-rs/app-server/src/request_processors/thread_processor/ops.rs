@@ -1,4 +1,63 @@
 use super::*;
+use codex_agent_runtime::AgentMetadata;
+use protocol::AgentPath;
+
+#[derive(Debug, Clone)]
+pub(super) struct ThreadStartAgent {
+    pub(super) agent_path: AgentPath,
+    pub(super) agent_role: Option<String>,
+}
+
+pub(super) fn parse_thread_start_agent(
+    task_name: Option<String>,
+    agent_path: Option<String>,
+    agent_type: Option<String>,
+) -> Result<Option<ThreadStartAgent>, JSONRPCErrorError> {
+    let task_name = task_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let explicit_agent_path = agent_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let agent_role = agent_type
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let task_agent_path = match task_name.as_deref() {
+        Some(task_name) => Some(AgentPath::root().join(task_name).map_err(|err| {
+            invalid_request(format!("invalid taskName `{task_name}`: {err}"))
+        })?),
+        None => None,
+    };
+    let explicit_agent_path = match explicit_agent_path.as_deref() {
+        Some(agent_path) => Some(AgentPath::try_from(agent_path).map_err(|err| {
+            invalid_request(format!("invalid agentPath `{agent_path}`: {err}"))
+        })?),
+        None => None,
+    };
+
+    let agent_path = match (task_agent_path, explicit_agent_path) {
+        (Some(task_agent_path), Some(explicit_agent_path))
+            if task_agent_path != explicit_agent_path =>
+        {
+            return Err(invalid_request(format!(
+                "taskName resolves to `{task_agent_path}` but agentPath is `{explicit_agent_path}`"
+            )));
+        }
+        (Some(agent_path), _) | (_, Some(agent_path)) => agent_path,
+        (None, None) => {
+            return Ok(agent_role.map(|agent_role| ThreadStartAgent {
+                agent_path: AgentPath::root(),
+                agent_role: Some(agent_role),
+            }));
+        }
+    };
+
+    Ok(Some(ThreadStartAgent {
+        agent_path,
+        agent_role,
+    }))
+}
 
 impl ThreadRequestProcessor {
     pub(super) async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
@@ -245,6 +304,7 @@ impl ThreadRequestProcessor {
         config_overrides: Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: ConfigOverrides,
         dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
+        thread_start_agent: Option<ThreadStartAgent>,
         session_start_source: Option<app_server_protocol::ThreadStartSource>,
         thread_source: Option<protocol::protocol::ThreadSource>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
@@ -322,6 +382,14 @@ impl ThreadRequestProcessor {
                 .await
                 .map_err(|err| config_load_error(&err))?;
         }
+        if let Some(agent_role) = thread_start_agent
+            .as_ref()
+            .and_then(|agent| agent.agent_role.as_deref())
+        {
+            codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role))
+                .await
+                .map_err(invalid_request)?;
+        }
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let environments = environments
@@ -359,6 +427,11 @@ impl ThreadRequestProcessor {
                     app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
                 },
                 session_source: None,
+                agent_metadata: thread_start_agent.clone().map(|agent| AgentMetadata {
+                    agent_path: Some(agent.agent_path),
+                    agent_role: agent.agent_role,
+                    ..Default::default()
+                }),
                 thread_source,
                 dynamic_tools: core_dynamic_tools,
                 persist_extended_history: false,
@@ -417,6 +490,10 @@ impl ThreadRequestProcessor {
             &config_snapshot,
             session_configured.rollout_path.clone(),
         );
+        if let Some(agent) = thread_start_agent.as_ref() {
+            thread.agent_path = Some(agent.agent_path.to_string());
+            thread.agent_role = agent.agent_role.clone();
+        }
 
         // Auto-attach a thread listener when starting a thread.
         log_listener_attach_result(
@@ -1094,5 +1171,57 @@ impl ThreadRequestProcessor {
         )
         .await?;
         Ok(ThreadApproveGuardianDeniedActionResponse {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_thread_start_agent_derives_path_from_task_name() {
+        let agent = parse_thread_start_agent(
+            Some("owner_dev".to_string()),
+            None,
+            Some("feature-owner".to_string()),
+        )
+        .expect("valid agent")
+        .expect("agent metadata");
+
+        assert_eq!(agent.agent_path.to_string(), "/root/owner_dev");
+        assert_eq!(agent.agent_role.as_deref(), Some("feature-owner"));
+    }
+
+    #[test]
+    fn parse_thread_start_agent_accepts_matching_explicit_path() {
+        let agent = parse_thread_start_agent(
+            Some("owner_dev".to_string()),
+            Some("/root/owner_dev".to_string()),
+            None,
+        )
+        .expect("valid agent")
+        .expect("agent metadata");
+
+        assert_eq!(agent.agent_path.to_string(), "/root/owner_dev");
+    }
+
+    #[test]
+    fn parse_thread_start_agent_rejects_conflicting_path() {
+        let error = parse_thread_start_agent(
+            Some("owner_dev".to_string()),
+            Some("/root/reviewer".to_string()),
+            None,
+        )
+        .expect_err("conflict should fail");
+
+        assert!(error.message.contains("taskName resolves to"));
+    }
+
+    #[test]
+    fn parse_thread_start_agent_rejects_invalid_task_name() {
+        let error = parse_thread_start_agent(Some("OwnerDev".to_string()), None, None)
+            .expect_err("invalid task name should fail");
+
+        assert!(error.message.contains("invalid taskName"));
     }
 }

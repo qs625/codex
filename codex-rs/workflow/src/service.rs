@@ -9,7 +9,6 @@ use protocol::models::WorkflowRunProgressEvent;
 use protocol::models::WorkflowRunProgressKind;
 use serde::Deserialize;
 use serde_json::Value;
-use thread_service_api::ThreadAgentMode;
 use thread_service_api::ThreadServiceApi;
 use thread_service_api::ThreadSpawnAgentForkMode;
 use thread_service_api::ThreadSpawnAgentRequest;
@@ -415,7 +414,6 @@ struct WorkflowSpawnAgentArgs {
     model: Option<String>,
     reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
     service_tier: Option<String>,
-    agent_mode: Option<ThreadAgentMode>,
     fork_turns: Option<String>,
     fork_context: Option<bool>,
 }
@@ -431,7 +429,6 @@ impl WorkflowSpawnAgentArgs {
             model: self.model,
             reasoning_effort: self.reasoning_effort,
             service_tier: self.service_tier,
-            agent_mode: self.agent_mode,
             fork_mode,
         })
     }

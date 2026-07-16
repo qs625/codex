@@ -215,9 +215,38 @@ export function NewThreadPopover({
   const [mode, setMode] = useState<NewThreadDraft["mode"]>("project");
   const [projectPath, setProjectPath] = useState(workspacePath);
   const [title, setTitle] = useState("Project chat");
+  const [taskName, setTaskName] = useState("project_chat");
+  const [agentPath, setAgentPath] = useState("/root/project_chat");
+  const [agentType, setAgentType] = useState("");
+  const [model, setModel] = useState("");
+  const [modelProvider, setModelProvider] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState("");
+  const [serviceTier, setServiceTier] = useState("");
   const hasSeededWorkspacePathRef = useRef(Boolean(workspacePath.trim()));
   const trimmedProjectPath = projectPath.trim();
-  const canCreate = mode === "project" && trimmedProjectPath.length > 0;
+  const trimmedTaskName = taskName.trim();
+  const trimmedAgentPath = agentPath.trim();
+  const derivedAgentPath = trimmedTaskName ? `/root/${trimmedTaskName}` : "";
+  const taskNameError =
+    trimmedTaskName && !isValidAgentPathSegment(trimmedTaskName)
+      ? "Task name must use lowercase letters, digits, and underscores, and cannot be root."
+      : "";
+  const agentPathError =
+    trimmedAgentPath && !isValidNewThreadAgentPath(trimmedAgentPath)
+      ? "Agent path must start with /root or /morpheus and use non-root lowercase path segments."
+      : "";
+  const agentPathConflict =
+    derivedAgentPath &&
+    trimmedAgentPath &&
+    derivedAgentPath !== trimmedAgentPath
+      ? `taskName resolves to ${derivedAgentPath}.`
+      : "";
+  const canCreate =
+    mode === "project" &&
+    trimmedProjectPath.length > 0 &&
+    !taskNameError &&
+    !agentPathError &&
+    !agentPathConflict;
 
   useEffect(() => {
     if (
@@ -235,7 +264,17 @@ export function NewThreadPopover({
     if (!canCreate) {
       return;
     }
-    onSubmit(buildNewThreadDraft(mode, trimmedProjectPath, title));
+    onSubmit(
+      buildNewThreadDraft(mode, trimmedProjectPath, title, {
+        taskName,
+        agentPath,
+        agentType,
+        model,
+        modelProvider,
+        reasoningEffort,
+        serviceTier,
+      }),
+    );
   };
 
   return (
@@ -300,38 +339,88 @@ export function NewThreadPopover({
       </label>
 
       <label className="sidebar-create-field">
-        <span>Agent type</span>
-        <select defaultValue="project-chat">
-          <option value="project-chat">Project chat</option>
-          <option disabled value="feature-owner">
-            Feature owner - after backend support
-          </option>
-          <option disabled value="refactor-owner">
-            Refactor owner - after backend support
-          </option>
-          <option disabled value="performance-owner">
-            Performance owner - after backend support
-          </option>
-        </select>
+        <span>taskName</span>
+        <input
+          onChange={(event) => {
+            const nextTaskName = event.target.value;
+            setTaskName(nextTaskName);
+            setAgentPath(nextTaskName.trim() ? `/root/${nextTaskName.trim()}` : "");
+          }}
+          placeholder="project_chat"
+          value={taskName}
+        />
+        {taskNameError ? (
+          <em className="sidebar-create-error">{taskNameError}</em>
+        ) : null}
+      </label>
+
+      <label className="sidebar-create-field">
+        <span>agentPath</span>
+        <input
+          onChange={(event) => setAgentPath(event.target.value)}
+          placeholder="/root/project_chat"
+          value={agentPath}
+        />
+        {agentPathError || agentPathConflict ? (
+          <em className="sidebar-create-error">
+            {agentPathError || agentPathConflict}
+          </em>
+        ) : null}
+      </label>
+
+      <label className="sidebar-create-field">
+        <span>agentType</span>
+        <input
+          onChange={(event) => setAgentType(event.target.value)}
+          placeholder="default"
+          value={agentType}
+        />
       </label>
 
       <div className="sidebar-create-disabled-grid">
         <label className="sidebar-create-field">
-          <span>Model</span>
-          <select disabled defaultValue="current-default">
-            <option value="current-default">Use current default</option>
+          <span>model</span>
+          <input
+            onChange={(event) => setModel(event.target.value)}
+            placeholder="default"
+            value={model}
+          />
+        </label>
+        <label className="sidebar-create-field">
+          <span>modelProvider</span>
+          <input
+            onChange={(event) => setModelProvider(event.target.value)}
+            placeholder="default"
+            value={modelProvider}
+          />
+        </label>
+      </div>
+
+      <div className="sidebar-create-disabled-grid">
+        <label className="sidebar-create-field">
+          <span>reasoningEffort</span>
+          <select
+            onChange={(event) => setReasoningEffort(event.target.value)}
+            value={reasoningEffort}
+          >
+            <option value="">Use default</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
           </select>
         </label>
         <label className="sidebar-create-field">
-          <span>Reasoning</span>
-          <select disabled defaultValue="current-default">
-            <option value="current-default">Use current default</option>
+          <span>serviceTier</span>
+          <select
+            onChange={(event) => setServiceTier(event.target.value)}
+            value={serviceTier}
+          >
+            <option value="">Use default</option>
+            <option value="priority">priority</option>
           </select>
         </label>
       </div>
-      <p className="sidebar-create-note">
-        Model parameters can be changed after creation from the conversation header.
-      </p>
 
       <footer className="sidebar-create-actions">
         <button type="button" onClick={onCancel}>
@@ -349,15 +438,59 @@ export function buildNewThreadDraft(
   mode: NewThreadDraft["mode"],
   projectPath: string,
   title: string,
+  params: Partial<
+    Pick<
+      NewThreadDraft,
+      | "taskName"
+      | "agentPath"
+      | "agentType"
+      | "model"
+      | "modelProvider"
+      | "reasoningEffort"
+      | "serviceTier"
+    >
+  > = {},
 ): NewThreadDraft {
+  const requestedTaskName = params.taskName?.trim();
+  const requestedAgentPath = params.agentPath?.trim();
+  const taskName =
+    requestedTaskName ?? (requestedAgentPath ? "" : "project_chat");
   return {
     mode,
     projectPath: projectPath.trim(),
     title: title.trim() || "Project chat",
-    agentType: "project-chat",
-    model: "current-default",
-    reasoningEffort: "current-default",
+    taskName,
+    agentPath: requestedAgentPath || (taskName ? `/root/${taskName}` : ""),
+    agentType: optionalThreadStartParam(params.agentType),
+    model: optionalThreadStartParam(params.model),
+    modelProvider: optionalThreadStartParam(params.modelProvider),
+    reasoningEffort: optionalThreadStartParam(params.reasoningEffort),
+    serviceTier: optionalThreadStartParam(params.serviceTier),
   };
+}
+
+function optionalThreadStartParam(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+export function isValidAgentPathSegment(segment: string) {
+  return /^[a-z0-9_]+$/.test(segment) && segment !== "root";
+}
+
+export function isValidNewThreadAgentPath(path: string) {
+  if (!path.startsWith("/")) {
+    return false;
+  }
+  if (path === "/morpheus") {
+    return true;
+  }
+  const segments = path.split("/").slice(1);
+  const root = segments[0];
+  if (root !== "root") {
+    return false;
+  }
+  return segments.slice(1).every(isValidAgentPathSegment);
 }
 
 function ProjectSection({

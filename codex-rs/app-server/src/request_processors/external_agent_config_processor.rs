@@ -71,6 +71,7 @@ impl ExternalAgentRuntime for ThreadService {
                     config,
                     initial_history: InitialHistory::Forked(rollout_items),
                     session_source: None,
+                    agent_metadata: None,
                     thread_source: None,
                     dynamic_tools: Vec::new(),
                     persist_extended_history: false,

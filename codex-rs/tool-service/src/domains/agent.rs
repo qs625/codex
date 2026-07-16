@@ -13,7 +13,6 @@ use crate::planning::create_poll_event_tool;
 use crate::planning::create_report_agent_job_result_tool;
 use crate::planning::create_spawn_agent_tool_v2;
 use crate::planning::create_spawn_agents_on_csv_tool;
-use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::SpawnAgentToolRequest;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -276,10 +275,6 @@ fn from_runtime_spawn_request(
         model: request.model,
         reasoning_effort: request.reasoning_effort,
         service_tier: request.service_tier,
-        agent_mode: request.agent_mode.map(|mode| match mode {
-            AgentMode::Normal => thread_service_api::ThreadAgentMode::Normal,
-            AgentMode::Management => thread_service_api::ThreadAgentMode::Management,
-        }),
         fork_mode: request.fork_mode.map(|mode| match mode {
             SpawnAgentForkMode::FullHistory => {
                 thread_service_api::ThreadSpawnAgentForkMode::FullHistory
@@ -301,7 +296,6 @@ struct SpawnAgentArgs {
     model: Option<String>,
     reasoning_effort: Option<ReasoningEffort>,
     service_tier: Option<String>,
-    agent_mode: Option<AgentMode>,
     fork_turns: Option<String>,
     fork_context: Option<bool>,
 }
@@ -317,7 +311,6 @@ impl SpawnAgentArgs {
             model: self.model,
             reasoning_effort: self.reasoning_effort,
             service_tier: self.service_tier,
-            agent_mode: self.agent_mode,
             fork_mode,
         })
     }

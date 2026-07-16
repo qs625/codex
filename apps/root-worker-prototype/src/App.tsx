@@ -1335,10 +1335,14 @@ function App() {
       setSelectedThreadId(existingProject.tree.threadId);
       return;
     }
-    await createProjectThread(draft.title || "Project chat", projectCwd);
+    await createProjectThread(draft.title || "Project chat", projectCwd, draft);
   }
 
-  async function createProjectThread(name = "Project chat", cwd = workspace) {
+  async function createProjectThread(
+    name = "Project chat",
+    cwd = workspace,
+    draft?: NewThreadDraft,
+  ) {
     const projectCwd = normalizeProjectCwd(cwd);
     if (!projectCwd) {
       setError("Project chat needs a workspace path from the app server.");
@@ -1349,6 +1353,13 @@ function App() {
       const payload = (await window.codexDesktop.createThread({
         cwd: projectCwd,
         name,
+        taskName: draft?.taskName,
+        agentPath: draft?.agentPath,
+        agentType: draft?.agentType,
+        model: draft?.model,
+        modelProvider: draft?.modelProvider,
+        reasoningEffort: draft?.reasoningEffort,
+        serviceTier: draft?.serviceTier,
       })) as { thread: Thread };
       markThreadLoaded(payload.thread.id);
       markThreadSubscribed(payload.thread.id);

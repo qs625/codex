@@ -1183,6 +1183,7 @@ mod tests {
             cli_version: "test".to_string(),
             agent_nickname: None,
             agent_role: None,
+            agent_path: None,
             source,
             thread_source: None,
             git_info: None,

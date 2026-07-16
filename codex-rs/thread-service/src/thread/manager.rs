@@ -10,6 +10,7 @@ use crate::session::INITIAL_SUBMIT_ID;
 use crate::session::SteerInputError;
 use crate::tasks::interrupted_turn_history_marker_from_config;
 use crate::thread::CodexThread;
+use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::LiveAgentShutdownAction;
 use codex_agent_runtime::live_agent_shutdown_action;
 use codex_analytics_api::AnalyticsEventsClient;
@@ -187,6 +188,7 @@ pub struct StartThreadOptions {
     pub config: Config,
     pub initial_history: InitialHistory,
     pub session_source: Option<SessionSource>,
+    pub agent_metadata: Option<AgentMetadata>,
     pub thread_source: Option<ThreadSource>,
     pub dynamic_tools: Vec<protocol::dynamic_tools::DynamicToolSpec>,
     pub persist_extended_history: bool,
@@ -921,6 +923,7 @@ impl ThreadService {
             config,
             initial_history: InitialHistory::New,
             session_source: None,
+            agent_metadata: None,
             thread_source: None,
             dynamic_tools,
             persist_extended_history,
@@ -941,7 +944,8 @@ impl ThreadService {
         let thread_source = options
             .thread_source
             .or_else(|| options.initial_history.get_resumed_thread_source());
-        Box::pin(self.state.spawn_thread_with_source(
+        let agent_metadata = options.agent_metadata;
+        let new_thread = Box::pin(self.state.spawn_thread_with_source(
             options.config,
             options.initial_history,
             self.agent_control(),
@@ -956,7 +960,27 @@ impl ThreadService {
             options.environments,
             /*user_shell_override*/ None,
         ))
-        .await
+        .await?;
+        if let Some(mut agent_metadata) = agent_metadata {
+            agent_metadata.agent_id = Some(new_thread.thread_id);
+            self.agent_control()
+                .register_root_scope_agent_metadata(agent_metadata.clone());
+            new_thread
+                .thread
+                .update_thread_metadata(
+                    ThreadMetadataPatch {
+                        agent_role: Some(agent_metadata.agent_role),
+                        agent_path: Some(agent_metadata.agent_path.map(Into::into)),
+                        ..Default::default()
+                    },
+                    /*include_archived*/ false,
+                )
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!("failed to persist root agent metadata: {err}"))
+                })?;
+        }
+        Ok(new_thread)
     }
 
     // TODO(jif) merge with fork_agent
@@ -1077,12 +1101,30 @@ impl ThreadService {
         session_source: SessionSource,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
+        self.resume_thread_with_history_source_and_agent_metadata(
+            config,
+            initial_history,
+            session_source,
+            None,
+            parent_trace,
+        )
+        .await
+    }
+
+    pub async fn resume_thread_with_history_source_and_agent_metadata(
+        &self,
+        config: Config,
+        initial_history: InitialHistory,
+        session_source: SessionSource,
+        agent_metadata: Option<AgentMetadata>,
+        parent_trace: Option<W3cTraceContext>,
+    ) -> CodexResult<NewThread> {
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
         let thread_source = initial_history.get_resumed_thread_source();
-        Box::pin(self.state.spawn_thread_with_source(
+        let new_thread = Box::pin(self.state.spawn_thread_with_source(
             config,
             initial_history,
             self.agent_control(),
@@ -1097,7 +1139,13 @@ impl ThreadService {
             environments,
             /*user_shell_override*/ None,
         ))
-        .await
+        .await?;
+        if let Some(mut agent_metadata) = agent_metadata {
+            agent_metadata.agent_id = Some(new_thread.thread_id);
+            self.agent_control()
+                .register_root_scope_agent_metadata(agent_metadata);
+        }
+        Ok(new_thread)
     }
 
     #[cfg(any(test, feature = "test-support"))]

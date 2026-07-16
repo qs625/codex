@@ -192,13 +192,6 @@ pub struct ThreadDiscoveryContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ThreadAgentMode {
-    Normal,
-    Management,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ThreadSpawnAgentForkMode {
     FullHistory,
@@ -215,7 +208,6 @@ pub struct ThreadSpawnAgentRequest {
     pub model: Option<String>,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub service_tier: Option<String>,
-    pub agent_mode: Option<ThreadAgentMode>,
     pub fork_mode: Option<ThreadSpawnAgentForkMode>,
 }
 

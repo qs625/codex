@@ -1,4 +1,5 @@
 use super::*;
+use codex_agent_runtime::AgentMetadata;
 
 pub(crate) trait ThreadProcessorMetadataRuntime: Send + Sync {
     fn update_thread_metadata<'a>(
@@ -123,6 +124,7 @@ pub(crate) trait ThreadProcessorThreadRuntime: Send + Sync {
         config: Config,
         initial_history: InitialHistory,
         session_source: protocol::protocol::SessionSource,
+        agent_metadata: Option<AgentMetadata>,
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>>;
 
@@ -188,14 +190,16 @@ impl ThreadProcessorThreadRuntime for ThreadService {
         config: Config,
         initial_history: InitialHistory,
         session_source: protocol::protocol::SessionSource,
+        agent_metadata: Option<AgentMetadata>,
         parent_trace: Option<W3cTraceContext>,
     ) -> futures::future::BoxFuture<'a, CodexResult<ThreadProcessorNewThread>> {
         Box::pin(async move {
-            ThreadService::resume_thread_with_history_and_source(
+            ThreadService::resume_thread_with_history_source_and_agent_metadata(
                 self,
                 config,
                 initial_history,
                 session_source,
+                agent_metadata,
                 parent_trace,
             )
             .await

@@ -11,8 +11,13 @@ import type {
 } from "../types";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
-const { NewThreadPopover, SidebarPanel, buildNewThreadDraft } =
-  await import("./Panels");
+const {
+  NewThreadPopover,
+  SidebarPanel,
+  buildNewThreadDraft,
+  isValidAgentPathSegment,
+  isValidNewThreadAgentPath,
+} = await import("./Panels");
 
 function makeThread(id: string, cwd: string, name: string): Thread {
   return {
@@ -161,7 +166,7 @@ test("SidebarPanel exposes one create button", () => {
   assert.doesNotMatch(markup, /Open Project/);
 });
 
-test("NewThreadPopover renders project path, agent type, and gated model controls", () => {
+test("NewThreadPopover renders thread/start parameter fields", () => {
   const markup = renderToStaticMarkup(
     <NewThreadPopover
       existingProjectPaths={["/work/alpha", "/work/beta"]}
@@ -173,32 +178,89 @@ test("NewThreadPopover renders project path, agent type, and gated model control
 
   assert.match(markup, /New conversation/);
   assert.match(markup, /Project path/);
-  assert.match(markup, /Agent type/);
-  assert.match(markup, /Feature owner - after backend support/);
-  assert.match(markup, /Model/);
-  assert.match(markup, /Reasoning/);
-  assert.match(markup, /Use current default/);
+  assert.match(markup, /taskName/);
+  assert.match(markup, /agentPath/);
+  assert.match(markup, /agentType/);
+  assert.match(markup, /modelProvider/);
+  assert.match(markup, /reasoningEffort/);
+  assert.match(markup, /serviceTier/);
   assert.match(markup, /No-project chat needs backend support/);
   assert.match(markup, /Chat without project/);
   assert.match(markup, /disabled=""/);
 });
 
-test("buildNewThreadDraft trims fields and preserves unsupported params as defaults", () => {
+test("buildNewThreadDraft trims thread start params", () => {
   assert.deepEqual(
-    buildNewThreadDraft("project", "  /work/new  ", "  Launch pad  "),
+    buildNewThreadDraft("project", "  /work/new  ", "  Launch pad  ", {
+      taskName: "  owner_dev  ",
+      agentPath: "  /root/owner_dev  ",
+      agentType: "  feature-owner  ",
+      model: "  gpt-5.4  ",
+      modelProvider: "  openai  ",
+      reasoningEffort: "  high  ",
+      serviceTier: "  priority  ",
+    }),
     {
       mode: "project",
       projectPath: "/work/new",
       title: "Launch pad",
-      agentType: "project-chat",
-      model: "current-default",
-      reasoningEffort: "current-default",
+      taskName: "owner_dev",
+      agentPath: "/root/owner_dev",
+      agentType: "feature-owner",
+      model: "gpt-5.4",
+      modelProvider: "openai",
+      reasoningEffort: "high",
+      serviceTier: "priority",
     },
   );
   assert.equal(
     buildNewThreadDraft("project", "/work/new", "   ").title,
     "Project chat",
   );
+  assert.equal(
+    buildNewThreadDraft("project", "/work/new", "Launch").agentPath,
+    "/root/project_chat",
+  );
+  assert.equal(
+    buildNewThreadDraft("project", "/work/new", "Launch", {
+      model: "   ",
+    }).model,
+    null,
+  );
+  assert.deepEqual(
+    buildNewThreadDraft("project", "/work/new", "Launch", {
+      taskName: " ",
+      agentPath: "/morpheus",
+    }),
+    {
+      mode: "project",
+      projectPath: "/work/new",
+      title: "Launch",
+      taskName: "",
+      agentPath: "/morpheus",
+      agentType: null,
+      model: null,
+      modelProvider: null,
+      reasoningEffort: null,
+      serviceTier: null,
+    },
+  );
+});
+
+test("new thread agent path validation matches backend path rules", () => {
+  assert.equal(isValidAgentPathSegment("owner_dev"), true);
+  assert.equal(isValidAgentPathSegment("root"), false);
+  assert.equal(isValidAgentPathSegment("OwnerDev"), false);
+  assert.equal(isValidAgentPathSegment("owner-dev"), false);
+
+  assert.equal(isValidNewThreadAgentPath("/root"), true);
+  assert.equal(isValidNewThreadAgentPath("/root/owner_dev"), true);
+  assert.equal(isValidNewThreadAgentPath("/morpheus"), true);
+  assert.equal(isValidNewThreadAgentPath("/morpheus/agent_1"), false);
+  assert.equal(isValidNewThreadAgentPath("/root/root"), false);
+  assert.equal(isValidNewThreadAgentPath("/root/owner/root"), false);
+  assert.equal(isValidNewThreadAgentPath("/root/owner/"), false);
+  assert.equal(isValidNewThreadAgentPath("/project/owner"), false);
 });
 
 test("SidebarPanel renders Chat group conversations separately", () => {

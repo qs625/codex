@@ -208,6 +208,10 @@ impl AgentRegistry {
         active_agents.agent_tree.insert(key, agent_metadata);
     }
 
+    pub fn register_agent_metadata(&self, agent_metadata: AgentMetadata) {
+        self.register_spawned_thread(agent_metadata);
+    }
+
     fn reserve_agent_nickname(&self, names: &[&str], preferred: Option<&str>) -> Option<String> {
         let mut active_agents = self
             .active_agents

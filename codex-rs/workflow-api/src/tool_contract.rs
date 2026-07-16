@@ -123,12 +123,6 @@ pub fn workflow_spawn_agent_tool_call(
     );
     copy_option_string(
         &mut arguments,
-        "agent_mode",
-        &options,
-        &["agentMode", "agent_mode"],
-    );
-    copy_option_string(
-        &mut arguments,
         "fork_turns",
         &options,
         &["forkTurns", "fork_turns"],
@@ -293,7 +287,6 @@ mod tests {
                     "cwd": "/tmp/project",
                     "reasoningEffort": "high",
                     "serviceTier": "priority",
-                    "agentMode": "management",
                     "forkTurns": "none"
                 }
             }),
@@ -311,7 +304,6 @@ mod tests {
                 "cwd": "/tmp/project",
                 "reasoning_effort": "high",
                 "service_tier": "priority",
-                "agent_mode": "management",
                 "fork_turns": "none"
             })
         );

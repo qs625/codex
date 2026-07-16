@@ -521,6 +521,7 @@ where
             config: config.clone(),
             initial_history: InitialHistory::New,
             session_source,
+            agent_metadata: None,
             thread_source: None,
             dynamic_tools: Vec::new(),
             persist_extended_history: false,

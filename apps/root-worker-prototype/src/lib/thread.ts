@@ -246,6 +246,9 @@ export function getTreeNodeSubtitle(thread: Thread) {
 }
 
 export function getThreadPath(thread: Thread): string {
+  if (thread.agentPath) {
+    return thread.agentPath;
+  }
   const threadSpawn = getThreadSpawnSource(thread);
   if (threadSpawn) {
     return (

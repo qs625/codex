@@ -447,6 +447,7 @@ export type Thread = {
   threadSource: string | null;
   agentNickname: string | null;
   agentRole: string | null;
+  agentPath?: string | null;
   gitInfo: unknown | null;
   name: string | null;
   skills: ThreadSkill[];
@@ -620,9 +621,13 @@ export type NewThreadDraft = {
   mode: "project" | "chat";
   projectPath: string;
   title: string;
-  agentType: "project-chat";
-  model: "current-default";
-  reasoningEffort: "current-default";
+  taskName: string;
+  agentPath: string;
+  agentType: string | null;
+  model: string | null;
+  modelProvider: string | null;
+  reasoningEffort: string | null;
+  serviceTier: string | null;
 };
 
 export type TaskFilter = "all" | "todo" | "doing" | "blocked" | "done";

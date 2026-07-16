@@ -278,6 +278,13 @@ svg {
   background: rgba(16, 24, 40, 0.04);
 }
 
+.sidebar-create-error {
+  color: #b42318;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
 .sidebar-create-disabled-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
