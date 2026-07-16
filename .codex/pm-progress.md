@@ -1,27 +1,16 @@
 # PM Progress
 
 ## Current Goal
-修复 compact 后客户端偶发看不到 init context item 的 display/replay/hydration 链路问题；该任务作为主 checkout 独占 runtime/display bugfix 推进。
+当前没有新的主开发任务在推进。compact 后客户端偶发看不到 init context item 的 root-worker replacement history hydration/render bug 已在主线修复为 `8ffc4ccf5`。
 
 ## Active Work
-- id: compact-init-context-display
-  owner: /root/my_codex_pm/owner_main
-  checkout: /Users/bytedance/Projects/my-codex
-  branch: main
-  task_type: bugfix
-  depends_on: none
-  files: codex-rs/thread-service/src/compact.rs; codex-rs/thread-service/src/compact_tests.rs; codex-rs/app-server/src/request_processors.rs; codex-rs/thread-history/; codex-rs/app-server-protocol/src/protocol/thread_data.rs; apps/root-worker-prototype/src/lib/conversation.ts; compact history request/render tests
-  base_commit: f174838c92c65a861cf611043dd56280cdda7e2e
-  pending_sync_from_main: n/a
-  status: in_progress
-  objective: compact 后客户端可见的 init context / injected context item 在 live、reload、按需展开 compact history 路径中语义一致；修复不能退化模型可见的 initial context reinject。
-  last_update: 2026-07-16: PM 已向 owner_main 派发完整 runtime/display brief，要求先定位 item 丢失发生在 persisted replacement history、thread/read/reload replay、root-worker compact history hydration 还是 renderer rendering，再按 typed event/item 链路收口。
-  next_action: 等待 owner_main 交付定位、实现、固定 reviewer 结论和最小回归验证；PM 将按设计约束先验收实现层级，再看测试结果。
-  blockers: none
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: 8ffc4ccf5
+  summary: 修复 compact 后客户端偶发看不到 init context item：定位为 root-worker replacement history hydration/render 层，`contextCompaction` 现在生成 typed compact row 并携带 replacement history 状态与条目；replacement history 中 `role: "developer"` 的 initial context 显示为 `Init Context` context tool row；compact cells 负责归档旧 turn 内容，并丢弃同 turn compact 前内部噪声，避免泄漏到归档计数。
+  validation: owner 固定 reviewer `/root/my_codex_pm/owner_main/reviewer` 首轮发现同 turn pre-compact cell 泄漏，返修后复审通过；owner `rtk pnpm test src/lib/conversation.test.ts` -> 38 passed；owner `rtk pnpm test src/components/Conversation.test.tsx` -> 15 passed；owner `rtk git diff --check` -> passed。PM 验收确认实现不靠字符串伪造 init context，不修改后端 model reinject；PM `rtk pnpm --dir apps/root-worker-prototype test src/lib/conversation.test.ts src/components/Conversation.test.tsx src/lib/thread.test.ts` -> 153 passed；PM `rtk git diff --check` -> passed。
+  residual_risk: replacement history 中 contextual user fragments 仍按 user message 显示；若未来要完全复刻后端 `InjectedContext` sections，需要后端提供更强 typed replacement display fact。本次只触及 root-worker 前端转换/渲染路径，未运行 app-server build。
 - commit: 601b2dd3a
   summary: 合并 `03e1143d9`、`5d7348de6`、`c28bbaa2d` 到主线，完成 root-worker sidebar/agent tree `New` 入口与真实 `thread/start` 参数链路：客户端显示 project path、taskName/path preview、agentType、model/modelProvider、reasoningEffort、serviceTier；客户端只提交 path name/taskName，后端派生 canonical root-level path（无父节点时 `taskName -> /taskName`）；`Thread.agentPath` 作为 typed 返回字段供 root-worker tree 使用；删除 `spawn_agent` 外部 `agent_mode/agentMode` 参数面；扩展 root-level `AgentPath` grammar、registry duplicate protection、root-scope metadata cleanup 和 list scope 隔离。
   validation: owner 侧固定 reviewer 多轮复审通过；PM 侧 `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 9 passed；`rtk cargo test -p protocol agent_path` -> 7 passed；`rtk cargo test -p app-server parse_thread_start_agent` -> 3 passed；`rtk cargo test -p app-server duplicate_agent_path_create_error_is_invalid_request` -> 1 passed；`rtk cargo test -p thread-service root_scope_agent_path` -> 3 passed；`rtk cargo test -p thread-service root_scope_project_agent_path_is_not_listed_under_root_prefix` -> 1 passed；`rtk cargo test -p thread-service shutdown_all_threads_bounded_submits_shutdown_to_every_thread` -> 1 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk jq empty codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json` -> passed；`rtk git diff --check` -> passed.
@@ -184,5 +173,4 @@
   residual_risk: 仍缺少更贴近真实 DOM 副作用的滚动交互测试
 
 ## Known Issues
-- 用户报告 compact 后客户端有时看不到 init context item。初步判断更可能是 display/replay/hydration 链路问题，而不是模型上下文未 reinject：需要区分 `replacement_history` 是否包含 initial context、`ContextCompactionItem.replacementHistory` 是否持久化、root-worker compact 按需加载是否展开了 injected context item，以及 `process_compacted_history_reinjects_full_initial_context` 覆盖的是 model history 还是客户端可见 item。若优先修复，应作为主 checkout 独占 runtime/display bugfix 派给 `owner_main`，不要混入当前 `root-worker-new-thread-popover` dev 分支。
 - 原 `.codex/pm-progress.md` 中记录的 thread 重构上下文已过期，且引用的 `spec/` 文档已删除；后续若继续推进该主题，需要重新建立可执行拆分计划。
