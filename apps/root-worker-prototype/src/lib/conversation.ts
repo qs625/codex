@@ -103,9 +103,6 @@ export function buildConversationState(
         entries: rebuiltEntries,
       });
       entries.push(...rebuiltEntries);
-      if (item.type === "contextCompaction") {
-        entries.length = 0;
-      }
       flatItemIndex += 1;
     }
   }
@@ -346,7 +343,12 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "contextCompaction") {
-    return [];
+    return [
+      buildContextCompactionEntry(item, {
+        author,
+        timestamp,
+      }),
+    ];
   }
 
   if (item.type === "plan") {
@@ -595,6 +597,48 @@ function buildConversationItemEntries(
   ];
 }
 
+function buildContextCompactionEntry(
+  item: Extract<ThreadItem, { type: "contextCompaction" }>,
+  {
+    author,
+    timestamp,
+  }: {
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry {
+  const replacementHistory = Array.isArray(item.replacementHistory)
+    ? item.replacementHistory
+    : null;
+  const replacementHistoryEntries = replacementHistory
+    ? buildReplacementHistoryEntries(replacementHistory, {
+        author,
+        timestamp,
+        parentId: item.id,
+      })
+    : null;
+  const replacementHistoryCount = replacementHistoryEntries?.length ?? null;
+  const replacementHistoryStatus =
+    replacementHistory === null
+      ? "missing"
+      : replacementHistoryEntries && replacementHistoryEntries.length > 0
+        ? "available"
+        : "empty";
+
+  return {
+    id: item.id,
+    kind: "compact",
+    author,
+    role: "system",
+    text: "Previous conversation was archived; compacted model context continues below.",
+    timestamp,
+    attachments: [],
+    replacementHistoryEntries,
+    replacementHistoryStatus,
+    replacementHistoryCount,
+  };
+}
+
 function formatItemTimestamp(item: ThreadItem) {
   if (
     (item.type === "commandExecutionNotification" ||
@@ -684,6 +728,15 @@ function buildReplacementHistoryEntry(
     case "message": {
       const role = stringOrFallback(item.role, "message");
       const text = extractResponseContentText(item.content);
+      if (role === "developer") {
+        return replacementContextEntry({
+          id,
+          author,
+          timestamp,
+          text: previewInlineText(text, 160) ?? "Initial context was injected.",
+          details: text,
+        });
+      }
       return {
         id,
         kind: "message",
@@ -995,6 +1048,34 @@ function buildCollabAgentMessageEntry(
     toolStatus: "completed",
     toolDetails: formatCollabAgentMessageDetails(item),
     toolCategory: formatCollabAgentMessageCategory(item),
+  };
+}
+
+function replacementContextEntry({
+  id,
+  author,
+  timestamp,
+  text,
+  details,
+}: {
+  id: string;
+  author: string;
+  timestamp: string;
+  text: string;
+  details: string;
+}): ConversationEntry {
+  return {
+    id,
+    kind: "tool",
+    author,
+    role: "system",
+    text,
+    timestamp,
+    attachments: [],
+    toolName: "Init Context",
+    toolStatus: "completed",
+    toolDetails: details,
+    toolCategory: "context",
   };
 }
 

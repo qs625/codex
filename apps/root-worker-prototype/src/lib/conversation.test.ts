@@ -5,7 +5,10 @@ import {
   buildConversationEntries,
   buildConversationState,
 } from "./conversation";
-import { buildConversationCells } from "./conversationCompact";
+import {
+  buildConversationCells,
+  extractCompactConversationDetails,
+} from "./conversationCompact";
 import { formatClockTime } from "./thread";
 import type { Thread } from "../types";
 
@@ -1269,13 +1272,28 @@ test("keeps ordinary child completion JSON in event-driven tools as event text",
   );
 });
 
-test("does not render context compaction as a visible conversation entry", () => {
+test("renders context compaction replacement history with init context", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
         type: "contextCompaction",
         id: "compact-1",
         replacementHistory: [
+          {
+            type: "message",
+            role: "developer",
+            content: [
+              {
+                type: "input_text",
+                text: "Permissions and AGENTS.md instructions",
+              },
+            ],
+          },
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "recent request" }],
+          },
           {
             type: "message",
             role: "assistant",
@@ -1286,11 +1304,97 @@ test("does not render context compaction as a visible conversation entry", () =>
     ]),
   );
 
-  assert.deepEqual(entries, []);
+  assert.equal(entries.length, 1);
+  const compactEntry = entries[0]!;
+  assert.equal(compactEntry.kind, "compact");
+  assert.equal(compactEntry.replacementHistoryStatus, "available");
+  assert.equal(compactEntry.replacementHistoryCount, 3);
+  assert.deepEqual(
+    compactEntry.replacementHistoryEntries?.map((entry) => [
+      entry.kind,
+      entry.toolName ?? entry.author,
+      entry.text,
+    ]),
+    [
+      ["tool", "Init Context", "Permissions and AGENTS.md instructions"],
+      ["message", "You", "recent request"],
+      ["message", "root", "compact final output"],
+    ],
+  );
+});
+
+test("extracts compact history details with init context replacement cell", () => {
+  const entries = buildConversationEntries(
+    makeThreadWithTurns([
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "userMessage",
+            id: "old-user",
+            content: [{ type: "text", text: "old request" }],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
+      },
+      {
+        id: "turn-2",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+            replacementHistory: [
+              {
+                type: "message",
+                role: "developer",
+                content: [
+                  {
+                    type: "input_text",
+                    text: "Fresh initial context",
+                  },
+                ],
+              },
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "compact final output" }],
+              },
+            ],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+    ]),
+  );
+
+  const details = extractCompactConversationDetails(entries, "compact-1");
+
+  assert.equal(details?.archivedEntryCount, 1);
+  assert.deepEqual(
+    details?.replacementHistoryCells.map((cell) => [
+      cell.kind,
+      cell.entries[0]?.toolName ?? cell.entries[0]?.author,
+      cell.entries[0]?.text,
+    ]),
+    [
+      ["tool", "Init Context", "Fresh initial context"],
+      ["message", "root", "compact final output"],
+    ],
+  );
 });
 
 test("hides compact turn entries while preserving later visible items", () => {
-  const entries = buildConversationEntries(
+  const state = buildConversationState(
     makeThreadWithTurns([
       {
         id: "turn-1",
@@ -1348,15 +1452,25 @@ test("hides compact turn entries while preserving later visible items", () => {
   );
 
   assert.deepEqual(
-    entries.map((entry) => [entry.id, entry.kind, entry.text]),
+    state.cells.map((cell) => [cell.id, cell.kind]),
     [
-      ["after-compact", "message", "continued"],
+      ["compact-1", "compact"],
+      ["after-compact", "message"],
     ],
+  );
+  const compactEntry = state.cells[0]?.entries[0];
+  assert.equal(compactEntry?.kind, "compact");
+  assert.equal(compactEntry?.archivedEntryCount, 1);
+  assert.deepEqual(
+    compactEntry?.archivedCells?.flatMap((cell) =>
+      cell.entries.map((entry) => entry.text),
+    ),
+    ["old request"],
   );
 });
 
 test("multiple compactions keep only entries after the latest hidden compact boundary", () => {
-  const entries = buildConversationEntries(
+  const state = buildConversationState(
     makeThreadWithTurns([
       {
         id: "turn-1",
@@ -1436,13 +1550,20 @@ test("multiple compactions keep only entries after the latest hidden compact bou
   );
 
   assert.deepEqual(
-    entries.map((entry) => [entry.id, entry.kind, entry.text]),
+    state.cells.map((cell) => [cell.id, cell.kind]),
     [
-      [
-        "after-second-compact",
-        "message",
-        "continued after second compact",
-      ],
+      ["compact-2", "compact"],
+      ["after-second-compact", "message"],
+    ],
+  );
+  const compactEntry = state.cells[0]?.entries[0];
+  assert.equal(compactEntry?.kind, "compact");
+  assert.equal(compactEntry?.archivedEntryCount, 3);
+  assert.deepEqual(
+    compactEntry?.archivedCells?.map((cell) => [cell.id, cell.kind]),
+    [
+      ["compact-1", "compact"],
+      ["after-first-compact", "message"],
     ],
   );
 });

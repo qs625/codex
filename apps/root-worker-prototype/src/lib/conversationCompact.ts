@@ -77,9 +77,15 @@ function buildConversationCellsForSegment(
         localArchivedCells.length > 0
           ? countConversationEntries(localArchivedCells)
           : loadedDetails?.archivedEntryCount ?? entry.archivedEntryCount;
-      if (localArchivedCells.length > 0) {
+      const compactTurnCells = collectCompactTurnCellsBeforeCompact(
+        cells,
+        entry.turnId,
+      );
+      if (localArchivedCells.length > 0 || compactTurnCells.length > 0) {
         const visibleCells = cells.filter(
-          (cell) => !shouldArchiveCellForCompact(cell, entry.turnId),
+          (cell) =>
+            !shouldArchiveCellForCompact(cell, entry.turnId) &&
+            !shouldDiscardCellBeforeCompact(cell, entry.turnId),
         );
         cells.length = 0;
         cells.push(...visibleCells);
@@ -251,6 +257,15 @@ function collectArchivedCellsForCompact(
   return cells.filter((cell) => shouldArchiveCellForCompact(cell, compactTurnId));
 }
 
+function collectCompactTurnCellsBeforeCompact(
+  cells: ConversationCell[],
+  compactTurnId: string | undefined,
+) {
+  return cells.filter((cell) =>
+    shouldDiscardCellBeforeCompact(cell, compactTurnId),
+  );
+}
+
 function shouldArchiveCellForCompact(
   cell: ConversationCell,
   compactTurnId: string | undefined,
@@ -260,4 +275,15 @@ function shouldArchiveCellForCompact(
   }
   const cellTurnId = cell.entries.find((entry) => entry.turnId)?.turnId;
   return cellTurnId !== undefined && cellTurnId !== compactTurnId;
+}
+
+function shouldDiscardCellBeforeCompact(
+  cell: ConversationCell,
+  compactTurnId: string | undefined,
+) {
+  if (!compactTurnId) {
+    return false;
+  }
+  const cellTurnId = cell.entries.find((entry) => entry.turnId)?.turnId;
+  return cellTurnId === compactTurnId;
 }
