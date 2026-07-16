@@ -105,6 +105,7 @@ pub(crate) async fn run_codex_thread_interactive(
         conversation_history: initial_history.unwrap_or(InitialHistory::New),
         session_source: SessionSource::SubAgent(subagent_source.clone()),
         thread_source: Some(ThreadSource::Subagent),
+        root_agent_metadata: None,
         agent_control: parent_session.services.agent_control.clone(),
         dynamic_tools: Vec::new(),
         persist_extended_history: false,

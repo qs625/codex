@@ -179,8 +179,12 @@ ipcMain.handle("codex:listWorkflows", async (_event, cwd = defaultWorkspace) => 
 
 ipcMain.handle("codex:createThread", async (_event, payload) => {
   await ensureDefaultWorkspace();
+  const cwd =
+    typeof payload?.cwd === "string" && payload.cwd.trim()
+      ? payload.cwd.trim()
+      : undefined;
   const params = withRealtimeConversationFeature({
-    cwd: payload?.cwd ?? defaultWorkspace,
+    ...(cwd ? { cwd } : {}),
     taskName: payload?.taskName || undefined,
     agentType: payload?.agentType || undefined,
     model: payload?.model || undefined,

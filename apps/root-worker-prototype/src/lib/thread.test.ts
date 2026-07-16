@@ -354,11 +354,11 @@ test("buildProjectAgentSidebar makes subagents inherit their project root", () =
   assert.equal(sidebar.projects.length, 1);
 });
 
-test("buildProjectAgentSidebar aggregates project status counts", () => {
+test("buildProjectAgentSidebar uses root thread status and aggregates project counts", () => {
   const pm = makeSidebarThread({
     id: "pm",
     cwd: "/work/project",
-    status: { type: "complete" },
+    status: { type: "idle", reason: "waitChild" },
   });
   const activeOwner = makeSubagentThread("owner", "pm", "/root/owner", {
     status: { type: "active", activeFlags: ["running"] },
@@ -383,9 +383,9 @@ test("buildProjectAgentSidebar aggregates project status counts", () => {
   ]);
   const project = sidebar.projects[0];
 
-  assert.equal(project?.statusClass, "blocked");
+  assert.equal(project?.statusClass, "waiting-subagent");
   assert.equal(project?.activeCount, 1);
-  assert.equal(project?.waitingCount, 1);
+  assert.equal(project?.waitingCount, 2);
   assert.equal(project?.failedCount, 1);
 });
 

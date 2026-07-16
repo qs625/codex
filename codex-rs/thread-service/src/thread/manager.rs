@@ -949,6 +949,7 @@ impl ThreadService {
             .thread_source
             .or_else(|| options.initial_history.get_resumed_thread_source());
         let agent_metadata = options.agent_metadata;
+        let root_agent_metadata = agent_metadata.clone();
         let mut agent_path_reservation = agent_metadata
             .as_ref()
             .and_then(|metadata| metadata.agent_path.as_ref())
@@ -959,6 +960,7 @@ impl ThreadService {
             options.initial_history,
             self.agent_control(),
             session_source,
+            root_agent_metadata,
             thread_source,
             options.dynamic_tools,
             options.persist_extended_history,
@@ -1147,6 +1149,7 @@ impl ThreadService {
             initial_history,
             self.agent_control(),
             session_source,
+            agent_metadata.clone(),
             thread_source,
             Vec::new(),
             /*persist_extended_history*/ false,
@@ -1549,6 +1552,7 @@ impl ThreadServiceState {
             InitialHistory::New,
             agent_control,
             session_source,
+            /*root_agent_metadata*/ None,
             thread_source,
             Vec::new(),
             persist_extended_history,
@@ -1582,6 +1586,7 @@ impl ThreadServiceState {
             initial_history,
             agent_control,
             session_source,
+            /*root_agent_metadata*/ None,
             thread_source,
             Vec::new(),
             /*persist_extended_history*/ false,
@@ -1616,6 +1621,7 @@ impl ThreadServiceState {
             initial_history,
             agent_control,
             session_source,
+            /*root_agent_metadata*/ None,
             thread_source,
             Vec::new(),
             persist_extended_history,
@@ -1649,6 +1655,7 @@ impl ThreadServiceState {
             initial_history,
             agent_control,
             self.session_source.clone(),
+            /*root_agent_metadata*/ None,
             thread_source,
             dynamic_tools,
             persist_extended_history,
@@ -1669,6 +1676,7 @@ impl ThreadServiceState {
         initial_history: InitialHistory,
         agent_control: AgentControl,
         session_source: SessionSource,
+        root_agent_metadata: Option<AgentMetadata>,
         thread_source: Option<ThreadSource>,
         dynamic_tools: Vec<protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
@@ -1737,6 +1745,7 @@ impl ThreadServiceState {
             conversation_history: initial_history,
             session_source,
             thread_source,
+            root_agent_metadata,
             agent_control,
             dynamic_tools,
             persist_extended_history,

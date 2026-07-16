@@ -1283,6 +1283,7 @@ impl Session {
             collaboration_mode,
             base_instructions,
             session_source,
+            root_agent_metadata,
         ) = {
             let state = self.state.lock().await;
             (
@@ -1291,6 +1292,7 @@ impl Session {
                 state.session_configuration.collaboration_mode.clone(),
                 state.session_configuration.base_instructions.clone(),
                 state.session_configuration.session_source.clone(),
+                state.session_configuration.root_agent_metadata.clone(),
             )
         };
         if let Some(model_switch_message) =
@@ -1482,9 +1484,14 @@ impl Session {
             );
             contextual_user_sections.push(
                 MultiagentContext::new(
-                    self.services
-                        .agent_control
-                        .current_agent_path(self.conversation_id, &session_source),
+                    codex_agent_runtime::current_agent_path_for_session(
+                        &session_source,
+                        self.services
+                            .agent_control
+                            .get_agent_metadata(self.conversation_id)
+                            .as_ref()
+                            .or(root_agent_metadata.as_ref()),
+                    ),
                     self.services
                         .agent_control
                         .direct_subagent_paths(self.conversation_id)

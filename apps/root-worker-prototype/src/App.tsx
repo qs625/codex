@@ -1288,9 +1288,7 @@ function App() {
 
   async function submitNewThreadDraft(draft: NewThreadDraft) {
     if (draft.mode === "chat") {
-      setError(
-        "Chat without project is unavailable in this build because createThread defaults missing cwd to the workspace.",
-      );
+      await createProjectThread(draft.title || "Chat", undefined, draft);
       return;
     }
     const projectCwd = normalizeProjectCwd(draft.projectPath);
@@ -1314,18 +1312,18 @@ function App() {
 
   async function createProjectThread(
     name = "Project chat",
-    cwd = workspace,
+    cwd?: string,
     draft?: NewThreadDraft,
   ) {
     const projectCwd = normalizeProjectCwd(cwd);
-    if (!projectCwd) {
+    if (draft?.mode !== "chat" && !projectCwd) {
       setError("Project chat needs a workspace path from the app server.");
       return;
     }
     setError(null);
     try {
       const payload = (await window.codexDesktop.createThread({
-        cwd: projectCwd,
+        ...(projectCwd ? { cwd: projectCwd } : {}),
         name,
         taskName: draft?.taskName,
         agentType: draft?.agentType,
@@ -1371,7 +1369,24 @@ function App() {
       );
       setSelectedThreadId(null);
       clearComposerDraftsForThreads(threadIdsToArchive);
-      await createProjectThread(replacementName);
+      const replacementProjectCwd = normalizeProjectCwd(rootThread?.cwd);
+      await createProjectThread(
+        replacementName,
+        replacementProjectCwd ?? undefined,
+        replacementProjectCwd
+          ? undefined
+          : {
+              mode: "chat",
+              projectPath: "",
+              title: replacementName,
+              taskName: "",
+              agentType: null,
+              model: null,
+              modelProvider: null,
+              reasoningEffort: null,
+              serviceTier: null,
+            },
+      );
     } catch (clearError) {
       setError(toErrorMessage(clearError));
     } finally {

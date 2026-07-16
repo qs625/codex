@@ -297,9 +297,9 @@ test("NewThreadPopover renders thread/start parameter fields", () => {
   assert.match(markup, /Use default/);
   assert.match(markup, /reasoningEffort/);
   assert.match(markup, /serviceTier/);
-  assert.match(markup, /No-project chat needs backend support/);
+  assert.match(markup, /chats without a project stay in Chat/);
   assert.match(markup, /Chat without project/);
-  assert.match(markup, /disabled=""/);
+  assert.doesNotMatch(markup, /value="chat" disabled=""/);
 });
 
 test("NewThreadDialog renders centered overlay around the existing form", () => {

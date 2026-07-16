@@ -328,8 +328,7 @@ export function NewThreadPopover({
       ? "Task name must use lowercase letters, digits, and underscores, and cannot be root."
       : "";
   const canCreate =
-    mode === "project" &&
-    trimmedProjectPath.length > 0 &&
+    (mode === "chat" || trimmedProjectPath.length > 0) &&
     trimmedTaskName.length > 0 &&
     !taskNameError;
 
@@ -488,9 +487,9 @@ export function NewThreadPopover({
           />
           <span>Project chat</span>
         </label>
-        <label className="disabled">
+        <label>
           <input
-            disabled
+            checked={mode === "chat"}
             name="new-thread-mode"
             onChange={() => setMode("chat")}
             type="radio"
@@ -498,7 +497,7 @@ export function NewThreadPopover({
           />
           <span>Chat without project</span>
         </label>
-        <p>No-project chat needs backend support before it can be created.</p>
+        <p>Project chats are grouped by cwd; chats without a project stay in Chat.</p>
       </fieldset>
 
       <label className="sidebar-create-field">

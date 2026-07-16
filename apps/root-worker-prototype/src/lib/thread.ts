@@ -137,7 +137,7 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
         label: projectLabelFromCwd(cwd),
         subtitle: cwd,
         cwd,
-        statusClass: aggregateSidebarStatus(projectThreadList),
+        statusClass: selfTreeThreadStatusClass(rootThread),
         updatedAt: Math.max(...projectThreadList.map((thread) => thread.updatedAt)),
         tree: projectTree,
         descendantCount: countDescendants(projectTree),
