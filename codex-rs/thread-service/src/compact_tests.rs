@@ -113,12 +113,31 @@ async fn process_compacted_history_replaces_developer_messages() {
 }
 
 #[test]
+fn compact_prompt_control_item_is_not_a_user_message() {
+    let prompt = "Custom prompt from COMPACT.md";
+    let item = compact_prompt_control_item(prompt);
+
+    match item {
+        ResponseItem::Message { role, content, .. } => {
+            assert_eq!(role, "developer");
+            assert_eq!(
+                content,
+                vec![ContentItem::InputText {
+                    text: prompt.to_string()
+                }]
+            );
+        }
+        other => panic!("expected compact prompt message, got {other:?}"),
+    }
+}
+
+#[test]
 fn compact_final_output_comes_from_current_compact_turn_only() {
     let prompt = "Summarize the conversation.";
     let history = vec![
         user_message("normal user message"),
         assistant_message("previous assistant reply"),
-        user_message(prompt),
+        compact_prompt_control_item(prompt),
         assistant_message("compact final output"),
     ];
 
@@ -129,12 +148,27 @@ fn compact_final_output_comes_from_current_compact_turn_only() {
 }
 
 #[test]
+fn compact_final_output_uses_custom_compact_prompt_control_item() {
+    let prompt = "Custom compact prompt from COMPACT.md";
+    let history = vec![
+        user_message("normal user message"),
+        compact_prompt_control_item(prompt),
+        assistant_message("custom compact final output"),
+    ];
+
+    assert_eq!(
+        compact_turn_final_output(&history, prompt).as_deref(),
+        Some("custom compact final output")
+    );
+}
+
+#[test]
 fn compact_final_output_does_not_fall_back_to_previous_turn_assistant_message() {
     let prompt = "Summarize the conversation.";
     let history = vec![
         user_message("normal user message"),
         assistant_message("previous assistant reply"),
-        user_message(prompt),
+        compact_prompt_control_item(prompt),
     ];
 
     assert_eq!(compact_turn_final_output(&history, prompt), None);

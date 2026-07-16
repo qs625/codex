@@ -20,6 +20,28 @@ fn user_message(text: &str) -> ResponseItem {
     }
 }
 
+fn developer_message(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+    }
+}
+
+fn assistant_message(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+    }
+}
+
 #[tokio::test]
 async fn reads_configured_replacement_files_without_missing_file_errors() {
     let tempdir = TempDir::new().expect("create temp dir");
@@ -231,6 +253,61 @@ fn compact_window_ignores_memory_checkpoint_and_context_noise() {
         vec!["真实用户进展一".to_string(), "真实用户进展二".to_string()]
     );
     assert_eq!(window.turns_since_last_compact, 2);
+}
+
+#[test]
+fn compact_window_treats_compact_prompt_as_control_context() {
+    let service = FsCompactService::new();
+    let compact_prompt = "Custom compact prompt from COMPACT.md";
+    let window = service.summarize_compact_window(
+        &[
+            user_message("真实用户任务一"),
+            developer_message(compact_prompt),
+            user_message("真实用户任务二"),
+            assistant_message("compact final output"),
+        ],
+        "<summary>",
+    );
+
+    assert_eq!(
+        window.recent_real_user_messages,
+        vec!["真实用户任务一".to_string(), "真实用户任务二".to_string()]
+    );
+
+    let history = service.build_replacement_history(ReplacementHistoryInput {
+        initial_context: Vec::new(),
+        memory_bundle: CompactMemoryBundle { snapshots: vec![] },
+        recent_real_user_messages: window.recent_real_user_messages,
+        final_output: Some("compact final output".to_string()),
+    });
+    let message_texts = history
+        .into_iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { role, content, .. } => Some((
+                role,
+                content
+                    .into_iter()
+                    .filter_map(|content_item| match content_item {
+                        ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                            Some(text)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        message_texts,
+        vec![
+            ("user".to_string(), "真实用户任务一".to_string()),
+            ("user".to_string(), "真实用户任务二".to_string()),
+            ("assistant".to_string(), "compact final output".to_string()),
+        ]
+    );
 }
 
 #[test]

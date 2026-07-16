@@ -32,7 +32,7 @@ use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
 use protocol::items::ContextCompactionItem;
 use protocol::items::TurnItem;
-use protocol::models::ResponseInputItem;
+use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::CompactedItem;
 use protocol::protocol::EventMsg;
@@ -67,17 +67,10 @@ pub(crate) async fn run_inline_auto_compact_task(
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<()> {
-    let prompt = turn_context.compact_prompt().to_string();
-    let input = vec![UserInput::Text {
-        text: prompt,
-        // Compaction prompt is synthesized; no UI element ranges to preserve.
-        text_elements: Vec::new(),
-    }];
-
     run_compact_task_inner(
         sess,
         turn_context,
-        input,
+        Vec::new(),
         initial_context_injection,
         CompactionTrigger::Auto,
         reason,
@@ -176,12 +169,7 @@ async fn run_compact_task_inner_impl(
     let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
     sess.emit_turn_item_started(&turn_context, &started_compaction_item)
         .await;
-    let initial_input_for_turn: ResponseInputItem =
-        codex_model_input::response_input_item_from_user_input(vec![UserInput::Text {
-            text: turn_context.compact_prompt().to_string(),
-            text_elements: Vec::new(),
-        }]);
-    let initial_input_for_turn: ResponseItem = initial_input_for_turn.into();
+    let initial_input_for_turn = compact_prompt_control_item(turn_context.compact_prompt());
     sess.record_conversation_items(
         &turn_context,
         std::slice::from_ref(&initial_input_for_turn),
@@ -362,18 +350,33 @@ async fn run_compact_task_inner_impl(
 
 fn compact_turn_final_output(history_items: &[ResponseItem], compact_prompt: &str) -> Option<String> {
     let prompt_index = history_items.iter().rposition(|item| {
-        matches!(
-            item,
-            ResponseItem::Message { role, content, .. }
-                if role == "user"
-                    && content.iter().any(|content_item| matches!(
-                        content_item,
-                        protocol::models::ContentItem::InputText { text } if text == compact_prompt
-                    ))
-        )
+        is_compact_prompt_control_item(item, compact_prompt)
     })?;
     let compact_turn_items = history_items.get(prompt_index + 1..)?;
     last_assistant_message_from_turn(compact_turn_items)
+}
+
+fn compact_prompt_control_item(compact_prompt: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: compact_prompt.to_string(),
+        }],
+        phase: None,
+    }
+}
+
+fn is_compact_prompt_control_item(item: &ResponseItem, compact_prompt: &str) -> bool {
+    matches!(
+        item,
+        ResponseItem::Message { role, content, .. }
+            if role == "developer"
+                && content.iter().any(|content_item| matches!(
+                    content_item,
+                    ContentItem::InputText { text } if text == compact_prompt
+                ))
+    )
 }
 
 pub(crate) struct CompactionAnalyticsAttempt {
