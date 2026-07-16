@@ -11,7 +11,8 @@ import type {
 } from "../types";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
-const { SidebarPanel } = await import("./Panels");
+const { NewThreadPopover, SidebarPanel, buildNewThreadDraft } =
+  await import("./Panels");
 
 function makeThread(id: string, cwd: string, name: string): Thread {
   return {
@@ -90,17 +91,18 @@ function renderSidebar(
       collapsedSet={new Set(options?.collapsedTreeNodes ?? [])}
       isChatCollapsed={options?.chatCollapsed ?? false}
       newProjectName="Project chat"
-      onCreateChatThread={() => {}}
       onCreateProjectThread={() => {}}
       onOpenMenu={() => {}}
       onSelectProject={() => {}}
       onSelectThread={() => {}}
       onSetNewProjectName={() => {}}
+      onSubmitNewThreadDraft={() => {}}
       onToggleChat={() => {}}
       onToggleProject={() => {}}
       onToggleTreeNode={() => {}}
       projectSidebar={sidebar}
       selectedThreadId={options?.selectedThreadId ?? null}
+      workspacePath="/work/alpha"
     />,
   );
 }
@@ -157,6 +159,46 @@ test("SidebarPanel exposes one create button", () => {
   assert.match(markup, /New/);
   assert.doesNotMatch(markup, /New Chat/);
   assert.doesNotMatch(markup, /Open Project/);
+});
+
+test("NewThreadPopover renders project path, agent type, and gated model controls", () => {
+  const markup = renderToStaticMarkup(
+    <NewThreadPopover
+      existingProjectPaths={["/work/alpha", "/work/beta"]}
+      onCancel={() => {}}
+      onSubmit={() => {}}
+      workspacePath="/work/alpha"
+    />,
+  );
+
+  assert.match(markup, /New conversation/);
+  assert.match(markup, /Project path/);
+  assert.match(markup, /Agent type/);
+  assert.match(markup, /Feature owner - after backend support/);
+  assert.match(markup, /Model/);
+  assert.match(markup, /Reasoning/);
+  assert.match(markup, /Use current default/);
+  assert.match(markup, /No-project chat needs backend support/);
+  assert.match(markup, /Chat without project/);
+  assert.match(markup, /disabled=""/);
+});
+
+test("buildNewThreadDraft trims fields and preserves unsupported params as defaults", () => {
+  assert.deepEqual(
+    buildNewThreadDraft("project", "  /work/new  ", "  Launch pad  "),
+    {
+      mode: "project",
+      projectPath: "/work/new",
+      title: "Launch pad",
+      agentType: "project-chat",
+      model: "current-default",
+      reasoningEffort: "current-default",
+    },
+  );
+  assert.equal(
+    buildNewThreadDraft("project", "/work/new", "   ").title,
+    "Project chat",
+  );
 });
 
 test("SidebarPanel renders Chat group conversations separately", () => {

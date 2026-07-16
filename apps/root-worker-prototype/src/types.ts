@@ -616,6 +616,15 @@ export type ProjectAgentSidebar = {
   chat: SidebarChatGroup;
 };
 
+export type NewThreadDraft = {
+  mode: "project" | "chat";
+  projectPath: string;
+  title: string;
+  agentType: "project-chat";
+  model: "current-default";
+  reasoningEffort: "current-default";
+};
+
 export type TaskFilter = "all" | "todo" | "doing" | "blocked" | "done";
 
 export type TodoCardItem = {

@@ -102,6 +102,7 @@ import type {
   FileLocation,
   FilePreview,
   FileTreeEntry,
+  NewThreadDraft,
   NotificationEnvelope,
   RightPanelView,
   TaskFilter,
@@ -1311,6 +1312,32 @@ function App() {
     await createProjectThread(newProjectName.trim() || "Project chat", projectCwd);
   }
 
+  async function submitNewThreadDraft(draft: NewThreadDraft) {
+    if (draft.mode === "chat") {
+      setError(
+        "Chat without project is unavailable in this build because createThread defaults missing cwd to the workspace.",
+      );
+      return;
+    }
+    const projectCwd = normalizeProjectCwd(draft.projectPath);
+    if (!projectCwd) {
+      setError("Project chat needs a project path.");
+      return;
+    }
+    const existingProject = projectSidebar.projects.find(
+      (project) => normalizeProjectCwd(project.cwd) === projectCwd,
+    );
+    if (existingProject) {
+      setError(null);
+      setCollapsedProjectIds((current) =>
+        current.filter((projectId) => projectId !== existingProject.id),
+      );
+      setSelectedThreadId(existingProject.tree.threadId);
+      return;
+    }
+    await createProjectThread(draft.title || "Project chat", projectCwd);
+  }
+
   async function createProjectThread(name = "Project chat", cwd = workspace) {
     const projectCwd = normalizeProjectCwd(cwd);
     if (!projectCwd) {
@@ -1330,12 +1357,6 @@ function App() {
     } catch (createError) {
       setError(toErrorMessage(createError));
     }
-  }
-
-  function createChatThread() {
-    setError(
-      "Choose the current workspace to open a project chat. No-project chat is unavailable in this build because createThread defaults missing cwd to the workspace.",
-    );
   }
 
   async function ensureInitialProjectThread(cwd: string) {
@@ -2457,17 +2478,18 @@ function App() {
           collapsedProjectSet={collapsedProjectSet}
           isChatCollapsed={isChatCollapsed}
           newProjectName={newProjectName}
-          onCreateChatThread={createChatThread}
           onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}
           onSelectProject={selectProject}
           onSelectThread={setSelectedThreadId}
           onSetNewProjectName={setNewProjectName}
+          onSubmitNewThreadDraft={(draft) => void submitNewThreadDraft(draft)}
           onToggleChat={() => setIsChatCollapsed((current) => !current)}
           onToggleProject={toggleProject}
           onToggleTreeNode={toggleTreeNode}
           projectSidebar={projectSidebar}
           selectedThreadId={selectedThreadId}
+          workspacePath={workspace}
         />
         <div
           className="panel-resizer"

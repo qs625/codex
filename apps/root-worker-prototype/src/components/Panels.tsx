@@ -5,6 +5,7 @@ import {
   useState,
   type ChangeEvent,
   type ClipboardEvent,
+  type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
@@ -56,6 +57,7 @@ import type {
   ComposerImage,
   ConversationCell,
   DraftSkill,
+  NewThreadDraft,
   ProjectAgentSidebar,
   SidebarProjectNode,
   Thread,
@@ -74,44 +76,43 @@ export function SidebarPanel({
   collapsedProjectSet,
   isChatCollapsed,
   newProjectName,
-  onCreateChatThread,
   onCreateProjectThread,
   onOpenMenu,
   onSelectProject,
   onSelectThread,
   onSetNewProjectName,
+  onSubmitNewThreadDraft,
   onToggleChat,
   onToggleProject,
   onToggleTreeNode,
   projectSidebar,
   selectedThreadId,
+  workspacePath,
 }: {
   collapsedSet: Set<string>;
   collapsedProjectSet: Set<string>;
   isChatCollapsed: boolean;
   newProjectName: string;
-  onCreateChatThread: () => void;
   onCreateProjectThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
   onSelectProject: (projectId: string, threadId: string) => void;
   onSelectThread: (threadId: string) => void;
   onSetNewProjectName: (value: string) => void;
+  onSubmitNewThreadDraft: (draft: NewThreadDraft) => void;
   onToggleChat: () => void;
   onToggleProject: (projectId: string) => void;
   onToggleTreeNode: (threadId: string) => void;
   projectSidebar: ProjectAgentSidebar;
   selectedThreadId: string | null;
+  workspacePath: string;
 }) {
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const projectCount = projectSidebar.projects.length;
   const chatCount = projectSidebar.chat.conversations.length;
-  const chooseProjectChat = () => {
+  const projectPaths = projectSidebar.projects.map((project) => project.cwd);
+  const submitNewThreadDraft = (draft: NewThreadDraft) => {
     setIsCreateMenuOpen(false);
-    onCreateProjectThread();
-  };
-  const choosePlainChat = () => {
-    setIsCreateMenuOpen(false);
-    onCreateChatThread();
+    onSubmitNewThreadDraft(draft);
   };
 
   return (
@@ -128,22 +129,19 @@ export function SidebarPanel({
             type="button"
             className="sidebar-action-button"
             onClick={() => setIsCreateMenuOpen((current) => !current)}
+            aria-controls="new-thread-popover"
             aria-expanded={isCreateMenuOpen}
           >
             <PlusIcon />
             <span>New</span>
           </button>
           {isCreateMenuOpen ? (
-            <div className="sidebar-create-menu">
-              <button type="button" onClick={chooseProjectChat}>
-                <strong>Current workspace</strong>
-                <span>Open project chat</span>
-              </button>
-              <button type="button" onClick={choosePlainChat}>
-                <strong>Chat without project</strong>
-                <span>Needs backend support</span>
-              </button>
-            </div>
+            <NewThreadPopover
+              existingProjectPaths={projectPaths}
+              onCancel={() => setIsCreateMenuOpen(false)}
+              onSubmit={submitNewThreadDraft}
+              workspacePath={workspacePath}
+            />
           ) : null}
         </div>
       </div>
@@ -201,6 +199,165 @@ export function SidebarPanel({
       </button>
     </aside>
   );
+}
+
+export function NewThreadPopover({
+  existingProjectPaths,
+  onCancel,
+  onSubmit,
+  workspacePath,
+}: {
+  existingProjectPaths: string[];
+  onCancel: () => void;
+  onSubmit: (draft: NewThreadDraft) => void;
+  workspacePath: string;
+}) {
+  const [mode, setMode] = useState<NewThreadDraft["mode"]>("project");
+  const [projectPath, setProjectPath] = useState(workspacePath);
+  const [title, setTitle] = useState("Project chat");
+  const hasSeededWorkspacePathRef = useRef(Boolean(workspacePath.trim()));
+  const trimmedProjectPath = projectPath.trim();
+  const canCreate = mode === "project" && trimmedProjectPath.length > 0;
+
+  useEffect(() => {
+    if (
+      !hasSeededWorkspacePathRef.current &&
+      !projectPath.trim() &&
+      workspacePath.trim()
+    ) {
+      hasSeededWorkspacePathRef.current = true;
+      setProjectPath(workspacePath);
+    }
+  }, [projectPath, workspacePath]);
+
+  const submitDraft = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canCreate) {
+      return;
+    }
+    onSubmit(buildNewThreadDraft(mode, trimmedProjectPath, title));
+  };
+
+  return (
+    <form
+      id="new-thread-popover"
+      className="sidebar-create-popover"
+      onSubmit={submitDraft}
+    >
+      <header className="sidebar-create-popover-header">
+        <strong>New conversation</strong>
+        <span>Choose the project chat to open or create.</span>
+      </header>
+
+      <fieldset className="sidebar-create-mode">
+        <legend>Target</legend>
+        <label>
+          <input
+            checked={mode === "project"}
+            name="new-thread-mode"
+            onChange={() => setMode("project")}
+            type="radio"
+            value="project"
+          />
+          <span>Project chat</span>
+        </label>
+        <label className="disabled">
+          <input
+            disabled
+            name="new-thread-mode"
+            onChange={() => setMode("chat")}
+            type="radio"
+            value="chat"
+          />
+          <span>Chat without project</span>
+        </label>
+        <p>No-project chat needs backend support before it can be created.</p>
+      </fieldset>
+
+      <label className="sidebar-create-field">
+        <span>Project path</span>
+        <input
+          list="sidebar-existing-projects"
+          onChange={(event) => setProjectPath(event.target.value)}
+          placeholder="/path/to/project"
+          value={projectPath}
+        />
+        <datalist id="sidebar-existing-projects">
+          {[...new Set([workspacePath, ...existingProjectPaths].filter(Boolean))]
+            .map((path) => (
+              <option key={path} value={path} />
+            ))}
+        </datalist>
+      </label>
+
+      <label className="sidebar-create-field">
+        <span>Title</span>
+        <input
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="Project chat"
+          value={title}
+        />
+      </label>
+
+      <label className="sidebar-create-field">
+        <span>Agent type</span>
+        <select defaultValue="project-chat">
+          <option value="project-chat">Project chat</option>
+          <option disabled value="feature-owner">
+            Feature owner - after backend support
+          </option>
+          <option disabled value="refactor-owner">
+            Refactor owner - after backend support
+          </option>
+          <option disabled value="performance-owner">
+            Performance owner - after backend support
+          </option>
+        </select>
+      </label>
+
+      <div className="sidebar-create-disabled-grid">
+        <label className="sidebar-create-field">
+          <span>Model</span>
+          <select disabled defaultValue="current-default">
+            <option value="current-default">Use current default</option>
+          </select>
+        </label>
+        <label className="sidebar-create-field">
+          <span>Reasoning</span>
+          <select disabled defaultValue="current-default">
+            <option value="current-default">Use current default</option>
+          </select>
+        </label>
+      </div>
+      <p className="sidebar-create-note">
+        Model parameters can be changed after creation from the conversation header.
+      </p>
+
+      <footer className="sidebar-create-actions">
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" disabled={!canCreate}>
+          Create or Open
+        </button>
+      </footer>
+    </form>
+  );
+}
+
+export function buildNewThreadDraft(
+  mode: NewThreadDraft["mode"],
+  projectPath: string,
+  title: string,
+): NewThreadDraft {
+  return {
+    mode,
+    projectPath: projectPath.trim(),
+    title: title.trim() || "Project chat",
+    agentType: "project-chat",
+    model: "current-default",
+    reasoningEffort: "current-default",
+  };
 }
 
 function ProjectSection({
