@@ -15,6 +15,7 @@ import { ConversationVirtualList } from "./ConversationVirtualList";
 import { RunConfigPicker } from "./RunConfigPicker";
 import type { RunConfigSelection } from "../lib/runConfig";
 import {
+  ChevronDownIcon,
   CodeIcon,
   GearIcon,
   ImageIcon,
@@ -54,6 +55,8 @@ import type {
   ComposerImage,
   ConversationCell,
   DraftSkill,
+  ProjectAgentSidebar,
+  SidebarProjectNode,
   Thread,
   ThreadGoal,
   ThreadSkill,
@@ -66,46 +69,248 @@ import type {
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 
 export function SidebarPanel({
-  agentTree,
   collapsedSet,
-  newRootName,
-  onCreateRootThread,
+  collapsedProjectSet,
+  isChatCollapsed,
+  newProjectName,
+  onCreateChatThread,
+  onCreateProjectThread,
   onOpenMenu,
+  onSelectProjectPm,
   onSelectThread,
-  onSetNewRootName,
+  onSetNewProjectName,
+  onToggleChat,
+  onToggleProject,
   onToggleTreeNode,
+  projectSidebar,
   selectedThreadId,
 }: {
-  agentTree: TreeNode[];
   collapsedSet: Set<string>;
-  newRootName: string;
-  onCreateRootThread: () => void;
+  collapsedProjectSet: Set<string>;
+  isChatCollapsed: boolean;
+  newProjectName: string;
+  onCreateChatThread: () => void;
+  onCreateProjectThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
+  onSelectProjectPm: (projectId: string, threadId: string) => void;
   onSelectThread: (threadId: string) => void;
-  onSetNewRootName: (value: string) => void;
+  onSetNewProjectName: (value: string) => void;
+  onToggleChat: () => void;
+  onToggleProject: (projectId: string) => void;
   onToggleTreeNode: (threadId: string) => void;
+  projectSidebar: ProjectAgentSidebar;
   selectedThreadId: string | null;
 }) {
+  const projectCount = projectSidebar.projects.length;
+  const chatCount = projectSidebar.chat.conversations.length;
+
   return (
     <aside className="sidebar">
       <div className="sidebar-section-header">
         <div className="section-heading">
-          <h2>Agent Tree</h2>
-          <span>{agentTree.length} roots</span>
+          <h2>Projects</h2>
+          <span>
+            {projectCount} projects · {chatCount} chats
+          </span>
         </div>
-        <button
-          type="button"
-          className="icon-button subtle"
-          aria-label="Create root agent"
-          onClick={onCreateRootThread}
-        >
-          <PlusIcon />
-        </button>
+        <div className="sidebar-actions">
+          <button
+            type="button"
+            className="sidebar-action-button"
+            onClick={onCreateProjectThread}
+          >
+            <PlusIcon />
+            <span>Open Project</span>
+          </button>
+          <button
+            type="button"
+            className="sidebar-action-button"
+            onClick={onCreateChatThread}
+            title="New Chat needs no-project thread support from the backend."
+          >
+            <span>New Chat</span>
+          </button>
+        </div>
       </div>
 
       <div className="tree-scroll">
-        {agentTree.length > 0 ? (
-          agentTree.map((node) => (
+        {projectSidebar.projects.length > 0 ? (
+          projectSidebar.projects.map((project) => (
+            <ProjectSection
+              key={project.id}
+              collapsedProjectSet={collapsedProjectSet}
+              collapsedSet={collapsedSet}
+              onOpenMenu={onOpenMenu}
+              onSelectProjectPm={onSelectProjectPm}
+              onSelectThread={onSelectThread}
+              onToggleProject={onToggleProject}
+              onToggleTreeNode={onToggleTreeNode}
+              project={project}
+              selectedThreadId={selectedThreadId}
+            />
+          ))
+        ) : (
+          <div className="empty-card">
+            <p>No projects yet.</p>
+            <div className="empty-card-actions">
+              <input
+                value={newProjectName}
+                onChange={(event) => onSetNewProjectName(event.target.value)}
+                placeholder="PM"
+              />
+              <button type="button" onClick={onCreateProjectThread}>
+                Open Project
+              </button>
+            </div>
+          </div>
+        )}
+        <ChatSection
+          chatNodes={projectSidebar.chat.conversations}
+          collapsedSet={collapsedSet}
+          isCollapsed={isChatCollapsed}
+          onOpenMenu={onOpenMenu}
+          onSelectThread={onSelectThread}
+          onToggleChat={onToggleChat}
+          onToggleTreeNode={onToggleTreeNode}
+          selectedThreadId={selectedThreadId}
+          statusClass={projectSidebar.chat.statusClass}
+        />
+      </div>
+
+      <button type="button" className="sidebar-footer">
+        <div className="sidebar-footer-left">
+          <GearIcon />
+          <span>Settings</span>
+        </div>
+        <span className="sidebar-footer-shortcut">⌘,</span>
+      </button>
+    </aside>
+  );
+}
+
+function ProjectSection({
+  collapsedProjectSet,
+  collapsedSet,
+  onOpenMenu,
+  onSelectProjectPm,
+  onSelectThread,
+  onToggleProject,
+  onToggleTreeNode,
+  project,
+  selectedThreadId,
+}: {
+  collapsedProjectSet: Set<string>;
+  collapsedSet: Set<string>;
+  onOpenMenu: (menu: TreeMenuState | null) => void;
+  onSelectProjectPm: (projectId: string, threadId: string) => void;
+  onSelectThread: (threadId: string) => void;
+  onToggleProject: (projectId: string) => void;
+  onToggleTreeNode: (threadId: string) => void;
+  project: SidebarProjectNode;
+  selectedThreadId: string | null;
+}) {
+  const isCollapsed = collapsedProjectSet.has(project.id);
+  const containsSelected =
+    selectedThreadId != null && treeContainsThread(project.pmTree, selectedThreadId);
+  const counts = [
+    project.failedCount > 0 ? `${project.failedCount} failed` : null,
+    project.activeCount > 0 ? `${project.activeCount} active` : null,
+    project.waitingCount > 0 ? `${project.waitingCount} waiting` : null,
+    project.descendantCount > 0 ? `${project.descendantCount} agents` : null,
+  ].filter(Boolean);
+
+  return (
+    <section className="project-section">
+      <button
+        type="button"
+        className={`project-header ${containsSelected ? "contains-selected" : ""}`}
+        onClick={() => onSelectProjectPm(project.id, project.pmTree.threadId)}
+      >
+        <span
+          className={`tree-toggle ${isCollapsed ? "collapsed" : ""}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleProject(project.id);
+          }}
+        >
+          <ChevronDownIcon />
+        </span>
+        <span
+          className={`tree-inline-status ${project.statusClass}`}
+          title={project.statusClass}
+          aria-label={project.statusClass}
+        />
+        <span className="project-header-copy">
+          <strong>{project.label}</strong>
+          <span>{project.subtitle}</span>
+        </span>
+        {counts.length > 0 ? (
+          <span className="project-counts">{counts.join(" · ")}</span>
+        ) : null}
+      </button>
+      {!isCollapsed ? (
+        <AgentTreeNode
+          collapsedSet={collapsedSet}
+          depth={0}
+          node={project.pmTree}
+          onSelect={onSelectThread}
+          onToggle={onToggleTreeNode}
+          onOpenMenu={onOpenMenu}
+          selectedThreadId={selectedThreadId}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function treeContainsThread(node: TreeNode, threadId: string): boolean {
+  return (
+    node.threadId === threadId ||
+    node.children.some((child) => treeContainsThread(child, threadId))
+  );
+}
+
+function ChatSection({
+  chatNodes,
+  collapsedSet,
+  isCollapsed,
+  onOpenMenu,
+  onSelectThread,
+  onToggleChat,
+  onToggleTreeNode,
+  selectedThreadId,
+  statusClass,
+}: {
+  chatNodes: TreeNode[];
+  collapsedSet: Set<string>;
+  isCollapsed: boolean;
+  onOpenMenu: (menu: TreeMenuState | null) => void;
+  onSelectThread: (threadId: string) => void;
+  onToggleChat: () => void;
+  onToggleTreeNode: (threadId: string) => void;
+  selectedThreadId: string | null;
+  statusClass: string;
+}) {
+  return (
+    <section className="project-section chat-section">
+      <button type="button" className="project-header" onClick={onToggleChat}>
+        <span className={`tree-toggle ${isCollapsed ? "collapsed" : ""}`}>
+          <ChevronDownIcon />
+        </span>
+        <span
+          className={`tree-inline-status ${statusClass}`}
+          title={statusClass}
+          aria-label={statusClass}
+        />
+        <span className="project-header-copy">
+          <strong>Chat</strong>
+          <span>Conversations without a project</span>
+        </span>
+        <span className="project-counts">{chatNodes.length}</span>
+      </button>
+      {!isCollapsed ? (
+        chatNodes.length > 0 ? (
+          chatNodes.map((node) => (
             <AgentTreeNode
               key={node.key}
               collapsedSet={collapsedSet}
@@ -118,30 +323,10 @@ export function SidebarPanel({
             />
           ))
         ) : (
-          <div className="empty-card">
-            <p>No root session yet.</p>
-            <div className="empty-card-actions">
-              <input
-                value={newRootName}
-                onChange={(event) => onSetNewRootName(event.target.value)}
-                placeholder="root"
-              />
-              <button type="button" onClick={onCreateRootThread}>
-                New Root
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <button type="button" className="sidebar-footer">
-        <div className="sidebar-footer-left">
-          <GearIcon />
-          <span>Settings</span>
-        </div>
-        <span className="sidebar-footer-shortcut">⌘,</span>
-      </button>
-    </aside>
+          <div className="chat-empty">No chat conversations.</div>
+        )
+      ) : null}
+    </section>
   );
 }
 
@@ -469,14 +654,22 @@ export function ConversationPanel({
       <header className="conversation-header">
         <div className="conversation-heading">
           <div className="conversation-title-row">
-            <h1>{selectedThread ? getThreadPath(selectedThread) : "/root"}</h1>
+            <h1>
+              {selectedThread
+                ? isRootThread(selectedThread)
+                  ? "Project PM"
+                  : getThreadPath(selectedThread)
+                : "Select a project"}
+            </h1>
             <span
               className={`status-dot ${threadDisplayStatusClass(selectedThread)}`}
             />
             <span>
               {selectedThread
-                ? getAgentRoleLabel(selectedThread)
-                : "Root Agent"}
+                ? isRootThread(selectedThread)
+                  ? "Project PM"
+                  : getAgentRoleLabel(selectedThread)
+                : "No thread selected"}
             </span>
             <span className="subtitle-separator">•</span>
             <span>{getThreadPresenceLabel(selectedThread)}</span>
@@ -486,7 +679,7 @@ export function ConversationPanel({
               onApply={onUpdateRunConfig}
               selectedThread={selectedThread}
             />
-            {selectedThread ? (
+            {selectedThread?.cwd.trim() ? (
               <span
                 className="thread-chip thread-chip-cwd"
                 title={selectedThread.cwd}
@@ -578,7 +771,7 @@ export function ConversationPanel({
           )
         ) : (
           <div className="conversation-empty">
-            <p>Create or select a root session to begin.</p>
+            <p>Open a project or select a chat to begin.</p>
           </div>
         )}
         {isLoadingThread ? (
@@ -1178,7 +1371,7 @@ export function TreeContextMenu({
         className="tree-context-menu-item danger"
         onClick={() => onArchiveThread(treeMenu.threadId)}
       >
-        {descendantCount > 0 ? "Delete Agent Tree" : "Delete Agent"}
+        {descendantCount > 0 ? "Delete Subagent Tree" : "Delete Agent"}
       </button>
     </div>
   );

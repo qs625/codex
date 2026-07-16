@@ -3,6 +3,8 @@ import type {
   Thread,
   ThreadActiveFlag,
   ThreadItem,
+  ProjectAgentSidebar,
+  SidebarProjectNode,
   ThreadSkill,
   ThreadStatus,
   TodoCardItem,
@@ -97,6 +99,80 @@ export function buildAgentTree(
       return left.localeCompare(right);
     })
     .map(buildNode);
+}
+
+export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar {
+  const parentlessThreads = threads.filter(isRootThread);
+  const projectPmCandidates = new Map<string, Thread[]>();
+  const chatThreads: Thread[] = [];
+
+  for (const thread of parentlessThreads) {
+    const projectCwd = normalizeProjectCwd(thread.cwd);
+    if (!projectCwd) {
+      chatThreads.push(thread);
+      continue;
+    }
+    const candidates = projectPmCandidates.get(projectCwd) ?? [];
+    candidates.push(thread);
+    projectPmCandidates.set(projectCwd, candidates);
+  }
+
+  const projects = [...projectPmCandidates.entries()]
+    .map(([cwd, candidates]) => {
+      const sortedCandidates = [...candidates].sort(compareCanonicalPm);
+      const pmThread = sortedCandidates[0];
+      const duplicatePmThreadIds = sortedCandidates
+        .slice(1)
+        .map((thread) => thread.id);
+      const labelledPmTree = buildSidebarRootTree(
+        threads,
+        pmThread,
+        withProjectPmLabel,
+      );
+      const projectThreadList = collectTreeThreads(labelledPmTree);
+      const counts = countSidebarStatuses(projectThreadList);
+
+      return {
+        id: `project:${cwd}`,
+        label: projectLabelFromCwd(cwd),
+        subtitle: cwd,
+        cwd,
+        statusClass: aggregateSidebarStatus(projectThreadList),
+        updatedAt: Math.max(...projectThreadList.map((thread) => thread.updatedAt)),
+        pmTree: labelledPmTree,
+        descendantCount: countDescendants(labelledPmTree),
+        activeCount: counts.activeCount,
+        waitingCount: counts.waitingCount,
+        failedCount: counts.failedCount,
+        duplicatePmThreadIds,
+      } satisfies SidebarProjectNode;
+    })
+    .sort((left, right) => right.updatedAt - left.updatedAt);
+
+  const chatConversations = [...chatThreads]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .map((thread) =>
+      buildSidebarRootTree(threads, thread, withChatConversationLabel),
+    );
+  const chatThreadsForStatus = chatConversations.flatMap(collectTreeThreads);
+
+  return {
+    projects,
+    chat: {
+      id: "chat",
+      statusClass: aggregateSidebarStatus(chatThreadsForStatus),
+      updatedAt:
+        chatThreadsForStatus.length > 0
+          ? Math.max(...chatThreadsForStatus.map((thread) => thread.updatedAt))
+          : 0,
+      conversations: chatConversations,
+    },
+  };
+}
+
+export function pickInitialProjectPmThread(threads: Thread[]) {
+  const sidebar = buildProjectAgentSidebar(threads);
+  return sidebar.projects[0]?.pmTree.thread ?? pickInitialThread(threads);
 }
 
 export function buildTodoItems(
@@ -259,12 +335,27 @@ export function getThreadSubtreeIds(threads: Thread[], rootThreadId: string) {
   return subtreeIds;
 }
 
+export function getThreadAncestorIds(threads: Thread[], threadId: string) {
+  const byId = new Map(threads.map((thread) => [thread.id, thread]));
+  const ancestorIds: string[] = [];
+  let current = byId.get(threadId) ?? null;
+  let parentId = current ? getParentThreadId(current) : null;
+
+  while (parentId) {
+    ancestorIds.push(parentId);
+    current = byId.get(parentId) ?? null;
+    parentId = current ? getParentThreadId(current) : null;
+  }
+
+  return ancestorIds;
+}
+
 export function getAgentRoleLabel(thread: Thread) {
   const source = thread.source;
   if (typeof source === "object" && "subAgent" in source) {
     return "Worker Agent";
   }
-  return "Root Agent";
+  return "Project PM";
 }
 
 export function getPresenceLabel(status: ThreadStatus) {
@@ -1217,6 +1308,143 @@ export function countDescendants(node: TreeNode): number {
     (count, child) => count + 1 + countDescendants(child),
     0,
   );
+}
+
+export function normalizeProjectCwd(cwd: string | null | undefined) {
+  const trimmed = cwd?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = trimmed.replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function projectLabelFromCwd(cwd: string) {
+  return cwd.split("/").filter(Boolean).at(-1) ?? cwd;
+}
+
+function compareCanonicalPm(left: Thread, right: Thread) {
+  const statusDelta =
+    canonicalPmPriority(right.status) - canonicalPmPriority(left.status);
+  if (statusDelta !== 0) {
+    return statusDelta;
+  }
+  if (left.updatedAt !== right.updatedAt) {
+    return right.updatedAt - left.updatedAt;
+  }
+  if (left.createdAt !== right.createdAt) {
+    return right.createdAt - left.createdAt;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function canonicalPmPriority(status: ThreadStatus) {
+  if (status.type === "systemError") {
+    return 4;
+  }
+  if (status.type === "active") {
+    return 3;
+  }
+  if (status.type === "idle") {
+    return 2;
+  }
+  if (status.type === "notLoaded") {
+    return 1;
+  }
+  return 0;
+}
+
+function withProjectPmLabel(node: TreeNode): TreeNode {
+  const descendantCount = countDescendants(node);
+  return {
+    ...node,
+    label: "PM",
+    path:
+      node.thread?.preview ||
+      (descendantCount > 0
+        ? `${descendantCount} subagents`
+        : getThreadPresenceLabel(node.thread)),
+  };
+}
+
+function withChatConversationLabel(node: TreeNode): TreeNode {
+  return {
+    ...node,
+    label: node.thread ? getThreadLabel(node.thread) : node.label,
+    path: node.thread?.preview || getThreadPresenceLabel(node.thread),
+  };
+}
+
+function buildSidebarRootTree(
+  threads: Thread[],
+  rootThread: Thread,
+  mapRoot: (node: TreeNode) => TreeNode,
+): TreeNode {
+  const subtreeIds = getThreadSubtreeIds(threads, rootThread.id);
+  const subtreeThreads = threads.filter((thread) => subtreeIds.has(thread.id));
+  const rootTree =
+    buildAgentTree(subtreeThreads, rootThread.id)[0] ??
+    buildSidebarThreadNode(rootThread);
+  return mapRoot(rootTree);
+}
+
+function buildSidebarThreadNode(thread: Thread): TreeNode {
+  return {
+    key: thread.id,
+    label: getThreadLabel(thread),
+    path: thread.preview || getThreadPresenceLabel(thread),
+    thread,
+    threadId: thread.id,
+    isPlaceholder: false,
+    children: [],
+  };
+}
+
+function collectTreeThreads(node: TreeNode): Thread[] {
+  return [
+    ...(node.thread ? [node.thread] : []),
+    ...node.children.flatMap(collectTreeThreads),
+  ];
+}
+
+function aggregateSidebarStatus(threads: Thread[]): TreeThreadStatusClass {
+  const statusClasses = threads.map(selfTreeThreadStatusClass);
+  if (statusClasses.includes("blocked")) {
+    return "blocked";
+  }
+  if (statusClasses.includes("doing")) {
+    return "doing";
+  }
+  if (statusClasses.includes("waiting-subagent")) {
+    return "waiting-subagent";
+  }
+  if (statusClasses.includes("waiting-eventtool")) {
+    return "waiting-eventtool";
+  }
+  if (statusClasses.includes("waiting-subscription")) {
+    return "waiting-subscription";
+  }
+  if (threads.length > 0 && statusClasses.every((status) => status === "done")) {
+    return "done";
+  }
+  return "todo";
+}
+
+function countSidebarStatuses(threads: Thread[]) {
+  let activeCount = 0;
+  let waitingCount = 0;
+  let failedCount = 0;
+  for (const thread of threads) {
+    const statusClass = selfTreeThreadStatusClass(thread);
+    if (statusClass === "doing") {
+      activeCount += 1;
+    } else if (statusClass === "blocked") {
+      failedCount += 1;
+    } else if (statusClass.startsWith("waiting-")) {
+      waitingCount += 1;
+    }
+  }
+  return { activeCount, waitingCount, failedCount };
 }
 
 export function formatClockTime(unixSeconds: number) {

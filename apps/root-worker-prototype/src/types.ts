@@ -580,6 +580,42 @@ export type TreeNode = {
   children: TreeNode[];
 };
 
+export type SidebarStatusClass =
+  | "todo"
+  | "doing"
+  | "blocked"
+  | "done"
+  | "waiting-subagent"
+  | "waiting-eventtool"
+  | "waiting-subscription";
+
+export type SidebarProjectNode = {
+  id: string;
+  label: string;
+  subtitle: string | null;
+  cwd: string;
+  statusClass: SidebarStatusClass;
+  updatedAt: number;
+  pmTree: TreeNode;
+  descendantCount: number;
+  activeCount: number;
+  waitingCount: number;
+  failedCount: number;
+  duplicatePmThreadIds: string[];
+};
+
+export type SidebarChatGroup = {
+  id: "chat";
+  statusClass: SidebarStatusClass;
+  updatedAt: number;
+  conversations: TreeNode[];
+};
+
+export type ProjectAgentSidebar = {
+  projects: SidebarProjectNode[];
+  chat: SidebarChatGroup;
+};
+
 export type TaskFilter = "all" | "todo" | "doing" | "blocked" | "done";
 
 export type TodoCardItem = {

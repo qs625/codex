@@ -39,7 +39,7 @@ export const BUILT_IN_SLASH_COMMANDS: BuiltInSlashCommand[] = [
     commandId: "clear",
     token: "clear",
     label: "/clear",
-    description: "Archive this root session and start a fresh root",
+    description: "Archive this project session and start a fresh PM",
     aliases: ["reset", "new"],
   },
   {
