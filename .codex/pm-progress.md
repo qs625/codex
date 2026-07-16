@@ -7,6 +7,10 @@ None
 None
 
 ## Completed
+- commit: bc62c5413
+  summary: 合并 `06b9b09b1` 到主线，修正 root-worker project sidebar 为单一 `New` 入口 + project/chat 选择菜单；project chat thread 本身作为 project tree root，Project 展开后只渲染该 root 的 subagents，不再额外显示 `PM` / `Project PM` / root row；右侧 Todo action 改为 `Open Project`，设计文档同步为 chat-root 模型。
+  validation: PM 侧 `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/slashMenu.test.ts` -> 129 passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning；`rtk git diff --check dd2f965b5..06b9b09b1` -> passed；fixed reviewer `/root/my_codex_pm/owner_dev/reviewer` 已确认复用规则，`review_project_sidebar_single_entry` 复审通过。
+  residual_risk: no-project chat 仍等待后端支持；当前 UI 明确 gated，不用 workspace cwd 伪造。空项目状态仍有输入框和 `Open` CTA 作为 empty-state 辅助入口，但常驻顶部主入口已合并为一个 `New` 按钮。
 - commit: 9468eebc8
   summary: 合并 `1f8a1d9bb` 与 `52186fea0` 到主线，实现 root-worker 左侧栏 project PM 模型：左侧根节点改为多个 Project，每个 Project 由一个 PM 管理入口表示，PM 下保留现有 subagent tree；无 project cwd 的 conversations 进入独立 Chat group；同 project 重复 parentless thread 不暴露成多个主 root conversations；New Chat 因后端 no-project thread 语义未确认而明确 gated，不用 workspace cwd 伪造 chat。返修同时清理用户可见 root 文案残留，并将右侧 Todo action 对齐为 Open PM。
   validation: PM 侧 `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/slashMenu.test.ts` -> 127 passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning；owner `rtk git diff --check` -> passed；independent reviewer passed。owner reported full frontend test has unrelated existing `src/lib/contextUsage.test.ts` failure `3582 !== 19900`.
