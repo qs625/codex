@@ -48,6 +48,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - 每个 checkout 只绑定一个长期 owner thread，PM 不为每个任务新建 owner。
 - 只有当固定 owner thread 不存在或不可用时，才按固定 `task_name` 重建一次，并把 `cwd` 设为对应 checkout。
 - 一个 checkout 同一时间只允许一个 active owner 任务。
+- 每个固定 owner 下也只维护一个长期 reviewer child，固定路径为 `<owner>/reviewer`；PM 派发 owner brief 时应提醒 owner 复用该 reviewer，不要每个任务或每轮 review 新建 reviewer。
 
 ## 三、调度与并行规则
 

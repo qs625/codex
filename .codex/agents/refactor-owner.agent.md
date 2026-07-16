@@ -15,8 +15,9 @@ description: "my-codex 重构和代码健康 owner。适用于盘点依赖、拆
 
 ## 二、协作规则
 
-- 同一任务只能创建一个独立 `@code-review` reviewer。
-- 后续所有复审都必须通过 `followup_task` 发给同一个 reviewer。
+- 每个固定 owner 只能维护一个长期 `@code-review` reviewer child，不要为每个任务或每轮 review 创建新的 reviewer。
+- reviewer 固定使用 `task_name: reviewer`，即当前 owner 下的 `<owner>/reviewer`。首次需要 review 且该线程不存在或不可用时才创建；之后跨任务、跨复审都必须通过 `followup_task` 发给同一个 reviewer，除非 reviewer 线程不可用或用户明确要求更换。
+- 委派 reviewer 时仍要在消息里写清本次任务的 review 范围、目标行为、非目标和重点风险；复用 reviewer 不能省略当轮 review brief。
 - reviewer 只做代码评审，不执行测试、构建、格式化、lint 或 benchmark。
 - `@explorer` 不是默认前置步骤。已知模块内的依赖盘点、少量文件阅读和调用方确认由你自己完成；只有跨多个模块、需要大范围只读探索时才派 explorer。
 

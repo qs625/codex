@@ -6,6 +6,7 @@
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
 - 固定 owner 空闲时不要主动关闭；后续同一 checkout 优先直接续用 `followup_task`，只有 thread 不可用时才重建。
+- 固定 owner 的 reviewer 也应长期复用：每个 owner 使用同一个 `<owner>/reviewer` child，不要每个任务或每轮 review 新建 reviewer。
 
 ## Working Style
 - 优先直接修改代码或文档，不要只停留在分析。
