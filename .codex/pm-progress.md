@@ -7,6 +7,10 @@ None
 None
 
 ## Completed
+- commit: 950edd74e
+  summary: 合并 `6acc09a` 到主线，修复 completed child 仍让 parent thread 卡在 `WaitChild` / wait on subagent 的问题；`agent_thread_is_active_from_inputs()` 现在优先识别 final agent status，completed child 即使残留 stale active turn 或 event subscription runtime facts，也不会再让 `direct_agent_children_are_active()` 判 active。active/non-final child 的 WaitChild 行为保留。
+  validation: owner `rtk cargo test -p codex-agent-runtime control_plan::tests::agent_thread_activity_uses_runtime_facts_in_order -- --nocapture` -> 1 passed；owner `rtk cargo test -p thread-service post_turn_state_stops_waiting_after_child_completion_is_consumed -- --nocapture` -> 1 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_3/reviewer` 通过。PM 合并后同两条 targeted tests、`rtk cargo build -p app-server --bin app-server`、`rtk git diff --check` 均通过。
+  residual_risk: 新测试模拟 parent mailbox 已消费 child completion 后的 post-turn 状态，未覆盖真实 `maybe_notify_parent_of_final_status()` trigger-turn 全链路；事实源修复在 runtime active 判定，review 认为风险可接受。
 - commit: bef305977
   summary: 合并 `1813355e1` 到主线，修复 `thread/resume` 对 persisted `agent_role` 只恢复 metadata、不重新 apply role config 的问题；resume load config 后会在计算 `instruction_sources` 与恢复 runtime 前重新调用 `apply_role_to_config`，因此 compact/restart 后带 agent type 的 thread 仍会读取对应 `.agent.md` / role instruction files。
   validation: owner `rtk cargo test -p app-server --test all thread_resume_reapplies_stored_agent_role_to_model_context` -> 1 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_2/reviewer` 通过。PM 合并后 `rtk cargo test -p app-server --test all thread_resume_reapplies_stored_agent_role_to_model_context` -> 1 passed；PM `rtk cargo build -p app-server --bin app-server` -> passed；PM `rtk git diff --check` -> passed。
