@@ -1893,6 +1893,29 @@ function App() {
     }
   }
 
+  async function archiveChatThread(threadId: string) {
+    setError(null);
+    setTreeMenu(null);
+    try {
+      const chatThreadIds = new Set(
+        projectSidebar.chat.conversations.map((node) => node.threadId),
+      );
+      if (!chatThreadIds.has(threadId)) {
+        throw new Error("Only chat conversations can be deleted from Chat.");
+      }
+      const archive = window.codexDesktop.archiveThread;
+      if (typeof archive !== "function") {
+        throw new Error(
+          "This build does not expose archiveThread. Please reload Electron.",
+        );
+      }
+      await archive(threadId);
+      removeThreadLocally(getThreadSubtreeIds(threads, threadId));
+    } catch (archiveError) {
+      setError(toErrorMessage(archiveError));
+    }
+  }
+
   function toggleTreeNode(threadId: string) {
     setCollapsedPaths((current) =>
       current.includes(threadId)
@@ -2492,6 +2515,7 @@ function App() {
           collapsedProjectSet={collapsedProjectSet}
           isCreatingChatThread={isCreatingChatThread}
           newProjectName={newProjectName}
+          onArchiveChatThread={(threadId) => void archiveChatThread(threadId)}
           onCreateChatThread={() => void createBlankChatThread()}
           onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}

@@ -120,6 +120,7 @@ function renderSidebar(
       collapsedSet={new Set(options?.collapsedTreeNodes ?? [])}
       isCreatingChatThread={options?.isCreatingChatThread}
       newProjectName="Project chat"
+      onArchiveChatThread={() => {}}
       onCreateChatThread={() => {}}
       onCreateProjectThread={() => {}}
       onOpenMenu={() => {}}
@@ -214,6 +215,7 @@ test("SidebarPanel indents project subagents relative to the project header", ()
     /class="tree-node " style="--depth:2"[\s\S]*reviewer/,
   );
   assert.match(markup, /class="chat-list-row"[\s\S]*General Q&amp;A/);
+  assert.match(markup, /aria-label="Delete chat General Q&amp;A"/);
   assert.doesNotMatch(markup, /tree-node-copy"><strong>General Q&amp;A/);
 });
 
@@ -490,9 +492,33 @@ test("SidebarPanel renders Chat group conversations separately", () => {
   assert.match(markup, /Chat/);
   assert.match(markup, /General Q&amp;A/);
   assert.match(markup, /API question/);
+  assert.match(markup, /class="chat-list-row-shell"/);
   assert.match(markup, /class="chat-list-row"[\s\S]*General Q&amp;A/);
+  assert.match(markup, /aria-label="Delete chat General Q&amp;A"/);
+  assert.match(markup, /aria-label="Delete chat API question"/);
   assert.doesNotMatch(markup, /tree-inline-status/);
   assert.match(markup, /No projects yet/);
+});
+
+test("SidebarPanel keeps chat delete controls out of project tree rows", () => {
+  const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
+    makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev")),
+  ]);
+  const sidebar: ProjectAgentSidebar = {
+    projects: [makeProject("project:/work/alpha", "alpha", root)],
+    chat: {
+      id: "chat",
+      statusClass: "todo",
+      updatedAt: 0,
+      conversations: [makeNode(makeThread("chat-1", "", "General Q&A"))],
+    },
+  };
+
+  const markup = renderSidebar(sidebar);
+
+  assert.match(markup, /aria-label="Delete chat General Q&amp;A"/);
+  assert.doesNotMatch(markup, /Delete chat owner_dev/);
+  assert.doesNotMatch(markup, /Delete chat Alpha chat/);
 });
 
 test("SidebarPanel keeps chat as a flat list outside tree collapse", () => {
@@ -525,6 +551,6 @@ test("SidebarPanel keeps chat as a flat list outside tree collapse", () => {
   assert.doesNotMatch(treeCollapsed, /reviewer/);
   assert.match(treeCollapsed, /Chat/);
   assert.match(treeCollapsed, /General Q&amp;A/);
-  assert.match(selectedChat, /class="chat-list-row selected"/);
+  assert.match(selectedChat, /class="chat-list-row-shell selected"/);
   assert.doesNotMatch(selectedChat, /tree-node-copy"><strong>General Q&amp;A/);
 });

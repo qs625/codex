@@ -37,6 +37,7 @@ import {
   SearchIcon,
   SendIcon,
   StopIcon,
+  TrashIcon,
 } from "./icons";
 import {
   getThreadSubtreeIds,
@@ -89,6 +90,7 @@ export function SidebarPanel({
   collapsedProjectSet,
   isCreatingChatThread,
   newProjectName,
+  onArchiveChatThread,
   onCreateChatThread,
   onCreateProjectThread,
   onOpenMenu,
@@ -106,6 +108,7 @@ export function SidebarPanel({
   collapsedProjectSet: Set<string>;
   isCreatingChatThread?: boolean;
   newProjectName: string;
+  onArchiveChatThread: (threadId: string) => void;
   onCreateChatThread: () => void;
   onCreateProjectThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
@@ -193,6 +196,7 @@ export function SidebarPanel({
         <ChatSection
           chatNodes={projectSidebar.chat.conversations}
           isCreatingChatThread={isCreatingChatThread}
+          onArchiveChatThread={onArchiveChatThread}
           onCreateChatThread={onCreateChatThread}
           onOpenMenu={onOpenMenu}
           onSelectThread={onSelectThread}
@@ -869,6 +873,7 @@ function treeContainsThread(node: TreeNode, threadId: string): boolean {
 function ChatSection({
   chatNodes,
   isCreatingChatThread = false,
+  onArchiveChatThread,
   onCreateChatThread,
   onOpenMenu,
   onSelectThread,
@@ -876,6 +881,7 @@ function ChatSection({
 }: {
   chatNodes: TreeNode[];
   isCreatingChatThread?: boolean;
+  onArchiveChatThread: (threadId: string) => void;
   onCreateChatThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
   onSelectThread: (threadId: string) => void;
@@ -900,11 +906,9 @@ function ChatSection({
       <div className="chat-list">
         {chatNodes.length > 0 ? (
           chatNodes.map((node) => (
-            <button
+            <div
               key={node.key}
-              type="button"
-              className={`chat-list-row${node.threadId === selectedThreadId ? " selected" : ""}`}
-              onClick={() => onSelectThread(node.threadId)}
+              className={`chat-list-row-shell${node.threadId === selectedThreadId ? " selected" : ""}`}
               onContextMenu={(event) => {
                 event.preventDefault();
                 onOpenMenu({
@@ -913,10 +917,28 @@ function ChatSection({
                   y: event.clientY,
                 });
               }}
-              title={node.label}
             >
-              <span>{node.label}</span>
-            </button>
+              <button
+                type="button"
+                className="chat-list-row"
+                onClick={() => onSelectThread(node.threadId)}
+                title={node.label}
+              >
+                <span>{node.label}</span>
+              </button>
+              <button
+                type="button"
+                className="chat-delete-button"
+                aria-label={`Delete chat ${node.label}`}
+                title={`Delete chat ${node.label}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onArchiveChatThread(node.threadId);
+                }}
+              >
+                <TrashIcon />
+              </button>
+            </div>
           ))
         ) : (
           <div className="chat-empty">No chat conversations.</div>
