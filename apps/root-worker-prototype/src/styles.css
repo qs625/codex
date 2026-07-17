@@ -464,12 +464,63 @@ svg {
   align-items: center;
   gap: 5px;
   min-width: 0;
+  overflow: hidden;
   border: 0;
   background: transparent;
   color: #44403c;
   font-size: 13px;
   font-weight: 650;
   line-height: 1.2;
+}
+
+.chat-list-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-create-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #78716c;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.chat-create-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chat-list-header:hover .chat-create-button,
+.chat-list-header:focus-within .chat-create-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-create-button:hover,
+.chat-create-button:focus-visible {
+  background: rgba(28, 25, 23, 0.07);
+  color: #18181b;
+  outline: none;
+}
+
+.chat-create-button:disabled {
+  color: #d6d3d1;
+  cursor: default;
 }
 
 .chat-list {

@@ -87,7 +87,9 @@ type GoalActionKind = "set" | "pause" | "resume" | "clear";
 export function SidebarPanel({
   collapsedSet,
   collapsedProjectSet,
+  isCreatingChatThread,
   newProjectName,
+  onCreateChatThread,
   onCreateProjectThread,
   onOpenMenu,
   onSelectProject,
@@ -102,7 +104,9 @@ export function SidebarPanel({
 }: {
   collapsedSet: Set<string>;
   collapsedProjectSet: Set<string>;
+  isCreatingChatThread?: boolean;
   newProjectName: string;
+  onCreateChatThread: () => void;
   onCreateProjectThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
   onSelectProject: (projectId: string, threadId: string) => void;
@@ -188,6 +192,8 @@ export function SidebarPanel({
         )}
         <ChatSection
           chatNodes={projectSidebar.chat.conversations}
+          isCreatingChatThread={isCreatingChatThread}
+          onCreateChatThread={onCreateChatThread}
           onOpenMenu={onOpenMenu}
           onSelectThread={onSelectThread}
           selectedThreadId={selectedThreadId}
@@ -674,6 +680,19 @@ export function buildNewThreadDraft(
   };
 }
 
+export function buildBlankChatThreadDraft(): NewThreadDraft {
+  return {
+    mode: "chat",
+    projectPath: "",
+    taskName: "",
+    agentType: null,
+    model: null,
+    modelProvider: null,
+    reasoningEffort: null,
+    serviceTier: null,
+  };
+}
+
 function optionalThreadStartParam(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -849,11 +868,15 @@ function treeContainsThread(node: TreeNode, threadId: string): boolean {
 
 function ChatSection({
   chatNodes,
+  isCreatingChatThread = false,
+  onCreateChatThread,
   onOpenMenu,
   onSelectThread,
   selectedThreadId,
 }: {
   chatNodes: TreeNode[];
+  isCreatingChatThread?: boolean;
+  onCreateChatThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
   onSelectThread: (threadId: string) => void;
   selectedThreadId: string | null;
@@ -864,6 +887,15 @@ function ChatSection({
         <div className="chat-list-title">
           <span>Chat</span>
         </div>
+        <button
+          type="button"
+          className="chat-create-button"
+          aria-label="New chat"
+          disabled={isCreatingChatThread}
+          onClick={onCreateChatThread}
+        >
+          <PlusIcon />
+        </button>
       </div>
       <div className="chat-list">
         {chatNodes.length > 0 ? (
