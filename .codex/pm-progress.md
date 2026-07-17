@@ -1,12 +1,24 @@
 # PM Progress
 
 ## Current Goal
-Implement chat-type root-worker threads as a read-only, non-project flat conversation list using a backend tmp cwd compatibility fallback when true cwd None is not yet supported.
+None
 
 ## Active Work
 None
 
 ## Completed
+- commit: cc11fce27f
+  summary: 合并 `0e02e9c` 到主线，修复 raw `<subagent_notification>...</subagent_notification>` envelope 泄漏到用户可见 conversation display；新增共享 legacy structured user-input guard，history replay 与 live `CoreTurnItem::UserMessage` projection 复用；live mapper 支持 filtered item 返回 `None`，app-server fanout 跳过发送，避免 panic；普通用户文本提及 marker 和带 skill/富内容的用户消息仍保留。
+  validation: owner `rtk cargo test -p app-server-protocol subagent_notification -j1` -> 5 passed；owner `rtk cargo test -p app-server-protocol raw_marker -j1` -> 1 passed；owner `rtk cargo build -p app-server --bin app-server -j1` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_3/reviewer` 通过。PM 合并后 `rtk cargo test -p app-server-protocol subagent_notification -j1` -> 5 passed；PM `rtk cargo test -p app-server-protocol raw_marker -j1` -> 1 passed；PM `rtk cargo build -p app-server --bin app-server -j1` -> passed；PM `rtk git diff --check` -> passed。
+  residual_risk: `ItemStarted(raw user)` 未单独加对称测试，但 mapper 同一 match arm 已由完成态路径覆盖；`thread_and_turn` 全文件过滤仍有既有无关失败 `thread_lifecycle_responses_default_missing_optional_fields`，未作为本任务范围修复。
+- commit: 0814f4c0d9
+  summary: 合并 `c900f1514` 到主线，为后端持久化 `ThreadContextUsage.toolBreakdown`，包含 applyPatch、fileOperations、commands、interAgent、searchMedia、otherTools 的 input/output 估算；`context-usage` 后端按 `ResponseItem` 计算并用 call_id 关联 output；app-server-protocol、rollout/replay fallback、thread_read/thread_resume fixture 与 root-worker 类型/UI 同步，RightPanel 展示后端 Tool I/O Detail 且缺字段/全零不渲染。
+  validation: owner `rtk pnpm --dir apps/root-worker-prototype test src/lib/contextUsage.test.ts src/components/RightPanel.test.tsx` -> 23 passed；owner `rtk cargo test -p codex-context-usage` -> 6 passed；owner 多条 app-server thread_read/thread_resume/replay targeted tests -> passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_2/reviewer` 多轮通过。PM 合并后 `rtk pnpm --dir apps/root-worker-prototype test src/lib/contextUsage.test.ts src/components/RightPanel.test.tsx` -> 23 passed；PM `rtk cargo test -p codex-context-usage` -> 6 passed；PM `rtk git diff --check` -> passed。
+  residual_risk: breakdown 是估算型诊断视图，不保证与顶层 `toolCalls` 严格数值闭合；inter-agent 保留原顶层分类语义，同时进入独立 breakdown bucket。
+- commit: a274097a0e
+  summary: 合并 `cc1eba17b` 到主线，root-worker 左侧 Chat header 现在 hover/focus-within 时显示 icon-only `New chat` 按钮；点击后直接构造 cwd-free `mode: "chat"` blank draft 并复用现有 create flow，不打开 New popup、不要求 title/task/cwd；Project New popup 和 Project create 行为不变。
+  validation: owner `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 14 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk warning；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev/reviewer` 两轮通过。PM 合并后 `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 14 passed；PM `rtk git diff --check` -> passed。
+  residual_risk: 未做完整 Electron/Playwright 视觉 smoke；当前通过 helper shape、App build、review 确认 direct create 会走 chat mode。后端 write-tool visibility 仍是既有残余风险，非本轮范围。
 - commit: 3be65d3d
   summary: 合并 `26f8cda3` 到主线，root-worker Chat 现在使用稳定 compat cwd 作为后端 required cwd fallback，但 renderer 将该 cwd 识别为非项目语义；Chat create payload 使用 `permissions: ":read-only"` 且不传 legacy `sandbox`，Project create 继续 `sandbox: "danger-full-access"`；左侧 Chat 区域改为用户截图风格的扁平 conversation list，不再走 collapsible tree node；RightPanel 对 compat cwd 显示无 project cwd 空态，不加载 tmp cwd tree。
   validation: owner `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx src/lib/thread.test.ts src/components/RightPanel.test.tsx` -> 126 passed；owner `rtk node --test apps/root-worker-prototype/electron/threadConfig.test.cjs` -> 7 passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev/reviewer` 通过。PM 合并后复跑同三项验证均通过。
