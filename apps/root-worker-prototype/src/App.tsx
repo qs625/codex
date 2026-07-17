@@ -105,7 +105,6 @@ import type {
   NewThreadDraft,
   NotificationEnvelope,
   RightPanelView,
-  TaskFilter,
   Thread,
   ThreadContextUsage,
   ThreadGoal,
@@ -182,7 +181,6 @@ function App() {
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [newProjectName, setNewProjectName] = useState("Project chat");
   const [error, setError] = useState<string | null>(null);
-  const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<string[]>([]);
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
@@ -728,8 +726,8 @@ function App() {
   );
   const todoItems = useMemo(
     () =>
-      buildCurrentThreadTodoItems(sessionThreads, selectedThreadId, taskFilter),
-    [selectedThreadId, sessionThreads, taskFilter],
+      buildCurrentThreadTodoItems(sessionThreads, selectedThreadId, "all"),
+    [selectedThreadId, sessionThreads],
   );
   const collapsedSet = useMemo(() => new Set(collapsedPaths), [collapsedPaths]);
   const collapsedProjectSet = useMemo(
@@ -2558,13 +2556,11 @@ function App() {
           fileTreeEntriesByPath={fileTreeEntriesByPath}
           fileTreeErrorsByPath={fileTreeErrorsByPath}
           fileTreeLoadingPath={fileTreeLoadingPath}
-          onOpenProjectChat={() => void openWorkspaceProject()}
           onNavigateToSymbol={(destination, sourceLocation) =>
             void handleNavigateToSymbol(destination, sourceLocation)
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onOpenTreeFile={handleOpenTreeFile}
-          onSelectTaskThread={selectThread}
           onSelectCommandMonitor={(commandItemId) =>
             setFocusedConversationItem((current) => ({
               itemId: commandItemId,
@@ -2573,7 +2569,6 @@ function App() {
           }
           onSetActiveView={setRightPanelView}
           onSetFilePanelView={handleSetFilePanelView}
-          onSetTaskFilter={setTaskFilter}
           onToggleTreeDirectory={handleToggleTreeDirectory}
           preview={filePreview}
           previewError={previewError}
@@ -2586,12 +2581,10 @@ function App() {
           onPauseGoal={pauseCurrentThreadGoal}
           onResumeGoal={resumeCurrentThreadGoal}
           skills={selectedThread?.skills ?? []}
-          selectedThreadId={selectedThreadId}
           thread={selectedThread}
           modelContextWindowOverride={
             selectedRunConfigOverride?.contextWindow ?? null
           }
-          taskFilter={taskFilter}
           todoItems={todoItems}
         />
       </main>
