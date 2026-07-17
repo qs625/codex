@@ -432,28 +432,29 @@ pub(crate) async fn apply_bespoke_event_handling(
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
         | EventMsg::AgentReasoningSectionBreak(_)) => {
-            let notification = item_event_to_server_notification(
-                msg,
-                &conversation_id.to_string(),
-                &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            if let Some(notification) =
+                item_event_to_server_notification(msg, &conversation_id.to_string(), &event_turn_id)
+            {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         EventMsg::CollabWaitingBegin(begin_event) => {
-            let notification = item_event_to_server_notification(
+            if let Some(notification) = item_event_to_server_notification(
                 EventMsg::CollabWaitingBegin(begin_event),
                 &conversation_id.to_string(),
                 &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            ) {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         EventMsg::CollabWaitingEnd(end_event) => {
-            let notification = item_event_to_server_notification(
+            if let Some(notification) = item_event_to_server_notification(
                 EventMsg::CollabWaitingEnd(end_event),
                 &conversation_id.to_string(),
                 &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            ) {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         EventMsg::CollabCloseEnd(end_event) => {
             if !live_threads
@@ -464,12 +465,13 @@ pub(crate) async fn apply_bespoke_event_handling(
                     .remove_thread(&end_event.receiver_thread_id.to_string())
                     .await;
             }
-            let notification = item_event_to_server_notification(
+            if let Some(notification) = item_event_to_server_notification(
                 EventMsg::CollabCloseEnd(end_event),
                 &conversation_id.to_string(),
                 &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            ) {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         EventMsg::ContextCompacted(..) => {
             // Core still fans out this deprecated event for legacy clients;
@@ -590,20 +592,20 @@ pub(crate) async fn apply_bespoke_event_handling(
         | EventMsg::ThreadGoalUpdateCompleted(_)
         | EventMsg::PatchApplyUpdated(_)
         | EventMsg::TerminalInteraction(_)) => {
-            let notification = item_event_to_server_notification(
-                msg,
-                &conversation_id.to_string(),
-                &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            if let Some(notification) =
+                item_event_to_server_notification(msg, &conversation_id.to_string(), &event_turn_id)
+            {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         EventMsg::ItemCompleted(event) => {
-            let notification = item_event_to_server_notification(
+            if let Some(notification) = item_event_to_server_notification(
                 EventMsg::ItemCompleted(event),
                 &conversation_id.to_string(),
                 &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            ) {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         EventMsg::HookStarted(event) => {
             let notification = HookStartedNotification {
@@ -656,12 +658,13 @@ pub(crate) async fn apply_bespoke_event_handling(
         EventMsg::ResponseItemCompleted(event)
             if response_item_completed_projects_to_display(&event) =>
         {
-            let notification = item_event_to_server_notification(
+            if let Some(notification) = item_event_to_server_notification(
                 EventMsg::ResponseItemCompleted(event),
                 &conversation_id.to_string(),
                 &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            ) {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         EventMsg::ResponseItemStarted(_)
         | EventMsg::ResponseItemCompleted(_)
@@ -689,21 +692,23 @@ pub(crate) async fn apply_bespoke_event_handling(
                     .insert(item_id.clone())
             };
             if first_start {
-                let notification = item_event_to_server_notification(
+                if let Some(notification) = item_event_to_server_notification(
                     EventMsg::ExecCommandBegin(exec_command_begin_event),
                     &conversation_id.to_string(),
                     &event_turn_id,
-                );
-                outgoing.send_server_notification(notification).await;
+                ) {
+                    outgoing.send_server_notification(notification).await;
+                }
             }
         }
         EventMsg::ExecCommandOutputDelta(exec_command_output_delta_event) => {
-            let notification = item_event_to_server_notification(
+            if let Some(notification) = item_event_to_server_notification(
                 EventMsg::ExecCommandOutputDelta(exec_command_output_delta_event),
                 &conversation_id.to_string(),
                 &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            ) {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         EventMsg::ExecCommandEnd(exec_command_end_event) => {
             let call_id = exec_command_end_event.call_id.clone();
@@ -723,12 +728,13 @@ pub(crate) async fn apply_bespoke_event_handling(
                 // emitted for unified exec interactions.
                 return;
             }
-            let notification = item_event_to_server_notification(
+            if let Some(notification) = item_event_to_server_notification(
                 EventMsg::ExecCommandEnd(exec_command_end_event),
                 &conversation_id.to_string(),
                 &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
+            ) {
+                outgoing.send_server_notification(notification).await;
+            }
         }
         // If this is a TurnAborted, reply to any pending interrupt requests.
         EventMsg::TurnAborted(turn_aborted_event) => {

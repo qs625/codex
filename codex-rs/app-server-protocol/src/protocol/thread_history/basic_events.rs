@@ -1,10 +1,12 @@
 use super::PendingAgentMessageResponse;
 use super::ThreadHistoryBuilder;
-use crate::protocol::event_item_projection::ProjectedEventItem;
-use crate::protocol::event_item_projection::project_event_msg_item;
-use crate::protocol::response_item_projection::is_legacy_structured_assistant_message_text;
 use crate::protocol::ThreadItem;
 use crate::protocol::assistant_message_thread_item;
+use crate::protocol::event_item_projection::ProjectedEventItem;
+use crate::protocol::event_item_projection::project_event_msg_item;
+use crate::protocol::response_item_projection::{
+    is_legacy_structured_assistant_message_text, is_legacy_structured_user_inputs,
+};
 use protocol::models::MessagePhase;
 use protocol::protocol::AgentReasoningEvent;
 use protocol::protocol::AgentReasoningRawContentEvent;
@@ -15,6 +17,11 @@ use protocol::protocol::UserMessageEvent;
 
 impl ThreadHistoryBuilder {
     pub(super) fn handle_user_message(&mut self, payload: &UserMessageEvent) {
+        let content = self.build_user_inputs(payload);
+        if is_legacy_structured_user_inputs(&content) {
+            return;
+        }
+
         if let Some(turn) = self.current_turn.as_ref()
             && !turn.opened_explicitly
             && !turn.items.is_empty()
@@ -28,7 +35,6 @@ impl ThreadHistoryBuilder {
             .take()
             .unwrap_or_else(|| self.new_turn(/*id*/ None));
         let id = self.next_item_id();
-        let content = self.build_user_inputs(payload);
         turn.items.push(ThreadItem::UserMessage { id, content });
         self.current_turn = Some(turn);
     }

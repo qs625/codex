@@ -1,7 +1,3 @@
-use crate::protocol::item_builders::convert_patch_changes;
-use crate::protocol::response_item_projection::thread_goal_from_update_goal;
-use crate::protocol::response_item_projection::thread_goal_status_from_update_status;
-use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
 use crate::protocol::CommandExecutionNotificationKind;
 use crate::protocol::CommandWaitNotificationKind;
 use crate::protocol::CommandWaitStatus;
@@ -19,6 +15,11 @@ use crate::protocol::ThreadItem;
 use crate::protocol::UserInput;
 use crate::protocol::WebSearchAction;
 use crate::protocol::assistant_message_thread_item;
+use crate::protocol::item_builders::convert_patch_changes;
+use crate::protocol::response_item_projection::is_legacy_structured_user_inputs;
+use crate::protocol::response_item_projection::thread_goal_from_update_goal;
+use crate::protocol::response_item_projection::thread_goal_status_from_update_status;
+use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
 use protocol::items::AgentMessageContent as CoreAgentMessageContent;
 use protocol::items::TurnItem as CoreTurnItem;
 use protocol::models::ResponseItem;
@@ -47,16 +48,22 @@ pub enum ProjectedEventItem {
 /// replay share this display projection.
 pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
     match event {
-        EventMsg::ItemStarted(event) => Some(ProjectedEventItem::Started {
-            turn_id: event.turn_id.clone(),
-            item: thread_item_from_turn_item(event.item.clone()),
-            started_at_ms: event.started_at_ms,
-        }),
-        EventMsg::ItemCompleted(event) => Some(ProjectedEventItem::Completed {
-            turn_id: event.turn_id.clone(),
-            item: thread_item_from_turn_item(event.item.clone()),
-            completed_at_ms: event.completed_at_ms,
-        }),
+        EventMsg::ItemStarted(event) => {
+            let item = thread_item_from_turn_item(event.item.clone())?;
+            Some(ProjectedEventItem::Started {
+                turn_id: event.turn_id.clone(),
+                item,
+                started_at_ms: event.started_at_ms,
+            })
+        }
+        EventMsg::ItemCompleted(event) => {
+            let item = thread_item_from_turn_item(event.item.clone())?;
+            Some(ProjectedEventItem::Completed {
+                turn_id: event.turn_id.clone(),
+                item,
+                completed_at_ms: event.completed_at_ms,
+            })
+        }
         EventMsg::ResponseItemCompleted(event) => {
             let ResponseItem::InterAgentCommunication {
                 id: Some(id),
@@ -70,10 +77,7 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
             }
             Some(ProjectedEventItem::Completed {
                 turn_id: event.turn_id.clone(),
-                item: thread_item_from_inter_agent_communication(
-                    id.clone(),
-                    communication.clone(),
-                ),
+                item: thread_item_from_inter_agent_communication(id.clone(), communication.clone()),
                 completed_at_ms: event.completed_at_ms,
             })
         }
@@ -190,21 +194,31 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
     }
 }
 
-fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
+fn thread_item_from_turn_item(value: CoreTurnItem) -> Option<ThreadItem> {
     match value {
-        CoreTurnItem::UserMessage(user) => ThreadItem::UserMessage {
-            id: user.id,
-            content: user.content.into_iter().map(UserInput::from).collect(),
-        },
-        CoreTurnItem::HookPrompt(hook_prompt) => ThreadItem::HookPrompt {
+        CoreTurnItem::UserMessage(user) => {
+            let content = user
+                .content
+                .into_iter()
+                .map(UserInput::from)
+                .collect::<Vec<_>>();
+            if is_legacy_structured_user_inputs(&content) {
+                return None;
+            }
+            Some(ThreadItem::UserMessage {
+                id: user.id,
+                content,
+            })
+        }
+        CoreTurnItem::HookPrompt(hook_prompt) => Some(ThreadItem::HookPrompt {
             id: hook_prompt.id,
             fragments: hook_prompt
                 .fragments
                 .into_iter()
                 .map(HookPromptFragment::from)
                 .collect(),
-        },
-        CoreTurnItem::InjectedContext(context) => ThreadItem::InjectedContext {
+        }),
+        CoreTurnItem::InjectedContext(context) => Some(ThreadItem::InjectedContext {
             id: context.id,
             title: context.title,
             preview: context.preview,
@@ -216,7 +230,7 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
                     text: section.text,
                 })
                 .collect(),
-        },
+        }),
         CoreTurnItem::AgentMessage(agent) => {
             let text = agent
                 .content
@@ -225,20 +239,20 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
                     CoreAgentMessageContent::Text { text } => text,
                 })
                 .collect::<String>();
-            assistant_message_thread_item(
+            Some(assistant_message_thread_item(
                 agent.id,
                 text,
                 agent.phase,
                 agent.memory_citation.map(Into::into),
-            )
+            ))
         }
-        CoreTurnItem::EventDrivenTool(event_driven_tool) => ThreadItem::EventDrivenTool {
+        CoreTurnItem::EventDrivenTool(event_driven_tool) => Some(ThreadItem::EventDrivenTool {
             id: event_driven_tool.id,
             tool: event_driven_tool.tool,
             title: event_driven_tool.title,
             text: event_driven_tool.text,
-        },
-        CoreTurnItem::EventCommandEvent(event_command) => ThreadItem::EventCommandEvent {
+        }),
+        CoreTurnItem::EventCommandEvent(event_command) => Some(ThreadItem::EventCommandEvent {
             id: event_command.id,
             subscription_id: event_command.event.subscription_id,
             kind: event_command.event.kind.into(),
@@ -252,36 +266,36 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
             message: event_command.event.message,
             truncated: event_command.event.truncated,
             created_at: event_command.event.created_at,
-        },
-        CoreTurnItem::CollabAgentMessage(collab) => {
-            thread_item_from_inter_agent_communication(collab.id, collab.communication)
-        }
-        CoreTurnItem::Plan(plan) => ThreadItem::Plan {
+        }),
+        CoreTurnItem::CollabAgentMessage(collab) => Some(
+            thread_item_from_inter_agent_communication(collab.id, collab.communication),
+        ),
+        CoreTurnItem::Plan(plan) => Some(ThreadItem::Plan {
             id: plan.id,
             text: plan.text,
-        },
-        CoreTurnItem::Reasoning(reasoning) => ThreadItem::Reasoning {
+        }),
+        CoreTurnItem::Reasoning(reasoning) => Some(ThreadItem::Reasoning {
             id: reasoning.id,
             summary: reasoning.summary_text,
             content: reasoning.raw_content,
-        },
-        CoreTurnItem::WebSearch(search) => ThreadItem::WebSearch {
+        }),
+        CoreTurnItem::WebSearch(search) => Some(ThreadItem::WebSearch {
             id: search.id,
             query: search.query,
             action: Some(WebSearchAction::from(search.action)),
-        },
-        CoreTurnItem::ImageView(image) => ThreadItem::ImageView {
+        }),
+        CoreTurnItem::ImageView(image) => Some(ThreadItem::ImageView {
             id: image.id,
             path: image.path,
-        },
-        CoreTurnItem::ImageGeneration(image) => ThreadItem::ImageGeneration {
+        }),
+        CoreTurnItem::ImageGeneration(image) => Some(ThreadItem::ImageGeneration {
             id: image.id,
             status: image.status,
             revised_prompt: image.revised_prompt,
             result: image.result,
             saved_path: image.saved_path,
-        },
-        CoreTurnItem::FileChange(file_change) => ThreadItem::FileChange {
+        }),
+        CoreTurnItem::FileChange(file_change) => Some(ThreadItem::FileChange {
             id: file_change.id,
             changes: convert_patch_changes(&file_change.changes),
             status: file_change
@@ -289,13 +303,13 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
                 .as_ref()
                 .map(PatchApplyStatus::from)
                 .unwrap_or(PatchApplyStatus::InProgress),
-        },
+        }),
         CoreTurnItem::McpToolCall(mcp) => {
             let duration_ms = mcp
                 .duration
                 .and_then(|duration| i64::try_from(duration.as_millis()).ok());
 
-            ThreadItem::McpToolCall {
+            Some(ThreadItem::McpToolCall {
                 id: mcp.id,
                 server: mcp.server,
                 tool: mcp.tool,
@@ -305,16 +319,16 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> ThreadItem {
                 result: mcp.result.map(McpToolCallResult::from).map(Box::new),
                 error: mcp.error.map(McpToolCallError::from),
                 duration_ms,
-            }
+            })
         }
         CoreTurnItem::ContextCompaction(compaction) => {
             let replacement_history = compaction
                 .replacement_history
                 .and_then(|history| serde_json::to_value(history).ok());
-            ThreadItem::ContextCompaction {
+            Some(ThreadItem::ContextCompaction {
                 id: compaction.id,
                 replacement_history,
-            }
+            })
         }
     }
 }
@@ -346,9 +360,7 @@ fn builtin_tool_call_thread_item(
             protocol::protocol::BuiltinToolCallStatus::Completed => {
                 DynamicToolCallStatus::Completed
             }
-            protocol::protocol::BuiltinToolCallStatus::Failed => {
-                DynamicToolCallStatus::Failed
-            }
+            protocol::protocol::BuiltinToolCallStatus::Failed => DynamicToolCallStatus::Failed,
         },
         output: event.output.clone(),
     }
