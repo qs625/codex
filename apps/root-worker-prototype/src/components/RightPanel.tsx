@@ -4,12 +4,10 @@ import type * as Monaco from "monaco-editor";
 
 import {
   BranchIcon,
-  ClockIcon,
   DocumentIcon,
   GridIcon,
   GearIcon,
   OpenIcon,
-  PlusIcon,
   SearchIcon,
 } from "./icons";
 import { LocalImagePreview } from "./Conversation";
@@ -26,7 +24,6 @@ import type {
   FilePreview,
   FileTreeEntry,
   RightPanelView,
-  TaskFilter,
   Thread,
   ThreadGoal,
   ThreadPlanStep,
@@ -67,15 +64,12 @@ function formatTokenCount(value: number | null) {
 export function RightPanel({
   activeView,
   availableSkillCount,
-  onOpenProjectChat,
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
   onSelectCommandMonitor,
-  onSelectTaskThread,
   onSetActiveView,
   onSetFilePanelView,
-  onSetTaskFilter,
   onToggleTreeDirectory,
   onCancelGoal,
   onPauseGoal,
@@ -93,23 +87,18 @@ export function RightPanel({
   previewError,
   previewLoading,
   skills,
-  selectedThreadId,
   thread,
   modelContextWindowOverride,
-  taskFilter,
   todoItems,
 }: {
   activeView: RightPanelView;
   availableSkillCount: number;
-  onOpenProjectChat: () => void;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
-  onSelectTaskThread: (threadId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetFilePanelView: (value: FilePanelView) => void;
-  onSetTaskFilter: (value: TaskFilter) => void;
   onToggleTreeDirectory: (path: string) => void;
   onCancelGoal: () => void;
   onPauseGoal: () => void;
@@ -127,10 +116,8 @@ export function RightPanel({
   previewError: string | null;
   previewLoading: boolean;
   skills: ThreadSkill[];
-  selectedThreadId: string | null;
   thread: Thread | null;
   modelContextWindowOverride?: number | null;
-  taskFilter: TaskFilter;
   todoItems: TodoCardItem[];
 }) {
   const todoStats = buildTodoStats(todoItems);
@@ -152,17 +139,10 @@ export function RightPanel({
               goalAction={goalAction}
               goalActionError={goalActionError}
               onCancelGoal={onCancelGoal}
-              onOpenProjectChat={onOpenProjectChat}
               onPauseGoal={onPauseGoal}
               onResumeGoal={onResumeGoal}
               onSelectCommandMonitor={onSelectCommandMonitor}
-              onSelectTaskThread={onSelectTaskThread}
-              onSetTaskFilter={onSetTaskFilter}
               planUpdate={planUpdate}
-              selectedThreadId={selectedThreadId}
-              taskFilter={taskFilter}
-              todoItems={todoItems}
-              todoStats={todoStats}
             />
           ) : activeView === "git" ? (
             <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
@@ -264,34 +244,20 @@ function ThreadAnalysisPanel({
   goalAction,
   goalActionError,
   onCancelGoal,
-  onOpenProjectChat,
   onPauseGoal,
   onResumeGoal,
   onSelectCommandMonitor,
-  onSelectTaskThread,
-  onSetTaskFilter,
   planUpdate,
-  selectedThreadId,
-  taskFilter,
-  todoItems,
-  todoStats,
 }: {
   analysis: ThreadAnalysis;
   goal: ThreadGoal | null;
   goalAction: GoalActionKind | null;
   goalActionError: string | null;
   onCancelGoal: () => void;
-  onOpenProjectChat: () => void;
   onPauseGoal: () => void;
   onResumeGoal: () => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
-  onSelectTaskThread: (threadId: string) => void;
-  onSetTaskFilter: (value: TaskFilter) => void;
   planUpdate: ThreadPlanUpdate | null;
-  selectedThreadId: string | null;
-  taskFilter: TaskFilter;
-  todoItems: TodoCardItem[];
-  todoStats: ReturnType<typeof buildTodoStats>;
 }) {
   const { contextUsage, monitors } = analysis;
 
@@ -337,16 +303,6 @@ function ThreadAnalysisPanel({
         />
 
         <CurrentPlanCard planUpdate={planUpdate} />
-
-        <ThreadAnalysisQueueSection
-          stats={todoStats}
-          onOpenProjectChat={onOpenProjectChat}
-          onSelectTaskThread={onSelectTaskThread}
-          onSetTaskFilter={onSetTaskFilter}
-          selectedThreadId={selectedThreadId}
-          taskFilter={taskFilter}
-          todoItems={todoItems}
-        />
 
         <section className="context-budget-card">
           <div className="context-budget-header">
@@ -721,100 +677,6 @@ function statusClassName(status: string) {
   }
 
   return status.toLowerCase().replace(/\s+/g, "-");
-}
-
-function ThreadAnalysisQueueSection({
-  stats,
-  onOpenProjectChat,
-  onSelectTaskThread,
-  onSetTaskFilter,
-  selectedThreadId,
-  taskFilter,
-  todoItems,
-}: {
-  stats: ReturnType<typeof buildTodoStats>;
-  onOpenProjectChat: () => void;
-  onSelectTaskThread: (threadId: string) => void;
-  onSetTaskFilter: (value: TaskFilter) => void;
-  selectedThreadId: string | null;
-  taskFilter: TaskFilter;
-  todoItems: TodoCardItem[];
-}) {
-  return (
-    <section className="context-section-card thread-analysis-queue">
-      <div className="context-section-header">
-        <div>
-          <span className="context-section-eyebrow">Plan Work</span>
-          <strong>Execution Queue</strong>
-        </div>
-        <button type="button" className="panel-inline-action" onClick={onOpenProjectChat}>
-          <PlusIcon />
-          <span>Open Project</span>
-        </button>
-      </div>
-
-      <div className="todo-overview-grid">
-        <OverviewMetric label="Open" value={stats.openCount} tone="open" />
-        <OverviewMetric label="Running" value={stats.doing} tone="doing" />
-        <OverviewMetric label="Blocked" value={stats.blocked} tone="blocked" />
-      </div>
-
-      <div className="todo-filters">
-        {(
-          [
-            ["all", "All"],
-            ["todo", "Open"],
-            ["doing", "Running"],
-            ["blocked", "Blocked"],
-            ["done", "Done"],
-          ] satisfies Array<[TaskFilter, string]>
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            className={taskFilter === value ? "active" : ""}
-            onClick={() => onSetTaskFilter(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="todo-scroll">
-        {todoItems.length > 0 ? (
-          todoItems.map((task) => (
-            <button
-              key={task.id}
-              type="button"
-              className={`todo-card ${task.threadId === selectedThreadId ? "selected" : ""}`}
-              onClick={() => onSelectTaskThread(task.threadId)}
-            >
-              <div className="todo-card-top">
-                <strong>{task.title}</strong>
-                <span className={`todo-status ${task.status}`}>{task.statusLabel}</span>
-              </div>
-              {task.summary ? <p>{task.summary}</p> : null}
-              <div className="todo-card-footer">
-                <div className="todo-card-meta">
-                  <BranchIcon />
-                  <span>{task.ownerPath}</span>
-                </div>
-                <div className="todo-card-meta">
-                  <ClockIcon />
-                  <span>{task.updatedLabel}</span>
-                </div>
-              </div>
-            </button>
-          ))
-        ) : (
-          <div className="empty-card todo-empty">
-            <p>No tasks for this filter.</p>
-            <span>Switch filters or select a thread with direct child tasks.</span>
-          </div>
-        )}
-      </div>
-    </section>
-  );
 }
 
 function CurrentPlanCard({

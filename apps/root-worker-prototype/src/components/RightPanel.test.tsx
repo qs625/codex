@@ -76,14 +76,11 @@ function renderRightPanel(
       fileTreeEntriesByPath={options?.fileTreeEntriesByPath ?? {}}
       fileTreeErrorsByPath={{}}
       fileTreeLoadingPath={null}
-      onOpenProjectChat={() => {}}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
-      onSelectTaskThread={() => {}}
       onSetActiveView={() => {}}
       onSetFilePanelView={() => {}}
-      onSetTaskFilter={() => {}}
       onToggleTreeDirectory={() => {}}
       onCancelGoal={() => {}}
       onPauseGoal={() => {}}
@@ -96,9 +93,7 @@ function renderRightPanel(
       previewError={null}
       previewLoading={false}
       skills={[]}
-      selectedThreadId={null}
       thread={thread}
-      taskFilter="all"
       todoItems={options?.todoItems ?? []}
     />,
   );
@@ -123,14 +118,11 @@ test("renders thread goal details in thread analysis", () => {
       fileTreeEntriesByPath={{}}
       fileTreeErrorsByPath={{}}
       fileTreeLoadingPath={null}
-      onOpenProjectChat={() => {}}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
-      onSelectTaskThread={() => {}}
       onSetActiveView={() => {}}
       onSetFilePanelView={() => {}}
-      onSetTaskFilter={() => {}}
       onToggleTreeDirectory={() => {}}
       onCancelGoal={() => {}}
       onPauseGoal={() => {}}
@@ -152,9 +144,7 @@ test("renders thread goal details in thread analysis", () => {
       previewError={null}
       previewLoading={false}
       skills={[]}
-      selectedThreadId="thread-1"
       thread={makeThread([])}
-      taskFilter="all"
       todoItems={[]}
     />,
   );
@@ -166,12 +156,27 @@ test("renders thread goal details in thread analysis", () => {
   assert.match(markup, /12K \/ 50K tokens/);
 });
 
-test("renders project chat action inside thread analysis", () => {
-  const markup = renderRightPanel(makeThread([]), "skills");
+test("omits plan work queue from thread analysis", () => {
+  const markup = renderRightPanel(makeThread([]), "skills", null, {
+    todoItems: [
+      {
+        id: "task-1",
+        title: "Wire plan into analysis",
+        ownerPath: "/my_codex/owner_dev",
+        status: "doing",
+        statusLabel: "Running",
+        updatedLabel: "just now",
+        summary: "Move the existing work queue into the analysis view.",
+        threadId: "thread-1",
+      },
+    ],
+  });
 
   assert.match(markup, /Thread Analysis/);
-  assert.match(markup, /Execution Queue/);
-  assert.match(markup, /Open Project/);
+  assert.doesNotMatch(markup, /Plan Work/);
+  assert.doesNotMatch(markup, /Execution Queue/);
+  assert.doesNotMatch(markup, /Open Project/);
+  assert.doesNotMatch(markup, /Wire plan into analysis/);
   assert.doesNotMatch(markup, /New Task/);
   assert.doesNotMatch(markup, /Todo List/);
   assert.doesNotMatch(markup, /Todo Board/);
@@ -352,10 +357,12 @@ test("renders the current thread plan in thread analysis", () => {
   assert.match(markup, /Render current thread plan/);
   assert.match(markup, /Run validation/);
   assert.match(markup, /In progress/);
+  assert.doesNotMatch(markup, /Plan Work/);
+  assert.doesNotMatch(markup, /Execution Queue/);
   assert.doesNotMatch(markup, /Todo List/);
 });
 
-test("renders todo items inside thread analysis without a separate todo panel", () => {
+test("does not render todo items inside thread analysis", () => {
   const markup = renderRightPanel(makeThread([]), "skills", null, {
     todoItems: [
       {
@@ -372,9 +379,10 @@ test("renders todo items inside thread analysis without a separate todo panel", 
   });
 
   assert.match(markup, /Thread Analysis/);
-  assert.match(markup, /Wire plan into analysis/);
-  assert.match(markup, /Move the existing work queue into the analysis view\./);
-  assert.match(markup, /\/my_codex\/owner_dev/);
+  assert.doesNotMatch(markup, /Wire plan into analysis/);
+  assert.doesNotMatch(markup, /Move the existing work queue into the analysis view\./);
+  assert.doesNotMatch(markup, /\/my_codex\/owner_dev/);
+  assert.doesNotMatch(markup, /No tasks for this filter/);
   assert.doesNotMatch(markup, /Todo List/);
   assert.doesNotMatch(markup, /Todo Board/);
 });
@@ -446,14 +454,11 @@ test("renders directory-specific cwd tree errors instead of empty state", () => 
       }}
       fileTreeErrorsByPath={{ "/tmp/src": "Permission denied" }}
       fileTreeLoadingPath={null}
-      onOpenProjectChat={() => {}}
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
-      onSelectTaskThread={() => {}}
       onSetActiveView={() => {}}
       onSetFilePanelView={() => {}}
-      onSetTaskFilter={() => {}}
       onToggleTreeDirectory={() => {}}
       onCancelGoal={() => {}}
       onPauseGoal={() => {}}
@@ -466,9 +471,7 @@ test("renders directory-specific cwd tree errors instead of empty state", () => 
       previewError={null}
       previewLoading={false}
       skills={[]}
-      selectedThreadId="thread-1"
       thread={thread}
-      taskFilter="all"
       todoItems={[]}
     />,
   );
