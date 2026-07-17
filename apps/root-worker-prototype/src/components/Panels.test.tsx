@@ -15,6 +15,7 @@ const {
   NewThreadDialog,
   NewThreadPopover,
   SidebarPanel,
+  buildBlankChatThreadDraft,
   buildNewThreadDraft,
   defaultNewThreadStartParams,
   isValidAgentPathSegment,
@@ -108,6 +109,7 @@ function renderSidebar(
   sidebar: ProjectAgentSidebar,
   options?: {
     collapsedProjects?: string[];
+    isCreatingChatThread?: boolean;
     selectedThreadId?: string | null;
     collapsedTreeNodes?: string[];
   },
@@ -116,7 +118,9 @@ function renderSidebar(
     <SidebarPanel
       collapsedProjectSet={new Set(options?.collapsedProjects ?? [])}
       collapsedSet={new Set(options?.collapsedTreeNodes ?? [])}
+      isCreatingChatThread={options?.isCreatingChatThread}
       newProjectName="Project chat"
+      onCreateChatThread={() => {}}
       onCreateProjectThread={() => {}}
       onOpenMenu={() => {}}
       onSelectProject={() => {}}
@@ -253,7 +257,7 @@ test("SidebarPanel keeps collapsed project children hidden across sidebar update
   assert.doesNotMatch(updatedMarkup, /owner_dev/);
 });
 
-test("SidebarPanel exposes one create button", () => {
+test("SidebarPanel exposes project create and chat quick create", () => {
   const sidebar: ProjectAgentSidebar = {
     projects: [],
     chat: {
@@ -267,8 +271,42 @@ test("SidebarPanel exposes one create button", () => {
   const markup = renderSidebar(sidebar);
 
   assert.match(markup, /New/);
+  assert.match(markup, /aria-label="New chat"/);
+  assert.match(markup, /class="chat-create-button"/);
   assert.doesNotMatch(markup, /New Chat/);
   assert.doesNotMatch(markup, /Open Project/);
+  assert.doesNotMatch(markup, /id="new-thread-popover"/);
+});
+
+test("SidebarPanel disables chat quick create while a chat is being created", () => {
+  const sidebar: ProjectAgentSidebar = {
+    projects: [],
+    chat: {
+      id: "chat",
+      statusClass: "todo",
+      updatedAt: 0,
+      conversations: [],
+    },
+  };
+
+  const markup = renderSidebar(sidebar, { isCreatingChatThread: true });
+
+  assert.match(markup, /class="chat-create-button"/);
+  assert.match(markup, /aria-label="New chat"/);
+  assert.match(markup, /disabled=""/);
+});
+
+test("buildBlankChatThreadDraft creates a cwd-free chat draft", () => {
+  assert.deepEqual(buildBlankChatThreadDraft(), {
+    mode: "chat",
+    projectPath: "",
+    taskName: "",
+    agentType: null,
+    model: null,
+    modelProvider: null,
+    reasoningEffort: null,
+    serviceTier: null,
+  });
 });
 
 test("NewThreadPopover renders thread/start parameter fields", () => {

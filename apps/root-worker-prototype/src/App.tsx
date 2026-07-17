@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import {
+  buildBlankChatThreadDraft,
   ConversationPanel,
   SidebarPanel,
   TreeContextMenu,
@@ -180,6 +181,7 @@ function App() {
   const [isSending, setIsSending] = useState(false);
   const [isStoppingTurn, setIsStoppingTurn] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
+  const [isCreatingChatThread, setIsCreatingChatThread] = useState(false);
   const [newProjectName, setNewProjectName] = useState("Project chat");
   const [error, setError] = useState<string | null>(null);
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
@@ -1306,6 +1308,18 @@ function App() {
       return;
     }
     await createProjectThread(draft.taskName || "Project chat", projectCwd, draft);
+  }
+
+  async function createBlankChatThread() {
+    if (isCreatingChatThread) {
+      return;
+    }
+    setIsCreatingChatThread(true);
+    try {
+      await createProjectThread("Chat", undefined, buildBlankChatThreadDraft());
+    } finally {
+      setIsCreatingChatThread(false);
+    }
   }
 
   async function createProjectThread(
@@ -2476,7 +2490,9 @@ function App() {
         <SidebarPanel
           collapsedSet={collapsedSet}
           collapsedProjectSet={collapsedProjectSet}
+          isCreatingChatThread={isCreatingChatThread}
           newProjectName={newProjectName}
+          onCreateChatThread={() => void createBlankChatThread()}
           onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}
           onSelectProject={selectProject}
