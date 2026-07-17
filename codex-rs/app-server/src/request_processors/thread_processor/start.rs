@@ -222,6 +222,9 @@ impl ThreadRequestProcessor {
         let resume_session_source = resume_source_thread
             .as_ref()
             .map(stored_thread_session_source_with_agent_metadata);
+        let resume_agent_role = resume_session_source
+            .as_ref()
+            .and_then(protocol::protocol::SessionSource::get_agent_role);
 
         let history_cwd = thread_history.session_cwd();
         let mut typesafe_overrides = self.build_thread_config_overrides(
@@ -246,7 +249,7 @@ impl ThreadRequestProcessor {
         .await;
 
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let config = match self
+        let mut config = match self
             .config_manager
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
@@ -258,6 +261,13 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
+        if let Some(agent_role) = resume_agent_role.as_deref()
+            && let Err(err) =
+                codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
+        {
+            self.outgoing.send_error(request_id, invalid_request(err)).await;
+            return Ok(());
+        }
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let response_history = thread_history.clone();

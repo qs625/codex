@@ -1026,3 +1026,129 @@ async fn thread_resume_accepts_personality_override() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn thread_resume_reapplies_stored_agent_role_to_model_context() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    const ROLE_BODY: &str = "ROLE_RESUME_AGENT_MD_UNIQUE_INSTRUCTION";
+
+    let server = responses::start_mock_server().await;
+    let first_body = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Seeded"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let second_body = responses::sse(vec![
+        responses::ev_response_created("resp-2"),
+        responses::ev_assistant_message("msg-2", "Done"),
+        responses::ev_completed("resp-2"),
+    ]);
+    let response_mock = responses::mount_sse_sequence(&server, vec![first_body, second_body]).await;
+
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+    let agents_dir = codex_home.path().join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("resume-role.md"),
+        format!(
+            r#"---
+name: resume-role
+description: Resume role fixture.
+---
+
+{ROLE_BODY}
+"#
+        ),
+    )?;
+
+    let mut primary = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, primary.initialize()).await??;
+
+    let start_id = primary
+        .send_thread_start_request(ThreadStartParams {
+            task_name: Some("resume_role_thread".to_string()),
+            agent_type: Some("resume-role".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    assert_eq!(thread.agent_role.as_deref(), Some("resume-role"));
+
+    let materialize_id = primary
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![UserInput::Text {
+                text: "seed history".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_response_message(RequestId::Integer(materialize_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        primary.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let mut secondary = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, secondary.initialize()).await??;
+
+    let resume_id = secondary
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: thread.id,
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        secondary.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
+    assert_eq!(resume.thread.agent_role.as_deref(), Some("resume-role"));
+
+    let turn_id = secondary
+        .send_turn_start_request(TurnStartParams {
+            thread_id: resume.thread.id,
+            input: vec![UserInput::Text {
+                text: "after resume".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        secondary.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        secondary.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let requests = response_mock.requests();
+    let request = requests
+        .last()
+        .expect("expected request for resumed thread turn");
+    assert!(
+        request.body_contains_text(ROLE_BODY),
+        "expected resumed model context to include agent role body, got {:?}",
+        request.body_json()
+    );
+
+    Ok(())
+}
