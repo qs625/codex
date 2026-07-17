@@ -3081,6 +3081,91 @@ async fn post_turn_state_waits_for_active_direct_child_without_active_goal() {
 }
 
 #[tokio::test]
+async fn post_turn_state_stops_waiting_after_child_completion_is_consumed() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    emit_turn_complete(&root_thread, "parent turn done").await;
+    assert_eq!(
+        root_thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild)
+    );
+
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(worker_thread_id, 1);
+    emit_turn_complete(&worker_thread, "child done").await;
+    let completion = InterAgentCommunication::new(
+        worker_path.clone(),
+        AgentPath::root(),
+        Vec::new(),
+        "child done".to_string(),
+        protocol::protocol::InterAgentOperation::ChildCompletion,
+    )
+    .with_trigger_turn(true)
+    .with_thread_ids(worker_thread_id, root_thread_id)
+    .with_status(AgentStatus::Completed(Some("child done".to_string())));
+    root_thread
+        .codex
+        .session
+        .enqueue_mailbox_communication(completion)
+        .await;
+    assert!(
+        root_thread.codex.session.has_pending_input().await,
+        "parent should receive child completion"
+    );
+
+    let pending_input = root_thread.codex.session.get_pending_input().await;
+    assert!(
+        pending_input.iter().any(|item| {
+            matches!(
+                item,
+                PendingInputItem::InterAgentCommunication(communication)
+                    if communication.author == worker_path
+                        && communication.operation
+                            == protocol::protocol::InterAgentOperation::ChildCompletion
+            )
+        }),
+        "parent should consume child completion input"
+    );
+    assert!(
+        !harness
+            .control
+            .agent_thread_is_active(worker_thread_id)
+            .await,
+        "final child with stale event subscription must not remain active"
+    );
+    assert_eq!(
+        root_thread.codex.session.thread_post_turn_state().await,
+        ThreadPostTurnState::ThreadCompletion
+    );
+}
+
+#[tokio::test]
 async fn inactive_child_completion_input_does_not_trigger_wait_child() {
     let harness = AgentControlHarness::new().await;
     let parent = harness
