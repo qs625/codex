@@ -3,6 +3,7 @@ use crate::protocol::CommandExecutionNotificationKind;
 use crate::protocol::CommandWaitNotificationKind;
 use crate::protocol::CommandWaitStatus;
 use crate::protocol::ThreadItem;
+use crate::protocol::UserInput;
 use protocol::models::CommandExecutionNotificationKind as CoreCommandExecutionNotificationKind;
 use protocol::models::CommandWaitNotificationKind as CoreCommandWaitNotificationKind;
 use protocol::models::CommandWaitStatus as CoreCommandWaitStatus;
@@ -136,6 +137,21 @@ pub fn is_legacy_structured_assistant_message_text(text: &str) -> bool {
         && object.contains_key("recipient")
         && object.contains_key("content")
         && object.contains_key("operation")
+}
+
+#[doc(hidden)]
+pub fn is_legacy_structured_user_inputs(content: &[UserInput]) -> bool {
+    let [
+        UserInput::Text {
+            text,
+            text_elements,
+        },
+    ] = content
+    else {
+        return false;
+    };
+
+    text_elements.is_empty() && is_legacy_structured_assistant_message_text(text)
 }
 
 fn is_wrapped_marker(trimmed: &str, start_marker: &str, end_marker: &str) -> bool {

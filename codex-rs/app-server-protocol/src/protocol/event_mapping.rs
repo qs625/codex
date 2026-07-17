@@ -1,9 +1,3 @@
-use crate::protocol::common::ServerNotification;
-use crate::protocol::event_item_projection::ProjectedEventItem;
-use crate::protocol::event_item_projection::project_event_msg_item;
-use crate::protocol::item_builders::build_command_execution_begin_item;
-use crate::protocol::item_builders::build_command_execution_end_item;
-use crate::protocol::item_builders::convert_patch_changes;
 use crate::protocol::AgentMessageDeltaNotification;
 use crate::protocol::CollabAgentState;
 use crate::protocol::CollabAgentTool;
@@ -20,6 +14,12 @@ use crate::protocol::ReasoningSummaryTextDeltaNotification;
 use crate::protocol::ReasoningTextDeltaNotification;
 use crate::protocol::TerminalInteractionNotification;
 use crate::protocol::ThreadItem;
+use crate::protocol::common::ServerNotification;
+use crate::protocol::event_item_projection::ProjectedEventItem;
+use crate::protocol::event_item_projection::project_event_msg_item;
+use crate::protocol::item_builders::build_command_execution_begin_item;
+use crate::protocol::item_builders::build_command_execution_end_item;
+use crate::protocol::item_builders::convert_patch_changes;
 use protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
 use protocol::protocol::EventMsg;
 use std::collections::HashMap;
@@ -33,11 +33,11 @@ pub fn item_event_to_server_notification(
     msg: EventMsg,
     thread_id: &str,
     turn_id: &str,
-) -> ServerNotification {
+) -> Option<ServerNotification> {
     let thread_id = thread_id.to_string();
     let turn_id = turn_id.to_string();
     if let Some(projected) = project_event_msg_item(&msg) {
-        return match projected {
+        return Some(match projected {
             ProjectedEventItem::Started {
                 item,
                 started_at_ms,
@@ -58,9 +58,10 @@ pub fn item_event_to_server_notification(
                 item,
                 completed_at_ms,
             }),
-        };
+        });
     }
-    match msg {
+    Some(match msg {
+        EventMsg::ItemStarted(_) | EventMsg::ItemCompleted(_) => return None,
         EventMsg::DynamicToolCallResponse(response) => {
             let status = if response.success {
                 DynamicToolCallStatus::Completed
@@ -558,7 +559,7 @@ pub fn item_event_to_server_notification(
             })
         }
         _ => unreachable!("unsupported item event"),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -576,6 +577,7 @@ mod tests {
     use protocol::items::EventCommandEventItem;
     use protocol::items::EventDrivenToolItem;
     use protocol::items::TurnItem;
+    use protocol::items::UserMessageItem;
     use protocol::models::ContentItem;
     use protocol::models::ResponseItem;
     use protocol::protocol::AgentStatus;
@@ -589,38 +591,67 @@ mod tests {
     use protocol::protocol::ItemCompletedEvent;
     use protocol::protocol::ItemStartedEvent;
     use protocol::protocol::ResponseItemCompletedEvent;
+    use protocol::user_input::UserInput as CoreUserInput;
     use serde_json::json;
 
     fn assert_item_started_server_notification(
-        notification: ServerNotification,
+        notification: Option<ServerNotification>,
         expected: ItemStartedNotification,
     ) {
-        match notification {
+        match notification.expect("expected notification") {
             ServerNotification::ItemStarted(payload) => assert_eq!(payload, expected),
             other => panic!("expected item started notification, got {other:?}"),
         }
     }
 
     fn assert_item_completed_server_notification(
-        notification: ServerNotification,
+        notification: Option<ServerNotification>,
         expected: ItemCompletedNotification,
     ) {
-        match notification {
+        match notification.expect("expected notification") {
             ServerNotification::ItemCompleted(payload) => assert_eq!(payload, expected),
             other => panic!("expected item completed notification, got {other:?}"),
         }
     }
 
     fn assert_command_execution_output_delta_server_notification(
-        notification: ServerNotification,
+        notification: Option<ServerNotification>,
         expected: CommandExecutionOutputDeltaNotification,
     ) {
-        match notification {
+        match notification.expect("expected notification") {
             ServerNotification::CommandExecutionOutputDelta(payload) => {
                 assert_eq!(payload, expected)
             }
             other => panic!("expected command execution output delta, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn item_event_to_server_notification_skips_raw_subagent_notification_user_item() {
+        let message = concat!(
+            "<subagent_notification>\n",
+            r#"{"agent_path":"/root/worker","status":{"completed":"done"}}"#,
+            "\n</subagent_notification>"
+        )
+        .to_string();
+        let notification = item_event_to_server_notification(
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: TurnItem::UserMessage(UserMessageItem {
+                    id: "user-1".into(),
+                    content: vec![CoreUserInput::Text {
+                        text: message,
+                        text_elements: Vec::new(),
+                    }],
+                }),
+                completed_at_ms: 1,
+            }),
+            "thread-1",
+            "turn-1",
+        );
+
+        assert!(notification.is_none());
     }
 
     #[test]

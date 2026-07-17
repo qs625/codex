@@ -502,3 +502,150 @@ fn turn_start_params_reject_relative_environment_cwd() {
         "unexpected error: {err}"
     );
 }
+
+fn raw_subagent_notification_message() -> String {
+    concat!(
+        "<subagent_notification>\n",
+        r#"{"agent_path":"/root/worker","status":{"completed":"done"}}"#,
+        "\n</subagent_notification>"
+    )
+    .to_string()
+}
+
+#[test]
+fn thread_history_filters_raw_subagent_notification_user_message() {
+    let items = vec![protocol::protocol::RolloutItem::EventMsg(
+        protocol::protocol::EventMsg::UserMessage(protocol::protocol::UserMessageEvent {
+            message: raw_subagent_notification_message(),
+            images: None,
+            local_images: Vec::new(),
+            skills: Vec::new(),
+            text_elements: Vec::new(),
+        }),
+    )];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert!(turns.is_empty());
+}
+
+#[test]
+fn thread_history_preserves_user_message_that_mentions_subagent_notification_marker() {
+    let message = "Please inspect <subagent_notification> output".to_string();
+    let items = vec![protocol::protocol::RolloutItem::EventMsg(
+        protocol::protocol::EventMsg::UserMessage(protocol::protocol::UserMessageEvent {
+            message: message.clone(),
+            images: None,
+            local_images: Vec::new(),
+            skills: Vec::new(),
+            text_elements: Vec::new(),
+        }),
+    )];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        turns[0].items,
+        vec![ThreadItem::UserMessage {
+            id: "item-1".into(),
+            content: vec![UserInput::Text {
+                text: message,
+                text_elements: Vec::new(),
+            }],
+        }]
+    );
+}
+
+#[test]
+fn thread_history_preserves_raw_marker_text_with_user_message_metadata() {
+    let skill_path = PathBuf::from("/tmp/skills/demo/SKILL.md");
+    let items = vec![protocol::protocol::RolloutItem::EventMsg(
+        protocol::protocol::EventMsg::UserMessage(protocol::protocol::UserMessageEvent {
+            message: raw_subagent_notification_message(),
+            images: None,
+            local_images: Vec::new(),
+            skills: vec![protocol::protocol::UserMessageSkill {
+                name: "demo".into(),
+                path: skill_path.clone(),
+            }],
+            text_elements: Vec::new(),
+        }),
+    )];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        turns[0].items[0],
+        ThreadItem::UserMessage {
+            id: "item-1".into(),
+            content: vec![
+                UserInput::Skill {
+                    name: "demo".into(),
+                    path: skill_path,
+                },
+                UserInput::Text {
+                    text: raw_subagent_notification_message(),
+                    text_elements: Vec::new(),
+                },
+            ],
+        }
+    );
+}
+
+#[test]
+fn live_projection_filters_raw_subagent_notification_user_item() {
+    let event =
+        protocol::protocol::EventMsg::ItemCompleted(protocol::protocol::ItemCompletedEvent {
+            thread_id: protocol::ThreadId::new(),
+            turn_id: "turn-1".into(),
+            item: protocol::items::TurnItem::UserMessage(protocol::items::UserMessageItem {
+                id: "user-1".into(),
+                content: vec![protocol::user_input::UserInput::Text {
+                    text: raw_subagent_notification_message(),
+                    text_elements: Vec::new(),
+                }],
+            }),
+            completed_at_ms: 1,
+        });
+
+    assert!(crate::protocol::event_item_projection::project_event_msg_item(&event).is_none());
+}
+
+#[test]
+fn live_projection_preserves_user_item_that_mentions_subagent_notification_marker() {
+    let message = "Please inspect <subagent_notification> output".to_string();
+    let event =
+        protocol::protocol::EventMsg::ItemCompleted(protocol::protocol::ItemCompletedEvent {
+            thread_id: protocol::ThreadId::new(),
+            turn_id: "turn-1".into(),
+            item: protocol::items::TurnItem::UserMessage(protocol::items::UserMessageItem {
+                id: "user-1".into(),
+                content: vec![protocol::user_input::UserInput::Text {
+                    text: message.clone(),
+                    text_elements: Vec::new(),
+                }],
+            }),
+            completed_at_ms: 1,
+        });
+
+    let projected =
+        crate::protocol::event_item_projection::project_event_msg_item(&event).expect("projected");
+    let crate::protocol::event_item_projection::ProjectedEventItem::Completed { item, .. } =
+        projected
+    else {
+        panic!("expected completed item");
+    };
+
+    assert_eq!(
+        item,
+        ThreadItem::UserMessage {
+            id: "user-1".into(),
+            content: vec![UserInput::Text {
+                text: message,
+                text_elements: Vec::new(),
+            }],
+        }
+    );
+}
