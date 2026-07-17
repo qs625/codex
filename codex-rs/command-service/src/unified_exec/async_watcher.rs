@@ -41,6 +41,7 @@ pub(crate) fn start_streaming_output(
     process: &UnifiedExecProcess,
     context: &UnifiedExecContext,
     transcript: Arc<Mutex<HeadTailBuffer>>,
+    exit_notification_output: Arc<Mutex<HeadTailBuffer>>,
     notify_on: CommandNotificationFilter,
     notification_state: Arc<CommandNotificationState>,
 ) {
@@ -91,6 +92,7 @@ pub(crate) fn start_streaming_output(
                     process_chunk(
                         &mut pending,
                         &transcript,
+                        &exit_notification_output,
                         &call_id,
                         &session_ref,
                         &turn_ref,
@@ -117,6 +119,7 @@ pub(crate) fn spawn_exit_watcher(
     cwd: AbsolutePathBuf,
     process_id: i32,
     transcript: Arc<Mutex<HeadTailBuffer>>,
+    exit_notification_output: Arc<Mutex<HeadTailBuffer>>,
     started_at: Instant,
     notification_state: Arc<CommandNotificationState>,
     initial_wait_ms: u64,
@@ -132,7 +135,8 @@ pub(crate) fn spawn_exit_watcher(
         let duration = Instant::now().saturating_duration_since(started_at);
         let background_session_active = notification_state.is_background_session_active();
         let process_id = background_session_active.then(|| process_id.to_string());
-        if let Some(message) = process.failure_message() {
+        let failure_message = process.failure_message();
+        if let Some(message) = failure_message.clone() {
             emit_failed_exec_end_for_unified_exec(
                 Arc::clone(&session_ref),
                 Arc::clone(&turn_ref),
@@ -167,12 +171,19 @@ pub(crate) fn spawn_exit_watcher(
             .await;
         }
         if background_session_active {
+            let output = resolve_exit_notification_output(
+                &transcript,
+                &exit_notification_output,
+                notify_on,
+                failure_message.as_deref(),
+            )
+            .await;
             let item = ResponseItem::CommandExecutionNotification {
                 id: Some(format!("{call_id}:notification:exit")),
                 command_item_id: call_id,
                 kind: CommandExecutionNotificationKind::Exit,
                 message: "Command exit notification received.".to_string(),
-                output: None,
+                output,
                 exit_code: process.exit_code(),
                 created_at_ms: now_unix_timestamp_ms(),
             };
@@ -184,10 +195,30 @@ pub(crate) fn spawn_exit_watcher(
     });
 }
 
+async fn resolve_exit_notification_output(
+    transcript: &Arc<Mutex<HeadTailBuffer>>,
+    exit_notification_output: &Arc<Mutex<HeadTailBuffer>>,
+    notify_on: CommandNotificationFilter,
+    failure_message: Option<&str>,
+) -> Option<String> {
+    let output_buffer = match notify_on {
+        CommandNotificationFilter::Exit => transcript,
+        CommandNotificationFilter::Output => exit_notification_output,
+    };
+    let stdout = resolve_aggregated_output(output_buffer, String::new()).await;
+    let output = match failure_message {
+        Some(message) if stdout.is_empty() => message.to_string(),
+        Some(message) => format!("{stdout}\n{message}"),
+        None => stdout,
+    };
+    (!output.is_empty()).then_some(output)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_chunk(
     pending: &mut Vec<u8>,
     transcript: &Arc<Mutex<HeadTailBuffer>>,
+    exit_notification_output: &Arc<Mutex<HeadTailBuffer>>,
     call_id: &str,
     session_ref: &Arc<dyn ThreadSessionCapability>,
     turn_ref: &Arc<dyn ThreadRuntimeCapability>,
@@ -198,8 +229,13 @@ async fn process_chunk(
 ) {
     pending.extend_from_slice(&chunk);
     while let Some(prefix) = split_valid_utf8_prefix(pending) {
+        let background_session_active = notification_state.is_background_session_active();
         {
             let mut guard = transcript.lock().await;
+            guard.push_chunk(prefix.to_vec());
+        }
+        if matches!(notify_on, CommandNotificationFilter::Output) && background_session_active {
+            let mut guard = exit_notification_output.lock().await;
             guard.push_chunk(prefix.to_vec());
         }
 
@@ -207,8 +243,8 @@ async fn process_chunk(
             continue;
         }
 
-        let generates_notification = matches!(notify_on, CommandNotificationFilter::Output)
-            && notification_state.is_background_session_active();
+        let generates_notification =
+            matches!(notify_on, CommandNotificationFilter::Output) && background_session_active;
         let sequence = *emitted_deltas as u64 + 1;
         let event = ExecCommandOutputDeltaEvent {
             call_id: call_id.to_string(),
@@ -234,6 +270,10 @@ async fn process_chunk(
                 created_at_ms: now_unix_timestamp_ms(),
             };
             let _ = session_ref.append_conversation_item(item).await;
+            {
+                let mut guard = exit_notification_output.lock().await;
+                let _ = guard.drain_chunks();
+            }
             notification_state
                 .notify(CommandNotificationKind::Output)
                 .await;
