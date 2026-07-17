@@ -20,6 +20,7 @@ const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const {
   buildChatCompatCwd,
   buildCreateThreadStartParams,
+  buildSubscribeThreadResumeParams,
 } = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
@@ -475,7 +476,7 @@ async function readThread(threadId, includeTurns, runtime = null, options = {}) 
 async function subscribeThread(threadId) {
   const resume = await appServerClient.request(
     "thread/resume",
-    withRealtimeConversationFeature({ threadId, excludeTurns: true }),
+    buildSubscribeThreadResumeParams(threadId),
   );
   const existingRuntime = threadRuntimeById.get(threadId) ?? null;
   const runtime = resolveRuntimeForResume(existingRuntime, resume);

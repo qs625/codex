@@ -5,6 +5,7 @@ const {
   CHAT_COMPAT_CWD_BASENAME,
   buildChatCompatCwd,
   buildCreateThreadStartParams,
+  buildSubscribeThreadResumeParams,
   withRealtimeConversationFeature,
 } = require("./threadConfig.cjs");
 
@@ -146,4 +147,22 @@ test("buildCreateThreadStartParams preserves project thread sandbox behavior", (
   assert.equal(params.permissions, undefined);
   assert.equal(params.approvalPolicy, "never");
   assert.equal(params.taskName, "owner_dev");
+});
+
+test("buildSubscribeThreadResumeParams resumes with realtime conversation config", () => {
+  assert.deepEqual(buildSubscribeThreadResumeParams("thread-1"), {
+    threadId: "thread-1",
+    excludeTurns: true,
+    config: {
+      features: {
+        goals: true,
+        realtime_conversation: true,
+      },
+      realtime: {
+        version: "v2",
+        type: "transcription",
+        transport: "webrtc",
+      },
+    },
+  });
 });

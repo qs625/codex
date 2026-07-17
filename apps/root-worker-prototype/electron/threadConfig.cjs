@@ -65,6 +65,10 @@ function buildCreateThreadStartParams(payload = {}, options = {}) {
   });
 }
 
+function buildSubscribeThreadResumeParams(threadId) {
+  return withRealtimeConversationFeature({ threadId, excludeTurns: true });
+}
+
 function readObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -73,5 +77,6 @@ module.exports = {
   CHAT_COMPAT_CWD_BASENAME,
   buildChatCompatCwd,
   buildCreateThreadStartParams,
+  buildSubscribeThreadResumeParams,
   withRealtimeConversationFeature,
 };

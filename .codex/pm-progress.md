@@ -1,12 +1,32 @@
 # PM Progress
 
 ## Current Goal
-None
+Implement chat-type root-worker threads as a read-only, non-project flat conversation list using a backend tmp cwd compatibility fallback when true cwd None is not yet supported.
 
 ## Active Work
 None
 
 ## Completed
+- commit: 3be65d3d
+  summary: 合并 `26f8cda3` 到主线，root-worker Chat 现在使用稳定 compat cwd 作为后端 required cwd fallback，但 renderer 将该 cwd 识别为非项目语义；Chat create payload 使用 `permissions: ":read-only"` 且不传 legacy `sandbox`，Project create 继续 `sandbox: "danger-full-access"`；左侧 Chat 区域改为用户截图风格的扁平 conversation list，不再走 collapsible tree node；RightPanel 对 compat cwd 显示无 project cwd 空态，不加载 tmp cwd tree。
+  validation: owner `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx src/lib/thread.test.ts src/components/RightPanel.test.tsx` -> 126 passed；owner `rtk node --test apps/root-worker-prototype/electron/threadConfig.test.cjs` -> 7 passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev/reviewer` 通过。PM 合并后复跑同三项验证均通过。
+  residual_risk: 后端 model-visible `apply_patch` 等 host-side 写工具 visibility 尚未收口；本次只保证 Chat thread start 使用 read-only permission profile，exec 类写入受 runtime sandbox 约束。App clear/root-session 重建路径缺少直接组件级测试，但 reviewer 已审查并通过，相关 helper/sidebar/RightPanel 行为已有覆盖。
+- commit: 4bc64b1d
+  summary: 合并 `654ff4d80` 到主线，修复 raw `InterAgentCommunication` envelope 泄露到可见 conversation 的问题；legacy/live/replay 路径中的 `ResponseItemCompleted(ResponseItem::InterAgentCommunication)` 现在只在有 id 且 operation 非 Unknown 时投影成 typed `CollabAgentMessage` / `CollabAgentStatusUpdate`，其它 raw response item 继续隐藏；模型可见 pending input 语义保持不变。
+  validation: owner `rtk cargo test -p app-server-protocol response_item_completed_maps` -> 2 passed；owner `rtk cargo test -p thread-history maps_legacy_response_item_completed` -> 2 passed；owner `rtk cargo test -p app-server-protocol collab` -> 8 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_2/reviewer` 通过。PM 合并后 `rtk cargo test -p app-server-protocol response_item_completed_maps` -> 2 passed；PM `rtk cargo test -p thread-history maps_legacy_response_item_completed` -> 2 passed；PM `rtk cargo test -p app-server-protocol collab` -> 8 passed；PM `rtk cargo build -p app-server --bin app-server` -> passed；PM `rtk git diff --check` -> passed。
+  residual_risk: 修复范围刻意限制在 inter-agent legacy completed projection；审计确认 `RawResponseItem` 和普通 `ResponseItemStarted/Completed` 默认仍隐藏，command/event/tool/goal/workflow 已有 structured projection。未做完整 Electron 手工 smoke。空闲 `dev-2` 与 `dev-3` 已 fast-forward 到 `4bc64b1d`。
+- commit: 536c0515b
+  summary: 合并 `f9ae57cf1` 到主线，修复 `model/list` 因远端 GPT-5.6 catalog 中 `ReasoningEffort` 新值 `max` / `ultra` decode 失败而回退旧 cache/bundled catalog 的问题；协议 enum、effort rank、Bedrock helper、app-server-protocol schema、config schema、TS/Python SDK 类型和 Python examples 均同步支持 `max` / `ultra`。
+  validation: owner `rtk cargo test -p protocol reasoning_effort` -> 4 passed；owner `rtk cargo test -p app-server-protocol --test schema_fixtures` -> passed；owner `rtk cargo test -p app-server --test all model_list` -> 11 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_3/reviewer` 多轮通过。PM 合并后 `rtk cargo test -p protocol reasoning_effort` -> 4 passed；PM `rtk cargo test -p app-server-protocol --test schema_fixtures` -> exit 0；PM `rtk cargo test -p app-server --test all model_list` -> 11 passed；PM `rtk cargo build -p app-server --bin app-server` -> passed；PM `rtk git diff --check` -> passed。
+  residual_risk: 未更新 bundled offline fallback catalog，完全离线 fallback 仍不包含 GPT-5.6；`config-service` schema fixture 受既有编译错误阻塞，未作为本次有效验证。`dev` 与 `dev-2` 因 active/paused work 暂不同步到 `536c0515b`；空闲 `dev-3` 已 fast-forward 到 `536c0515b`。
+- commit: cfef6c781
+  summary: 合并 `ea3765633` 到主线，修复 unified exec 后台 command exit pending input：`Output` / `Exit` notification 保持分离；`notify_on=output` 的 exit 只携带最后一次 Output notification 后未通知的 residual output；`notify_on=exit` 的 exit 携带完整有界 transcript；`poll_event` 返回 schema 不扩展。
+  validation: owner `rtk cargo test -p command-service unified_exec::async_watcher` -> 5 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_2/reviewer` 两轮通过；PM 合并后 `rtk cargo test -p command-service unified_exec::async_watcher` -> 5 passed；PM 合并后 `rtk cargo build -p app-server --bin app-server` -> passed；PM `rtk git diff --check` -> passed。空闲 checkout `/Users/bytedance/Projects/my-codex-dev` 与 `/Users/bytedance/Projects/my-codex-dev-2` 已 fast-forward 到 `cfef6c781`；`dev-3` 正在 model/list 修复分支上暂不同步。
+  residual_risk: 未补完整 streaming 集成时序测试；当前 helper tests 覆盖核心 full/residual/empty/failure 输出选择语义。
+- commit: 3833226ec
+  summary: 合并 `d9d0634b4` 到主线，删除 root-worker 右侧 Thread Analysis 中的 `Plan Work` / `Execution Queue` 队列组件；保留 Current Thread Plan、Thread Analysis summary/goal/context/monitor 等内容；`todoItems` 仍作为右侧 rail badge 输入，不再在 Thread Analysis 内渲染 todo cards/filter/Open Project 入口。
+  validation: owner `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx` -> 12/12 passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev/reviewer` 通过；PM 合并后 `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx` -> 12/12 passed；PM `rtk git diff --check` -> passed。空闲 checkout `/Users/bytedance/Projects/my-codex-dev` 与 `/Users/bytedance/Projects/my-codex-dev-3` 已 fast-forward 到 `3833226ec`；`dev-2` 正在 runtime 修复分支上暂不同步。
+  residual_risk: 未做完整 Electron 手工 smoke；样式里可能仍有历史 todo/thread-analysis-queue 类名残留，但 TSX 已无入口引用，未作为本次范围清理。
 - commit: 37f83178d
   summary: 合并 `e6e8c09a5` 到主线，调整 root-worker New popup 与右侧面板：New popup 删除 Title 输入和 `NewThreadDraft.title`，创建 name 内部用 `taskName` 兜底；默认 taskName 从 cwd basename sanitize 得到，不再追加 hash；project root 的 title/role 两处 helper 改为展示 thread path；右侧移除独立 Todo Board / `todo` view，将 Current Plan 和 Execution Queue 合入 Thread Analysis，历史存储的 `todo` view 回落到 `skills`。
   validation: owner `rtk git diff --check` -> passed；owner `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx src/lib/thread.test.ts src/components/RightPanel.test.tsx src/lib/rightPanelView.test.ts` -> 129 passed；owner reviewer `/my_codex/owner_dev/reviewer` 两轮通过；PM `rtk git diff --check 88a5227307b76f924e56d0d24e17ba27e62d360e..e6e8c09a5` -> passed；PM 合并后 `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx src/lib/thread.test.ts src/components/RightPanel.test.tsx src/lib/rightPanelView.test.ts` -> 129 passed。
