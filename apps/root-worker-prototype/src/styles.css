@@ -2866,6 +2866,73 @@ svg {
   color: #171717;
 }
 
+.context-tool-breakdown {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(28, 25, 23, 0.08);
+}
+
+.context-tool-breakdown-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #78716c;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.context-tool-breakdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.context-tool-breakdown-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.context-tool-breakdown-main {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.context-tool-breakdown-main strong {
+  overflow: hidden;
+  color: #292524;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-tool-breakdown-main span {
+  overflow: hidden;
+  color: #78716c;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-tool-breakdown-share {
+  flex: none;
+  min-width: 42px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(13, 148, 136, 0.1);
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .context-section-card {
   padding: 12px;
 }

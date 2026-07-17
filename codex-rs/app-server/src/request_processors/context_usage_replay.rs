@@ -14,6 +14,7 @@ use protocol::protocol::RolloutItem;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::ThreadContextUsageCategoryBreakdown;
 use protocol::protocol::ThreadContextUsageLoadedSkills;
+use protocol::protocol::ThreadContextUsageToolBreakdown;
 use protocol::protocol::TokenUsageInfo;
 
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
@@ -227,6 +228,7 @@ pub(super) fn legacy_thread_context_usage_from_rollout_items(
             total_count: None,
             skills: Vec::new(),
         },
+        tool_breakdown: ThreadContextUsageToolBreakdown::default(),
     })
 }
 
@@ -275,6 +277,7 @@ mod tests {
     use protocol::protocol::ThreadContextUsage;
     use protocol::protocol::ThreadContextUsageCategoryBreakdown;
     use protocol::protocol::ThreadContextUsageLoadedSkills;
+    use protocol::protocol::ThreadContextUsageToolBreakdown;
     use protocol::protocol::ThreadContextUsageUpdatedEvent;
     use protocol::protocol::UserMessageEvent;
 
@@ -337,6 +340,7 @@ mod tests {
                             total_count: Some(0),
                             skills: Vec::new(),
                         },
+                        tool_breakdown: ThreadContextUsageToolBreakdown::default(),
                     },
                 },
             )),

@@ -351,6 +351,20 @@ export type ThreadContextUsageSkill = {
   loadCount: number;
 };
 
+export type ThreadContextUsageToolBucket = {
+  input: number;
+  output: number;
+};
+
+export type ThreadContextUsageToolBreakdown = {
+  applyPatch: ThreadContextUsageToolBucket;
+  fileOperations: ThreadContextUsageToolBucket;
+  commands: ThreadContextUsageToolBucket;
+  interAgent: ThreadContextUsageToolBucket;
+  searchMedia: ThreadContextUsageToolBucket;
+  otherTools: ThreadContextUsageToolBucket;
+};
+
 export type ThreadContextUsage = {
   totalBytes: number;
   budgetUsedPercent: number | null;
@@ -360,6 +374,7 @@ export type ThreadContextUsage = {
     totalCount: number | null;
     skills: ThreadContextUsageSkill[];
   };
+  toolBreakdown?: ThreadContextUsageToolBreakdown;
 };
 
 export type TokenUsageBreakdown = {

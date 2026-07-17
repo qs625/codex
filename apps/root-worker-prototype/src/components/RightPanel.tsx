@@ -12,7 +12,10 @@ import {
 } from "./icons";
 import { LocalImagePreview } from "./Conversation";
 import { isChatCompatCwd } from "../lib/chatCompat";
-import { getContextUsageCategoryColor } from "../lib/contextUsage";
+import {
+  getContextUsageCategoryColor,
+  type ContextUsageToolBreakdownSummary,
+} from "../lib/contextUsage";
 import {
   buildThreadAnalysis,
   type MonitorSummary,
@@ -341,6 +344,7 @@ function ThreadAnalysisPanel({
               </div>
             ))}
           </div>
+          <ToolBreakdownRows rows={contextUsage.toolBreakdown} />
         </section>
 
         <section className="context-section-card">
@@ -441,6 +445,38 @@ function ThreadAnalysisPanel({
             </div>
           )}
         </section>
+      </div>
+    </div>
+  );
+}
+
+function ToolBreakdownRows({
+  rows,
+}: {
+  rows: ContextUsageToolBreakdownSummary[];
+}) {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="context-tool-breakdown" aria-label="Estimated tool I/O mix">
+      <div className="context-tool-breakdown-title">
+        <span>Tool I/O Detail</span>
+        <span>estimated</span>
+      </div>
+      <div className="context-tool-breakdown-list">
+        {rows.map((row) => (
+          <div key={row.id} className="context-tool-breakdown-row">
+            <div className="context-tool-breakdown-main">
+              <strong>{row.label}</strong>
+              <span title={row.description}>
+                in {formatByteSize(row.inputUnits)} / out {formatByteSize(row.outputUnits)}
+              </span>
+            </div>
+            <span className="context-tool-breakdown-share">{row.sharePercent}%</span>
+          </div>
+        ))}
       </div>
     </div>
   );

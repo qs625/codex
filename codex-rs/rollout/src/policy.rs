@@ -309,6 +309,7 @@ mod tests {
     use protocol::protocol::ThreadContextUsage;
     use protocol::protocol::ThreadContextUsageCategoryBreakdown;
     use protocol::protocol::ThreadContextUsageLoadedSkills;
+    use protocol::protocol::ThreadContextUsageToolBreakdown;
     use protocol::protocol::ThreadContextUsageUpdatedEvent;
 
     #[test]
@@ -332,6 +333,7 @@ mod tests {
                     total_count: Some(0),
                     skills: Vec::new(),
                 },
+                tool_breakdown: ThreadContextUsageToolBreakdown::default(),
             },
         });
 

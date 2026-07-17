@@ -10,6 +10,8 @@ use protocol::protocol::ThreadContextUsage as CoreThreadContextUsage;
 use protocol::protocol::ThreadContextUsageCategoryBreakdown as CoreThreadContextUsageCategoryBreakdown;
 use protocol::protocol::ThreadContextUsageLoadedSkills as CoreThreadContextUsageLoadedSkills;
 use protocol::protocol::ThreadContextUsageSkill as CoreThreadContextUsageSkill;
+use protocol::protocol::ThreadContextUsageToolBreakdown as CoreThreadContextUsageToolBreakdown;
+use protocol::protocol::ThreadContextUsageToolBucket as CoreThreadContextUsageToolBucket;
 use protocol::protocol::ThreadSkill as CoreThreadSkill;
 use protocol::protocol::ThreadSkillKind as CoreThreadSkillKind;
 use protocol::protocol::ThreadSource as CoreThreadSource;
@@ -237,6 +239,52 @@ impl From<CoreThreadContextUsageLoadedSkills> for ThreadContextUsageLoadedSkills
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadContextUsageToolBucket {
+    #[cfg_attr(feature = "schema-export", ts(type = "number"))]
+    pub input: i64,
+    #[cfg_attr(feature = "schema-export", ts(type = "number"))]
+    pub output: i64,
+}
+
+impl From<CoreThreadContextUsageToolBucket> for ThreadContextUsageToolBucket {
+    fn from(value: CoreThreadContextUsageToolBucket) -> Self {
+        Self {
+            input: value.input,
+            output: value.output,
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadContextUsageToolBreakdown {
+    pub apply_patch: ThreadContextUsageToolBucket,
+    pub file_operations: ThreadContextUsageToolBucket,
+    pub commands: ThreadContextUsageToolBucket,
+    pub inter_agent: ThreadContextUsageToolBucket,
+    pub search_media: ThreadContextUsageToolBucket,
+    pub other_tools: ThreadContextUsageToolBucket,
+}
+
+impl From<CoreThreadContextUsageToolBreakdown> for ThreadContextUsageToolBreakdown {
+    fn from(value: CoreThreadContextUsageToolBreakdown) -> Self {
+        Self {
+            apply_patch: value.apply_patch.into(),
+            file_operations: value.file_operations.into(),
+            commands: value.commands.into(),
+            inter_agent: value.inter_agent.into(),
+            search_media: value.search_media.into(),
+            other_tools: value.other_tools.into(),
+        }
+    }
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
@@ -247,6 +295,8 @@ pub struct ThreadContextUsage {
     pub budget_used_percent: Option<i64>,
     pub categories: ThreadContextUsageCategoryBreakdown,
     pub loaded_skills: ThreadContextUsageLoadedSkills,
+    #[serde(default)]
+    pub tool_breakdown: ThreadContextUsageToolBreakdown,
 }
 
 impl From<CoreThreadContextUsage> for ThreadContextUsage {
@@ -256,6 +306,7 @@ impl From<CoreThreadContextUsage> for ThreadContextUsage {
             budget_used_percent: value.budget_used_percent,
             categories: value.categories.into(),
             loaded_skills: value.loaded_skills.into(),
+            tool_breakdown: value.tool_breakdown.into(),
         }
     }
 }

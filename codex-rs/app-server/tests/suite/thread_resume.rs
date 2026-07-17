@@ -70,6 +70,8 @@ use protocol::protocol::SessionSource as RolloutSessionSource;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::ThreadContextUsageCategoryBreakdown;
 use protocol::protocol::ThreadContextUsageLoadedSkills;
+use protocol::protocol::ThreadContextUsageToolBreakdown;
+use protocol::protocol::ThreadContextUsageToolBucket;
 use protocol::protocol::ThreadContextUsageUpdatedEvent;
 use protocol::protocol::TokenCountEvent;
 use protocol::protocol::TokenUsage;

@@ -228,6 +228,45 @@ test("renders live commands and schedule subscriptions", () => {
   assert.doesNotMatch(markup, /every 21600000 ms/);
 });
 
+test("renders backend tool I/O breakdown in thread analysis", () => {
+  const thread = makeThread([]);
+  thread.contextUsage = {
+    totalBytes: 4000,
+    budgetUsedPercent: 2,
+    categories: {
+      compact: 0,
+      skillsMetadata: 0,
+      concreteSkills: 0,
+      toolsMetadata: 200,
+      toolCalls: 3800,
+      userMessages: 0,
+      llmMessages: 0,
+      reasoning: 0,
+    },
+    loadedSkills: {
+      loadedCount: 0,
+      totalCount: 0,
+      skills: [],
+    },
+    toolBreakdown: {
+      applyPatch: { input: 1200, output: 300 },
+      fileOperations: { input: 0, output: 0 },
+      commands: { input: 700, output: 300 },
+      interAgent: { input: 200, output: 300 },
+      searchMedia: { input: 0, output: 0 },
+      otherTools: { input: 0, output: 0 },
+    },
+  };
+
+  const markup = renderRightPanel(thread);
+
+  assert.match(markup, /Tool I\/O Detail/);
+  assert.match(markup, /estimated/);
+  assert.match(markup, /Apply Patch/);
+  assert.match(markup, /Inter-Agent/);
+  assert.match(markup, /in 1\.2 KB \/ out 300 B/);
+});
+
 test("renders schedule agenda groups expanded by default", () => {
   const markup = renderToStaticMarkup(
     <ScheduleAgendaDateGroup
