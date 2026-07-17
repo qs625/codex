@@ -49,6 +49,8 @@ pub enum ReasoningEffort {
     Medium,
     High,
     XHigh,
+    Max,
+    Ultra,
 }
 
 impl FromStr for ReasoningEffort {
@@ -555,6 +557,8 @@ fn effort_rank(effort: ReasoningEffort) -> i32 {
         ReasoningEffort::Medium => 3,
         ReasoningEffort::High => 4,
         ReasoningEffort::XHigh => 5,
+        ReasoningEffort::Max => 6,
+        ReasoningEffort::Ultra => 7,
     }
 }
 
@@ -621,6 +625,65 @@ mod tests {
     fn reasoning_effort_from_str_accepts_known_values() {
         assert_eq!("high".parse(), Ok(ReasoningEffort::High));
         assert_eq!("minimal".parse(), Ok(ReasoningEffort::Minimal));
+        assert_eq!("max".parse(), Ok(ReasoningEffort::Max));
+        assert_eq!("ultra".parse(), Ok(ReasoningEffort::Ultra));
+    }
+
+    #[test]
+    fn reasoning_effort_serializes_latest_values() {
+        assert_eq!(
+            serde_json::to_string(&ReasoningEffort::Max).unwrap(),
+            r#""max""#
+        );
+        assert_eq!(
+            serde_json::to_string(&ReasoningEffort::Ultra).unwrap(),
+            r#""ultra""#
+        );
+    }
+
+    #[test]
+    fn models_response_decodes_latest_reasoning_efforts() {
+        let response: ModelsResponse = serde_json::from_value(serde_json::json!({
+            "models": [{
+                "slug": "gpt-5.6-sol",
+                "display_name": "GPT-5.6 Sol",
+                "description": "Latest GPT-5.6 model",
+                "default_reasoning_level": "max",
+                "supported_reasoning_levels": [
+                    {"effort": "max", "description": "Max reasoning"},
+                    {"effort": "ultra", "description": "Ultra reasoning"}
+                ],
+                "shell_type": "shell_command",
+                "visibility": "list",
+                "minimal_client_version": [0, 1, 0],
+                "supported_in_api": true,
+                "priority": 0,
+                "upgrade": null,
+                "base_instructions": "base instructions",
+                "supports_reasoning_summaries": false,
+                "support_verbosity": false,
+                "default_verbosity": null,
+                "apply_patch_tool_type": null,
+                "truncation_policy": {"mode": "bytes", "limit": 10000},
+                "supports_parallel_tool_calls": false,
+                "supports_image_detail_original": false,
+                "context_window": 272000,
+                "max_context_window": 272000,
+                "experimental_supported_tools": []
+            }]
+        }))
+        .expect("models response with latest reasoning efforts should decode");
+
+        let model = &response.models[0];
+        assert_eq!(model.default_reasoning_level, Some(ReasoningEffort::Max));
+        assert_eq!(
+            model
+                .supported_reasoning_levels
+                .iter()
+                .map(|preset| preset.effort)
+                .collect::<Vec<_>>(),
+            vec![ReasoningEffort::Max, ReasoningEffort::Ultra]
+        );
     }
 
     #[test]

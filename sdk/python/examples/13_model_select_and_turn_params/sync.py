@@ -32,6 +32,8 @@ REASONING_RANK = {
     "medium": 3,
     "high": 4,
     "xhigh": 5,
+    "max": 6,
+    "ultra": 7,
 }
 PREFERRED_MODEL = "gpt-5.4"
 

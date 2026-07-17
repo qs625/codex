@@ -554,13 +554,13 @@ async fn list_models_includes_hidden_models() -> Result<()> {
 async fn list_models_uses_chatgpt_remote_catalog_as_source_of_truth() -> Result<()> {
     let server = MockServer::start().await;
     let remote_model: ModelInfo = serde_json::from_value(json!({
-        "slug": "chatgpt-remote-only",
-        "display_name": "ChatGPT Remote Only",
-        "description": "Remote-only model for app-server model/list coverage",
-        "default_reasoning_level": "medium",
+        "slug": "gpt-5.6-sol",
+        "display_name": "GPT-5.6 Sol",
+        "description": "Remote-only GPT-5.6 model for app-server model/list coverage",
+        "default_reasoning_level": "max",
         "supported_reasoning_levels": [
-            {"effort": "low", "description": "low"},
-            {"effort": "medium", "description": "medium"}
+            {"effort": "max", "description": "max"},
+            {"effort": "ultra", "description": "ultra"}
         ],
         "shell_type": "shell_command",
         "visibility": "list",
@@ -639,6 +639,21 @@ openai_base_url = "{server_uri}/v1"
         &items[..expected_openai_items.len()],
         expected_openai_items.as_slice()
     );
+    assert!(items.iter().any(|item| {
+        item.model == "gpt-5.6-sol"
+            && item.supported_reasoning_efforts
+                == vec![
+                    ReasoningEffortOption {
+                        reasoning_effort: ReasoningEffort::Max,
+                        description: "max".to_string(),
+                    },
+                    ReasoningEffortOption {
+                        reasoning_effort: ReasoningEffort::Ultra,
+                        description: "ultra".to_string(),
+                    },
+                ]
+            && item.default_reasoning_effort == ReasoningEffort::Max
+    }));
     assert!(
         items
             .iter()
