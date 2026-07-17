@@ -7,6 +7,14 @@ None
 None
 
 ## Completed
+- commit: bef305977
+  summary: 合并 `1813355e1` 到主线，修复 `thread/resume` 对 persisted `agent_role` 只恢复 metadata、不重新 apply role config 的问题；resume load config 后会在计算 `instruction_sources` 与恢复 runtime 前重新调用 `apply_role_to_config`，因此 compact/restart 后带 agent type 的 thread 仍会读取对应 `.agent.md` / role instruction files。
+  validation: owner `rtk cargo test -p app-server --test all thread_resume_reapplies_stored_agent_role_to_model_context` -> 1 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_2/reviewer` 通过。PM 合并后 `rtk cargo test -p app-server --test all thread_resume_reapplies_stored_agent_role_to_model_context` -> 1 passed；PM `rtk cargo build -p app-server --bin app-server` -> passed；PM `rtk git diff --check` -> passed。
+  residual_risk: unknown/unavailable role 的 resume 错误路径未单独加 E2E；实现复用 start 路径 `apply_role_to_config` 的 invalid_request 语义。
+- commit: bef305977
+  summary: 合并 `32560427f` 到主线，root-worker 左侧 Chat 列表行现在 hover/focus-within 时在右侧显示 icon-only delete button；Chat 行结构改为 shell + select button + delete button，避免 nested button；删除入口走现有 archive IPC，但新增 Chat 专用 handler 只允许删除当前 Chat 列表成员，Project/subagent 右键删除限制保持不变。
+  validation: owner `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 15 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk warning；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev/reviewer` 通过。PM 合并后 `rtk pnpm --dir apps/root-worker-prototype test src/components/Panels.test.tsx` -> 15 passed；PM `rtk git diff --check` -> passed。
+  residual_risk: 未做完整 Electron/Playwright 点击 smoke；组件结构与 review 确认 delete/select 为 sibling buttons，删除点击不会触发行选择。
 - commit: cc11fce27f
   summary: 合并 `0e02e9c` 到主线，修复 raw `<subagent_notification>...</subagent_notification>` envelope 泄漏到用户可见 conversation display；新增共享 legacy structured user-input guard，history replay 与 live `CoreTurnItem::UserMessage` projection 复用；live mapper 支持 filtered item 返回 `None`，app-server fanout 跳过发送，避免 panic；普通用户文本提及 marker 和带 skill/富内容的用户消息仍保留。
   validation: owner `rtk cargo test -p app-server-protocol subagent_notification -j1` -> 5 passed；owner `rtk cargo test -p app-server-protocol raw_marker -j1` -> 1 passed；owner `rtk cargo build -p app-server --bin app-server -j1` -> passed；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev_3/reviewer` 通过。PM 合并后 `rtk cargo test -p app-server-protocol subagent_notification -j1` -> 5 passed；PM `rtk cargo test -p app-server-protocol raw_marker -j1` -> 1 passed；PM `rtk cargo build -p app-server --bin app-server -j1` -> passed；PM `rtk git diff --check` -> passed。
