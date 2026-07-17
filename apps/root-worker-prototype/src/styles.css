@@ -441,9 +441,71 @@ svg {
 }
 
 .chat-empty {
-  padding: 8px 9px 10px 35px;
+  padding: 8px 9px 10px 8px;
   color: #a8a29e;
   font-size: 11px;
+}
+
+.chat-section {
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+  padding: 10px 0 8px;
+}
+
+.chat-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 6px 4px 8px;
+}
+
+.chat-list-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #44403c;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.chat-list-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #57534e;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-list-row:hover,
+.chat-list-row.selected {
+  background: rgba(28, 25, 23, 0.05);
+  color: #18181b;
+}
+
+.chat-list-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tree-node {

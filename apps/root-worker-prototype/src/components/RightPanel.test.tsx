@@ -11,6 +11,7 @@ import type {
   ThreadPlanUpdate,
   ThreadStatus,
 } from "../types";
+import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const { RightPanel, ScheduleAgendaDateGroup } = await import("./RightPanel");
@@ -439,6 +440,24 @@ test("renders cwd tree inside the preview panel", () => {
   assert.match(markup, /Thread cwd file tree/);
   assert.match(markup, /README\.md/);
   assert.match(markup, /App\.tsx/);
+});
+
+test("hides chat compat cwd from the preview tree", () => {
+  const thread = {
+    ...makeThread([]),
+    cwd: `/tmp/root-worker/${CHAT_COMPAT_CWD_BASENAME}`,
+  };
+  const markup = renderRightPanel(thread, "preview", null, {
+    filePanelView: "tree",
+    fileTreeEntriesByPath: {
+      [thread.cwd]: [{ path: `${thread.cwd}/scratch.txt`, name: "scratch.txt", kind: "file" }],
+    },
+  });
+
+  assert.match(markup, /CWD Tree/);
+  assert.match(markup, /This chat has no project cwd to browse\./);
+  assert.doesNotMatch(markup, /Thread cwd file tree/);
+  assert.doesNotMatch(markup, /scratch\.txt/);
 });
 
 test("renders directory-specific cwd tree errors instead of empty state", () => {

@@ -51,6 +51,7 @@ import {
 } from "./lib/sendMessagePayload";
 import type { ComposerSlashCommandId } from "./lib/slashMenu";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
+import { isChatCompatCwd } from "./lib/chatCompat";
 import {
   decideThreadSelectionAction,
   nextThreadReadRequestId,
@@ -183,7 +184,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<string[]>([]);
-  const [isChatCollapsed, setIsChatCollapsed] = useState(false);
   const [treeMenu, setTreeMenu] = useState<TreeMenuState | null>(null);
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>(
     readStoredRightPanelView,
@@ -1322,6 +1322,7 @@ function App() {
     try {
       const payload = (await window.codexDesktop.createThread({
         ...(projectCwd ? { cwd: projectCwd } : {}),
+        threadMode: draft?.mode === "chat" ? "chat" : "project",
         name,
         taskName: draft?.taskName,
         agentType: draft?.agentType,
@@ -1367,7 +1368,9 @@ function App() {
       );
       setSelectedThreadId(null);
       clearComposerDraftsForThreads(threadIdsToArchive);
-      const replacementProjectCwd = normalizeProjectCwd(rootThread?.cwd);
+      const replacementProjectCwd = isChatCompatCwd(rootThread?.cwd)
+        ? null
+        : normalizeProjectCwd(rootThread?.cwd);
       await createProjectThread(
         replacementName,
         replacementProjectCwd ?? undefined,
@@ -1908,13 +1911,6 @@ function App() {
       return;
     }
 
-    if (
-      projectSidebar.chat.conversations.some((conversation) =>
-        getThreadSubtreeIds(threads, conversation.threadId).has(threadId),
-      )
-    ) {
-      setIsChatCollapsed(false);
-    }
   }
 
   function selectThread(threadId: string) {
@@ -2480,7 +2476,6 @@ function App() {
         <SidebarPanel
           collapsedSet={collapsedSet}
           collapsedProjectSet={collapsedProjectSet}
-          isChatCollapsed={isChatCollapsed}
           newProjectName={newProjectName}
           onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}
@@ -2488,7 +2483,6 @@ function App() {
           onSelectThread={selectThread}
           onSetNewProjectName={setNewProjectName}
           onSubmitNewThreadDraft={(draft) => void submitNewThreadDraft(draft)}
-          onToggleChat={() => setIsChatCollapsed((current) => !current)}
           onToggleProject={toggleProject}
           onToggleTreeNode={toggleTreeNode}
           projectSidebar={projectSidebar}

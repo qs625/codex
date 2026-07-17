@@ -108,7 +108,6 @@ function renderSidebar(
   sidebar: ProjectAgentSidebar,
   options?: {
     collapsedProjects?: string[];
-    chatCollapsed?: boolean;
     selectedThreadId?: string | null;
     collapsedTreeNodes?: string[];
   },
@@ -117,7 +116,6 @@ function renderSidebar(
     <SidebarPanel
       collapsedProjectSet={new Set(options?.collapsedProjects ?? [])}
       collapsedSet={new Set(options?.collapsedTreeNodes ?? [])}
-      isChatCollapsed={options?.chatCollapsed ?? false}
       newProjectName="Project chat"
       onCreateProjectThread={() => {}}
       onOpenMenu={() => {}}
@@ -125,7 +123,6 @@ function renderSidebar(
       onSelectThread={() => {}}
       onSetNewProjectName={() => {}}
       onSubmitNewThreadDraft={() => {}}
-      onToggleChat={() => {}}
       onToggleProject={() => {}}
       onToggleTreeNode={() => {}}
       projectSidebar={sidebar}
@@ -212,10 +209,8 @@ test("SidebarPanel indents project subagents relative to the project header", ()
     markup,
     /class="tree-node " style="--depth:2"[\s\S]*reviewer/,
   );
-  assert.match(
-    markup,
-    /class="tree-node tree-node-root" style="--depth:0"[\s\S]*General Q&amp;A/,
-  );
+  assert.match(markup, /class="chat-list-row"[\s\S]*General Q&amp;A/);
+  assert.doesNotMatch(markup, /tree-node-copy"><strong>General Q&amp;A/);
 });
 
 test("SidebarPanel keeps collapsed project children hidden across sidebar updates", () => {
@@ -457,10 +452,12 @@ test("SidebarPanel renders Chat group conversations separately", () => {
   assert.match(markup, /Chat/);
   assert.match(markup, /General Q&amp;A/);
   assert.match(markup, /API question/);
+  assert.match(markup, /class="chat-list-row"[\s\S]*General Q&amp;A/);
+  assert.doesNotMatch(markup, /tree-inline-status/);
   assert.match(markup, /No projects yet/);
 });
 
-test("SidebarPanel keeps project and tree collapse independent", () => {
+test("SidebarPanel keeps chat as a flat list outside tree collapse", () => {
   const child = makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev"), [
     makeNode(makeThread("reviewer-alpha", "/work/alpha", "reviewer")),
   ]);
@@ -483,12 +480,13 @@ test("SidebarPanel keeps project and tree collapse independent", () => {
   const treeCollapsed = renderSidebar(sidebar, {
     collapsedTreeNodes: ["owner-alpha"],
   });
-  const chatCollapsed = renderSidebar(sidebar, { chatCollapsed: true });
+  const selectedChat = renderSidebar(sidebar, { selectedThreadId: "chat-1" });
 
   assert.doesNotMatch(projectCollapsed, /owner_dev/);
   assert.match(treeCollapsed, /owner_dev/);
   assert.doesNotMatch(treeCollapsed, /reviewer/);
   assert.match(treeCollapsed, /Chat/);
-  assert.doesNotMatch(chatCollapsed, /General Q&amp;A/);
-  assert.match(chatCollapsed, /alpha/);
+  assert.match(treeCollapsed, /General Q&amp;A/);
+  assert.match(selectedChat, /class="chat-list-row selected"/);
+  assert.doesNotMatch(selectedChat, /tree-node-copy"><strong>General Q&amp;A/);
 });

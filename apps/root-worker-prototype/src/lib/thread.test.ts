@@ -32,6 +32,7 @@ import {
   upsertThread,
   upsertThreadMetadataPreservingTurns,
 } from "./thread";
+import { CHAT_COMPAT_CWD_BASENAME } from "./chatCompat";
 import type { Thread, ThreadItem, TreeNode, Turn } from "../types";
 
 function makeThread(): Thread {
@@ -243,6 +244,26 @@ test("buildProjectAgentSidebar places no-cwd parentless threads in Chat", () => 
   assert.equal(sidebar.chat.conversations[0]?.label, "General Q&A");
 });
 
+test("buildProjectAgentSidebar treats chat compat cwd as Chat", () => {
+  const project = makeSidebarThread({ id: "pm", cwd: "/work/project" });
+  const chat = makeSidebarThread({
+    id: "chat",
+    name: "查看 Claude tools",
+    cwd: `/tmp/root-worker/${CHAT_COMPAT_CWD_BASENAME}`,
+    updatedAt: 9,
+  });
+
+  const sidebar = buildProjectAgentSidebar([project, chat]);
+
+  assert.equal(sidebar.projects.length, 1);
+  assert.equal(sidebar.projects[0]?.cwd, "/work/project");
+  assert.deepEqual(
+    sidebar.chat.conversations.map((node) => node.threadId),
+    ["chat"],
+  );
+  assert.equal(sidebar.chat.conversations[0]?.label, "查看 Claude tools");
+});
+
 test("buildProjectAgentSidebar keeps Chat conversation subagents visible", () => {
   const chat = makeSidebarThread({
     id: "chat",
@@ -275,11 +296,22 @@ test("root thread labels distinguish project roots from no-project chats", () =>
     name: "General Q&A",
     cwd: "",
   });
+  const compatChat = makeSidebarThread({
+    id: "compat-chat",
+    name: "查看 TAE managed agent API",
+    cwd: `/tmp/root-worker/${CHAT_COMPAT_CWD_BASENAME}`,
+    agentPath: "/my_codex",
+  });
 
   assert.equal(getRootThreadConversationTitle(project), "/my_codex");
   assert.equal(getAgentRoleLabel(project), "/my_codex");
   assert.equal(getRootThreadConversationTitle(chat), "General Q&A");
   assert.equal(getAgentRoleLabel(chat), "Chat");
+  assert.equal(
+    getRootThreadConversationTitle(compatChat),
+    "查看 TAE managed agent API",
+  );
+  assert.equal(getAgentRoleLabel(compatChat), "Chat");
 });
 
 test("getThreadAncestorIds returns ancestors for selected Chat subagents", () => {

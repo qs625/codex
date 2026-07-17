@@ -87,7 +87,6 @@ type GoalActionKind = "set" | "pause" | "resume" | "clear";
 export function SidebarPanel({
   collapsedSet,
   collapsedProjectSet,
-  isChatCollapsed,
   newProjectName,
   onCreateProjectThread,
   onOpenMenu,
@@ -95,7 +94,6 @@ export function SidebarPanel({
   onSelectThread,
   onSetNewProjectName,
   onSubmitNewThreadDraft,
-  onToggleChat,
   onToggleProject,
   onToggleTreeNode,
   projectSidebar,
@@ -104,7 +102,6 @@ export function SidebarPanel({
 }: {
   collapsedSet: Set<string>;
   collapsedProjectSet: Set<string>;
-  isChatCollapsed: boolean;
   newProjectName: string;
   onCreateProjectThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
@@ -112,7 +109,6 @@ export function SidebarPanel({
   onSelectThread: (threadId: string) => void;
   onSetNewProjectName: (value: string) => void;
   onSubmitNewThreadDraft: (draft: NewThreadDraft) => void;
-  onToggleChat: () => void;
   onToggleProject: (projectId: string) => void;
   onToggleTreeNode: (threadId: string) => void;
   projectSidebar: ProjectAgentSidebar;
@@ -192,14 +188,9 @@ export function SidebarPanel({
         )}
         <ChatSection
           chatNodes={projectSidebar.chat.conversations}
-          collapsedSet={collapsedSet}
-          isCollapsed={isChatCollapsed}
           onOpenMenu={onOpenMenu}
           onSelectThread={onSelectThread}
-          onToggleChat={onToggleChat}
-          onToggleTreeNode={onToggleTreeNode}
           selectedThreadId={selectedThreadId}
-          statusClass={projectSidebar.chat.statusClass}
         />
       </div>
 
@@ -858,60 +849,47 @@ function treeContainsThread(node: TreeNode, threadId: string): boolean {
 
 function ChatSection({
   chatNodes,
-  collapsedSet,
-  isCollapsed,
   onOpenMenu,
   onSelectThread,
-  onToggleChat,
-  onToggleTreeNode,
   selectedThreadId,
-  statusClass,
 }: {
   chatNodes: TreeNode[];
-  collapsedSet: Set<string>;
-  isCollapsed: boolean;
   onOpenMenu: (menu: TreeMenuState | null) => void;
   onSelectThread: (threadId: string) => void;
-  onToggleChat: () => void;
-  onToggleTreeNode: (threadId: string) => void;
   selectedThreadId: string | null;
-  statusClass: string;
 }) {
   return (
-    <section className="project-section chat-section">
-      <button type="button" className="project-header" onClick={onToggleChat}>
-        <span className={`tree-toggle ${isCollapsed ? "collapsed" : ""}`}>
-          <ChevronDownIcon />
-        </span>
-        <span
-          className={`tree-inline-status ${statusClass}`}
-          title={statusClass}
-          aria-label={statusClass}
-        />
-        <span className="project-header-copy">
-          <strong>Chat</strong>
-          <span>Conversations without a project</span>
-        </span>
-        <span className="project-counts">{chatNodes.length}</span>
-      </button>
-      {!isCollapsed ? (
-        chatNodes.length > 0 ? (
+    <section className="chat-section" aria-label="Chat conversations">
+      <div className="chat-list-header">
+        <div className="chat-list-title">
+          <span>Chat</span>
+        </div>
+      </div>
+      <div className="chat-list">
+        {chatNodes.length > 0 ? (
           chatNodes.map((node) => (
-            <AgentTreeNode
+            <button
               key={node.key}
-              collapsedSet={collapsedSet}
-              depth={0}
-              node={node}
-              onSelect={onSelectThread}
-              onToggle={onToggleTreeNode}
-              onOpenMenu={onOpenMenu}
-              selectedThreadId={selectedThreadId}
-            />
+              type="button"
+              className={`chat-list-row${node.threadId === selectedThreadId ? " selected" : ""}`}
+              onClick={() => onSelectThread(node.threadId)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                onOpenMenu({
+                  threadId: node.threadId,
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }}
+              title={node.label}
+            >
+              <span>{node.label}</span>
+            </button>
           ))
         ) : (
           <div className="chat-empty">No chat conversations.</div>
-        )
-      ) : null}
+        )}
+      </div>
     </section>
   );
 }
