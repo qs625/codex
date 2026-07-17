@@ -365,6 +365,111 @@ use super::*;
     }
 
     #[test]
+    fn maps_legacy_response_item_completed_inter_agent_to_collab_message() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "progress".into(),
+            InterAgentOperation::FollowupTask,
+        )
+        .with_trigger_turn(false);
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ResponseItemCompleted(ResponseItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: ResponseItem::InterAgentCommunication {
+                    id: Some("collab-response-1".into()),
+                    communication,
+                },
+                completed_at_ms: 123,
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentMessage {
+                id: "collab-response-1".into(),
+                operation: CollabAgentOperation::FollowupTask,
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                other_recipient_paths: Vec::new(),
+                content: "progress".into(),
+                trigger_turn: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn maps_legacy_response_item_completed_child_completion_to_status_update() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(protocol::protocol::AgentStatus::Completed(Some(
+            "completed".into(),
+        )));
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ResponseItemCompleted(ResponseItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: ResponseItem::InterAgentCommunication {
+                    id: Some("collab-response-2".into()),
+                    communication,
+                },
+                completed_at_ms: 124,
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentStatusUpdate {
+                id: "collab-response-2".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    status: CollabAgentStatus::Completed,
+                    message: Some("completed".into()),
+                },
+            }]
+        );
+    }
+
+    #[test]
     fn restores_typed_child_completion_without_turn_lifecycle() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
@@ -661,4 +766,3 @@ use super::*;
             }]
         );
     }
-

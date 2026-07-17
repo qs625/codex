@@ -90,13 +90,16 @@ use protocol::ThreadId;
 #[cfg(test)]
 use protocol::items::parse_hook_prompt_message;
 use protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
+use protocol::models::ResponseItem;
 use protocol::plan_tool::UpdatePlanArgs;
 use protocol::protocol::CodexErrorInfo as CoreCodexErrorInfo;
 use protocol::protocol::Event;
 use protocol::protocol::EventMsg;
 use protocol::protocol::ExecApprovalRequestEvent;
+use protocol::protocol::InterAgentOperation;
 use protocol::protocol::Op;
 use protocol::protocol::RealtimeEvent;
+use protocol::protocol::ResponseItemCompletedEvent;
 use protocol::protocol::ReviewDecision;
 use protocol::protocol::ReviewOutputEvent;
 use protocol::protocol::TokenCountEvent;
@@ -650,6 +653,16 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
                 .await;
         }
+        EventMsg::ResponseItemCompleted(event)
+            if response_item_completed_projects_to_display(&event) =>
+        {
+            let notification = item_event_to_server_notification(
+                EventMsg::ResponseItemCompleted(event),
+                &conversation_id.to_string(),
+                &event_turn_id,
+            );
+            outgoing.send_server_notification(notification).await;
+        }
         EventMsg::ResponseItemStarted(_)
         | EventMsg::ResponseItemCompleted(_)
         | EventMsg::RawResponseItem(_) => {}
@@ -863,6 +876,16 @@ pub(crate) async fn apply_bespoke_event_handling(
 
         _ => {}
     }
+}
+
+fn response_item_completed_projects_to_display(event: &ResponseItemCompletedEvent) -> bool {
+    matches!(
+        &event.item,
+        ResponseItem::InterAgentCommunication {
+            id: Some(_),
+            communication,
+        } if !matches!(communication.operation, InterAgentOperation::Unknown)
+    )
 }
 
 mod helpers;

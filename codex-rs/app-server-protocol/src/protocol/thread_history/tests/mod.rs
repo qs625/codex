@@ -1,6 +1,7 @@
     use super::*;
-    use crate::protocol::CollabAgentStatus;
+    use crate::protocol::CollabAgentOperation;
     use crate::protocol::CollabAgentState;
+    use crate::protocol::CollabAgentStatus;
     use crate::protocol::CollabAgentTool;
     use crate::protocol::CollabAgentToolCallStatus;
     use crate::protocol::CommandExecutionStatus;
@@ -62,6 +63,7 @@
     use protocol::protocol::PatchApplyBeginEvent;
     use protocol::protocol::PatchApplyEndEvent;
     use protocol::protocol::SandboxPolicy;
+    use protocol::protocol::ResponseItemCompletedEvent;
     use protocol::protocol::ThreadRolledBackEvent;
     use protocol::protocol::TurnAbortReason;
     use protocol::protocol::TurnAbortedEvent;
