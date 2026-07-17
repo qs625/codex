@@ -58,6 +58,17 @@ export function MoreIcon() {
   );
 }
 
+export function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4.5 6.5h15" />
+      <path d="M9.5 6.5V4.8h5v1.7" />
+      <path d="M7.2 9.2 8 19.1c.1.7.6 1.2 1.3 1.2h5.4c.7 0 1.2-.5 1.3-1.2l.8-9.9" />
+      <path d="M10.2 11.2v6M13.8 11.2v6" />
+    </svg>
+  );
+}
+
 export function OpenIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">

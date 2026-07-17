@@ -529,16 +529,33 @@ svg {
   gap: 1px;
 }
 
-.chat-list-row {
+.chat-list-row-shell {
   display: flex;
   align-items: center;
   width: 100%;
   min-height: 34px;
+  border-radius: 7px;
+  color: #57534e;
+}
+
+.chat-list-row-shell:hover,
+.chat-list-row-shell:focus-within,
+.chat-list-row-shell.selected {
+  background: rgba(28, 25, 23, 0.05);
+  color: #18181b;
+}
+
+.chat-list-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 34px;
+  flex: 1 1 auto;
   padding: 4px 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 7px 0 0 7px;
   background: transparent;
-  color: #57534e;
+  color: inherit;
   font-size: 15px;
   font-weight: 500;
   line-height: 1.35;
@@ -546,17 +563,50 @@ svg {
   cursor: pointer;
 }
 
-.chat-list-row:hover,
-.chat-list-row.selected {
-  background: rgba(28, 25, 23, 0.05);
-  color: #18181b;
-}
-
 .chat-list-row span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  margin-right: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #a8a29e;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.chat-delete-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chat-list-row-shell:hover .chat-delete-button,
+.chat-list-row-shell:focus-within .chat-delete-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-delete-button:hover,
+.chat-delete-button:focus-visible {
+  background: rgba(185, 28, 28, 0.1);
+  color: #b91c1c;
+  outline: none;
 }
 
 .tree-node {
