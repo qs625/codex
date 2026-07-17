@@ -11,6 +11,7 @@ import type {
   TreeNode,
   Turn,
 } from "../types";
+import { isChatCompatCwd } from "./chatCompat";
 
 export function pickInitialThread(threads: Thread[]) {
   return (
@@ -108,7 +109,7 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
 
   for (const thread of parentlessThreads) {
     const projectCwd = normalizeProjectCwd(thread.cwd);
-    if (!projectCwd) {
+    if (!projectCwd || isChatCompatCwd(projectCwd)) {
       chatThreads.push(thread);
       continue;
     }
@@ -369,7 +370,8 @@ export function getRootThreadConversationTitle(thread: Thread) {
 }
 
 export function isProjectRootThread(thread: Thread) {
-  return isRootThread(thread) && normalizeProjectCwd(thread.cwd) !== null;
+  const projectCwd = normalizeProjectCwd(thread.cwd);
+  return isRootThread(thread) && projectCwd !== null && !isChatCompatCwd(projectCwd);
 }
 
 export function getPresenceLabel(status: ThreadStatus) {

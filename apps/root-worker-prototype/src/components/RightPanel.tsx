@@ -11,6 +11,7 @@ import {
   SearchIcon,
 } from "./icons";
 import { LocalImagePreview } from "./Conversation";
+import { isChatCompatCwd } from "../lib/chatCompat";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
 import {
   buildThreadAnalysis,
@@ -742,6 +743,7 @@ function GitPanel({
   changedFiles: ThreadAnalysis["changedFiles"];
   thread: Thread | null;
 }) {
+  const hasProjectCwd = thread ? !isChatCompatCwd(thread.cwd) : false;
   return (
     <div className="preview-panel git-panel">
       <header className="panel-content-header">
@@ -754,7 +756,7 @@ function GitPanel({
 
       <div className="git-summary-strip">
         <span className="git-summary-label">
-          {thread ? trimPath(thread.cwd) : "No thread selected"}
+          {thread ? (hasProjectCwd ? trimPath(thread.cwd) : "No project") : "No thread selected"}
         </span>
         <span className="git-summary-count">
           {changedFiles.length} file{changedFiles.length === 1 ? "" : "s"}
@@ -883,6 +885,9 @@ function FilePreviewPanel({
     };
   }, []);
 
+  const threadRootPath =
+    thread && !isChatCompatCwd(thread.cwd) ? thread.cwd : null;
+
   return (
     <div className="preview-panel">
       <header className="panel-content-header preview-header">
@@ -890,7 +895,7 @@ function FilePreviewPanel({
           <span className="panel-eyebrow">File Preview</span>
           <h2>
             {filePanelView === "tree"
-              ? (thread ? trimPath(thread.cwd) : "Workspace Browser")
+              ? (threadRootPath ? trimPath(threadRootPath) : "Workspace Browser")
               : preview
                 ? preview.displayPath
                 : "Linked Context"}
@@ -937,7 +942,8 @@ function FilePreviewPanel({
           loadingPath={fileTreeLoadingPath}
           onOpenFile={onOpenTreeFile}
           onToggleDirectory={onToggleTreeDirectory}
-          rootPath={thread?.cwd ?? null}
+          rootPath={threadRootPath}
+          hasThread={thread !== null}
         />
       ) : null}
       {filePanelView === "tree" ? null : (
@@ -1115,6 +1121,7 @@ function CwdFileTreePanel({
   onOpenFile,
   onToggleDirectory,
   rootPath,
+  hasThread,
 }: {
   entriesByPath: Record<string, FileTreeEntry[]>;
   errorsByPath: Record<string, string>;
@@ -1123,11 +1130,16 @@ function CwdFileTreePanel({
   onOpenFile: (path: string) => void;
   onToggleDirectory: (path: string) => void;
   rootPath: string | null;
+  hasThread: boolean;
 }) {
   if (!rootPath) {
     return (
       <div className="preview-empty">
-        <p>Select a thread to browse its cwd file tree.</p>
+        <p>
+          {hasThread
+            ? "This chat has no project cwd to browse."
+            : "Select a thread to browse its cwd file tree."}
+        </p>
       </div>
     );
   }

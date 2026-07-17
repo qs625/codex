@@ -17,7 +17,10 @@ const {
 } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
 const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
-const { withRealtimeConversationFeature } = require("./threadConfig.cjs");
+const {
+  buildChatCompatCwd,
+  buildCreateThreadStartParams,
+} = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
   buildTurnStartParams,
@@ -179,25 +182,11 @@ ipcMain.handle("codex:listWorkflows", async (_event, cwd = defaultWorkspace) => 
 
 ipcMain.handle("codex:createThread", async (_event, payload) => {
   await ensureDefaultWorkspace();
-  const cwd =
-    typeof payload?.cwd === "string" && payload.cwd.trim()
-      ? payload.cwd.trim()
-      : undefined;
-  const params = withRealtimeConversationFeature({
-    ...(cwd ? { cwd } : {}),
-    taskName: payload?.taskName || undefined,
-    agentType: payload?.agentType || undefined,
-    model: payload?.model || undefined,
-    modelProvider: payload?.modelProvider || undefined,
-    reasoningEffort: payload?.reasoningEffort || undefined,
-    serviceTier:
-      payload && Object.prototype.hasOwnProperty.call(payload, "serviceTier")
-        ? payload.serviceTier
-        : undefined,
-    approvalPolicy: "never",
-    sandbox: "danger-full-access",
-    threadSource: "user",
-  });
+  const chatCompatCwd = buildChatCompatCwd(app.getPath("userData"));
+  if (payload?.threadMode === "chat") {
+    await fs.mkdir(chatCompatCwd, { recursive: true });
+  }
+  const params = buildCreateThreadStartParams(payload, { chatCompatCwd });
   const start = await appServerClient.request("thread/start", params);
 
   if (payload?.name && payload.name.trim()) {

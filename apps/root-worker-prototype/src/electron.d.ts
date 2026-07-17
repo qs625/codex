@@ -40,6 +40,7 @@ declare global {
         diagnostics: unknown[];
       }>;
       createThread: (payload: {
+        threadMode?: "chat" | "project";
         cwd?: string;
         name?: string;
         taskName?: string | null;
