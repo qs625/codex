@@ -1,4 +1,5 @@
 use app_server_protocol::Turn;
+use app_server_protocol::project_event_msg_item;
 use protocol::protocol::EventMsg;
 use protocol::protocol::RolloutItem;
 
@@ -192,6 +193,9 @@ impl ThreadHistoryBuilder {
             EventMsg::ExitedReviewMode(payload) => self.handle_exited_review_mode(payload),
             EventMsg::ItemStarted(payload) => self.handle_item_started(payload),
             EventMsg::ItemCompleted(payload) => self.handle_item_completed(payload),
+            EventMsg::ResponseItemCompleted(_) if project_event_msg_item(event).is_some() => {
+                self.handle_projected_event_item(event);
+            }
             EventMsg::ResponseItemStarted(_) | EventMsg::ResponseItemCompleted(_) => {}
             EventMsg::CommandWaitStarted(_)
             | EventMsg::CommandWaitCompleted(_)

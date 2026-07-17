@@ -21,6 +21,7 @@ use crate::protocol::WebSearchAction;
 use crate::protocol::assistant_message_thread_item;
 use protocol::items::AgentMessageContent as CoreAgentMessageContent;
 use protocol::items::TurnItem as CoreTurnItem;
+use protocol::models::ResponseItem;
 use protocol::protocol::EventMsg;
 use protocol::protocol::InterAgentOperation;
 
@@ -56,6 +57,26 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
             item: thread_item_from_turn_item(event.item.clone()),
             completed_at_ms: event.completed_at_ms,
         }),
+        EventMsg::ResponseItemCompleted(event) => {
+            let ResponseItem::InterAgentCommunication {
+                id: Some(id),
+                communication,
+            } = &event.item
+            else {
+                return None;
+            };
+            if matches!(communication.operation, InterAgentOperation::Unknown) {
+                return None;
+            }
+            Some(ProjectedEventItem::Completed {
+                turn_id: event.turn_id.clone(),
+                item: thread_item_from_inter_agent_communication(
+                    id.clone(),
+                    communication.clone(),
+                ),
+                completed_at_ms: event.completed_at_ms,
+            })
+        }
         EventMsg::CommandWaitStarted(event) => Some(ProjectedEventItem::Started {
             turn_id: event.turn_id.clone(),
             item: command_wait_thread_item(event),

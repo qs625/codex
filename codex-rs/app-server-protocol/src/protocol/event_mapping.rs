@@ -588,6 +588,7 @@ mod tests {
     use protocol::protocol::InterAgentOperation;
     use protocol::protocol::ItemCompletedEvent;
     use protocol::protocol::ItemStartedEvent;
+    use protocol::protocol::ResponseItemCompletedEvent;
     use serde_json::json;
 
     fn assert_item_started_server_notification(
@@ -1148,6 +1149,101 @@ mod tests {
                 completed_at_ms: event.completed_at_ms,
                 item: ThreadItem::CollabAgentStatusUpdate {
                     id: "collab-1".to_string(),
+                    sender_thread_id: None,
+                    sender_path: "/root/worker".to_string(),
+                    recipient_thread_id: None,
+                    recipient_path: "/root".to_string(),
+                    status: CollabAgentState {
+                        path: Some("/root/worker".to_string()),
+                        status: CollabAgentStatus::Completed,
+                        message: Some("done".to_string()),
+                    },
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn response_item_completed_maps_inter_agent_communication_to_collab_message() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "status update".to_string(),
+            InterAgentOperation::FollowupTask,
+        )
+        .with_trigger_turn(false);
+        let event = ResponseItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: ResponseItem::InterAgentCommunication {
+                id: Some("collab-response-1".to_string()),
+                communication,
+            },
+            completed_at_ms: 789,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ResponseItemCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.completed_at_ms,
+                item: ThreadItem::CollabAgentMessage {
+                    id: "collab-response-1".to_string(),
+                    operation: crate::protocol::CollabAgentOperation::FollowupTask,
+                    sender_thread_id: None,
+                    sender_path: "/root/worker".to_string(),
+                    recipient_thread_id: None,
+                    recipient_path: "/root".to_string(),
+                    other_recipient_paths: Vec::new(),
+                    content: "status update".to_string(),
+                    trigger_turn: false,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn response_item_completed_maps_child_completion_to_collab_status_update() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "completed".to_string(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(AgentStatus::Completed(Some("done".to_string())));
+        let event = ResponseItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            item: ResponseItem::InterAgentCommunication {
+                id: Some("collab-response-2".to_string()),
+                communication,
+            },
+            completed_at_ms: 790,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::ResponseItemCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.completed_at_ms,
+                item: ThreadItem::CollabAgentStatusUpdate {
+                    id: "collab-response-2".to_string(),
                     sender_thread_id: None,
                     sender_path: "/root/worker".to_string(),
                     recipient_thread_id: None,

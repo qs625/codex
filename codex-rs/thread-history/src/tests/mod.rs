@@ -1,4 +1,5 @@
 use super::*;
+use app_server_protocol::CollabAgentOperation;
 use app_server_protocol::CollabAgentState;
 use app_server_protocol::CollabAgentStatus;
 use app_server_protocol::CollabAgentTool;
@@ -64,6 +65,7 @@ use protocol::protocol::McpInvocation;
 use protocol::protocol::McpToolCallEndEvent;
 use protocol::protocol::PatchApplyBeginEvent;
 use protocol::protocol::PatchApplyEndEvent;
+use protocol::protocol::ResponseItemCompletedEvent;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::ThreadRolledBackEvent;
 use protocol::protocol::TurnAbortReason;
