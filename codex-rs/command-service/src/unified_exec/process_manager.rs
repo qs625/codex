@@ -843,6 +843,8 @@ impl UnifiedExecProcessManager {
         }
 
         let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
+        let exit_notification_output =
+            Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
         emit_unified_exec_begin(
             Arc::clone(&context.session),
             Arc::clone(&context.turn),
@@ -861,6 +863,7 @@ impl UnifiedExecProcessManager {
             &process,
             context,
             Arc::clone(&transcript),
+            Arc::clone(&exit_notification_output),
             request.notify_on,
             Arc::clone(&notification_state),
         );
@@ -880,6 +883,7 @@ impl UnifiedExecProcessManager {
                 deferred_network_approval.clone(),
                 Arc::clone(&transcript),
                 Arc::clone(&notification_state),
+                Arc::clone(&exit_notification_output),
                 request.yield_time_ms,
                 request.notify_on,
             )
@@ -903,6 +907,9 @@ impl UnifiedExecProcessManager {
         )
         .await;
         let wall_time = Instant::now().saturating_duration_since(start);
+        if process_started_alive && !process.has_exited() && process.exit_code().is_none() {
+            notification_state.activate_background_session();
+        }
 
         let text = String::from_utf8_lossy(&collected).to_string();
         let chunk_id = generate_chunk_id();
@@ -1134,6 +1141,7 @@ impl UnifiedExecProcessManager {
         network_approval: Option<Arc<dyn ToolRuntimeNetworkApprovalHandle>>,
         transcript: Arc<tokio::sync::Mutex<HeadTailBuffer>>,
         notification_state: Arc<CommandNotificationState>,
+        exit_notification_output: Arc<tokio::sync::Mutex<HeadTailBuffer>>,
         initial_wait_ms: u64,
         notify_on: CommandNotificationFilter,
     ) {
@@ -1175,6 +1183,7 @@ impl UnifiedExecProcessManager {
             cwd.clone(),
             process_id,
             transcript,
+            exit_notification_output,
             started_at,
             notification_state,
             initial_wait_ms,
