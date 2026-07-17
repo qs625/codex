@@ -214,6 +214,14 @@ test("uses last token usage for budget percent and context usage ratios for toke
       totalCount: 12,
       skills: [],
     },
+    toolBreakdown: {
+      applyPatch: { input: 1200, output: 300 },
+      fileOperations: { input: 600, output: 400 },
+      commands: { input: 500, output: 1500 },
+      interAgent: { input: 250, output: 250 },
+      searchMedia: { input: 0, output: 0 },
+      otherTools: { input: 0, output: 0 },
+    },
   };
   thread.tokenUsage = {
     total: {
@@ -247,6 +255,48 @@ test("uses last token usage for budget percent and context usage ratios for toke
   assert.equal(analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells.length, 1);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 1.8);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.units, 19900);
+  assert.deepEqual(
+    analysis.toolBreakdown.map((row) => row.id),
+    ["applyPatch", "fileOperations", "commands", "interAgent"],
+  );
+  assert.equal(analysis.toolBreakdown.find((row) => row.id === "applyPatch")?.sharePercent, 30);
+  assert.equal(analysis.toolBreakdown.find((row) => row.id === "commands")?.outputUnits, 1500);
+});
+
+test("omits tool breakdown when backend context usage has no breakdown data", () => {
+  const thread = makeThread([
+    {
+      type: "builtinToolCall",
+      id: "tool-1",
+      tool: "apply_patch",
+      arguments: { patch: "*** Begin Patch" },
+      status: "completed",
+      output: { ok: true },
+    },
+  ]);
+  thread.contextUsage = {
+    totalBytes: 10,
+    budgetUsedPercent: null,
+    categories: {
+      compact: 0,
+      skillsMetadata: 0,
+      concreteSkills: 0,
+      toolsMetadata: 0,
+      toolCalls: 10,
+      userMessages: 0,
+      llmMessages: 0,
+      reasoning: 0,
+    },
+    loadedSkills: {
+      loadedCount: 0,
+      totalCount: 0,
+      skills: [],
+    },
+  };
+
+  const analysis = buildContextUsageAnalysis(thread, 0);
+
+  assert.deepEqual(analysis.toolBreakdown, []);
 });
 
 test("uses selected model context window override for budget display", () => {

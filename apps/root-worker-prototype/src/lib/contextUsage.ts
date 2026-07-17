@@ -32,6 +32,24 @@ export type LoadedSkillSummary = {
   loadCount: number;
 };
 
+export type ContextUsageToolBreakdownId =
+  | "applyPatch"
+  | "fileOperations"
+  | "commands"
+  | "interAgent"
+  | "searchMedia"
+  | "otherTools";
+
+export type ContextUsageToolBreakdownSummary = {
+  id: ContextUsageToolBreakdownId;
+  label: string;
+  description: string;
+  inputUnits: number;
+  outputUnits: number;
+  totalUnits: number;
+  sharePercent: number;
+};
+
 export type ContextUsageTurnTrendCell = {
   turnId: string;
   label: string;
@@ -57,6 +75,7 @@ export type ContextUsageAnalysis = {
   totalConcreteLoads: number;
   reasoningSharePercent: number;
   categories: ContextUsageCategorySummary[];
+  toolBreakdown: ContextUsageToolBreakdownSummary[];
   loadedConcreteSkills: LoadedSkillSummary[];
   turnTrend: {
     turns: Array<{
@@ -136,6 +155,43 @@ const CATEGORY_COLORS: Record<ContextUsageCategoryId, string> = {
 
 const MAX_TREND_TURNS = 16;
 
+const TOOL_BREAKDOWN_ORDER: Array<{
+  id: ContextUsageToolBreakdownId;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "applyPatch",
+    label: "Apply Patch",
+    description: "Patch inputs and patch application results",
+  },
+  {
+    id: "fileOperations",
+    label: "File Ops",
+    description: "File inspection, reads, diffs, and listings",
+  },
+  {
+    id: "commands",
+    label: "Commands",
+    description: "Shell commands, tests, builds, and git actions",
+  },
+  {
+    id: "interAgent",
+    label: "Inter-Agent",
+    description: "Agent handoffs, messages, status, and collaboration tools",
+  },
+  {
+    id: "searchMedia",
+    label: "Search & Media",
+    description: "Web search, image, screenshot, and media tools",
+  },
+  {
+    id: "otherTools",
+    label: "Other Tools",
+    description: "Tool traffic that did not match a specific bucket",
+  },
+];
+
 export function getContextUsageCategoryColor(categoryId: ContextUsageCategoryId) {
   return CATEGORY_COLORS[categoryId];
 }
@@ -160,6 +216,7 @@ export function buildContextUsageAnalysis(
         units: 0,
         sharePercent: 0,
       })),
+      toolBreakdown: [],
       loadedConcreteSkills: [],
       turnTrend: {
         turns: [],
@@ -221,6 +278,7 @@ export function buildContextUsageAnalysis(
       units: 0,
       sharePercent: 0,
     })),
+    toolBreakdown: [],
     loadedConcreteSkills,
     turnTrend,
   };
@@ -246,16 +304,19 @@ function buildContextUsageAnalysisFromBackend(
   rawCategoryUnits.reasoning = contextUsage.categories.reasoning;
 
   const totalUnits = sumCategoryUnits(rawCategoryUnits);
-  const totalUsedTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
+  const totalUsedTokens = categoryDistributionTokensFromTokenUsage(tokenUsage);
+  const lastUsedTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
   const contextWindowTokens =
     contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ?? 0;
   const categories = CATEGORY_ORDER.map((category) => {
     const units = rawCategoryUnits[category.id];
     const mixSharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
     const categoryTokens = totalUsedTokens > 0 ? Math.round((mixSharePercent / 100) * totalUsedTokens) : 0;
+    const lastCategoryTokens =
+      lastUsedTokens > 0 ? Math.round((mixSharePercent / 100) * lastUsedTokens) : 0;
     const sharePercent =
-      contextWindowTokens > 0 && categoryTokens > 0
-        ? roundPercent((categoryTokens / contextWindowTokens) * 100)
+      contextWindowTokens > 0 && lastCategoryTokens > 0
+        ? roundPercent((lastCategoryTokens / contextWindowTokens) * 100)
         : mixSharePercent;
     return {
       ...category,
@@ -266,6 +327,7 @@ function buildContextUsageAnalysisFromBackend(
   const reasoningSharePercent = categories.find((category) => category.id === "reasoning")?.sharePercent ?? 0;
   const normalizedTotalSkills =
     contextUsage.loadedSkills.totalCount ?? Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
+  const toolBreakdown = buildToolBreakdownSummary(contextUsage);
 
   return {
     hasBudgetData: hasContextWindow(tokenUsage, modelContextWindowOverride),
@@ -283,9 +345,47 @@ function buildContextUsageAnalysisFromBackend(
     totalConcreteLoads,
     reasoningSharePercent,
     categories,
+    toolBreakdown,
     loadedConcreteSkills,
     turnTrend,
   };
+}
+
+function buildToolBreakdownSummary(
+  contextUsage: ThreadContextUsage,
+): ContextUsageToolBreakdownSummary[] {
+  const raw = contextUsage.toolBreakdown;
+  if (!raw) {
+    return [];
+  }
+
+  const rows = TOOL_BREAKDOWN_ORDER.map((bucket) => {
+    const value = raw[bucket.id];
+    const inputUnits = sanitizeUnitCount(value?.input);
+    const outputUnits = sanitizeUnitCount(value?.output);
+    return {
+      ...bucket,
+      inputUnits,
+      outputUnits,
+      totalUnits: inputUnits + outputUnits,
+      sharePercent: 0,
+    };
+  });
+  const totalUnits = rows.reduce((sum, row) => sum + row.totalUnits, 0);
+  if (totalUnits <= 0) {
+    return [];
+  }
+
+  return rows
+    .filter((row) => row.totalUnits > 0)
+    .map((row) => ({
+      ...row,
+      sharePercent: roundPercent((row.totalUnits / totalUnits) * 100),
+    }));
+}
+
+function sanitizeUnitCount(value: number | null | undefined) {
+  return Number.isFinite(value) && value && value > 0 ? Math.round(value) : 0;
 }
 
 function initializeCategoryUnits(): Record<ContextUsageCategoryId, number> {
@@ -626,6 +726,13 @@ function hasContextWindow(
 function usedTokensFromTokenUsage(tokenUsage: ThreadTokenUsage | null | undefined) {
   const totalTokens = tokenUsage?.last.totalTokens ?? 0;
   return totalTokens > 0 ? totalTokens : null;
+}
+
+function categoryDistributionTokensFromTokenUsage(
+  tokenUsage: ThreadTokenUsage | null | undefined,
+) {
+  const totalTokens = tokenUsage?.total.totalTokens ?? 0;
+  return totalTokens > 0 ? totalTokens : 0;
 }
 
 function contextWindowTokensFromTokenUsage(

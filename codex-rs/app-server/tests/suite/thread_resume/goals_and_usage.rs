@@ -613,6 +613,7 @@ async fn thread_resume_ignores_persisted_zero_context_usage_snapshot() -> Result
                         total_count: Some(0),
                         skills: Vec::new(),
                     },
+                    tool_breakdown: ThreadContextUsageToolBreakdown::default(),
                 },
             }
         ))?,
@@ -701,6 +702,13 @@ async fn thread_resume_emits_restored_context_usage_before_next_turn() -> Result
                         total_count: Some(4),
                         skills: Vec::new(),
                     },
+                    tool_breakdown: ThreadContextUsageToolBreakdown {
+                        commands: ThreadContextUsageToolBucket {
+                            input: 42,
+                            output: 7,
+                        },
+                        ..Default::default()
+                    },
                 },
             },
         ))?,
@@ -731,6 +739,7 @@ async fn thread_resume_emits_restored_context_usage_before_next_turn() -> Result
     assert_eq!(response_context_usage.budget_used_percent, Some(61));
     assert_eq!(response_context_usage.categories.tool_calls, 14);
     assert_eq!(response_context_usage.loaded_skills.loaded_count, 1);
+    assert_eq!(response_context_usage.tool_breakdown.commands.input, 42);
 
     let note = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -751,6 +760,7 @@ async fn thread_resume_emits_restored_context_usage_before_next_turn() -> Result
     assert_eq!(notification.context_usage.budget_used_percent, Some(61));
     assert_eq!(notification.context_usage.categories.tool_calls, 14);
     assert_eq!(notification.context_usage.loaded_skills.loaded_count, 1);
+    assert_eq!(notification.context_usage.tool_breakdown.commands.input, 42);
 
     Ok(())
 }
@@ -1037,4 +1047,3 @@ async fn thread_resume_token_usage_replay_can_belong_to_interrupted_turn() -> Re
 
     Ok(())
 }
-

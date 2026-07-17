@@ -65,6 +65,8 @@ use protocol::protocol::SessionSource as ProtocolSessionSource;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::ThreadContextUsageCategoryBreakdown;
 use protocol::protocol::ThreadContextUsageLoadedSkills;
+use protocol::protocol::ThreadContextUsageToolBreakdown;
+use protocol::protocol::ThreadContextUsageToolBucket;
 use protocol::protocol::ThreadContextUsageUpdatedEvent;
 use protocol::protocol::ThreadMemoryMode;
 use protocol::protocol::UserMessageEvent;
@@ -254,6 +256,13 @@ async fn thread_read_restores_usage_without_notifications() -> Result<()> {
                         total_count: Some(4),
                         skills: Vec::new(),
                     },
+                    tool_breakdown: ThreadContextUsageToolBreakdown {
+                        commands: ThreadContextUsageToolBucket {
+                            input: 42,
+                            output: 7,
+                        },
+                        ..Default::default()
+                    },
                 },
             },
         ))?,
@@ -290,6 +299,8 @@ async fn thread_read_restores_usage_without_notifications() -> Result<()> {
     assert_eq!(context_usage.budget_used_percent, Some(61));
     assert_eq!(context_usage.categories.tool_calls, 14);
     assert_eq!(context_usage.loaded_skills.loaded_count, 1);
+    assert_eq!(context_usage.tool_breakdown.commands.input, 42);
+    assert_eq!(context_usage.tool_breakdown.commands.output, 7);
 
     Ok(())
 }
@@ -334,6 +345,13 @@ async fn thread_read_keeps_restored_context_usage_after_thread_resume() -> Resul
                         total_count: Some(4),
                         skills: Vec::new(),
                     },
+                    tool_breakdown: ThreadContextUsageToolBreakdown {
+                        commands: ThreadContextUsageToolBucket {
+                            input: 42,
+                            output: 7,
+                        },
+                        ..Default::default()
+                    },
                 },
             },
         ))?,
@@ -364,6 +382,7 @@ async fn thread_read_keeps_restored_context_usage_after_thread_resume() -> Resul
         .expect("thread/resume should restore context usage");
     assert_eq!(resume_context_usage.total_bytes, 123456);
     assert_eq!(resume_context_usage.budget_used_percent, Some(61));
+    assert_eq!(resume_context_usage.tool_breakdown.commands.input, 42);
 
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
@@ -385,6 +404,7 @@ async fn thread_read_keeps_restored_context_usage_after_thread_resume() -> Resul
     assert_eq!(context_usage.budget_used_percent, Some(61));
     assert_eq!(context_usage.categories.tool_calls, 14);
     assert_eq!(context_usage.loaded_skills.loaded_count, 1);
+    assert_eq!(context_usage.tool_breakdown.commands.input, 42);
 
     Ok(())
 }

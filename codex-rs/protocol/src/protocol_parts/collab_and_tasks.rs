@@ -370,6 +370,26 @@ pub struct ThreadContextUsageLoadedSkills {
     pub skills: Vec<ThreadContextUsageSkill>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadContextUsageToolBucket {
+    pub input: i64,
+    pub output: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "protocol/")]
+pub struct ThreadContextUsageToolBreakdown {
+    pub apply_patch: ThreadContextUsageToolBucket,
+    pub file_operations: ThreadContextUsageToolBucket,
+    pub commands: ThreadContextUsageToolBucket,
+    pub inter_agent: ThreadContextUsageToolBucket,
+    pub search_media: ThreadContextUsageToolBucket,
+    pub other_tools: ThreadContextUsageToolBucket,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "protocol/")]
@@ -378,6 +398,8 @@ pub struct ThreadContextUsage {
     pub budget_used_percent: Option<i64>,
     pub categories: ThreadContextUsageCategoryBreakdown,
     pub loaded_skills: ThreadContextUsageLoadedSkills,
+    #[serde(default)]
+    pub tool_breakdown: ThreadContextUsageToolBreakdown,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
