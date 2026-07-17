@@ -223,11 +223,18 @@ pub fn agent_thread_is_active_from_inputs(inputs: AgentThreadActivityInputs) -> 
     if !inputs.manager_available {
         return false;
     }
-    if inputs.active_event_subscription_count > 0 {
-        return true;
-    }
     if !inputs.thread_found {
         return false;
+    }
+    if inputs
+        .status
+        .as_ref()
+        .is_some_and(|status| crate::is_final(status))
+    {
+        return false;
+    }
+    if inputs.active_event_subscription_count > 0 {
+        return true;
     }
     if inputs.has_active_turn {
         return true;
@@ -826,6 +833,15 @@ mod tests {
         assert!(agent_thread_is_active_from_inputs(
             AgentThreadActivityInputs {
                 manager_available: true,
+                thread_found: true,
+                active_event_subscription_count: 1,
+                ..AgentThreadActivityInputs::default()
+            }
+        ));
+        assert!(!agent_thread_is_active_from_inputs(
+            AgentThreadActivityInputs {
+                manager_available: true,
+                thread_found: false,
                 active_event_subscription_count: 1,
                 ..AgentThreadActivityInputs::default()
             }
@@ -838,7 +854,16 @@ mod tests {
                 ..AgentThreadActivityInputs::default()
             }
         ));
-        assert!(agent_thread_is_active_from_inputs(
+        assert!(!agent_thread_is_active_from_inputs(
+            AgentThreadActivityInputs {
+                manager_available: true,
+                thread_found: true,
+                active_event_subscription_count: 1,
+                status: Some(AgentStatus::Completed(None)),
+                ..AgentThreadActivityInputs::default()
+            }
+        ));
+        assert!(!agent_thread_is_active_from_inputs(
             AgentThreadActivityInputs {
                 manager_available: true,
                 thread_found: true,
