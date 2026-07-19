@@ -228,7 +228,7 @@ test("renders live commands and schedule subscriptions", () => {
   assert.doesNotMatch(markup, /every 21600000 ms/);
 });
 
-test("renders backend tool I/O breakdown in thread analysis", () => {
+test("renders backend tool I/O buckets as top-level context categories", () => {
   const thread = makeThread([]);
   thread.contextUsage = {
     totalBytes: 4000,
@@ -260,11 +260,13 @@ test("renders backend tool I/O breakdown in thread analysis", () => {
 
   const markup = renderRightPanel(thread);
 
-  assert.match(markup, /Tool I\/O Detail/);
-  assert.match(markup, /estimated/);
-  assert.match(markup, /Apply Patch/);
+  assert.doesNotMatch(markup, /Tool I\/O Detail/);
+  assert.doesNotMatch(markup, /estimated/);
+  assert.match(markup, /File Writes/);
+  assert.match(markup, /Commands/);
   assert.match(markup, /Inter-Agent/);
-  assert.match(markup, /in 1\.2 KB \/ out 300 B/);
+  assert.doesNotMatch(markup, /Tool Inputs &amp; Results/);
+  assert.doesNotMatch(markup, /in 1\.2 KB \/ out 300 B/);
 });
 
 test("renders schedule agenda groups expanded by default", () => {
