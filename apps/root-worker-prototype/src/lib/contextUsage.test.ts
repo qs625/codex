@@ -255,15 +255,23 @@ test("uses last token usage for budget percent and context usage ratios for toke
   assert.equal(analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells.length, 1);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 1.8);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.units, 19900);
+  assert.equal(analysis.categories.find((row) => row.id === "toolCalls"), undefined);
   assert.deepEqual(
-    analysis.toolBreakdown.map((row) => row.id),
-    ["applyPatch", "fileOperations", "commands", "interAgent"],
+    analysis.categories
+      .filter((row) =>
+        ["fileWrites", "fileReads", "commands", "interAgent"].includes(row.id),
+      )
+      .map((row) => row.id),
+    ["fileWrites", "fileReads", "commands", "interAgent"],
   );
-  assert.equal(analysis.toolBreakdown.find((row) => row.id === "applyPatch")?.sharePercent, 30);
-  assert.equal(analysis.toolBreakdown.find((row) => row.id === "commands")?.outputUnits, 1500);
+  assert.equal(analysis.categories.find((row) => row.id === "fileWrites")?.label, "File Writes");
+  assert.equal(analysis.categories.find((row) => row.id === "fileReads")?.label, "File Reads");
+  assert.equal(analysis.categories.find((row) => row.id === "commands")?.units, 6100);
+  assert.equal(analysis.categories.find((row) => row.id === "interAgent")?.sharePercent, 0.1);
+  assert.deepEqual(analysis.toolBreakdown, []);
 });
 
-test("omits tool breakdown when backend context usage has no breakdown data", () => {
+test("keeps tool I/O fallback when backend context usage has no breakdown data", () => {
   const thread = makeThread([
     {
       type: "builtinToolCall",
@@ -297,6 +305,46 @@ test("omits tool breakdown when backend context usage has no breakdown data", ()
   const analysis = buildContextUsageAnalysis(thread, 0);
 
   assert.deepEqual(analysis.toolBreakdown, []);
+  assert.equal(analysis.categories.find((row) => row.id === "toolCalls")?.label, "Tool Inputs & Results");
+  assert.equal(analysis.categories.find((row) => row.id === "toolCalls")?.sharePercent, 100);
+  assert.equal(analysis.categories.find((row) => row.id === "commands"), undefined);
+});
+
+test("does not synthesize tool buckets when top-level tool usage is zero", () => {
+  const thread = makeThread([]);
+  thread.contextUsage = {
+    totalBytes: 100,
+    budgetUsedPercent: null,
+    categories: {
+      compact: 0,
+      skillsMetadata: 0,
+      concreteSkills: 0,
+      toolsMetadata: 100,
+      toolCalls: 0,
+      userMessages: 0,
+      llmMessages: 0,
+      reasoning: 0,
+    },
+    loadedSkills: {
+      loadedCount: 0,
+      totalCount: 0,
+      skills: [],
+    },
+    toolBreakdown: {
+      applyPatch: { input: 100, output: 50 },
+      fileOperations: { input: 25, output: 25 },
+      commands: { input: 200, output: 100 },
+      interAgent: { input: 0, output: 0 },
+      searchMedia: { input: 0, output: 0 },
+      otherTools: { input: 0, output: 0 },
+    },
+  };
+
+  const analysis = buildContextUsageAnalysis(thread, 0);
+
+  assert.equal(analysis.categories.find((row) => row.id === "toolCalls")?.units, 0);
+  assert.equal(analysis.categories.find((row) => row.id === "fileWrites"), undefined);
+  assert.equal(analysis.categories.find((row) => row.id === "commands"), undefined);
 });
 
 test("uses selected model context window override for budget display", () => {

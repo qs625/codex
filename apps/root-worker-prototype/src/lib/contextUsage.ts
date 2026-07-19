@@ -12,6 +12,12 @@ export type ContextUsageCategoryId =
   | "concreteSkills"
   | "toolsMetadata"
   | "toolCalls"
+  | "fileWrites"
+  | "fileReads"
+  | "commands"
+  | "interAgent"
+  | "searchMedia"
+  | "otherTools"
   | "userMessages"
   | "llmMessages"
   | "reasoning";
@@ -123,6 +129,42 @@ const CATEGORY_ORDER: Array<{
     description: "Tool arguments, returned results, and execution output kept in context",
   },
   {
+    id: "fileWrites",
+    label: "File Writes",
+    shortLabel: "Writes",
+    description: "Patch inputs and file write results kept in context",
+  },
+  {
+    id: "fileReads",
+    label: "File Reads",
+    shortLabel: "Reads",
+    description: "File inspection, reads, diffs, and listings kept in context",
+  },
+  {
+    id: "commands",
+    label: "Commands",
+    shortLabel: "Cmd",
+    description: "Shell command inputs, test output, build output, and git output",
+  },
+  {
+    id: "interAgent",
+    label: "Inter-Agent",
+    shortLabel: "Agents",
+    description: "Agent handoffs, messages, status, and collaboration tools",
+  },
+  {
+    id: "searchMedia",
+    label: "Search & Media",
+    shortLabel: "Search",
+    description: "Web search, image, screenshot, and media tool traffic",
+  },
+  {
+    id: "otherTools",
+    label: "Other Tools",
+    shortLabel: "Other",
+    description: "Tool traffic that did not match a specific bucket",
+  },
+  {
     id: "userMessages",
     label: "User Messages",
     shortLabel: "User",
@@ -148,6 +190,12 @@ const CATEGORY_COLORS: Record<ContextUsageCategoryId, string> = {
   concreteSkills: "#d97706",
   toolsMetadata: "#0f766e",
   toolCalls: "#0d9488",
+  fileWrites: "#b45309",
+  fileReads: "#0284c7",
+  commands: "#16a34a",
+  interAgent: "#7c3aed",
+  searchMedia: "#db2777",
+  otherTools: "#64748b",
   userMessages: "#4f46e5",
   llmMessages: "#6366f1",
   reasoning: "#8b5cf6",
@@ -157,36 +205,43 @@ const MAX_TREND_TURNS = 16;
 
 const TOOL_BREAKDOWN_ORDER: Array<{
   id: ContextUsageToolBreakdownId;
+  categoryId: ContextUsageCategoryId;
   label: string;
   description: string;
 }> = [
   {
     id: "applyPatch",
-    label: "Apply Patch",
+    categoryId: "fileWrites",
+    label: "File Writes",
     description: "Patch inputs and patch application results",
   },
   {
     id: "fileOperations",
-    label: "File Ops",
+    categoryId: "fileReads",
+    label: "File Reads",
     description: "File inspection, reads, diffs, and listings",
   },
   {
     id: "commands",
+    categoryId: "commands",
     label: "Commands",
     description: "Shell commands, tests, builds, and git actions",
   },
   {
     id: "interAgent",
+    categoryId: "interAgent",
     label: "Inter-Agent",
     description: "Agent handoffs, messages, status, and collaboration tools",
   },
   {
     id: "searchMedia",
+    categoryId: "searchMedia",
     label: "Search & Media",
     description: "Web search, image, screenshot, and media tools",
   },
   {
     id: "otherTools",
+    categoryId: "otherTools",
     label: "Other Tools",
     description: "Tool traffic that did not match a specific bucket",
   },
@@ -211,11 +266,14 @@ export function buildContextUsageAnalysis(
       totalSkills: totalSkillMetadataCount,
       totalConcreteLoads: 0,
       reasoningSharePercent: 0,
-      categories: CATEGORY_ORDER.map((category) => ({
-        ...category,
-        units: 0,
-        sharePercent: 0,
-      })),
+      categories: buildCategorySummaries(
+        initializeCategoryUnits(),
+        0,
+        0,
+        0,
+        0,
+        false,
+      ),
       toolBreakdown: [],
       loadedConcreteSkills: [],
       turnTrend: {
@@ -273,11 +331,14 @@ export function buildContextUsageAnalysis(
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
     reasoningSharePercent: 0,
-    categories: CATEGORY_ORDER.map((category) => ({
-      ...category,
-      units: 0,
-      sharePercent: 0,
-    })),
+    categories: buildCategorySummaries(
+      initializeCategoryUnits(),
+      0,
+      0,
+      0,
+      0,
+      false,
+    ),
     toolBreakdown: [],
     loadedConcreteSkills,
     turnTrend,
@@ -298,7 +359,16 @@ function buildContextUsageAnalysisFromBackend(
   rawCategoryUnits.skillsMetadata = contextUsage.categories.skillsMetadata;
   rawCategoryUnits.concreteSkills = contextUsage.categories.concreteSkills;
   rawCategoryUnits.toolsMetadata = contextUsage.categories.toolsMetadata;
-  rawCategoryUnits.toolCalls = contextUsage.categories.toolCalls;
+  const toolBucketUnits = buildToolCategoryUnits(contextUsage);
+  if (toolBucketUnits) {
+    for (const [categoryId, units] of Object.entries(toolBucketUnits) as Array<
+      [ContextUsageCategoryId, number]
+    >) {
+      rawCategoryUnits[categoryId] = units;
+    }
+  } else {
+    rawCategoryUnits.toolCalls = contextUsage.categories.toolCalls;
+  }
   rawCategoryUnits.userMessages = contextUsage.categories.userMessages;
   rawCategoryUnits.llmMessages = contextUsage.categories.llmMessages;
   rawCategoryUnits.reasoning = contextUsage.categories.reasoning;
@@ -308,26 +378,17 @@ function buildContextUsageAnalysisFromBackend(
   const lastUsedTokens = usedTokensFromTokenUsage(tokenUsage) ?? 0;
   const contextWindowTokens =
     contextWindowTokensFromTokenUsage(tokenUsage, modelContextWindowOverride) ?? 0;
-  const categories = CATEGORY_ORDER.map((category) => {
-    const units = rawCategoryUnits[category.id];
-    const mixSharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
-    const categoryTokens = totalUsedTokens > 0 ? Math.round((mixSharePercent / 100) * totalUsedTokens) : 0;
-    const lastCategoryTokens =
-      lastUsedTokens > 0 ? Math.round((mixSharePercent / 100) * lastUsedTokens) : 0;
-    const sharePercent =
-      contextWindowTokens > 0 && lastCategoryTokens > 0
-        ? roundPercent((lastCategoryTokens / contextWindowTokens) * 100)
-        : mixSharePercent;
-    return {
-      ...category,
-      units: categoryTokens,
-      sharePercent,
-    };
-  });
+  const categories = buildCategorySummaries(
+    rawCategoryUnits,
+    totalUnits,
+    totalUsedTokens,
+    lastUsedTokens,
+    contextWindowTokens,
+    toolBucketUnits != null,
+  );
   const reasoningSharePercent = categories.find((category) => category.id === "reasoning")?.sharePercent ?? 0;
   const normalizedTotalSkills =
     contextUsage.loadedSkills.totalCount ?? Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
-  const toolBreakdown = buildToolBreakdownSummary(contextUsage);
 
   return {
     hasBudgetData: hasContextWindow(tokenUsage, modelContextWindowOverride),
@@ -345,18 +406,18 @@ function buildContextUsageAnalysisFromBackend(
     totalConcreteLoads,
     reasoningSharePercent,
     categories,
-    toolBreakdown,
+    toolBreakdown: [],
     loadedConcreteSkills,
     turnTrend,
   };
 }
 
-function buildToolBreakdownSummary(
+function buildToolCategoryUnits(
   contextUsage: ThreadContextUsage,
-): ContextUsageToolBreakdownSummary[] {
+): Partial<Record<ContextUsageCategoryId, number>> | null {
   const raw = contextUsage.toolBreakdown;
   if (!raw) {
-    return [];
+    return null;
   }
 
   const rows = TOOL_BREAKDOWN_ORDER.map((bucket) => {
@@ -368,20 +429,84 @@ function buildToolBreakdownSummary(
       inputUnits,
       outputUnits,
       totalUnits: inputUnits + outputUnits,
-      sharePercent: 0,
     };
   });
   const totalUnits = rows.reduce((sum, row) => sum + row.totalUnits, 0);
   if (totalUnits <= 0) {
-    return [];
+    return null;
   }
 
-  return rows
-    .filter((row) => row.totalUnits > 0)
-    .map((row) => ({
-      ...row,
-      sharePercent: roundPercent((row.totalUnits / totalUnits) * 100),
-    }));
+  const toolCallUnits = sanitizeUnitCount(contextUsage.categories.toolCalls);
+  if (toolCallUnits <= 0) {
+    return null;
+  }
+  const nonZeroRows = rows.filter((row) => row.totalUnits > 0);
+  let allocatedUnits = 0;
+  return nonZeroRows.reduce<Partial<Record<ContextUsageCategoryId, number>>>(
+    (unitsByCategory, row, index) => {
+      const isLastRow = index === nonZeroRows.length - 1;
+      const units = isLastRow
+        ? Math.max(0, toolCallUnits - allocatedUnits)
+        : Math.round((row.totalUnits / totalUnits) * toolCallUnits);
+      allocatedUnits += units;
+      unitsByCategory[row.categoryId] = units;
+      return unitsByCategory;
+    },
+    {},
+  );
+}
+
+function buildCategorySummaries(
+  rawCategoryUnits: Record<ContextUsageCategoryId, number>,
+  totalUnits: number,
+  totalUsedTokens: number,
+  lastUsedTokens: number,
+  contextWindowTokens: number,
+  hasToolBuckets: boolean,
+): ContextUsageCategorySummary[] {
+  return CATEGORY_ORDER.filter((category) =>
+    shouldIncludeCategory(category.id, rawCategoryUnits[category.id], hasToolBuckets),
+  ).map((category) => {
+    const units = rawCategoryUnits[category.id];
+    const mixSharePercent = totalUnits > 0 ? roundPercent((units / totalUnits) * 100) : 0;
+    const categoryTokens = totalUsedTokens > 0 ? Math.round((mixSharePercent / 100) * totalUsedTokens) : 0;
+    const lastCategoryTokens =
+      lastUsedTokens > 0 ? Math.round((mixSharePercent / 100) * lastUsedTokens) : 0;
+    const sharePercent =
+      contextWindowTokens > 0 && lastCategoryTokens > 0
+        ? roundPercent((lastCategoryTokens / contextWindowTokens) * 100)
+        : mixSharePercent;
+    return {
+      ...category,
+      units: categoryTokens,
+      sharePercent,
+    };
+  });
+}
+
+function shouldIncludeCategory(
+  categoryId: ContextUsageCategoryId,
+  units: number,
+  hasToolBuckets: boolean,
+) {
+  if (categoryId === "toolCalls" && hasToolBuckets) {
+    return false;
+  }
+  if (isToolBucketCategory(categoryId)) {
+    return units > 0;
+  }
+  return true;
+}
+
+function isToolBucketCategory(categoryId: ContextUsageCategoryId) {
+  return (
+    categoryId === "fileWrites" ||
+    categoryId === "fileReads" ||
+    categoryId === "commands" ||
+    categoryId === "interAgent" ||
+    categoryId === "searchMedia" ||
+    categoryId === "otherTools"
+  );
 }
 
 function sanitizeUnitCount(value: number | null | undefined) {
@@ -395,6 +520,12 @@ function initializeCategoryUnits(): Record<ContextUsageCategoryId, number> {
     concreteSkills: 0,
     toolsMetadata: 0,
     toolCalls: 0,
+    fileWrites: 0,
+    fileReads: 0,
+    commands: 0,
+    interAgent: 0,
+    searchMedia: 0,
+    otherTools: 0,
     userMessages: 0,
     llmMessages: 0,
     reasoning: 0,
@@ -483,8 +614,15 @@ function buildTurnTrendRows(
   }>,
 ) {
   const visibleTurns = turns.slice(-MAX_TREND_TURNS);
+  const trendCategories = CATEGORY_ORDER.filter(
+    (category) =>
+      !isToolBucketCategory(category.id) ||
+      visibleTurns.some((turn) => turn.units[category.id] > 0),
+  );
   const maxCategoryUnits = Math.max(
-    ...visibleTurns.flatMap((turn) => CATEGORY_ORDER.map((category) => turn.units[category.id])),
+    ...visibleTurns.flatMap((turn) =>
+      trendCategories.map((category) => turn.units[category.id]),
+    ),
     0,
   );
 
@@ -493,7 +631,7 @@ function buildTurnTrendRows(
       turnId: turn.turnId,
       label: turn.label,
     })),
-    rows: CATEGORY_ORDER.map((category) => ({
+    rows: trendCategories.map((category) => ({
       id: category.id,
       label: category.label,
       shortLabel: category.shortLabel,
