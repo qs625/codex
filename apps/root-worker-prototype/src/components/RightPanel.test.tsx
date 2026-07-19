@@ -9,7 +9,7 @@ import type {
   RightPanelView,
   Thread,
   ThreadPlanUpdate,
-  ThreadStatus,
+  ThreadLifecycleStatus,
 } from "../types";
 import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
 
@@ -18,7 +18,7 @@ const { RightPanel, ScheduleAgendaDateGroup } = await import("./RightPanel");
 
 function makeThread(
   items: Thread["turns"][number]["items"],
-  status: ThreadStatus = { type: "complete" },
+  lifecycleStatus: ThreadLifecycleStatus = { type: "complete" },
 ): Thread {
   return {
     id: "thread-1",

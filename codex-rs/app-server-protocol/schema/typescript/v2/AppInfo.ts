@@ -5,7 +5,7 @@ import type { AppBranding } from "./AppBranding";
 import type { AppMetadata } from "./AppMetadata";
 
 /**
- * EXPERIMENTAL - app metadata returned by app-list APIs.
+ * Connector app metadata returned by app-list APIs and used by connector domain code.
  */
 export type AppInfo = { id: string, name: string, description: string | null, logoUrl: string | null, logoUrlDark: string | null, distributionChannel: string | null, branding: AppBranding | null, appMetadata: AppMetadata | null, labels: { [key in string]?: string } | null, installUrl: string | null, isAccessible: boolean,
 /**

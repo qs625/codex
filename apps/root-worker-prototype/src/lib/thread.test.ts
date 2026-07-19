@@ -24,8 +24,8 @@ import {
   queuePendingThreadUpdate,
   threadDisplayStatusClass,
   threadStatusClass,
-  treeThreadStatusClass,
-  treeThreadStatusLabel,
+  treeThreadLifecycleStatusClass,
+  treeThreadLifecycleStatusLabel,
   updateThreadItem,
   updateThreadTurn,
   updateThreadTurnLifecycle,
@@ -47,7 +47,7 @@ function makeThread(): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "complete" },
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -133,6 +133,27 @@ function makeThread(): Thread {
         skills: [],
       },
     },
+  };
+}
+
+function collabAgentLifecycleState(
+  status: "completed" | "errored" | "shutdown" | "notFound",
+  message: string | null = "done",
+  path: string | null = "/root/worker",
+): Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>["lifecycleStatus"] {
+  const lifecycleStatus =
+    status === "completed"
+      ? { type: "final" as const, result: { type: "completed" as const, lastAgentMessage: message } }
+      : status === "errored"
+        ? { type: "final" as const, result: { type: "errored" as const, message } }
+        : status === "shutdown"
+          ? { type: "final" as const, result: { type: "shutdown" as const } }
+          : { type: "notLoaded" as const };
+
+  return {
+    path,
+    lifecycleStatus,
+    message,
   };
 }
 
@@ -343,7 +364,7 @@ test("buildProjectAgentSidebar hides duplicate parentless roots for the same pro
     id: "active-root",
     cwd: "/work/project/",
     updatedAt: 1,
-    status: { type: "active", activeFlags: ["running"] },
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
   });
 
   const sidebar = buildProjectAgentSidebar([olderRoot, activeRoot]);
@@ -363,7 +384,7 @@ test("pickInitialProjectThread follows sidebar canonical project root selection"
     id: "active-root",
     cwd: "/work/project",
     updatedAt: 1,
-    status: { type: "active", activeFlags: ["running"] },
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
   });
 
   const picked = pickInitialProjectThread([olderRoot, activeRoot]);
@@ -391,21 +412,21 @@ test("buildProjectAgentSidebar uses root thread status and aggregates project co
   const pm = makeSidebarThread({
     id: "pm",
     cwd: "/work/project",
-    status: { type: "idle", reason: "waitChild" },
+    lifecycleStatus: { type: "waiting" as const, reason: "child" as const },
   });
   const activeOwner = makeSubagentThread("owner", "pm", "/root/owner", {
-    status: { type: "active", activeFlags: ["running"] },
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
   });
   const waitingReviewer = makeSubagentThread(
     "reviewer",
     "pm",
     "/root/reviewer",
     {
-      status: { type: "idle", reason: "waitChild" },
+      lifecycleStatus: { type: "waiting" as const, reason: "child" as const },
     },
   );
   const failedWorker = makeSubagentThread("worker", "pm", "/root/worker", {
-    status: { type: "systemError" },
+    lifecycleStatus: { type: "systemError" as const },
   });
 
   const sidebar = buildProjectAgentSidebar([
@@ -1180,11 +1201,7 @@ test("mergeThreadSnapshot preserves same-content live child completion with diff
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
   const liveThread = updateThreadItem(makeThread(), "live-turn", liveItem, {
     completedAtMs: 3_000,
@@ -2030,10 +2047,7 @@ test("pending thread updates replay when the thread snapshot arrives", () => {
       senderPath: "/root/worker",
       recipientThreadId: "thread-1",
       recipientPath: "/root",
-      status: {
-        status: "completed",
-        message: "done",
-      },
+      lifecycleStatus: collabAgentLifecycleState("completed", "done", null),
     }),
   );
 
@@ -2051,10 +2065,7 @@ test("pending thread updates replay when the thread snapshot arrives", () => {
           senderPath: "/root/worker",
           recipientThreadId: "thread-1",
           recipientPath: "/root",
-          status: {
-            status: "completed",
-            message: "done",
-          },
+          lifecycleStatus: collabAgentLifecycleState("completed", "done", null),
         },
       ],
       itemsView: "full",
@@ -2076,10 +2087,7 @@ for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
       senderPath: "/root/worker",
       recipientThreadId: "thread-1",
       recipientPath: "/root",
-      status: {
-        status: terminalStatus,
-        message: "done",
-      },
+      lifecycleStatus: collabAgentLifecycleState(terminalStatus, "done", null),
     });
 
     const updated = updateThreadItem(thread, "turn-1", {
@@ -2089,10 +2097,7 @@ for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
       senderPath: "/root/worker",
       recipientThreadId: "thread-1",
       recipientPath: "/root",
-      status: {
-        status: terminalStatus,
-        message: "done",
-      },
+      lifecycleStatus: collabAgentLifecycleState(terminalStatus, "done", null),
     });
 
     assert.deepEqual(updated.turns[0]?.items, [
@@ -2103,10 +2108,7 @@ for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
-          status: terminalStatus,
-          message: "done",
-        },
+        lifecycleStatus: collabAgentLifecycleState(terminalStatus, "done", null),
       },
       {
         type: "collabAgentStatusUpdate",
@@ -2115,10 +2117,7 @@ for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
-          status: terminalStatus,
-          message: "done",
-        },
+        lifecycleStatus: collabAgentLifecycleState(terminalStatus, "done", null),
       },
     ]);
   });
@@ -2132,11 +2131,7 @@ test("collab status item notifications target the recipient thread", () => {
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
 
   assert.deepEqual(
@@ -2224,11 +2219,7 @@ test("collab status completion notifications join the active parent turn", () =>
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
 
   const updatedRoot = updateThreadItem(activeThread, "turn-child", item, {
@@ -2315,11 +2306,7 @@ test("collab status item completion updates an existing synthetic recipient turn
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
   const runningRoot = updateThreadItem(makeThread(), "turn-child", item, {
     startedAtMs: 2_000,
@@ -2393,11 +2380,7 @@ test("child completion synthetic turn moves before later parent messages", () =>
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
   const withSyntheticChildCompletion = updateThreadItem(
     parentThread,
@@ -2441,11 +2424,7 @@ test("turn lifecycle updates preserve live child completion items", () => {
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
   const liveThread: Thread = {
     ...makeThread(),
@@ -2539,11 +2518,7 @@ test("metadata updates preserve repeated terminal collab status live items", () 
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
   const secondCompletion: ThreadItem = {
     ...firstCompletion,
@@ -2587,11 +2562,7 @@ test("direct collab status completion notifications create completed synthetic t
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
 
   assert.equal(
@@ -2641,7 +2612,7 @@ test("direct collab status completion notifications create completed synthetic t
 test("terminal child status does not hide restored conversation history or keep loaded thread active", () => {
   const restoredThread: Thread = {
     ...makeThread(),
-    status: { type: "complete" },
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
     turns: [
       {
         id: "turn-user",
@@ -2676,11 +2647,7 @@ test("terminal child status does not hide restored conversation history or keep 
     senderPath: "/root/worker/tester",
     recipientThreadId: "thread-1",
     recipientPath: "/root/worker",
-    status: {
-      path: "/root/worker/tester",
-      status: "shutdown",
-      message: "completed",
-    },
+    lifecycleStatus: collabAgentLifecycleState("shutdown", "completed", "/root/worker/tester"),
   };
   const updated = updateThreadItem(restoredThread, "turn-child", childStatus, {
     completedAtMs: 3_000,
@@ -2735,11 +2702,7 @@ test("initialized live child completion preserves existing assistant messages", 
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
 
   const [updated] = applyInitializedThreadUpdate(
@@ -2773,11 +2736,7 @@ test("uninitialized live child completion does not create display turn cache", (
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
 
   const updatedThreads = applyInitializedThreadUpdate(
@@ -2806,11 +2765,7 @@ test("collab status item notifications stay on the notification thread unless se
     senderPath: "/root/worker",
     recipientThreadId: "thread-1",
     recipientPath: "/root",
-    status: {
-      path: "/root/worker",
-      status: "completed",
-      message: "done",
-    },
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
 
   assert.deepEqual(getThreadItemNotificationTargetThreadIds("thread-1", item), [
@@ -3254,13 +3209,10 @@ test("threadStatusClass treats active thread status as doing", () => {
   );
 });
 
-test("treeThreadStatusClass keeps self active thread green", () => {
+test("treeThreadLifecycleStatusClass keeps self active thread green", () => {
   const thread = {
     ...makeThread(),
-    status: {
-      type: "active" as const,
-      activeFlags: [],
-    },
+    lifecycleStatus: { type: "active" as const, activeFlags: [] },
     turns: [
       {
         id: "turn-1",
@@ -3283,32 +3235,26 @@ test("treeThreadStatusClass keeps self active thread green", () => {
     ],
   };
 
-  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "doing");
+  assert.equal(treeThreadLifecycleStatusClass(makeTreeNode(thread)), "doing");
 });
 
-test("treeThreadStatusClass shows subagent waiting separately", () => {
+test("treeThreadLifecycleStatusClass shows subagent waiting separately", () => {
   const thread = {
     ...makeThread(),
-    status: {
-      type: "idle" as const,
-      reason: "waitChild" as const,
-    },
+    lifecycleStatus: { type: "waiting" as const, reason: "child" as const },
   } satisfies Thread;
 
-  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "waiting-subagent");
+  assert.equal(treeThreadLifecycleStatusClass(makeTreeNode(thread)), "waiting-subagent");
   assert.equal(
-    treeThreadStatusLabel("waiting-subagent"),
+    treeThreadLifecycleStatusLabel("waiting-subagent"),
     "Waiting on subagent",
   );
 });
 
-test("treeThreadStatusClass ignores item-derived subagent waits", () => {
+test("treeThreadLifecycleStatusClass ignores item-derived subagent waits", () => {
   const thread = {
     ...makeThread(),
-    status: {
-      type: "active" as const,
-      activeFlags: [],
-    },
+    lifecycleStatus: { type: "active" as const, activeFlags: [] },
     turns: [
       {
         id: "turn-1",
@@ -3345,45 +3291,37 @@ test("treeThreadStatusClass ignores item-derived subagent waits", () => {
     ],
   };
 
-  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "doing");
+  assert.equal(treeThreadLifecycleStatusClass(makeTreeNode(thread)), "doing");
 });
 
-test("treeThreadStatusClass shows event tool waiting separately", () => {
+test("treeThreadLifecycleStatusClass shows event tool waiting separately", () => {
   const thread = {
     ...makeThread(),
-    status: {
-      type: "idle" as const,
-      reason: "waitCommand" as const,
-    },
+    lifecycleStatus: { type: "waiting" as const, reason: "command" as const },
   } satisfies Thread;
 
   assert.equal(
-    treeThreadStatusClass(makeTreeNode(thread)),
+    treeThreadLifecycleStatusClass(makeTreeNode(thread)),
     "waiting-eventtool",
   );
 });
 
-test("treeThreadStatusClass prioritizes backend event tool flags over subagent flags", () => {
+test("treeThreadLifecycleStatusClass prioritizes backend event tool flags over subagent flags", () => {
   const thread = {
     ...makeThread(),
-    status: {
-      type: "idle" as const,
-      reason: "waitCommand" as const,
-    },
+    lifecycleStatus: { type: "waiting" as const, reason: "command" as const },
   } satisfies Thread;
 
   assert.equal(
-    treeThreadStatusClass(makeTreeNode(thread)),
+    treeThreadLifecycleStatusClass(makeTreeNode(thread)),
     "waiting-eventtool",
   );
 });
 
-test("treeThreadStatusClass ignores process exit restore failures when backend status is idle", () => {
+test("treeThreadLifecycleStatusClass ignores process exit restore failures when backend status is idle", () => {
   const thread = {
     ...makeThread(),
-    status: {
-      type: "complete" as const,
-    },
+    lifecycleStatus: { type: "final" as const, result: { type: "completed" as const } },
     turns: [
       {
         id: "turn-1",
@@ -3414,15 +3352,13 @@ test("treeThreadStatusClass ignores process exit restore failures when backend s
     ],
   };
 
-  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "todo");
+  assert.equal(treeThreadLifecycleStatusClass(makeTreeNode(thread)), "todo");
 });
 
-test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe when backend status is idle", () => {
+test("treeThreadLifecycleStatusClass ignores event tool subscriptions after unsubscribe when backend status is idle", () => {
   const thread = {
     ...makeThread(),
-    status: {
-      type: "complete" as const,
-    },
+    lifecycleStatus: { type: "final" as const, result: { type: "completed" as const } },
     turns: [
       {
         id: "turn-1",
@@ -3454,34 +3390,28 @@ test("treeThreadStatusClass ignores event tool subscriptions after unsubscribe w
     ],
   };
 
-  assert.equal(treeThreadStatusClass(makeTreeNode(thread)), "todo");
+  assert.equal(treeThreadLifecycleStatusClass(makeTreeNode(thread)), "todo");
 });
 
-test("treeThreadStatusClass uses backend parent wait-child status directly", () => {
+test("treeThreadLifecycleStatusClass uses backend parent wait-child status directly", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
-    status: {
-      type: "idle" as const,
-      reason: "waitChild" as const,
-    },
+    lifecycleStatus: { type: "waiting" as const, reason: "child" as const },
   };
   const child = {
     ...makeThread(),
     id: "child",
-    status: {
-      type: "active" as const,
-      activeFlags: [],
-    },
+    lifecycleStatus: { type: "active" as const, activeFlags: [] },
   };
 
   assert.equal(
-    treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
+    treeThreadLifecycleStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
     "waiting-subagent",
   );
 });
 
-test("treeThreadStatusClass does not infer parent status from active descendants", () => {
+test("treeThreadLifecycleStatusClass does not infer parent status from active descendants", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
@@ -3489,19 +3419,16 @@ test("treeThreadStatusClass does not infer parent status from active descendants
   const activeChild = {
     ...makeThread(),
     id: "active-child",
-    status: {
-      type: "active" as const,
-      activeFlags: [],
-    },
+    lifecycleStatus: { type: "active" as const, activeFlags: [] },
   };
 
   assert.equal(
-    treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(activeChild)])),
+    treeThreadLifecycleStatusClass(makeTreeNode(parent, [makeTreeNode(activeChild)])),
     "todo",
   );
 });
 
-test("treeThreadStatusClass does not infer parent status from descendant waits", () => {
+test("treeThreadLifecycleStatusClass does not infer parent status from descendant waits", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
@@ -3509,19 +3436,16 @@ test("treeThreadStatusClass does not infer parent status from descendant waits",
   const child = {
     ...makeThread(),
     id: "child",
-    status: {
-      type: "idle" as const,
-      reason: "waitCommand" as const,
-    },
+    lifecycleStatus: { type: "waiting" as const, reason: "command" as const },
   } satisfies Thread;
 
   assert.equal(
-    treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
+    treeThreadLifecycleStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
     "todo",
   );
 });
 
-test("treeThreadStatusClass does not infer parent status from descendant errors", () => {
+test("treeThreadLifecycleStatusClass does not infer parent status from descendant errors", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
@@ -3529,18 +3453,16 @@ test("treeThreadStatusClass does not infer parent status from descendant errors"
   const child = {
     ...makeThread(),
     id: "child",
-    status: {
-      type: "systemError" as const,
-    },
+    lifecycleStatus: { type: "systemError" as const },
   };
 
   assert.equal(
-    treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
+    treeThreadLifecycleStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
     "todo",
   );
 });
 
-test("treeThreadStatusClass leaves inactive trees unchanged", () => {
+test("treeThreadLifecycleStatusClass leaves inactive trees unchanged", () => {
   const parent = {
     ...makeThread(),
     id: "parent",
@@ -3551,7 +3473,7 @@ test("treeThreadStatusClass leaves inactive trees unchanged", () => {
   };
 
   assert.equal(
-    treeThreadStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
+    treeThreadLifecycleStatusClass(makeTreeNode(parent, [makeTreeNode(child)])),
     "todo",
   );
 });
@@ -3676,18 +3598,18 @@ test("buildCurrentThreadTodoItems only returns direct child threads", () => {
   );
 });
 
-test("getPresenceLabel surfaces canonical thread status", () => {
+test("getPresenceLabel surfaces canonical thread lifecycle status", () => {
   assert.equal(
     getPresenceLabel({
-      type: "idle",
-      reason: "waitCommand",
+      type: "waiting",
+      reason: "command",
     }),
     "Waiting on Event Tool",
   );
   assert.equal(
     getPresenceLabel({
-      type: "idle",
-      reason: "waitChild",
+      type: "waiting",
+      reason: "child",
     }),
     "Waiting on Subagent",
   );
@@ -3721,8 +3643,9 @@ test("getPresenceLabel surfaces canonical thread status", () => {
   );
   assert.equal(
     getPresenceLabel({
-      type: "idle",
-    } as Thread["status"]),
+      type: "final",
+      result: { type: "completed" },
+    }),
     "Complete",
   );
 });
@@ -3730,10 +3653,7 @@ test("getPresenceLabel surfaces canonical thread status", () => {
 test("isThreadThinking stays false while a turn only injects init context", () => {
   const thread: Thread = {
     ...makeThread(),
-    status: {
-      type: "active" as const,
-      activeFlags: ["waitingOnUserInput"],
-    },
+    lifecycleStatus: { type: "active" as const, activeFlags: ["waitingOnUserInput"] },
     turns: [
       {
         id: "turn-1",
@@ -3773,9 +3693,7 @@ test("isThreadThinking stays false while a turn only injects init context", () =
 test("isThreadThinking ignores item-derived running state when backend status is idle", () => {
   const thread = {
     ...makeThread(),
-    status: {
-      type: "complete" as const,
-    },
+    lifecycleStatus: { type: "final" as const, result: { type: "completed" as const } },
     turns: [
       {
         id: "turn-1",
@@ -3813,10 +3731,7 @@ test("isThreadThinking ignores item-derived running state when backend status is
 test("isThreadThinking follows backend running active flag", () => {
   const thread: Thread = {
     ...makeThread(),
-    status: {
-      type: "active" as const,
-      activeFlags: ["running"],
-    },
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
     turns: [
       {
         id: "turn-1",

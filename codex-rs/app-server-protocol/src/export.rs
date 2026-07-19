@@ -937,6 +937,10 @@ fn build_schema_bundle(schemas: Vec<GeneratedSchema>) -> Result<Value> {
             continue;
         }
 
+        let logical_prefix = logical_name
+            .rsplit_once('/')
+            .map(|(prefix, _)| prefix.to_string());
+
         if let Value::Object(ref mut obj) = value
             && let Some(defs) = obj.remove("definitions")
             && let Value::Object(defs_obj) = defs
@@ -948,9 +952,25 @@ fn build_schema_bundle(schemas: Vec<GeneratedSchema>) -> Result<Value> {
                 if SPECIAL_DEFINITIONS.contains(&def_name.as_str()) {
                     continue;
                 }
+                if let Some(prefix) = logical_prefix.as_deref() {
+                    prefix_schema_definition_refs(&mut def_schema, prefix);
+                }
                 annotate_schema(&mut def_schema, Some(def_name.as_str()));
-                insert_definition(&mut definitions, def_name, def_schema, "root definitions")?;
+                let bundled_def_name = logical_prefix
+                    .as_deref()
+                    .map(|prefix| format!("{prefix}/{def_name}"))
+                    .unwrap_or(def_name);
+                insert_definition(
+                    &mut definitions,
+                    bundled_def_name,
+                    def_schema,
+                    "root definitions",
+                )?;
             }
+        }
+
+        if let Some(prefix) = logical_prefix.as_deref() {
+            prefix_schema_definition_refs(&mut value, prefix);
         }
 
         insert_definition(&mut definitions, logical_name, value, "root definitions")?;
@@ -978,7 +998,7 @@ fn insert_definition(
     location: &str,
 ) -> Result<()> {
     if let Some(existing) = definitions.get(&name) {
-        if existing == &schema {
+        if existing == &schema || schemas_equal_ignoring_definition_metadata(existing, &schema) {
             return Ok(());
         }
 
@@ -997,6 +1017,50 @@ fn insert_definition(
 
     definitions.insert(name, schema);
     Ok(())
+}
+
+fn schemas_equal_ignoring_definition_metadata(left: &Value, right: &Value) -> bool {
+    fn strip_metadata(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut stripped = Map::new();
+                for (key, child) in map {
+                    if matches!(key.as_str(), "$schema" | "title" | "description") {
+                        continue;
+                    }
+                    stripped.insert(key.clone(), strip_metadata(child));
+                }
+                Value::Object(stripped)
+            }
+            Value::Array(items) => Value::Array(items.iter().map(strip_metadata).collect()),
+            _ => value.clone(),
+        }
+    }
+
+    strip_metadata(left) == strip_metadata(right)
+}
+
+fn prefix_schema_definition_refs(value: &mut Value, prefix: &str) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(reference)) = map.get_mut("$ref")
+                && let Some(definition_name) = reference.strip_prefix("#/definitions/")
+                && !definition_name.contains('/')
+            {
+                *reference = format!("#/definitions/{prefix}/{definition_name}");
+            }
+
+            for child in map.values_mut() {
+                prefix_schema_definition_refs(child, prefix);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                prefix_schema_definition_refs(item, prefix);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn write_json_schema_with_return<T>(out_dir: &Path, name: &str) -> Result<GeneratedSchema>

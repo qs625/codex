@@ -20,7 +20,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     reasoningEffort: "high",
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "complete" },
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
     path: null,
     cwd: "/tmp",
     cliVersion: "test",

@@ -71,7 +71,7 @@ impl ThreadRequestProcessor {
             .into_iter()
             .map(|mut thread| {
                 if let Some(status) = statuses.get(&thread.id) {
-                    thread.status = status.clone();
+                    thread.lifecycle_status = status.clone();
                 }
                 thread
             })
@@ -840,7 +840,7 @@ mod restore_persisted_injected_context_turns_tests {
             model_provider: "mock_provider".to_string(),
             created_at: 1,
             updated_at: 1,
-            status: ThreadStatus::Complete,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
             path: None,
             cwd: codex_utils_absolute_path::test_support::test_path_buf("/tmp").abs(),
             cli_version: "0.0.0".to_string(),

@@ -51,6 +51,7 @@ use protocol::models::ResponseItem;
 use protocol::openai_models::ReasoningEffort;
 use protocol::permissions::FileSystemSandboxPolicy;
 use protocol::protocol::AgentStatus;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::EventMsg;
 use protocol::protocol::McpServerRefreshConfig;
@@ -259,7 +260,7 @@ pub struct ThreadCloseAgentResult {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadListedAgent {
     pub agent_name: String,
-    pub agent_status: AgentStatus,
+    pub lifecycle_status: ThreadLifecycleStatus,
     pub last_task_message: Option<String>,
 }
 

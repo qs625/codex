@@ -330,10 +330,13 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
         }
         ThreadItem::CollabAgentStatusUpdate {
             recipient_path,
-            status,
+            lifecycle_status,
             ..
         } => vec![
-            format!("agent status: {} · {:?}", recipient_path, status.status)
+            format!(
+                "agent status: {} · {:?}",
+                recipient_path, lifecycle_status.lifecycle_status
+            )
                 .dim()
                 .into(),
         ],

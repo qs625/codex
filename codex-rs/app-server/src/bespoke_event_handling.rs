@@ -63,7 +63,7 @@ use app_server_protocol::ThreadRealtimeTranscriptDeltaNotification;
 use app_server_protocol::ThreadRealtimeTranscriptDoneNotification;
 use app_server_protocol::ThreadRollbackResponse;
 use app_server_protocol::ThreadSkillsUpdatedNotification;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadTokenUsage;
 use app_server_protocol::ThreadTokenUsageUpdatedNotification;
 use app_server_protocol::ToolRequestUserInputOption;

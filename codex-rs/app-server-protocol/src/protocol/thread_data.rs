@@ -1,6 +1,6 @@
 use super::CodexErrorInfo;
 use super::ThreadItem;
-use super::ThreadStatus;
+use super::ThreadLifecycleStatus;
 use super::ThreadTokenUsage;
 use super::TurnStatus;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -333,8 +333,8 @@ pub struct Thread {
     /// Unix timestamp (in seconds) when the thread was last updated.
     #[cfg_attr(feature = "schema-export", ts(type = "number"))]
     pub updated_at: i64,
-    /// Current runtime status for the thread.
-    pub status: ThreadStatus,
+    /// Current runtime lifecycle status for the thread.
+    pub lifecycle_status: ThreadLifecycleStatus,
     /// [UNSTABLE] Path to the thread on disk.
     pub path: Option<PathBuf>,
     /// Working directory captured for the thread.

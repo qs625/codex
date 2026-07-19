@@ -1,7 +1,6 @@
     use super::*;
     use crate::protocol::CollabAgentOperation;
     use crate::protocol::CollabAgentState;
-    use crate::protocol::CollabAgentStatus;
     use crate::protocol::CollabAgentTool;
     use crate::protocol::CollabAgentToolCallStatus;
     use crate::protocol::CommandExecutionStatus;
@@ -11,6 +10,8 @@
     use crate::protocol::DynamicToolCallStatus;
     use crate::protocol::InjectedContextSection;
     use crate::protocol::McpToolCallResult;
+    use crate::protocol::ThreadLifecycleFinalStatus;
+    use crate::protocol::ThreadLifecycleStatus;
     use crate::protocol::McpToolCallStatus;
     use crate::protocol::ThreadItem;
     use crate::protocol::TurnStatus;

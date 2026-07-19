@@ -16,7 +16,7 @@ function makeThread(items: Thread["turns"][number]["items"], skills: Thread["ski
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "active", activeFlags: [] },
+    lifecycleStatus: { type: "active" as const, activeFlags: [] },
     path: null,
     cwd: "/tmp",
     cliVersion: "test",

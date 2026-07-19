@@ -310,6 +310,7 @@ mod tests {
     use protocol::protocol::ThreadContextUsageCategoryBreakdown;
     use protocol::protocol::ThreadContextUsageLoadedSkills;
     use protocol::protocol::ThreadContextUsageToolBreakdown;
+    use protocol::protocol::ThreadLifecycleStatus;
     use protocol::protocol::ThreadContextUsageUpdatedEvent;
 
     #[test]
@@ -583,7 +584,7 @@ mod tests {
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
                 prompt: "continue".into(),
-                status: AgentStatus::Completed(None),
+                status: ThreadLifecycleStatus::completed(None),
             }),
             EventMsg::CollabWaitingBegin(CollabWaitingBeginEvent {
                 call_id: "wait-begin".into(),
@@ -600,8 +601,8 @@ mod tests {
                 sender_thread_id,
                 sender_agent_path: sender_agent_path.clone(),
                 timeout_ms: 30_000,
-                agent_statuses: Vec::new(),
-                statuses: [(receiver_thread_id, AgentStatus::Completed(None))]
+                agent_lifecycles: Vec::new(),
+                lifecycle_statuses: [(receiver_thread_id, ThreadLifecycleStatus::completed(None))]
                     .into_iter()
                     .collect(),
             }),
@@ -622,7 +623,7 @@ mod tests {
                 receiver_agent_path: receiver_agent_path.clone(),
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
-                status: AgentStatus::Completed(None),
+                status: ThreadLifecycleStatus::completed(None),
             }),
             EventMsg::CollabResumeBegin(CollabResumeBeginEvent {
                 call_id: "resume-begin".into(),
@@ -643,7 +644,7 @@ mod tests {
                 receiver_agent_path,
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
-                status: AgentStatus::Completed(None),
+                status: ThreadLifecycleStatus::completed(None),
             }),
         ];
 

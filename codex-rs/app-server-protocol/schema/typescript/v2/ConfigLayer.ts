@@ -4,4 +4,7 @@
 import type { JsonValue } from "../serde_json/JsonValue";
 import type { ConfigLayerSource } from "./ConfigLayerSource";
 
+/**
+ * Serialized view of one configuration layer.
+ */
 export type ConfigLayer = { name: ConfigLayerSource, version: string, config: JsonValue, disabledReason: string | null, };

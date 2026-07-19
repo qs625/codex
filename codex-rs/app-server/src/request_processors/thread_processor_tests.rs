@@ -54,7 +54,7 @@ mod thread_processor_behavior_tests {
     use app_server_protocol::CommandExecutionStatus;
     use app_server_protocol::ServerRequestPayload;
     use app_server_protocol::SessionSource as ApiSessionSource;
-    use app_server_protocol::ThreadIdleReason;
+    use app_server_protocol::ThreadLifecycleWaitReason;
     use app_server_protocol::ThreadItem;
     use app_server_protocol::ToolRequestUserInputParams;
     use chrono::DateTime;
@@ -231,9 +231,7 @@ mod thread_processor_behavior_tests {
             .await;
         assert_eq!(
             status,
-            ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitEventSubscription,
-            }
+            ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::EventSubscription }
         );
 
         sync_active_event_subscriptions(
@@ -248,7 +246,7 @@ mod thread_processor_behavior_tests {
             thread_watch_manager
                 .loaded_status_for_thread(&thread_id.to_string())
                 .await,
-            ThreadStatus::Complete
+            ThreadLifecycleStatus::completed(None)
         );
     }
 
@@ -343,7 +341,7 @@ mod thread_processor_behavior_tests {
 
         let turns = reconstruct_thread_turns_for_turns_list(
             &persisted_items,
-            ThreadStatus::Complete,
+            ThreadLifecycleStatus::completed(None),
             /*has_live_running_thread*/ false,
             Some(active_turn.clone()),
         );
@@ -429,7 +427,7 @@ mod thread_processor_behavior_tests {
 
         let turns = reconstruct_thread_turns_for_turns_list(
             &persisted_items,
-            ThreadStatus::Complete,
+            ThreadLifecycleStatus::completed(None),
             /*has_live_running_thread*/ false,
             state.active_in_progress_turn_snapshot(),
         );
@@ -467,7 +465,7 @@ mod thread_processor_behavior_tests {
             model_provider: "mock_provider".to_string(),
             created_at: 0,
             updated_at: 0,
-            status: ThreadStatus::Complete,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: "0.0.0".to_string(),

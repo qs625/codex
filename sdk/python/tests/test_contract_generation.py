@@ -35,10 +35,10 @@ def _snapshot_targets(root: Path) -> dict[str, dict[str, bytes] | bytes | None]:
 
 
 def test_generated_files_are_up_to_date():
-    """Regenerating from the pinned runtime package should leave artifacts unchanged."""
+    """Regenerating from the checkout schema should leave artifacts unchanged."""
     before = _snapshot_targets(ROOT)
 
-    # Regenerate contract artifacts via the pinned runtime package, not a local
+    # Regenerate contract artifacts from the checked-in schema, not a local
     # app-server binary from the checkout or CI environment.
     assert importlib.metadata.version("openai-codex-cli-bin") == "0.131.0a4"
     env = os.environ.copy()

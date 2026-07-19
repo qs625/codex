@@ -22,6 +22,8 @@ use protocol::protocol::ExecCommandSource as CoreExecCommandSource;
 use protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 use protocol::protocol::InterAgentOperation as CoreInterAgentOperation;
 use protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
+use protocol::protocol::ThreadLifecycleFinalStatus;
+use protocol::protocol::ThreadLifecycleStatus;
 #[cfg(feature = "schema-export")]
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -440,7 +442,7 @@ pub enum ThreadItem {
         sender_path: String,
         recipient_thread_id: Option<String>,
         recipient_path: String,
-        status: CollabAgentState,
+        lifecycle_status: CollabAgentState,
     },
     #[serde(rename_all = "camelCase")]
     #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
@@ -926,64 +928,57 @@ pub enum CollabAgentToolCallStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
-pub enum CollabAgentStatus {
-    PendingInit,
-    Running,
-    Interrupted,
-    Completed,
-    Errored,
-    Shutdown,
-    NotFound,
-}
-
-#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "schema-export", ts(export))]
 pub struct CollabAgentState {
     pub path: Option<String>,
-    pub status: CollabAgentStatus,
+    pub lifecycle_status: ThreadLifecycleStatus,
     pub message: Option<String>,
 }
 
 impl From<CoreAgentStatus> for CollabAgentState {
     fn from(value: CoreAgentStatus) -> Self {
-        match value {
-            CoreAgentStatus::PendingInit => Self {
-                path: None,
-                status: CollabAgentStatus::PendingInit,
-                message: None,
-            },
-            CoreAgentStatus::Running => Self {
-                path: None,
-                status: CollabAgentStatus::Running,
-                message: None,
-            },
-            CoreAgentStatus::Interrupted => Self {
-                path: None,
-                status: CollabAgentStatus::Interrupted,
-                message: None,
-            },
-            CoreAgentStatus::Completed(message) => Self {
-                path: None,
-                status: CollabAgentStatus::Completed,
-                message,
-            },
-            CoreAgentStatus::Errored(message) => Self {
-                path: None,
-                status: CollabAgentStatus::Errored,
-                message: Some(message),
-            },
-            CoreAgentStatus::Shutdown => Self {
-                path: None,
-                status: CollabAgentStatus::Shutdown,
-                message: None,
-            },
-            CoreAgentStatus::NotFound => Self {
-                path: None,
-                status: CollabAgentStatus::NotFound,
-                message: None,
-            },
+        Self::from(core_agent_status_to_lifecycle_status(value))
+    }
+}
+
+impl From<ThreadLifecycleStatus> for CollabAgentState {
+    fn from(lifecycle_status: ThreadLifecycleStatus) -> Self {
+        let message = match &lifecycle_status {
+            ThreadLifecycleStatus::Final {
+                result:
+                    ThreadLifecycleFinalStatus::Completed {
+                        last_agent_message,
+                    },
+            } => last_agent_message.clone(),
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Errored { message },
+            }
+            | ThreadLifecycleStatus::SystemError { message } => message.clone(),
+            _ => None,
+        };
+        Self {
+            path: None,
+            lifecycle_status,
+            message,
         }
+    }
+}
+
+fn core_agent_status_to_lifecycle_status(status: CoreAgentStatus) -> ThreadLifecycleStatus {
+    match status {
+        CoreAgentStatus::PendingInit => ThreadLifecycleStatus::Initializing,
+        CoreAgentStatus::Running => ThreadLifecycleStatus::Active {
+            active_flags: Vec::new(),
+        },
+        CoreAgentStatus::Interrupted => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        },
+        CoreAgentStatus::Completed(last_agent_message) => {
+            ThreadLifecycleStatus::completed(last_agent_message)
+        }
+        CoreAgentStatus::Errored(message) => ThreadLifecycleStatus::errored(Some(message)),
+        CoreAgentStatus::Shutdown => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        },
+        CoreAgentStatus::NotFound => ThreadLifecycleStatus::NotLoaded,
     }
 }

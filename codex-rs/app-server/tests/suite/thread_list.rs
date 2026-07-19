@@ -11,7 +11,7 @@ use app_server_protocol::ThreadSortKey;
 use app_server_protocol::ThreadSourceKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
 use app_server_protocol::UserInput;
@@ -285,7 +285,7 @@ async fn thread_list_reports_system_error_idle_flag_after_failed_turn() -> Resul
         .iter()
         .find(|candidate| candidate.id == thread.id)
         .expect("expected started thread to be listed");
-    assert_eq!(listed.status, ThreadStatus::SystemError,);
+    assert_eq!(listed.lifecycle_status, ThreadLifecycleStatus::system_error(None),);
 
     Ok(())
 }
@@ -382,7 +382,7 @@ async fn thread_list_pagination_next_cursor_none_on_last_page() -> Result<()> {
         assert_eq!(thread.cli_version, "0.0.0");
         assert_eq!(thread.source, SessionSource::Cli);
         assert_eq!(thread.git_info, None);
-        assert_eq!(thread.status, ThreadStatus::NotLoaded);
+        assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
     }
     let cursor1 = cursor1.expect("expected nextCursor on first page");
 
@@ -410,7 +410,7 @@ async fn thread_list_pagination_next_cursor_none_on_last_page() -> Result<()> {
         assert_eq!(thread.cli_version, "0.0.0");
         assert_eq!(thread.source, SessionSource::Cli);
         assert_eq!(thread.git_info, None);
-        assert_eq!(thread.status, ThreadStatus::NotLoaded);
+        assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
     }
     assert_eq!(cursor2, None, "expected nextCursor to be null on last page");
 

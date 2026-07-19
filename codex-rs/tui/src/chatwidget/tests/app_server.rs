@@ -91,8 +91,7 @@ async fn collab_spawn_end_shows_requested_model_and_effort() {
                     spawned_thread_id.to_string(),
                     AppServerCollabAgentState {
                         path: None,
-                        status: AppServerCollabAgentStatus::PendingInit,
-                        message: None,
+                        lifecycle_status: AppServerThreadLifecycleStatus::Initializing,
                     },
                 )]),
             },
@@ -500,16 +499,18 @@ async fn live_app_server_collab_wait_items_render_history() {
                         receiver_thread_id.to_string(),
                         AppServerCollabAgentState {
                             path: None,
-                            status: AppServerCollabAgentStatus::Completed,
-                            message: Some("Done".to_string()),
+                            lifecycle_status: AppServerThreadLifecycleStatus::completed(Some(
+                                "Done".to_string(),
+                            )),
                         },
                     ),
                     (
                         other_receiver_thread_id.to_string(),
                         AppServerCollabAgentState {
                             path: None,
-                            status: AppServerCollabAgentStatus::Running,
-                            message: None,
+                            lifecycle_status: AppServerThreadLifecycleStatus::Active {
+                                active_flags: Vec::new(),
+                            },
                         },
                     ),
                 ]),
@@ -578,8 +579,7 @@ async fn live_app_server_collab_spawn_completed_renders_requested_model_and_effo
                     spawned_thread_id.to_string(),
                     AppServerCollabAgentState {
                         path: None,
-                        status: AppServerCollabAgentStatus::PendingInit,
-                        message: None,
+                        lifecycle_status: AppServerThreadLifecycleStatus::Initializing,
                     },
                 )]),
             },

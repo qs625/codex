@@ -286,7 +286,7 @@ pub(super) fn thread_rollback_response_from_stored_thread(
     session_id: String,
     fallback_model_provider: &str,
     fallback_cwd: &AbsolutePathBuf,
-    loaded_status: ThreadStatus,
+    loaded_status: ThreadLifecycleStatus,
 ) -> std::result::Result<ThreadRollbackResponse, String> {
     let thread_id = stored_thread.thread_id;
     let (mut thread, history) =
@@ -298,7 +298,7 @@ pub(super) fn thread_rollback_response_from_stored_thread(
         ));
     };
     populate_thread_turns_from_history(&mut thread, &history.items, /*active_turn*/ None);
-    thread.status = loaded_status;
+    thread.lifecycle_status = loaded_status;
     Ok(ThreadRollbackResponse { thread })
 }
 

@@ -14,7 +14,7 @@ use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
@@ -133,7 +133,7 @@ async fn thread_fork_creates_new_thread_and_emits_started() -> Result<()> {
     assert_eq!(thread.forked_from_id, Some(conversation_id.clone()));
     assert_eq!(thread.preview, preview);
     assert_eq!(thread.model_provider, "mock_provider");
-    assert_eq!(thread.status, ThreadStatus::Complete);
+    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
     let thread_path = thread.path.clone().expect("thread path");
     assert!(thread_path.as_path().is_absolute());
     assert_ne!(thread_path.as_path(), original_path);
@@ -592,7 +592,7 @@ async fn thread_fork_ephemeral_remains_pathless_and_omits_listing() -> Result<()
         "ephemeral forks should not expose a path"
     );
     assert_eq!(thread.preview, preview);
-    assert_eq!(thread.status, ThreadStatus::Complete);
+    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
     assert_eq!(thread.name, None);
     assert_eq!(thread.turns.len(), 1, "expected copied fork history");
 

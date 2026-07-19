@@ -1,7 +1,6 @@
 use super::*;
 use app_server_protocol::CollabAgentOperation;
 use app_server_protocol::CollabAgentState;
-use app_server_protocol::CollabAgentStatus;
 use app_server_protocol::CollabAgentTool;
 use app_server_protocol::CollabAgentToolCallStatus;
 use app_server_protocol::CommandExecutionStatus;
@@ -12,6 +11,8 @@ use app_server_protocol::DynamicToolCallStatus;
 use app_server_protocol::InjectedContextSection;
 use app_server_protocol::McpToolCallError;
 use app_server_protocol::McpToolCallResult;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::McpToolCallStatus;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::TurnStatus;

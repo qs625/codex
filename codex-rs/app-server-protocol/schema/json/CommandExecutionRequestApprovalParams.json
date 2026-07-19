@@ -197,22 +197,16 @@
     "CommandExecutionApprovalDecision": {
       "oneOf": [
         {
-          "description": "User approved the command.",
           "enum": [
-            "accept"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "User approved the command and future prompts in the same session-scoped approval cache should run without prompting.",
-          "enum": [
-            "acceptForSession"
+            "accept",
+            "acceptForSession",
+            "decline",
+            "cancel"
           ],
           "type": "string"
         },
         {
           "additionalProperties": false,
-          "description": "User approved the command, and wants to apply the proposed execpolicy amendment so future matching commands can run without prompting.",
           "properties": {
             "acceptWithExecpolicyAmendment": {
               "properties": {
@@ -237,7 +231,6 @@
         },
         {
           "additionalProperties": false,
-          "description": "User chose a persistent network policy rule (allow/deny) for this host.",
           "properties": {
             "applyNetworkPolicyAmendment": {
               "properties": {
@@ -256,20 +249,6 @@
           ],
           "title": "ApplyNetworkPolicyAmendmentCommandExecutionApprovalDecision",
           "type": "object"
-        },
-        {
-          "description": "User denied the command. The agent will continue the turn.",
-          "enum": [
-            "decline"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "User denied the command. The turn will also be immediately interrupted.",
-          "enum": [
-            "cancel"
-          ],
-          "type": "string"
         }
       ]
     },
@@ -518,21 +497,18 @@
   },
   "properties": {
     "approvalId": {
-      "description": "Unique identifier for this specific approval callback.\n\nFor regular shell/unified_exec approvals, this is null.\n\nFor zsh-exec-bridge subcommand approvals, multiple callbacks can belong to one parent `itemId`, so `approvalId` is a distinct opaque callback id (a UUID) used to disambiguate routing.",
       "type": [
         "string",
         "null"
       ]
     },
     "command": {
-      "description": "The command to be executed.",
       "type": [
         "string",
         "null"
       ]
     },
     "commandActions": {
-      "description": "Best-effort parsed command actions for friendly display.",
       "items": {
         "$ref": "#/definitions/CommandAction"
       },
@@ -549,8 +525,7 @@
         {
           "type": "null"
         }
-      ],
-      "description": "The command's working directory."
+      ]
     },
     "itemId": {
       "type": "string"
@@ -563,11 +538,9 @@
         {
           "type": "null"
         }
-      ],
-      "description": "Optional context for a managed-network approval prompt."
+      ]
     },
     "proposedExecpolicyAmendment": {
-      "description": "Optional proposed execpolicy amendment to allow similar commands without prompting.",
       "items": {
         "type": "string"
       },
@@ -577,7 +550,6 @@
       ]
     },
     "proposedNetworkPolicyAmendments": {
-      "description": "Optional proposed network policy amendments (allow/deny host) for future requests.",
       "items": {
         "$ref": "#/definitions/NetworkPolicyAmendment"
       },
@@ -587,14 +559,12 @@
       ]
     },
     "reason": {
-      "description": "Optional explanatory reason (e.g. request for network access).",
       "type": [
         "string",
         "null"
       ]
     },
     "startedAtMs": {
-      "description": "Unix timestamp (in milliseconds) when this approval request started.",
       "format": "int64",
       "type": "integer"
     },

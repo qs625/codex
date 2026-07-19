@@ -11,22 +11,22 @@ use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::AgentPathReservation;
 use codex_agent_runtime::AgentRegistry;
-use codex_agent_runtime::AgentThreadActivityInputs;
 use codex_agent_runtime::ListedAgent;
 use codex_agent_runtime::LiveAgent;
 use codex_agent_runtime::SpawnAgentOptions;
 use codex_agent_runtime::SpawnReservation;
+use codex_agent_runtime::ThreadLifecycleInputs;
 use codex_agent_runtime::ThreadSpawnChild;
 use codex_agent_runtime::ThreadSpawnPlanInput;
 use codex_agent_runtime::agent_status_from_event;
 use codex_agent_runtime::agent_subtree_thread_ids;
-use codex_agent_runtime::agent_thread_is_active_from_inputs;
 use codex_agent_runtime::any_agent_thread_active;
 use codex_agent_runtime::build_thread_spawn_children_by_parent;
 use codex_agent_runtime::current_agent_path_for_session;
 use codex_agent_runtime::direct_subagent_paths_from_children;
 use codex_agent_runtime::is_final;
 use codex_agent_runtime::list_agents_plan;
+use codex_agent_runtime::normalized_thread_lifecycle_from_inputs;
 use codex_agent_runtime::prepare_thread_spawn_plan;
 use codex_agent_runtime::render_input_preview;
 use codex_agent_runtime::resolve_agent_reference_path;
@@ -38,11 +38,13 @@ use codex_agent_runtime::should_release_agent_after_thread_request_error;
 use codex_agent_runtime::thread_spawn_depth;
 use codex_agent_runtime::thread_spawn_descendants;
 use codex_agent_runtime::thread_spawn_parent_thread_id;
+use codex_agent_runtime::thread_lifecycle_is_active;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
 use chrono::DateTime;
 use chrono::Utc;
 use protocol::AgentPath;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::SessionId;
 use protocol::ThreadId;
 use protocol::error::CodexErr;
@@ -762,17 +764,8 @@ impl AgentControl {
     /// used by thread status: current turn, active event subscriptions, or
     /// non-final lifecycle status.
     pub(crate) async fn agent_thread_is_active(&self, agent_id: ThreadId) -> bool {
-        let Ok(state) = self.upgrade() else {
-            return agent_thread_is_active_from_inputs(AgentThreadActivityInputs::default());
-        };
-        let snapshot = state.live_thread_activity_snapshot(agent_id).await;
-        agent_thread_is_active_from_inputs(AgentThreadActivityInputs {
-            manager_available: snapshot.manager_available,
-            active_event_subscription_count: snapshot.active_event_subscription_count,
-            thread_found: snapshot.thread_found,
-            has_active_turn: snapshot.has_active_turn,
-            status: snapshot.status,
-        })
+        let lifecycle = Box::pin(self.normalized_thread_lifecycle(agent_id)).await;
+        thread_lifecycle_is_active(&lifecycle)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1238,7 +1231,7 @@ impl AgentControl {
         current_session_source: &SessionSource,
         path_prefix: Option<&str>,
     ) -> CodexResult<Vec<ListedAgent>> {
-        let state = self.upgrade()?;
+        let _state = self.upgrade()?;
         let current_agent_path = self
             .current_agent_path_with_persisted_metadata(current_thread_id, current_session_source)
             .await;
@@ -1259,27 +1252,53 @@ impl AgentControl {
         let root_path = AgentPath::root();
         if plan.include_root
             && let Some(root_thread_id) = self.state.agent_id_for_path(&root_path)
-            && let Ok(agent_status) = state.live_thread_agent_status(root_thread_id).await
+            && let Some(lifecycle_status) = self
+                .listed_thread_lifecycle(root_thread_id)
+                .await
         {
-            agents.push(root_listed_agent(agent_status));
+            agents.push(root_listed_agent(lifecycle_status));
         }
 
         for candidate in plan.candidates {
-            let agent_status = match state.live_thread_agent_status(candidate.thread_id).await {
-                Ok(status) => Some(status),
-                Err(_) => self.persisted_final_agent_status(candidate.thread_id).await,
-            };
-            let Some(agent_status) = agent_status else {
+            let lifecycle_status = self.listed_thread_lifecycle(candidate.thread_id).await;
+            let Some(lifecycle_status) = lifecycle_status else {
                 continue;
             };
             agents.push(ListedAgent {
                 agent_name: candidate.agent_name,
-                agent_status,
+                lifecycle_status,
                 last_task_message: candidate.last_task_message,
             });
         }
 
         Ok(agents)
+    }
+
+    async fn listed_thread_lifecycle(&self, thread_id: ThreadId) -> Option<ThreadLifecycleStatus> {
+        let lifecycle = Box::pin(self.normalized_thread_lifecycle(thread_id)).await;
+        if matches!(lifecycle, ThreadLifecycleStatus::NotLoaded) {
+            None
+        } else {
+            Some(lifecycle)
+        }
+    }
+
+    pub(crate) async fn normalized_thread_lifecycle(
+        &self,
+        thread_id: ThreadId,
+    ) -> ThreadLifecycleStatus {
+        let Ok(state) = self.upgrade() else {
+            return normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs::default());
+        };
+        let snapshot = state.live_thread_activity_snapshot(thread_id).await;
+        normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+            manager_available: snapshot.manager_available,
+            active_event_subscription_count: snapshot.active_event_subscription_count,
+            thread_found: snapshot.thread_found,
+            has_active_turn: snapshot.has_active_turn,
+            live_agent_status: snapshot.status,
+            persisted_final_agent_status: self.persisted_final_agent_status(thread_id).await,
+        })
     }
 
     async fn registered_agents_with_persisted_descendants(

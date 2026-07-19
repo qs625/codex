@@ -618,13 +618,12 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
         .expect("spawn completion should include child agent state");
     assert!(
         matches!(
-            agent_state.status,
-            CollabAgentStatus::PendingInit | CollabAgentStatus::Running
+            agent_state.lifecycle_status,
+            ThreadLifecycleStatus::Initializing | ThreadLifecycleStatus::Active { .. }
         ),
         "child agent should still be initializing or already running, got {:?}",
-        agent_state.status
+        agent_state.lifecycle_status
     );
-    assert_eq!(agent_state.message, None);
 
     let turn_completed = timeout(DEFAULT_READ_TIMEOUT, async {
         loop {
@@ -805,13 +804,12 @@ config_file = "./custom-role.toml"
         .expect("spawn completion should include child agent state");
     assert!(
         matches!(
-            agent_state.status,
-            CollabAgentStatus::PendingInit | CollabAgentStatus::Running
+            agent_state.lifecycle_status,
+            ThreadLifecycleStatus::Initializing | ThreadLifecycleStatus::Active { .. }
         ),
         "child agent should still be initializing or already running, got {:?}",
-        agent_state.status
+        agent_state.lifecycle_status
     );
-    assert_eq!(agent_state.message, None);
 
     let turn_completed = timeout(DEFAULT_READ_TIMEOUT, async {
         loop {

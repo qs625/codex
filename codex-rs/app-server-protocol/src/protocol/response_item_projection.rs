@@ -88,7 +88,7 @@ pub fn thread_item_from_inter_agent_communication(
                 .recipient_thread_id
                 .map(|value| value.to_string()),
             recipient_path: communication.recipient.to_string(),
-            status,
+            lifecycle_status: status,
         };
     }
 

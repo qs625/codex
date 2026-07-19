@@ -2,11 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildThreadAnalysis } from "./threadAnalysis";
-import type { Thread, ThreadStatus } from "../types";
+import type { Thread, ThreadLifecycleStatus } from "../types";
 
 function makeThread(
   items: Thread["turns"][number]["items"],
-  status: ThreadStatus = { type: "complete" },
+  lifecycleStatus: ThreadLifecycleStatus = {
+    type: "final",
+    result: { type: "completed" },
+  },
 ): Thread {
   return {
     id: "thread-1",
@@ -19,7 +22,7 @@ function makeThread(
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status,
+    lifecycleStatus,
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -200,7 +203,7 @@ test("keeps in-progress command statuses active", () => {
           durationMs: null,
         },
       ],
-      { type: "idle", reason: "waitCommand" },
+      { type: "waiting", reason: "command" },
     ),
     0,
   );
@@ -225,7 +228,7 @@ test("keeps live commands visible while thread waits on a child", () => {
           durationMs: null,
         },
       ],
-      { type: "idle", reason: "waitChild" },
+      { type: "waiting", reason: "child" },
     ),
     0,
   );
@@ -283,7 +286,7 @@ test("uses command notification as latest live command event", () => {
           createdAtMs: 1,
         },
       ],
-      { type: "idle", reason: "waitCommand" },
+      { type: "waiting", reason: "command" },
     ),
     0,
   );

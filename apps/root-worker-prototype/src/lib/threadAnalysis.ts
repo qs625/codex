@@ -315,13 +315,13 @@ function threadAllowsLiveCommandMonitors(thread: Thread | null) {
   if (!thread) {
     return false;
   }
-  if (thread.status.type === "active") {
-    return thread.status.activeFlags.includes("running");
+  if (thread.lifecycleStatus.type === "active") {
+    return thread.lifecycleStatus.activeFlags.includes("running");
   }
   return (
-    thread.status.type === "idle" &&
-    (thread.status.reason === "waitCommand" ||
-      thread.status.reason === "waitChild")
+    thread.lifecycleStatus.type === "waiting" &&
+    (thread.lifecycleStatus.reason === "command" ||
+      thread.lifecycleStatus.reason === "child")
   );
 }
 

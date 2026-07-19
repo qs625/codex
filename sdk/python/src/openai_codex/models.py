@@ -22,7 +22,6 @@ from .generated.v2_all import (
     McpServerOauthLoginCompletedNotification,
     McpToolCallProgressNotification,
     PlanDeltaNotification,
-    RawResponseItemCompletedNotification,
     ReasoningSummaryPartAddedNotification,
     ReasoningSummaryTextDeltaNotification,
     ReasoningTextDeltaNotification,
@@ -64,7 +63,6 @@ NotificationPayload: TypeAlias = (
     | McpServerOauthLoginCompletedNotification
     | McpToolCallProgressNotification
     | PlanDeltaNotification
-    | RawResponseItemCompletedNotification
     | ReasoningSummaryPartAddedNotification
     | ReasoningSummaryTextDeltaNotification
     | ReasoningTextDeltaNotification

@@ -235,7 +235,7 @@ impl ThreadRequestProcessor {
             return;
         };
         let mut loaded_thread = build_thread_from_live_snapshot(thread_id, &live_snapshot);
-        loaded_thread.status = resolve_thread_status(
+        loaded_thread.lifecycle_status = resolve_thread_status(
             self.thread_watch_manager
                 .loaded_status_for_thread(&loaded_thread.id)
                 .await,
@@ -519,7 +519,7 @@ impl ThreadRequestProcessor {
             ))
             .await;
 
-        thread.status = resolve_thread_status(
+        thread.lifecycle_status = resolve_thread_status(
             listener_task_context
                 .thread_watch_manager
                 .loaded_status_for_thread(&thread.id)
@@ -948,7 +948,7 @@ impl ThreadRequestProcessor {
             thread.session_id = live_info.session_id.to_string();
         }
         self.attach_thread_name(thread_uuid, &mut thread).await;
-        thread.status = resolve_thread_status(
+        thread.lifecycle_status = resolve_thread_status(
             self.thread_watch_manager
                 .loaded_status_for_thread(&thread.id)
                 .await,
@@ -1000,7 +1000,7 @@ impl ThreadRequestProcessor {
         let (mut thread, _) =
             thread_from_stored_thread(stored_thread, fallback_provider.as_str(), &self.config.cwd);
 
-        thread.status = resolve_thread_status(
+        thread.lifecycle_status = resolve_thread_status(
             self.thread_watch_manager
                 .loaded_status_for_thread(&thread.id)
                 .await,

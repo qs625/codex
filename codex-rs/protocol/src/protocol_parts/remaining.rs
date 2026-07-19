@@ -44,8 +44,8 @@ pub struct CollabListAgentsBeginEvent {
 pub struct CollabListedAgent {
     /// Canonical path of the listed agent.
     pub agent_path: String,
-    /// Last known status of the listed agent.
-    pub status: AgentStatus,
+    /// Last known lifecycle of the listed agent.
+    pub lifecycle_status: ThreadLifecycleStatus,
     /// Last task message recorded for the listed agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_task_message: Option<String>,
@@ -99,11 +99,11 @@ pub struct CollabWaitingEndEvent {
     pub completed_at_ms: i64,
     /// Timeout requested for the wait call, in milliseconds.
     pub timeout_ms: i64,
-    /// Optional receiver metadata paired with final statuses.
+    /// Optional receiver metadata paired with final lifecycle statuses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub agent_statuses: Vec<CollabAgentStatusEntry>,
-    /// Last known status of the receiver agents reported to the sender agent.
-    pub statuses: HashMap<ThreadId, AgentStatus>,
+    pub agent_lifecycles: Vec<CollabAgentLifecycleEntry>,
+    /// Last known lifecycle statuses of the receiver agents reported to the sender agent.
+    pub lifecycle_statuses: HashMap<ThreadId, ThreadLifecycleStatus>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

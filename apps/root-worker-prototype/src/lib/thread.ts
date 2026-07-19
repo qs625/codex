@@ -1,12 +1,12 @@
 import type {
   TaskFilter,
   Thread,
-  ThreadActiveFlag,
+  ThreadLifecycleActiveFlag,
   ThreadItem,
   ProjectAgentSidebar,
   SidebarProjectNode,
   ThreadSkill,
-  ThreadStatus,
+  ThreadLifecycleStatus,
   TodoCardItem,
   TreeNode,
   Turn,
@@ -138,7 +138,7 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
         label: projectLabelFromCwd(cwd),
         subtitle: cwd,
         cwd,
-        statusClass: selfTreeThreadStatusClass(rootThread),
+        statusClass: selfTreeThreadLifecycleStatusClass(rootThread),
         updatedAt: Math.max(...projectThreadList.map((thread) => thread.updatedAt)),
         tree: projectTree,
         descendantCount: countDescendants(projectTree),
@@ -205,7 +205,7 @@ function buildTodoCardItems(threads: Thread[]): TodoCardItem[] {
   return [...threads]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .map((thread) => {
-      const status = mapTaskStatus(thread.status);
+      const status = mapTaskStatus(thread.lifecycleStatus);
       return {
         id: thread.id,
         title: getThreadLabel(thread),
@@ -374,28 +374,28 @@ export function isProjectRootThread(thread: Thread) {
   return isRootThread(thread) && projectCwd !== null && !isChatCompatCwd(projectCwd);
 }
 
-export function getPresenceLabel(status: ThreadStatus) {
-  if (status.type === "active") {
-    return getActivePresenceLabel(status.activeFlags);
+export function getPresenceLabel(lifecycleStatus: ThreadLifecycleStatus) {
+  if (lifecycleStatus.type === "active") {
+    return getActivePresenceLabel(lifecycleStatus.activeFlags);
   }
 
-  switch (status.type) {
+  switch (lifecycleStatus.type) {
     case "systemError":
       return "System Error";
     case "notLoaded":
       return "Not Loaded";
-    case "idle":
-      if (status.reason === "waitCommand") {
+    case "waiting":
+      if (lifecycleStatus.reason === "command") {
         return "Waiting on Event Tool";
       }
-      if (status.reason === "waitChild") {
+      if (lifecycleStatus.reason === "child") {
         return "Waiting on Subagent";
       }
-      if (status.reason === "waitEventSubscription") {
+      if (lifecycleStatus.reason === "eventSubscription") {
         return "Waiting on Subscription";
       }
       return "Complete";
-    case "complete":
+    case "final":
       return "Complete";
     default:
       return "Idle";
@@ -406,14 +406,14 @@ export function getThreadPresenceLabel(thread: Thread | null) {
   if (!thread) {
     return "Idle";
   }
-  return getPresenceLabel(thread.status);
+  return getPresenceLabel(thread.lifecycleStatus);
 }
 
 export function threadDisplayStatusClass(thread: Thread | null) {
   if (!thread) {
     return threadStatusClass({ type: "notLoaded" });
   }
-  return threadStatusClass(thread.status);
+  return threadStatusClass(thread.lifecycleStatus);
 }
 
 export function getThreadModelLabel(thread: Thread | null) {
@@ -1008,8 +1008,8 @@ export function isThreadThinking(
   }
 
   return (
-    thread?.status.type === "active" &&
-    thread.status.activeFlags.includes("running")
+    thread?.lifecycleStatus.type === "active" &&
+    thread.lifecycleStatus.activeFlags.includes("running")
   );
 }
 
@@ -1243,18 +1243,18 @@ function preferMoreCompleteText(existing: string, next: string) {
   return next;
 }
 
-export function threadStatusClass(status: ThreadStatus) {
-  switch (status.type) {
+export function threadStatusClass(lifecycleStatus: ThreadLifecycleStatus) {
+  switch (lifecycleStatus.type) {
     case "active":
       return "doing";
-    case "idle":
-      if (status.reason === "waitCommand") {
+    case "waiting":
+      if (lifecycleStatus.reason === "command") {
         return "waiting-eventtool";
       }
-      if (status.reason === "waitChild") {
+      if (lifecycleStatus.reason === "child") {
         return "waiting-subagent";
       }
-      if (status.reason === "waitEventSubscription") {
+      if (lifecycleStatus.reason === "eventSubscription") {
         return "waiting-subscription";
       }
       return "todo";
@@ -1265,7 +1265,7 @@ export function threadStatusClass(status: ThreadStatus) {
   }
 }
 
-export type TreeThreadStatusClass =
+export type TreeThreadLifecycleStatusClass =
   | "todo"
   | "doing"
   | "blocked"
@@ -1274,11 +1274,11 @@ export type TreeThreadStatusClass =
   | "waiting-eventtool"
   | "waiting-subscription";
 
-export function treeThreadStatusClass(node: TreeNode): TreeThreadStatusClass {
-  return node.thread ? selfTreeThreadStatusClass(node.thread) : "todo";
+export function treeThreadLifecycleStatusClass(node: TreeNode): TreeThreadLifecycleStatusClass {
+  return node.thread ? selfTreeThreadLifecycleStatusClass(node.thread) : "todo";
 }
 
-export function treeThreadStatusLabel(statusClass: TreeThreadStatusClass) {
+export function treeThreadLifecycleStatusLabel(statusClass: TreeThreadLifecycleStatusClass) {
   switch (statusClass) {
     case "doing":
       return "Active";
@@ -1297,23 +1297,23 @@ export function treeThreadStatusLabel(statusClass: TreeThreadStatusClass) {
   }
 }
 
-function selfTreeThreadStatusClass(thread: Thread): TreeThreadStatusClass {
-  if (thread.status.type === "systemError") {
+function selfTreeThreadLifecycleStatusClass(thread: Thread): TreeThreadLifecycleStatusClass {
+  if (thread.lifecycleStatus.type === "systemError") {
     return "blocked";
   }
-  if (thread.status.type === "idle") {
-    if (thread.status.reason === "waitCommand") {
+  if (thread.lifecycleStatus.type === "waiting") {
+    if (thread.lifecycleStatus.reason === "command") {
       return "waiting-eventtool";
     }
-    if (thread.status.reason === "waitChild") {
+    if (thread.lifecycleStatus.reason === "child") {
       return "waiting-subagent";
     }
-    if (thread.status.reason === "waitEventSubscription") {
+    if (thread.lifecycleStatus.reason === "eventSubscription") {
       return "waiting-subscription";
     }
     return "todo";
   }
-  if (thread.status.type === "active") {
+  if (thread.lifecycleStatus.type === "active") {
     return "doing";
   }
   return "todo";
@@ -1341,8 +1341,8 @@ function projectLabelFromCwd(cwd: string) {
 
 function compareCanonicalProjectRoot(left: Thread, right: Thread) {
   const statusDelta =
-    canonicalProjectRootPriority(right.status) -
-    canonicalProjectRootPriority(left.status);
+    canonicalProjectRootPriority(right.lifecycleStatus) -
+    canonicalProjectRootPriority(left.lifecycleStatus);
   if (statusDelta !== 0) {
     return statusDelta;
   }
@@ -1355,17 +1355,17 @@ function compareCanonicalProjectRoot(left: Thread, right: Thread) {
   return left.id.localeCompare(right.id);
 }
 
-function canonicalProjectRootPriority(status: ThreadStatus) {
-  if (status.type === "systemError") {
+function canonicalProjectRootPriority(lifecycleStatus: ThreadLifecycleStatus) {
+  if (lifecycleStatus.type === "systemError") {
     return 4;
   }
-  if (status.type === "active") {
+  if (lifecycleStatus.type === "active" || lifecycleStatus.type === "initializing") {
     return 3;
   }
-  if (status.type === "idle") {
+  if (lifecycleStatus.type === "waiting") {
     return 2;
   }
-  if (status.type === "notLoaded") {
+  if (lifecycleStatus.type === "notLoaded") {
     return 1;
   }
   return 0;
@@ -1424,8 +1424,8 @@ function collectTreeThreads(node: TreeNode): Thread[] {
   ];
 }
 
-function aggregateSidebarStatus(threads: Thread[]): TreeThreadStatusClass {
-  const statusClasses = threads.map(selfTreeThreadStatusClass);
+function aggregateSidebarStatus(threads: Thread[]): TreeThreadLifecycleStatusClass {
+  const statusClasses = threads.map(selfTreeThreadLifecycleStatusClass);
   if (statusClasses.includes("blocked")) {
     return "blocked";
   }
@@ -1452,7 +1452,7 @@ function countSidebarStatuses(threads: Thread[]) {
   let waitingCount = 0;
   let failedCount = 0;
   for (const thread of threads) {
-    const statusClass = selfTreeThreadStatusClass(thread);
+    const statusClass = selfTreeThreadLifecycleStatusClass(thread);
     if (statusClass === "doing") {
       activeCount += 1;
     } else if (statusClass === "blocked") {
@@ -1499,15 +1499,15 @@ export function trimThreadId(threadId: string) {
   return threadId.slice(0, 8);
 }
 
-function mapTaskStatus(status: ThreadStatus): Exclude<TaskFilter, "all"> {
-  const mapped = threadStatusClass(status);
+function mapTaskStatus(lifecycleStatus: ThreadLifecycleStatus): Exclude<TaskFilter, "all"> {
+  const mapped = threadStatusClass(lifecycleStatus);
   if (mapped === "blocked" || mapped === "doing") {
     return mapped;
   }
   return "todo";
 }
 
-function getActivePresenceLabel(activeFlags: ThreadActiveFlag[]) {
+function getActivePresenceLabel(activeFlags: ThreadLifecycleActiveFlag[]) {
   if (activeFlags.includes("waitingOnApproval")) {
     return "Waiting on Approval";
   }

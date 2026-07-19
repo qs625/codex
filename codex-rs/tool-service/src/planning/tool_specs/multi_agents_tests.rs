@@ -232,12 +232,12 @@ fn list_agents_tool_includes_path_prefix_and_agent_fields() {
     );
     assert_eq!(
         output_schema.expect("list_agents output schema")["properties"]["agents"]["items"]["required"],
-        json!(["agent_name", "agent_status", "last_task_message"])
+        json!(["agent_name", "lifecycle_status", "last_task_message"])
     );
 }
 
 #[test]
-fn list_agents_tool_status_schema_includes_interrupted() {
+fn list_agents_tool_lifecycle_schema_includes_interrupted_final() {
     let ToolSpec::Function(ResponsesApiTool { output_schema, .. }) = create_list_agents_tool()
     else {
         panic!("list_agents should be a function tool");
@@ -245,13 +245,7 @@ fn list_agents_tool_status_schema_includes_interrupted() {
 
     assert_eq!(
         output_schema.expect("list_agents output schema")["properties"]["agents"]["items"]["properties"]
-            ["agent_status"]["allOf"][0]["oneOf"][0]["enum"],
-        json!([
-            "pending_init",
-            "running",
-            "interrupted",
-            "shutdown",
-            "not_found"
-        ])
+            ["lifecycle_status"]["allOf"][0]["oneOf"][4]["properties"]["result"]["oneOf"][2]["properties"]["type"]["enum"],
+        json!(["interrupted"])
     );
 }

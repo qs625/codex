@@ -16,7 +16,7 @@ use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::TurnEnvironmentParams;
 use app_test_support::ChatGptAuthFixture;
@@ -174,7 +174,7 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
         !thread.ephemeral,
         "new persistent threads should not be ephemeral"
     );
-    assert_eq!(thread.status, ThreadStatus::Complete);
+    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     let ThreadItem::InjectedContext {
         title,
@@ -956,7 +956,7 @@ async fn thread_start_emits_mcp_server_status_updated_notifications() -> Result<
         anyhow::bail!("unexpected notification variant");
     };
     assert_eq!(failed.name, "optional_broken");
-    assert_eq!(failed.status, McpServerStartupState::Failed);
+    assert_eq!(failed.lifecycle_status, McpServerStartupState::Failed);
     assert!(
         failed
             .error

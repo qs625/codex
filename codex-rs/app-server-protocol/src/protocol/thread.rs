@@ -20,9 +20,12 @@ use protocol::config_types::Personality;
 use protocol::models::ResponseItem;
 use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::ThreadGoalStatus as CoreThreadGoalStatus;
+pub use protocol::protocol::ThreadLifecycleActiveFlag;
+pub use protocol::protocol::ThreadLifecycleFinalStatus;
+pub use protocol::protocol::ThreadLifecycleStatus;
+pub use protocol::protocol::ThreadLifecycleWaitReason;
 use protocol::protocol::TokenUsage as CoreTokenUsage;
 use protocol::protocol::TokenUsageInfo as CoreTokenUsageInfo;
-#[cfg(feature = "schema-export")]
 #[cfg(feature = "schema-export")]
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -30,7 +33,6 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::PathBuf;
-#[cfg(feature = "schema-export")]
 #[cfg(feature = "schema-export")]
 use ts_rs::TS;
 
@@ -1035,47 +1037,6 @@ pub struct ThreadLoadedListResponse {
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[cfg_attr(feature = "schema-export", ts(tag = "type"))]
-#[cfg_attr(feature = "schema-export", ts(export))]
-pub enum ThreadStatus {
-    NotLoaded,
-    #[serde(rename_all = "camelCase")]
-    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
-    Idle {
-        reason: ThreadIdleReason,
-    },
-    Complete,
-    SystemError,
-    #[serde(rename_all = "camelCase")]
-    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
-    Active {
-        active_flags: Vec<ThreadActiveFlag>,
-    },
-}
-
-#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "schema-export", ts(export))]
-pub enum ThreadIdleReason {
-    WaitCommand,
-    WaitChild,
-    WaitEventSubscription,
-}
-
-#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "schema-export", ts(export))]
-pub enum ThreadActiveFlag {
-    Running,
-    WaitingOnApproval,
-    WaitingOnUserInput,
-}
-
-#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
 pub struct ThreadReadParams {
@@ -1264,7 +1225,7 @@ pub struct ThreadStartedNotification {
 #[cfg_attr(feature = "schema-export", ts(export))]
 pub struct ThreadStatusChangedNotification {
     pub thread_id: String,
-    pub status: ThreadStatus,
+    pub lifecycle_status: ThreadLifecycleStatus,
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]

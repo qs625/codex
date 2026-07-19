@@ -84,43 +84,6 @@
       },
       "type": "object"
     },
-    "ApplyPatchApprovalParams": {
-      "properties": {
-        "callId": {
-          "description": "Use to correlate this with [protocol::protocol::PatchApplyBeginEvent] and [protocol::protocol::PatchApplyEndEvent].",
-          "type": "string"
-        },
-        "conversationId": {
-          "$ref": "#/definitions/ThreadId"
-        },
-        "fileChanges": {
-          "additionalProperties": {
-            "$ref": "#/definitions/FileChange"
-          },
-          "type": "object"
-        },
-        "grantRoot": {
-          "description": "When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "reason": {
-          "description": "Optional explanatory reason (e.g. request for extra write access).",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "callId",
-        "conversationId",
-        "fileChanges"
-      ],
-      "type": "object"
-    },
     "AttestationGenerateParams": {
       "type": "object"
     },
@@ -266,22 +229,16 @@
     "CommandExecutionApprovalDecision": {
       "oneOf": [
         {
-          "description": "User approved the command.",
           "enum": [
-            "accept"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "User approved the command and future prompts in the same session-scoped approval cache should run without prompting.",
-          "enum": [
-            "acceptForSession"
+            "accept",
+            "acceptForSession",
+            "decline",
+            "cancel"
           ],
           "type": "string"
         },
         {
           "additionalProperties": false,
-          "description": "User approved the command, and wants to apply the proposed execpolicy amendment so future matching commands can run without prompting.",
           "properties": {
             "acceptWithExecpolicyAmendment": {
               "properties": {
@@ -306,7 +263,6 @@
         },
         {
           "additionalProperties": false,
-          "description": "User chose a persistent network policy rule (allow/deny) for this host.",
           "properties": {
             "applyNetworkPolicyAmendment": {
               "properties": {
@@ -325,41 +281,24 @@
           ],
           "title": "ApplyNetworkPolicyAmendmentCommandExecutionApprovalDecision",
           "type": "object"
-        },
-        {
-          "description": "User denied the command. The agent will continue the turn.",
-          "enum": [
-            "decline"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "User denied the command. The turn will also be immediately interrupted.",
-          "enum": [
-            "cancel"
-          ],
-          "type": "string"
         }
       ]
     },
     "CommandExecutionRequestApprovalParams": {
       "properties": {
         "approvalId": {
-          "description": "Unique identifier for this specific approval callback.\n\nFor regular shell/unified_exec approvals, this is null.\n\nFor zsh-exec-bridge subcommand approvals, multiple callbacks can belong to one parent `itemId`, so `approvalId` is a distinct opaque callback id (a UUID) used to disambiguate routing.",
           "type": [
             "string",
             "null"
           ]
         },
         "command": {
-          "description": "The command to be executed.",
           "type": [
             "string",
             "null"
           ]
         },
         "commandActions": {
-          "description": "Best-effort parsed command actions for friendly display.",
           "items": {
             "$ref": "#/definitions/CommandAction"
           },
@@ -376,8 +315,7 @@
             {
               "type": "null"
             }
-          ],
-          "description": "The command's working directory."
+          ]
         },
         "itemId": {
           "type": "string"
@@ -390,11 +328,9 @@
             {
               "type": "null"
             }
-          ],
-          "description": "Optional context for a managed-network approval prompt."
+          ]
         },
         "proposedExecpolicyAmendment": {
-          "description": "Optional proposed execpolicy amendment to allow similar commands without prompting.",
           "items": {
             "type": "string"
           },
@@ -404,7 +340,6 @@
           ]
         },
         "proposedNetworkPolicyAmendments": {
-          "description": "Optional proposed network policy amendments (allow/deny host) for future requests.",
           "items": {
             "$ref": "#/definitions/NetworkPolicyAmendment"
           },
@@ -414,14 +349,12 @@
           ]
         },
         "reason": {
-          "description": "Optional explanatory reason (e.g. request for network access).",
           "type": [
             "string",
             "null"
           ]
         },
         "startedAtMs": {
-          "description": "Unix timestamp (in milliseconds) when this approval request started.",
           "format": "int64",
           "type": "integer"
         },
@@ -471,127 +404,9 @@
       ],
       "type": "object"
     },
-    "ExecCommandApprovalParams": {
-      "properties": {
-        "approvalId": {
-          "description": "Identifier for this specific approval callback.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "callId": {
-          "description": "Use to correlate this with [protocol::protocol::ExecCommandBeginEvent] and [protocol::protocol::ExecCommandEndEvent].",
-          "type": "string"
-        },
-        "command": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "conversationId": {
-          "$ref": "#/definitions/ThreadId"
-        },
-        "cwd": {
-          "type": "string"
-        },
-        "parsedCmd": {
-          "items": {
-            "$ref": "#/definitions/ParsedCommand"
-          },
-          "type": "array"
-        },
-        "reason": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "callId",
-        "command",
-        "conversationId",
-        "cwd",
-        "parsedCmd"
-      ],
-      "type": "object"
-    },
-    "FileChange": {
-      "oneOf": [
-        {
-          "properties": {
-            "content": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "add"
-              ],
-              "title": "AddFileChangeType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "content",
-            "type"
-          ],
-          "title": "AddFileChange",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "content": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "delete"
-              ],
-              "title": "DeleteFileChangeType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "content",
-            "type"
-          ],
-          "title": "DeleteFileChange",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "move_path": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "enum": [
-                "update"
-              ],
-              "title": "UpdateFileChangeType",
-              "type": "string"
-            },
-            "unified_diff": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "unified_diff"
-          ],
-          "title": "UpdateFileChange",
-          "type": "object"
-        }
-      ]
-    },
     "FileChangeRequestApprovalParams": {
       "properties": {
         "grantRoot": {
-          "description": "[UNSTABLE] When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today).",
           "type": [
             "string",
             "null"
@@ -601,14 +416,12 @@
           "type": "string"
         },
         "reason": {
-          "description": "Optional explanatory reason (e.g. request for extra write access).",
           "type": [
             "string",
             "null"
           ]
         },
         "startedAtMs": {
-          "description": "Unix timestamp (in milliseconds) when this approval request started.",
           "format": "int64",
           "type": "integer"
         },
@@ -1474,117 +1287,6 @@
       ],
       "type": "string"
     },
-    "ParsedCommand": {
-      "oneOf": [
-        {
-          "properties": {
-            "cmd": {
-              "type": "string"
-            },
-            "name": {
-              "type": "string"
-            },
-            "path": {
-              "description": "(Best effort) Path to the file being read by the command. When possible, this is an absolute path, though when relative, it should be resolved against the `cwd`` that will be used to run the command to derive the absolute path.",
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "read"
-              ],
-              "title": "ReadParsedCommandType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "cmd",
-            "name",
-            "path",
-            "type"
-          ],
-          "title": "ReadParsedCommand",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "cmd": {
-              "type": "string"
-            },
-            "path": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "enum": [
-                "list_files"
-              ],
-              "title": "ListFilesParsedCommandType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "cmd",
-            "type"
-          ],
-          "title": "ListFilesParsedCommand",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "cmd": {
-              "type": "string"
-            },
-            "path": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "query": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "enum": [
-                "search"
-              ],
-              "title": "SearchParsedCommandType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "cmd",
-            "type"
-          ],
-          "title": "SearchParsedCommand",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "cmd": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "unknown"
-              ],
-              "title": "UnknownParsedCommandType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "cmd",
-            "type"
-          ],
-          "title": "UnknownParsedCommand",
-          "type": "object"
-        }
-      ]
-    },
     "PermissionsRequestApprovalParams": {
       "properties": {
         "cwd": {
@@ -1661,11 +1363,7 @@
       },
       "type": "object"
     },
-    "ThreadId": {
-      "type": "string"
-    },
     "ToolRequestUserInputOption": {
-      "description": "EXPERIMENTAL. Defines a single selectable option for request_user_input.",
       "properties": {
         "description": {
           "type": "string"
@@ -1681,7 +1379,6 @@
       "type": "object"
     },
     "ToolRequestUserInputParams": {
-      "description": "EXPERIMENTAL. Params sent with a request_user_input event.",
       "properties": {
         "itemId": {
           "type": "string"
@@ -1708,7 +1405,6 @@
       "type": "object"
     },
     "ToolRequestUserInputQuestion": {
-      "description": "EXPERIMENTAL. Represents one request_user_input question and its required options.",
       "properties": {
         "header": {
           "type": "string"
@@ -1944,56 +1640,6 @@
         "params"
       ],
       "title": "Attestation/generateRequest",
-      "type": "object"
-    },
-    {
-      "description": "DEPRECATED APIs below Request to approve a patch. This request is used for Turns started via the legacy APIs (i.e. SendUserTurn, SendUserMessage).",
-      "properties": {
-        "id": {
-          "$ref": "#/definitions/RequestId"
-        },
-        "method": {
-          "enum": [
-            "applyPatchApproval"
-          ],
-          "title": "ApplyPatchApprovalRequestMethod",
-          "type": "string"
-        },
-        "params": {
-          "$ref": "#/definitions/ApplyPatchApprovalParams"
-        }
-      },
-      "required": [
-        "id",
-        "method",
-        "params"
-      ],
-      "title": "ApplyPatchApprovalRequest",
-      "type": "object"
-    },
-    {
-      "description": "Request to exec a command. This request is used for Turns started via the legacy APIs (i.e. SendUserTurn, SendUserMessage).",
-      "properties": {
-        "id": {
-          "$ref": "#/definitions/RequestId"
-        },
-        "method": {
-          "enum": [
-            "execCommandApproval"
-          ],
-          "title": "ExecCommandApprovalRequestMethod",
-          "type": "string"
-        },
-        "params": {
-          "$ref": "#/definitions/ExecCommandApprovalParams"
-        }
-      },
-      "required": [
-        "id",
-        "method",
-        "params"
-      ],
-      "title": "ExecCommandApprovalRequest",
       "type": "object"
     }
   ],

@@ -297,7 +297,7 @@ pub(crate) fn summary_to_thread(
         model_provider,
         created_at: created_at.map(|dt| dt.timestamp()).unwrap_or(0),
         updated_at: updated_at.map(|dt| dt.timestamp()).unwrap_or(0),
-        status: ThreadStatus::NotLoaded,
+        lifecycle_status: ThreadLifecycleStatus::NotLoaded,
         path: (!path.as_os_str().is_empty()).then_some(path),
         cwd,
         cli_version,

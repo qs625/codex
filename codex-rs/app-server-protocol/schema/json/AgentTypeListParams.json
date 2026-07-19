@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "cwd": {
+      "description": "Workspace path whose config should be used for agent role discovery.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "AgentTypeListParams",
+  "type": "object"
+}

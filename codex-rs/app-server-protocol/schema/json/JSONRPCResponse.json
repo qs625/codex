@@ -13,7 +13,7 @@
       ]
     }
   },
-  "description": "A successful (non-error) response to a request.",
+  "description": "A successful response to a request.",
   "properties": {
     "id": {
       "$ref": "#/definitions/RequestId"

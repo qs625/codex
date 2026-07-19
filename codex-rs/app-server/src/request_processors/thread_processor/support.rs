@@ -143,7 +143,7 @@ pub(super) fn parse_thread_turns_cursor(cursor: &str) -> Result<ThreadTurnsCurso
 
 pub(super) fn reconstruct_thread_turns_for_turns_list(
     items: &[RolloutItem],
-    loaded_status: ThreadStatus,
+    loaded_status: ThreadLifecycleStatus,
     has_live_running_thread: bool,
     active_turn: Option<Turn>,
 ) -> Vec<Turn> {
@@ -188,7 +188,7 @@ pub(super) async fn load_initial_injected_context_turns(
 
 pub(super) fn initial_injected_context_turns_from_items(items: &[RolloutItem]) -> Vec<Turn> {
     let mut turns =
-        reconstruct_thread_turns_for_turns_list(items, ThreadStatus::Complete, false, None);
+        reconstruct_thread_turns_for_turns_list(items, ThreadLifecycleStatus::completed(None), false, None);
     for turn in &mut turns {
         turn.items
             .retain(|item| matches!(item, ThreadItem::InjectedContext { .. }));
@@ -256,11 +256,11 @@ pub(super) fn current_unix_timestamp_ms() -> i64 {
 
 pub(super) fn normalize_thread_turns_status(
     turns: &mut [Turn],
-    loaded_status: ThreadStatus,
+    loaded_status: ThreadLifecycleStatus,
     has_live_in_progress_turn: bool,
 ) {
     let status = resolve_thread_status(loaded_status, has_live_in_progress_turn);
-    if matches!(status, ThreadStatus::Active { .. }) {
+    if matches!(status, ThreadLifecycleStatus::Active { .. }) {
         return;
     }
     for turn in turns {
@@ -468,7 +468,7 @@ pub(crate) fn thread_from_stored_thread(
         },
         created_at: thread.created_at.timestamp(),
         updated_at: thread.updated_at.timestamp(),
-        status: ThreadStatus::NotLoaded,
+        lifecycle_status: ThreadLifecycleStatus::NotLoaded,
         path,
         cwd,
         cli_version: thread.cli_version,
@@ -741,7 +741,7 @@ pub(super) fn build_thread_from_snapshot(
         model_provider: config_snapshot.model_provider_id.clone(),
         created_at: now,
         updated_at: now,
-        status: ThreadStatus::NotLoaded,
+        lifecycle_status: ThreadLifecycleStatus::NotLoaded,
         path,
         cwd: config_snapshot.cwd.clone(),
         cli_version: env!("CARGO_PKG_VERSION").to_string(),

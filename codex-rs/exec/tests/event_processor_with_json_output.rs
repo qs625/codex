@@ -1,5 +1,4 @@
 use app_server_protocol::CollabAgentState as ApiCollabAgentState;
-use app_server_protocol::CollabAgentStatus as ApiCollabAgentStatus;
 use app_server_protocol::CollabAgentTool;
 use app_server_protocol::CollabAgentToolCallStatus as ApiCollabAgentToolCallStatus;
 use app_server_protocol::CommandAction;
@@ -739,8 +738,9 @@ fn collab_spawn_begin_and_end_emit_item_events() {
                     "thread-child".to_string(),
                     ApiCollabAgentState {
                         path: Some("/root/parent/child".to_string()),
-                        status: ApiCollabAgentStatus::Running,
-                        message: None,
+                        lifecycle_status: app_server_protocol::ThreadLifecycleStatus::Active {
+                            active_flags: Vec::new(),
+                        },
                     },
                 )]),
             },

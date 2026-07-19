@@ -11,7 +11,7 @@ use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadArchiveResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadUnarchiveParams;
 use app_server_protocol::ThreadUnarchiveResponse;
 use app_server_protocol::ThreadUnarchivedNotification;
@@ -172,7 +172,7 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
         unarchived_thread.updated_at > old_timestamp,
         "expected updated_at to be bumped on unarchive"
     );
-    assert_eq!(unarchived_thread.status, ThreadStatus::NotLoaded);
+    assert_eq!(unarchived_thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
 
     // Wire contract: thread title field is `name`, serialized as null when unset.
     let thread_json = unarchive_result
