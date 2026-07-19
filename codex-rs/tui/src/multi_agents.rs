@@ -8,10 +8,11 @@ use crate::history_cell::PlainHistoryCell;
 use crate::render::line_utils::prefix_lines;
 use crate::text_formatting::truncate_text;
 use app_server_protocol::CollabAgentState;
-use app_server_protocol::CollabAgentStatus;
 use app_server_protocol::CollabAgentTool;
 use app_server_protocol::CollabAgentToolCallStatus;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 #[cfg(target_os = "macos")]
@@ -558,15 +559,25 @@ fn status_summary_line(status: Option<&CollabAgentState>, fallback_error: &str) 
 }
 
 fn status_summary_spans(status: &CollabAgentState) -> Vec<Span<'static>> {
-    match status.status {
-        CollabAgentStatus::PendingInit => vec![Span::from("Pending init").cyan()],
-        CollabAgentStatus::Running => vec![Span::from("Running").cyan().bold()],
+    match &status.lifecycle_status {
+        ThreadLifecycleStatus::NotLoaded => vec![Span::from("Not found").red()],
+        ThreadLifecycleStatus::Initializing => vec![Span::from("Pending init").cyan()],
+        ThreadLifecycleStatus::Active { .. } | ThreadLifecycleStatus::Waiting { .. } => {
+            vec![Span::from("Running").cyan().bold()]
+        }
         // Allow `.yellow()`
         #[allow(clippy::disallowed_methods)]
-        CollabAgentStatus::Interrupted => vec![Span::from("Interrupted").yellow()],
-        CollabAgentStatus::Completed => {
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        } => vec![Span::from("Interrupted").yellow()],
+        ThreadLifecycleStatus::Final {
+            result:
+                ThreadLifecycleFinalStatus::Completed {
+                    last_agent_message,
+                },
+        } => {
             let mut spans = vec![Span::from("Completed").green()];
-            if let Some(message) = status.message.as_ref() {
+            if let Some(message) = last_agent_message.as_ref() {
                 let message_preview = truncate_text(
                     &message.split_whitespace().collect::<Vec<_>>().join(" "),
                     COLLAB_AGENT_RESPONSE_PREVIEW_GRAPHEMES,
@@ -578,11 +589,37 @@ fn status_summary_spans(status: &CollabAgentState) -> Vec<Span<'static>> {
             }
             spans
         }
-        CollabAgentStatus::Errored => {
-            error_summary_spans(status.message.as_deref().unwrap_or("Agent errored"))
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Errored { message },
         }
-        CollabAgentStatus::Shutdown => vec![Span::from("Shutdown")],
-        CollabAgentStatus::NotFound => vec![Span::from("Not found").red()],
+        | ThreadLifecycleStatus::SystemError { message } => {
+            error_summary_spans(message.as_deref().unwrap_or("Agent errored"))
+        }
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        } => vec![Span::from("Shutdown")],
+    }
+}
+
+#[cfg(test)]
+fn legacy_agent_lifecycle(status: &str, message: Option<&str>) -> ThreadLifecycleStatus {
+    match status {
+        "pending_init" => ThreadLifecycleStatus::Initializing,
+        "running" => ThreadLifecycleStatus::Active {
+            active_flags: vec![],
+        },
+        "interrupted" => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        },
+        "completed" => ThreadLifecycleStatus::completed(message.map(str::to_string)),
+        "errored" => ThreadLifecycleStatus::errored(message.map(str::to_string)),
+        "shutdown" => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        },
+        "not_found" => ThreadLifecycleStatus::NotLoaded,
+        _ => ThreadLifecycleStatus::system_error(Some(format!(
+            "Unknown test agent lifecycle: {status}"
+        ))),
     }
 }
 
@@ -637,7 +674,7 @@ mod tests {
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::PendingInit, /*message*/ None),
+                    agent_state("pending_init", /*message*/ None),
                 )]),
             },
             /*cached_spawn_request*/ None,
@@ -660,7 +697,7 @@ mod tests {
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::Running, /*message*/ None),
+                    agent_state("running", /*message*/ None),
                 )]),
             },
             /*cached_spawn_request*/ None,
@@ -704,11 +741,11 @@ mod tests {
                 agents_states: HashMap::from([
                     (
                         robie_id.to_string(),
-                        agent_state(CollabAgentStatus::Completed, Some("39916800")),
+                        agent_state("completed", Some("39916800")),
                     ),
                     (
                         bob_id.to_string(),
-                        agent_state(CollabAgentStatus::Errored, Some("tool timeout")),
+                        agent_state("errored", Some("tool timeout")),
                     ),
                 ]),
             },
@@ -732,7 +769,7 @@ mod tests {
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::Completed, Some("39916800")),
+                    agent_state("completed", Some("39916800")),
                 )]),
             },
             /*cached_spawn_request*/ None,
@@ -819,7 +856,7 @@ mod tests {
                 reasoning_effort: Some(ReasoningEffortConfig::High),
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::PendingInit, /*message*/ None),
+                    agent_state("pending_init", /*message*/ None),
                 )]),
             },
             /*cached_spawn_request*/ None,
@@ -861,7 +898,7 @@ mod tests {
                 reasoning_effort: None,
                 agents_states: HashMap::from([(
                     robie_id.to_string(),
-                    agent_state(CollabAgentStatus::Interrupted, /*message*/ None),
+                    agent_state("interrupted", /*message*/ None),
                 )]),
             },
             /*cached_spawn_request*/ None,
@@ -872,11 +909,10 @@ mod tests {
         assert_snapshot!("collab_resume_interrupted", cell_to_text(&cell));
     }
 
-    fn agent_state(status: CollabAgentStatus, message: Option<&str>) -> CollabAgentState {
+    fn agent_state(status: &str, message: Option<&str>) -> CollabAgentState {
         CollabAgentState {
             path: None,
-            status,
-            message: message.map(str::to_string),
+            lifecycle_status: legacy_agent_lifecycle(status, message),
         }
     }
 

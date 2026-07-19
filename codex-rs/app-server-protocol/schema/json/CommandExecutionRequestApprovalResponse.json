@@ -4,22 +4,16 @@
     "CommandExecutionApprovalDecision": {
       "oneOf": [
         {
-          "description": "User approved the command.",
           "enum": [
-            "accept"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "User approved the command and future prompts in the same session-scoped approval cache should run without prompting.",
-          "enum": [
-            "acceptForSession"
+            "accept",
+            "acceptForSession",
+            "decline",
+            "cancel"
           ],
           "type": "string"
         },
         {
           "additionalProperties": false,
-          "description": "User approved the command, and wants to apply the proposed execpolicy amendment so future matching commands can run without prompting.",
           "properties": {
             "acceptWithExecpolicyAmendment": {
               "properties": {
@@ -44,7 +38,6 @@
         },
         {
           "additionalProperties": false,
-          "description": "User chose a persistent network policy rule (allow/deny) for this host.",
           "properties": {
             "applyNetworkPolicyAmendment": {
               "properties": {
@@ -63,20 +56,6 @@
           ],
           "title": "ApplyNetworkPolicyAmendmentCommandExecutionApprovalDecision",
           "type": "object"
-        },
-        {
-          "description": "User denied the command. The agent will continue the turn.",
-          "enum": [
-            "decline"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "User denied the command. The turn will also be immediately interrupted.",
-          "enum": [
-            "cancel"
-          ],
-          "type": "string"
         }
       ]
     },

@@ -355,9 +355,9 @@ use super::*;
                 sender_path: "/root/worker".into(),
                 recipient_thread_id: None,
                 recipient_path: "/root".into(),
-                status: CollabAgentState {
+                lifecycle_status: CollabAgentState {
                     path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
+                    lifecycle_status: ThreadLifecycleStatus::completed(None),
                     message: Some("completed".into()),
                 },
             }]
@@ -460,9 +460,9 @@ use super::*;
                 sender_path: "/root/worker".into(),
                 recipient_thread_id: None,
                 recipient_path: "/root".into(),
-                status: CollabAgentState {
+                lifecycle_status: CollabAgentState {
                     path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
+                    lifecycle_status: ThreadLifecycleStatus::completed(None),
                     message: Some("completed".into()),
                 },
             }]
@@ -507,9 +507,9 @@ use super::*;
                 sender_path: "/root/worker".into(),
                 recipient_thread_id: None,
                 recipient_path: "/root".into(),
-                status: CollabAgentState {
+                lifecycle_status: CollabAgentState {
                     path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
+                    lifecycle_status: ThreadLifecycleStatus::completed(None),
                     message: Some("completed".into()),
                 },
             }]
@@ -565,9 +565,9 @@ use super::*;
                 sender_path: "/root/worker".into(),
                 recipient_thread_id: None,
                 recipient_path: "/root".into(),
-                status: CollabAgentState {
+                lifecycle_status: CollabAgentState {
                     path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
+                    lifecycle_status: ThreadLifecycleStatus::completed(None),
                     message: Some("completed".into()),
                 },
             }]
@@ -629,9 +629,9 @@ use super::*;
                     sender_path: "/root/worker".into(),
                     recipient_thread_id: None,
                     recipient_path: "/root".into(),
-                    status: CollabAgentState {
+                    lifecycle_status: CollabAgentState {
                         path: Some("/root/worker".into()),
-                        status: CollabAgentStatus::Completed,
+                        lifecycle_status: ThreadLifecycleStatus::completed(None),
                         message: Some("completed".into()),
                     },
                 },
@@ -697,9 +697,9 @@ use super::*;
                 sender_path: "/root/worker".into(),
                 recipient_thread_id: None,
                 recipient_path: "/root".into(),
-                status: CollabAgentState {
+                lifecycle_status: CollabAgentState {
                     path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
+                    lifecycle_status: ThreadLifecycleStatus::completed(None),
                     message: Some("completed".into()),
                 },
             }]
@@ -758,9 +758,9 @@ use super::*;
                 sender_path: "/root/worker".into(),
                 recipient_thread_id: None,
                 recipient_path: "/root".into(),
-                status: CollabAgentState {
+                lifecycle_status: CollabAgentState {
                     path: Some("/root/worker".into()),
-                    status: CollabAgentStatus::Completed,
+                    lifecycle_status: ThreadLifecycleStatus::completed(None),
                     message: Some("completed".into()),
                 },
             }]

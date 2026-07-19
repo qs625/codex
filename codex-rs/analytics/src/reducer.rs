@@ -83,7 +83,6 @@ use crate::usize_to_u64;
 use app_server_protocol::ClientRequest;
 use app_server_protocol::ClientResponse;
 use app_server_protocol::CodexErrorInfo;
-use app_server_protocol::CollabAgentStatus;
 use app_server_protocol::CollabAgentTool;
 use app_server_protocol::CollabAgentToolCallStatus;
 use app_server_protocol::CommandAction;
@@ -93,6 +92,8 @@ use app_server_protocol::CommandExecutionStatus;
 use app_server_protocol::DynamicToolCallOutputContentItem;
 use app_server_protocol::DynamicToolCallStatus;
 use app_server_protocol::FileChangeApprovalDecision;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::GuardianApprovalReviewAction;
 use app_server_protocol::GuardianApprovalReviewStatus;
 use app_server_protocol::InitializeParams;
@@ -1872,7 +1873,14 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                         completed_agent_count: Some(usize_to_u64(
                             agents_states
                                 .values()
-                                .filter(|state| state.status == CollabAgentStatus::Completed)
+                                .filter(|state| {
+                                    matches!(
+                                        state.lifecycle_status,
+                                        ThreadLifecycleStatus::Final {
+                                            result: ThreadLifecycleFinalStatus::Completed { .. }
+                                        }
+                                    )
+                                })
                                 .count(),
                         )),
                         failed_agent_count: Some(usize_to_u64(
@@ -1880,10 +1888,13 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                                 .values()
                                 .filter(|state| {
                                     matches!(
-                                        state.status,
-                                        CollabAgentStatus::Errored
-                                            | CollabAgentStatus::Shutdown
-                                            | CollabAgentStatus::NotFound
+                                        state.lifecycle_status,
+                                        ThreadLifecycleStatus::Final {
+                                            result:
+                                                ThreadLifecycleFinalStatus::Errored { .. }
+                                                    | ThreadLifecycleFinalStatus::Shutdown
+                                        } | ThreadLifecycleStatus::NotLoaded
+                                            | ThreadLifecycleStatus::SystemError { .. }
                                     )
                                 })
                                 .count(),

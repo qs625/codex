@@ -13,7 +13,7 @@ use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::SessionSource;
 use app_server_protocol::SortDirection;
-use app_server_protocol::ThreadActiveFlag;
+use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadForkParams;
 use app_server_protocol::ThreadForkResponse;
 use app_server_protocol::ThreadItem;
@@ -30,7 +30,7 @@ use app_server_protocol::ThreadSkill;
 use app_server_protocol::ThreadSkillKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadTurnsItemsListParams;
 use app_server_protocol::ThreadTurnsListParams;
 use app_server_protocol::ThreadTurnsListResponse;
@@ -149,7 +149,7 @@ async fn thread_read_returns_summary_without_turns() -> Result<()> {
     assert_eq!(thread.source, SessionSource::Cli);
     assert_eq!(thread.git_info, None);
     assert_eq!(thread.turns.len(), 0);
-    assert_eq!(thread.status, ThreadStatus::NotLoaded);
+    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
 
     Ok(())
 }
@@ -211,7 +211,7 @@ async fn thread_read_can_include_turns() -> Result<()> {
         }
         other => panic!("expected user message item, got {other:?}"),
     }
-    assert_eq!(thread.status, ThreadStatus::NotLoaded);
+    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
 
     Ok(())
 }
@@ -558,7 +558,7 @@ async fn thread_turns_list_supports_requested_items_view() -> Result<()> {
     assert_eq!(not_loaded.items_view, TurnItemsView::NotLoaded);
     assert!(not_loaded.items.is_empty());
     assert_eq!(not_loaded.id, full.id);
-    assert_eq!(not_loaded.status, full.status);
+    assert_eq!(not_loaded.lifecycle_status, full.lifecycle_status);
     assert_eq!(not_loaded.started_at, full.started_at);
     assert_eq!(not_loaded.completed_at, full.completed_at);
     assert_eq!(not_loaded.duration_ms, full.duration_ms);
@@ -1135,7 +1135,7 @@ async fn thread_read_loaded_thread_returns_precomputed_path_before_materializati
     assert_eq!(read.path, Some(thread_path));
     assert!(read.preview.is_empty());
     assert_eq!(read.turns.len(), 0);
-    assert_eq!(read.status, ThreadStatus::Complete);
+    assert_eq!(read.lifecycle_status, ThreadLifecycleStatus::completed(None));
 
     Ok(())
 }
@@ -1606,7 +1606,7 @@ async fn thread_read_reports_system_error_idle_flag_after_failed_turn() -> Resul
     .await??;
     let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
 
-    assert_eq!(thread.status, ThreadStatus::SystemError,);
+    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::system_error(None),);
 
     Ok(())
 }
@@ -1681,9 +1681,9 @@ async fn thread_read_without_turns_reports_active_loaded_turn() -> Result<()> {
     let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
 
     assert_eq!(
-        thread.status,
-        ThreadStatus::Active {
-            active_flags: vec![ThreadActiveFlag::Running],
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
         }
     );
     assert_eq!(thread.turns, Vec::new());

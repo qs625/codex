@@ -223,7 +223,7 @@ pub(crate) async fn list_agents_tool(
                 .iter()
                 .map(|agent| CollabListedAgent {
                     agent_path: agent.agent_name.clone(),
-                    status: agent.agent_status.clone(),
+                    lifecycle_status: agent.lifecycle_status.clone(),
                     last_task_message: agent.last_task_message.clone(),
                 })
                 .collect()

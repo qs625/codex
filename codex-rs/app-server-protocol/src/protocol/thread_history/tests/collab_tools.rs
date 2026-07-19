@@ -50,7 +50,7 @@ use super::*;
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
-                        status: crate::protocol::CollabAgentStatus::Completed,
+                        lifecycle_status: ThreadLifecycleStatus::completed(None),
                         message: None,
                     },
                 )]
@@ -120,7 +120,7 @@ use super::*;
                     "/root/scout".into(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
-                        status: crate::protocol::CollabAgentStatus::Completed,
+                        lifecycle_status: ThreadLifecycleStatus::completed(None),
                         message: Some("done".into()),
                     },
                 )]
@@ -242,7 +242,7 @@ use super::*;
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
-                        status: crate::protocol::CollabAgentStatus::Running,
+                        lifecycle_status: ThreadLifecycleStatus::Active { active_flags: Vec::new() },
                         message: None,
                     },
                 )]
@@ -317,7 +317,7 @@ use super::*;
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
-                        status: crate::protocol::CollabAgentStatus::Running,
+                        lifecycle_status: ThreadLifecycleStatus::Active { active_flags: Vec::new() },
                         message: None,
                     },
                 )]
@@ -396,7 +396,7 @@ use super::*;
                     receiver.to_string(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
-                        status: crate::protocol::CollabAgentStatus::Interrupted,
+                        lifecycle_status: ThreadLifecycleStatus::Final { result: ThreadLifecycleFinalStatus::Interrupted },
                         message: None,
                     },
                 )]
@@ -440,14 +440,14 @@ use super::*;
                 call_id: "wait-1".into(),
                 completed_at_ms: 1,
                 timeout_ms: 30_000,
-                agent_statuses: vec![protocol::protocol::CollabAgentStatusEntry {
+                agent_lifecycles: vec![protocol::protocol::CollabAgentLifecycleEntry {
                     thread_id: receiver,
                     agent_path: Some("/root/scout".into()),
                     agent_nickname: None,
                     agent_role: None,
-                    status: AgentStatus::Completed(None),
+                    lifecycle_status: ThreadLifecycleStatus::completed(None),
                 }],
-                statuses: [(receiver, AgentStatus::Completed(None))]
+                lifecycle_statuses: [(receiver, ThreadLifecycleStatus::completed(None))]
                     .into_iter()
                     .collect(),
             }),
@@ -478,7 +478,7 @@ use super::*;
                     receiver.to_string(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
-                        status: crate::protocol::CollabAgentStatus::Completed,
+                        lifecycle_status: ThreadLifecycleStatus::completed(None),
                         message: None,
                     },
                 )]
@@ -487,4 +487,3 @@ use super::*;
             }
         );
     }
-

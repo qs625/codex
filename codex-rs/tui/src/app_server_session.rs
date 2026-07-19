@@ -1607,7 +1607,7 @@ mod tests {
     use app_server_protocol::PermissionProfile as AppServerPermissionProfile;
     use app_server_protocol::PermissionProfileFileSystemPermissions;
     use app_server_protocol::PermissionProfileNetworkPermissions;
-    use app_server_protocol::ThreadStatus;
+    use app_server_protocol::ThreadLifecycleStatus;
     use app_server_protocol::Turn;
     use app_server_protocol::TurnStatus;
     use codex_utils_absolute_path::test_support::PathBufExt;
@@ -2061,7 +2061,7 @@ mod tests {
                 model_provider: "openai".to_string(),
                 created_at: 1,
                 updated_at: 2,
-                status: ThreadStatus::Complete,
+                lifecycle_status: ThreadLifecycleStatus::completed(None),
                 path: None,
                 cwd: test_path_buf("/tmp/project").abs(),
                 cli_version: "0.0.0".to_string(),

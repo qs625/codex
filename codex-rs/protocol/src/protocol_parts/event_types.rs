@@ -473,6 +473,80 @@ pub enum AgentStatus {
     NotFound,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS, Default)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type", rename_all = "camelCase")]
+pub enum ThreadLifecycleStatus {
+    #[default]
+    NotLoaded,
+    Initializing,
+    Active {
+        active_flags: Vec<ThreadLifecycleActiveFlag>,
+    },
+    Waiting {
+        reason: ThreadLifecycleWaitReason,
+    },
+    Final {
+        result: ThreadLifecycleFinalStatus,
+    },
+    SystemError {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum ThreadLifecycleActiveFlag {
+    Running,
+    WaitingOnApproval,
+    WaitingOnUserInput,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum ThreadLifecycleWaitReason {
+    Child,
+    Command,
+    EventSubscription,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type", rename_all = "camelCase")]
+pub enum ThreadLifecycleFinalStatus {
+    Completed {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_agent_message: Option<String>,
+    },
+    Errored {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    Interrupted,
+    Shutdown,
+}
+
+impl ThreadLifecycleStatus {
+    pub fn completed(last_agent_message: Option<String>) -> Self {
+        Self::Final {
+            result: ThreadLifecycleFinalStatus::Completed { last_agent_message },
+        }
+    }
+
+    pub fn errored(message: Option<String>) -> Self {
+        Self::Final {
+            result: ThreadLifecycleFinalStatus::Errored { message },
+        }
+    }
+
+    pub fn system_error(message: Option<String>) -> Self {
+        Self::SystemError { message }
+    }
+}
+
 /// Turn kinds that reject same-turn steering.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]

@@ -130,13 +130,13 @@ Example with notification opt-out:
 
 ## API Overview
 
-- `thread/start` — create a new thread; emits `thread/started` (including the current `thread.status`) and auto-subscribes you to turn/item events for that thread. When the request includes a `cwd` and the resolved sandbox is `workspace-write` or full access, app-server also marks that project as trusted in the user `config.toml`. Pass `sessionStartSource: "clear"` when starting a replacement thread after clearing the current session so `SessionStart` hooks receive `source: "clear"` instead of the default `"startup"`. Experimental `runtimeWorkspaceRoots` replaces the thread-scoped runtime workspace roots used to materialize `:workspace_roots`; relative paths resolve against the effective thread cwd. For permissions, prefer experimental `permissions` profile selection by id; the legacy `sandbox` shorthand is still accepted but cannot be combined with `permissions`. Experimental `environments` selects the sticky execution environments for turns on the thread; omit it to use the server default, pass `[]` to disable environments, or pass explicit environment ids with per-environment `cwd`.
+- `thread/start` — create a new thread; emits `thread/started` (including the current `thread.lifecycleStatus`) and auto-subscribes you to turn/item events for that thread. When the request includes a `cwd` and the resolved sandbox is `workspace-write` or full access, app-server also marks that project as trusted in the user `config.toml`. Pass `sessionStartSource: "clear"` when starting a replacement thread after clearing the current session so `SessionStart` hooks receive `source: "clear"` instead of the default `"startup"`. Experimental `runtimeWorkspaceRoots` replaces the thread-scoped runtime workspace roots used to materialize `:workspace_roots`; relative paths resolve against the effective thread cwd. For permissions, prefer experimental `permissions` profile selection by id; the legacy `sandbox` shorthand is still accepted but cannot be combined with `permissions`. Experimental `environments` selects the sticky execution environments for turns on the thread; omit it to use the server default, pass `[]` to disable environments, or pass explicit environment ids with per-environment `cwd`.
 - `thread/resume` — reopen an existing thread by id so subsequent `turn/start` calls append to it. Accepts the same permission override rules as `thread/start`.
-- `thread/fork` — fork an existing thread into a new thread id by copying the stored history; if the source thread is currently mid-turn, the fork records the same interruption marker as `turn/interrupt` instead of inheriting an unmarked partial turn suffix. The returned `thread.forkedFromId` points at the source thread when known. Accepts `ephemeral: true` for an in-memory temporary fork, emits `thread/started` (including the current `thread.status`), and auto-subscribes you to turn/item events for the new thread. Experimental clients can pass `excludeTurns: true` when they plan to page fork history via `thread/turns/list` instead of receiving the full turn array immediately. Accepts the same permission override rules as `thread/start`.
+- `thread/fork` — fork an existing thread into a new thread id by copying the stored history; if the source thread is currently mid-turn, the fork records the same interruption marker as `turn/interrupt` instead of inheriting an unmarked partial turn suffix. The returned `thread.forkedFromId` points at the source thread when known. Accepts `ephemeral: true` for an in-memory temporary fork, emits `thread/started` (including the current `thread.lifecycleStatus`), and auto-subscribes you to turn/item events for the new thread. Experimental clients can pass `excludeTurns: true` when they plan to page fork history via `thread/turns/list` instead of receiving the full turn array immediately. Accepts the same permission override rules as `thread/start`.
 - `thread/start`, `thread/resume`, and `thread/fork` responses include the legacy `sandbox` compatibility projection. Experimental clients can read `runtimeWorkspaceRoots` for the thread-scoped runtime roots, `permissionProfile` for the exact active runtime permissions, and `activePermissionProfile` for the named or implicit built-in profile identity/provenance when known.
-- `thread/list` — page through stored rollouts; supports cursor-based pagination and optional `modelProviders`, `sourceKinds`, `archived`, `cwd`, and `searchTerm` filters. Each returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded. After an app-server restart, the next `thread/list` or `thread/loaded/list` request automatically restores threads with persisted event subscriptions so their `status` can return to `active` without an explicit `thread/resume`.
+- `thread/list` — page through stored rollouts; supports cursor-based pagination and optional `modelProviders`, `sourceKinds`, `archived`, `cwd`, and `searchTerm` filters. Each returned `thread` includes `lifecycleStatus` (`ThreadLifecycleStatus`), defaulting to `notLoaded` when the thread is not currently loaded. After an app-server restart, the next `thread/list` or `thread/loaded/list` request automatically restores threads with persisted event subscriptions so their `lifecycleStatus` can return to `active` without an explicit `thread/resume`.
 - `thread/loaded/list` — list the thread ids currently loaded in memory. This also includes threads restored on demand from persisted event subscriptions after restart.
-- `thread/read` — read a stored thread by id without resuming it; optionally include turns via `includeTurns`. The returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded, plus any restored `tokenUsage` / `contextUsage` snapshots that can be reconstructed from persisted rollout history.
+- `thread/read` — read a stored thread by id without resuming it; optionally include turns via `includeTurns`. The returned `thread` includes `lifecycleStatus` (`ThreadLifecycleStatus`), defaulting to `notLoaded` when the thread is not currently loaded, plus any restored `tokenUsage` / `contextUsage` snapshots that can be reconstructed from persisted rollout history.
 - `thread/turns/list` — experimental; page through a stored thread’s turn history without resuming it; supports cursor-based pagination with `sortDirection`, `itemsView`, `nextCursor`, and `backwardsCursor`.
 - `thread/turns/items/list` — experimental; reserved for paging full items for one turn. The API shape is present, but app-server currently returns an unsupported-method JSON-RPC error.
 - `thread/metadata/update` — patch stored thread metadata in sqlite; currently supports updating persisted `gitInfo` fields and returns the refreshed `thread`.
@@ -147,7 +147,7 @@ Example with notification opt-out:
 - `thread/goal/clear` — clear the current persisted goal for a materialized thread; returns whether a goal was removed and emits `thread/goal/cleared` when state changes.
 - `thread/goal/updated` — notification emitted whenever a thread goal changes; includes the full current goal.
 - `thread/goal/cleared` — notification emitted whenever a thread goal is removed.
-- `thread/status/changed` — notification emitted when a loaded thread’s status changes (`threadId` + new `status`).
+- `thread/status/changed` — notification emitted when a loaded thread’s lifecycle status changes (`threadId` + new `lifecycleStatus`).
 - `thread/archive` — move a thread’s rollout file into the archived directory and attempt to move any spawned descendant thread rollout files; returns `{}` on success and emits `thread/archived` for each archived thread.
 - `thread/unsubscribe` — unsubscribe this connection from thread turn/item events. If this was the last subscriber, the server keeps the thread loaded and unloads it only after it has had no subscribers and no thread activity for 30 minutes, then emits `thread/closed`.
 - `thread/name/set` — set or update a thread’s user-facing name for either a loaded thread or a persisted rollout; returns `{}` on success and emits `thread/name/updated` to initialized, opted-in clients. Thread names are not required to be unique; name lookups resolve to the most recently updated thread.
@@ -339,8 +339,8 @@ Example:
 } }
 { "id": 20, "result": {
     "data": [
-        { "id": "thr_a", "preview": "Create a TUI", "modelProvider": "openai", "createdAt": 1730831111, "updatedAt": 1730831111, "status": { "type": "notLoaded" }, "agentNickname": "Atlas", "agentRole": "explorer" },
-        { "id": "thr_b", "preview": "Fix tests", "modelProvider": "openai", "createdAt": 1730750000, "updatedAt": 1730750000, "status": { "type": "notLoaded" } }
+        { "id": "thr_a", "preview": "Create a TUI", "modelProvider": "openai", "createdAt": 1730831111, "updatedAt": 1730831111, "lifecycleStatus": { "type": "notLoaded" }, "agentNickname": "Atlas", "agentRole": "explorer" },
+        { "id": "thr_b", "preview": "Fix tests", "modelProvider": "openai", "createdAt": 1730750000, "updatedAt": 1730750000, "lifecycleStatus": { "type": "notLoaded" } }
     ],
     "nextCursor": "opaque-token-or-null",
     "backwardsCursor": "opaque-token-or-null"
@@ -364,16 +364,16 @@ When `nextCursor` is `null`, you’ve reached the final page.
 
 `thread/status/changed` is emitted whenever a loaded thread's status changes after it has already been introduced to the client:
 
-- Includes `threadId` and the new `status`.
-- Status can be `notLoaded`, `active`, `idle`, `complete`, or `systemError`; active threads carry `activeFlags` such as `running`, `waitingOnApproval`, or `waitingOnUserInput`, while idle threads carry a `reason` such as `waitChild` or `waitCommand`.
-- `thread/start`, `thread/fork`, and detached review threads do not emit a separate initial `thread/status/changed`; their `thread/started` notification already carries the current `thread.status`.
+- Includes `threadId` and the new `lifecycleStatus`.
+- `lifecycleStatus` can be `notLoaded`, `initializing`, `active`, `waiting`, `final`, or `systemError`; active threads carry `activeFlags` such as `running`, `waitingOnApproval`, or `waitingOnUserInput`, waiting threads carry a `reason` such as `child` or `command`, and final threads carry a `result` such as `completed`, `errored`, `interrupted`, or `shutdown`.
+- `thread/start`, `thread/fork`, and detached review threads do not emit a separate initial `thread/status/changed`; their `thread/started` notification already carries the current `thread.lifecycleStatus`.
 
 ```json
 {
   "method": "thread/status/changed",
   "params": {
     "threadId": "thr_123",
-    "status": { "type": "active", "activeFlags": ["running"] }
+    "lifecycleStatus": { "type": "active", "activeFlags": ["running"] }
   }
 }
 ```
@@ -398,7 +398,7 @@ Later, after the idle unload timeout:
 ```json
 { "method": "thread/status/changed", "params": {
     "threadId": "thr_123",
-    "status": { "type": "notLoaded" }
+    "lifecycleStatus": { "type": "notLoaded" }
 } }
 { "method": "thread/closed", "params": { "threadId": "thr_123" } }
 ```
@@ -410,14 +410,14 @@ Use `thread/read` to fetch a stored thread by id without resuming it. Pass `incl
 ```json
 { "method": "thread/read", "id": 22, "params": { "threadId": "thr_123" } }
 { "id": 22, "result": {
-    "thread": { "id": "thr_123", "status": { "type": "notLoaded" }, "turns": [] }
+    "thread": { "id": "thr_123", "lifecycleStatus": { "type": "notLoaded" }, "turns": [] }
 } }
 ```
 
 ```json
 { "method": "thread/read", "id": 23, "params": { "threadId": "thr_123", "includeTurns": true } }
 { "id": 23, "result": {
-    "thread": { "id": "thr_123", "status": { "type": "notLoaded" }, "turns": [ ... ] }
+    "thread": { "id": "thr_123", "lifecycleStatus": { "type": "notLoaded" }, "turns": [ ... ] }
 } }
 ```
 
@@ -1241,7 +1241,7 @@ Today both notifications carry an empty `items` array even when item events were
 - `commandExecution` — `{id, command, cwd, status, commandActions, aggregatedOutput?, exitCode?, durationMs?}` for sandboxed commands; `status` is `inProgress`, `completed`, `failed`, or `declined`.
 - `fileChange` — `{id, changes, status}` describing proposed edits; `changes` list `{path, kind, diff}` and `status` is `inProgress`, `completed`, `failed`, or `declined`.
 - `mcpToolCall` — `{id, server, tool, status, arguments, result?, error?}` describing MCP calls; `status` is `inProgress`, `completed`, or `failed`.
-- `collabToolCall` — `{id, tool, status, senderThreadId, receiverThreadId?, newThreadId?, prompt?, agentStatus?}` describing collab tool calls (`spawn_agent`, `send_input`, `resume_agent`, `wait`, `close_agent`); `status` is `inProgress`, `completed`, or `failed`.
+- `collabToolCall` — `{id, tool, status, senderThreadId, receiverThreadIds, prompt?, agentsStates?}` describing collab tool calls (`spawn_agent`, `send_input`, `resume_agent`, `wait`, `close_agent`); `status` is `inProgress`, `completed`, or `failed`, and each `agentsStates` value includes `lifecycleStatus`.
 - `eventCommandCall` — `{id, subscriptionId, command, cwd?, label?, status, output?}` describing an EventCommand monitor. EventCommand runs a shell command in the background and treats each stdout read chunk as a thread event; `status` is `inProgress`, `completed`, or `failed`.
 - `eventCommandEvent` — `{id, subscriptionId, kind, command, cwd?, label?, line?, sequence?, exitCode?, signal?, message?, truncated, createdAt}` describing EventCommand output chunks or terminal events. For `kind: "output"`, `line` carries the stdout chunk text and may contain multiple lines. `kind` is `output`, `exited`, `cancelled`, or `failedToStart`.
 - `eventDrivenToolCall` — `{id, tool, status, arguments, output?}` describing typed event-driven tool calls that remain outside EventCommand, currently schedule subscriptions; `status` is `inProgress`, `completed`, or `failed`.

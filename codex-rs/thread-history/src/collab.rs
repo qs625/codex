@@ -2,6 +2,8 @@ use super::ThreadHistoryBuilder;
 use app_server_protocol::CollabAgentState;
 use app_server_protocol::CollabAgentTool;
 use app_server_protocol::CollabAgentToolCallStatus;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadItem;
 use protocol::protocol::AgentStatus;
 use std::collections::HashMap;
@@ -148,7 +150,7 @@ impl ThreadHistoryBuilder {
             .agents
             .iter()
             .map(|agent| {
-                let mut state = CollabAgentState::from(agent.status.clone());
+                let mut state = CollabAgentState::from(agent.lifecycle_status.clone());
                 state.path = Some(agent.agent_path.clone());
                 if state.message.is_none() {
                     state.message = agent.last_task_message.clone();
@@ -210,24 +212,32 @@ impl ThreadHistoryBuilder {
         payload: &protocol::protocol::CollabWaitingEndEvent,
     ) {
         let status = if payload
-            .statuses
+            .lifecycle_statuses
             .values()
-            .any(|status| matches!(status, AgentStatus::Errored(_) | AgentStatus::NotFound))
+            .any(|status| {
+                matches!(
+                    status,
+                    ThreadLifecycleStatus::Final {
+                        result: ThreadLifecycleFinalStatus::Errored { .. }
+                    } | ThreadLifecycleStatus::NotLoaded
+                        | ThreadLifecycleStatus::SystemError { .. }
+                )
+            })
         {
             CollabAgentToolCallStatus::Failed
         } else {
             CollabAgentToolCallStatus::Completed
         };
         let mut receiver_thread_ids: Vec<String> =
-            payload.statuses.keys().map(ToString::to_string).collect();
+            payload.lifecycle_statuses.keys().map(ToString::to_string).collect();
         receiver_thread_ids.sort();
         let agents_states = payload
-            .statuses
+            .lifecycle_statuses
             .iter()
             .map(|(id, status)| {
                 let mut state = CollabAgentState::from(status.clone());
                 state.path = payload
-                    .agent_statuses
+                    .agent_lifecycles
                     .iter()
                     .find(|entry| entry.thread_id == *id)
                     .and_then(|entry| entry.agent_path.clone());
@@ -242,7 +252,7 @@ impl ThreadHistoryBuilder {
             sender_path: payload.sender_agent_path.clone(),
             receiver_thread_ids,
             receiver_paths: payload
-                .agent_statuses
+                .agent_lifecycles
                 .iter()
                 .filter_map(|entry| entry.agent_path.clone())
                 .collect(),

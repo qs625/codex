@@ -949,11 +949,11 @@ function App() {
     });
   }
 
-  function updateThreadStatusLocally(
+  function updateThreadLifecycleStatusLocally(
     threadId: string,
-    status: Thread["status"],
+    lifecycleStatus: Thread["lifecycleStatus"],
   ) {
-    updateThreadLocally(threadId, (thread) => ({ ...thread, status }));
+    updateThreadLocally(threadId, (thread) => ({ ...thread, lifecycleStatus }));
   }
 
   function updateThreadNameLocally(threadId: string, name: Thread["name"]) {
@@ -2081,9 +2081,12 @@ function App() {
         case "thread/status/changed": {
           const notification = params as {
             threadId: string;
-            status: Thread["status"];
+            lifecycleStatus: Thread["lifecycleStatus"];
           };
-          updateThreadStatusLocally(notification.threadId, notification.status);
+          updateThreadLifecycleStatusLocally(
+            notification.threadId,
+            notification.lifecycleStatus,
+          );
           break;
         }
         case "thread/goal/updated": {

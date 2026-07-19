@@ -32,6 +32,7 @@ use protocol::protocol::EventMsg;
 use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::TurnAbortReason;
 use protocol::protocol::TurnAbortedEvent;
 use protocol::protocol::TurnCompleteEvent;
@@ -1604,8 +1605,8 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
             .into_iter()
             .find(|agent| agent.agent_name == worker_path.to_string())
             .expect("worker should be listed")
-            .agent_status,
-        AgentStatus::Completed(Some("done".to_string())),
+            .lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("done".to_string())),
     );
     let captured_ops = harness.manager.captured_ops();
     assert_eq!(
@@ -1739,8 +1740,8 @@ async fn list_agents_restores_completed_child_from_persisted_history_when_live_t
             .into_iter()
             .find(|agent| agent.agent_name == worker_path.to_string())
             .expect("persisted worker should be listed")
-            .agent_status,
-        AgentStatus::Completed(Some("done".to_string())),
+            .lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("done".to_string())),
     );
 }
 
@@ -1805,8 +1806,8 @@ async fn list_agents_restores_completed_child_from_persisted_root_when_registry_
             .into_iter()
             .find(|agent| agent.agent_name == worker_path.to_string())
             .expect("persisted worker should be listed after registry loss")
-            .agent_status,
-        AgentStatus::Completed(Some("done".to_string())),
+            .lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("done".to_string())),
     );
 }
 
@@ -1870,8 +1871,8 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
             .iter()
             .find(|agent| agent.agent_name == worker_path.to_string())
             .expect("persisted worker should be listed")
-            .agent_status,
-        AgentStatus::Completed(Some("done".to_string())),
+            .lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("done".to_string())),
     );
 
     let resolved_thread_id = harness
@@ -1909,7 +1910,7 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         listed_agents
             .iter()
             .any(|agent| agent.agent_name == worker_path.to_string()
-                && agent.agent_status == AgentStatus::Completed(Some("done".to_string())))
+                && agent.lifecycle_status == ThreadLifecycleStatus::completed(Some("done".to_string())))
     );
     let captured_ops = harness.manager.captured_ops();
     assert_eq!(
@@ -1981,6 +1982,90 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         ),
         1,
         "a real post-followup completion should still be delivered once",
+    );
+}
+
+#[tokio::test]
+async fn tree_resume_restores_completed_child_status_for_parent_wait_child() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, root_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: Some("worker".to_string()),
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+
+    persist_thread_for_tree_resume(&root_thread, "root persisted").await;
+    persist_thread_for_tree_resume(&worker_thread, "worker persisted").await;
+    emit_turn_complete(&worker_thread, "done").await;
+    worker_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("worker rollout should flush");
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[worker_thread_id])
+        .await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    restarted_control
+        .resume_agent_from_rollout(harness.config.clone(), root_thread_id, SessionSource::Exec)
+        .await
+        .expect("root tree should resume from persisted rollout");
+
+    let restored_root_thread = restarted_manager
+        .get_thread(root_thread_id)
+        .await
+        .expect("root thread should be restored");
+    assert_eq!(
+        restarted_control
+            .normalized_thread_lifecycle(worker_thread_id)
+            .await,
+        ThreadLifecycleStatus::completed(Some("done".to_string())),
+        "restored completed child must not stay at placeholder PendingInit",
+    );
+    assert!(
+        !restarted_control
+            .agent_thread_is_active(worker_thread_id)
+            .await,
+        "restored completed child should not keep the parent waiting",
+    );
+    assert_eq!(
+        restored_root_thread
+            .codex
+            .session
+            .thread_post_turn_state()
+            .await,
+        ThreadPostTurnState::ThreadCompletion
+    );
+
+    let listed_agents = restarted_control
+        .list_agents(root_thread_id, &SessionSource::Exec, None)
+        .await
+        .expect("list agents should succeed from restored live tree");
+    assert_eq!(
+        listed_agents
+            .into_iter()
+            .find(|agent| agent.agent_name == worker_path.to_string())
+            .expect("restored worker should be listed")
+            .lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("done".to_string())),
     );
 }
 
@@ -4347,8 +4432,8 @@ async fn persisted_agent_restore_deduplicates_by_path_with_live_registry_preferr
         .collect::<Vec<_>>();
     assert_eq!(matching_agents.len(), 1);
     assert_ne!(
-        matching_agents[0].agent_status,
-        AgentStatus::Completed(Some("old done".to_string())),
+        matching_agents[0].lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("old done".to_string())),
         "live registry entry should win over stale persisted entry with the same path",
     );
 

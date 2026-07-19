@@ -16,6 +16,9 @@ const {
   parseLocalFileTarget,
 } = require("./fileTargets.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
+const {
+  normalizeThreadLifecycleStatus,
+} = require("./threadLifecycleStatus.cjs");
 const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const {
   buildChatCompatCwd,
@@ -540,7 +543,9 @@ function normalizeNotification(notification) {
       ...notification,
       params: {
         ...notification.params,
-        status: normalizeThreadStatus(notification.params.status),
+        lifecycleStatus: normalizeThreadLifecycleStatus(
+          notification.params.lifecycleStatus ?? notification.params.status,
+        ),
       },
     };
   }
@@ -605,7 +610,9 @@ function normalizeThread(thread, runtime = null, options = {}) {
     model: runtime?.model ?? thread.model ?? null,
     modelProvider: runtime?.modelProvider ?? thread.modelProvider ?? null,
     reasoningEffort: runtime?.reasoningEffort ?? thread.reasoningEffort ?? null,
-    status: normalizeThreadStatus(thread.status),
+    lifecycleStatus: normalizeThreadLifecycleStatus(
+      thread.lifecycleStatus ?? thread.status,
+    ),
     skills: (thread.skills ?? []).map(normalizeThreadSkill),
     threadUsage,
     ...(Object.prototype.hasOwnProperty.call(thread, "tokenUsage")
@@ -752,10 +759,27 @@ function normalizeItem(item, options = {}) {
     case "mcpToolCall":
     case "dynamicToolCall":
     case "eventDrivenToolCall":
+      return {
+        ...item,
+        status: normalizeStatusValue(item.status),
+      };
     case "collabAgentToolCall":
       return {
         ...item,
         status: normalizeStatusValue(item.status),
+        agentsStates: Object.fromEntries(
+          Object.entries(item.agentsStates ?? {}).map(([key, state]) => [
+            key,
+            normalizeCollabAgentState(state),
+          ]),
+        ),
+      };
+    case "collabAgentStatusUpdate":
+      return {
+        ...item,
+        lifecycleStatus: normalizeCollabAgentState(
+          item.lifecycleStatus ?? item.status,
+        ),
       };
     case "imageView":
       return {
@@ -770,6 +794,15 @@ function normalizeItem(item, options = {}) {
     default:
       return item;
   }
+}
+
+function normalizeCollabAgentState(state) {
+  return {
+    ...state,
+    lifecycleStatus: normalizeThreadLifecycleStatus(
+      state?.lifecycleStatus ?? state?.status,
+    ),
+  };
 }
 
 function normalizeUserInput(input) {
@@ -799,32 +832,6 @@ function normalizeStatusValue(status) {
     return status.type;
   }
   return "unknown";
-}
-
-function normalizeThreadStatus(status) {
-  if (status && typeof status === "object" && typeof status.type === "string") {
-    if (status.type === "idle") {
-      return status.reason === "waitChild" || status.reason === "waitCommand"
-        ? { type: "idle", reason: status.reason }
-        : { type: "complete" };
-    }
-    return {
-      type: status.type,
-      ...(status.type === "active"
-        ? {
-            activeFlags: Array.isArray(status.activeFlags)
-              ? status.activeFlags.filter((flag) => typeof flag === "string")
-              : [],
-          }
-        : {}),
-    };
-  }
-
-  if (typeof status === "string") {
-    return status === "idle" ? { type: "complete" } : { type: status };
-  }
-
-  return { type: "notLoaded" };
 }
 
 function normalizePatchChangeKind(kind) {

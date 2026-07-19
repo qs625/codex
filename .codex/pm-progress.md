@@ -1,26 +1,15 @@
 # PM Progress
 
 ## Current Goal
-设计并后续实现统一 thread/agent lifecycle 状态系统；协议破坏性删除旧 `Thread.status` 与 `list_agents.agentStatus`，统一使用新的 `lifecycleStatus`，避免 restored completed child 被 live placeholder `PendingInit` 卡住 parent `WaitChild`。
+暂无 active PM 合并任务。
 
 ## Active Work
-- id: unified-lifecycle-status-protocol
-  owner: /my_codex/owner_dev_3
-  checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: current branch
-  task_type: feature/runtime-protocol-design
-  depends_on: 950edd74e completed child stale active facts fix
-  files: codex-rs/app-server-protocol/src/protocol/thread.rs; codex-rs/app-server-protocol/src/protocol/thread_data.rs; codex-rs/thread-service/src/agent/control.rs; codex-rs/thread-service/src/goal.rs; codex-rs/thread-service/src/thread/codex.rs; codex-rs/thread-service/src/thread/manager.rs; codex-rs/app-server/src/thread_status.rs; codex-rs/app-server/src/bespoke_event_handling.rs; apps/root-worker-prototype/src/types.ts; apps/root-worker-prototype/src/lib/thread.ts
-  base_commit: 1a3744978c9110bb4f76d08e685d4a0670bd2ecb
-  pending_sync_from_main: no
-  status: planned
-  objective: 合并并删除现有 agent-facing `AgentStatus` 与 thread/UI-facing `ThreadStatus` 协议面，引入统一 lifecycle 状态，并让 `list_agents`、thread UI status、parent `WaitChild` 聚合、恢复后的 final status 都从同一 normalized lifecycle resolver 派生。
-  last_update: 2026-07-19
-  next_action: PM 先完成协议级状态系统设计验收，再向 owner_dev_3 派发完整实现 brief；owner_dev_3 当前有上一版局部修复的未提交草稿 diff，需在实现前确认保留、改造或丢弃。
-  blockers: 设计决策需明确 final/systemError/interrupted/shutdown 对 parent wait 的语义；用户已确认不保留旧 agent status/thread status 协议字段，改为破坏性统一 lifecycle。
-  validation: pending
-  commit: pending
+- none
 ## Completed
+- commit: ba902eb70
+  summary: 合并 `/my_codex/owner_dev_3` 的 `ba902eb70` 到主线 pending merge，完成公开 thread/agent lifecycle 状态统一：协议和 root-worker 公共面从旧 `Thread.status` / `list_agents.agentStatus` 迁移到 `lifecycleStatus` / `ThreadLifecycleStatus`；`ThreadStatusChangedNotification` 保留 wire method 名但 payload 使用 `lifecycleStatus`；`list_agents` tool schema 输出 `lifecycle_status`；parent `WaitChild`、completed child restore、app-server watcher、thread listing/resume/read、TUI/root-worker 显示都改从 normalized lifecycle resolver 派生。内部 runtime/persisted `AgentStatus` 仍作为事实输入保留，`Turn.status` 不迁移。PM 合并后补修 `AgentTree.tsx` 旧 helper 导入残留，改用 `treeThreadLifecycleStatusClass` / `treeThreadLifecycleStatusLabel`。
+  validation: owner reported `rtk cargo test -p app-server-protocol --features schema-export` -> 661 passed；owner `rtk uv run pytest tests/test_contract_generation.py tests/test_artifact_workflow_and_binaries.py` -> 30 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk cargo test -p thread-service tree_resume_restores_completed_child_status_for_parent_wait_child -- --nocapture` -> 1 passed；owner `rtk pnpm --dir apps/root-worker-prototype test` -> 279 passed；fixed reviewer `/my_codex/owner_dev_3/reviewer` 多轮通过。PM merge 后 `rtk cargo test -p app-server-protocol --features schema-export` -> 661 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk cargo test -p thread-service tree_resume_restores_completed_child_status_for_parent_wait_child -- --nocapture` -> 1 passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning；`rtk pnpm --dir apps/root-worker-prototype test` -> 280 passed；`rtk uv run python scripts/update_sdk_artifacts.py generate-types` -> success with existing datamodel-code-generator uint format warnings；`rtk uv run pytest tests/test_contract_generation.py tests/test_artifact_workflow_and_binaries.py` -> 30 passed；`rtk git diff --check` -> passed。
+  residual_risk: 这是公开协议破坏性迁移，外部/内部调用方需要切到 `lifecycleStatus` / `lifecycle_status`；Python SDK 手写 facade 未来仍可能与 generated registry 漂移；schema fixture churn 很大但已由 schema-export 与 SDK contract tests 覆盖。`thread/status/changed` method 名仍保留以避免额外事件名 churn，但 payload 已是 lifecycle。
 - commit: c9a738fce
   summary: 合并 `c9a738fce` 到主线，调整 root-worker 右侧 Thread Analysis 的 Context Usage 顶层比例口径；有 backend `toolBreakdown` 时将 `applyPatch` / `fileOperations` / `commands` / `interAgent` / `searchMedia` / `otherTools` 映射为顶层 `File Writes` / `File Reads` / `Commands` / `Inter-Agent` / `Search & Media` / `Other Tools` category，移除 `Tool I/O Detail` 子表；无 breakdown 的旧数据仍保留 `Tool Inputs & Results` fallback，避免工具占比丢失。
   validation: owner `rtk pnpm --dir apps/root-worker-prototype test src/lib/contextUsage.test.ts src/components/RightPanel.test.tsx` -> 24/24 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning；owner `rtk git diff --check` -> passed；fixed reviewer `/my_codex/owner_dev/reviewer` 通过。PM merge 后 `rtk pnpm --dir apps/root-worker-prototype test src/lib/contextUsage.test.ts src/components/RightPanel.test.tsx` -> 24/24 passed；PM `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning；PM `rtk git diff --check` -> passed。

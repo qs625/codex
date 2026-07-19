@@ -1271,7 +1271,7 @@ impl TurnRequestProcessor {
                 self.thread_watch_manager
                     .upsert_thread_silently(thread.clone())
                     .await;
-                thread.status = resolve_thread_status(
+                thread.lifecycle_status = resolve_thread_status(
                     self.thread_watch_manager
                         .loaded_status_for_thread(&thread.id)
                         .await,

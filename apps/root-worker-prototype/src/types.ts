@@ -129,7 +129,7 @@ export type ThreadItem = ThreadItemTimestamps &
       prompt: string | null;
       model: string | null;
       reasoningEffort: string | null;
-      agentsStates: Record<string, { path?: string | null; status: string; message?: string | null }>;
+      agentsStates: Record<string, { path?: string | null; lifecycleStatus: ThreadLifecycleStatus; message?: string | null }>;
     }
   | {
       type: "collabAgentMessage";
@@ -150,9 +150,9 @@ export type ThreadItem = ThreadItemTimestamps &
       senderPath: string;
       recipientThreadId: string | null;
       recipientPath: string;
-      status: {
+      lifecycleStatus: {
         path?: string | null;
-        status: string;
+        lifecycleStatus: ThreadLifecycleStatus;
         message?: string | null;
       };
     }
@@ -396,24 +396,31 @@ export type ThreadUsage = {
   contextUsage: ThreadContextUsage | null;
 };
 
-export type ThreadActiveFlag =
+export type ThreadLifecycleActiveFlag =
   | "running"
   | "waitingOnApproval"
   | "waitingOnUserInput";
 
-export type ThreadIdleReason =
-  | "waitCommand"
-  | "waitChild"
-  | "waitEventSubscription";
+export type ThreadLifecycleWaitReason =
+  | "child"
+  | "command"
+  | "eventSubscription";
 
-export type ThreadStatus =
+export type ThreadLifecycleFinalStatus =
+  | { type: "completed"; lastAgentMessage?: string | null }
+  | { type: "errored"; message?: string | null }
+  | { type: "interrupted" }
+  | { type: "shutdown" };
+
+export type ThreadLifecycleStatus =
   | { type: "notLoaded" }
-  | { type: "idle"; reason: ThreadIdleReason }
-  | { type: "complete" }
-  | { type: "systemError" }
+  | { type: "initializing" }
+  | { type: "waiting"; reason: ThreadLifecycleWaitReason }
+  | { type: "final"; result: ThreadLifecycleFinalStatus }
+  | { type: "systemError"; message?: string | null }
   | {
       type: "active";
-      activeFlags: ThreadActiveFlag[];
+      activeFlags: ThreadLifecycleActiveFlag[];
     };
 
 export type ThreadGoalStatus =
@@ -454,7 +461,7 @@ export type Thread = {
   reasoningEffort: string | null;
   createdAt: number;
   updatedAt: number;
-  status: ThreadStatus;
+  lifecycleStatus: ThreadLifecycleStatus;
   path: string | null;
   cwd: string;
   cliVersion: string;

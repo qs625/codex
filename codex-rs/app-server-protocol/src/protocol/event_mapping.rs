@@ -247,7 +247,7 @@ pub fn item_event_to_server_notification(
                 .agents
                 .into_iter()
                 .map(|agent| {
-                    let mut state = CollabAgentState::from(agent.status);
+                    let mut state = CollabAgentState::from(agent.lifecycle_status);
                     state.path = Some(agent.agent_path.clone());
                     if state.message.is_none() {
                         state.message = agent.last_task_message;
@@ -312,25 +312,24 @@ pub fn item_event_to_server_notification(
             })
         }
         EventMsg::CollabWaitingEnd(end_event) => {
-            let status = if end_event.statuses.values().any(|status| {
+            let status = if end_event.lifecycle_statuses.values().any(|status| {
                 matches!(
                     status,
-                    protocol::protocol::AgentStatus::Errored(_)
-                        | protocol::protocol::AgentStatus::NotFound
+                    protocol::protocol::ThreadLifecycleStatus::Final { result: protocol::protocol::ThreadLifecycleFinalStatus::Errored { .. } } | protocol::protocol::ThreadLifecycleStatus::NotLoaded | protocol::protocol::ThreadLifecycleStatus::SystemError { .. }
                 )
             }) {
                 CollabAgentToolCallStatus::Failed
             } else {
                 CollabAgentToolCallStatus::Completed
             };
-            let receiver_thread_ids = end_event.statuses.keys().map(ToString::to_string).collect();
+            let receiver_thread_ids = end_event.lifecycle_statuses.keys().map(ToString::to_string).collect();
             let agents_states = end_event
-                .statuses
+                .lifecycle_statuses
                 .iter()
                 .map(|(id, status)| {
                     let mut state = CollabAgentState::from(status.clone());
                     state.path = end_event
-                        .agent_statuses
+                        .agent_lifecycles
                         .iter()
                         .find(|entry| entry.thread_id == *id)
                         .and_then(|entry| entry.agent_path.clone());
@@ -345,7 +344,7 @@ pub fn item_event_to_server_notification(
                 sender_path: end_event.sender_agent_path,
                 receiver_thread_ids,
                 receiver_paths: end_event
-                    .agent_statuses
+                    .agent_lifecycles
                     .iter()
                     .filter_map(|entry| entry.agent_path.clone())
                     .collect(),
@@ -565,7 +564,6 @@ pub fn item_event_to_server_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::CollabAgentStatus;
     use pretty_assertions::assert_eq;
     use protocol::AgentPath;
     use protocol::ThreadId;
@@ -591,6 +589,7 @@ mod tests {
     use protocol::protocol::ItemCompletedEvent;
     use protocol::protocol::ItemStartedEvent;
     use protocol::protocol::ResponseItemCompletedEvent;
+    use protocol::protocol::ThreadLifecycleStatus;
     use protocol::user_input::UserInput as CoreUserInput;
     use serde_json::json;
 
@@ -1184,9 +1183,11 @@ mod tests {
                     sender_path: "/root/worker".to_string(),
                     recipient_thread_id: None,
                     recipient_path: "/root".to_string(),
-                    status: CollabAgentState {
+                    lifecycle_status: CollabAgentState {
                         path: Some("/root/worker".to_string()),
-                        status: CollabAgentStatus::Completed,
+                        lifecycle_status: ThreadLifecycleStatus::completed(Some(
+                            "done".to_string(),
+                        )),
                         message: Some("done".to_string()),
                     },
                 },
@@ -1279,9 +1280,11 @@ mod tests {
                     sender_path: "/root/worker".to_string(),
                     recipient_thread_id: None,
                     recipient_path: "/root".to_string(),
-                    status: CollabAgentState {
+                    lifecycle_status: CollabAgentState {
                         path: Some("/root/worker".to_string()),
-                        status: CollabAgentStatus::Completed,
+                        lifecycle_status: ThreadLifecycleStatus::completed(Some(
+                            "done".to_string(),
+                        )),
                         message: Some("done".to_string()),
                     },
                 },

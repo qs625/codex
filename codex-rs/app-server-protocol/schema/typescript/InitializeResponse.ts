@@ -15,6 +15,6 @@ codexHome: AbsolutePathBuf,
 platformFamily: string,
 /**
  * Operating system for the running app-server target, for example
- * `"macos"`, `"linux"`, or `"windows"`.
+ * `"macos"` or `"linux"` or `"windows"`.
  */
 platformOs: string, };

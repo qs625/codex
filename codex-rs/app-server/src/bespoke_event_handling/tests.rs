@@ -136,7 +136,7 @@
             thread_id.to_string(),
             "fallback-provider",
             &fallback_cwd,
-            ThreadStatus::NotLoaded,
+            ThreadLifecycleStatus::NotLoaded,
         )
         .expect("rollback response should rebuild from stored history");
 
@@ -144,7 +144,7 @@
         assert_eq!(response.thread.path, None);
         assert_eq!(response.thread.preview, "fallback preview");
         assert_eq!(response.thread.name.as_deref(), Some("Rollback thread"));
-        assert_eq!(response.thread.status, ThreadStatus::NotLoaded);
+        assert_eq!(response.thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
         assert_eq!(response.thread.turns.len(), 1);
         assert_eq!(response.thread.turns[0].items.len(), 2);
         Ok(())

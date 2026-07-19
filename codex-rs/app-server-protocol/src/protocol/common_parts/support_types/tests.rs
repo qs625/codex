@@ -562,7 +562,7 @@ fn serialize_client_response() -> Result<()> {
                 model_provider: "openai".to_string(),
                 created_at: 1,
                 updated_at: 2,
-                status: v2::ThreadStatus::Complete,
+                lifecycle_status: v2::ThreadLifecycleStatus::completed(None),
                 path: None,
                 cwd: cwd.clone(),
                 cli_version: "0.0.0".to_string(),
@@ -609,8 +609,11 @@ fn serialize_client_response() -> Result<()> {
                     "modelProvider": "openai",
                     "createdAt": 1,
                     "updatedAt": 2,
-                    "status": {
-                        "type": "idle"
+                    "lifecycleStatus": {
+                        "type": "final",
+                        "result": {
+                            "type": "completed"
+                        }
                     },
                     "path": null,
                     "cwd": absolute_path_string("tmp"),
@@ -619,6 +622,7 @@ fn serialize_client_response() -> Result<()> {
                     "threadSource": null,
                     "agentNickname": null,
                     "agentRole": null,
+                    "agentPath": null,
                     "gitInfo": null,
                     "name": null,
                     "skills": [],
@@ -1166,15 +1170,18 @@ fn serialize_thread_status_changed_notification() -> Result<()> {
     let notification =
         ServerNotification::ThreadStatusChanged(v2::ThreadStatusChangedNotification {
             thread_id: "thr_123".to_string(),
-            status: v2::ThreadStatus::Complete,
+            lifecycle_status: v2::ThreadLifecycleStatus::completed(None),
         });
     assert_eq!(
         json!({
             "method": "thread/status/changed",
             "params": {
                 "threadId": "thr_123",
-                "status": {
-                    "type": "idle"
+                "lifecycleStatus": {
+                    "type": "final",
+                    "result": {
+                        "type": "completed"
+                    }
                 },
             }
         }),

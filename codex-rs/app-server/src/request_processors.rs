@@ -206,7 +206,7 @@ use app_server_protocol::ThreadSourceKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadTurnsItemsListParams;
 use app_server_protocol::ThreadTurnsListParams;
 use app_server_protocol::ThreadTurnsListResponse;

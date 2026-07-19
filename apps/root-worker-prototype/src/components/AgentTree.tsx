@@ -3,8 +3,8 @@ import type { CSSProperties, MouseEvent } from "react";
 import {
   countDescendants,
   isRootThread,
-  treeThreadStatusClass,
-  treeThreadStatusLabel,
+  treeThreadLifecycleStatusClass,
+  treeThreadLifecycleStatusLabel,
 } from "../lib/thread";
 import type { TreeMenuState, TreeNode } from "../types";
 import { ChevronDownIcon, RobotIcon } from "./icons";
@@ -30,8 +30,8 @@ export function AgentTreeNode({
   const isCollapsed = collapsedSet.has(node.threadId);
   const hasChildren = node.children.length > 0;
   const isRoot = node.thread ? isRootThread(node.thread) : depth === 0;
-  const statusClass = treeThreadStatusClass(node);
-  const statusLabel = treeThreadStatusLabel(statusClass);
+  const statusClass = treeThreadLifecycleStatusClass(node);
+  const statusLabel = treeThreadLifecycleStatusLabel(statusClass);
   const openContextMenu = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();

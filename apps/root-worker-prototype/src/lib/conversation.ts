@@ -4,6 +4,7 @@ import type {
   ResponseItem,
   Thread,
   ThreadItem,
+  ThreadLifecycleStatus,
 } from "../types";
 import {
   buildConversationCells,
@@ -1666,7 +1667,7 @@ function formatCollabAgentToolDetails(
         .map(([threadId, state]) =>
           [
             stringOrNull(state.path) ?? trimThreadId(threadId),
-            state.status,
+            formatLifecycleStatus(state.lifecycleStatus),
             stringOrNull(state.message),
           ]
             .filter((value) => value && value.length > 0)
@@ -1771,14 +1772,14 @@ function summarizeCollabAgentStatusUpdate(
   item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
 ) {
   const agentPath =
-    stringOrNull(item.status.path) ??
+    stringOrNull(item.lifecycleStatus.path) ??
     stringOrNull(item.senderPath) ??
     "unknown";
   const message = previewInlineText(
-    item.status.message,
+    item.lifecycleStatus.message,
     AGENT_STATUS_PREVIEW_MAX_CHARS,
   );
-  return [agentPath, item.status.status, message]
+  return [agentPath, formatLifecycleStatus(item.lifecycleStatus.lifecycleStatus), message]
     .filter((value) => value && value.length > 0)
     .join(" • ");
 }
@@ -1786,8 +1787,8 @@ function summarizeCollabAgentStatusUpdate(
 function formatCollabAgentStatusUpdateTitle(
   item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
 ) {
-  const agentPath = resolveAgentPath(item.status.path, item.senderPath);
-  return item.status.status === "completed"
+  const agentPath = resolveAgentPath(item.lifecycleStatus.path, item.senderPath);
+  return item.lifecycleStatus.lifecycleStatus.type === "final"
     ? `${agentPath} subagent completion`
     : `status from ${agentPath}`;
 }
@@ -1798,20 +1799,37 @@ function formatCollabAgentStatusUpdateDetails(
   const sections = [
     `From\n${stringOrFallback(item.senderPath, "unknown")}`,
     `To\n${stringOrFallback(item.recipientPath, "unknown")}`,
-    `Status\n${item.status.status}`,
+    `Status\n${formatLifecycleStatus(item.lifecycleStatus.lifecycleStatus)}`,
   ];
 
-  const statusPath = stringOrNull(item.status.path);
+  const statusPath = stringOrNull(item.lifecycleStatus.path);
   if (statusPath) {
     sections.push(`Agent\n${statusPath}`);
   }
 
-  const statusMessage = stringOrNull(item.status.message);
+  const statusMessage = stringOrNull(item.lifecycleStatus.message);
   if (statusMessage) {
     sections.push(`Message\n${statusMessage}`);
   }
 
   return sections.join("\n\n");
+}
+
+function formatLifecycleStatus(status: ThreadLifecycleStatus) {
+  switch (status.type) {
+    case "notLoaded":
+      return "notLoaded";
+    case "initializing":
+      return "initializing";
+    case "active":
+      return "active";
+    case "waiting":
+      return `waiting:${status.reason}`;
+    case "final":
+      return status.result.type;
+    case "systemError":
+      return "systemError";
+  }
 }
 
 function summarizeCommandExecution(

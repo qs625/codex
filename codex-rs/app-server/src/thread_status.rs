@@ -5,9 +5,10 @@ use crate::outgoing_message::OutgoingMessage;
 use crate::outgoing_message::OutgoingMessageSender;
 use app_server_protocol::ServerNotification;
 use app_server_protocol::Thread;
-use app_server_protocol::ThreadActiveFlag;
-use app_server_protocol::ThreadIdleReason;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleActiveFlag;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleWaitReason;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStatusChangedNotification;
 use protocol::ThreadId;
 use std::collections::HashMap;
@@ -109,14 +110,14 @@ impl ThreadWatchManager {
             .await;
     }
 
-    pub(crate) async fn loaded_status_for_thread(&self, thread_id: &str) -> ThreadStatus {
+    pub(crate) async fn loaded_status_for_thread(&self, thread_id: &str) -> ThreadLifecycleStatus {
         self.state.lock().await.loaded_status_for_thread(thread_id)
     }
 
     pub(crate) async fn loaded_statuses_for_threads(
         &self,
         thread_ids: Vec<String>,
-    ) -> HashMap<String, ThreadStatus> {
+    ) -> HashMap<String, ThreadLifecycleStatus> {
         let state = self.state.lock().await;
         thread_ids
             .into_iter()
@@ -289,7 +290,7 @@ impl ThreadWatchManager {
     pub(crate) async fn subscribe(
         &self,
         thread_id: ThreadId,
-    ) -> Option<watch::Receiver<ThreadStatus>> {
+    ) -> Option<watch::Receiver<ThreadLifecycleStatus>> {
         Some(self.state.lock().await.subscribe(thread_id.to_string()))
     }
 
@@ -326,20 +327,22 @@ impl ThreadWatchManager {
 }
 
 pub(crate) fn resolve_thread_status(
-    status: ThreadStatus,
+    status: ThreadLifecycleStatus,
     has_in_progress_turn: bool,
-) -> ThreadStatus {
+) -> ThreadLifecycleStatus {
     // Running-turn events can arrive before the watch runtime state is observed by
     // the listener loop. In that window we prefer to reflect a real active turn as
     // `Active` instead of `Idle`/`NotLoaded`.
     if has_in_progress_turn
         && matches!(
             status,
-            ThreadStatus::Idle { .. } | ThreadStatus::Complete | ThreadStatus::NotLoaded
+            ThreadLifecycleStatus::Waiting { .. }
+                | ThreadLifecycleStatus::Final { .. }
+                | ThreadLifecycleStatus::NotLoaded
         )
     {
-        return ThreadStatus::Active {
-            active_flags: vec![ThreadActiveFlag::Running],
+        return ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
         };
     }
 
@@ -349,7 +352,7 @@ pub(crate) fn resolve_thread_status(
 #[derive(Default)]
 struct ThreadWatchState {
     runtime_by_thread_id: HashMap<String, RuntimeFacts>,
-    status_watcher_by_thread_id: HashMap<String, watch::Sender<ThreadStatus>>,
+    status_watcher_by_thread_id: HashMap<String, watch::Sender<ThreadLifecycleStatus>>,
 }
 
 impl ThreadWatchState {
@@ -375,11 +378,11 @@ impl ThreadWatchState {
     fn remove_thread(&mut self, thread_id: &str) -> Option<ThreadStatusChangedNotification> {
         let previous_status = self.status_for(thread_id);
         self.runtime_by_thread_id.remove(thread_id);
-        self.update_status_watcher(thread_id, &ThreadStatus::NotLoaded);
-        if previous_status.is_some() && previous_status != Some(ThreadStatus::NotLoaded) {
+        self.update_status_watcher(thread_id, &ThreadLifecycleStatus::NotLoaded);
+        if previous_status.is_some() && previous_status != Some(ThreadLifecycleStatus::NotLoaded) {
             Some(ThreadStatusChangedNotification {
                 thread_id: thread_id.to_string(),
-                status: ThreadStatus::NotLoaded,
+                lifecycle_status: ThreadLifecycleStatus::NotLoaded,
             })
         } else {
             None
@@ -405,18 +408,18 @@ impl ThreadWatchState {
         self.status_changed_notification(thread_id.to_string(), previous_status)
     }
 
-    fn status_for(&self, thread_id: &str) -> Option<ThreadStatus> {
+    fn status_for(&self, thread_id: &str) -> Option<ThreadLifecycleStatus> {
         self.runtime_by_thread_id
             .get(thread_id)
             .map(loaded_thread_status)
     }
 
-    fn loaded_status_for_thread(&self, thread_id: &str) -> ThreadStatus {
+    fn loaded_status_for_thread(&self, thread_id: &str) -> ThreadLifecycleStatus {
         self.status_for(thread_id)
-            .unwrap_or(ThreadStatus::NotLoaded)
+            .unwrap_or(ThreadLifecycleStatus::NotLoaded)
     }
 
-    fn subscribe(&mut self, thread_id: String) -> watch::Receiver<ThreadStatus> {
+    fn subscribe(&mut self, thread_id: String) -> watch::Receiver<ThreadLifecycleStatus> {
         let status = self.loaded_status_for_thread(&thread_id);
         let sender = self
             .status_watcher_by_thread_id
@@ -430,7 +433,7 @@ impl ThreadWatchState {
         self.update_status_watcher(thread_id, &status);
     }
 
-    fn update_status_watcher(&mut self, thread_id: &str, status: &ThreadStatus) {
+    fn update_status_watcher(&mut self, thread_id: &str, status: &ThreadLifecycleStatus) {
         let remove_watcher = if let Some(sender) = self.status_watcher_by_thread_id.get(thread_id) {
             let status = status.clone();
             let _ = sender.send_if_modified(|current| {
@@ -453,7 +456,7 @@ impl ThreadWatchState {
     fn status_changed_notification(
         &self,
         thread_id: String,
-        previous_status: Option<ThreadStatus>,
+        previous_status: Option<ThreadLifecycleStatus>,
     ) -> Option<ThreadStatusChangedNotification> {
         let status = self.status_for(&thread_id)?;
 
@@ -461,7 +464,10 @@ impl ThreadWatchState {
             return None;
         }
 
-        Some(ThreadStatusChangedNotification { thread_id, status })
+        Some(ThreadStatusChangedNotification {
+            thread_id,
+            lifecycle_status: status,
+        })
     }
 }
 
@@ -478,47 +484,51 @@ struct RuntimeFacts {
     has_system_error: bool,
 }
 
-fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadStatus {
+fn loaded_thread_status(runtime: &RuntimeFacts) -> ThreadLifecycleStatus {
     if !runtime.is_loaded {
-        return ThreadStatus::NotLoaded;
+        return ThreadLifecycleStatus::NotLoaded;
     }
 
     let mut active_flags = Vec::new();
     if runtime.running {
-        active_flags.push(ThreadActiveFlag::Running);
+        active_flags.push(ThreadLifecycleActiveFlag::Running);
     }
     if runtime.pending_permission_requests > 0 {
-        active_flags.push(ThreadActiveFlag::WaitingOnApproval);
+        active_flags.push(ThreadLifecycleActiveFlag::WaitingOnApproval);
     }
     if runtime.pending_user_input_requests > 0 {
-        active_flags.push(ThreadActiveFlag::WaitingOnUserInput);
+        active_flags.push(ThreadLifecycleActiveFlag::WaitingOnUserInput);
     }
 
     if runtime.running || !active_flags.is_empty() {
-        return ThreadStatus::Active { active_flags };
+        return ThreadLifecycleStatus::Active { active_flags };
     }
 
     if runtime.has_system_error {
-        return ThreadStatus::SystemError;
+        return ThreadLifecycleStatus::system_error(None);
     }
 
     if runtime.post_turn_wait_child {
-        return ThreadStatus::Idle {
-            reason: ThreadIdleReason::WaitChild,
+        return ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Child,
         };
     }
     if runtime.post_turn_wait_command {
-        return ThreadStatus::Idle {
-            reason: ThreadIdleReason::WaitCommand,
+        return ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Command,
         };
     }
     if runtime.pending_event_subscription_count > 0 || runtime.post_turn_wait_event_subscription {
-        return ThreadStatus::Idle {
-            reason: ThreadIdleReason::WaitEventSubscription,
+        return ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
         };
     }
 
-    ThreadStatus::Complete
+    ThreadLifecycleStatus::Final {
+        result: ThreadLifecycleFinalStatus::Completed {
+            last_agent_message: None,
+        },
+    }
 }
 
 #[cfg(test)]
@@ -541,7 +551,7 @@ mod tests {
             manager
                 .loaded_status_for_thread("00000000-0000-0000-0000-000000000003")
                 .await,
-            ThreadStatus::NotLoaded,
+            ThreadLifecycleStatus::NotLoaded,
         );
     }
 
@@ -561,8 +571,8 @@ mod tests {
             manager
                 .loaded_status_for_thread(NON_INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
         );
     }
@@ -582,8 +592,8 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
         );
 
@@ -594,10 +604,10 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
+            ThreadLifecycleStatus::Active {
                 active_flags: vec![
-                    ThreadActiveFlag::Running,
-                    ThreadActiveFlag::WaitingOnApproval,
+                    ThreadLifecycleActiveFlag::Running,
+                    ThreadLifecycleActiveFlag::WaitingOnApproval,
                 ],
             },
         );
@@ -609,11 +619,11 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
+            ThreadLifecycleStatus::Active {
                 active_flags: vec![
-                    ThreadActiveFlag::Running,
-                    ThreadActiveFlag::WaitingOnApproval,
-                    ThreadActiveFlag::WaitingOnUserInput,
+                    ThreadLifecycleActiveFlag::Running,
+                    ThreadLifecycleActiveFlag::WaitingOnApproval,
+                    ThreadLifecycleActiveFlag::WaitingOnUserInput,
                 ],
             },
         );
@@ -622,10 +632,10 @@ mod tests {
         wait_for_status(
             &manager,
             INTERACTIVE_THREAD_ID,
-            ThreadStatus::Active {
+            ThreadLifecycleStatus::Active {
                 active_flags: vec![
-                    ThreadActiveFlag::Running,
-                    ThreadActiveFlag::WaitingOnUserInput,
+                    ThreadLifecycleActiveFlag::Running,
+                    ThreadLifecycleActiveFlag::WaitingOnUserInput,
                 ],
             },
         )
@@ -635,8 +645,8 @@ mod tests {
         wait_for_status(
             &manager,
             INTERACTIVE_THREAD_ID,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
         )
         .await;
@@ -648,7 +658,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Complete,
+            ThreadLifecycleStatus::completed(None),
         );
     }
 
@@ -683,9 +693,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitEventSubscription,
-            },
+            ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::EventSubscription },
         );
 
         manager
@@ -695,7 +703,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Complete,
+            ThreadLifecycleStatus::completed(None),
         );
     }
 
@@ -726,9 +734,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitCommand,
-            },
+            ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::Command },
         );
     }
 
@@ -760,8 +766,8 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
         );
 
@@ -770,8 +776,8 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
         );
     }
@@ -779,20 +785,20 @@ mod tests {
     #[test]
     fn resolves_in_progress_turn_to_active_status() {
         let status =
-            resolve_thread_status(ThreadStatus::Complete, /*has_in_progress_turn*/ true);
+            resolve_thread_status(ThreadLifecycleStatus::completed(None), /*has_in_progress_turn*/ true);
         assert_eq!(
             status,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             }
         );
 
         let status =
-            resolve_thread_status(ThreadStatus::NotLoaded, /*has_in_progress_turn*/ true);
+            resolve_thread_status(ThreadLifecycleStatus::NotLoaded, /*has_in_progress_turn*/ true);
         assert_eq!(
             status,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             }
         );
     }
@@ -800,15 +806,15 @@ mod tests {
     #[test]
     fn keeps_status_when_no_in_progress_turn() {
         assert_eq!(
-            resolve_thread_status(ThreadStatus::Complete, /*has_in_progress_turn*/ false),
-            ThreadStatus::Complete
+            resolve_thread_status(ThreadLifecycleStatus::completed(None), /*has_in_progress_turn*/ false),
+            ThreadLifecycleStatus::completed(None)
         );
         assert_eq!(
             resolve_thread_status(
-                ThreadStatus::SystemError,
+                ThreadLifecycleStatus::system_error(None),
                 /*has_in_progress_turn*/ false
             ),
-            ThreadStatus::SystemError
+            ThreadLifecycleStatus::system_error(None)
         );
     }
 
@@ -829,7 +835,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::SystemError,
+            ThreadLifecycleStatus::system_error(None),
         );
 
         manager.note_turn_started(INTERACTIVE_THREAD_ID).await;
@@ -837,8 +843,8 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
         );
     }
@@ -860,9 +866,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Idle {
-                reason: ThreadIdleReason::WaitEventSubscription,
-            },
+            ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::EventSubscription },
         );
 
         manager.note_system_error(INTERACTIVE_THREAD_ID).await;
@@ -870,7 +874,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::SystemError,
+            ThreadLifecycleStatus::system_error(None),
         );
     }
 
@@ -891,7 +895,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::NotLoaded,
+            ThreadLifecycleStatus::NotLoaded,
         );
     }
 
@@ -915,13 +919,13 @@ mod tests {
 
         assert_eq!(
             statuses.get(INTERACTIVE_THREAD_ID),
-            Some(&ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            Some(&ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             }),
         );
         assert_eq!(
             statuses.get(NON_INTERACTIVE_THREAD_ID),
-            Some(&ThreadStatus::NotLoaded),
+            Some(&ThreadLifecycleStatus::NotLoaded),
         );
     }
 
@@ -969,7 +973,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
+                lifecycle_status: ThreadLifecycleStatus::completed(None),
             },
         );
 
@@ -978,8 +982,8 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
+                lifecycle_status: ThreadLifecycleStatus::Active {
+                    active_flags: vec![ThreadLifecycleActiveFlag::Running],
                 },
             },
         );
@@ -989,7 +993,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::NotLoaded,
+                lifecycle_status: ThreadLifecycleStatus::NotLoaded,
             },
         );
     }
@@ -1012,7 +1016,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
+                lifecycle_status: ThreadLifecycleStatus::completed(None),
             },
         );
 
@@ -1023,9 +1027,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Idle {
-                    reason: ThreadIdleReason::WaitEventSubscription,
-                },
+                lifecycle_status: ThreadLifecycleStatus::Waiting { reason: ThreadLifecycleWaitReason::EventSubscription },
             },
         );
 
@@ -1036,7 +1038,7 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Complete,
+                lifecycle_status: ThreadLifecycleStatus::completed(None),
             },
         );
     }
@@ -1060,7 +1062,7 @@ mod tests {
             manager
                 .loaded_status_for_thread(INTERACTIVE_THREAD_ID)
                 .await,
-            ThreadStatus::Complete,
+            ThreadLifecycleStatus::completed(None),
         );
         assert!(
             timeout(Duration::from_millis(100), outgoing_rx.recv())
@@ -1074,8 +1076,8 @@ mod tests {
             recv_status_changed_notification(&mut outgoing_rx).await,
             ThreadStatusChangedNotification {
                 thread_id: INTERACTIVE_THREAD_ID.to_string(),
-                status: ThreadStatus::Active {
-                    active_flags: vec![ThreadActiveFlag::Running],
+                lifecycle_status: ThreadLifecycleStatus::Active {
+                    active_flags: vec![ThreadLifecycleActiveFlag::Running],
                 },
             },
         );
@@ -1117,8 +1119,8 @@ mod tests {
             .expect("interactive status watcher should remain open");
         assert_eq!(
             *interactive_rx.borrow(),
-            ThreadStatus::Active {
-                active_flags: vec![ThreadActiveFlag::Running],
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
         );
         assert!(
@@ -1127,13 +1129,13 @@ mod tests {
                 .is_err(),
             "unrelated thread watcher should not receive an update"
         );
-        assert_eq!(*non_interactive_rx.borrow(), ThreadStatus::Complete);
+        assert_eq!(*non_interactive_rx.borrow(), ThreadLifecycleStatus::completed(None));
     }
 
     async fn wait_for_status(
         manager: &ThreadWatchManager,
         thread_id: &str,
-        expected_status: ThreadStatus,
+        expected_status: ThreadLifecycleStatus,
     ) {
         timeout(Duration::from_secs(1), async {
             loop {
@@ -1177,7 +1179,7 @@ mod tests {
             model_provider: "mock-provider".to_string(),
             created_at: 0,
             updated_at: 0,
-            status: ThreadStatus::NotLoaded,
+            lifecycle_status: ThreadLifecycleStatus::NotLoaded,
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: "test".to_string(),

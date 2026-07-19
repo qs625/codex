@@ -107,7 +107,7 @@ mod tests {
     use super::find_loaded_subagent_threads_for_primary;
     use app_server_protocol::SessionSource;
     use app_server_protocol::Thread;
-    use app_server_protocol::ThreadStatus;
+    use app_server_protocol::ThreadLifecycleStatus;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
@@ -123,7 +123,7 @@ mod tests {
             model_provider: "openai".to_string(),
             created_at: 0,
             updated_at: 0,
-            status: ThreadStatus::Complete,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
             path: None,
             cwd: test_path_buf("/tmp").abs(),
             cli_version: "0.0.0".to_string(),

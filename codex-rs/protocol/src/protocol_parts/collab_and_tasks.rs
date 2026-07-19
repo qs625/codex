@@ -547,7 +547,7 @@ pub struct CollabAgentRef {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
-pub struct CollabAgentStatusEntry {
+pub struct CollabAgentLifecycleEntry {
     /// Thread ID of the receiver/new agent.
     pub thread_id: ThreadId,
     /// Canonical path of the receiver/new agent.
@@ -559,8 +559,8 @@ pub struct CollabAgentStatusEntry {
     /// Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.
     #[serde(default, alias = "agent_type", skip_serializing_if = "Option::is_none")]
     pub agent_role: Option<String>,
-    /// Last known status of the agent.
-    pub status: AgentStatus,
+    /// Last known lifecycle status of the agent.
+    pub lifecycle_status: ThreadLifecycleStatus,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

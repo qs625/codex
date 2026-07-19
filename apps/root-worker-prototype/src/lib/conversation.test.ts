@@ -24,7 +24,7 @@ function makeThread(items: Thread["turns"][number]["items"]): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "active", activeFlags: [] },
+    lifecycleStatus: { type: "active" as const, activeFlags: [] },
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -766,7 +766,10 @@ test("shows typed list_agents collab tool calls", () => {
         agentsStates: {
           "/root/worker": {
             path: "/root/worker",
-            status: "completed",
+            lifecycleStatus: {
+              type: "final",
+              result: { type: "completed", lastAgentMessage: "done" },
+            },
             message: "done",
           },
         },
@@ -804,9 +807,12 @@ test("keeps child completions and subagent notifications as visible cells", () =
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
+        lifecycleStatus: {
           path: "/root/worker",
-          status: "completed",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: "done" },
+          },
           message: "done",
         },
       },
@@ -854,9 +860,12 @@ test("keeps child completion order inside the parent turn", () => {
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
+        lifecycleStatus: {
           path: "/root/worker",
-          status: "completed",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: "worker finished" },
+          },
           message: "worker finished",
         },
       },
@@ -918,9 +927,12 @@ test("uses short previews for long child completion details", () => {
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
+        lifecycleStatus: {
           path: "/root/worker",
-          status: "completed",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: longMessage },
+          },
           message: longMessage,
         },
       },
@@ -1038,9 +1050,12 @@ test("uses meaningful multi-agent titles for received work and child completion"
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
+        lifecycleStatus: {
           path: "/root/worker",
-          status: "completed",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: "done" },
+          },
           message: "done",
         },
       },
@@ -1108,9 +1123,12 @@ test("tolerates non-string multi-agent history fields without crashing", () => {
         senderPath: { path: "/root/worker" } as never,
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
+        lifecycleStatus: {
           path: { path: "/root/worker" } as never,
-          status: "completed",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: "done" },
+          },
           message: { text: "done" } as never,
         },
       },
@@ -1807,9 +1825,12 @@ test("keeps repeated standalone notifications as distinct cell entries", () => {
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
+        lifecycleStatus: {
           path: "/root/worker",
-          status: "completed",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: "done" },
+          },
           message: "done",
         },
       },
@@ -1820,9 +1841,12 @@ test("keeps repeated standalone notifications as distinct cell entries", () => {
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        status: {
+        lifecycleStatus: {
           path: "/root/worker",
-          status: "completed",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: "done" },
+          },
           message: "done",
         },
       },

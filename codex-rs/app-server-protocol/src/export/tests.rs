@@ -61,12 +61,14 @@ fn generated_ts_optional_nullable_fields_only_in_params() -> Result<()> {
                     || matches!(
                         stem,
                         "CollabAgentRef"
-                            | "CollabAgentStatusEntry"
+                            | "CollabAgentLifecycleEntry"
                             | "CollabAgentSpawnEndEvent"
                             | "CollabAgentInteractionEndEvent"
                             | "CollabCloseEndEvent"
                             | "CollabResumeBeginEvent"
                             | "CollabResumeEndEvent"
+                            | "ThreadLifecycleFinalStatus"
+                            | "ThreadLifecycleStatus"
                     )
             });
 

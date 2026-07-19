@@ -211,7 +211,7 @@ fn collab_agent_state_maps_interrupted_status() {
         CollabAgentState::from(CoreAgentStatus::Interrupted),
         CollabAgentState {
             path: None,
-            status: CollabAgentStatus::Interrupted,
+            lifecycle_status: ThreadLifecycleStatus::Final { result: ThreadLifecycleFinalStatus::Interrupted },
             message: None,
         }
     );
@@ -319,24 +319,37 @@ fn thread_lifecycle_responses_default_missing_optional_fields() {
             "modelProvider": "openai",
             "createdAt": 1,
             "updatedAt": 1,
-            "status": { "type": "idle" },
+            "lifecycleStatus": {
+                "type": "final",
+                "result": {
+                    "type": "completed"
+                }
+            },
             "path": null,
             "cwd": absolute_path_string("tmp"),
             "cliVersion": "0.0.0",
             "source": "exec",
             "agentNickname": null,
             "agentRole": null,
+            "agentPath": null,
             "gitInfo": null,
             "name": null,
+            "skills": [],
+            "tokenUsage": null,
+            "contextUsage": null,
             "turns": []
         },
         "model": "gpt-5",
         "modelProvider": "openai",
         "serviceTier": null,
         "cwd": absolute_path_string("tmp"),
+        "runtimeWorkspaceRoots": [],
+        "instructionSources": [],
         "approvalPolicy": "on-failure",
         "approvalsReviewer": "user",
         "sandbox": { "type": "dangerFullAccess" },
+        "permissionProfile": null,
+        "activePermissionProfile": null,
         "reasoningEffort": null
     });
 

@@ -22,7 +22,7 @@ use app_server_protocol::ThreadArchiveResponse;
 use app_server_protocol::ThreadForkResponse;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadStatus as AppServerThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus as AppServerThreadLifecycleStatus;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
@@ -128,7 +128,7 @@ fn sample_thread(thread_id: &str) -> Thread {
         model_provider: "openai".to_string(),
         created_at: 1,
         updated_at: 2,
-        status: AppServerThreadStatus::Complete,
+        lifecycle_status: AppServerThreadLifecycleStatus::completed(None),
         path: None,
         cwd: test_path_buf("/tmp").abs(),
         cli_version: "0.0.0".to_string(),

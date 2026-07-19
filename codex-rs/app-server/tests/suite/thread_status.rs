@@ -5,17 +5,18 @@ use app_server_protocol::JSONRPCMessage;
 use app_server_protocol::JSONRPCNotification;
 use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
-use app_server_protocol::ThreadIdleReason;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleFinalStatus;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadLoadedListParams;
 use app_server_protocol::ThreadLoadedListResponse;
+use app_server_protocol::ThreadLifecycleWaitReason;
 use app_server_protocol::ThreadReadParams;
 use app_server_protocol::ThreadReadResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
@@ -91,22 +92,24 @@ async fn thread_status_changed_emits_runtime_updates() -> Result<()> {
                 if notification.thread_id != thread.id {
                     continue;
                 }
-                match notification.status {
-                    ThreadStatus::Active { .. } => {
+                match notification.lifecycle_status {
+                    ThreadLifecycleStatus::Active { .. } => {
                         saw_active_running = true;
                     }
-                    ThreadStatus::Idle { .. } => {}
-                    ThreadStatus::Complete => {
+                    ThreadLifecycleStatus::Waiting { .. } => {}
+                    ThreadLifecycleStatus::Final {
+                        result: ThreadLifecycleFinalStatus::Completed { .. },
+                    } => {
                         if saw_active_running {
                             saw_idle_after_turn = true;
                         }
                     }
-                    ThreadStatus::SystemError => {
+                    ThreadLifecycleStatus::SystemError { .. } => {
                         if saw_active_running {
                             saw_idle_after_turn = true;
                         }
                     }
-                    ThreadStatus::NotLoaded => {
+                    ThreadLifecycleStatus::NotLoaded => {
                         if saw_active_running {
                             saw_idle_after_turn = true;
                         }
@@ -300,9 +303,9 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
     let ThreadReadResponse { thread } = to_response(thread_read_resp)?;
 
     assert_eq!(
-        thread.status,
-        ThreadStatus::Idle {
-            reason: ThreadIdleReason::WaitEventSubscription,
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
         },
     );
     let schedule_item = thread
@@ -439,9 +442,9 @@ async fn startup_restores_threads_with_persisted_event_subscriptions() -> Result
         .find(|thread| thread.id == thread_id)
         .expect("thread/list should include the restored thread");
     assert_eq!(
-        restored_thread.status,
-        ThreadStatus::Idle {
-            reason: ThreadIdleReason::WaitEventSubscription,
+        restored_thread.lifecycle_status,
+        ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
         },
     );
 

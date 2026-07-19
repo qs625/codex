@@ -40,8 +40,19 @@ def sdk_pyproject_path() -> Path:
 
 
 def schema_bundle_path(schema_dir: Path) -> Path:
-    """Return the aggregate v2 schema bundle emitted by the runtime binary."""
+    """Return the aggregate app-server protocol schema bundle emitted by the runtime binary."""
+    current_bundle = schema_dir / "app_server_protocol.schemas.json"
+    if current_bundle.exists():
+        return current_bundle
     return schema_dir / "codex_app_server_protocol.v2.schemas.json"
+
+
+def checked_in_schema_dir() -> Path | None:
+    """Return the checkout's vendored app-server schema directory when available."""
+    schema_dir = repo_root() / "codex-rs" / "app-server-protocol" / "schema" / "json"
+    if schema_bundle_path(schema_dir).exists():
+        return schema_dir
+    return None
 
 
 def _is_windows() -> bool:
@@ -1170,7 +1181,11 @@ def generate_types_from_schema_dir(schema_dir: Path) -> None:
 
 
 def generate_types() -> None:
-    """Generate schemas from the pinned runtime and then refresh SDK artifacts."""
+    """Refresh SDK artifacts from the checkout schema or, if absent, the pinned runtime."""
+    if schema_dir := checked_in_schema_dir():
+        generate_types_from_schema_dir(schema_dir)
+        return
+
     with tempfile.TemporaryDirectory(prefix="codex-python-schema-") as td:
         schema_dir = generate_schema_from_pinned_runtime(Path(td) / "schema")
         generate_types_from_schema_dir(schema_dir)

@@ -35,7 +35,7 @@ function makeThread(id: string, cwd: string, name: string): Thread {
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status: { type: "complete" },
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
     path: null,
     cwd,
     cliVersion: "test",

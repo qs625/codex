@@ -260,8 +260,8 @@ fn collab_receiver_is_not_found(
             ThreadItem::CollabAgentToolCall { agents_states, .. } => {
                 agents_states.get(receiver_thread_id).is_some_and(|state| {
                     matches!(
-                        &state.status,
-                        app_server_protocol::CollabAgentStatus::NotFound
+                        &state.lifecycle_status,
+                        app_server_protocol::ThreadLifecycleStatus::NotLoaded
                     )
                 })
             }

@@ -144,7 +144,7 @@
       "type": "string"
     },
     "AppBranding": {
-      "description": "EXPERIMENTAL - app metadata returned by app-list APIs.",
+      "description": "Branding metadata for a connector app.",
       "properties": {
         "category": {
           "type": [
@@ -186,7 +186,7 @@
       "type": "object"
     },
     "AppInfo": {
-      "description": "EXPERIMENTAL - app metadata returned by app-list APIs.",
+      "description": "Connector app metadata returned by app-list APIs and used by connector domain code.",
       "properties": {
         "appMetadata": {
           "anyOf": [
@@ -292,6 +292,7 @@
       "type": "object"
     },
     "AppMetadata": {
+      "description": "Extended metadata for a connector app.",
       "properties": {
         "categories": {
           "items": {
@@ -449,7 +450,6 @@
       ]
     },
     "AutoReviewDecisionSource": {
-      "description": "[UNSTABLE] Source that produced a terminal approval auto-review decision.",
       "enum": [
         "agent"
       ],
@@ -623,6 +623,9 @@
     },
     "CollabAgentState": {
       "properties": {
+        "lifecycleStatus": {
+          "$ref": "#/definitions/ThreadLifecycleStatus"
+        },
         "message": {
           "type": [
             "string",
@@ -634,27 +637,12 @@
             "string",
             "null"
           ]
-        },
-        "status": {
-          "$ref": "#/definitions/CollabAgentStatus"
         }
       },
       "required": [
-        "status"
+        "lifecycleStatus"
       ],
       "type": "object"
-    },
-    "CollabAgentStatus": {
-      "enum": [
-        "pendingInit",
-        "running",
-        "interrupted",
-        "completed",
-        "errored",
-        "shutdown",
-        "notFound"
-      ],
-      "type": "string"
     },
     "CollabAgentTool": {
       "enum": [
@@ -1077,7 +1065,6 @@
       "type": "object"
     },
     "FileChangeOutputDeltaNotification": {
-      "description": "Deprecated legacy notification for `apply_patch` textual output.\n\nThe server no longer emits this notification.",
       "properties": {
         "delta": {
           "type": "string"
@@ -1467,7 +1454,6 @@
       "type": "object"
     },
     "GuardianApprovalReview": {
-      "description": "[UNSTABLE] Temporary approval auto-review payload used by `item/autoApprovalReview/*` notifications. This shape is expected to change soon.",
       "properties": {
         "rationale": {
           "type": [
@@ -1701,7 +1687,6 @@
       ]
     },
     "GuardianApprovalReviewStatus": {
-      "description": "[UNSTABLE] Lifecycle state for an approval auto-review.",
       "enum": [
         "inProgress",
         "approved",
@@ -1719,7 +1704,6 @@
       "type": "string"
     },
     "GuardianRiskLevel": {
-      "description": "[UNSTABLE] Risk level assigned by approval auto-review.",
       "enum": [
         "low",
         "medium",
@@ -1729,7 +1713,6 @@
       "type": "string"
     },
     "GuardianUserAuthorization": {
-      "description": "[UNSTABLE] Authorization level assigned by approval auto-review.",
       "enum": [
         "unknown",
         "low",
@@ -1995,7 +1978,6 @@
     "ItemCompletedNotification": {
       "properties": {
         "completedAtMs": {
-          "description": "Unix timestamp (in milliseconds) when this item lifecycle completed.",
           "format": "int64",
           "type": "integer"
         },
@@ -2018,13 +2000,11 @@
       "type": "object"
     },
     "ItemGuardianApprovalReviewCompletedNotification": {
-      "description": "[UNSTABLE] Temporary notification payload for approval auto-review. This shape is expected to change soon.",
       "properties": {
         "action": {
           "$ref": "#/definitions/GuardianApprovalReviewAction"
         },
         "completedAtMs": {
-          "description": "Unix timestamp (in milliseconds) when this review completed.",
           "format": "int64",
           "type": "integer"
         },
@@ -2035,16 +2015,13 @@
           "$ref": "#/definitions/GuardianApprovalReview"
         },
         "reviewId": {
-          "description": "Stable identifier for this review.",
           "type": "string"
         },
         "startedAtMs": {
-          "description": "Unix timestamp (in milliseconds) when this review started.",
           "format": "int64",
           "type": "integer"
         },
         "targetItemId": {
-          "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
           "type": [
             "string",
             "null"
@@ -2070,7 +2047,6 @@
       "type": "object"
     },
     "ItemGuardianApprovalReviewStartedNotification": {
-      "description": "[UNSTABLE] Temporary notification payload for approval auto-review. This shape is expected to change soon.",
       "properties": {
         "action": {
           "$ref": "#/definitions/GuardianApprovalReviewAction"
@@ -2079,16 +2055,13 @@
           "$ref": "#/definitions/GuardianApprovalReview"
         },
         "reviewId": {
-          "description": "Stable identifier for this review.",
           "type": "string"
         },
         "startedAtMs": {
-          "description": "Unix timestamp (in milliseconds) when this review started.",
           "format": "int64",
           "type": "integer"
         },
         "targetItemId": {
-          "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
           "type": [
             "string",
             "null"
@@ -2117,7 +2090,6 @@
           "$ref": "#/definitions/ThreadItem"
         },
         "startedAtMs": {
-          "description": "Unix timestamp (in milliseconds) when this item lifecycle started.",
           "format": "int64",
           "type": "integer"
         },
@@ -2455,7 +2427,6 @@
       ]
     },
     "PlanDeltaNotification": {
-      "description": "EXPERIMENTAL - proposed plan streaming deltas for plan items. Clients should not assume concatenated deltas match the completed plan item content.",
       "properties": {
         "delta": {
           "type": "string"
@@ -3087,15 +3058,15 @@
             "null"
           ]
         },
-        "agentRole": {
-          "description": "Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.",
+        "agentPath": {
+          "description": "Optional canonical agent path assigned to this thread.",
           "type": [
             "string",
             "null"
           ]
         },
-        "agentPath": {
-          "description": "Optional canonical agent path assigned to this thread.",
+        "agentRole": {
+          "description": "Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.",
           "type": [
             "string",
             "null"
@@ -3154,6 +3125,14 @@
         "id": {
           "type": "string"
         },
+        "lifecycleStatus": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ThreadLifecycleStatus"
+            }
+          ],
+          "description": "Current runtime lifecycle status for the thread."
+        },
         "modelProvider": {
           "description": "Model provider used for this thread (for example, 'openai').",
           "type": "string"
@@ -3196,14 +3175,6 @@
           ],
           "description": "Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.)."
         },
-        "status": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ThreadStatus"
-            }
-          ],
-          "description": "Current runtime status for the thread."
-        },
         "threadSource": {
           "anyOf": [
             {
@@ -3245,23 +3216,15 @@
         "cwd",
         "ephemeral",
         "id",
+        "lifecycleStatus",
         "modelProvider",
         "preview",
         "sessionId",
         "source",
-        "status",
         "turns",
         "updatedAt"
       ],
       "type": "object"
-    },
-    "ThreadActiveFlag": {
-      "enum": [
-        "running",
-        "waitingOnApproval",
-        "waitingOnUserInput"
-      ],
-      "type": "string"
     },
     "ThreadArchivedNotification": {
       "properties": {
@@ -3299,6 +3262,39 @@
         },
         "loadedSkills": {
           "$ref": "#/definitions/ThreadContextUsageLoadedSkills"
+        },
+        "toolBreakdown": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ThreadContextUsageToolBreakdown"
+            }
+          ],
+          "default": {
+            "applyPatch": {
+              "input": 0,
+              "output": 0
+            },
+            "commands": {
+              "input": 0,
+              "output": 0
+            },
+            "fileOperations": {
+              "input": 0,
+              "output": 0
+            },
+            "interAgent": {
+              "input": 0,
+              "output": 0
+            },
+            "otherTools": {
+              "input": 0,
+              "output": 0
+            },
+            "searchMedia": {
+              "input": 0,
+              "output": 0
+            }
+          }
         },
         "totalBytes": {
           "format": "int64",
@@ -3409,6 +3405,54 @@
         "loadCount",
         "name",
         "path"
+      ],
+      "type": "object"
+    },
+    "ThreadContextUsageToolBreakdown": {
+      "properties": {
+        "applyPatch": {
+          "$ref": "#/definitions/ThreadContextUsageToolBucket"
+        },
+        "commands": {
+          "$ref": "#/definitions/ThreadContextUsageToolBucket"
+        },
+        "fileOperations": {
+          "$ref": "#/definitions/ThreadContextUsageToolBucket"
+        },
+        "interAgent": {
+          "$ref": "#/definitions/ThreadContextUsageToolBucket"
+        },
+        "otherTools": {
+          "$ref": "#/definitions/ThreadContextUsageToolBucket"
+        },
+        "searchMedia": {
+          "$ref": "#/definitions/ThreadContextUsageToolBucket"
+        }
+      },
+      "required": [
+        "applyPatch",
+        "commands",
+        "fileOperations",
+        "interAgent",
+        "otherTools",
+        "searchMedia"
+      ],
+      "type": "object"
+    },
+    "ThreadContextUsageToolBucket": {
+      "properties": {
+        "input": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "output": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input",
+        "output"
       ],
       "type": "object"
     },
@@ -3553,14 +3597,6 @@
     "ThreadId": {
       "type": "string"
     },
-    "ThreadIdleReason": {
-      "enum": [
-        "waitCommand",
-        "waitChild",
-        "waitEventSubscription"
-      ],
-      "type": "string"
-    },
     "ThreadItem": {
       "oneOf": [
         {
@@ -3699,7 +3735,6 @@
           "type": "object"
         },
         {
-          "description": "EXPERIMENTAL - proposed plan item content. The completed plan item is authoritative and may not match the concatenation of `PlanDelta` text.",
           "properties": {
             "id": {
               "type": "string"
@@ -3760,33 +3795,24 @@
         {
           "properties": {
             "aggregatedOutput": {
-              "description": "The command's output, aggregated from stdout and stderr.",
               "type": [
                 "string",
                 "null"
               ]
             },
             "command": {
-              "description": "The command to be executed.",
               "type": "string"
             },
             "commandActions": {
-              "description": "A best-effort parsing of the command to understand the action(s) it will perform. This returns a list of CommandAction objects because a single shell command may be composed of many commands piped together.",
               "items": {
                 "$ref": "#/definitions/CommandAction"
               },
               "type": "array"
             },
             "cwd": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/AbsolutePathBuf"
-                }
-              ],
-              "description": "The command's working directory."
+              "$ref": "#/definitions/AbsolutePathBuf"
             },
             "durationMs": {
-              "description": "The duration of the command execution in milliseconds.",
               "format": "int64",
               "type": [
                 "integer",
@@ -3794,7 +3820,6 @@
               ]
             },
             "exitCode": {
-              "description": "The command's exit code.",
               "format": "int32",
               "type": [
                 "integer",
@@ -3805,7 +3830,6 @@
               "type": "string"
             },
             "initialWaitMs": {
-              "description": "Initial wait window requested by exec_command, in milliseconds.",
               "format": "int64",
               "type": [
                 "integer",
@@ -3820,11 +3844,9 @@
                 {
                   "type": "null"
                 }
-              ],
-              "description": "Notification policy requested by exec_command."
+              ]
             },
             "processId": {
-              "description": "Identifier for the underlying PTY process (when available).",
               "type": [
                 "string",
                 "null"
@@ -3863,16 +3885,13 @@
         {
           "properties": {
             "commandItemId": {
-              "description": "The command execution item that produced this notification.",
               "type": "string"
             },
             "createdAtMs": {
-              "description": "Timestamp when the notification was created.",
               "format": "int64",
               "type": "integer"
             },
             "exitCode": {
-              "description": "Exit code associated with an exit notification.",
               "format": "int32",
               "type": [
                 "integer",
@@ -3886,11 +3905,9 @@
               "$ref": "#/definitions/CommandExecutionNotificationKind"
             },
             "message": {
-              "description": "User-visible notification summary.",
               "type": "string"
             },
             "output": {
-              "description": "Output text associated with an output notification.",
               "type": [
                 "string",
                 "null"
@@ -3918,7 +3935,6 @@
         {
           "properties": {
             "commandId": {
-              "description": "Identifier of the command session being waited on.",
               "type": "string"
             },
             "createdAtMs": {
@@ -3984,7 +4000,6 @@
               "type": "integer"
             },
             "commandId": {
-              "description": "Identifier of the command session receiving stdin.",
               "type": "string"
             },
             "containsNewline": {
@@ -4051,7 +4066,6 @@
           "properties": {
             "arguments": true,
             "durationMs": {
-              "description": "The duration of the MCP tool call in milliseconds.",
               "format": "int64",
               "type": [
                 "integer",
@@ -4118,6 +4132,37 @@
         {
           "properties": {
             "arguments": true,
+            "id": {
+              "type": "string"
+            },
+            "output": true,
+            "status": {
+              "$ref": "#/definitions/DynamicToolCallStatus"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "builtinToolCall"
+              ],
+              "title": "BuiltinToolCallThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "arguments",
+            "id",
+            "status",
+            "tool",
+            "type"
+          ],
+          "title": "BuiltinToolCallThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "arguments": true,
             "contentItems": {
               "items": {
                 "$ref": "#/definitions/DynamicToolCallOutputContentItem"
@@ -4128,7 +4173,6 @@
               ]
             },
             "durationMs": {
-              "description": "The duration of the dynamic tool call in milliseconds.",
               "format": "int64",
               "type": [
                 "integer",
@@ -4499,22 +4543,18 @@
               "additionalProperties": {
                 "$ref": "#/definitions/CollabAgentState"
               },
-              "description": "Last known status of the target agents, when available.",
               "type": "object"
             },
             "id": {
-              "description": "Unique identifier for this collab tool call.",
               "type": "string"
             },
             "model": {
-              "description": "Model requested for the spawned agent, when applicable.",
               "type": [
                 "string",
                 "null"
               ]
             },
             "prompt": {
-              "description": "Prompt text sent as part of the collab tool call, when available.",
               "type": [
                 "string",
                 "null"
@@ -4528,41 +4568,30 @@
                 {
                   "type": "null"
                 }
-              ],
-              "description": "Reasoning effort requested for the spawned agent, when applicable."
+              ]
             },
             "receiverPaths": {
-              "description": "Canonical paths of the receiving agents, when applicable.",
               "items": {
                 "type": "string"
               },
               "type": "array"
             },
             "receiverThreadIds": {
-              "description": "Thread ID of the receiving agent, when applicable. In case of spawn operation, this corresponds to the newly spawned agent.",
               "items": {
                 "type": "string"
               },
               "type": "array"
             },
             "senderPath": {
-              "description": "Canonical path of the agent issuing the collab request.",
               "type": "string"
             },
             "senderThreadId": {
-              "description": "Thread ID of the agent issuing the collab request.",
               "type": "string"
             },
             "status": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/CollabAgentToolCallStatus"
-                }
-              ],
-              "description": "Current status of the collab tool call."
+              "$ref": "#/definitions/CollabAgentToolCallStatus"
             },
             "timeoutMs": {
-              "description": "Timeout requested for wait_agent, in milliseconds, when applicable.",
               "format": "int64",
               "type": [
                 "integer",
@@ -4570,12 +4599,7 @@
               ]
             },
             "tool": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/CollabAgentTool"
-                }
-              ],
-              "description": "Name of the collab tool that was invoked."
+              "$ref": "#/definitions/CollabAgentTool"
             },
             "type": {
               "enum": [
@@ -4604,6 +4628,9 @@
             "id": {
               "type": "string"
             },
+            "lifecycleStatus": {
+              "$ref": "#/definitions/CollabAgentState"
+            },
             "recipientPath": {
               "type": "string"
             },
@@ -4622,9 +4649,6 @@
                 "null"
               ]
             },
-            "status": {
-              "$ref": "#/definitions/CollabAgentState"
-            },
             "type": {
               "enum": [
                 "collabAgentStatusUpdate"
@@ -4635,9 +4659,9 @@
           },
           "required": [
             "id",
+            "lifecycleStatus",
             "recipientPath",
             "senderPath",
-            "status",
             "type"
           ],
           "title": "CollabAgentStatusUpdateThreadItem",
@@ -4815,6 +4839,223 @@
           "type": "object"
         }
       ]
+    },
+    "ThreadLifecycleActiveFlag": {
+      "enum": [
+        "running",
+        "waitingOnApproval",
+        "waitingOnUserInput"
+      ],
+      "type": "string"
+    },
+    "ThreadLifecycleFinalStatus": {
+      "oneOf": [
+        {
+          "properties": {
+            "last_agent_message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "completed"
+              ],
+              "title": "CompletedThreadLifecycleFinalStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "CompletedThreadLifecycleFinalStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "errored"
+              ],
+              "title": "ErroredThreadLifecycleFinalStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "ErroredThreadLifecycleFinalStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "interrupted"
+              ],
+              "title": "InterruptedThreadLifecycleFinalStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "InterruptedThreadLifecycleFinalStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "shutdown"
+              ],
+              "title": "ShutdownThreadLifecycleFinalStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "ShutdownThreadLifecycleFinalStatus",
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadLifecycleStatus": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "notLoaded"
+              ],
+              "title": "NotLoadedThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "NotLoadedThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "initializing"
+              ],
+              "title": "InitializingThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "InitializingThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "active_flags": {
+              "items": {
+                "$ref": "#/definitions/ThreadLifecycleActiveFlag"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "active"
+              ],
+              "title": "ActiveThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "active_flags",
+            "type"
+          ],
+          "title": "ActiveThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "$ref": "#/definitions/ThreadLifecycleWaitReason"
+            },
+            "type": {
+              "enum": [
+                "waiting"
+              ],
+              "title": "WaitingThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "type"
+          ],
+          "title": "WaitingThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "result": {
+              "$ref": "#/definitions/ThreadLifecycleFinalStatus"
+            },
+            "type": {
+              "enum": [
+                "final"
+              ],
+              "title": "FinalThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "type"
+          ],
+          "title": "FinalThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "systemError"
+              ],
+              "title": "SystemErrorThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "SystemErrorThreadLifecycleStatus",
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadLifecycleWaitReason": {
+      "enum": [
+        "child",
+        "command",
+        "eventSubscription"
+      ],
+      "type": "string"
     },
     "ThreadNameUpdatedNotification": {
       "properties": {
@@ -5079,112 +5320,17 @@
       ],
       "type": "object"
     },
-    "ThreadStatus": {
-      "oneOf": [
-        {
-          "properties": {
-            "type": {
-              "enum": [
-                "notLoaded"
-              ],
-              "title": "NotLoadedThreadStatusType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "title": "NotLoadedThreadStatus",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "reason": {
-              "$ref": "#/definitions/ThreadIdleReason"
-            },
-            "type": {
-              "enum": [
-                "idle"
-              ],
-              "title": "IdleThreadStatusType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "reason",
-            "type"
-          ],
-          "title": "IdleThreadStatus",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "enum": [
-                "complete"
-              ],
-              "title": "CompleteThreadStatusType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "title": "CompleteThreadStatus",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "type": {
-              "enum": [
-                "systemError"
-              ],
-              "title": "SystemErrorThreadStatusType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "type"
-          ],
-          "title": "SystemErrorThreadStatus",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "activeFlags": {
-              "items": {
-                "$ref": "#/definitions/ThreadActiveFlag"
-              },
-              "type": "array"
-            },
-            "type": {
-              "enum": [
-                "active"
-              ],
-              "title": "ActiveThreadStatusType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "activeFlags",
-            "type"
-          ],
-          "title": "ActiveThreadStatus",
-          "type": "object"
-        }
-      ]
-    },
     "ThreadStatusChangedNotification": {
       "properties": {
-        "status": {
-          "$ref": "#/definitions/ThreadStatus"
+        "lifecycleStatus": {
+          "$ref": "#/definitions/ThreadLifecycleStatus"
         },
         "threadId": {
           "type": "string"
         }
       },
       "required": [
-        "status",
+        "lifecycleStatus",
         "threadId"
       ],
       "type": "object"

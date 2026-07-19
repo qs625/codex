@@ -201,6 +201,111 @@ fn agent_status_output_schema() -> Value {
     })
 }
 
+fn lifecycle_status_output_schema() -> Value {
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "type": { "type": "string", "enum": ["notLoaded"] }
+                },
+                "required": ["type"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": { "type": "string", "enum": ["initializing"] }
+                },
+                "required": ["type"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": { "type": "string", "enum": ["active"] },
+                    "activeFlags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["running", "waitingOnApproval", "waitingOnUserInput"]
+                        }
+                    }
+                },
+                "required": ["type", "activeFlags"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": { "type": "string", "enum": ["waiting"] },
+                    "reason": {
+                        "type": "string",
+                        "enum": ["child", "command", "eventSubscription"]
+                    }
+                },
+                "required": ["type", "reason"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": { "type": "string", "enum": ["final"] },
+                    "result": {
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["completed"] },
+                                    "lastAgentMessage": { "type": ["string", "null"] }
+                                },
+                                "required": ["type"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["errored"] },
+                                    "message": { "type": ["string", "null"] }
+                                },
+                                "required": ["type"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["interrupted"] }
+                                },
+                                "required": ["type"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["shutdown"] }
+                                },
+                                "required": ["type"],
+                                "additionalProperties": false
+                            }
+                        ]
+                    }
+                },
+                "required": ["type", "result"],
+                "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": { "type": "string", "enum": ["systemError"] },
+                    "message": { "type": ["string", "null"] }
+                },
+                "required": ["type"],
+                "additionalProperties": false
+            }
+        ]
+    })
+}
+
 fn spawn_agent_output_schema_v2(hide_agent_metadata: bool) -> Value {
     if hide_agent_metadata {
         return json!({
@@ -246,16 +351,16 @@ fn list_agents_output_schema() -> Value {
                             "type": "string",
                             "description": "Canonical task name for the agent when available, otherwise the agent id."
                         },
-                        "agent_status": {
-                            "description": "Last known status of the agent.",
-                            "allOf": [agent_status_output_schema()]
+                        "lifecycle_status": {
+                            "description": "Last known lifecycle status of the agent thread.",
+                            "allOf": [lifecycle_status_output_schema()]
                         },
                         "last_task_message": {
                             "type": ["string", "null"],
                             "description": "Most recent user or inter-agent instruction received by the agent, when available."
                         }
                     },
-                    "required": ["agent_name", "agent_status", "last_task_message"],
+                    "required": ["agent_name", "lifecycle_status", "last_task_message"],
                     "additionalProperties": false
                 },
                 "description": "Live agents visible in the current root thread tree."

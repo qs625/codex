@@ -330,7 +330,7 @@ mod tests {
             model_provider: "read-provider".to_string(),
             created_at: 1,
             updated_at: 2,
-            status: app_server_protocol::ThreadStatus::Complete,
+            lifecycle_status: app_server_protocol::ThreadLifecycleStatus::completed(None),
             path: None,
             cwd: test_path_buf("/tmp/read").abs(),
             cli_version: "0.0.0".to_string(),

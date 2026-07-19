@@ -288,7 +288,7 @@ async fn thread_resume_returns_rollout_history() -> Result<()> {
     assert_eq!(thread.cli_version, "0.0.0");
     assert_eq!(thread.source, SessionSource::Cli);
     assert_eq!(thread.git_info, None);
-    assert_eq!(thread.status, ThreadStatus::Complete);
+    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
 
     assert_eq!(
         thread.turns.len(),
@@ -510,4 +510,3 @@ fn append_resume_redaction_history(
     )?;
     Ok(())
 }
-

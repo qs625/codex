@@ -46,6 +46,7 @@ from .v2_all import SkillsChangedNotification
 from .v2_all import TerminalInteractionNotification
 from .v2_all import ThreadArchivedNotification
 from .v2_all import ThreadClosedNotification
+from .v2_all import ThreadContextUsageUpdatedNotification
 from .v2_all import ThreadGoalClearedNotification
 from .v2_all import ThreadGoalUpdatedNotification
 from .v2_all import ThreadNameUpdatedNotification
@@ -57,6 +58,7 @@ from .v2_all import ThreadRealtimeSdpNotification
 from .v2_all import ThreadRealtimeStartedNotification
 from .v2_all import ThreadRealtimeTranscriptDeltaNotification
 from .v2_all import ThreadRealtimeTranscriptDoneNotification
+from .v2_all import ThreadSkillsUpdatedNotification
 from .v2_all import ThreadStartedNotification
 from .v2_all import ThreadStatusChangedNotification
 from .v2_all import ThreadTokenUsageUpdatedNotification
@@ -68,6 +70,7 @@ from .v2_all import TurnStartedNotification
 from .v2_all import WarningNotification
 from .v2_all import WindowsSandboxSetupCompletedNotification
 from .v2_all import WindowsWorldWritableWarningNotification
+from .v2_all import WorkflowRunUpdatedNotification
 
 NOTIFICATION_MODELS: dict[str, type[BaseModel]] = {
     "account/login/completed": AccountLoginCompletedNotification,
@@ -111,6 +114,7 @@ NOTIFICATION_MODELS: dict[str, type[BaseModel]] = {
     "thread/archived": ThreadArchivedNotification,
     "thread/closed": ThreadClosedNotification,
     "thread/compacted": ContextCompactedNotification,
+    "thread/contextUsage/updated": ThreadContextUsageUpdatedNotification,
     "thread/goal/cleared": ThreadGoalClearedNotification,
     "thread/goal/updated": ThreadGoalUpdatedNotification,
     "thread/name/updated": ThreadNameUpdatedNotification,
@@ -122,6 +126,7 @@ NOTIFICATION_MODELS: dict[str, type[BaseModel]] = {
     "thread/realtime/started": ThreadRealtimeStartedNotification,
     "thread/realtime/transcript/delta": ThreadRealtimeTranscriptDeltaNotification,
     "thread/realtime/transcript/done": ThreadRealtimeTranscriptDoneNotification,
+    "thread/skills/updated": ThreadSkillsUpdatedNotification,
     "thread/started": ThreadStartedNotification,
     "thread/status/changed": ThreadStatusChangedNotification,
     "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotification,
@@ -133,6 +138,7 @@ NOTIFICATION_MODELS: dict[str, type[BaseModel]] = {
     "warning": WarningNotification,
     "windows/worldWritableWarning": WindowsWorldWritableWarningNotification,
     "windowsSandbox/setupCompleted": WindowsSandboxSetupCompletedNotification,
+    "workflow/run/updated": WorkflowRunUpdatedNotification,
 }
 
 DIRECT_TURN_ID_NOTIFICATION_TYPES: tuple[type[BaseModel], ...] = (
@@ -156,6 +162,7 @@ DIRECT_TURN_ID_NOTIFICATION_TYPES: tuple[type[BaseModel], ...] = (
     ReasoningSummaryTextDeltaNotification,
     ReasoningTextDeltaNotification,
     TerminalInteractionNotification,
+    ThreadContextUsageUpdatedNotification,
     ThreadGoalUpdatedNotification,
     ThreadTokenUsageUpdatedNotification,
     TurnDiffUpdatedNotification,

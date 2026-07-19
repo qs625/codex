@@ -8,7 +8,7 @@ use app_server_protocol::ThreadResumeParams;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadUnarchiveParams;
 use app_server_protocol::ThreadUnarchiveResponse;
 use app_server_protocol::TurnStartParams;
@@ -531,7 +531,7 @@ async fn thread_archive_clears_stale_subscriptions_before_resume() -> Result<()>
     )
     .await??;
     let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
-    assert_eq!(resume.thread.status, ThreadStatus::Complete);
+    assert_eq!(resume.thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
     primary.clear_message_buffer();
     secondary.clear_message_buffer();
 

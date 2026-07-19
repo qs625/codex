@@ -9,6 +9,9 @@ use protocol::protocol::AgentStatus;
 use protocol::protocol::Op;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
+use protocol::protocol::ThreadLifecycleFinalStatus;
+use protocol::protocol::ThreadLifecycleStatus;
+use protocol::protocol::ThreadLifecycleWaitReason;
 use protocol::protocol::TurnEnvironmentSelection;
 use protocol::user_input::UserInput;
 use serde::Serialize;
@@ -35,7 +38,7 @@ pub struct LiveAgent {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct ListedAgent {
     pub agent_name: String,
-    pub agent_status: AgentStatus,
+    pub lifecycle_status: ThreadLifecycleStatus,
     pub last_task_message: Option<String>,
 }
 
@@ -73,6 +76,16 @@ pub struct AgentThreadActivityInputs {
     pub thread_found: bool,
     pub has_active_turn: bool,
     pub status: Option<AgentStatus>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThreadLifecycleInputs {
+    pub manager_available: bool,
+    pub active_event_subscription_count: usize,
+    pub thread_found: bool,
+    pub has_active_turn: bool,
+    pub live_agent_status: Option<AgentStatus>,
+    pub persisted_final_agent_status: Option<AgentStatus>,
 }
 
 pub struct ThreadSpawnPlanInput<'a> {
@@ -220,29 +233,103 @@ pub fn should_ignore_descendant_shutdown_error(error: &CodexErr) -> bool {
 }
 
 pub fn agent_thread_is_active_from_inputs(inputs: AgentThreadActivityInputs) -> bool {
+    let lifecycle = normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+        manager_available: inputs.manager_available,
+        active_event_subscription_count: inputs.active_event_subscription_count,
+        thread_found: inputs.thread_found,
+        has_active_turn: inputs.has_active_turn,
+        live_agent_status: inputs.status,
+        persisted_final_agent_status: None,
+    });
+    thread_lifecycle_is_active(&lifecycle)
+}
+
+pub fn normalized_thread_lifecycle_from_inputs(
+    inputs: ThreadLifecycleInputs,
+) -> ThreadLifecycleStatus {
     if !inputs.manager_available {
-        return false;
+        return ThreadLifecycleStatus::SystemError {
+            message: Some("thread manager unavailable".to_string()),
+        };
     }
-    if !inputs.thread_found {
-        return false;
-    }
-    if inputs
-        .status
-        .as_ref()
-        .is_some_and(|status| crate::is_final(status))
-    {
-        return false;
+
+    let agent_status = match inputs.live_agent_status {
+        Some(AgentStatus::PendingInit) => inputs
+            .persisted_final_agent_status
+            .clone()
+            .unwrap_or(AgentStatus::PendingInit),
+        Some(status) => status,
+        None => {
+            if let Some(status) = inputs.persisted_final_agent_status {
+                return thread_lifecycle_from_final_agent_status(status);
+            }
+            if !inputs.thread_found {
+                return ThreadLifecycleStatus::NotLoaded;
+            }
+            return ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            };
+        }
+    };
+
+    if crate::is_final(&agent_status) {
+        return thread_lifecycle_from_final_agent_status(agent_status);
     }
     if inputs.active_event_subscription_count > 0 {
-        return true;
+        return ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        };
     }
     if inputs.has_active_turn {
-        return true;
+        return ThreadLifecycleStatus::Active {
+            active_flags: Vec::new(),
+        };
     }
-    inputs
-        .status
-        .as_ref()
-        .is_some_and(|status| !crate::is_final(status))
+    match agent_status {
+        AgentStatus::PendingInit => ThreadLifecycleStatus::Initializing,
+        AgentStatus::Running => ThreadLifecycleStatus::Active {
+            active_flags: Vec::new(),
+        },
+        AgentStatus::NotFound => ThreadLifecycleStatus::NotLoaded,
+        AgentStatus::Completed(_)
+        | AgentStatus::Errored(_)
+        | AgentStatus::Interrupted
+        | AgentStatus::Shutdown => {
+            thread_lifecycle_from_final_agent_status(agent_status)
+        }
+    }
+}
+
+pub fn thread_lifecycle_is_active(lifecycle: &ThreadLifecycleStatus) -> bool {
+    matches!(
+        lifecycle,
+        ThreadLifecycleStatus::Initializing
+            | ThreadLifecycleStatus::Active { .. }
+            | ThreadLifecycleStatus::Waiting { .. }
+    )
+}
+
+pub fn thread_lifecycle_from_final_agent_status(status: AgentStatus) -> ThreadLifecycleStatus {
+    match status {
+        AgentStatus::Completed(last_agent_message) => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Completed { last_agent_message },
+        },
+        AgentStatus::Errored(message) => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Errored {
+                message: Some(message),
+            },
+        },
+        AgentStatus::Interrupted => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        },
+        AgentStatus::Shutdown => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        },
+        AgentStatus::PendingInit | AgentStatus::Running => ThreadLifecycleStatus::Active {
+            active_flags: Vec::new(),
+        },
+        AgentStatus::NotFound => ThreadLifecycleStatus::NotLoaded,
+    }
 }
 
 pub fn any_agent_thread_active(active_flags: impl IntoIterator<Item = bool>) -> bool {
@@ -266,10 +353,10 @@ pub fn agent_matches_prefix(agent_path: Option<&AgentPath>, prefix: &AgentPath) 
     })
 }
 
-pub fn root_listed_agent(agent_status: AgentStatus) -> ListedAgent {
+pub fn root_listed_agent(lifecycle_status: ThreadLifecycleStatus) -> ListedAgent {
     ListedAgent {
         agent_name: AgentPath::root().to_string(),
-        agent_status,
+        lifecycle_status,
         last_task_message: Some(ROOT_LAST_TASK_MESSAGE.to_string()),
     }
 }
@@ -888,6 +975,89 @@ mod tests {
                 ..AgentThreadActivityInputs::default()
             }
         ));
+    }
+
+    #[test]
+    fn normalized_thread_lifecycle_projects_runtime_facts() {
+        let lifecycle = normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+            manager_available: true,
+            thread_found: true,
+            live_agent_status: Some(AgentStatus::PendingInit),
+            ..ThreadLifecycleInputs::default()
+        });
+        assert_eq!(lifecycle, ThreadLifecycleStatus::Initializing);
+        assert!(thread_lifecycle_is_active(&lifecycle));
+
+        let lifecycle = normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+            manager_available: true,
+            thread_found: true,
+            live_agent_status: Some(AgentStatus::PendingInit),
+            persisted_final_agent_status: Some(AgentStatus::Completed(Some("done".to_string()))),
+            ..ThreadLifecycleInputs::default()
+        });
+        assert_eq!(
+            lifecycle,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+        assert!(!thread_lifecycle_is_active(&lifecycle));
+
+        let lifecycle = normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+            manager_available: true,
+            persisted_final_agent_status: Some(AgentStatus::Shutdown),
+            ..ThreadLifecycleInputs::default()
+        });
+        assert_eq!(
+            lifecycle,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Shutdown
+            }
+        );
+        assert!(!thread_lifecycle_is_active(&lifecycle));
+
+        let lifecycle = normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+            manager_available: true,
+            thread_found: true,
+            active_event_subscription_count: 1,
+            has_active_turn: true,
+            live_agent_status: Some(AgentStatus::Interrupted),
+            ..ThreadLifecycleInputs::default()
+        });
+        assert_eq!(
+            lifecycle,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted
+            }
+        );
+        assert!(!thread_lifecycle_is_active(&lifecycle));
+
+        let lifecycle = normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+            manager_available: true,
+            thread_found: true,
+            active_event_subscription_count: 1,
+            live_agent_status: Some(AgentStatus::Running),
+            ..ThreadLifecycleInputs::default()
+        });
+        assert_eq!(
+            lifecycle,
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription
+            }
+        );
+        assert!(thread_lifecycle_is_active(&lifecycle));
+
+        let lifecycle = normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+            manager_available: false,
+            thread_found: true,
+            live_agent_status: Some(AgentStatus::Running),
+            ..ThreadLifecycleInputs::default()
+        });
+        assert_eq!(
+            lifecycle,
+            ThreadLifecycleStatus::SystemError {
+                message: Some("thread manager unavailable".to_string())
+            }
+        );
+        assert!(!thread_lifecycle_is_active(&lifecycle));
     }
 
     #[test]

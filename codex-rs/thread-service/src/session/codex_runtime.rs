@@ -88,6 +88,22 @@ pub(crate) fn duration_from_config_ms(ms: i64) -> Duration {
     Duration::from_millis(ms.max(0) as u64)
 }
 
+fn initial_agent_status_from_history(initial_history: &InitialHistory) -> AgentStatus {
+    let InitialHistory::Resumed(resumed) = initial_history else {
+        return AgentStatus::PendingInit;
+    };
+    resumed
+        .history
+        .iter()
+        .filter_map(|item| match item {
+            RolloutItem::EventMsg(event) => agent_status_from_event(event),
+            _ => None,
+        })
+        .next_back()
+        .filter(is_final)
+        .unwrap_or(AgentStatus::PendingInit)
+}
+
 /// Owns a live thread while session initialization is still fallible.
 pub(crate) struct LiveThreadInitGuard {
     live_thread: Option<SharedLiveThread>,
@@ -391,7 +407,8 @@ impl Codex {
 
         // Generate a unique ID for the lifetime of this Codex session.
         let session_source_clone = session_configuration.session_source.clone();
-        let (agent_status_tx, agent_status_rx) = watch::channel(AgentStatus::PendingInit);
+        let initial_agent_status = initial_agent_status_from_history(&conversation_history);
+        let (agent_status_tx, agent_status_rx) = watch::channel(initial_agent_status);
 
         let session = Session::new(
             session_configuration,

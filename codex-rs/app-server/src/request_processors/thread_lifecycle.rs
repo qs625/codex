@@ -22,7 +22,7 @@ struct UnloadingState {
     delay: Duration,
     has_subscribers_rx: watch::Receiver<bool>,
     has_subscribers: (bool, Instant),
-    thread_status_rx: watch::Receiver<ThreadStatus>,
+    thread_status_rx: watch::Receiver<ThreadLifecycleStatus>,
     is_active: (bool, Instant),
 }
 
@@ -42,7 +42,7 @@ impl UnloadingState {
             .await?;
         let has_subscribers = (*has_subscribers_rx.borrow(), Instant::now());
         let is_active = (
-            matches!(*thread_status_rx.borrow(), ThreadStatus::Active { .. }),
+            matches!(*thread_status_rx.borrow(), ThreadLifecycleStatus::Active { .. }),
             Instant::now(),
         );
         Some(Self {
@@ -69,7 +69,7 @@ impl UnloadingState {
             self.has_subscribers = (has_subscribers, Instant::now());
         }
 
-        let is_active = matches!(*self.thread_status_rx.borrow(), ThreadStatus::Active { .. });
+        let is_active = matches!(*self.thread_status_rx.borrow(), ThreadLifecycleStatus::Active { .. });
         if self.is_active.0 != is_active {
             self.is_active = (is_active, Instant::now());
         }
@@ -778,16 +778,16 @@ pub(super) fn merge_turn_history_with_active_turn(turns: &mut Vec<Turn>, active_
 
 pub(super) fn set_thread_status_and_interrupt_stale_turns(
     thread: &mut Thread,
-    loaded_status: ThreadStatus,
+    loaded_status: ThreadLifecycleStatus,
     has_live_in_progress_turn: bool,
 ) {
     let status = resolve_thread_status(loaded_status, has_live_in_progress_turn);
-    if !matches!(status, ThreadStatus::Active { .. }) {
+    if !matches!(status, ThreadLifecycleStatus::Active { .. }) {
         for turn in &mut thread.turns {
             if matches!(turn.status, TurnStatus::InProgress) {
                 turn.status = TurnStatus::Interrupted;
             }
         }
     }
-    thread.status = status;
+    thread.lifecycle_status = status;
 }

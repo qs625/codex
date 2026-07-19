@@ -11,6 +11,8 @@ use app_server_protocol::PatchApplyStatus;
 use app_server_protocol::PatchChangeKind;
 use app_server_protocol::ServerNotification;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadTokenUsage;
 use app_server_protocol::TurnStatus;
 use protocol::models::WebSearchAction;
@@ -257,33 +259,13 @@ impl EventProcessorWithJsonOutput {
                     agents_states: agents_states
                         .into_iter()
                         .map(|(thread_id, state)| {
+                            let (status, message) =
+                                collab_agent_status_from_lifecycle(state.lifecycle_status);
                             (
                                 thread_id,
                                 CollabAgentState {
-                                    status: match state.status {
-                                        app_server_protocol::CollabAgentStatus::PendingInit => {
-                                            CollabAgentStatus::PendingInit
-                                        }
-                                        app_server_protocol::CollabAgentStatus::Running => {
-                                            CollabAgentStatus::Running
-                                        }
-                                        app_server_protocol::CollabAgentStatus::Interrupted => {
-                                            CollabAgentStatus::Interrupted
-                                        }
-                                        app_server_protocol::CollabAgentStatus::Completed => {
-                                            CollabAgentStatus::Completed
-                                        }
-                                        app_server_protocol::CollabAgentStatus::Errored => {
-                                            CollabAgentStatus::Errored
-                                        }
-                                        app_server_protocol::CollabAgentStatus::Shutdown => {
-                                            CollabAgentStatus::Shutdown
-                                        }
-                                        app_server_protocol::CollabAgentStatus::NotFound => {
-                                            CollabAgentStatus::NotFound
-                                        }
-                                    },
-                                    message: state.message,
+                                    status,
+                                    message,
                                 },
                             )
                         })
@@ -587,6 +569,34 @@ impl EventProcessorWithJsonOutput {
         };
 
         CollectedThreadEvents { events, status }
+    }
+}
+
+fn collab_agent_status_from_lifecycle(
+    lifecycle_status: ThreadLifecycleStatus,
+) -> (CollabAgentStatus, Option<String>) {
+    match lifecycle_status {
+        ThreadLifecycleStatus::NotLoaded => (CollabAgentStatus::NotFound, None),
+        ThreadLifecycleStatus::Initializing => (CollabAgentStatus::PendingInit, None),
+        ThreadLifecycleStatus::Active { .. } | ThreadLifecycleStatus::Waiting { .. } => {
+            (CollabAgentStatus::Running, None)
+        }
+        ThreadLifecycleStatus::Final {
+            result:
+                ThreadLifecycleFinalStatus::Completed {
+                    last_agent_message,
+                },
+        } => (CollabAgentStatus::Completed, last_agent_message),
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Errored { message },
+        } => (CollabAgentStatus::Errored, message),
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        } => (CollabAgentStatus::Interrupted, None),
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        } => (CollabAgentStatus::Shutdown, None),
+        ThreadLifecycleStatus::SystemError { message } => (CollabAgentStatus::Errored, message),
     }
 }
 
