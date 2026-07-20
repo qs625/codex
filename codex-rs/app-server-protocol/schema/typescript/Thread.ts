@@ -97,10 +97,9 @@ tokenUsage: ThreadTokenUsage | null,
  */
 contextUsage: ThreadContextUsage | null,
 /**
- * Only populated on `thread/start`, `thread/resume`, `thread/rollback`, `thread/fork`, and
- * `thread/read` (when `includeTurns` is true) responses.
- * `thread/start` only includes initial injected context display items.
- * For all other responses and notifications returning a Thread,
+ * Populated only on responses that explicitly include display history, such as
+ * `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true).
+ * For `thread/start`, `thread/started`, and other metadata-only Thread payloads,
  * the turns field will be an empty list.
  */
 turns: Array<Turn>, };

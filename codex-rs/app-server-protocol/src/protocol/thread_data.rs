@@ -362,10 +362,10 @@ pub struct Thread {
     pub token_usage: Option<ThreadTokenUsage>,
     /// Restored aggregate thread context usage, when available.
     pub context_usage: Option<ThreadContextUsage>,
-    /// Only populated on `thread/start`, `thread/resume`, `thread/rollback`, `thread/fork`, and
-    /// `thread/read` (when `includeTurns` is true) responses.
-    /// `thread/start` only includes initial injected context display items.
-    /// For all other responses and notifications returning a Thread,
+    /// Populated only on responses that explicitly include display history, such as
+    /// `thread/resume`, `thread/rollback`, `thread/fork`, and
+    /// `thread/read` (when `includeTurns` is true).
+    /// For `thread/start`, `thread/started`, and other metadata-only Thread payloads,
     /// the turns field will be an empty list.
     pub turns: Vec<Turn>,
 }

@@ -1439,7 +1439,6 @@ impl TurnRequestProcessor {
     fn listener_task_context(&self) -> ListenerTaskContext {
         ListenerTaskContext {
             live_threads: self.live_threads.clone(),
-            thread_store: None,
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),

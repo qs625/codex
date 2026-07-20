@@ -9,7 +9,6 @@ use app_server_protocol::McpServerStatusUpdatedNotification;
 use app_server_protocol::RequestId;
 use app_server_protocol::SandboxMode;
 use app_server_protocol::ServerNotification;
-use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadSource;
@@ -53,6 +52,8 @@ use super::analytics::wait_for_analytics_payload;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
+const STARTUP_NOTIFICATION_QUIET_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_millis(200);
 
 fn write_workflow(root: &Path, id: &str, description: &str) -> Result<()> {
     let workflow_dir = root.join(id);
@@ -78,6 +79,43 @@ Use this workflow when feature work needs a structured process.
         ),
     )?;
     Ok(())
+}
+
+async fn assert_no_startup_injected_context_replay(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+) -> Result<()> {
+    loop {
+        let message = match timeout(STARTUP_NOTIFICATION_QUIET_TIMEOUT, mcp.read_next_message()).await
+        {
+            Ok(result) => result?,
+            Err(_) => return Ok(()),
+        };
+        if is_injected_context_item_completed_for_thread(&message, thread_id) {
+            anyhow::bail!("thread/start should not replay Init Context as item/completed");
+        }
+    }
+}
+
+fn is_injected_context_item_completed_for_thread(
+    message: &JSONRPCMessage,
+    thread_id: &str,
+) -> bool {
+    let JSONRPCMessage::Notification(notification) = message else {
+        return false;
+    };
+    if notification.method != "item/completed" {
+        return false;
+    }
+    let Some(params) = notification.params.as_ref() else {
+        return false;
+    };
+    params.get("threadId").and_then(Value::as_str) == Some(thread_id)
+        && params
+            .get("item")
+            .and_then(|item| item.get("type"))
+            .and_then(Value::as_str)
+            == Some("injectedContext")
 }
 
 #[tokio::test]
@@ -176,30 +214,9 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     );
     assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
-    let ThreadItem::InjectedContext {
-        title,
-        preview,
-        sections,
-        ..
-    } = thread
-        .turns
-        .first()
-        .and_then(|turn| turn.items.first())
-        .expect("thread/start response should include initial context item")
-    else {
-        anyhow::bail!("thread/start response should include an injected context item");
-    };
-    assert_eq!(title, "Init Context");
     assert!(
-        preview.contains("Developer"),
-        "initial context preview should mention Developer, got {preview}"
-    );
-    assert!(
-        sections.iter().any(|section| section.label == "Developer"
-            && section
-                .text
-                .contains("Agent type file body: always inspect the active task.")),
-        "initial context should include developer instructions, got {sections:?}"
+        thread.turns.is_empty(),
+        "thread/start response should not include initial context display turns"
     );
     let thread_path = thread.path.clone().expect("thread path should be present");
     assert!(thread_path.is_absolute(), "thread path should be absolute");
@@ -288,37 +305,8 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     );
     let started: ThreadStartedNotification =
         serde_json::from_value(notif.params.expect("params must be present"))?;
-    let mut expected_started_thread = thread.clone();
-    expected_started_thread.turns.clear();
-    assert_eq!(started.thread, expected_started_thread);
-
-    let item_completed = loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let message = timeout(remaining, mcp.read_next_message()).await??;
-        let JSONRPCMessage::Notification(notif) = message else {
-            continue;
-        };
-        if notif.method == "item/completed" {
-            break notif;
-        }
-    };
-    let item_completed_params = item_completed
-        .params
-        .expect("item/completed params must be present");
-    assert_eq!(
-        item_completed_params
-            .get("threadId")
-            .and_then(Value::as_str),
-        Some(thread.id.as_str())
-    );
-    assert_eq!(
-        item_completed_params
-            .get("item")
-            .and_then(|item| item.get("type"))
-            .and_then(Value::as_str),
-        Some("injectedContext"),
-        "thread/start should replay initial context as a typed item/completed notification"
-    );
+    assert_eq!(started.thread, thread);
+    assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
 
     Ok(())
 }
@@ -567,7 +555,7 @@ instruction_files = [
 }
 
 #[tokio::test]
-async fn thread_start_initial_context_includes_project_workflows_and_instruction_files_without_primary_environment(
+async fn thread_start_with_project_context_does_not_display_initial_context(
 ) -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
@@ -619,33 +607,23 @@ instruction_files = [
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(response)?;
 
-    let ThreadItem::InjectedContext { sections, .. } = thread
-        .turns
-        .first()
-        .and_then(|turn| turn.items.first())
-        .expect("thread/start response should include initial context item")
-    else {
-        anyhow::bail!("thread/start response should include an injected context item");
-    };
-
     assert!(
-        sections.iter().any(|section| section.text.contains("<workflows_instructions>")
-            && section.text.contains("- feature-dev (project)")
-            && section.text.contains("structured feature workflow")
-            && section
-                .text
-                .contains("Use this workflow when feature work needs a structured process.")),
-        "initial context should include project workflow instructions, got {sections:?}"
+        thread.turns.is_empty(),
+        "project thread/start response should not include initial context display turns"
     );
+    let started = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/started"),
+    )
+    .await??;
+    let started: ThreadStartedNotification =
+        serde_json::from_value(started.params.expect("params must be present"))?;
+    assert_eq!(started.thread.id, thread.id);
     assert!(
-        sections.iter().any(|section| section
-            .text
-            .contains("Project understanding: payment API, cache invalidation, and release checklist.")
-            && section
-                .text
-                .contains("User preference: keep migrations separate from behavior changes.")),
-        "initial context should include configured instruction_files content, got {sections:?}"
+        started.thread.turns.is_empty(),
+        "project thread/started notification should not include initial context display turns"
     );
+    assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
 
     Ok(())
 }

@@ -159,45 +159,14 @@ pub(super) fn reconstruct_thread_turns_for_turns_list(
     turns
 }
 
-pub(super) async fn load_initial_injected_context_turns(
-    thread_store: Option<&Arc<dyn ThreadStore>>,
-    thread_id: ThreadId,
-) -> Result<Vec<Turn>, JSONRPCErrorError> {
-    let Some(thread_store) = thread_store else {
-        return Ok(Vec::new());
-    };
-    let items = match read_thread_history_items(thread_store.as_ref(), thread_id).await {
-        Ok(items) => items,
-        Err(ThreadStoreError::InvalidRequest { message })
-            if message == format!("no rollout found for thread id {thread_id}") =>
-        {
-            return Ok(Vec::new());
-        }
-        Err(ThreadStoreError::ThreadNotFound {
-            thread_id: missing_thread_id,
-        }) if missing_thread_id == thread_id => return Ok(Vec::new()),
-        Err(ThreadStoreError::InvalidRequest { message }) => return Err(invalid_request(message)),
-        Err(err) => {
-            return Err(internal_error(format!(
-                "failed to read initial thread history: {err}"
-            )));
-        }
-    };
-    Ok(initial_injected_context_turns_from_items(&items))
-}
-
-pub(super) fn initial_injected_context_turns_from_items(items: &[RolloutItem]) -> Vec<Turn> {
-    let mut turns =
-        reconstruct_thread_turns_for_turns_list(items, ThreadLifecycleStatus::completed(None), false, None);
-    for turn in &mut turns {
-        turn.items
-            .retain(|item| matches!(item, ThreadItem::InjectedContext { .. }));
-        if !turn.items.is_empty() {
-            turn.items_view = TurnItemsView::Full;
-        }
+pub(crate) fn suppress_init_only_display_turns(turns: &mut Vec<Turn>) {
+    if !turns.is_empty()
+        && turns
+            .iter()
+            .all(|turn| turn.items.iter().all(|item| matches!(item, ThreadItem::InjectedContext { .. })))
+    {
+        turns.clear();
     }
-    turns.retain(|turn| !turn.items.is_empty());
-    turns
 }
 
 pub(super) async fn read_thread_history_items(
@@ -217,41 +186,6 @@ pub(super) async fn read_thread_history_items(
             message: format!("thread store did not return history for thread {thread_id}"),
         })?;
     Ok(history.items)
-}
-
-pub(super) async fn emit_initial_injected_context_items(
-    listener_task_context: &ListenerTaskContext,
-    connection_id: ConnectionId,
-    thread_id: &str,
-    turns: &[Turn],
-) {
-    for turn in turns {
-        for item in &turn.items {
-            if !matches!(item, ThreadItem::InjectedContext { .. }) {
-                continue;
-            }
-            let notification = ItemCompletedNotification {
-                item: item.clone(),
-                thread_id: thread_id.to_string(),
-                turn_id: turn.id.clone(),
-                completed_at_ms: turn
-                    .completed_at
-                    .map(|completed_at| completed_at * 1000)
-                    .unwrap_or_else(current_unix_timestamp_ms),
-            };
-            listener_task_context
-                .outgoing
-                .send_server_notification_to_connections(
-                    &[connection_id],
-                    ServerNotification::ItemCompleted(notification),
-                )
-                .await;
-        }
-    }
-}
-
-pub(super) fn current_unix_timestamp_ms() -> i64 {
-    time::OffsetDateTime::now_utc().unix_timestamp() * 1000
 }
 
 pub(super) fn normalize_thread_turns_status(

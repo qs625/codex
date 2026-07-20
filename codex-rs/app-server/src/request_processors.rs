@@ -62,7 +62,6 @@ use app_server_protocol::HooksListParams;
 use app_server_protocol::HooksListResponse;
 use app_server_protocol::InitializeParams;
 use app_server_protocol::InitializeResponse;
-use app_server_protocol::ItemCompletedNotification;
 use app_server_protocol::JSONRPCErrorError;
 use app_server_protocol::ListMcpServerStatusParams;
 use app_server_protocol::ListMcpServerStatusResponse;
