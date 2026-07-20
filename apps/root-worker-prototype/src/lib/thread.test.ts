@@ -158,6 +158,21 @@ function collabAgentLifecycleState(
   };
 }
 
+function makeInitContextItem(
+  id: string,
+): Extract<ThreadItem, { type: "injectedContext" }> {
+  return {
+    type: "injectedContext",
+    id,
+    title: "Init Context",
+    preview: "Workspace • Instructions",
+    sections: [
+      { label: "Workspace", text: "/tmp/project" },
+      { label: "Instructions", text: "全程使用中文" },
+    ],
+  };
+}
+
 function makeSidebarThread(overrides: Partial<Thread>): Thread {
   return {
     ...makeThread(),
@@ -594,17 +609,18 @@ test("injected init context item notifications create visible conversation entri
   const updated = updateThreadItem(
     makeThread(),
     "turn-1",
+    makeInitContextItem("ctx-1"),
     {
-      type: "injectedContext",
-      id: "ctx-1",
-      title: "Init Context",
-      preview: "Workspace • Instructions",
-      sections: [{ label: "Workspace", text: "/tmp/project" }],
+      completedAtMs: 2_000,
+      syntheticTurnStatus: getThreadItemNotificationSyntheticTurnStatus(
+        "item/completed",
+        makeInitContextItem("ctx-1"),
+      ),
     },
-    { completedAtMs: 2_000 },
   );
 
   const entries = buildConversationEntries(updated);
+  assert.equal(updated.turns[0]?.status, "completed");
 
   assert.deepEqual(
     entries.map((entry) => ({
@@ -624,6 +640,129 @@ test("injected init context item notifications create visible conversation entri
       },
     ],
   );
+});
+
+test("injected init context notification merges with existing init snapshot", () => {
+  const existing = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-start",
+        items: [makeInitContextItem("ctx-start")],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ],
+  };
+
+  const updated = updateThreadItem(
+    existing,
+    "turn-notification",
+    makeInitContextItem("ctx-notification"),
+    {
+      completedAtMs: 2_000,
+      syntheticTurnStatus: getThreadItemNotificationSyntheticTurnStatus(
+        "item/completed",
+        makeInitContextItem("ctx-notification"),
+      ),
+    },
+  );
+
+  const entries = buildConversationEntries(updated);
+
+  assert.equal(updated.turns.length, 1);
+  assert.equal(updated.turns[0]?.status, "completed");
+  assert.deepEqual(
+    entries
+      .filter((entry) => entry.toolName === "Init Context")
+      .map((entry) => entry.text),
+    ["Workspace • Instructions"],
+  );
+});
+
+test("mergeThreadSnapshot drops equivalent init context from later snapshots", () => {
+  const existing = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-start",
+        items: [makeInitContextItem("ctx-start")],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ],
+  };
+  const nextTurn = {
+    id: "turn-read",
+    items: [makeInitContextItem("ctx-read")],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1000,
+  };
+
+  const merged = mergeThreadSnapshot(existing, {
+    ...makeThread(),
+    turns: [nextTurn],
+  });
+
+  assert.deepEqual(merged.turns, [nextTurn]);
+});
+
+test("mergeThreadSnapshot preserves distinct non-init injected contexts", () => {
+  const existingContext: ThreadItem = {
+    type: "injectedContext",
+    id: "ctx-existing",
+    title: "Runtime Context",
+    preview: "Workspace",
+    sections: [{ label: "Workspace", text: "/tmp/project" }],
+  };
+  const nextContext: ThreadItem = {
+    ...existingContext,
+    id: "ctx-next",
+  };
+  const existing = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-existing",
+        items: [existingContext],
+        itemsView: "full" as const,
+        status: "completed" as const,
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ],
+  };
+  const nextTurn = {
+    id: "turn-next",
+    items: [nextContext],
+    itemsView: "full" as const,
+    status: "completed" as const,
+    error: null,
+    startedAt: 3,
+    completedAt: 4,
+    durationMs: 1000,
+  };
+
+  const merged = mergeThreadSnapshot(existing, {
+    ...makeThread(),
+    turns: [nextTurn],
+  });
+
+  assert.deepEqual(merged.turns, [nextTurn, existing.turns[0]]);
 });
 
 test("updateThreadTurn preserves item timestamps when a completed turn snapshot arrives", () => {

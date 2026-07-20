@@ -575,6 +575,20 @@ export function updateThreadItem(
     };
   }
 
+  if (initContextItemKey(nextItem) !== null) {
+    const existingTurn = thread.turns.find((turn) =>
+      turn.items.some((item) => isEquivalentInitContextItem(item, nextItem)),
+    );
+    if (existingTurn) {
+      const turns = thread.turns.map((turn) =>
+        turn.id === existingTurn.id
+          ? { ...turn, items: appendOrMergeThreadItem(turn.items, nextItem) }
+          : turn,
+      );
+      return { ...thread, turns };
+    }
+  }
+
   const activeTurn = isCollabCompletionNotificationItem(nextItem)
     ? [...thread.turns].reverse().find(isTurnInFlight)
     : undefined;
@@ -597,7 +611,10 @@ export function updateThreadItem(
 }
 
 function appendOrMergeThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
-  const existingItemIndex = items.findIndex((item) => item.id === nextItem.id);
+  const existingItemIndex = items.findIndex(
+    (item) =>
+      item.id === nextItem.id || isEquivalentInitContextItem(item, nextItem),
+  );
   return existingItemIndex === -1
     ? [...items, nextItem]
     : items.map((existing, index) =>
@@ -634,7 +651,8 @@ export function getThreadItemNotificationSyntheticTurnStatus(
   method: "item/started" | "item/completed",
   item: ThreadItem,
 ): "completed" | undefined {
-  return method === "item/completed" && isCollabCompletionNotificationItem(item)
+  return method === "item/completed" &&
+    (isCollabCompletionNotificationItem(item) || item.type === "injectedContext")
     ? "completed"
     : undefined;
 }
@@ -1141,6 +1159,7 @@ function syntheticTurnDurationMs(timestamps?: {
 
 type TurnItemIndex = {
   ids: Set<string>;
+  initContextKeys: Set<string>;
 };
 
 type TurnItemMatcher = {
@@ -1157,14 +1176,19 @@ function buildTurnItemIndex(
   entries: Array<{ turn: Turn; items: ThreadItem[] }>,
 ): TurnItemIndex {
   const ids = new Set<string>();
+  const initContextKeys = new Set<string>();
 
   for (const { items } of entries) {
     for (const item of items) {
       ids.add(item.id);
+      const key = initContextItemKey(item);
+      if (key) {
+        initContextKeys.add(key);
+      }
     }
   }
 
-  return { ids };
+  return { ids, initContextKeys };
 }
 
 function consumeMatchingTurnItem(
@@ -1173,7 +1197,10 @@ function consumeMatchingTurnItem(
   item: ThreadItem,
 ) {
   void turn;
-  return matcher.index.ids.has(item.id);
+  return (
+    matcher.index.ids.has(item.id) ||
+    hasMatchingInitContextItem(matcher, item)
+  );
 }
 
 function getRetainedUnmatchedTurn(
@@ -1187,7 +1214,11 @@ function getRetainedUnmatchedTurn(
     ? turn
     : { ...turn, items: normalizedItems };
 
-  if (!isTurnInFlight(turn) && !isLiveDerivedCompletedAgentTurn(turn)) {
+  if (
+    !isTurnInFlight(turn) &&
+    !isLiveDerivedCompletedAgentTurn(turn) &&
+    !normalizedItems.some((item) => hasMatchingInitContextItem(matcher, item))
+  ) {
     return [normalizedTurn];
   }
 
@@ -1251,6 +1282,33 @@ function isLiveDerivedCompletedAgentTurn(turn: Turn) {
     (turn.itemsView !== "full" ||
       turn.items.every(isCollabCompletionNotificationItem))
   );
+}
+
+function hasMatchingInitContextItem(
+  matcher: TurnItemMatcher,
+  item: ThreadItem,
+) {
+  const key = initContextItemKey(item);
+  return key !== null && matcher.index.initContextKeys.has(key);
+}
+
+function isEquivalentInitContextItem(left: ThreadItem, right: ThreadItem) {
+  const leftKey = initContextItemKey(left);
+  return leftKey !== null && leftKey === initContextItemKey(right);
+}
+
+function initContextItemKey(item: ThreadItem) {
+  if (item.type !== "injectedContext" || item.title !== "Init Context") {
+    return null;
+  }
+  return JSON.stringify({
+    title: item.title,
+    preview: item.preview,
+    sections: item.sections.map((section) => ({
+      label: section.label,
+      text: section.text,
+    })),
+  });
 }
 
 function preferMoreCompleteText(existing: string, next: string) {
