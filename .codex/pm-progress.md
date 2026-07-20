@@ -1,26 +1,15 @@
 # PM Progress
 
 ## Current Goal
-推进 modelhub 模型使用报错修复；project thread 完成系统 notification 已合并。
+None
 
 ## Active Work
-- id: modelhub-model-selection-error
-  owner: /my_codex/owner_dev_2
-  checkout: /Users/bytedance/Projects/my-codex-dev-2
-  branch: fix/modelhub-model-selection
-  task_type: bugfix
-  depends_on: 无
-  files: codex-rs/app-server/src/request_processors/**; codex-rs/app-server/src/models.rs; codex-rs/thread-service/**; codex-rs/config/**; apps/root-worker-prototype/electron/turnStart.cjs; apps/root-worker-prototype/src/lib/runConfig.ts（owner 根据根因收窄）
-  base_commit: ff29cb8ef29b0624ae3893ae4e40452c204f4622
-  pending_sync_from_main: c89e56aad003e00a8ffe48d6a0212eed798946c1；暂不同步原因：owner_dev_2 交付基线落后 project notification merge，PM 合并前需检查主线 merge 兼容。
-  status: ready_to_merge
-  objective: 修复 root-worker / app-server 中选择或使用 modelhub 模型时报错的问题，确保 modelhub 模型被列出后可作为 turn/thread 运行配置正常使用。
-  last_update: 2026-07-20 owner 交付 commit `665c5a259`，PM 已按 brief 验收：修复落在 per-turn config overlay 的 model/provider 事实层，没有 UI 字符串补丁、隐藏 modelhub 或绕过 turn/start validation；unknown model hard-fail 仍沿用既有 fallback 语义，作为残余风险记录。PM 可用验证通过。
-  next_action: PM merge `665c5a259` 到主 checkout。
-  blockers: 用户未提供具体错误文本；owner 需先从代码和现有测试定位最可能链路，必要时回报需要用户补充实际报错。
-  validation: owner `rtk git diff --check` -> passed；owner `rtk cargo test -p thread-service per_turn_config_preserves_explicit_modelhub_model_and_provider` -> passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk cargo test -p app-server turn_start_uses_explicit_modelhub_provider_override_v2` blocked by existing unrelated app-server suite compile drift；owner `rtk cargo test -p config-service per_turn_overlay_applies_session_runtime_fields` blocked by existing config-service test compile drift；fixed reviewer `/my_codex/owner_dev_2/reviewer` 通过。PM `rtk cargo test -p thread-service per_turn_config_preserves_explicit_modelhub_model_and_provider` -> 1 passed；PM `rtk cargo build -p app-server --bin app-server` -> passed；PM `rtk git diff --check` -> passed。
-  commit: 665c5a259
+- none
 ## Completed
+- commit: 9fff86aafdeecc930e00eabf0a0381e2a40113db
+  summary: 合并 `/my_codex/owner_dev_2` 的 `665c5a259` 到主线，修复 modelhub 模型选择后运行链路中的 model/provider 事实漂移；`SessionConfigOverlay` 现在携带当前 collaboration model，per-turn `Config.model` 与 `model_provider_id` 一起从 session configuration 写入，显式选择 modelhub provider/model 后不会在后续读取 `Config.model` 的路径看到旧默认模型。修复位于后端 runtime config overlay 层，没有 UI 字符串补丁、没有隐藏 modelhub，也没有绕过 `turn/start` validation。
+  validation: owner `rtk git diff --check` -> passed；owner `rtk cargo test -p thread-service per_turn_config_preserves_explicit_modelhub_model_and_provider` -> passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；fixed reviewer `/my_codex/owner_dev_2/reviewer` 通过。PM 合并前同 thread-service targeted test -> 1 passed；PM 合并前 `rtk cargo build -p app-server --bin app-server` -> passed；PM 合并前 `rtk git diff --check` -> passed。PM merge 后同 thread-service targeted test -> 1 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk git diff --check` -> passed。
+  residual_risk: 用户未提供真实 modelhub 报错文本，修复基于代码链路定位的 model/provider drift；新增 app-server integration 用例 `turn_start_uses_explicit_modelhub_provider_override_v2` 暂因既有 app-server test suite 编译漂移无法单独执行到运行阶段；config-service overlay 单测也受既有编译漂移阻塞。unknown model hard-fail 仍沿用既有 fallback 语义，本次未扩大语义。
 - commit: c89e56aad003e00a8ffe48d6a0212eed798946c1
   summary: 合并 `/my_codex/owner_dev` 的 `c57a4915f` 到主线，为 root-worker 客户端增加 project root thread 完成后的系统桌面 notification；触发点在 typed `thread/status/changed` lifecycle 更新路径，只有 project root thread 从非 completed-final 进入 final completed 的边沿触发一次；Chat thread、subagent、failed/errored/cancelled/非 completed final、历史 bootstrap/read 已完成状态不触发。通知封装为 best-effort Web Notification，权限 denied、API 缺失或平台异常不会阻断 UI lifecycle 更新。
   validation: owner `rtk pnpm --dir apps/root-worker-prototype test` -> 285 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；fixed reviewer `/my_codex/owner_dev/reviewer` 两轮通过。PM 合并前 `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/systemNotification.test.ts` -> 105 passed；PM 合并前 `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；PM 合并前 `rtk git diff --check` -> passed。PM merge 后同 targeted tests -> 105 passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；`rtk git diff --check` -> passed。
