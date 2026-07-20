@@ -15,10 +15,10 @@
   pending_sync_from_main: c89e56aad003e00a8ffe48d6a0212eed798946c1；暂不同步原因：owner_dev_2 正在 `fix/modelhub-model-selection` 上 active work，按规则不强制同步。
   status: in_progress
   objective: 修复 root-worker / app-server 中选择或使用 modelhub 模型时报错的问题，确保 modelhub 模型被列出后可作为 turn/thread 运行配置正常使用。
-  last_update: 2026-07-20 PM 完成初步搜索，`model/list`、run config、turn/start provider override 是重点链路；`my-codex-dev-2` 已从主 checkout 当前基线创建任务分支。
-  next_action: 等待 owner 复现/定位 modelhub 报错根因、实现修复、复用固定 reviewer 审查并提交验证证据。
+  last_update: 2026-07-20 PM 完成初步搜索，`model/list`、run config、turn/start provider override 是重点链路；`my-codex-dev-2` 已从主 checkout 当前基线创建任务分支。PM 后续观察到固定 reviewer `/my_codex/owner_dev_2/reviewer` 已对 owner 当前 diff 通过，核心方向是让 per-turn config overlay 同时写入当前 collaboration model 与 provider；owner 仍 active，尚未最终交付。
+  next_action: 等待 owner_dev_2 完成自测并按 Owner 交付格式返回；PM 之后按 brief 核对 model/provider 保留、unknown provider/model 不静默 fallback、测试矩阵和 reviewer 风险。
   blockers: 用户未提供具体错误文本；owner 需先从代码和现有测试定位最可能链路，必要时回报需要用户补充实际报错。
-  validation: 待 owner 提供 targeted Rust/Node/TS tests、必要 build、diff-check。
+  validation: reviewer 当前结论为无阻塞问题，建议 owner 自测 `rtk cargo test -p thread-service per_turn_config_preserves_explicit_modelhub_model_and_provider` 与 `rtk cargo test -p app-server turn_start_uses_explicit_modelhub_provider_override_v2`；owner 最终验证待交付。
   commit:
 ## Completed
 - commit: c89e56aad003e00a8ffe48d6a0212eed798946c1
