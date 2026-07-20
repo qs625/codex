@@ -141,6 +141,18 @@ async fn record_context_updates_emits_injected_context_with_agent_file_instructi
                 && section.text.contains(agent_file_instructions)),
         "expected injected context to include agent file instructions, got {injected_context:?}"
     );
+
+    let reference_context_item = session
+        .reference_context_item()
+        .await
+        .expect("expected reference context item");
+    let reference_developer_instructions = reference_context_item
+        .developer_instructions
+        .expect("expected persisted developer instructions");
+    assert!(
+        reference_developer_instructions.contains(agent_file_instructions),
+        "expected reference context to persist agent file instructions, got {reference_developer_instructions:?}"
+    );
 }
 
 #[tokio::test]

@@ -308,7 +308,10 @@ async fn run_compact_task_inner_impl(
     }
     let reference_context_item = match initial_context_injection {
         InitialContextInjection::DoNotInject => None,
-        InitialContextInjection::BeforeLastUserMessage => Some(turn_context.to_turn_context_item()),
+        InitialContextInjection::BeforeLastUserMessage => Some(
+            sess.reference_context_item_for_turn(turn_context.as_ref())
+                .await,
+        ),
     };
     let replacement_history = Some(new_history.clone());
     let compacted_item = CompactedItem {

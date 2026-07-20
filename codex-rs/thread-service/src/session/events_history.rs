@@ -1,5 +1,35 @@
 use super::*;
 
+fn developer_instructions_contains_section(
+    developer_instructions: Option<&str>,
+    section: &str,
+) -> bool {
+    let section = section.trim();
+    !section.is_empty()
+        && developer_instructions
+            .map(str::trim)
+            .is_some_and(|developer_instructions| developer_instructions.contains(section))
+}
+
+fn append_developer_instructions_section(
+    developer_instructions: &mut Option<String>,
+    section: String,
+) {
+    let section = section.trim();
+    if section.is_empty() {
+        return;
+    }
+    match developer_instructions {
+        Some(existing) if !existing.trim().is_empty() => {
+            existing.push_str("\n\n");
+            existing.push_str(section);
+        }
+        _ => {
+            *developer_instructions = Some(section.to_string());
+        }
+    }
+}
+
 impl Session {
     fn init_context_workflow_registry(
         &self,
@@ -101,6 +131,31 @@ impl Session {
             .map(str::trim)
             .filter(|text| !text.is_empty())
             .map(ToOwned::to_owned)
+    }
+
+    pub(crate) async fn reference_context_item_for_turn(
+        &self,
+        turn_context: &TurnContext,
+    ) -> TurnContextItem {
+        let mut item = turn_context.to_turn_context_item();
+        let session_source = {
+            let state = self.state.lock().await;
+            state.session_configuration.session_source.clone()
+        };
+        if let Some(agent_role_instructions) = self
+            .current_agent_role_developer_instructions(turn_context, &session_source)
+            .await
+            && !developer_instructions_contains_section(
+                item.developer_instructions.as_deref(),
+                &agent_role_instructions,
+            )
+        {
+            append_developer_instructions_section(
+                &mut item.developer_instructions,
+                agent_role_instructions,
+            );
+        }
+        item
     }
 
     pub(crate) async fn send_event(&self, turn_context: &TurnContext, msg: EventMsg) {
@@ -1337,11 +1392,10 @@ impl Session {
             && let Some(agent_role_instructions) = self
                 .current_agent_role_developer_instructions(turn_context, &session_source)
                 .await
-            && turn_context
-                .developer_instructions
-                .as_deref()
-                .map(str::trim)
-                != Some(agent_role_instructions.as_str())
+            && !developer_instructions_contains_section(
+                turn_context.developer_instructions.as_deref(),
+                &agent_role_instructions,
+            )
         {
             developer_sections.push(agent_role_instructions);
         }
@@ -1621,7 +1675,7 @@ impl Session {
             self.build_settings_update_items(reference_context_item.as_ref(), turn_context)
                 .await
         };
-        let turn_context_item = turn_context.to_turn_context_item();
+        let turn_context_item = self.reference_context_item_for_turn(turn_context).await;
         if !context_items.is_empty() {
             self.record_conversation_items(turn_context, &context_items)
                 .await;
