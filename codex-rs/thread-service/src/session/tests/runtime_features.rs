@@ -1256,6 +1256,43 @@ async fn session_settings_model_update_infers_model_option_provider() {
 }
 
 #[tokio::test]
+async fn per_turn_config_preserves_explicit_modelhub_model_and_provider() {
+    let mut session_configuration = make_session_configuration_for_tests().await;
+    let mut config = (*session_configuration.original_config_do_not_use).clone();
+    let provider = ModelProviderInfo {
+        name: "ModelHub GPT".to_string(),
+        base_url: Some("https://modelhub.example.test/v1".to_string()),
+        ..ModelProviderInfo::default()
+    };
+    config
+        .model_providers
+        .insert("modelhub-gpt".to_string(), provider.clone());
+    session_configuration.original_config_do_not_use = Arc::new(config);
+
+    let collaboration_mode = session_configuration.collaboration_mode.with_updates(
+        Some("gpt-5.5-2026-04-24".to_string()),
+        None,
+        /*developer_instructions*/ None,
+    );
+    let updated = session_configuration
+        .apply(&SessionSettingsUpdate {
+            model_provider: Some("modelhub-gpt".to_string()),
+            collaboration_mode: Some(collaboration_mode),
+            ..Default::default()
+        })
+        .expect("explicit modelhub model/provider update should apply");
+
+    let per_turn_config = Session::build_per_turn_config(&updated, updated.cwd.clone());
+
+    assert_eq!(
+        per_turn_config.model.as_deref(),
+        Some("gpt-5.5-2026-04-24")
+    );
+    assert_eq!(per_turn_config.model_provider_id, "modelhub-gpt");
+    assert_eq!(per_turn_config.model_provider, provider);
+}
+
+#[tokio::test]
 async fn session_settings_legacy_fast_service_tier_update_uses_priority_request_value() {
     let session_configuration = make_session_configuration_for_tests().await;
 

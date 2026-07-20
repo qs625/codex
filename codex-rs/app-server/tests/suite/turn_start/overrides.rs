@@ -85,6 +85,93 @@ async fn turn_start_accepts_collaboration_mode_override_v2() -> Result<()> {
 }
 
 #[tokio::test]
+async fn turn_start_uses_explicit_modelhub_provider_override_v2() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let default_server = responses::start_mock_server().await;
+    let modelhub_server = responses::start_mock_server().await;
+    let body = responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Done"),
+        responses::ev_completed("resp-1"),
+    ]);
+    let modelhub_response = responses::mount_sse_once(&modelhub_server, body).await;
+
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        format!(
+            r#"
+model = "mock-model"
+approval_policy = "never"
+sandbox_mode = "read-only"
+model_provider = "mock_provider"
+
+[model_providers.mock_provider]
+name = "Mock provider for test"
+base_url = "{default_server_uri}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+
+[model_providers.modelhub-gpt]
+name = "ModelHub GPT"
+base_url = "{modelhub_server_uri}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#,
+            default_server_uri = default_server.uri(),
+            modelhub_server_uri = modelhub_server.uri(),
+        ),
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_req = mcp
+        .send_thread_start_request(ThreadStartParams::default())
+        .await?;
+    let thread_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+
+    let turn_req = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "Hello".to_string(),
+                text_elements: Vec::new(),
+            }],
+            model: Some("gpt-5.5-2026-04-24".to_string()),
+            model_provider: Some("modelhub-gpt".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    let _turn: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let request = modelhub_response.single_request();
+    let payload = request.body_json();
+    assert_eq!(payload["model"].as_str(), Some("gpt-5.5-2026-04-24"));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn turn_start_uses_thread_feature_overrides_for_request_user_input_tool_description_v2()
 -> Result<()> {
     skip_if_no_network!(Ok(()));

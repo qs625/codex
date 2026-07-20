@@ -17,6 +17,7 @@ use super::resolve_web_search_mode_for_turn;
 pub struct SessionConfigOverlay {
     pub cwd: AbsolutePathBuf,
     pub workspace_roots: Vec<AbsolutePathBuf>,
+    pub model: String,
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub service_tier: Option<String>,
@@ -40,6 +41,7 @@ pub fn build_per_turn_config_from_session_overlay(
     let mut per_turn_config = base_config.clone();
     per_turn_config.cwd = overlay.cwd;
     per_turn_config.workspace_roots = overlay.workspace_roots.clone();
+    per_turn_config.model = Some(overlay.model);
     per_turn_config
         .permissions
         .set_workspace_roots(overlay.workspace_roots);
@@ -113,6 +115,7 @@ mod tests {
         SessionConfigOverlay {
             cwd: workspace_root(),
             workspace_roots: vec![workspace_root()],
+            model: "gpt-test".to_string(),
             model_reasoning_effort: Some(ReasoningEffort::High),
             model_reasoning_summary: Some(ReasoningSummary::Detailed),
             service_tier: Some("priority".to_string()),
@@ -140,6 +143,7 @@ mod tests {
         assert_eq!(config.cwd, workspace_root());
         assert_eq!(config.workspace_roots, vec![workspace_root()]);
         assert_eq!(config.permissions.workspace_roots(), &[workspace_root()]);
+        assert_eq!(config.model.as_deref(), Some("gpt-test"));
         assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::High));
         assert_eq!(
             config.model_reasoning_summary,
@@ -192,6 +196,7 @@ mod tests {
         };
 
         let overlay = SessionConfigOverlay {
+            model: collaboration_mode.model().to_string(),
             model_reasoning_effort: collaboration_mode.reasoning_effort(),
             ..overlay()
         };
