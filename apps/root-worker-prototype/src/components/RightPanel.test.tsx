@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type {
   FilePanelView,
+  FilePreview,
   FileTreeEntry,
   RightPanelView,
   Thread,
@@ -14,7 +15,12 @@ import type {
 import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
-const { RightPanel, ScheduleAgendaDateGroup } = await import("./RightPanel");
+const {
+  RightPanel,
+  ScheduleAgendaDateGroup,
+  filePreviewRenderMode,
+  resolveMarkdownPreviewLocalFileTarget,
+} = await import("./RightPanel");
 
 function makeThread(
   items: Thread["turns"][number]["items"],
@@ -31,7 +37,7 @@ function makeThread(
     reasoningEffort: null,
     createdAt: 1,
     updatedAt: 1,
-    status,
+    lifecycleStatus,
     path: null,
     cwd: "/tmp",
     cliVersion: "test",
@@ -65,6 +71,7 @@ function renderRightPanel(
     filePanelView?: FilePanelView;
     fileTreeEntriesByPath?: Record<string, FileTreeEntry[]>;
     expandedTreeDirectories?: string[];
+    preview?: FilePreview | null;
     todoItems?: React.ComponentProps<typeof RightPanel>["todoItems"];
   },
 ) {
@@ -90,7 +97,7 @@ function renderRightPanel(
       goal={null}
       goalAction={null}
       goalActionError={null}
-      preview={null}
+      preview={options?.preview ?? null}
       previewError={null}
       previewLoading={false}
       skills={[]}
@@ -99,6 +106,57 @@ function renderRightPanel(
     />,
   );
 }
+
+function makePreview(overrides: Partial<FilePreview> = {}): FilePreview {
+  return {
+    path: "/tmp/README.md",
+    displayPath: "README.md",
+    content: "",
+    language: "markdown",
+    line: null,
+    column: null,
+    lsp: {
+      enabled: false,
+      languageId: null,
+      lspStatus: {
+        phase: "plain",
+        detail: null,
+      },
+      serverLabel: null,
+      workspaceRoot: null,
+      reason: null,
+    },
+    image: null,
+    ...overrides,
+  };
+}
+
+test("resolves markdown preview relative links from the current file directory", () => {
+  assert.equal(
+    resolveMarkdownPreviewLocalFileTarget("/tmp/docs/README.md", "./other.md"),
+    "/tmp/docs/other.md",
+  );
+  assert.equal(
+    resolveMarkdownPreviewLocalFileTarget("/tmp/docs/guides/README.md", "../other.md"),
+    "/tmp/docs/other.md",
+  );
+  assert.equal(
+    resolveMarkdownPreviewLocalFileTarget("C:\\repo\\docs\\README.markdown", ".\\other.md"),
+    "C:\\repo\\docs\\other.md",
+  );
+  assert.equal(
+    resolveMarkdownPreviewLocalFileTarget("/tmp/docs/README.md", "/tmp/other.md"),
+    "/tmp/other.md",
+  );
+  assert.equal(
+    resolveMarkdownPreviewLocalFileTarget("/tmp/docs/README.md", "file:///tmp/other.md"),
+    "file:///tmp/other.md",
+  );
+  assert.equal(
+    resolveMarkdownPreviewLocalFileTarget("/tmp/docs/README.md", "~/other.md"),
+    "~/other.md",
+  );
+});
 
 test("renders thread analysis title and monitor empty states", () => {
   const markup = renderRightPanel(null);
@@ -481,6 +539,56 @@ test("renders cwd tree inside the preview panel", () => {
   assert.match(markup, /Thread cwd file tree/);
   assert.match(markup, /README\.md/);
   assert.match(markup, /App\.tsx/);
+});
+
+test("renders markdown file previews as markdown content", () => {
+  const markup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: makePreview({
+      content: "# Title\n\nThis is **bold**.\n\n[Other](./other.md)",
+      language: "markdown",
+    }),
+  });
+
+  assert.match(markup, /<h1>Title<\/h1>/);
+  assert.match(markup, /This is <strong>bold<\/strong>\./);
+  assert.match(markup, /href="#"/);
+  assert.doesNotMatch(markup, /Loading editor/);
+});
+
+test("keeps non-markdown file previews on the editor render path", () => {
+  assert.equal(
+    filePreviewRenderMode(
+      makePreview({
+        path: "/tmp/src/App.tsx",
+        displayPath: "src/App.tsx",
+        content: "export const value = 1;",
+        language: "typescript",
+      }),
+    ),
+    "editor",
+  );
+});
+
+test("keeps image file previews on the image path", () => {
+  const markup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: makePreview({
+      path: "/tmp/diagram.png",
+      displayPath: "diagram.png",
+      content: "",
+      language: "plaintext",
+      image: {
+        path: "/tmp/diagram.png",
+        mimeType: "image/png",
+        name: "diagram.png",
+        byteSize: 2048,
+      },
+    }),
+  });
+
+  assert.match(markup, /IMAGE/);
+  assert.match(markup, /image\/png/);
+  assert.match(markup, /diagram\.png/);
+  assert.doesNotMatch(markup, /markdown-content/);
 });
 
 test("hides chat compat cwd from the preview tree", () => {
