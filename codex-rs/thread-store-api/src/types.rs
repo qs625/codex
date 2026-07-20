@@ -65,6 +65,10 @@ pub struct ThreadPersistenceMetadata {
     pub model_provider: String,
     /// Memory mode associated with the live thread.
     pub memory_mode: MemoryMode,
+    /// Optional root-scope agent role associated with the thread.
+    pub root_agent_role: Option<String>,
+    /// Optional root-scope canonical agent path associated with the thread.
+    pub root_agent_path: Option<String>,
 }
 
 /// Parameters required to create a persisted thread.

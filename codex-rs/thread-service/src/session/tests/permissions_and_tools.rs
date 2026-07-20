@@ -640,6 +640,8 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
                 } else {
                     ThreadMemoryMode::Disabled
                 },
+                root_agent_role: None,
+                root_agent_path: None,
             },
             event_persistence_mode: ThreadEventPersistenceMode::Limited,
         },

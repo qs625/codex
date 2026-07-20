@@ -549,6 +549,8 @@ mod tests {
                     cwd: Some(home.path().to_path_buf()),
                     model_provider: "different-provider".to_string(),
                     memory_mode: ThreadMemoryMode::Enabled,
+                    root_agent_role: None,
+                    root_agent_path: None,
                 },
                 event_persistence_mode: ThreadEventPersistenceMode::Limited,
             },
@@ -604,6 +606,8 @@ mod tests {
                     cwd: Some(home.path().to_path_buf()),
                     model_provider: "different-provider".to_string(),
                     memory_mode: ThreadMemoryMode::Enabled,
+                    root_agent_role: None,
+                    root_agent_path: None,
                 },
                 event_persistence_mode: ThreadEventPersistenceMode::Limited,
             },
@@ -818,6 +822,8 @@ mod tests {
                     cwd: None,
                     model_provider: "test-provider".to_string(),
                     memory_mode: ThreadMemoryMode::Enabled,
+                    root_agent_role: None,
+                    root_agent_path: None,
                 },
                 event_persistence_mode: ThreadEventPersistenceMode::Limited,
             })
@@ -1048,6 +1054,8 @@ mod tests {
             cwd: Some(std::env::current_dir().expect("cwd")),
             model_provider: "test-provider".to_string(),
             memory_mode: ThreadMemoryMode::Enabled,
+            root_agent_role: None,
+            root_agent_path: None,
         }
     }
 

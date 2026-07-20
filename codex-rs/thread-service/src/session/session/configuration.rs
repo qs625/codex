@@ -73,6 +73,15 @@ impl SessionConfiguration {
             reasoning_effort: self.collaboration_mode.reasoning_effort(),
             personality: self.personality,
             session_source: self.session_source.clone(),
+            root_agent_path: self
+                .root_agent_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.agent_path.as_ref())
+                .map(ToString::to_string),
+            root_agent_role: self
+                .root_agent_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.agent_role.clone()),
             thread_source: self.thread_source,
         }
     }
