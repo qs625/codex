@@ -1,13 +1,13 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
+use crate::request_processors::thread_processor::suppress_init_only_display_turns;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
     pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
-    pub(super) thread_store: Option<Arc<dyn ThreadStore>>,
     pub(super) thread_state_manager: ThreadStateManager,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
     pub(super) pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
@@ -743,6 +743,7 @@ pub(crate) fn populate_thread_turns_from_history(
     if let Some(active_turn) = active_turn {
         merge_turn_history_with_active_turn(&mut turns, active_turn.clone());
     }
+    suppress_init_only_display_turns(&mut turns);
     thread.turns = turns;
 }
 

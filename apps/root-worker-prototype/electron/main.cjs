@@ -201,10 +201,11 @@ ipcMain.handle("codex:createThread", async (_event, payload) => {
   const params = buildCreateThreadStartParams(payload, { chatCompatCwd });
   const start = await appServerClient.request("thread/start", params);
 
+  const name = payload?.name?.trim();
   if (payload?.name && payload.name.trim()) {
     await appServerClient.request("thread/name/set", {
       threadId: start.thread.id,
-      name: payload.name.trim(),
+      name,
     });
   }
 
@@ -214,7 +215,12 @@ ipcMain.handle("codex:createThread", async (_event, payload) => {
     reasoningEffort: start.reasoningEffort ?? null,
   };
   rememberThreadRuntime(start.thread.id, runtime);
-  return readThread(start.thread.id, true, runtime);
+  return {
+    thread: normalizeThread(
+      name ? { ...start.thread, name } : start.thread,
+      runtime,
+    ),
+  };
 });
 
 ipcMain.handle("codex:archiveThread", async (_event, threadId) => {

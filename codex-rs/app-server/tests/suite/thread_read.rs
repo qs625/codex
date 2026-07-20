@@ -1298,7 +1298,7 @@ async fn thread_name_set_is_reflected_in_read_list_and_resume() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_read_include_turns_returns_initial_context_for_fresh_loaded_thread() -> Result<()> {
+async fn thread_read_include_turns_omits_initial_context_for_fresh_loaded_thread() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -1337,11 +1337,10 @@ async fn thread_read_include_turns_returns_initial_context_for_fresh_loaded_thre
     .await??;
     let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
 
-    assert_eq!(thread.turns.len(), 1);
-    assert!(matches!(
-        thread.turns[0].items.first(),
-        Some(ThreadItem::InjectedContext { .. })
-    ));
+    assert!(
+        thread.turns.is_empty(),
+        "fresh loaded thread/read should not expose init-only display turns"
+    );
 
     Ok(())
 }
@@ -1460,7 +1459,7 @@ instruction_files = [
 }
 
 #[tokio::test]
-async fn thread_turns_list_returns_initial_context_for_fresh_loaded_thread() -> Result<()> {
+async fn thread_turns_list_omits_initial_context_for_fresh_loaded_thread() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -1502,11 +1501,10 @@ async fn thread_turns_list_returns_initial_context_for_fresh_loaded_thread() -> 
     .await??;
     let ThreadTurnsListResponse { data, .. } = to_response::<ThreadTurnsListResponse>(read_resp)?;
 
-    assert_eq!(data.len(), 1);
-    assert!(matches!(
-        data[0].items.first(),
-        Some(ThreadItem::InjectedContext { .. })
-    ));
+    assert!(
+        data.is_empty(),
+        "fresh loaded thread/turns/list should not expose init-only display turns"
+    );
 
     Ok(())
 }

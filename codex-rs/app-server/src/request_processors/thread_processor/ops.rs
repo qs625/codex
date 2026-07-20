@@ -152,7 +152,6 @@ impl ThreadRequestProcessor {
     pub(super) fn listener_task_context(&self) -> ListenerTaskContext {
         ListenerTaskContext {
             live_threads: Arc::clone(&self.live_threads),
-            thread_store: Some(Arc::clone(&self.thread_store)),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
@@ -492,24 +491,6 @@ impl ThreadRequestProcessor {
             request_id.connection_id,
             "thread",
         );
-        let initial_display_turns = match load_initial_injected_context_turns(
-            listener_task_context.thread_store.as_ref(),
-            thread_id,
-        )
-        .instrument(tracing::info_span!(
-            "app_server.thread_start.load_initial_display_turns",
-            otel.name = "app_server.thread_start.load_initial_display_turns",
-        ))
-        .await
-        {
-            Ok(turns) => turns,
-            Err(err) => {
-                warn!("failed to load initial injected context display turns: {err:?}");
-                Vec::new()
-            }
-        };
-        thread.turns = initial_display_turns.clone();
-
         listener_task_context
             .thread_watch_manager
             .upsert_thread_silently(thread.clone())
@@ -554,7 +535,6 @@ impl ThreadRequestProcessor {
             reasoning_effort: config_snapshot.reasoning_effort,
         };
         let notif = thread_started_notification(thread.clone());
-        let request_connection_id = request_id.connection_id;
         listener_task_context
             .outgoing
             .send_response(request_id, response)
@@ -572,17 +552,6 @@ impl ThreadRequestProcessor {
                 otel.name = "app_server.thread_start.notify_started",
             ))
             .await;
-        emit_initial_injected_context_items(
-            &listener_task_context,
-            request_connection_id,
-            &thread.id,
-            &initial_display_turns,
-        )
-        .instrument(tracing::info_span!(
-            "app_server.thread_start.emit_initial_display_items",
-            otel.name = "app_server.thread_start.emit_initial_display_items",
-        ))
-        .await;
         created_thread.record_startup_phase(
             "thread_start_total",
             thread_start_started_at.elapsed(),
