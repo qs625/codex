@@ -94,7 +94,7 @@ fn thread_turns_items_list_round_trips() {
             },
             ThreadItem::ContextCompaction {
                 id: "item_2".to_string(),
-                replacement_history: None,
+                replacement_history: Vec::new(),
             },
         ],
         next_cursor: None,
@@ -121,7 +121,7 @@ fn thread_turns_items_list_round_trips() {
                         }
                     ]
                 },
-                {"type": "contextCompaction", "id": "item_2", "replacementHistory": null}
+                {"type": "contextCompaction", "id": "item_2", "replacementHistory": []}
             ],
             "nextCursor": null,
             "backwardsCursor": "cursor_0",
@@ -131,17 +131,15 @@ fn thread_turns_items_list_round_trips() {
 
 #[test]
 fn context_compaction_serializes_replacement_history() {
-    let replacement_history = vec![ResponseItem::Message {
-        id: None,
-        role: "user".to_string(),
-        content: vec![ContentItem::InputText {
-            text: "recent request".to_string(),
-        }],
-        phase: None,
-    }];
     let item = ThreadItem::ContextCompaction {
         id: "item_3".to_string(),
-        replacement_history: Some(serde_json::to_value(replacement_history).unwrap()),
+        replacement_history: vec![ContextCompactionReplacementItem::UserMessage {
+            id: "recent-user".to_string(),
+            content: vec![UserInput::Text {
+                text: "recent request".to_string(),
+                text_elements: Vec::new(),
+            }],
+        }],
     };
 
     assert_eq!(
@@ -151,12 +149,13 @@ fn context_compaction_serializes_replacement_history() {
             "id": "item_3",
             "replacementHistory": [
                 {
-                    "type": "message",
-                    "role": "user",
+                    "type": "userMessage",
+                    "id": "recent-user",
                     "content": [
                         {
-                            "type": "input_text",
+                            "type": "text",
                             "text": "recent request",
+                            "text_elements": []
                         }
                     ]
                 }
@@ -211,7 +210,9 @@ fn collab_agent_state_maps_interrupted_status() {
         CollabAgentState::from(CoreAgentStatus::Interrupted),
         CollabAgentState {
             path: None,
-            lifecycle_status: ThreadLifecycleStatus::Final { result: ThreadLifecycleFinalStatus::Interrupted },
+            lifecycle_status: ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted
+            },
             message: None,
         }
     );

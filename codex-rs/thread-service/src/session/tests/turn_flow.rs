@@ -1514,6 +1514,40 @@ async fn thread_context_usage_counts_compaction_summary_as_compact() {
 }
 
 #[tokio::test]
+async fn thread_context_usage_counts_compaction_replacement_seed_as_compact() {
+    let (session, _turn_context) = make_session_and_context().await;
+    let user_item = user_message("recent user message");
+    let compact_seed = ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: "compact final output seed".to_string(),
+        }],
+        phase: None,
+    };
+    let replacement_history = vec![user_item, compact_seed.clone()];
+
+    session
+        .record_initial_history(InitialHistory::Resumed(ResumedHistory {
+            conversation_id: ThreadId::default(),
+            history: vec![RolloutItem::Compacted(CompactedItem {
+                message: "compact final output seed".to_string(),
+                replacement_history: Some(replacement_history),
+            })],
+            rollout_path: Some(PathBuf::from("/tmp/resume.jsonl")),
+        }))
+        .await;
+
+    let compact_seed_bytes =
+        codex_context_manager::estimate_response_item_model_visible_bytes(&compact_seed);
+    let usage = session.thread_context_usage().await;
+
+    assert_eq!(usage.categories.compact, compact_seed_bytes);
+    assert_eq!(usage.categories.llm_messages, 0);
+    assert!(usage.categories.user_messages > 0);
+}
+
+#[tokio::test]
 async fn recompute_token_usage_uses_session_base_instructions() {
     let (session, turn_context) = make_session_and_context().await;
 

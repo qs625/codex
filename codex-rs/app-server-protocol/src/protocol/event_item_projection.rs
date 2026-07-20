@@ -1,6 +1,7 @@
 use crate::protocol::CommandExecutionNotificationKind;
 use crate::protocol::CommandWaitNotificationKind;
 use crate::protocol::CommandWaitStatus;
+use crate::protocol::ContextCompactionReplacementItem;
 use crate::protocol::DynamicToolCallStatus;
 use crate::protocol::EventCommandEventKind;
 use crate::protocol::HookPromptFragment;
@@ -21,6 +22,7 @@ use crate::protocol::response_item_projection::thread_goal_from_update_goal;
 use crate::protocol::response_item_projection::thread_goal_status_from_update_status;
 use crate::protocol::response_item_projection::thread_item_from_inter_agent_communication;
 use protocol::items::AgentMessageContent as CoreAgentMessageContent;
+use protocol::items::ContextCompactionReplacementItem as CoreContextCompactionReplacementItem;
 use protocol::items::TurnItem as CoreTurnItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::EventMsg;
@@ -321,14 +323,57 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> Option<ThreadItem> {
                 duration_ms,
             })
         }
-        CoreTurnItem::ContextCompaction(compaction) => {
-            let replacement_history = compaction
+        CoreTurnItem::ContextCompaction(compaction) => Some(ThreadItem::ContextCompaction {
+            id: compaction.id,
+            replacement_history: compaction
                 .replacement_history
-                .and_then(|history| serde_json::to_value(history).ok());
-            Some(ThreadItem::ContextCompaction {
-                id: compaction.id,
-                replacement_history,
-            })
+                .into_iter()
+                .map(context_compaction_replacement_item_from_core)
+                .collect(),
+        }),
+    }
+}
+
+pub fn context_compaction_replacement_item_from_core(
+    item: CoreContextCompactionReplacementItem,
+) -> ContextCompactionReplacementItem {
+    match item {
+        CoreContextCompactionReplacementItem::InjectedContext(context) => {
+            ContextCompactionReplacementItem::InjectedContext {
+                id: context.id,
+                title: context.title,
+                preview: context.preview,
+                sections: context
+                    .sections
+                    .into_iter()
+                    .map(|section| InjectedContextSection {
+                        label: section.label,
+                        text: section.text,
+                    })
+                    .collect(),
+            }
+        }
+        CoreContextCompactionReplacementItem::UserMessage(user) => {
+            ContextCompactionReplacementItem::UserMessage {
+                id: user.id,
+                content: user.content.into_iter().map(UserInput::from).collect(),
+            }
+        }
+        CoreContextCompactionReplacementItem::AgentMessage(agent) => {
+            let text = agent
+                .content
+                .into_iter()
+                .map(|content| match content {
+                    CoreAgentMessageContent::Text { text } => text,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            ContextCompactionReplacementItem::AgentMessage {
+                id: agent.id,
+                text,
+                phase: agent.phase,
+                memory_citation: agent.memory_citation.map(Into::into),
+            }
         }
     }
 }

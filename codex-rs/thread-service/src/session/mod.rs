@@ -1326,7 +1326,11 @@ impl Session {
     /// panel as soon as a client attaches, matching the token usage restore path.
     pub(crate) async fn thread_context_usage(&self) -> ThreadContextUsage {
         let state = self.state.lock().await;
-        build_thread_context_usage_from_history(&state.history, &state.thread_skills())
+        build_thread_context_usage_from_history(
+            &state.history,
+            &state.thread_skills(),
+            state.compact_replacement_history_len(),
+        )
     }
 
     pub(crate) async fn get_estimated_token_count(
@@ -1467,9 +1471,19 @@ impl Session {
             let mut state = self.state.lock().await;
             state.replace_history_with_compact_window_start(
                 reconstructed_rollout.history,
-                reconstructed_rollout.reference_context_item,
+                reconstructed_rollout.reference_context_item.clone(),
                 Self::last_compact_window_start_from_rollout(rollout_items),
             );
+            if let Some(reference_context_item) = reconstructed_rollout.reference_context_item {
+                if reference_context_item.user_instructions.is_some() {
+                    state.session_configuration.user_instructions =
+                        reference_context_item.user_instructions;
+                }
+                if reference_context_item.developer_instructions.is_some() {
+                    state.session_configuration.developer_instructions =
+                        reference_context_item.developer_instructions;
+                }
+            }
         }
         self.set_previous_turn_settings(previous_turn_settings.clone())
             .await;

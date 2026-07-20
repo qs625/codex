@@ -1,4 +1,5 @@
 import type {
+  CompactReplacementHistoryItem,
   ConversationCell,
   ConversationEntry,
   ResponseItem,
@@ -129,41 +130,16 @@ function buildConversationItemEntries(
   },
 ): ConversationEntry[] {
   if (item.type === "userMessage") {
-    const text = item.content
-      .filter((content) => content.type === "text")
-      .map((content) => content.text ?? "")
-      .join("\n")
-      .trim();
-    const skillAttachments = item.content
-      .filter((content) => content.type === "skill")
-      .map((content) => ({
-        kind: "file" as const,
-        label: `/${content.name ?? "skill"}`,
-        path: content.path,
-      }));
-    const imageAttachments = item.content
-      .filter((content) => content.type === "image")
-      .map((content, index) => ({
-        kind: "image" as const,
-        label: content.name ?? `Image ${index + 1}`,
-        url: content.image_url,
-      }));
+    const attachments = attachmentsFromUserInput(item.content);
     return [
       {
         id: item.id,
         kind: "message" as const,
         author: "You",
         role: "user" as const,
-        text:
-          text ||
-          (skillAttachments.length > 0
-            ? `Activated ${skillAttachments.length} skill${skillAttachments.length === 1 ? "" : "s"}.`
-            : "") ||
-          (imageAttachments.length > 0
-            ? `Attached ${imageAttachments.length} image${imageAttachments.length === 1 ? "" : "s"}.`
-            : ""),
+        text: formatUserInputContent(item.content),
         timestamp,
-        attachments: [...skillAttachments, ...imageAttachments],
+        attachments,
       },
     ];
   }
@@ -598,6 +574,60 @@ function buildConversationItemEntries(
   ];
 }
 
+function formatUserInputContent(
+  content: Array<{
+    type: string;
+    text?: string;
+    image_url?: string;
+    imageUrl?: string;
+    name?: string;
+    path?: string;
+  }>,
+): string {
+  const text = content
+    .filter((item) => item.type === "text")
+    .map((item) => item.text ?? "")
+    .join("\n")
+    .trim();
+  const skillCount = content.filter((item) => item.type === "skill").length;
+  const imageCount = content.filter((item) => item.type === "image").length;
+  return (
+    text ||
+    (skillCount > 0
+      ? `Activated ${skillCount} skill${skillCount === 1 ? "" : "s"}.`
+      : "") ||
+    (imageCount > 0
+      ? `Attached ${imageCount} image${imageCount === 1 ? "" : "s"}.`
+      : "")
+  );
+}
+
+function attachmentsFromUserInput(
+  content: Array<{
+    type: string;
+    image_url?: string;
+    imageUrl?: string;
+    name?: string;
+    path?: string;
+  }>,
+) {
+  const skillAttachments = content
+    .filter((item) => item.type === "skill")
+    .map((item) => ({
+      kind: "file" as const,
+      label: `/${item.name ?? "skill"}`,
+      path: item.path,
+    }));
+  const imageAttachments = content
+    .filter((item) => item.type === "image")
+    .map((item, index) => ({
+      kind: "image" as const,
+      label: item.name ?? `Image ${index + 1}`,
+      url: item.image_url ?? item.imageUrl,
+    }));
+  return [...skillAttachments, ...imageAttachments];
+}
+
 function buildContextCompactionEntry(
   item: Extract<ThreadItem, { type: "contextCompaction" }>,
   {
@@ -668,7 +698,7 @@ function formatItemTimestamp(item: ThreadItem) {
 }
 
 function buildReplacementHistoryEntries(
-  items: ResponseItem[],
+  items: Array<CompactReplacementHistoryItem | ResponseItem>,
   {
     author,
     timestamp,
@@ -679,9 +709,25 @@ function buildReplacementHistoryEntries(
     parentId: string;
   },
 ): ConversationEntry[] {
-  const hiddenFunctionOutputCallIds = collectStructuredToolOutputCallIds(items);
-  const hiddenFunctionCallIds = collectStructuredToolCallIdsWithTypedDisplay(items);
+  const rawResponseItems = items.filter(isResponseItem);
+  const hiddenFunctionOutputCallIds =
+    collectStructuredToolOutputCallIds(rawResponseItems);
+  const hiddenFunctionCallIds =
+    collectStructuredToolCallIdsWithTypedDisplay(rawResponseItems);
   return items.flatMap((item, index) => {
+    if (!isResponseItem(item)) {
+      const entry = buildTypedReplacementHistoryEntry(item, {
+        author,
+        timestamp,
+        id: `${parentId}:replacement:${index}`,
+      });
+      return [
+        {
+          ...entry,
+          isReplacementHistory: true,
+        },
+      ];
+    }
     if (
       item.type === "function_call" &&
       hiddenFunctionCallIds.has(stringOrFallback(item.call_id, ""))
@@ -709,6 +755,60 @@ function buildReplacementHistoryEntries(
         ]
       : [];
   });
+}
+
+function isResponseItem(
+  item: CompactReplacementHistoryItem | ResponseItem,
+): item is ResponseItem {
+  return !["injectedContext", "userMessage", "agentMessage"].includes(
+    String(item.type),
+  );
+}
+
+function buildTypedReplacementHistoryEntry(
+  item: CompactReplacementHistoryItem,
+  {
+    author,
+    timestamp,
+    id,
+  }: {
+    author: string;
+    timestamp: string;
+    id: string;
+  },
+): ConversationEntry {
+  switch (item.type) {
+    case "injectedContext":
+      return replacementContextEntry({
+        id,
+        author,
+        timestamp,
+        text: item.preview || item.title || "Initial context was injected.",
+        details: item.sections
+          .map((section) => `${section.label}\n${section.text}`)
+          .join("\n\n"),
+      });
+    case "userMessage":
+      return {
+        id,
+        kind: "message",
+        author: "You",
+        role: "user",
+        text: formatUserInputContent(item.content),
+        timestamp,
+        attachments: attachmentsFromUserInput(item.content),
+      };
+    case "agentMessage":
+      return {
+        id,
+        kind: "message",
+        author,
+        role: "agent",
+        text: item.text || "Replacement history assistant message.",
+        timestamp,
+        attachments: [],
+      };
+  }
 }
 
 function buildReplacementHistoryEntry(

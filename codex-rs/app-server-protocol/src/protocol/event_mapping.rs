@@ -315,14 +315,21 @@ pub fn item_event_to_server_notification(
             let status = if end_event.lifecycle_statuses.values().any(|status| {
                 matches!(
                     status,
-                    protocol::protocol::ThreadLifecycleStatus::Final { result: protocol::protocol::ThreadLifecycleFinalStatus::Errored { .. } } | protocol::protocol::ThreadLifecycleStatus::NotLoaded | protocol::protocol::ThreadLifecycleStatus::SystemError { .. }
+                    protocol::protocol::ThreadLifecycleStatus::Final {
+                        result: protocol::protocol::ThreadLifecycleFinalStatus::Errored { .. }
+                    } | protocol::protocol::ThreadLifecycleStatus::NotLoaded
+                        | protocol::protocol::ThreadLifecycleStatus::SystemError { .. }
                 )
             }) {
                 CollabAgentToolCallStatus::Failed
             } else {
                 CollabAgentToolCallStatus::Completed
             };
-            let receiver_thread_ids = end_event.lifecycle_statuses.keys().map(ToString::to_string).collect();
+            let receiver_thread_ids = end_event
+                .lifecycle_statuses
+                .keys()
+                .map(ToString::to_string)
+                .collect();
             let agents_states = end_event
                 .lifecycle_statuses
                 .iter()
@@ -564,6 +571,7 @@ pub fn item_event_to_server_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ContextCompactionReplacementItem;
     use pretty_assertions::assert_eq;
     use protocol::AgentPath;
     use protocol::ThreadId;
@@ -920,21 +928,24 @@ mod tests {
 
     #[test]
     fn item_completed_preserves_context_compaction_replacement_history() {
-        let replacement_history = vec![ResponseItem::Message {
-            id: None,
-            role: "assistant".to_string(),
-            content: vec![ContentItem::OutputText {
-                text: "LOCAL_SUMMARY".to_string(),
-            }],
-            phase: None,
-        }];
         let event = ItemCompletedEvent {
             thread_id: ThreadId::new(),
             turn_id: "turn-ignored".to_string(),
             item: TurnItem::ContextCompaction(
                 serde_json::from_value(json!({
                     "id": "compact-1",
-                    "replacementHistory": replacement_history,
+                    "replacementHistory": [
+                        {
+                            "type": "agentMessage",
+                            "id": "compact-seed",
+                            "content": [
+                                {
+                                    "type": "Text",
+                                    "text": "LOCAL_SUMMARY"
+                                }
+                            ]
+                        }
+                    ],
                 }))
                 .expect("context compaction item"),
             ),
@@ -955,7 +966,12 @@ mod tests {
                 completed_at_ms: event.completed_at_ms,
                 item: ThreadItem::ContextCompaction {
                     id: "compact-1".to_string(),
-                    replacement_history: Some(serde_json::to_value(replacement_history).unwrap()),
+                    replacement_history: vec![ContextCompactionReplacementItem::AgentMessage {
+                        id: "compact-seed".to_string(),
+                        text: "LOCAL_SUMMARY".to_string(),
+                        phase: None,
+                        memory_citation: None,
+                    }],
                 },
             },
         );

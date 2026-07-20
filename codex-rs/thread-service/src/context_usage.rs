@@ -9,6 +9,7 @@ pub(crate) fn build_thread_context_usage(
     history: &ContextManager,
     turn_context: &TurnContext,
     thread_skills: &[ThreadSkill],
+    compact_replacement_history_len: Option<usize>,
 ) -> ThreadContextUsage {
     let total_skills = turn_context
         .turn_skills
@@ -16,7 +17,7 @@ pub(crate) fn build_thread_context_usage(
         .skills_with_enabled()
         .filter(|(_, enabled)| *enabled)
         .count();
-    codex_context_usage::build_thread_context_usage(
+    codex_context_usage::build_thread_context_usage_with_compact_replacement_history(
         history,
         thread_skills,
         Some(ContextUsageSkillDetection {
@@ -25,17 +26,21 @@ pub(crate) fn build_thread_context_usage(
             total_count: Some(u32::try_from(total_skills).unwrap_or(u32::MAX)),
         }),
         crate::compact::is_summary_message,
+        compact_replacement_history_len,
     )
 }
 
 pub(crate) fn build_thread_context_usage_from_history(
     history: &ContextManager,
     thread_skills: &[ThreadSkill],
+    compact_replacement_history_len: Option<usize>,
 ) -> ThreadContextUsage {
-    codex_context_usage::build_thread_context_usage_from_history(
+    codex_context_usage::build_thread_context_usage_with_compact_replacement_history(
         history,
         thread_skills,
+        None,
         crate::compact::is_summary_message,
+        compact_replacement_history_len,
     )
 }
 

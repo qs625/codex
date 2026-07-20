@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::event_mapping::injected_context_item_from_response_items;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
@@ -31,7 +32,9 @@ use hooks::run_pre_compact_hooks;
 use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
 use protocol::items::ContextCompactionItem;
+use protocol::items::ContextCompactionReplacementItem;
 use protocol::items::TurnItem;
+use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::CompactedItem;
@@ -170,11 +173,8 @@ async fn run_compact_task_inner_impl(
     sess.emit_turn_item_started(&turn_context, &started_compaction_item)
         .await;
     let initial_input_for_turn = compact_prompt_control_item(turn_context.compact_prompt());
-    sess.record_conversation_items(
-        &turn_context,
-        std::slice::from_ref(&initial_input_for_turn),
-    )
-    .await;
+    sess.record_conversation_items(&turn_context, std::slice::from_ref(&initial_input_for_turn))
+        .await;
 
     let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
@@ -213,8 +213,8 @@ async fn run_compact_task_inner_impl(
             .for_prompt(&turn_context.model_info.input_modalities);
         let turn_input_len = turn_input.len();
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
-        let attempt_result = crate::session::turn::run_sampling_request(
-            crate::session::turn::SamplingRequest {
+        let attempt_result =
+            crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
                 tool_inputs_override: Some(Arc::clone(&compact_tool_inputs)),
                 sess: Arc::clone(&sess),
                 turn_context: Arc::clone(&turn_context),
@@ -226,9 +226,8 @@ async fn run_compact_task_inner_impl(
                 explicitly_enabled_connectors: &explicitly_enabled_connectors,
                 skills_outcome,
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
-            },
-        )
-        .await;
+            })
+            .await;
 
         match attempt_result {
             Ok(result) => {
@@ -295,11 +294,15 @@ async fn run_compact_task_inner_impl(
         final_output: Some(compacted_message.clone()),
     });
 
+    let mut injected_initial_context_item = None;
+    let mut injected_initial_context_len = 0;
     if matches!(
         initial_context_injection,
         InitialContextInjection::BeforeLastUserMessage
     ) {
         let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
+        injected_initial_context_len = initial_context.len();
+        injected_initial_context_item = injected_context_item_from_response_items(&initial_context);
         new_history =
             prepend_initial_context_to_memory_checkpoint_history(new_history, initial_context);
     }
@@ -312,33 +315,27 @@ async fn run_compact_task_inner_impl(
         message: compacted_message.clone(),
         replacement_history: replacement_history.clone(),
     };
+    let replacement_history_tail = new_history
+        .iter()
+        .skip(injected_initial_context_len)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut replacement_history_items = Vec::new();
+    if let Some(TurnItem::InjectedContext(item)) = injected_initial_context_item {
+        replacement_history_items.push(ContextCompactionReplacementItem::InjectedContext(item));
+    }
+    replacement_history_items.extend(context_compaction_replacement_items_from_response_items(
+        replacement_history_tail,
+    ));
+    let compaction_item = ContextCompactionItem {
+        replacement_history: replacement_history_items,
+        ..compaction_item
+    };
     sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
         .await;
     client_session.reset_websocket_session();
     sess.recompute_token_usage(&turn_context).await;
 
-    let mut compaction_item_value = serde_json::to_value(&compaction_item).map_err(|err| {
-        CodexErr::Fatal(format!(
-            "failed to serialize context compaction item: {err}"
-        ))
-    })?;
-    let Some(compaction_item_object) = compaction_item_value.as_object_mut() else {
-        return Err(CodexErr::Fatal(
-            "failed to serialize context compaction item as object".to_string(),
-        ));
-    };
-    let replacement_history_value = serde_json::to_value(&replacement_history).map_err(|err| {
-        CodexErr::Fatal(format!(
-            "failed to serialize compact replacement history: {err}"
-        ))
-    })?;
-    compaction_item_object.insert("replacementHistory".to_string(), replacement_history_value);
-    let compaction_item: ContextCompactionItem = serde_json::from_value(compaction_item_value)
-        .map_err(|err| {
-            CodexErr::Fatal(format!(
-                "failed to deserialize context compaction item: {err}"
-            ))
-        })?;
     sess.emit_turn_item_completed(&turn_context, TurnItem::ContextCompaction(compaction_item))
         .await;
     let warning = EventMsg::Warning(WarningEvent {
@@ -348,10 +345,13 @@ async fn run_compact_task_inner_impl(
     Ok(compacted_message)
 }
 
-fn compact_turn_final_output(history_items: &[ResponseItem], compact_prompt: &str) -> Option<String> {
-    let prompt_index = history_items.iter().rposition(|item| {
-        is_compact_prompt_control_item(item, compact_prompt)
-    })?;
+fn compact_turn_final_output(
+    history_items: &[ResponseItem],
+    compact_prompt: &str,
+) -> Option<String> {
+    let prompt_index = history_items
+        .iter()
+        .rposition(|item| is_compact_prompt_control_item(item, compact_prompt))?;
     let compact_turn_items = history_items.get(prompt_index + 1..)?;
     last_assistant_message_from_turn(compact_turn_items)
 }

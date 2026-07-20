@@ -267,11 +267,44 @@ export type ThreadItem = ThreadItemTimestamps &
   | {
       type: "contextCompaction";
       id: string;
-      replacementHistory?: ResponseItem[] | null;
+      replacementHistory?: CompactReplacementHistoryItem[] | ResponseItem[] | null;
       replacementHistoryStatus?: "missing" | "empty" | "available";
       replacementHistoryCount?: number | null;
     }
   );
+
+export type CompactReplacementHistoryItem =
+  | {
+      type: "injectedContext";
+      id: string;
+      title: string;
+      preview: string;
+      sections: Array<{
+        label: string;
+        text: string;
+      }>;
+    }
+  | {
+      type: "userMessage";
+      id: string;
+      content: Array<{
+        type: string;
+        text?: string;
+        image_url?: string;
+        imageUrl?: string;
+        url?: string;
+        path?: string;
+        text_elements?: unknown[];
+        textElements?: unknown[];
+      }>;
+    }
+  | {
+      type: "agentMessage";
+      id: string;
+      text: string;
+      phase?: string | null;
+      memoryCitation?: unknown | null;
+    };
 
 export type ResponseItem = {
   type: string;

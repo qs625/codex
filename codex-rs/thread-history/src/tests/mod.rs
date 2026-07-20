@@ -3,6 +3,7 @@ use app_server_protocol::CollabAgentOperation;
 use app_server_protocol::CollabAgentState;
 use app_server_protocol::CollabAgentTool;
 use app_server_protocol::CollabAgentToolCallStatus;
+use app_server_protocol::ContextCompactionReplacementItem;
 use app_server_protocol::CommandExecutionStatus;
 use app_server_protocol::CommandExecutionNotificationKind;
 use app_server_protocol::CommandExecutionNotifyOn;

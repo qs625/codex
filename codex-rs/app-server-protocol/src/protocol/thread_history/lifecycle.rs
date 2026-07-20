@@ -5,6 +5,8 @@ use super::support::render_review_output_text;
 use crate::protocol::ThreadItem;
 use crate::protocol::TurnError as V2TurnError;
 use crate::protocol::TurnStatus;
+use crate::protocol::event_item_projection::context_compaction_replacement_item_from_core;
+use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::protocol::CompactedItem;
 use protocol::protocol::ContextCompactedEvent;
 use protocol::protocol::ErrorEvent;
@@ -33,7 +35,7 @@ impl ThreadHistoryBuilder {
             .items
             .push(ThreadItem::ContextCompaction {
                 id,
-                replacement_history: None,
+                replacement_history: Vec::new(),
             });
     }
 
@@ -176,7 +178,11 @@ impl ThreadHistoryBuilder {
             return;
         }
 
-        if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == payload.turn_id) {
+        if let Some(turn) = self
+            .turns
+            .iter_mut()
+            .find(|turn| turn.id == payload.turn_id)
+        {
             if matches!(turn.status, TurnStatus::Completed | TurnStatus::InProgress) {
                 turn.status = TurnStatus::Completed;
             }
@@ -195,7 +201,13 @@ impl ThreadHistoryBuilder {
         let replacement_history = payload
             .replacement_history
             .as_ref()
-            .and_then(|history| serde_json::to_value(history).ok());
+            .map(|history| {
+                context_compaction_replacement_items_from_response_items(history.clone())
+                    .into_iter()
+                    .map(context_compaction_replacement_item_from_core)
+                    .collect()
+            })
+            .unwrap_or_default();
         {
             let turn = self.ensure_turn();
             turn.saw_compaction = true;

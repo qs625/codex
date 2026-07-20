@@ -372,6 +372,118 @@
       ],
       "type": "string"
     },
+    "ContextCompactionReplacementItem": {
+      "oneOf": [
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "preview": {
+              "type": "string"
+            },
+            "sections": {
+              "items": {
+                "$ref": "#/definitions/InjectedContextSection"
+              },
+              "type": "array"
+            },
+            "title": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "injectedContext"
+              ],
+              "title": "InjectedContextContextCompactionReplacementItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "preview",
+            "sections",
+            "title",
+            "type"
+          ],
+          "title": "InjectedContextContextCompactionReplacementItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "content": {
+              "items": {
+                "$ref": "#/definitions/UserInput"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "userMessage"
+              ],
+              "title": "UserMessageContextCompactionReplacementItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "id",
+            "type"
+          ],
+          "title": "UserMessageContextCompactionReplacementItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "memoryCitation": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/MemoryCitation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/MessagePhase"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "agentMessage"
+              ],
+              "title": "AgentMessageContextCompactionReplacementItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "type"
+          ],
+          "title": "AgentMessageContextCompactionReplacementItem",
+          "type": "object"
+        }
+      ]
+    },
     "DynamicToolCallOutputContentItem": {
       "oneOf": [
         {
@@ -2519,7 +2631,12 @@
             "id": {
               "type": "string"
             },
-            "replacementHistory": true,
+            "replacementHistory": {
+              "items": {
+                "$ref": "#/definitions/ContextCompactionReplacementItem"
+              },
+              "type": "array"
+            },
             "type": {
               "enum": [
                 "contextCompaction"
@@ -2530,6 +2647,7 @@
           },
           "required": [
             "id",
+            "replacementHistory",
             "type"
           ],
           "title": "ContextCompactionThreadItem",

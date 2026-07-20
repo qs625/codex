@@ -152,6 +152,52 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
 }
 
 #[tokio::test]
+async fn record_initial_history_resumed_hydrates_materialized_instructions_for_later_initial_context()
+ {
+    let (session, turn_context) = make_session_and_context().await;
+    let mut previous_context_item = turn_context_item(
+        &turn_context,
+        Some(turn_context.sub_id.clone()),
+        "previous-rollout-model",
+    );
+    previous_context_item.user_instructions =
+        Some("# AGENTS.md instructions for /workspace\n\nPersisted agent instructions".to_string());
+    previous_context_item.developer_instructions =
+        Some("Persisted developer instructions".to_string());
+    let previous_turn_id = previous_context_item
+        .turn_id
+        .clone()
+        .expect("turn context should have turn_id");
+    let rollout_items = vec![
+        turn_started(&previous_turn_id),
+        user_event("seed"),
+        RolloutItem::Compacted(CompactedItem {
+            message: String::new(),
+            replacement_history: Some(Vec::new()),
+        }),
+        RolloutItem::TurnContext(previous_context_item),
+        turn_complete(&previous_turn_id),
+    ];
+
+    session
+        .record_initial_history(resumed_history(rollout_items))
+        .await;
+
+    let resumed_turn = session.new_default_turn().await;
+    let initial_context = session.build_initial_context(resumed_turn.as_ref()).await;
+    let serialized_context =
+        serde_json::to_string(&initial_context).expect("serialize initial context");
+    assert!(
+        serialized_context.contains("Persisted agent instructions"),
+        "expected resumed initial context to include persisted AGENTS.md instructions: {serialized_context}"
+    );
+    assert!(
+        serialized_context.contains("Persisted developer instructions"),
+        "expected resumed initial context to include persisted developer instructions: {serialized_context}"
+    );
+}
+
+#[tokio::test]
 async fn record_initial_history_resumed_trailing_incomplete_turn_compaction_clears_reference_context_item()
  {
     let (session, turn_context) = make_session_and_context().await;

@@ -136,6 +136,10 @@ impl SessionState {
         self.history.raw_items()[start..].to_vec()
     }
 
+    pub(crate) fn compact_replacement_history_len(&self) -> Option<usize> {
+        self.compact_window_start
+    }
+
     // Token/rate limit helpers
     pub(crate) fn update_token_info_from_usage(
         &mut self,

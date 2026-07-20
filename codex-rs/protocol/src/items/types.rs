@@ -232,7 +232,103 @@ pub struct McpToolCallError {
 pub struct ContextCompactionItem {
     pub id: String,
     #[serde(rename = "replacementHistory", alias = "replacement_history")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, rename = "replacementHistory")]
-    pub replacement_history: Option<Vec<ResponseItem>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_context_compaction_replacement_history"
+    )]
+    #[ts(rename = "replacementHistory")]
+    pub replacement_history: Vec<ContextCompactionReplacementItem>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(tag = "type", rename_all = "camelCase")]
+pub enum ContextCompactionReplacementItem {
+    InjectedContext(InjectedContextItem),
+    UserMessage(UserMessageItem),
+    AgentMessage(AgentMessageItem),
+}
+
+fn deserialize_context_compaction_replacement_history<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ContextCompactionReplacementItem>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_value::<Vec<ContextCompactionReplacementItem>>(value.clone())
+        .or_else(|_| {
+            serde_json::from_value::<Vec<ResponseItem>>(value)
+                .map(context_compaction_replacement_items_from_response_items)
+        })
+        .map_err(serde::de::Error::custom)
+}
+
+pub fn context_compaction_replacement_items_from_response_items(
+    items: Vec<ResponseItem>,
+) -> Vec<ContextCompactionReplacementItem> {
+    items
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            context_compaction_replacement_item_from_response_item(index, item)
+        })
+        .collect()
+}
+
+fn context_compaction_replacement_item_from_response_item(
+    index: usize,
+    item: ResponseItem,
+) -> Option<ContextCompactionReplacementItem> {
+    let id = format!("replacement-{index}");
+    match item {
+        ResponseItem::Message { role, content, .. } if role == "user" => Some(
+            ContextCompactionReplacementItem::UserMessage(UserMessageItem {
+                id,
+                content: content
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        crate::models::ContentItem::InputText { text } => {
+                            Some(crate::user_input::UserInput::Text {
+                                text,
+                                text_elements: Vec::new(),
+                            })
+                        }
+                        crate::models::ContentItem::InputImage { image_url, .. } => {
+                            Some(crate::user_input::UserInput::Image { image_url })
+                        }
+                        _ => None,
+                    })
+                    .collect(),
+            }),
+        ),
+        ResponseItem::Message {
+            role,
+            content,
+            phase,
+            ..
+        } if role == "assistant" => Some(ContextCompactionReplacementItem::AgentMessage(
+            AgentMessageItem {
+                id,
+                content: content
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        crate::models::ContentItem::OutputText { text } => {
+                            Some(AgentMessageContent::Text { text })
+                        }
+                        _ => None,
+                    })
+                    .collect(),
+                phase,
+                memory_citation: None,
+            },
+        )),
+        _ => None,
+    }
 }

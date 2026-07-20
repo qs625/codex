@@ -69,7 +69,8 @@ impl Session {
             .get_agent_metadata(self.conversation_id)
             .and_then(|metadata| metadata.agent_role)
             .or_else(|| session_source.get_agent_role())?;
-        let role = codex_agent_roles::resolve_role_config(&turn_context.config.agent_roles, &role_name)?;
+        let role =
+            codex_agent_roles::resolve_role_config(&turn_context.config.agent_roles, &role_name)?;
         let role_file = role
             .source_path
             .as_deref()
@@ -1756,7 +1757,12 @@ impl Session {
     pub(crate) async fn send_thread_context_usage_event(&self, turn_context: &TurnContext) {
         let usage = {
             let state = self.state.lock().await;
-            build_thread_context_usage(&state.history, turn_context, &state.thread_skills())
+            build_thread_context_usage(
+                &state.history,
+                turn_context,
+                &state.thread_skills(),
+                state.compact_replacement_history_len(),
+            )
         };
         self.send_event(
             turn_context,

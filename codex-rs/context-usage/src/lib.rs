@@ -158,7 +158,13 @@ pub fn build_thread_context_usage(
     skill_detection: Option<ContextUsageSkillDetection<'_>>,
     is_summary_message: fn(&str) -> bool,
 ) -> ThreadContextUsage {
-    build_thread_context_usage_inner(history, thread_skills, skill_detection, is_summary_message)
+    build_thread_context_usage_inner(
+        history,
+        thread_skills,
+        skill_detection,
+        is_summary_message,
+        None,
+    )
 }
 
 pub fn build_thread_context_usage_from_history(
@@ -166,7 +172,23 @@ pub fn build_thread_context_usage_from_history(
     thread_skills: &[ThreadSkill],
     is_summary_message: fn(&str) -> bool,
 ) -> ThreadContextUsage {
-    build_thread_context_usage_inner(history, thread_skills, None, is_summary_message)
+    build_thread_context_usage_inner(history, thread_skills, None, is_summary_message, None)
+}
+
+pub fn build_thread_context_usage_with_compact_replacement_history(
+    history: &ContextManager,
+    thread_skills: &[ThreadSkill],
+    skill_detection: Option<ContextUsageSkillDetection<'_>>,
+    is_summary_message: fn(&str) -> bool,
+    compact_replacement_history_len: Option<usize>,
+) -> ThreadContextUsage {
+    build_thread_context_usage_inner(
+        history,
+        thread_skills,
+        skill_detection,
+        is_summary_message,
+        compact_replacement_history_len,
+    )
 }
 
 fn build_thread_context_usage_inner(
@@ -174,6 +196,7 @@ fn build_thread_context_usage_inner(
     thread_skills: &[ThreadSkill],
     skill_detection: Option<ContextUsageSkillDetection<'_>>,
     is_summary_message: fn(&str) -> bool,
+    compact_replacement_history_len: Option<usize>,
 ) -> ThreadContextUsage {
     let mut categories = ThreadContextUsageCategoryBreakdown {
         compact: 0,
@@ -190,7 +213,7 @@ fn build_thread_context_usage_inner(
     let mut tool_breakdown = ToolBreakdownAccumulator::default();
     skills.seed(thread_skills);
 
-    for item in history.raw_items() {
+    for (index, item) in history.raw_items().iter().enumerate() {
         match item {
             ResponseItem::Message { role, content, .. } => {
                 let item_bytes = estimate_response_item_model_visible_bytes(item);
@@ -230,8 +253,12 @@ fn build_thread_context_usage_inner(
                         }
                     }
                     "assistant" => {
-                        categories.llm_messages =
-                            categories.llm_messages.saturating_add(item_bytes);
+                        if compact_replacement_history_len.is_some_and(|len| index < len) {
+                            categories.compact = categories.compact.saturating_add(item_bytes);
+                        } else {
+                            categories.llm_messages =
+                                categories.llm_messages.saturating_add(item_bytes);
+                        }
                     }
                     "developer" => {
                         let developer_usage = classify_developer_message(content);
@@ -264,9 +291,7 @@ fn build_thread_context_usage_inner(
                 ..
             } => {
                 let item_bytes = estimate_response_item_model_visible_bytes(item);
-                categories.tool_calls = categories
-                    .tool_calls
-                    .saturating_add(item_bytes);
+                categories.tool_calls = categories.tool_calls.saturating_add(item_bytes);
                 let bucket = classify_shell_command(action.command.as_slice());
                 tool_breakdown.add_input(bucket, item_bytes);
                 if let Some(call_id) = call_id.as_ref() {
@@ -293,9 +318,7 @@ fn build_thread_context_usage_inner(
                 ..
             } => {
                 let item_bytes = estimate_response_item_model_visible_bytes(item);
-                categories.tool_calls = categories
-                    .tool_calls
-                    .saturating_add(item_bytes);
+                categories.tool_calls = categories.tool_calls.saturating_add(item_bytes);
                 let bucket = classify_function_call(name.as_str(), arguments.as_str());
                 tool_breakdown.add_input(bucket, item_bytes);
                 tool_breakdown.remember_call(call_id.clone(), bucket);
@@ -529,14 +552,12 @@ fn shell_like_tokens(command: &str) -> Vec<String> {
 }
 
 fn is_env_assignment(token: &str) -> bool {
-    token
-        .split_once('=')
-        .is_some_and(|(name, _)| {
-            !name.is_empty()
-                && name
-                    .chars()
-                    .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-        })
+    token.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    })
 }
 
 fn is_exec_command_tool_name(name: &str) -> bool {

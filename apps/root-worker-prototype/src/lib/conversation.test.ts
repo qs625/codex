@@ -1341,6 +1341,63 @@ test("renders context compaction replacement history with init context", () => {
   );
 });
 
+test("renders typed context compaction replacement history", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-typed",
+        replacementHistory: [
+          {
+            type: "injectedContext",
+            id: "ctx-1",
+            title: "Init Context",
+            preview: "AGENTS.md • Environment",
+            sections: [
+              {
+                label: "AGENTS.md",
+                text: "# AGENTS.md instructions\nPersisted agent instructions",
+              },
+              {
+                label: "Environment",
+                text: "<cwd>/workspace</cwd>",
+              },
+            ],
+          },
+          {
+            type: "userMessage",
+            id: "recent-user",
+            content: [{ type: "text", text: "recent request" }],
+          },
+          {
+            type: "agentMessage",
+            id: "compact-seed",
+            text: "compact final output",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+      },
+    ]),
+  );
+
+  const compactEntry = entries[0]!;
+  assert.equal(compactEntry.replacementHistoryStatus, "available");
+  assert.equal(compactEntry.replacementHistoryCount, 3);
+  assert.deepEqual(
+    compactEntry.replacementHistoryEntries?.map((entry) => [
+      entry.kind,
+      entry.toolName ?? entry.author,
+      entry.text,
+    ]),
+    [
+      ["tool", "Init Context", "AGENTS.md • Environment"],
+      ["message", "You", "recent request"],
+      ["message", "root", "compact final output"],
+    ],
+  );
+});
+
 test("extracts compact history details with init context replacement cell", () => {
   const entries = buildConversationEntries(
     makeThreadWithTurns([

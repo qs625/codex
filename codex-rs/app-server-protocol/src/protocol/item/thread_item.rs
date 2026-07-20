@@ -1,10 +1,10 @@
+use super::super::shared::camel_case_enum_from_core;
 use crate::protocol::ExecPolicyAmendment;
 use crate::protocol::McpToolCallError;
 use crate::protocol::McpToolCallResult;
 use crate::protocol::ThreadGoal;
 use crate::protocol::ThreadGoalStatus;
 use crate::protocol::UserInput;
-use super::super::shared::camel_case_enum_from_core;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
 use protocol::items::McpToolCallStatus as CoreMcpToolCallStatus;
@@ -475,7 +475,7 @@ pub enum ThreadItem {
     #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
     ContextCompaction {
         id: String,
-        replacement_history: Option<JsonValue>,
+        replacement_history: Vec<ContextCompactionReplacementItem>,
     },
 }
 
@@ -504,6 +504,35 @@ impl From<protocol::items::HookPromptFragment> for HookPromptFragment {
 pub struct InjectedContextSection {
     pub label: String,
     pub text: String,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[cfg_attr(
+    feature = "schema-export",
+    ts(tag = "type", rename_all = "camelCase", export)
+)]
+pub enum ContextCompactionReplacementItem {
+    InjectedContext {
+        id: String,
+        title: String,
+        preview: String,
+        sections: Vec<InjectedContextSection>,
+    },
+    UserMessage {
+        id: String,
+        content: Vec<UserInput>,
+    },
+    AgentMessage {
+        id: String,
+        text: String,
+        #[serde(default)]
+        phase: Option<MessagePhase>,
+        #[serde(default, rename = "memoryCitation")]
+        #[cfg_attr(feature = "schema-export", ts(rename = "memoryCitation"))]
+        memory_citation: Option<MemoryCitation>,
+    },
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
@@ -637,7 +666,10 @@ impl From<CoreWorkflowRunProgressKind> for ThreadWorkflowRunProgressKind {
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(feature = "schema-export", schemars(rename = "ThreadEventCommandEventKind"))]
+#[cfg_attr(
+    feature = "schema-export",
+    schemars(rename = "ThreadEventCommandEventKind")
+)]
 #[cfg_attr(feature = "schema-export", ts(rename = "ThreadEventCommandEventKind"))]
 #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
 #[cfg_attr(feature = "schema-export", ts(export))]
@@ -944,10 +976,7 @@ impl From<ThreadLifecycleStatus> for CollabAgentState {
     fn from(lifecycle_status: ThreadLifecycleStatus) -> Self {
         let message = match &lifecycle_status {
             ThreadLifecycleStatus::Final {
-                result:
-                    ThreadLifecycleFinalStatus::Completed {
-                        last_agent_message,
-                    },
+                result: ThreadLifecycleFinalStatus::Completed { last_agent_message },
             } => last_agent_message.clone(),
             ThreadLifecycleStatus::Final {
                 result: ThreadLifecycleFinalStatus::Errored { message },

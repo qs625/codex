@@ -296,7 +296,7 @@ use super::*;
                 items_view: TurnItemsView::Full,
                 items: vec![ThreadItem::ContextCompaction {
                     id: "item-1".into(),
-                    replacement_history: None,
+                    replacement_history: Vec::new(),
                 }],
             }]
         );
@@ -340,7 +340,13 @@ use super::*;
             turns[0].items,
             vec![ThreadItem::ContextCompaction {
                 id: "item-1".into(),
-                replacement_history: Some(serde_json::to_value(replacement_history).unwrap()),
+                replacement_history: vec![ContextCompactionReplacementItem::UserMessage {
+                    id: "replacement-0".into(),
+                    content: vec![UserInput::Text {
+                        text: "recent request".into(),
+                        text_elements: Vec::new(),
+                    }],
+                }],
             }]
         );
     }
@@ -391,9 +397,14 @@ use super::*;
                 items_view: TurnItemsView::Full,
                 items: vec![ThreadItem::ContextCompaction {
                     id: "item-1".into(),
-                    replacement_history: Some(serde_json::to_value(replacement_history).unwrap()),
+                    replacement_history: vec![ContextCompactionReplacementItem::UserMessage {
+                        id: "replacement-0".into(),
+                        content: vec![UserInput::Text {
+                            text: "recent request".into(),
+                            text_elements: Vec::new(),
+                        }],
+                    }],
                 }],
             }]
         );
     }
-
