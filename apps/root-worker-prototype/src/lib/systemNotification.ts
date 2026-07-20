@@ -22,44 +22,26 @@ export function maybeNotifyProjectThreadCompleted(
 
 export function notifyProjectThreadCompleted(thread: Thread) {
   try {
-    const notificationApi = globalThis.Notification;
-    if (typeof notificationApi !== "function") {
+    const showSystemNotification =
+      window.codexDesktop?.showSystemNotification;
+    if (typeof showSystemNotification !== "function") {
       return;
     }
-
-    const send = () => {
-      try {
-        new notificationApi(PROJECT_THREAD_COMPLETED_TITLE, {
-          body: getProjectThreadCompletionNotificationBody(thread),
-        });
-      } catch {
-        // Desktop notifications are best-effort and must not break UI state.
-      }
-    };
-
-    if (notificationApi.permission === "granted") {
-      send();
-      return;
-    }
-
-    if (
-      notificationApi.permission === "default" &&
-      typeof notificationApi.requestPermission === "function"
-    ) {
-      void notificationApi
-        .requestPermission()
-        .then((permission) => {
-          if (permission === "granted") {
-            send();
-          }
-        })
-        .catch(() => {
-          // Permission prompts may be denied or unavailable in some shells.
-        });
-    }
+    void showSystemNotification(
+      buildProjectThreadCompletedNotificationPayload(thread),
+    ).catch(() => {
+      // Desktop notifications are best-effort and must not break UI state.
+    });
   } catch {
-    // Some runtimes expose Notification partially or behind permissions.
+    // Some runtimes may not expose the Electron preload bridge.
   }
+}
+
+export function buildProjectThreadCompletedNotificationPayload(thread: Thread) {
+  return {
+    title: PROJECT_THREAD_COMPLETED_TITLE,
+    body: getProjectThreadCompletionNotificationBody(thread),
+  };
 }
 
 function getProjectThreadCompletionNotificationBody(thread: Thread) {

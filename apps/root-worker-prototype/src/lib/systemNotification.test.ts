@@ -2,12 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildProjectThreadCompletedNotificationPayload,
   maybeNotifyProjectThreadCompleted,
   notifyProjectThreadCompleted,
 } from "./systemNotification";
 import type { Thread } from "../types";
 
-const originalNotification = globalThis.Notification;
+const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
+  globalThis,
+  "window",
+);
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -38,27 +42,44 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 test.afterEach(() => {
-  Object.defineProperty(globalThis, "Notification", {
-    configurable: true,
-    value: originalNotification,
-    writable: true,
-  });
+  if (originalWindowDescriptor) {
+    Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, "window");
+  }
 });
 
-test("maybeNotifyProjectThreadCompleted sends granted project completion notification", () => {
-  const notifications: Array<{ title: string; body?: string }> = [];
-  class FakeNotification {
-    static permission = "granted";
-    static requestPermission = test.mock.fn();
+test("buildProjectThreadCompletedNotificationPayload uses concise thread labels", () => {
+  assert.deepEqual(
+    buildProjectThreadCompletedNotificationPayload(
+      makeThread({ name: " Build backend " }),
+    ),
+    {
+      title: "Project thread completed",
+      body: "Build backend",
+    },
+  );
+  assert.deepEqual(
+    buildProjectThreadCompletedNotificationPayload(makeThread()),
+    {
+      title: "Project thread completed",
+      body: "/work/project",
+    },
+  );
+});
 
-    constructor(title: string, options?: NotificationOptions) {
-      notifications.push({ title, body: options?.body });
-    }
-  }
-  Object.defineProperty(globalThis, "Notification", {
+test("maybeNotifyProjectThreadCompleted sends project completion through desktop IPC", () => {
+  const payloads: unknown[] = [];
+  Object.defineProperty(globalThis, "window", {
     configurable: true,
-    value: FakeNotification,
-    writable: true,
+    value: {
+      codexDesktop: {
+        showSystemNotification: (payload: unknown) => {
+          payloads.push(payload);
+          return Promise.resolve({ ok: true });
+        },
+      },
+    },
   });
 
   assert.equal(
@@ -68,62 +89,24 @@ test("maybeNotifyProjectThreadCompleted sends granted project completion notific
     }),
     true,
   );
-  assert.deepEqual(notifications, [
+  assert.deepEqual(payloads, [
     { title: "Project thread completed", body: "Build backend" },
   ]);
 });
 
-test("maybeNotifyProjectThreadCompleted ignores denied permissions and non-edges", () => {
-  class FakeNotification {
-    static permission = "denied";
-    static requestPermission = test.mock.fn();
-
-    constructor() {
-      throw new Error("should not construct");
-    }
-  }
-  Object.defineProperty(globalThis, "Notification", {
-    configurable: true,
-    value: FakeNotification,
-    writable: true,
-  });
-
-  assert.equal(
-    maybeNotifyProjectThreadCompleted(
-      makeThread({
-        lifecycleStatus: { type: "final", result: { type: "completed" } },
-      }),
-      { type: "final", result: { type: "completed" } },
-    ),
-    false,
-  );
-  assert.equal(FakeNotification.requestPermission.mock.callCount(), 0);
-  assert.doesNotThrow(() => {
-    notifyProjectThreadCompleted(makeThread());
-  });
-});
-
-test("notifyProjectThreadCompleted tolerates missing or throwing Notification API", () => {
-  Object.defineProperty(globalThis, "Notification", {
-    configurable: true,
-    value: undefined,
-    writable: true,
-  });
+test("notifyProjectThreadCompleted tolerates missing or rejecting desktop IPC", () => {
+  Reflect.deleteProperty(globalThis, "window");
   assert.doesNotThrow(() => {
     notifyProjectThreadCompleted(makeThread());
   });
 
-  class ThrowingNotification {
-    static permission = "granted";
-
-    constructor() {
-      throw new Error("blocked");
-    }
-  }
-  Object.defineProperty(globalThis, "Notification", {
+  Object.defineProperty(globalThis, "window", {
     configurable: true,
-    value: ThrowingNotification,
-    writable: true,
+    value: {
+      codexDesktop: {
+        showSystemNotification: () => Promise.reject(new Error("blocked")),
+      },
+    },
   });
   assert.doesNotThrow(() => {
     notifyProjectThreadCompleted(makeThread());

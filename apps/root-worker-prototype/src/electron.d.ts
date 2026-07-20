@@ -11,6 +11,10 @@ declare global {
         };
         workspace: string;
       }>;
+      showSystemNotification: (payload: {
+        title: string;
+        body?: string | null;
+      }) => Promise<{ ok: boolean; reason?: string }>;
       bootstrap: () => Promise<{
         workspace: string;
         threads: unknown[];
