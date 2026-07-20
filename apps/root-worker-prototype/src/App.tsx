@@ -36,6 +36,12 @@ import {
 } from "./lib/conversationCompact";
 import { isConversationNearBottom } from "./lib/conversationScroll";
 import {
+  getProjectFilePreview,
+  rememberProjectFilePreview,
+  shouldRestoreProjectFilePreview,
+  type FilePreviewMemoryByRootId,
+} from "./lib/filePreviewMemory";
+import {
   readImageBlob,
   readImageFile,
   revokeComposerImage,
@@ -197,6 +203,8 @@ function App() {
     token: number;
   } | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const [filePreviewByRootId, setFilePreviewByRootId] =
+    useState<FilePreviewMemoryByRootId>({});
   const [filePanelView, setFilePanelView] = useState<FilePanelView>("preview");
   const [fileTreeEntriesByPath, setFileTreeEntriesByPath] = useState<
     Record<string, FileTreeEntry[]>
@@ -222,8 +230,11 @@ function App() {
   const composerDraftsRef = useRef<ComposerDraftsByThreadId>({});
   const shouldStickConversationToBottomRef = useRef(true);
   const filePreviewRef = useRef<FilePreview | null>(null);
+  const filePanelViewRef = useRef<FilePanelView>("preview");
   const symbolBackStackRef = useRef<FileLocation[]>([]);
   const symbolForwardStackRef = useRef<FileLocation[]>([]);
+  const selectedTreeRootIdRef = useRef<string | null>(null);
+  const filePreviewRequestTokenRef = useRef(0);
   const selectedThreadIdRef = useRef<string | null>(null);
   const selectedThreadCwdRef = useRef<string | null>(null);
   const fileTreeSessionTokenRef = useRef(0);
@@ -537,12 +548,18 @@ function App() {
   }, [filePreview]);
 
   useEffect(() => {
-    setFilePanelView("preview");
+    filePanelViewRef.current = filePanelView;
+  }, [filePanelView]);
+
+  useEffect(() => {
     setFileTreeEntriesByPath({});
     setFileTreeLoadingPath(null);
     setFileTreeErrorsByPath({});
     setExpandedTreeDirectories([]);
     fileTreeSessionTokenRef.current += 1;
+    if (filePanelViewRef.current === "tree" && selectedThread?.cwd) {
+      void loadFileTreeDirectory(selectedThread.cwd);
+    }
   }, [selectedThread?.cwd, selectedThreadId]);
 
   useEffect(() => {
@@ -718,6 +735,37 @@ function App() {
     }
     return getTreeRootThreadId(threads, seedThread.id);
   }, [selectedThreadId, threads]);
+
+  useEffect(() => {
+    if (selectedTreeRootIdRef.current === selectedTreeRootId) {
+      return;
+    }
+    selectedTreeRootIdRef.current = selectedTreeRootId;
+    filePreviewRequestTokenRef.current += 1;
+    symbolBackStackRef.current = [];
+    symbolForwardStackRef.current = [];
+    setIsLoadingPreview(false);
+  }, [selectedTreeRootId]);
+
+  useEffect(() => {
+    if (!shouldRestoreProjectFilePreview(rightPanelView, filePanelView)) {
+      return;
+    }
+    if (isLoadingPreview) {
+      return;
+    }
+
+    setFilePreview(getProjectFilePreview(filePreviewByRootId, selectedTreeRootId));
+    setPreviewError(null);
+    setIsLoadingPreview(false);
+  }, [
+    filePanelView,
+    filePreviewByRootId,
+    isLoadingPreview,
+    rightPanelView,
+    selectedTreeRootId,
+  ]);
+
   const sessionThreads = useMemo(() => {
     if (!selectedTreeRootId) {
       return [];
@@ -2346,6 +2394,9 @@ function App() {
   }
 
   async function loadFilePreview(target: string) {
+    const requestRootId = selectedTreeRootId;
+    const requestToken = filePreviewRequestTokenRef.current + 1;
+    filePreviewRequestTokenRef.current = requestToken;
     setRightPanelView("preview");
     setFilePanelView("preview");
     setIsLoadingPreview(true);
@@ -2355,12 +2406,32 @@ function App() {
       const preview = (await window.codexDesktop.readLocalFile(
         target,
       )) as FilePreview;
+      if (
+        filePreviewRequestTokenRef.current !== requestToken ||
+        selectedTreeRootIdRef.current !== requestRootId
+      ) {
+        return;
+      }
       setFilePreview(preview);
+      setFilePreviewByRootId((current) =>
+        rememberProjectFilePreview(current, requestRootId, preview),
+      );
     } catch (previewLoadError) {
+      if (
+        filePreviewRequestTokenRef.current !== requestToken ||
+        selectedTreeRootIdRef.current !== requestRootId
+      ) {
+        return;
+      }
       setFilePreview(null);
       setPreviewError(toErrorMessage(previewLoadError));
     } finally {
-      setIsLoadingPreview(false);
+      if (
+        filePreviewRequestTokenRef.current === requestToken &&
+        selectedTreeRootIdRef.current === requestRootId
+      ) {
+        setIsLoadingPreview(false);
+      }
     }
   }
 
