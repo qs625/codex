@@ -52,6 +52,7 @@ import {
 } from "./lib/sendMessagePayload";
 import type { ComposerSlashCommandId } from "./lib/slashMenu";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
+import { maybeNotifyProjectThreadCompleted } from "./lib/systemNotification";
 import { isChatCompatCwd } from "./lib/chatCompat";
 import {
   decideThreadSelectionAction,
@@ -71,6 +72,7 @@ import {
   getThreadItemNotificationTargetThreadIds,
   getTreeRootThreadId,
   getThreadDepth,
+  isCompletedFinalLifecycleStatus,
   isRootThread,
   isSubagentThread,
   normalizeProjectCwd,
@@ -216,6 +218,7 @@ function App() {
   const conversationStateRef = useRef<ReturnType<
     typeof buildConversationState
   > | null>(null);
+  const threadsRef = useRef<Thread[]>([]);
   const composerDraftsRef = useRef<ComposerDraftsByThreadId>({});
   const shouldStickConversationToBottomRef = useRef(true);
   const filePreviewRef = useRef<FilePreview | null>(null);
@@ -239,6 +242,7 @@ function App() {
   );
   const compactHistoryRequestIdsRef = useRef<Map<string, number>>(new Map());
   const pendingThreadUpdatesRef = useRef(new Map<string, ThreadUpdate[]>());
+  const projectCompletionNotifiedThreadIdsRef = useRef<Set<string>>(new Set());
   const voiceSessionRef = useRef<ActiveVoiceSession | null>(null);
   const voiceDraftStateRef = useRef<VoiceDraftState | null>(null);
   const voicePeerConnectionRef = useRef<RTCPeerConnection | null>(null);
@@ -252,6 +256,7 @@ function App() {
     startWidth: number;
     panel: "left" | "right";
   } | null>(null);
+  threadsRef.current = threads;
 
   useEffect(() => {
     void loadBootstrap();
@@ -916,6 +921,7 @@ function App() {
       loadingThreadIdsRef.current.delete(threadId);
       loadThreadRequestIdsByThreadIdRef.current.delete(threadId);
       runConfigOverrideByThreadIdRef.current.delete(threadId);
+      projectCompletionNotifiedThreadIdsRef.current.delete(threadId);
       for (const requestKey of compactHistoryRequestIdsRef.current.keys()) {
         if (requestKey.startsWith(`${threadId}:`)) {
           compactHistoryRequestIdsRef.current.delete(requestKey);
@@ -2083,6 +2089,25 @@ function App() {
             threadId: string;
             lifecycleStatus: Thread["lifecycleStatus"];
           };
+          if (!isCompletedFinalLifecycleStatus(notification.lifecycleStatus)) {
+            projectCompletionNotifiedThreadIdsRef.current.delete(
+              notification.threadId,
+            );
+          } else if (
+            !projectCompletionNotifiedThreadIdsRef.current.has(
+              notification.threadId,
+            ) &&
+            maybeNotifyProjectThreadCompleted(
+              threadsRef.current.find(
+                (thread) => thread.id === notification.threadId,
+              ) ?? null,
+              notification.lifecycleStatus,
+            )
+          ) {
+            projectCompletionNotifiedThreadIdsRef.current.add(
+              notification.threadId,
+            );
+          }
           updateThreadLifecycleStatusLocally(
             notification.threadId,
             notification.lifecycleStatus,
