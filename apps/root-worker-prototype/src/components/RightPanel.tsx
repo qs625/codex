@@ -13,6 +13,7 @@ import {
 import { LocalImagePreview } from "./Conversation";
 import { isChatCompatCwd } from "../lib/chatCompat";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
+import { MarkdownContent } from "../lib/markdown";
 import {
   buildThreadAnalysis,
   type MonitorSummary,
@@ -797,6 +798,77 @@ function GitPanel({
   );
 }
 
+export function resolveMarkdownPreviewLocalFileTarget(
+  previewPath: string,
+  target: string,
+) {
+  if (!isRelativeMarkdownPreviewTarget(target)) {
+    return target;
+  }
+
+  const lastSlash = Math.max(previewPath.lastIndexOf("/"), previewPath.lastIndexOf("\\"));
+  if (lastSlash < 0) {
+    return target;
+  }
+
+  const baseDir = lastSlash === 0 ? previewPath.slice(0, 1) : previewPath.slice(0, lastSlash);
+  const separator = previewPath.includes("\\") && !previewPath.includes("/") ? "\\" : "/";
+  return normalizeRelativeFileTarget(baseDir, target, separator);
+}
+
+function isRelativeMarkdownPreviewTarget(target: string) {
+  return /^\.{1,2}[\\/]/.test(target);
+}
+
+function normalizeRelativeFileTarget(baseDir: string, target: string, separator: "/" | "\\") {
+  const driveMatch = baseDir.match(/^([A-Za-z]:)(.*)$/);
+  const isUncPath = baseDir.startsWith("\\\\");
+  const isAbsolutePosixPath = baseDir.startsWith("/");
+  const prefix = driveMatch
+    ? `${driveMatch[1]}${separator}`
+    : isUncPath
+      ? "\\\\"
+      : isAbsolutePosixPath
+        ? "/"
+        : "";
+  const baseWithoutPrefix = driveMatch
+    ? driveMatch[2]
+    : isUncPath
+      ? baseDir.replace(/^\\+/, "")
+      : isAbsolutePosixPath
+        ? baseDir.slice(1)
+        : baseDir;
+  const parts = baseWithoutPrefix.split(/[\\/]+/).filter(Boolean);
+
+  for (const part of target.split(/[\\/]+/)) {
+    if (!part || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      if (parts.length > 0) {
+        parts.pop();
+      }
+      continue;
+    }
+    parts.push(part);
+  }
+
+  return `${prefix}${parts.join(separator)}`;
+}
+
+export function filePreviewRenderMode(preview: FilePreview | null) {
+  if (!preview) {
+    return "empty";
+  }
+  if (preview.image) {
+    return "image";
+  }
+  if (preview.language === "markdown") {
+    return "markdown";
+  }
+  return "editor";
+}
+
 function FilePreviewPanel({
   expandedTreeDirectories,
   filePanelView,
@@ -887,6 +959,7 @@ function FilePreviewPanel({
 
   const threadRootPath =
     thread && !isChatCompatCwd(thread.cwd) ? thread.cwd : null;
+  const previewRenderMode = filePreviewRenderMode(preview);
 
   return (
     <div className="preview-panel">
@@ -955,7 +1028,7 @@ function FilePreviewPanel({
           <p>Open a local file link in the conversation to pin code context here.</p>
         </div>
       ) : null}
-      {!previewLoading && !previewError && preview?.image ? (
+      {!previewLoading && !previewError && previewRenderMode === "image" && preview?.image ? (
         <div className="preview-editor-shell preview-image-shell">
           <div className="preview-utility-strip">
             <div className="preview-utility-primary">
@@ -981,7 +1054,7 @@ function FilePreviewPanel({
           </div>
         </div>
       ) : null}
-      {!previewLoading && !previewError && preview && !preview.image ? (
+      {!previewLoading && !previewError && preview && previewRenderMode !== "image" ? (
         <div className="preview-editor-shell">
           <div className="preview-utility-strip">
             <div className="preview-utility-primary">
@@ -1004,107 +1077,120 @@ function FilePreviewPanel({
               </span>
             </div>
           </div>
-          <div className="preview-editor-pad">
-            <Editor
-              key={`${preview.path}:${preview.line ?? 0}:${preview.column ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
-              height="100%"
-              onMount={(editor, monaco) => {
-                editorRef.current = editor;
-                decorationCollectionRef.current = editor.createDecorationsCollection();
-                editor.revealPositionInCenter({
-                  lineNumber: preview.line ?? 1,
-                  column: preview.column ?? 1,
-                });
-                editor.setPosition({
-                  lineNumber: preview.line ?? 1,
-                  column: preview.column ?? 1,
-                });
-
-                editor.onMouseMove((event) => {
-                  hoverPositionRef.current = event.target.position ?? null;
-                  modifierPressedRef.current =
-                    event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey;
-                  updateLinkDecoration(editor, decorationCollectionRef.current, {
-                  modifierPressed: modifierPressedRef.current,
-                  enabled: preview.lsp.enabled,
-                  position: hoverPositionRef.current,
-                });
-              });
-
-                editor.onMouseLeave(() => {
-                  hoverPositionRef.current = null;
-                  updateLinkDecoration(editor, decorationCollectionRef.current, {
-                    enabled: preview.lsp.enabled,
-                    modifierPressed: false,
-                    position: null,
+          {previewRenderMode === "markdown" ? (
+            <div className="preview-markdown-pad">
+              <MarkdownContent
+                text={preview.content}
+                onOpenLocalFile={(target) =>
+                  onOpenTreeFile(
+                    resolveMarkdownPreviewLocalFileTarget(preview.path, target),
+                  )
+                }
+              />
+            </div>
+          ) : (
+            <div className="preview-editor-pad">
+              <Editor
+                key={`${preview.path}:${preview.line ?? 0}:${preview.column ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
+                height="100%"
+                onMount={(editor, monaco) => {
+                  editorRef.current = editor;
+                  decorationCollectionRef.current = editor.createDecorationsCollection();
+                  editor.revealPositionInCenter({
+                    lineNumber: preview.line ?? 1,
+                    column: preview.column ?? 1,
                   });
-                });
+                  editor.setPosition({
+                    lineNumber: preview.line ?? 1,
+                    column: preview.column ?? 1,
+                  });
 
-                editor.onMouseDown((event) => {
-                  if (
-                    !preview.lsp.enabled ||
-                    !event.target.position ||
-                    event.event.browserEvent.button !== 0 ||
-                    !(event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey) ||
-                    pendingDefinitionRef.current
-                  ) {
-                    return;
-                  }
-
-                  pendingDefinitionRef.current = true;
-                  event.event.browserEvent.preventDefault();
-                  const sourcePosition = event.target.position;
-
-                  void window.codexDesktop
-                    .lspDefinition({
-                      path: preview.path,
-                      line: sourcePosition.lineNumber,
-                      column: sourcePosition.column,
-                    })
-                    .then((response) => {
-                      const destination = response.locations[0];
-                      if (response.enabled && destination) {
-                        onNavigateToSymbol(destination, {
-                          path: preview.path,
-                          line: sourcePosition.lineNumber,
-                          column: sourcePosition.column,
-                        });
-                      }
-                    })
-                    .catch((error) => {
-                      console.error("Failed to resolve definition", error);
-                    })
-                    .finally(() => {
-                      pendingDefinitionRef.current = false;
-                      updateLinkDecoration(editor, decorationCollectionRef.current, {
-                        enabled: preview.lsp.enabled,
-                        modifierPressed: modifierPressedRef.current,
-                        position: hoverPositionRef.current,
-                      });
+                  editor.onMouseMove((event) => {
+                    hoverPositionRef.current = event.target.position ?? null;
+                    modifierPressedRef.current =
+                      event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey;
+                    updateLinkDecoration(editor, decorationCollectionRef.current, {
+                      modifierPressed: modifierPressedRef.current,
+                      enabled: preview.lsp.enabled,
+                      position: hoverPositionRef.current,
                     });
-                });
-              }}
-              language={preview.language}
-              loading={<div className="preview-empty">Loading editor…</div>}
-              options={{
-                automaticLayout: true,
-                definitionLinkOpensInPeek: false,
-                contextmenu: false,
-                fontSize: 12,
-                lineNumbersMinChars: 3,
-                minimap: { enabled: false },
-                readOnly: true,
-                renderLineHighlight: "all",
-                roundedSelection: false,
-                scrollBeyondLastLine: false,
-                selectionHighlight: false,
-                wordWrap: "on",
-              }}
-              path={preview.path}
-              theme="vs"
-              value={preview.content}
-            />
-          </div>
+                  });
+
+                  editor.onMouseLeave(() => {
+                    hoverPositionRef.current = null;
+                    updateLinkDecoration(editor, decorationCollectionRef.current, {
+                      enabled: preview.lsp.enabled,
+                      modifierPressed: false,
+                      position: null,
+                    });
+                  });
+
+                  editor.onMouseDown((event) => {
+                    if (
+                      !preview.lsp.enabled ||
+                      !event.target.position ||
+                      event.event.browserEvent.button !== 0 ||
+                      !(event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey) ||
+                      pendingDefinitionRef.current
+                    ) {
+                      return;
+                    }
+
+                    pendingDefinitionRef.current = true;
+                    event.event.browserEvent.preventDefault();
+                    const sourcePosition = event.target.position;
+
+                    void window.codexDesktop
+                      .lspDefinition({
+                        path: preview.path,
+                        line: sourcePosition.lineNumber,
+                        column: sourcePosition.column,
+                      })
+                      .then((response) => {
+                        const destination = response.locations[0];
+                        if (response.enabled && destination) {
+                          onNavigateToSymbol(destination, {
+                            path: preview.path,
+                            line: sourcePosition.lineNumber,
+                            column: sourcePosition.column,
+                          });
+                        }
+                      })
+                      .catch((error) => {
+                        console.error("Failed to resolve definition", error);
+                      })
+                      .finally(() => {
+                        pendingDefinitionRef.current = false;
+                        updateLinkDecoration(editor, decorationCollectionRef.current, {
+                          enabled: preview.lsp.enabled,
+                          modifierPressed: modifierPressedRef.current,
+                          position: hoverPositionRef.current,
+                        });
+                      });
+                  });
+                }}
+                language={preview.language}
+                loading={<div className="preview-empty">Loading editor…</div>}
+                options={{
+                  automaticLayout: true,
+                  definitionLinkOpensInPeek: false,
+                  contextmenu: false,
+                  fontSize: 12,
+                  lineNumbersMinChars: 3,
+                  minimap: { enabled: false },
+                  readOnly: true,
+                  renderLineHighlight: "all",
+                  roundedSelection: false,
+                  scrollBeyondLastLine: false,
+                  selectionHighlight: false,
+                  wordWrap: "on",
+                }}
+                path={preview.path}
+                theme="vs"
+                value={preview.content}
+              />
+            </div>
+          )}
         </div>
       ) : null}
         </>

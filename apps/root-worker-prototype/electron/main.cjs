@@ -1051,6 +1051,7 @@ function languageForFilePath(filePath) {
     case ".json":
       return "json";
     case ".md":
+    case ".markdown":
       return "markdown";
     case ".css":
       return "css";
