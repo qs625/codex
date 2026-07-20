@@ -746,11 +746,16 @@ pub(super) fn build_thread_from_snapshot(
         cwd: config_snapshot.cwd.clone(),
         cli_version: env!("CARGO_PKG_VERSION").to_string(),
         agent_nickname: config_snapshot.session_source.get_nickname(),
-        agent_role: config_snapshot.session_source.get_agent_role(),
-        agent_path: config_snapshot
-            .session_source
-            .get_agent_path()
-            .map(Into::into),
+        agent_role: config_snapshot
+            .root_agent_role
+            .clone()
+            .or_else(|| config_snapshot.session_source.get_agent_role()),
+        agent_path: config_snapshot.root_agent_path.clone().or_else(|| {
+            config_snapshot
+                .session_source
+                .get_agent_path()
+                .map(Into::into)
+        }),
         source: config_snapshot.session_source.clone().into(),
         thread_source: config_snapshot.thread_source.map(Into::into),
         git_info: None,

@@ -70,8 +70,20 @@ impl ThreadMetadataSync {
             source: Some(params.source.clone()),
             thread_source: Some(params.thread_source),
             agent_nickname: Some(params.source.get_nickname()),
-            agent_role: Some(params.source.get_agent_role()),
-            agent_path: Some(params.source.get_agent_path().map(Into::into)),
+            agent_role: Some(
+                params
+                    .metadata
+                    .root_agent_role
+                    .clone()
+                    .or_else(|| params.source.get_agent_role()),
+            ),
+            agent_path: Some(
+                params
+                    .metadata
+                    .root_agent_path
+                    .clone()
+                    .or_else(|| params.source.get_agent_path().map(Into::into)),
+            ),
             cwd: Some(cwd.clone()),
             cli_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             git_info: git_info.map(git_info_patch_from_observation),
@@ -395,6 +407,7 @@ fn git_info_patch_from_observation(git_info: GitInfo) -> GitInfoPatch {
 mod tests {
     use pretty_assertions::assert_eq;
     use protocol::AgentPath;
+    use protocol::models::BaseInstructions;
     use protocol::protocol::CompactedItem;
     use protocol::protocol::SessionMeta;
     use protocol::protocol::SessionMetaLine;
@@ -411,6 +424,38 @@ mod tests {
     use super::*;
     use crate::ThreadEventPersistenceMode;
     use crate::ThreadPersistenceMetadata;
+
+    #[tokio::test]
+    async fn create_metadata_prefers_root_agent_path() {
+        let thread_id = ThreadId::new();
+        let sync = ThreadMetadataSync::for_create(&CreateThreadParams {
+            thread_id,
+            forked_from_id: None,
+            source: SessionSource::Exec,
+            thread_source: None,
+            base_instructions: BaseInstructions::default(),
+            dynamic_tools: Vec::new(),
+            metadata: ThreadPersistenceMetadata {
+                cwd: None,
+                model_provider: "test-provider".to_string(),
+                memory_mode: ThreadMemoryMode::Enabled,
+                root_agent_role: Some("feature-owner".to_string()),
+                root_agent_path: Some("/my_project".to_string()),
+            },
+            event_persistence_mode: ThreadEventPersistenceMode::Limited,
+        })
+        .await;
+
+        let update = sync.take_pending_update().expect("pending metadata update");
+        assert_eq!(
+            update.patch.agent_role,
+            Some(Some("feature-owner".to_string()))
+        );
+        assert_eq!(
+            update.patch.agent_path,
+            Some(Some("/my_project".to_string()))
+        );
+    }
 
     #[test]
     fn resume_history_keeps_derived_metadata_pending_until_applied() {
@@ -610,6 +655,8 @@ mod tests {
                 cwd: None,
                 model_provider: "test-provider".to_string(),
                 memory_mode: ThreadMemoryMode::Enabled,
+                root_agent_role: None,
+                root_agent_path: None,
             },
             event_persistence_mode: ThreadEventPersistenceMode::Limited,
         }

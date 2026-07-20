@@ -118,6 +118,15 @@ impl Session {
                                         } else {
                                             ThreadMemoryMode::Disabled
                                         },
+                                        root_agent_role: session_configuration
+                                            .root_agent_metadata
+                                            .as_ref()
+                                            .and_then(|metadata| metadata.agent_role.clone()),
+                                        root_agent_path: session_configuration
+                                            .root_agent_metadata
+                                            .as_ref()
+                                            .and_then(|metadata| metadata.agent_path.as_ref())
+                                            .map(ToString::to_string),
                                     },
                                     event_persistence_mode: init.event_persistence_mode,
                                 },
@@ -141,6 +150,8 @@ impl Session {
                                         } else {
                                             ThreadMemoryMode::Disabled
                                         },
+                                        root_agent_role: None,
+                                        root_agent_path: None,
                                     },
                                     event_persistence_mode: init.event_persistence_mode,
                                 },

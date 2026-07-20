@@ -76,6 +76,8 @@ pub struct ThreadConfigSnapshot {
     pub reasoning_effort: Option<ReasoningEffort>,
     pub personality: Option<Personality>,
     pub session_source: SessionSource,
+    pub root_agent_path: Option<String>,
+    pub root_agent_role: Option<String>,
     pub thread_source: Option<ThreadSource>,
 }
 

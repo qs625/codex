@@ -1830,6 +1830,8 @@ async fn seed_pathless_store_thread(
                 cwd: None,
                 model_provider: "test-provider".to_string(),
                 memory_mode: ThreadMemoryMode::Disabled,
+                root_agent_role: None,
+                root_agent_path: None,
             },
             event_persistence_mode: ThreadEventPersistenceMode::default(),
         })

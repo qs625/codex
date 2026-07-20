@@ -1664,6 +1664,8 @@ mod tests {
             cwd: Some(std::env::current_dir().expect("cwd")),
             model_provider: "test-provider".to_string(),
             memory_mode: ThreadMemoryMode::Enabled,
+            root_agent_role: None,
+            root_agent_path: None,
         }
     }
 

@@ -18,6 +18,12 @@ use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadCompactStartResponse;
 use app_server_protocol::ThreadContextUsageUpdatedNotification;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadListParams;
+use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadReadParams;
+use app_server_protocol::ThreadReadResponse;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::TurnCompletedNotification;
@@ -211,12 +217,120 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
     let started = wait_for_context_compaction_started(&mut mcp).await?;
     let completed = wait_for_context_compaction_completed(&mut mcp).await?;
 
-    assert_context_compaction_lifecycle(
-        started,
-        completed,
-        &thread_id,
-        "MANUAL_COMPACT_SUMMARY",
+    assert_context_compaction_lifecycle(started, completed, &thread_id, "MANUAL_COMPACT_SUMMARY")?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thread_compact_start_preserves_project_agent_path() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let sse = responses::sse(vec![
+        responses::ev_assistant_message("m1", "PROJECT_COMPACT_SUMMARY"),
+        responses::ev_completed_with_tokens("r1", /*total_tokens*/ 200),
+    ]);
+    responses::mount_sse_sequence(&server, vec![sse]).await;
+
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::default(),
+        AUTO_COMPACT_LIMIT,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        COMPACT_PROMPT,
     )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let (thread_id, agent_path) = start_project_thread(&mut mcp, "/my_project").await?;
+    compact_thread_and_wait(&mut mcp, &thread_id, "PROJECT_COMPACT_SUMMARY").await?;
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread_id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+    assert_eq!(thread.agent_path.as_deref(), Some(agent_path.as_str()));
+
+    let resume_id = mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: thread_id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let ThreadResumeResponse { thread, .. } = to_response::<ThreadResumeResponse>(resume_resp)?;
+    assert_eq!(thread.agent_path.as_deref(), Some(agent_path.as_str()));
+
+    let list_id = mcp
+        .send_thread_list_request(thread_list_params(Some(10)))
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadListResponse { data, .. } = to_response::<ThreadListResponse>(list_resp)?;
+    let listed_thread = data
+        .iter()
+        .find(|thread| thread.id == thread_id)
+        .expect("thread/list should include compacted project thread");
+    assert_eq!(
+        listed_thread.agent_path.as_deref(),
+        Some(agent_path.as_str())
+    );
+    drop(mcp);
+
+    let mut reloaded_mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, reloaded_mcp.initialize()).await??;
+
+    let read_id = reloaded_mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread_id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        reloaded_mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+    assert_eq!(thread.agent_path.as_deref(), Some(agent_path.as_str()));
+
+    let list_id = reloaded_mcp
+        .send_thread_list_request(thread_list_params(Some(10)))
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        reloaded_mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadListResponse { data, .. } = to_response::<ThreadListResponse>(list_resp)?;
+    let listed_thread = data
+        .iter()
+        .find(|thread| thread.id == thread_id)
+        .expect("thread/list should include reloaded compacted project thread");
+    assert_eq!(
+        listed_thread.agent_path.as_deref(),
+        Some(agent_path.as_str())
+    );
 
     Ok(())
 }
@@ -293,6 +407,39 @@ async fn thread_compact_start_rejects_unknown_thread_id() -> Result<()> {
     Ok(())
 }
 
+async fn start_project_thread(mcp: &mut McpProcess, agent_path: &str) -> Result<(String, String)> {
+    let thread_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            task_name: Some(agent_path.to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+    assert_eq!(thread.agent_path.as_deref(), Some(agent_path));
+    Ok((thread.id, agent_path.to_string()))
+}
+
+fn thread_list_params(limit: Option<u32>) -> ThreadListParams {
+    ThreadListParams {
+        cursor: None,
+        limit,
+        sort_key: None,
+        sort_direction: None,
+        model_providers: None,
+        source_kinds: None,
+        archived: None,
+        cwd: None,
+        use_state_db_only: false,
+        search_term: None,
+    }
+}
+
 async fn start_thread(mcp: &mut McpProcess) -> Result<String> {
     let thread_id = mcp
         .send_thread_start_request(ThreadStartParams {
@@ -307,6 +454,29 @@ async fn start_thread(mcp: &mut McpProcess) -> Result<String> {
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
     Ok(thread.id)
+}
+
+async fn compact_thread_and_wait(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+    expected_final_output: &str,
+) -> Result<()> {
+    let compact_id = mcp
+        .send_thread_compact_start_request(ThreadCompactStartParams {
+            thread_id: thread_id.to_string(),
+        })
+        .await?;
+    let compact_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(compact_id)),
+    )
+    .await??;
+    let _compact: ThreadCompactStartResponse =
+        to_response::<ThreadCompactStartResponse>(compact_resp)?;
+
+    let started = wait_for_context_compaction_started(mcp).await?;
+    let completed = wait_for_context_compaction_completed(mcp).await?;
+    assert_context_compaction_lifecycle(started, completed, thread_id, expected_final_output)
 }
 
 async fn send_turn_and_wait(mcp: &mut McpProcess, thread_id: &str, text: &str) -> Result<String> {
@@ -391,15 +561,10 @@ fn assert_context_compaction_lifecycle(
     assert_eq!(started.thread_id, thread_id);
     assert_eq!(completed.thread_id, thread_id);
     assert_eq!(started_id, completed_id);
-    assert!(started_replacement_history.is_none());
+    assert!(started_replacement_history.is_empty());
 
-    let completed_replacement_history = completed_replacement_history
-        .expect("completed compact item should include replacement history");
-    let replacement_history_items = completed_replacement_history
-        .as_array()
-        .expect("replacement history should serialize as an array");
     assert!(
-        !replacement_history_items.is_empty(),
+        !completed_replacement_history.is_empty(),
         "replacement history should preserve at least one item after compaction"
     );
     let completed_replacement_history_json = serde_json::to_string(&completed_replacement_history)?;

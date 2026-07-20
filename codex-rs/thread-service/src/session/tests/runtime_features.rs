@@ -1119,6 +1119,8 @@ async fn attach_thread_persistence(session: &mut Session) -> PathBuf {
                 } else {
                     ThreadMemoryMode::Disabled
                 },
+                root_agent_role: None,
+                root_agent_path: None,
             },
             event_persistence_mode: ThreadEventPersistenceMode::Limited,
         },

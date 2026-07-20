@@ -1077,6 +1077,8 @@ mod thread_processor_behavior_tests {
             reasoning_effort: None,
             personality: None,
             session_source: SessionSource::Cli,
+            root_agent_path: None,
+            root_agent_role: None,
             thread_source: None,
         };
 
