@@ -5,6 +5,7 @@ const {
   BrowserWindow,
   dialog,
   ipcMain,
+  Notification,
   session,
   shell,
   systemPreferences,
@@ -35,6 +36,9 @@ const {
   ensureDefaultWorkspace,
   resolveDefaultWorkspace,
 } = require("./workspace.cjs");
+const {
+  showSystemNotification,
+} = require("./systemNotification.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
@@ -136,6 +140,10 @@ ipcMain.handle("codex:health", async () => {
     workspace: defaultWorkspace,
   };
 });
+
+ipcMain.handle("codex:showSystemNotification", async (_event, payload) =>
+  showSystemNotification(payload, { Notification }),
+);
 
 ipcMain.handle("codex:bootstrap", async () => {
   await ensureDefaultWorkspace();
