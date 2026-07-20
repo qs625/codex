@@ -1,25 +1,9 @@
 # PM Progress
 
 ## Current Goal
-为 root-worker 客户端增加 project thread 完成后的系统 notification。
+推进 modelhub 模型使用报错修复；project thread 完成系统 notification 已合并。
 
 ## Active Work
-- id: project-thread-completion-notification
-  owner: /my_codex/owner_dev
-  checkout: /Users/bytedance/Projects/my-codex-dev
-  branch: feature/project-thread-completion-notification
-  task_type: feature
-  depends_on: 无
-  files: apps/root-worker-prototype/src/App.tsx; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/**/*.test.tsx?; apps/root-worker-prototype/electron/**?（如 owner 判断系统 notification 应放 Electron main/preload）
-  base_commit: ff29cb8ef29b0624ae3893ae4e40452c204f4622
-  pending_sync_from_main: 无
-  status: ready_to_merge
-  objective: 当 root-worker 中 project root thread 从非 final 进入 completed final 状态时，发送一次系统桌面通知；Chat thread、subagent、失败/取消/非 completed final 不触发。
-  last_update: 2026-07-20 PM 合并前验收通过：typed lifecycle 边沿触发、project root helper、去重、best-effort notification、无协议改动均对齐；targeted tests / build / diff-check 通过。
-  next_action: PM merge `c57a4915f` 到主 checkout。
-  blockers: 无
-  validation: owner `rtk pnpm --dir apps/root-worker-prototype test` -> 285 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；fixed reviewer `/my_codex/owner_dev/reviewer` 两轮通过。PM `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/systemNotification.test.ts` -> 105 passed；PM `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；PM `rtk git diff --check` -> passed。
-  commit: c57a4915f
 - id: modelhub-model-selection-error
   owner: /my_codex/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
@@ -28,7 +12,7 @@
   depends_on: 无
   files: codex-rs/app-server/src/request_processors/**; codex-rs/app-server/src/models.rs; codex-rs/thread-service/**; codex-rs/config/**; apps/root-worker-prototype/electron/turnStart.cjs; apps/root-worker-prototype/src/lib/runConfig.ts（owner 根据根因收窄）
   base_commit: ff29cb8ef29b0624ae3893ae4e40452c204f4622
-  pending_sync_from_main: 无
+  pending_sync_from_main: c89e56aad003e00a8ffe48d6a0212eed798946c1；暂不同步原因：owner_dev_2 正在 `fix/modelhub-model-selection` 上 active work，按规则不强制同步。
   status: in_progress
   objective: 修复 root-worker / app-server 中选择或使用 modelhub 模型时报错的问题，确保 modelhub 模型被列出后可作为 turn/thread 运行配置正常使用。
   last_update: 2026-07-20 PM 完成初步搜索，`model/list`、run config、turn/start provider override 是重点链路；`my-codex-dev-2` 已从主 checkout 当前基线创建任务分支。
@@ -37,6 +21,10 @@
   validation: 待 owner 提供 targeted Rust/Node/TS tests、必要 build、diff-check。
   commit:
 ## Completed
+- commit: c89e56aad003e00a8ffe48d6a0212eed798946c1
+  summary: 合并 `/my_codex/owner_dev` 的 `c57a4915f` 到主线，为 root-worker 客户端增加 project root thread 完成后的系统桌面 notification；触发点在 typed `thread/status/changed` lifecycle 更新路径，只有 project root thread 从非 completed-final 进入 final completed 的边沿触发一次；Chat thread、subagent、failed/errored/cancelled/非 completed final、历史 bootstrap/read 已完成状态不触发。通知封装为 best-effort Web Notification，权限 denied、API 缺失或平台异常不会阻断 UI lifecycle 更新。
+  validation: owner `rtk pnpm --dir apps/root-worker-prototype test` -> 285 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；fixed reviewer `/my_codex/owner_dev/reviewer` 两轮通过。PM 合并前 `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/systemNotification.test.ts` -> 105 passed；PM 合并前 `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；PM 合并前 `rtk git diff --check` -> passed。PM merge 后同 targeted tests -> 105 passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；`rtk git diff --check` -> passed。
+  residual_risk: 未做真实 Electron 桌面权限弹窗手测；通知是 best-effort，系统权限或平台限制下可能静默不显示，但不会影响 thread 状态更新。`my-codex-dev-2` 因 modelhub active work 暂未同步到 `c89e56aad`。
 - commit: ba902eb70
   summary: 合并 `/my_codex/owner_dev_3` 的 `ba902eb70` 到主线 pending merge，完成公开 thread/agent lifecycle 状态统一：协议和 root-worker 公共面从旧 `Thread.status` / `list_agents.agentStatus` 迁移到 `lifecycleStatus` / `ThreadLifecycleStatus`；`ThreadStatusChangedNotification` 保留 wire method 名但 payload 使用 `lifecycleStatus`；`list_agents` tool schema 输出 `lifecycle_status`；parent `WaitChild`、completed child restore、app-server watcher、thread listing/resume/read、TUI/root-worker 显示都改从 normalized lifecycle resolver 派生。内部 runtime/persisted `AgentStatus` 仍作为事实输入保留，`Turn.status` 不迁移。PM 合并后补修 `AgentTree.tsx` 旧 helper 导入残留，改用 `treeThreadLifecycleStatusClass` / `treeThreadLifecycleStatusLabel`。
   validation: owner reported `rtk cargo test -p app-server-protocol --features schema-export` -> 661 passed；owner `rtk uv run pytest tests/test_contract_generation.py tests/test_artifact_workflow_and_binaries.py` -> 30 passed；owner `rtk cargo build -p app-server --bin app-server` -> passed；owner `rtk cargo test -p thread-service tree_resume_restores_completed_child_status_for_parent_wait_child -- --nocapture` -> 1 passed；owner `rtk pnpm --dir apps/root-worker-prototype test` -> 279 passed；fixed reviewer `/my_codex/owner_dev_3/reviewer` 多轮通过。PM merge 后 `rtk cargo test -p app-server-protocol --features schema-export` -> 661 passed；`rtk cargo build -p app-server --bin app-server` -> passed；`rtk cargo test -p thread-service tree_resume_restores_completed_child_status_for_parent_wait_child -- --nocapture` -> 1 passed；`rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning；`rtk pnpm --dir apps/root-worker-prototype test` -> 280 passed；`rtk uv run python scripts/update_sdk_artifacts.py generate-types` -> success with existing datamodel-code-generator uint format warnings；`rtk uv run pytest tests/test_contract_generation.py tests/test_artifact_workflow_and_binaries.py` -> 30 passed；`rtk git diff --check` -> passed。
