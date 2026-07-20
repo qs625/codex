@@ -1,10 +1,41 @@
 # PM Progress
 
 ## Current Goal
-暂无 active PM 合并任务。
+为 root-worker 客户端增加 project thread 完成后的系统 notification。
 
 ## Active Work
-- none
+- id: project-thread-completion-notification
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: feature/project-thread-completion-notification
+  task_type: feature
+  depends_on: 无
+  files: apps/root-worker-prototype/src/App.tsx; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/**/*.test.tsx?; apps/root-worker-prototype/electron/**?（如 owner 判断系统 notification 应放 Electron main/preload）
+  base_commit: ff29cb8ef29b0624ae3893ae4e40452c204f4622
+  pending_sync_from_main: 无
+  status: ready_to_merge
+  objective: 当 root-worker 中 project root thread 从非 final 进入 completed final 状态时，发送一次系统桌面通知；Chat thread、subagent、失败/取消/非 completed final 不触发。
+  last_update: 2026-07-20 PM 合并前验收通过：typed lifecycle 边沿触发、project root helper、去重、best-effort notification、无协议改动均对齐；targeted tests / build / diff-check 通过。
+  next_action: PM merge `c57a4915f` 到主 checkout。
+  blockers: 无
+  validation: owner `rtk pnpm --dir apps/root-worker-prototype test` -> 285 passed；owner `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；fixed reviewer `/my_codex/owner_dev/reviewer` 两轮通过。PM `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/systemNotification.test.ts` -> 105 passed；PM `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning；PM `rtk git diff --check` -> passed。
+  commit: c57a4915f
+- id: modelhub-model-selection-error
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: fix/modelhub-model-selection
+  task_type: bugfix
+  depends_on: 无
+  files: codex-rs/app-server/src/request_processors/**; codex-rs/app-server/src/models.rs; codex-rs/thread-service/**; codex-rs/config/**; apps/root-worker-prototype/electron/turnStart.cjs; apps/root-worker-prototype/src/lib/runConfig.ts（owner 根据根因收窄）
+  base_commit: ff29cb8ef29b0624ae3893ae4e40452c204f4622
+  pending_sync_from_main: 无
+  status: in_progress
+  objective: 修复 root-worker / app-server 中选择或使用 modelhub 模型时报错的问题，确保 modelhub 模型被列出后可作为 turn/thread 运行配置正常使用。
+  last_update: 2026-07-20 PM 完成初步搜索，`model/list`、run config、turn/start provider override 是重点链路；`my-codex-dev-2` 已从主 checkout 当前基线创建任务分支。
+  next_action: 等待 owner 复现/定位 modelhub 报错根因、实现修复、复用固定 reviewer 审查并提交验证证据。
+  blockers: 用户未提供具体错误文本；owner 需先从代码和现有测试定位最可能链路，必要时回报需要用户补充实际报错。
+  validation: 待 owner 提供 targeted Rust/Node/TS tests、必要 build、diff-check。
+  commit:
 ## Completed
 - commit: ba902eb70
   summary: 合并 `/my_codex/owner_dev_3` 的 `ba902eb70` 到主线 pending merge，完成公开 thread/agent lifecycle 状态统一：协议和 root-worker 公共面从旧 `Thread.status` / `list_agents.agentStatus` 迁移到 `lifecycleStatus` / `ThreadLifecycleStatus`；`ThreadStatusChangedNotification` 保留 wire method 名但 payload 使用 `lifecycleStatus`；`list_agents` tool schema 输出 `lifecycle_status`；parent `WaitChild`、completed child restore、app-server watcher、thread listing/resume/read、TUI/root-worker 显示都改从 normalized lifecycle resolver 派生。内部 runtime/persisted `AgentStatus` 仍作为事实输入保留，`Turn.status` 不迁移。PM 合并后补修 `AgentTree.tsx` 旧 helper 导入残留，改用 `treeThreadLifecycleStatusClass` / `treeThreadLifecycleStatusLabel`。
