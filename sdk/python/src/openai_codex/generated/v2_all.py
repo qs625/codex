@@ -4485,15 +4485,6 @@ class ExitedReviewModeThreadItem(BaseModel):
     type: Annotated[Literal["exitedReviewMode"], Field(title="ExitedReviewModeThreadItemType")]
 
 
-class ContextCompactionThreadItem(BaseModel):
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-    id: str
-    replacement_history: Annotated[Any | None, Field(alias="replacementHistory")] = None
-    type: Annotated[Literal["contextCompaction"], Field(title="ContextCompactionThreadItemType")]
-
-
 class ThreadLifecycleActiveFlag(Enum):
     running = "running"
     waiting_on_approval = "waitingOnApproval"
@@ -6438,6 +6429,31 @@ class ContentItem(RootModel[InputTextContentItem | InputImageContentItem | Outpu
     root: InputTextContentItem | InputImageContentItem | OutputTextContentItem
 
 
+class InjectedContextContextCompactionReplacementItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    preview: str
+    sections: list[InjectedContextSection]
+    title: str
+    type: Annotated[
+        Literal["injectedContext"],
+        Field(title="InjectedContextContextCompactionReplacementItemType"),
+    ]
+
+
+class UserMessageContextCompactionReplacementItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    content: list[UserInput]
+    id: str
+    type: Annotated[
+        Literal["userMessage"], Field(title="UserMessageContextCompactionReplacementItemType")
+    ]
+
+
 class EventCommandEvent(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -8291,6 +8307,36 @@ class ConfigWriteResponse(BaseModel):
     version: str
 
 
+class AgentMessageContextCompactionReplacementItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    memory_citation: Annotated[MemoryCitation | None, Field(alias="memoryCitation")] = None
+    phase: MessagePhase | None = None
+    text: str
+    type: Annotated[
+        Literal["agentMessage"], Field(title="AgentMessageContextCompactionReplacementItemType")
+    ]
+
+
+class ContextCompactionReplacementItem(
+    RootModel[
+        InjectedContextContextCompactionReplacementItem
+        | UserMessageContextCompactionReplacementItem
+        | AgentMessageContextCompactionReplacementItem
+    ]
+):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: (
+        InjectedContextContextCompactionReplacementItem
+        | UserMessageContextCompactionReplacementItem
+        | AgentMessageContextCompactionReplacementItem
+    )
+
+
 class ErrorNotification(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -8935,6 +8981,17 @@ class CollabAgentStatusUpdateThreadItem(BaseModel):
     type: Annotated[
         Literal["collabAgentStatusUpdate"], Field(title="CollabAgentStatusUpdateThreadItemType")
     ]
+
+
+class ContextCompactionThreadItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    replacement_history: Annotated[
+        list[ContextCompactionReplacementItem], Field(alias="replacementHistory")
+    ]
+    type: Annotated[Literal["contextCompaction"], Field(title="ContextCompactionThreadItemType")]
 
 
 class ThreadItem(
