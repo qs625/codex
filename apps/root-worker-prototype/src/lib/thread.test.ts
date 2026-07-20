@@ -18,6 +18,7 @@ import {
   getThreadItemNotificationTargetThreadIds,
   getThreadAncestorIds,
   getThreadPath,
+  shouldNotifyProjectThreadCompleted,
   isThreadThinking,
   mergeThreadSnapshot,
   pickInitialProjectThread,
@@ -3425,6 +3426,62 @@ test("treeThreadLifecycleStatusClass does not infer parent status from active de
   assert.equal(
     treeThreadLifecycleStatusClass(makeTreeNode(parent, [makeTreeNode(activeChild)])),
     "todo",
+  );
+});
+
+test("shouldNotifyProjectThreadCompleted only fires on project completed edges", () => {
+  const completed = {
+    type: "final" as const,
+    result: { type: "completed" as const },
+  };
+  const active = { type: "active" as const, activeFlags: [] };
+  const waiting = { type: "waiting" as const, reason: "command" as const };
+  const failed = {
+    type: "final" as const,
+    result: { type: "errored" as const, message: "failed" },
+  };
+  const project = makeSidebarThread({
+    id: "project",
+    cwd: "/work/project",
+    lifecycleStatus: active,
+  });
+
+  assert.equal(shouldNotifyProjectThreadCompleted(project, completed), true);
+  assert.equal(
+    shouldNotifyProjectThreadCompleted(
+      { ...project, lifecycleStatus: waiting },
+      completed,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldNotifyProjectThreadCompleted(
+      { ...project, lifecycleStatus: completed },
+      completed,
+    ),
+    false,
+  );
+  assert.equal(shouldNotifyProjectThreadCompleted(project, failed), false);
+  assert.equal(
+    shouldNotifyProjectThreadCompleted(
+      makeSidebarThread({
+        id: "chat",
+        cwd: `/tmp/root-worker/${CHAT_COMPAT_CWD_BASENAME}`,
+        lifecycleStatus: active,
+      }),
+      completed,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldNotifyProjectThreadCompleted(
+      makeSubagentThread("child", "project", "/root/child", {
+        cwd: "/work/project",
+        lifecycleStatus: active,
+      }),
+      completed,
+    ),
+    false,
   );
 });
 

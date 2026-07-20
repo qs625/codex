@@ -374,6 +374,26 @@ export function isProjectRootThread(thread: Thread) {
   return isRootThread(thread) && projectCwd !== null && !isChatCompatCwd(projectCwd);
 }
 
+export function isCompletedFinalLifecycleStatus(
+  lifecycleStatus: ThreadLifecycleStatus,
+) {
+  return (
+    lifecycleStatus.type === "final" &&
+    lifecycleStatus.result.type === "completed"
+  );
+}
+
+export function shouldNotifyProjectThreadCompleted(
+  thread: Thread,
+  nextLifecycleStatus: ThreadLifecycleStatus,
+) {
+  return (
+    isProjectRootThread(thread) &&
+    !isCompletedFinalLifecycleStatus(thread.lifecycleStatus) &&
+    isCompletedFinalLifecycleStatus(nextLifecycleStatus)
+  );
+}
+
 export function getPresenceLabel(lifecycleStatus: ThreadLifecycleStatus) {
   if (lifecycleStatus.type === "active") {
     return getActivePresenceLabel(lifecycleStatus.activeFlags);
