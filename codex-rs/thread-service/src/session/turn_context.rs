@@ -888,6 +888,7 @@ impl Session {
             SessionConfigOverlay {
                 cwd,
                 workspace_roots: session_configuration.workspace_roots.clone(),
+                model: session_configuration.collaboration_mode.model().to_string(),
                 model_reasoning_effort: session_configuration.collaboration_mode.reasoning_effort(),
                 model_reasoning_summary: session_configuration.model_reasoning_summary,
                 service_tier: session_configuration.service_tier.clone(),
@@ -907,6 +908,7 @@ impl Session {
                 session: SessionConfigOverlay {
                     cwd: session_configuration.cwd.clone(),
                     workspace_roots: session_configuration.workspace_roots.clone(),
+                    model: session_configuration.collaboration_mode.model().to_string(),
                     model_reasoning_effort: session_configuration
                         .collaboration_mode
                         .reasoning_effort(),
