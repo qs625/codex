@@ -50,6 +50,8 @@ use super::*;
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: ThreadLifecycleStatus::completed(None),
                         message: None,
                     },
@@ -88,7 +90,9 @@ use super::*;
                 success: true,
                 agents: vec![protocol::protocol::CollabListedAgent {
                     agent_path: "/root/scout".into(),
-                    status: AgentStatus::Completed(Some("done".into())),
+                    agent_nickname: Some("codex_cli".into()),
+                    agent_role: Some("codex_cli".into()),
+                    lifecycle_status: ThreadLifecycleStatus::completed(Some("done".into())),
                     last_task_message: Some("last task".into()),
                 }],
             }),
@@ -120,6 +124,8 @@ use super::*;
                     "/root/scout".into(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
+                        agent_nickname: Some("codex_cli".into()),
+                        agent_role: Some("codex_cli".into()),
                         lifecycle_status: ThreadLifecycleStatus::completed(None),
                         message: Some("done".into()),
                     },
@@ -242,6 +248,8 @@ use super::*;
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: ThreadLifecycleStatus::Active { active_flags: Vec::new() },
                         message: None,
                     },
@@ -317,6 +325,8 @@ use super::*;
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: ThreadLifecycleStatus::Active { active_flags: Vec::new() },
                         message: None,
                     },
@@ -396,6 +406,8 @@ use super::*;
                     receiver.to_string(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: ThreadLifecycleStatus::Final { result: ThreadLifecycleFinalStatus::Interrupted },
                         message: None,
                     },
@@ -478,6 +490,8 @@ use super::*;
                     receiver.to_string(),
                     CollabAgentState {
                         path: Some("/root/scout".into()),
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: ThreadLifecycleStatus::completed(None),
                         message: None,
                     },

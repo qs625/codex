@@ -4,4 +4,4 @@
 import type { AgentPath } from "./AgentPath";
 import type { InterAgentOperation } from "./InterAgentOperation";
 
-export type InterAgentCommunication = { author: AgentPath, recipient: AgentPath, other_recipients: Array<AgentPath>, content: string, operation: InterAgentOperation, trigger_turn: boolean, sender_thread_id: string | null, recipient_thread_id: string | null, status: unknown | null, };
+export type InterAgentCommunication = { author: AgentPath, recipient: AgentPath, other_recipients: Array<AgentPath>, content: string, operation: InterAgentOperation, trigger_turn: boolean, sender_thread_id: string | null, recipient_thread_id: string | null, status: unknown | null, agent_nickname: string | null, agent_role: string | null, };

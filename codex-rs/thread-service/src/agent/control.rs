@@ -1421,6 +1421,8 @@ impl AgentControl {
             };
             agents.push(ListedAgent {
                 agent_name: candidate.agent_name,
+                agent_nickname: candidate.agent_nickname,
+                agent_role: candidate.agent_role,
                 lifecycle_status,
                 last_task_message: candidate.last_task_message,
             });

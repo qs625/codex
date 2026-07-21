@@ -38,6 +38,8 @@ pub struct LiveAgent {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct ListedAgent {
     pub agent_name: String,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
     pub lifecycle_status: ThreadLifecycleStatus,
     pub last_task_message: Option<String>,
 }
@@ -46,6 +48,8 @@ pub struct ListedAgent {
 pub struct ListedAgentCandidate {
     pub thread_id: ThreadId,
     pub agent_name: String,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
     pub last_task_message: Option<String>,
 }
 
@@ -356,6 +360,8 @@ pub fn agent_matches_prefix(agent_path: Option<&AgentPath>, prefix: &AgentPath) 
 pub fn root_listed_agent(lifecycle_status: ThreadLifecycleStatus) -> ListedAgent {
     ListedAgent {
         agent_name: AgentPath::root().to_string(),
+        agent_nickname: None,
+        agent_role: None,
         lifecycle_status,
         last_task_message: Some(ROOT_LAST_TASK_MESSAGE.to_string()),
     }
@@ -407,6 +413,8 @@ pub fn list_agents_plan(
             Some(ListedAgentCandidate {
                 thread_id,
                 agent_name,
+                agent_nickname: metadata.agent_nickname,
+                agent_role: metadata.agent_role,
                 last_task_message: metadata.last_task_message,
             })
         })
@@ -616,11 +624,15 @@ mod tests {
                 ListedAgentCandidate {
                     thread_id: first_thread,
                     agent_name: "/root/worker".to_string(),
+                    agent_nickname: None,
+                    agent_role: None,
                     last_task_message: Some("work".to_string()),
                 },
                 ListedAgentCandidate {
                     thread_id: second_thread,
                     agent_name: "/root/worker/reviewer".to_string(),
+                    agent_nickname: None,
+                    agent_role: None,
                     last_task_message: Some("review".to_string()),
                 },
             ]
@@ -659,6 +671,8 @@ mod tests {
             vec![ListedAgentCandidate {
                 thread_id: root_thread,
                 agent_name: root_worker.to_string(),
+                agent_nickname: None,
+                agent_role: None,
                 last_task_message: None,
             }]
         );
@@ -679,6 +693,8 @@ mod tests {
             vec![ListedAgentCandidate {
                 thread_id: project_thread,
                 agent_name: project.to_string(),
+                agent_nickname: None,
+                agent_role: None,
                 last_task_message: None,
             }]
         );
@@ -708,6 +724,8 @@ mod tests {
             vec![ListedAgentCandidate {
                 thread_id,
                 agent_name: thread_id.to_string(),
+                agent_nickname: None,
+                agent_role: None,
                 last_task_message: None,
             }]
         );

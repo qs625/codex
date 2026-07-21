@@ -465,6 +465,8 @@ async fn list_agents_includes_external_runs_with_prefix_filter() {
         .expect("list agents");
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].agent_name, "/root/external");
+    assert_eq!(agents[0].agent_nickname.as_deref(), Some("codex_cli"));
+    assert_eq!(agents[0].agent_role.as_deref(), Some("codex_cli"));
     assert_eq!(
         agents[0].lifecycle_status,
         ThreadLifecycleStatus::completed(Some("done".to_string()))

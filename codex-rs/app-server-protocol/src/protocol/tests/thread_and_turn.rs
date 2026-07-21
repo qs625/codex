@@ -210,6 +210,8 @@ fn collab_agent_state_maps_interrupted_status() {
         CollabAgentState::from(CoreAgentStatus::Interrupted),
         CollabAgentState {
             path: None,
+            agent_nickname: None,
+            agent_role: None,
             lifecycle_status: ThreadLifecycleStatus::Final {
                 result: ThreadLifecycleFinalStatus::Interrupted
             },

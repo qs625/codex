@@ -409,6 +409,20 @@
     },
     "InterAgentCommunication": {
       "properties": {
+        "agent_nickname": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent_role": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "author": {
           "$ref": "#/definitions/AgentPath"
         },

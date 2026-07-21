@@ -95,6 +95,8 @@ fn from_runtime_list_result(
             .into_iter()
             .map(|agent| ThreadListedAgent {
                 agent_name: agent.agent_name,
+                agent_nickname: agent.agent_nickname,
+                agent_role: agent.agent_role,
                 lifecycle_status: agent.lifecycle_status,
                 last_task_message: agent.last_task_message,
             })

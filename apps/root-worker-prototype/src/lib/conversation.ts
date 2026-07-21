@@ -50,6 +50,14 @@ type ConversationFlatItemState = {
 
 const AGENT_STATUS_PREVIEW_MAX_CHARS = 120;
 
+type CollabAgentStateView = {
+  path?: string | null;
+  agentNickname?: string | null;
+  agentRole?: string | null;
+  lifecycleStatus: ThreadLifecycleStatus;
+  message?: string | null;
+};
+
 export function buildConversationEntries(
   thread: Thread | null,
   options?: ConversationCellBuildOptions,
@@ -774,9 +782,10 @@ function buildPollEventProgress(
 function summarizeCollabAgentToolCall(
   item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
 ) {
+  const stateByPath = collabAgentStatesByPath(item);
   const receiverLabel =
     item.receiverPaths.length === 1
-      ? item.receiverPaths[0]
+      ? formatCollabAgentLabel(item.receiverPaths[0], stateByPath.get(item.receiverPaths[0]))
       : `${item.receiverPaths.length} workers`;
   const senderLabel = resolveAgentPath(item.senderPath);
 
@@ -797,9 +806,12 @@ function summarizeCollabAgentToolCall(
       return "wait_agent";
     case "listAgents":
     case "list_agents":
-      return item.receiverPaths.length > 0
-        ? `listed ${item.receiverPaths.length} agents`
-        : "list_agents";
+      if (item.receiverPaths.length === 0) {
+        return "list_agents";
+      }
+      return `listed ${item.receiverPaths.length} agents${formatProviderSummary(
+        item.agentsStates,
+      )}`;
     case "closeAgent":
       return `Closed ${receiverLabel}.`;
     default:
@@ -1097,6 +1109,7 @@ function formatCollabAgentToolTitle(
 function formatCollabAgentToolDetails(
   item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
 ) {
+  const stateByPath = collabAgentStatesByPath(item);
   const sections = [
     `Tool\n${formatCollabAgentToolName(item.tool)}`,
     `Sender\n${stringOrFallback(item.senderPath, "unknown")}`,
@@ -1105,7 +1118,12 @@ function formatCollabAgentToolDetails(
   if (item.receiverPaths.length > 0) {
     sections.push(
       `Receivers\n${item.receiverPaths
-        .map((path) => stringOrFallback(path, "unknown"))
+        .map((path) =>
+          formatCollabAgentLabel(
+            stringOrFallback(path, "unknown"),
+            stateByPath.get(path),
+          ),
+        )
         .join("\n")}`,
     );
   }
@@ -1132,7 +1150,10 @@ function formatCollabAgentToolDetails(
       `Agent States\n${agentStates
         .map(([threadId, state]) =>
           [
-            stringOrNull(state.path) ?? trimThreadId(threadId),
+            formatCollabAgentLabel(
+              stringOrNull(state.path) ?? trimThreadId(threadId),
+              state,
+            ),
             formatLifecycleStatus(state.lifecycleStatus),
             stringOrNull(state.message),
           ]
@@ -1241,11 +1262,12 @@ function summarizeCollabAgentStatusUpdate(
     stringOrNull(item.lifecycleStatus.path) ??
     stringOrNull(item.senderPath) ??
     "unknown";
+  const agentLabel = formatCollabAgentLabel(agentPath, item.lifecycleStatus);
   const message = previewInlineText(
     item.lifecycleStatus.message,
     AGENT_STATUS_PREVIEW_MAX_CHARS,
   );
-  return [agentPath, formatLifecycleStatus(item.lifecycleStatus.lifecycleStatus), message]
+  return [agentLabel, formatLifecycleStatus(item.lifecycleStatus.lifecycleStatus), message]
     .filter((value) => value && value.length > 0)
     .join(" • ");
 }
@@ -1254,9 +1276,10 @@ function formatCollabAgentStatusUpdateTitle(
   item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
 ) {
   const agentPath = resolveAgentPath(item.lifecycleStatus.path, item.senderPath);
+  const agentLabel = formatCollabAgentLabel(agentPath, item.lifecycleStatus);
   return item.lifecycleStatus.lifecycleStatus.type === "final"
-    ? `${agentPath} subagent completion`
-    : `status from ${agentPath}`;
+    ? `${agentLabel} subagent completion`
+    : `status from ${agentLabel}`;
 }
 
 function formatCollabAgentStatusUpdateDetails(
@@ -1270,7 +1293,12 @@ function formatCollabAgentStatusUpdateDetails(
 
   const statusPath = stringOrNull(item.lifecycleStatus.path);
   if (statusPath) {
-    sections.push(`Agent\n${statusPath}`);
+    sections.push(`Agent\n${formatCollabAgentLabel(statusPath, item.lifecycleStatus)}`);
+  }
+
+  const providerLabel = collabExternalProviderLabel(item.lifecycleStatus);
+  if (providerLabel) {
+    sections.push(`Provider\n${providerLabel}`);
   }
 
   const statusMessage = stringOrNull(item.lifecycleStatus.message);
@@ -1280,6 +1308,56 @@ function formatCollabAgentStatusUpdateDetails(
 
   return sections.join("\n\n");
 }
+
+function collabAgentStatesByPath(
+  item: Extract<ThreadItem, { type: "collabAgentToolCall" }>,
+) {
+  const states = new Map<string, CollabAgentStateView>();
+  for (const state of Object.values(item.agentsStates ?? {})) {
+    const path = stringOrNull(state.path);
+    if (path) {
+      states.set(path, state);
+    }
+  }
+  return states;
+}
+
+function formatCollabAgentLabel(
+  path: string,
+  state?: CollabAgentStateView | null,
+) {
+  const providerLabel = collabExternalProviderLabel(state);
+  return providerLabel ? `${providerLabel} ${path}` : path;
+}
+
+function formatProviderSummary(
+  states: Extract<ThreadItem, { type: "collabAgentToolCall" }>["agentsStates"],
+) {
+  const providers = [
+    ...new Set(
+      Object.values(states ?? {})
+        .map((state) => collabExternalProviderLabel(state))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  return providers.length > 0 ? ` (${providers.join(", ")})` : "";
+}
+
+function collabExternalProviderLabel(state?: CollabAgentStateView | null) {
+  const providerId = [
+    state?.agentRole,
+    state?.agentNickname,
+  ]
+    .map((value) => value?.trim())
+    .find((value) => value && externalProviderLabels[value]);
+  return providerId ? externalProviderLabels[providerId] : null;
+}
+
+const externalProviderLabels: Record<string, string> = {
+  codex_cli: "Codex CLI",
+  claude_cli: "Claude Code",
+  opencode: "OpenCode",
+};
 
 function formatLifecycleStatus(status: ThreadLifecycleStatus) {
   switch (status.type) {

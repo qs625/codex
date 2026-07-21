@@ -738,6 +738,8 @@ fn collab_spawn_begin_and_end_emit_item_events() {
                     "thread-child".to_string(),
                     ApiCollabAgentState {
                         path: Some("/root/parent/child".to_string()),
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: app_server_protocol::ThreadLifecycleStatus::Active {
                             active_flags: Vec::new(),
                         },
