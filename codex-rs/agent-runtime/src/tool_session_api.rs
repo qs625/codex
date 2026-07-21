@@ -33,6 +33,14 @@ pub struct SpawnAgentToolRequest {
     pub fork_mode: Option<SpawnAgentForkMode>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SpawnExternalAgentToolRequest {
+    pub message: String,
+    pub task_name: String,
+    pub provider: SpawnAgentProvider,
+    pub cwd: AbsolutePathBuf,
+}
+
 #[derive(Debug, serde::Serialize)]
 #[serde(untagged)]
 pub enum SpawnAgentToolResult {

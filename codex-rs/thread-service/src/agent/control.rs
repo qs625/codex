@@ -1,10 +1,18 @@
 use crate::agent::AgentStatus;
 use crate::agent::external::ExternalAgentRun;
+use crate::agent::external::ExternalCliTurn;
+use crate::agent::external::ExternalToolCall;
+use crate::agent::external::ExternalToolName;
+use crate::agent::external::ExternalToolResult;
+use crate::agent::external::MAX_EXTERNAL_TOOL_ITERATIONS;
 use crate::agent::external::SharedExternalAgentRegistry;
+use crate::agent::external::append_external_transcript_line;
 use crate::agent::external::completion_communication;
 use crate::agent::external::external_live_agent;
 use crate::agent::external::external_metadata;
-use crate::agent::external::run_external_cli;
+use crate::agent::external::external_tool_result_json_line;
+use crate::agent::external::run_external_cli_with_events;
+use crate::agent::spawn_support::thread_spawn_source;
 use crate::runtime_shell_snapshot::ShellSnapshot;
 use crate::session::emit_subagent_session_started;
 use crate::thread::NewThread;
@@ -50,6 +58,7 @@ use codex_agent_runtime::thread_spawn_descendants;
 use codex_agent_runtime::thread_spawn_parent_thread_id;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::AgentPath;
 use protocol::SessionId;
 use protocol::ThreadId;
@@ -59,16 +68,21 @@ use protocol::error::Result as CodexResult;
 use protocol::models::ResponseItem;
 use protocol::protocol::InitialHistory;
 use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentOperation;
 use protocol::protocol::Op;
 use protocol::protocol::ResumedHistory;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
 use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadSource;
+use serde::Deserialize;
+use serde_json::json;
 use state_api::DirectionalThreadSpawnEdgeStatus;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Weak;
 use thread_service_api::LiveThreadActivitySource;
@@ -79,6 +93,7 @@ use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::LiveThreadStatusRuntime;
 use thread_store_api::ReadThreadParams;
 use tokio::sync::watch;
+use tool_service_api::FunctionCallError;
 use tracing::warn;
 
 /// Control-plane handle for multi-agent operations.
@@ -110,6 +125,62 @@ struct PersistedAgentPathCandidate {
     target: PersistedAgentTarget,
     updated_at: DateTime<Utc>,
     final_status: Option<AgentStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalSpawnAgentArgs {
+    task_name: String,
+    provider: SpawnAgentProvider,
+    cwd: AbsolutePathBuf,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalFollowupTaskArgs {
+    target: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalListAgentsArgs {
+    path_prefix: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalCloseAgentArgs {
+    target: String,
+}
+
+fn parse_external_arguments<T>(arguments: &serde_json::Value) -> Result<T, FunctionCallError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    serde_json::from_value(arguments.clone()).map_err(|err| {
+        FunctionCallError::RespondToModel(format!("failed to parse external tool arguments: {err}"))
+    })
+}
+
+fn external_session_source(run: &ExternalAgentRun) -> SessionSource {
+    SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: run.parent_thread_id,
+        depth: run.depth,
+        agent_path: Some(run.agent_path.clone()),
+        agent_nickname: Some(provider_label(run.provider).to_string()),
+        agent_role: Some(provider_label(run.provider).to_string()),
+    })
+}
+
+fn provider_label(provider: SpawnAgentProvider) -> &'static str {
+    match provider {
+        SpawnAgentProvider::Native => "native",
+        SpawnAgentProvider::CodexCli => "codex_cli",
+        SpawnAgentProvider::ClaudeCli => "claude_cli",
+        SpawnAgentProvider::Opencode => "opencode",
+    }
 }
 
 impl AgentControl {
@@ -171,6 +242,23 @@ impl AgentControl {
         session_source: SessionSource,
         options: SpawnAgentOptions,
     ) -> CodexResult<LiveAgent> {
+        self.spawn_external_agent_with_metadata_sync(
+            config,
+            provider,
+            message,
+            session_source,
+            options,
+        )
+    }
+
+    fn spawn_external_agent_with_metadata_sync(
+        &self,
+        config: config_service::Config,
+        provider: SpawnAgentProvider,
+        message: String,
+        session_source: SessionSource,
+        options: SpawnAgentOptions,
+    ) -> CodexResult<LiveAgent> {
         let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
             parent_thread_id,
             depth,
@@ -208,6 +296,8 @@ impl AgentControl {
             parent_thread_id,
             agent_path,
             provider,
+            depth,
+            spawn_config: Some(config.clone()),
             status: AgentStatus::Running,
             last_task_message: Some(message.clone()),
             abort_handle: None,
@@ -217,13 +307,78 @@ impl AgentControl {
         let control = self.clone();
         let cwd = config.cwd.as_path().to_path_buf();
         let handle = tokio::spawn(async move {
-            let status = run_external_cli(provider, cwd, message).await;
+            let status = control
+                .run_external_agent_loop(thread_id, provider, cwd, message)
+                .await;
             control.complete_external_agent(thread_id, status).await;
         });
         self.external_agents
             .attach_abort_handle(thread_id, handle.abort_handle());
 
         Ok(external_live_agent(&run))
+    }
+
+    async fn run_external_agent_loop(
+        &self,
+        thread_id: ThreadId,
+        provider: SpawnAgentProvider,
+        cwd: PathBuf,
+        message: String,
+    ) -> AgentStatus {
+        self.run_external_agent_loop_with_invoker(
+            thread_id,
+            provider,
+            cwd,
+            message,
+            run_external_cli_with_events,
+        )
+        .await
+    }
+
+    async fn run_external_agent_loop_with_invoker<F, Fut>(
+        &self,
+        thread_id: ThreadId,
+        provider: SpawnAgentProvider,
+        cwd: PathBuf,
+        message: String,
+        mut invoke: F,
+    ) -> AgentStatus
+    where
+        F: FnMut(SpawnAgentProvider, PathBuf, String, String) -> Fut + Send,
+        Fut: Future<Output = ExternalCliTurn> + Send,
+    {
+        let mut transcript = String::new();
+        for iteration in 0..MAX_EXTERNAL_TOOL_ITERATIONS {
+            let turn = invoke(provider, cwd.clone(), message.clone(), transcript.clone()).await;
+            for line in turn.transcript_lines {
+                append_external_transcript_line(&mut transcript, line);
+            }
+            let had_tool_call_errors = !turn.tool_call_errors.is_empty();
+            for result in turn.tool_call_errors {
+                append_external_transcript_line(
+                    &mut transcript,
+                    external_tool_result_json_line(&result),
+                );
+            }
+            if turn.tool_calls.is_empty() && !had_tool_call_errors {
+                return turn.status;
+            }
+            for tool_call in turn.tool_calls {
+                let result = self.dispatch_external_tool_call(thread_id, tool_call).await;
+                append_external_transcript_line(
+                    &mut transcript,
+                    external_tool_result_json_line(&result),
+                );
+            }
+            if iteration + 1 == MAX_EXTERNAL_TOOL_ITERATIONS {
+                return AgentStatus::Errored(format!(
+                    "external tool iteration limit reached after {MAX_EXTERNAL_TOOL_ITERATIONS} iterations"
+                ));
+            }
+        }
+        AgentStatus::Errored(format!(
+            "external tool iteration limit reached after {MAX_EXTERNAL_TOOL_ITERATIONS} iterations"
+        ))
     }
 
     async fn spawn_agent_internal(
@@ -861,6 +1016,156 @@ impl AgentControl {
                 "failed to notify parent thread {parent_thread_id} of external agent completion: {err}"
             );
         }
+    }
+
+    pub(crate) async fn dispatch_external_tool_call(
+        &self,
+        sender_thread_id: ThreadId,
+        call: ExternalToolCall,
+    ) -> ExternalToolResult {
+        let Some(sender_run) = self.external_agents.get(sender_thread_id) else {
+            return ExternalToolResult::error(
+                call.id,
+                "agent_not_found",
+                "external sender is not registered",
+            );
+        };
+        match self
+            .dispatch_external_tool_call_inner(&sender_run, &call)
+            .await
+        {
+            Ok(result) => ExternalToolResult::ok(call.id, result),
+            Err(err) => ExternalToolResult::error(call.id, "tool_error", err.to_string()),
+        }
+    }
+
+    async fn dispatch_external_tool_call_inner(
+        &self,
+        sender_run: &ExternalAgentRun,
+        call: &ExternalToolCall,
+    ) -> Result<serde_json::Value, FunctionCallError> {
+        match call.tool {
+            ExternalToolName::ListExternalAgents => {
+                let args: ExternalListAgentsArgs = parse_external_arguments(&call.arguments)?;
+                let source = external_session_source(sender_run);
+                let agents = self
+                    .list_agents(sender_run.thread_id, &source, args.path_prefix.as_deref())
+                    .await
+                    .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                serde_json::to_value(codex_agent_runtime::ListAgentsToolResult { agents })
+                    .map_err(|err| FunctionCallError::Fatal(err.to_string()))
+            }
+            ExternalToolName::FollowupExternalTask => {
+                let args: ExternalFollowupTaskArgs = parse_external_arguments(&call.arguments)?;
+                let receiver_thread_id =
+                    self.resolve_external_target(sender_run, &args.target).await?;
+                let receiver_agent = self
+                    .state
+                    .agent_metadata_for_thread(receiver_thread_id)
+                    .or_else(|| {
+                        self.external_agents
+                            .get(receiver_thread_id)
+                            .map(|run| external_metadata(&run))
+                    })
+                    .unwrap_or_default();
+                let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
+                    FunctionCallError::RespondToModel(
+                        "target agent is missing an agent_path".to_string(),
+                    )
+                })?;
+                let communication = InterAgentCommunication::new(
+                    sender_run.agent_path.clone(),
+                    receiver_agent_path,
+                    Vec::new(),
+                    args.message,
+                    InterAgentOperation::FollowupTask,
+                )
+                .with_thread_ids(sender_run.thread_id, receiver_thread_id)
+                .with_trigger_turn(true);
+                self.send_inter_agent_communication(receiver_thread_id, communication)
+                    .await
+                    .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                Ok(json!({ "delivered": true }))
+            }
+            ExternalToolName::SpawnExternalAgent => {
+                let args: ExternalSpawnAgentArgs = parse_external_arguments(&call.arguments)?;
+                if matches!(args.provider, SpawnAgentProvider::Native) {
+                    return Err(FunctionCallError::RespondToModel(
+                        "spawn_external_agent requires codex_cli, claude_cli, or opencode provider"
+                            .to_string(),
+                    ));
+                }
+                let mut config = sender_run.spawn_config.clone().ok_or_else(|| {
+                    FunctionCallError::RespondToModel(
+                        "external sender cannot spawn children without spawn config".to_string(),
+                    )
+                })?;
+                config.cwd = args.cwd;
+                let child_depth = sender_run.depth.saturating_add(1);
+                let spawn_source = thread_spawn_source(
+                    sender_run.thread_id,
+                    &external_session_source(sender_run),
+                    child_depth,
+                    None,
+                    Some(args.task_name),
+                )
+                .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                let spawned = self
+                    .spawn_external_agent_with_metadata_sync(
+                        config,
+                        args.provider,
+                        args.message,
+                        spawn_source,
+                        SpawnAgentOptions {
+                            fork_parent_spawn_call_id: None,
+                            fork_mode: None,
+                            environments: None,
+                            agent_mode: AgentMode::default(),
+                        },
+                    )
+                    .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                Ok(json!({
+                    "task_name": spawned
+                        .metadata
+                        .agent_path
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| spawned.thread_id.to_string()),
+                    "provider": provider_label(args.provider),
+                }))
+            }
+            ExternalToolName::CloseExternalAgent => {
+                let args: ExternalCloseAgentArgs = parse_external_arguments(&call.arguments)?;
+                let target = self.resolve_external_target(sender_run, &args.target).await?;
+                let previous_status = self.get_status(target).await;
+                self.close_agent(target)
+                    .await
+                    .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                Ok(json!({ "previous_status": previous_status }))
+            }
+            ExternalToolName::PollExternalEvent => Err(FunctionCallError::RespondToModel(
+                "poll_external_event is not supported until external CLI sessions expose an interactive input channel"
+                    .to_string(),
+            )),
+        }
+    }
+
+    async fn resolve_external_target(
+        &self,
+        sender_run: &ExternalAgentRun,
+        target: &str,
+    ) -> Result<ThreadId, FunctionCallError> {
+        let agent_path = resolve_agent_reference_path(&sender_run.agent_path, target)
+            .map_err(FunctionCallError::RespondToModel)?;
+        if let Some(thread_id) = self.state.agent_id_for_path(&agent_path) {
+            return Ok(thread_id);
+        }
+        if let Some(run) = self.external_agents.get_by_path(&agent_path) {
+            return Ok(run.thread_id);
+        }
+        Err(FunctionCallError::RespondToModel(format!(
+            "unknown external agent target `{target}`"
+        )))
     }
 
     /// Returns whether the live agent thread has `feature` enabled.

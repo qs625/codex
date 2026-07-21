@@ -13,6 +13,7 @@ use codex_agent_runtime::CloseAgentToolResult;
 use codex_agent_runtime::ListAgentsToolResult;
 use codex_agent_runtime::SpawnAgentToolRequest;
 use codex_agent_runtime::SpawnAgentToolResult;
+use codex_agent_runtime::SpawnExternalAgentToolRequest;
 use codex_agent_runtime::render_input_preview;
 use protocol::AgentPath;
 use protocol::protocol::CollabAgentInteractionBeginEvent;
@@ -57,6 +58,62 @@ pub(crate) async fn spawn_agent_tool(
         )
         .await;
     handle_spawn_agent_request(session, turn, call_id, request).await
+}
+
+pub(crate) async fn spawn_external_agent_tool(
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    call_id: String,
+    request: SpawnExternalAgentToolRequest,
+) -> Result<SpawnAgentToolResult, FunctionCallError> {
+    if matches!(
+        request.provider,
+        codex_agent_runtime::SpawnAgentProvider::Native
+    ) {
+        return Err(FunctionCallError::RespondToModel(
+            "spawn_external_agent requires codex_cli, claude_cli, or opencode provider".to_string(),
+        ));
+    }
+    let spawn_request = SpawnAgentToolRequest {
+        message: request.message,
+        task_name: request.task_name,
+        provider: Some(request.provider),
+        agent_type: None,
+        cwd: Some(request.cwd),
+        model: None,
+        reasoning_effort: None,
+        service_tier: None,
+        fork_mode: None,
+    };
+    spawn_external_agent_request(session, turn, call_id, spawn_request).await
+}
+
+pub(crate) async fn followup_external_task_tool(
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    call_id: String,
+    target: String,
+    message: String,
+) -> Result<(), FunctionCallError> {
+    followup_task_tool(session, turn, call_id, target, message).await
+}
+
+pub(crate) async fn close_external_agent_tool(
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    call_id: String,
+    target: String,
+) -> Result<CloseAgentToolResult, FunctionCallError> {
+    close_agent_tool(session, turn, call_id, target).await
+}
+
+pub(crate) async fn list_external_agents_tool(
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    call_id: String,
+    path_prefix: Option<String>,
+) -> Result<ListAgentsToolResult, FunctionCallError> {
+    list_agents_tool(session, turn, call_id, path_prefix).await
 }
 
 pub(crate) async fn followup_task_tool(
@@ -298,97 +355,9 @@ async fn handle_spawn_agent_request(
     )
     .await?;
     if provider_is_external(request.provider) {
-        if request.cwd.is_none() {
-            return Err(FunctionCallError::RespondToModel(
-                "external spawn_agent providers require an explicit cwd".to_string(),
-            ));
-        }
-        if request.fork_mode.is_some() {
-            return Err(FunctionCallError::RespondToModel(
-                "fork_turns is not supported for external CLI agents; use fork_turns=\"none\""
-                    .to_string(),
-            ));
-        }
-        let provider = request.provider.expect("external provider is present");
-        let spawn_source = thread_spawn_source(
-            session.thread_id(),
-            &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                parent_thread_id: session.thread_id(),
-                depth: child_depth.saturating_sub(1),
-                agent_path: Some(current_agent_path.clone()),
-                agent_nickname: None,
-                agent_role: None,
-            }),
-            child_depth,
-            role_name,
-            Some(request.task_name.clone()),
-        )?;
-        let result = session
-            .spawn_external_agent_with_metadata(
-                config,
-                provider,
-                request.message.clone(),
-                spawn_source,
-                SpawnAgentOptions {
-                    fork_parent_spawn_call_id: None,
-                    fork_mode: None,
-                    environments: None,
-                    agent_mode: Default::default(),
-                },
-            )
-            .await
-            .map_err(collab_spawn_error);
-        let (new_thread_id, new_agent_metadata, status) = match &result {
-            Ok(spawned_agent) => (
-                Some(spawned_agent.thread_id),
-                Some(spawned_agent.metadata.clone()),
-                spawned_agent.status.clone(),
-            ),
-            Err(_) => (None, None, crate::agent::AgentStatus::NotFound),
-        };
-        let (new_agent_path, new_agent_nickname, new_agent_role) = match new_agent_metadata {
-            Some(metadata) => (
-                metadata.agent_path.map(String::from),
-                metadata.agent_nickname,
-                metadata.agent_role,
-            ),
-            None => (None, None, None),
-        };
-        let nickname = new_agent_nickname.clone();
-        session
-            .send_event(
-                &turn,
-                CollabAgentSpawnEndEvent {
-                    call_id,
-                    completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
-                    sender_thread_id: session.thread_id(),
-                    sender_agent_path: current_agent_path.to_string(),
-                    new_thread_id,
-                    new_agent_path: new_agent_path.clone(),
-                    new_agent_nickname,
-                    new_agent_role,
-                    prompt,
-                    model: request.model.clone().unwrap_or_default(),
-                    reasoning_effort: request.reasoning_effort.unwrap_or_default(),
-                    status,
-                }
-                .into(),
-            )
-            .await;
-        let _ = result?;
-        let task_name = new_agent_path.ok_or_else(|| {
-            FunctionCallError::RespondToModel(
-                "spawned external agent is missing a canonical task name".to_string(),
-            )
-        })?;
-        return if turn.hide_spawn_agent_metadata() {
-            Ok(SpawnAgentToolResult::HiddenMetadata { task_name })
-        } else {
-            Ok(SpawnAgentToolResult::WithNickname {
-                task_name,
-                nickname,
-            })
-        };
+        return Err(FunctionCallError::RespondToModel(
+            "spawn_agent is only for native my-codex agents; use spawn_external_agent for external code agents".to_string(),
+        ));
     }
     if matches!(
         request.fork_mode,
@@ -537,4 +506,123 @@ async fn handle_spawn_agent_request(
             nickname,
         })
     }
+}
+
+async fn spawn_external_agent_request(
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    call_id: String,
+    request: SpawnAgentToolRequest,
+) -> Result<SpawnAgentToolResult, FunctionCallError> {
+    let prompt = message_content(request.message.clone())?;
+    session
+        .send_event(
+            turn.as_ref(),
+            CollabAgentSpawnBeginEvent {
+                call_id: call_id.clone(),
+                started_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id: session.thread_id(),
+                sender_agent_path: session
+                    .current_agent_path_for_turn(turn.as_ref())
+                    .to_string(),
+                prompt: prompt.clone(),
+                model: String::new(),
+                reasoning_effort: Default::default(),
+            }
+            .into(),
+        )
+        .await;
+    let child_depth = turn.next_child_spawn_depth();
+    let agent_max_depth = turn.agent_max_depth();
+    if exceeds_thread_spawn_depth_limit(child_depth, agent_max_depth) {
+        return Err(FunctionCallError::RespondToModel(format!(
+            "agent depth limit reached: cannot spawn depth {child_depth}; configured agents.max_depth is {agent_max_depth}"
+        )));
+    }
+    let current_agent_path = session.current_agent_path_for_turn(turn.as_ref());
+    let mut config = build_agent_spawn_config(
+        &session.get_base_instructions().await,
+        turn.as_ref(),
+        request.cwd.clone(),
+    )
+    .await?;
+    refresh_spawn_cwd_agent_roles(&mut config).await?;
+    let provider = request.provider.ok_or_else(|| {
+        FunctionCallError::RespondToModel("spawn_external_agent requires provider".to_string())
+    })?;
+    let spawn_source = thread_spawn_source(
+        session.thread_id(),
+        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: session.thread_id(),
+            depth: child_depth.saturating_sub(1),
+            agent_path: Some(current_agent_path.clone()),
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        child_depth,
+        None,
+        Some(request.task_name.clone()),
+    )?;
+    let result = session
+        .spawn_external_agent_with_metadata(
+            config,
+            provider,
+            request.message.clone(),
+            spawn_source,
+            SpawnAgentOptions {
+                fork_parent_spawn_call_id: None,
+                fork_mode: None,
+                environments: None,
+                agent_mode: Default::default(),
+            },
+        )
+        .await
+        .map_err(collab_spawn_error);
+    let (new_thread_id, new_agent_metadata, status) = match &result {
+        Ok(spawned_agent) => (
+            Some(spawned_agent.thread_id),
+            Some(spawned_agent.metadata.clone()),
+            spawned_agent.status.clone(),
+        ),
+        Err(_) => (None, None, crate::agent::AgentStatus::NotFound),
+    };
+    let (new_agent_path, new_agent_nickname, new_agent_role) = match new_agent_metadata {
+        Some(metadata) => (
+            metadata.agent_path.map(String::from),
+            metadata.agent_nickname,
+            metadata.agent_role,
+        ),
+        None => (None, None, None),
+    };
+    let nickname = new_agent_nickname.clone();
+    session
+        .send_event(
+            &turn,
+            CollabAgentSpawnEndEvent {
+                call_id,
+                completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                sender_thread_id: session.thread_id(),
+                sender_agent_path: current_agent_path.to_string(),
+                new_thread_id,
+                new_agent_path: new_agent_path.clone(),
+                new_agent_nickname,
+                new_agent_role,
+                prompt,
+                model: String::new(),
+                reasoning_effort: Default::default(),
+                status,
+            }
+            .into(),
+        )
+        .await;
+    let _ = result?;
+    let task_name = new_agent_path.ok_or_else(|| {
+        FunctionCallError::RespondToModel(
+            "spawned external agent is missing a canonical task name".to_string(),
+        )
+    })?;
+    Ok(SpawnAgentToolResult::WithNickname {
+        task_name,
+        nickname,
+    })
 }

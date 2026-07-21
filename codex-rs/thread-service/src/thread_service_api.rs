@@ -18,6 +18,7 @@ use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadSpawnAgentForkMode;
 use thread_service_api::ThreadSpawnAgentRequest;
 use thread_service_api::ThreadSpawnAgentResult;
+use thread_service_api::ThreadSpawnExternalAgentRequest;
 use thread_service_api::ThreadTurnCapability;
 use tool_service_api::FunctionCallError;
 
@@ -58,6 +59,24 @@ fn to_runtime_spawn_request(
                 SpawnAgentForkMode::LastNTurns(last_n_turns)
             }
         }),
+    }
+}
+
+fn to_runtime_spawn_external_request(
+    request: ThreadSpawnExternalAgentRequest,
+) -> codex_agent_runtime::SpawnExternalAgentToolRequest {
+    codex_agent_runtime::SpawnExternalAgentToolRequest {
+        message: request.message,
+        task_name: request.task_name,
+        provider: match request.provider {
+            thread_service_api::ThreadSpawnAgentProvider::Native => SpawnAgentProvider::Native,
+            thread_service_api::ThreadSpawnAgentProvider::CodexCli => SpawnAgentProvider::CodexCli,
+            thread_service_api::ThreadSpawnAgentProvider::ClaudeCli => {
+                SpawnAgentProvider::ClaudeCli
+            }
+            thread_service_api::ThreadSpawnAgentProvider::Opencode => SpawnAgentProvider::Opencode,
+        },
+        cwd: request.cwd,
     }
 }
 
@@ -134,6 +153,45 @@ impl ThreadServiceApi for ThreadService {
         Box::pin(async move {
             let turn = turn_context(turn)?;
             multi_agent::followup_task_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                target,
+                message,
+            )
+            .await
+        })
+    }
+
+    fn spawn_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnExternalAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>> {
+        Box::pin(async move {
+            let turn = turn_context(turn)?;
+            multi_agent::spawn_external_agent_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                to_runtime_spawn_external_request(request),
+            )
+            .await
+            .map(from_runtime_spawn_result)
+        })
+    }
+
+    fn followup_external_task<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
+        Box::pin(async move {
+            let turn = turn_context(turn)?;
+            multi_agent::followup_external_task_tool(
                 session(turn.as_ref()),
                 Arc::clone(&turn),
                 call_id,
@@ -228,6 +286,25 @@ impl ThreadServiceApi for ThreadService {
         })
     }
 
+    fn close_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
+        Box::pin(async move {
+            let turn = turn_context(turn)?;
+            multi_agent::close_external_agent_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                target,
+            )
+            .await
+            .map(from_runtime_close_result)
+        })
+    }
+
     fn list_agents<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -237,6 +314,25 @@ impl ThreadServiceApi for ThreadService {
         Box::pin(async move {
             let turn = turn_context(turn)?;
             multi_agent::list_agents_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                path_prefix,
+            )
+            .await
+            .map(from_runtime_list_result)
+        })
+    }
+
+    fn list_external_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
+        Box::pin(async move {
+            let turn = turn_context(turn)?;
+            multi_agent::list_external_agents_tool(
                 session(turn.as_ref()),
                 Arc::clone(&turn),
                 call_id,
