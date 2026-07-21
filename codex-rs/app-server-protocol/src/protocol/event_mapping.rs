@@ -134,6 +134,8 @@ pub fn item_event_to_server_notification(
                     let receiver_id = id.to_string();
                     let mut received_status = CollabAgentState::from(end_event.status.clone());
                     received_status.path = end_event.new_agent_path.clone();
+                    received_status.agent_nickname = end_event.new_agent_nickname.clone();
+                    received_status.agent_role = end_event.new_agent_role.clone();
                     (
                         vec![receiver_id.clone()],
                         [(receiver_id, received_status)].into_iter().collect(),
@@ -194,6 +196,8 @@ pub fn item_event_to_server_notification(
             let receiver_id = end_event.receiver_thread_id.to_string();
             let mut received_status = CollabAgentState::from(end_event.status);
             received_status.path = Some(end_event.receiver_agent_path.clone());
+            received_status.agent_nickname = end_event.receiver_agent_nickname.clone();
+            received_status.agent_role = end_event.receiver_agent_role.clone();
             let item = ThreadItem::CollabAgentToolCall {
                 id: end_event.call_id,
                 tool: CollabAgentTool::SendInput,
@@ -249,6 +253,8 @@ pub fn item_event_to_server_notification(
                 .map(|agent| {
                     let mut state = CollabAgentState::from(agent.lifecycle_status);
                     state.path = Some(agent.agent_path.clone());
+                    state.agent_nickname = agent.agent_nickname.clone();
+                    state.agent_role = agent.agent_role.clone();
                     if state.message.is_none() {
                         state.message = agent.last_task_message;
                     }
@@ -340,6 +346,16 @@ pub fn item_event_to_server_notification(
                         .iter()
                         .find(|entry| entry.thread_id == *id)
                         .and_then(|entry| entry.agent_path.clone());
+                    state.agent_nickname = end_event
+                        .agent_lifecycles
+                        .iter()
+                        .find(|entry| entry.thread_id == *id)
+                        .and_then(|entry| entry.agent_nickname.clone());
+                    state.agent_role = end_event
+                        .agent_lifecycles
+                        .iter()
+                        .find(|entry| entry.thread_id == *id)
+                        .and_then(|entry| entry.agent_role.clone());
                     (id.to_string(), state)
                 })
                 .collect();
@@ -399,6 +415,8 @@ pub fn item_event_to_server_notification(
             let receiver_id = end_event.receiver_thread_id.to_string();
             let mut receiver_state = CollabAgentState::from(end_event.status);
             receiver_state.path = Some(end_event.receiver_agent_path.clone());
+            receiver_state.agent_nickname = end_event.receiver_agent_nickname.clone();
+            receiver_state.agent_role = end_event.receiver_agent_role.clone();
             let agents_states = [(receiver_id.clone(), receiver_state)]
                 .into_iter()
                 .collect();
@@ -454,6 +472,8 @@ pub fn item_event_to_server_notification(
             let receiver_id = end_event.receiver_thread_id.to_string();
             let mut receiver_state = CollabAgentState::from(end_event.status);
             receiver_state.path = Some(end_event.receiver_agent_path.clone());
+            receiver_state.agent_nickname = end_event.receiver_agent_nickname.clone();
+            receiver_state.agent_role = end_event.receiver_agent_role.clone();
             let agents_states = [(receiver_id.clone(), receiver_state)]
                 .into_iter()
                 .collect();
@@ -745,6 +765,8 @@ mod tests {
                         receiver_id,
                         CollabAgentState {
                             path: Some(event.receiver_agent_path),
+                            agent_nickname: None,
+                            agent_role: None,
                             ..CollabAgentState::from(protocol::protocol::AgentStatus::NotFound)
                         },
                     )]
@@ -1201,6 +1223,8 @@ mod tests {
                     recipient_path: "/root".to_string(),
                     lifecycle_status: CollabAgentState {
                         path: Some("/root/worker".to_string()),
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: ThreadLifecycleStatus::completed(Some(
                             "done".to_string(),
                         )),
@@ -1298,6 +1322,8 @@ mod tests {
                     recipient_path: "/root".to_string(),
                     lifecycle_status: CollabAgentState {
                         path: Some("/root/worker".to_string()),
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: ThreadLifecycleStatus::completed(Some(
                             "done".to_string(),
                         )),

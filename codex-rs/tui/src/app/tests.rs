@@ -1154,6 +1154,8 @@ async fn collab_receiver_notification_does_not_cache_not_found_thread() {
                     receiver_thread_id.to_string(),
                     app_server_protocol::CollabAgentState {
                         path: None,
+                        agent_nickname: None,
+                        agent_role: None,
                         lifecycle_status: app_server_protocol::ThreadLifecycleStatus::NotLoaded,
                     },
                 )]),

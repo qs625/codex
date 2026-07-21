@@ -45,6 +45,8 @@ impl ThreadHistoryBuilder {
                 let receiver_id = id.to_string();
                 let mut received_status = CollabAgentState::from(payload.status.clone());
                 received_status.path = payload.new_agent_path.clone();
+                received_status.agent_nickname = payload.new_agent_nickname.clone();
+                received_status.agent_role = payload.new_agent_role.clone();
                 (
                     vec![receiver_id.clone()],
                     [(receiver_id, received_status)].into_iter().collect(),
@@ -100,6 +102,8 @@ impl ThreadHistoryBuilder {
         let receiver_id = payload.receiver_thread_id.to_string();
         let mut received_status = CollabAgentState::from(payload.status.clone());
         received_status.path = Some(payload.receiver_agent_path.clone());
+        received_status.agent_nickname = payload.receiver_agent_nickname.clone();
+        received_status.agent_role = payload.receiver_agent_role.clone();
         self.upsert_item_in_current_turn(ThreadItem::CollabAgentToolCall {
             id: payload.call_id.clone(),
             tool: CollabAgentTool::SendInput,
@@ -152,6 +156,8 @@ impl ThreadHistoryBuilder {
             .map(|agent| {
                 let mut state = CollabAgentState::from(agent.lifecycle_status.clone());
                 state.path = Some(agent.agent_path.clone());
+                state.agent_nickname = agent.agent_nickname.clone();
+                state.agent_role = agent.agent_role.clone();
                 if state.message.is_none() {
                     state.message = agent.last_task_message.clone();
                 }
@@ -241,6 +247,16 @@ impl ThreadHistoryBuilder {
                     .iter()
                     .find(|entry| entry.thread_id == *id)
                     .and_then(|entry| entry.agent_path.clone());
+                state.agent_nickname = payload
+                    .agent_lifecycles
+                    .iter()
+                    .find(|entry| entry.thread_id == *id)
+                    .and_then(|entry| entry.agent_nickname.clone());
+                state.agent_role = payload
+                    .agent_lifecycles
+                    .iter()
+                    .find(|entry| entry.thread_id == *id)
+                    .and_then(|entry| entry.agent_role.clone());
                 (id.to_string(), state)
             })
             .collect();
@@ -296,6 +312,8 @@ impl ThreadHistoryBuilder {
         let receiver_id = payload.receiver_thread_id.to_string();
         let mut state = CollabAgentState::from(payload.status.clone());
         state.path = Some(payload.receiver_agent_path.clone());
+        state.agent_nickname = payload.receiver_agent_nickname.clone();
+        state.agent_role = payload.receiver_agent_role.clone();
         let agents_states = [(receiver_id.clone(), state)].into_iter().collect();
         self.upsert_item_in_current_turn(ThreadItem::CollabAgentToolCall {
             id: payload.call_id.clone(),
@@ -345,6 +363,8 @@ impl ThreadHistoryBuilder {
         let receiver_id = payload.receiver_thread_id.to_string();
         let mut state = CollabAgentState::from(payload.status.clone());
         state.path = Some(payload.receiver_agent_path.clone());
+        state.agent_nickname = payload.receiver_agent_nickname.clone();
+        state.agent_role = payload.receiver_agent_role.clone();
         let agents_states = [(receiver_id.clone(), state)].into_iter().collect();
         self.upsert_item_in_current_turn(ThreadItem::CollabAgentToolCall {
             id: payload.call_id.clone(),

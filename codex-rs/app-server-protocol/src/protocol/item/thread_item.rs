@@ -962,6 +962,8 @@ pub enum CollabAgentToolCallStatus {
 #[cfg_attr(feature = "schema-export", ts(export))]
 pub struct CollabAgentState {
     pub path: Option<String>,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
     pub lifecycle_status: ThreadLifecycleStatus,
     pub message: Option<String>,
 }
@@ -986,6 +988,8 @@ impl From<ThreadLifecycleStatus> for CollabAgentState {
         };
         Self {
             path: None,
+            agent_nickname: None,
+            agent_role: None,
             lifecycle_status,
             message,
         }

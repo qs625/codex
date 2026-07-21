@@ -912,6 +912,8 @@ mod tests {
     fn agent_state(status: &str, message: Option<&str>) -> CollabAgentState {
         CollabAgentState {
             path: None,
+            agent_nickname: None,
+            agent_role: None,
             lifecycle_status: legacy_agent_lifecycle(status, message),
         }
     }

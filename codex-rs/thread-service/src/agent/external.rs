@@ -255,7 +255,11 @@ pub(crate) fn completion_communication(run: &ExternalAgentRun) -> Option<InterAg
         )
         .with_trigger_turn(true)
         .with_thread_ids(run.thread_id, run.parent_thread_id)
-        .with_status(run.status.clone()),
+        .with_status(run.status.clone())
+        .with_agent_metadata(
+            Some(provider_name(run.provider).to_string()),
+            Some(provider_name(run.provider).to_string()),
+        ),
     )
 }
 

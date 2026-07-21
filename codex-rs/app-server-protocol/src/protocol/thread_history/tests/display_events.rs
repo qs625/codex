@@ -150,6 +150,8 @@ use super::*;
                 recipient_path: "/root".into(),
                 lifecycle_status: CollabAgentState {
                     path: Some("/root/worker".into()),
+                    agent_nickname: None,
+                    agent_role: None,
                     lifecycle_status: ThreadLifecycleStatus::completed(None),
                     message: Some("completed".into()),
                 },

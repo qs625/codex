@@ -271,6 +271,8 @@ pub struct ThreadCloseAgentResult {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadListedAgent {
     pub agent_name: String,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
     pub lifecycle_status: ThreadLifecycleStatus,
     pub last_task_message: Option<String>,
 }

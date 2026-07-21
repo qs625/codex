@@ -129,7 +129,7 @@ export type ThreadItem = ThreadItemTimestamps &
       prompt: string | null;
       model: string | null;
       reasoningEffort: string | null;
-      agentsStates: Record<string, { path?: string | null; lifecycleStatus: ThreadLifecycleStatus; message?: string | null }>;
+      agentsStates: Record<string, { path?: string | null; agentNickname?: string | null; agentRole?: string | null; lifecycleStatus: ThreadLifecycleStatus; message?: string | null }>;
     }
   | {
       type: "collabAgentMessage";
@@ -152,6 +152,8 @@ export type ThreadItem = ThreadItemTimestamps &
       recipientPath: string;
       lifecycleStatus: {
         path?: string | null;
+        agentNickname?: string | null;
+        agentRole?: string | null;
         lifecycleStatus: ThreadLifecycleStatus;
         message?: string | null;
       };

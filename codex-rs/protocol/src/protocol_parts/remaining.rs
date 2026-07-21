@@ -44,6 +44,12 @@ pub struct CollabListAgentsBeginEvent {
 pub struct CollabListedAgent {
     /// Canonical path of the listed agent.
     pub agent_path: String,
+    /// Optional nickname assigned to the listed agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_nickname: Option<String>,
+    /// Optional role assigned to the listed agent.
+    #[serde(default, alias = "agent_type", skip_serializing_if = "Option::is_none")]
+    pub agent_role: Option<String>,
     /// Last known lifecycle of the listed agent.
     pub lifecycle_status: ThreadLifecycleStatus,
     /// Last task message recorded for the listed agent.
@@ -276,6 +282,8 @@ mod tests {
             sender_thread_id: None,
             recipient_thread_id: None,
             status: None,
+            agent_nickname: None,
+            agent_role: None,
         };
 
         assert_eq!(

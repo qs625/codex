@@ -785,6 +785,140 @@ test("shows typed list_agents collab tool calls", () => {
   assert.match(entries[0]?.toolDetails ?? "", /Agent States\n\/root\/worker • completed • done/);
 });
 
+test("labels external code agent providers in collab tool details", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "spawn-codex-cli",
+        tool: "spawnAgent",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: ["thread-2"],
+        receiverPaths: ["/root/external"],
+        timeoutMs: null,
+        prompt: "work on this",
+        model: "gpt-5.5",
+        reasoningEffort: "medium",
+        agentsStates: {
+          "thread-2": {
+            path: "/root/external",
+            agentNickname: "codex_cli",
+            agentRole: "codex_cli",
+            lifecycleStatus: { type: "active", activeFlags: [] },
+            message: "running",
+          },
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
+    [["multiAgent", "spawn agent", "/root -> Codex CLI /root/external"]],
+  );
+  assert.match(entries[0]?.toolDetails ?? "", /Receivers\nCodex CLI \/root\/external/);
+  assert.match(
+    entries[0]?.toolDetails ?? "",
+    /Agent States\nCodex CLI \/root\/external • active • running/,
+  );
+});
+
+test("summarizes mixed native and external list_agents provider states", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentToolCall",
+        id: "list-agents-external",
+        tool: "listAgents",
+        status: "completed",
+        senderThreadId: "thread-1",
+        senderPath: "/root",
+        receiverThreadIds: [],
+        receiverPaths: ["/root/native", "/root/claude", "/root/opencode"],
+        timeoutMs: null,
+        prompt: "/root",
+        model: null,
+        reasoningEffort: null,
+        agentsStates: {
+          "thread-native": {
+            path: "/root/native",
+            lifecycleStatus: { type: "active", activeFlags: [] },
+            message: "working",
+          },
+          "thread-claude": {
+            path: "/root/claude",
+            agentNickname: "claude_cli",
+            agentRole: "claude_cli",
+            lifecycleStatus: {
+              type: "final",
+              result: { type: "completed", lastAgentMessage: "done" },
+            },
+            message: "done",
+          },
+          "thread-opencode": {
+            path: "/root/opencode",
+            agentNickname: "opencode",
+            agentRole: "opencode",
+            lifecycleStatus: {
+              type: "final",
+              result: { type: "errored", message: "provider unavailable" },
+            },
+            message: "provider unavailable",
+          },
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
+    [["multiAgent", "list agents", "listed 3 agents (Claude Code, OpenCode)"]],
+  );
+  assert.match(entries[0]?.toolDetails ?? "", /\/root\/native • active • working/);
+  assert.match(entries[0]?.toolDetails ?? "", /Claude Code \/root\/claude • completed • done/);
+  assert.match(
+    entries[0]?.toolDetails ?? "",
+    /OpenCode \/root\/opencode • errored • provider unavailable/,
+  );
+});
+
+test("labels external code agent completion status updates", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "collabAgentStatusUpdate",
+        id: "status-claude",
+        senderThreadId: "thread-2",
+        senderPath: "/root/claude",
+        recipientThreadId: "thread-1",
+        recipientPath: "/root",
+        lifecycleStatus: {
+          path: "/root/claude",
+          agentNickname: "claude_cli",
+          agentRole: "claude_cli",
+          lifecycleStatus: {
+            type: "final",
+            result: { type: "completed", lastAgentMessage: "done" },
+          },
+          message: "done",
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
+    [[
+      "subagentNotification",
+      "Claude Code /root/claude subagent completion",
+      "Claude Code /root/claude • completed • done",
+    ]],
+  );
+  assert.match(entries[0]?.toolDetails ?? "", /Provider\nClaude Code/);
+});
+
 test("keeps child completions and subagent notifications as visible cells", () => {
   const entries = buildConversationEntries(
     makeThread([
