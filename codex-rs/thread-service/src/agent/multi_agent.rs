@@ -3,6 +3,7 @@
 use crate::agent::SpawnAgentOptions;
 use crate::agent::agent_resolver::resolve_agent_target;
 use crate::agent::exceeds_thread_spawn_depth_limit;
+use crate::agent::external::provider_is_external;
 use crate::agent::role::apply_role_to_config;
 use crate::agent::spawn_support::*;
 use crate::session::session::Session;
@@ -294,6 +295,99 @@ async fn handle_spawn_agent_request(
         request.cwd.clone(),
     )
     .await?;
+    if provider_is_external(request.provider) {
+        if request.cwd.is_none() {
+            return Err(FunctionCallError::RespondToModel(
+                "external spawn_agent providers require an explicit cwd".to_string(),
+            ));
+        }
+        if request.fork_mode.is_some() {
+            return Err(FunctionCallError::RespondToModel(
+                "fork_turns is not supported for external CLI agents; use fork_turns=\"none\""
+                    .to_string(),
+            ));
+        }
+        let provider = request.provider.expect("external provider is present");
+        let spawn_source = thread_spawn_source(
+            session.thread_id(),
+            &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: session.thread_id(),
+                depth: child_depth.saturating_sub(1),
+                agent_path: Some(current_agent_path.clone()),
+                agent_nickname: None,
+                agent_role: None,
+            }),
+            child_depth,
+            role_name,
+            Some(request.task_name.clone()),
+        )?;
+        let result = session
+            .spawn_external_agent_with_metadata(
+                config,
+                provider,
+                request.message.clone(),
+                spawn_source,
+                SpawnAgentOptions {
+                    fork_parent_spawn_call_id: None,
+                    fork_mode: None,
+                    environments: None,
+                    agent_mode: Default::default(),
+                },
+            )
+            .await
+            .map_err(collab_spawn_error);
+        let (new_thread_id, new_agent_metadata, status) = match &result {
+            Ok(spawned_agent) => (
+                Some(spawned_agent.thread_id),
+                Some(spawned_agent.metadata.clone()),
+                spawned_agent.status.clone(),
+            ),
+            Err(_) => (None, None, crate::agent::AgentStatus::NotFound),
+        };
+        let (new_agent_path, new_agent_nickname, new_agent_role) = match new_agent_metadata {
+            Some(metadata) => (
+                metadata.agent_path.map(String::from),
+                metadata.agent_nickname,
+                metadata.agent_role,
+            ),
+            None => (None, None, None),
+        };
+        let nickname = new_agent_nickname.clone();
+        session
+            .send_event(
+                &turn,
+                CollabAgentSpawnEndEvent {
+                    call_id,
+                    completed_at_ms: crate::turn_timing::now_unix_timestamp_ms(),
+                    sender_thread_id: session.thread_id(),
+                    sender_agent_path: current_agent_path.to_string(),
+                    new_thread_id,
+                    new_agent_path: new_agent_path.clone(),
+                    new_agent_nickname,
+                    new_agent_role,
+                    prompt,
+                    model: request.model.clone().unwrap_or_default(),
+                    reasoning_effort: request.reasoning_effort.unwrap_or_default(),
+                    status,
+                }
+                .into(),
+            )
+            .await;
+        let _ = result?;
+        let task_name = new_agent_path.ok_or_else(|| {
+            FunctionCallError::RespondToModel(
+                "spawned external agent is missing a canonical task name".to_string(),
+            )
+        })?;
+        return if turn.hide_spawn_agent_metadata() {
+            Ok(SpawnAgentToolResult::HiddenMetadata { task_name })
+        } else {
+            Ok(SpawnAgentToolResult::WithNickname {
+                task_name,
+                nickname,
+            })
+        };
+    }
     if matches!(
         request.fork_mode,
         Some(codex_agent_runtime::SpawnAgentForkMode::FullHistory)

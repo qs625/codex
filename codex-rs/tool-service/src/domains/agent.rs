@@ -14,6 +14,7 @@ use crate::planning::create_report_agent_job_result_tool;
 use crate::planning::create_spawn_agent_tool_v2;
 use crate::planning::create_spawn_agents_on_csv_tool;
 use codex_agent_runtime::SpawnAgentForkMode;
+use codex_agent_runtime::SpawnAgentProvider;
 use codex_agent_runtime::SpawnAgentToolRequest;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
@@ -270,6 +271,20 @@ fn from_runtime_spawn_request(
     thread_service_api::ThreadSpawnAgentRequest {
         message: request.message,
         task_name: request.task_name,
+        provider: request.provider.map(|provider| match provider {
+            codex_agent_runtime::SpawnAgentProvider::Native => {
+                thread_service_api::ThreadSpawnAgentProvider::Native
+            }
+            codex_agent_runtime::SpawnAgentProvider::CodexCli => {
+                thread_service_api::ThreadSpawnAgentProvider::CodexCli
+            }
+            codex_agent_runtime::SpawnAgentProvider::ClaudeCli => {
+                thread_service_api::ThreadSpawnAgentProvider::ClaudeCli
+            }
+            codex_agent_runtime::SpawnAgentProvider::Opencode => {
+                thread_service_api::ThreadSpawnAgentProvider::Opencode
+            }
+        }),
         agent_type: request.agent_type,
         cwd: request.cwd,
         model: request.model,
@@ -291,6 +306,7 @@ fn from_runtime_spawn_request(
 struct SpawnAgentArgs {
     message: String,
     task_name: String,
+    provider: Option<SpawnAgentProvider>,
     agent_type: Option<String>,
     cwd: Option<AbsolutePathBuf>,
     model: Option<String>,
@@ -306,6 +322,7 @@ impl SpawnAgentArgs {
         Ok(SpawnAgentToolRequest {
             message: self.message,
             task_name: self.task_name,
+            provider: self.provider,
             agent_type: self.agent_type,
             cwd: self.cwd,
             model: self.model,

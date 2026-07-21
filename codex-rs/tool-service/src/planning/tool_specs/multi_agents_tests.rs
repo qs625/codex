@@ -1,12 +1,11 @@
 use super::*;
-use crate::JsonSchemaPrimitiveType;
-use crate::JsonSchemaType;
-use pretty_assertions::assert_eq;
 use protocol::openai_models::ModelPreset;
 use protocol::openai_models::ModelServiceTier;
 use protocol::openai_models::ReasoningEffort;
 use protocol::openai_models::ReasoningEffortPreset;
 use serde_json::json;
+use tool_service_api::JsonSchemaPrimitiveType;
+use tool_service_api::JsonSchemaType;
 
 fn model_preset(id: &str, show_in_picker: bool) -> ModelPreset {
     ModelPreset {
@@ -86,6 +85,17 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     assert!(properties.contains_key("task_name"));
     assert!(properties.contains_key("message"));
     assert!(properties.contains_key("cwd"));
+    assert_eq!(
+        properties
+            .get("provider")
+            .and_then(|schema| schema.enum_values.as_ref()),
+        Some(&vec![
+            json!("native"),
+            json!("codex_cli"),
+            json!("claude_cli"),
+            json!("opencode"),
+        ])
+    );
     assert!(properties.contains_key("fork_turns"));
     assert!(!properties.contains_key("agent_mode"));
     assert!(!properties.contains_key("items"));

@@ -1,5 +1,6 @@
 pub(crate) mod agent_resolver;
 pub(crate) mod control;
+pub(crate) mod external;
 pub(crate) mod job_tools;
 pub(crate) mod multi_agent;
 pub(crate) mod role;

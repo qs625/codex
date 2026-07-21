@@ -35,6 +35,18 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions) -> ToolSpec {
                 .to_string(),
         )),
     );
+    properties.insert(
+        "provider".to_string(),
+        JsonSchema::string_enum(
+            vec![
+                json!("native"),
+                json!("codex_cli"),
+                json!("claude_cli"),
+                json!("opencode"),
+            ],
+            Some("Optional agent provider. Omit or use native for built-in Codex subagents; use codex_cli, claude_cli, or opencode to run an external one-shot code agent CLI.".to_string()),
+        ),
+    );
 
     ToolSpec::Function(ResponsesApiTool {
         name: "spawn_agent".to_string(),

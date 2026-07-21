@@ -11,10 +11,20 @@ use tool_service_api::FunctionCallError;
 use crate::ListedAgent;
 use crate::SpawnAgentForkMode;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnAgentProvider {
+    Native,
+    CodexCli,
+    ClaudeCli,
+    Opencode,
+}
+
 #[derive(Debug, Clone)]
 pub struct SpawnAgentToolRequest {
     pub message: String,
     pub task_name: String,
+    pub provider: Option<SpawnAgentProvider>,
     pub agent_type: Option<String>,
     pub cwd: Option<AbsolutePathBuf>,
     pub model: Option<String>,

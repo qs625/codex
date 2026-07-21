@@ -581,6 +581,20 @@ impl Session {
         self.services.agent_control.get_status(thread_id).await
     }
 
+    pub(crate) async fn spawn_external_agent_with_metadata(
+        &self,
+        config: config_service::Config,
+        provider: codex_agent_runtime::SpawnAgentProvider,
+        message: String,
+        session_source: SessionSource,
+        options: codex_agent_runtime::SpawnAgentOptions,
+    ) -> CodexResult<codex_agent_runtime::LiveAgent> {
+        self.services
+            .agent_control
+            .spawn_external_agent_with_metadata(config, provider, message, session_source, options)
+            .await
+    }
+
     pub(crate) async fn subscribe_agent_status(
         &self,
         thread_id: ThreadId,

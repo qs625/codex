@@ -409,6 +409,7 @@ impl WorkflowProgressSink for ThreadWorkflowProgressSink {
 struct WorkflowSpawnAgentArgs {
     message: String,
     task_name: String,
+    provider: Option<thread_service_api::ThreadSpawnAgentProvider>,
     agent_type: Option<String>,
     cwd: Option<codex_utils_absolute_path::AbsolutePathBuf>,
     model: Option<String>,
@@ -424,6 +425,7 @@ impl WorkflowSpawnAgentArgs {
         Ok(ThreadSpawnAgentRequest {
             message: self.message,
             task_name: self.task_name,
+            provider: self.provider,
             agent_type: self.agent_type,
             cwd: self.cwd,
             model: self.model,
