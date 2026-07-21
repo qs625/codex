@@ -1,10 +1,18 @@
 use crate::agent::AgentStatus;
+use crate::agent::external::ExternalAgentRun;
+use crate::agent::external::SharedExternalAgentRegistry;
+use crate::agent::external::completion_communication;
+use crate::agent::external::external_live_agent;
+use crate::agent::external::external_metadata;
+use crate::agent::external::run_external_cli;
 use crate::runtime_shell_snapshot::ShellSnapshot;
 use crate::session::emit_subagent_session_started;
 use crate::thread::NewThread;
 use crate::thread::ResumeThreadWithHistoryOptions;
 use crate::thread::ThreadConfigSnapshot;
 use crate::thread::ThreadServiceState;
+use chrono::DateTime;
+use chrono::Utc;
 use codex_agent_roles::DEFAULT_ROLE_NAME;
 use codex_agent_roles::resolve_role_config;
 use codex_agent_runtime::AgentMetadata;
@@ -14,6 +22,7 @@ use codex_agent_runtime::AgentRegistry;
 use codex_agent_runtime::ListedAgent;
 use codex_agent_runtime::LiveAgent;
 use codex_agent_runtime::SpawnAgentOptions;
+use codex_agent_runtime::SpawnAgentProvider;
 use codex_agent_runtime::SpawnReservation;
 use codex_agent_runtime::ThreadLifecycleInputs;
 use codex_agent_runtime::ThreadSpawnChild;
@@ -34,17 +43,14 @@ use codex_agent_runtime::root_listed_agent;
 use codex_agent_runtime::select_forked_rollout_items;
 use codex_agent_runtime::should_ignore_descendant_shutdown_error;
 use codex_agent_runtime::should_release_agent_after_thread_request_error;
+use codex_agent_runtime::thread_lifecycle_is_active;
 #[cfg(any(test, feature = "test-support"))]
 use codex_agent_runtime::thread_spawn_depth;
 use codex_agent_runtime::thread_spawn_descendants;
 use codex_agent_runtime::thread_spawn_parent_thread_id;
-use codex_agent_runtime::thread_lifecycle_is_active;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
-use chrono::DateTime;
-use chrono::Utc;
 use protocol::AgentPath;
-use protocol::protocol::ThreadLifecycleStatus;
 use protocol::SessionId;
 use protocol::ThreadId;
 use protocol::error::CodexErr;
@@ -57,6 +63,7 @@ use protocol::protocol::Op;
 use protocol::protocol::ResumedHistory;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadSource;
 use state_api::DirectionalThreadSpawnEdgeStatus;
 use std::collections::HashMap;
@@ -90,6 +97,7 @@ pub(crate) struct AgentControl {
     /// `ThreadServiceState -> CodexThread -> Session -> SessionServices -> ThreadServiceState`.
     manager: Weak<ThreadServiceState>,
     state: Arc<AgentRegistry>,
+    external_agents: SharedExternalAgentRegistry,
 }
 
 struct PersistedAgentTarget {
@@ -153,6 +161,69 @@ impl AgentControl {
     ) -> CodexResult<LiveAgent> {
         Box::pin(self.spawn_agent_internal(config, initial_operation, session_source, options))
             .await
+    }
+
+    pub(crate) async fn spawn_external_agent_with_metadata(
+        &self,
+        config: config_service::Config,
+        provider: SpawnAgentProvider,
+        message: String,
+        session_source: SessionSource,
+        options: SpawnAgentOptions,
+    ) -> CodexResult<LiveAgent> {
+        let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id,
+            depth,
+            agent_path,
+            agent_role,
+            ..
+        }) = session_source
+        else {
+            return Err(CodexErr::UnsupportedOperation(
+                "external agents must be spawned as thread-spawn subagents".to_string(),
+            ));
+        };
+
+        let mut reservation = self.state.reserve_spawn_slot(config.agent_max_threads)?;
+        let (_session_source, mut agent_metadata) = self.prepare_thread_spawn(
+            &mut reservation,
+            &config,
+            parent_thread_id,
+            depth,
+            agent_path,
+            agent_role,
+            options.agent_mode,
+            None,
+        )?;
+        let thread_id = ThreadId::new();
+        let agent_path = agent_metadata.agent_path.clone().ok_or_else(|| {
+            CodexErr::UnsupportedOperation("external agent is missing agent path".to_string())
+        })?;
+        agent_metadata.agent_id = Some(thread_id);
+        agent_metadata.last_task_message = Some(message.clone());
+        reservation.commit(agent_metadata);
+
+        let run = ExternalAgentRun {
+            thread_id,
+            parent_thread_id,
+            agent_path,
+            provider,
+            status: AgentStatus::Running,
+            last_task_message: Some(message.clone()),
+            abort_handle: None,
+        };
+        self.external_agents.insert_running(run.clone());
+
+        let control = self.clone();
+        let cwd = config.cwd.as_path().to_path_buf();
+        let handle = tokio::spawn(async move {
+            let status = run_external_cli(provider, cwd, message).await;
+            control.complete_external_agent(thread_id, status).await;
+        });
+        self.external_agents
+            .attach_abort_handle(thread_id, handle.abort_handle());
+
+        Ok(external_live_agent(&run))
     }
 
     async fn spawn_agent_internal(
@@ -483,7 +554,12 @@ impl AgentControl {
         child_thread_id: ThreadId,
         state_db_ctx: &dyn state_api::ThreadStateRuntime,
     ) -> bool {
-        let Some(metadata) = state_db_ctx.get_thread(child_thread_id).await.ok().flatten() else {
+        let Some(metadata) = state_db_ctx
+            .get_thread(child_thread_id)
+            .await
+            .ok()
+            .flatten()
+        else {
             return false;
         };
         if metadata.archived_at.is_some() {
@@ -655,6 +731,11 @@ impl AgentControl {
         agent_id: ThreadId,
         communication: InterAgentCommunication,
     ) -> CodexResult<String> {
+        if self.external_agents.get(agent_id).is_some() {
+            return Err(CodexErr::UnsupportedOperation(
+                "followup_task is not supported for one-shot external CLI agents".to_string(),
+            ));
+        }
         let last_task_message = communication.content.clone();
         let state = self.upgrade()?;
         let op = Op::InterAgentCommunication { communication };
@@ -710,6 +791,11 @@ impl AgentControl {
     /// Mark `agent_id` as explicitly closed in persisted spawn-edge state, then shut down the
     /// agent and any live descendants reached from the in-memory tree.
     pub(crate) async fn close_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
+        if self.external_agents.get(agent_id).is_some() {
+            self.external_agents.shutdown(agent_id);
+            self.state.release_spawned_thread(agent_id);
+            return Ok(agent_id.to_string());
+        }
         let state = self.upgrade()?;
         if let Some(state_db_ctx) = state.thread_state_runtime()
             && let Err(err) = state_db_ctx
@@ -737,6 +823,9 @@ impl AgentControl {
 
     /// Fetch the last known status for `agent_id`, returning `NotFound` when unavailable.
     pub(crate) async fn get_status(&self, agent_id: ThreadId) -> AgentStatus {
+        if let Some(run) = self.external_agents.get(agent_id) {
+            return run.status;
+        }
         let Ok(state) = self.upgrade() else {
             // No agent available if upgrade fails.
             return AgentStatus::NotFound;
@@ -745,6 +834,33 @@ impl AgentControl {
             .live_thread_agent_status(agent_id)
             .await
             .unwrap_or(AgentStatus::NotFound)
+    }
+
+    async fn complete_external_agent(&self, thread_id: ThreadId, status: AgentStatus) {
+        let Some(run) = self
+            .external_agents
+            .set_terminal_status_if_active(thread_id, status)
+        else {
+            return;
+        };
+        let Some(communication) = completion_communication(&run) else {
+            return;
+        };
+        let Ok(state) = self.upgrade() else {
+            return;
+        };
+        let parent_thread_id = run.parent_thread_id;
+        if let Err(err) = state
+            .submit_live_thread_op(
+                parent_thread_id,
+                Op::InterAgentCommunication { communication },
+            )
+            .await
+        {
+            warn!(
+                "failed to notify parent thread {parent_thread_id} of external agent completion: {err}"
+            );
+        }
     }
 
     /// Returns whether the live agent thread has `feature` enabled.
@@ -796,6 +912,9 @@ impl AgentControl {
     }
 
     pub(crate) async fn direct_agent_children_are_active(&self, agent_id: ThreadId) -> bool {
+        if self.external_agents.direct_children_are_active(agent_id) {
+            return true;
+        }
         let Ok(children) = Box::pin(self.open_thread_spawn_children(agent_id)).await else {
             return false;
         };
@@ -1033,7 +1152,11 @@ impl AgentControl {
                     continue;
                 }
                 let depth = parent_depth + 1;
-                let child_metadata = state_db_ctx.get_thread(child_thread_id).await.ok().flatten();
+                let child_metadata = state_db_ctx
+                    .get_thread(child_thread_id)
+                    .await
+                    .ok()
+                    .flatten();
                 if child_thread_id == target_thread_id {
                     let Some(metadata) = child_metadata.as_ref() else {
                         return Err(CodexErr::UnsupportedOperation(format!(
@@ -1112,7 +1235,11 @@ impl AgentControl {
                     continue;
                 }
                 let depth = parent_depth + 1;
-                let Some(metadata) = state_db_ctx.get_thread(child_thread_id).await.ok().flatten()
+                let Some(metadata) = state_db_ctx
+                    .get_thread(child_thread_id)
+                    .await
+                    .ok()
+                    .flatten()
                 else {
                     continue;
                 };
@@ -1151,17 +1278,12 @@ impl AgentControl {
         let non_final_indices = candidates
             .iter()
             .enumerate()
-            .filter_map(|(index, candidate)| {
-                candidate.final_status.is_none().then_some(index)
-            })
+            .filter_map(|(index, candidate)| candidate.final_status.is_none().then_some(index))
             .collect::<Vec<_>>();
         if non_final_indices.len() == 1
-            && candidates
-                .iter()
-                .enumerate()
-                .all(|(index, candidate)| {
-                    index == non_final_indices[0] || candidate.final_status.is_some()
-                })
+            && candidates.iter().enumerate().all(|(index, candidate)| {
+                index == non_final_indices[0] || candidate.final_status.is_some()
+            })
         {
             return Ok(Some(candidates.swap_remove(non_final_indices[0]).target));
         }
@@ -1189,10 +1311,13 @@ impl AgentControl {
         }
 
         candidates.sort_by(|left, right| {
-            right
-                .updated_at
-                .cmp(&left.updated_at)
-                .then_with(|| right.target.thread_id.to_string().cmp(&left.target.thread_id.to_string()))
+            right.updated_at.cmp(&left.updated_at).then_with(|| {
+                right
+                    .target
+                    .thread_id
+                    .to_string()
+                    .cmp(&left.target.thread_id.to_string())
+            })
         });
         let newest = &candidates[0];
         if candidates
@@ -1242,9 +1367,41 @@ impl AgentControl {
                 .await
                 .or_else(|| self.state.agent_id_for_path(&AgentPath::root()))
         };
-        let registered_agents = self
+        let mut registered_agents = self
             .registered_agents_with_persisted_descendants(root_thread_id)
             .await;
+        let mut registered_thread_ids = registered_agents
+            .iter()
+            .filter_map(|metadata| metadata.agent_id)
+            .collect::<HashSet<_>>();
+        let mut registered_agent_paths = registered_agents
+            .iter()
+            .filter_map(|metadata| metadata.agent_path.as_ref().map(ToString::to_string))
+            .collect::<HashSet<_>>();
+        let scoped_thread_ids = if let Some(root_thread_id) = root_thread_id {
+            let mut scoped_thread_ids = HashSet::from([root_thread_id]);
+            if let Ok(descendant_ids) = self.live_thread_spawn_descendants(root_thread_id).await {
+                scoped_thread_ids.extend(descendant_ids);
+            }
+            Some(scoped_thread_ids)
+        } else {
+            None
+        };
+        registered_agents.extend(
+            self.external_agents
+                .list()
+                .into_iter()
+                .filter(|run| {
+                    scoped_thread_ids
+                        .as_ref()
+                        .is_none_or(|thread_ids| thread_ids.contains(&run.parent_thread_id))
+                })
+                .filter(|run| {
+                    registered_thread_ids.insert(run.thread_id)
+                        && registered_agent_paths.insert(run.agent_path.to_string())
+                })
+                .map(|run| external_metadata(&run)),
+        );
         let plan = list_agents_plan(&current_agent_path, path_prefix, registered_agents)
             .map_err(CodexErr::UnsupportedOperation)?;
 
@@ -1252,9 +1409,7 @@ impl AgentControl {
         let root_path = AgentPath::root();
         if plan.include_root
             && let Some(root_thread_id) = self.state.agent_id_for_path(&root_path)
-            && let Some(lifecycle_status) = self
-                .listed_thread_lifecycle(root_thread_id)
-                .await
+            && let Some(lifecycle_status) = self.listed_thread_lifecycle(root_thread_id).await
         {
             agents.push(root_listed_agent(lifecycle_status));
         }
@@ -1287,6 +1442,14 @@ impl AgentControl {
         &self,
         thread_id: ThreadId,
     ) -> ThreadLifecycleStatus {
+        if let Some(run) = self.external_agents.get(thread_id) {
+            return normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs {
+                manager_available: true,
+                thread_found: true,
+                live_agent_status: Some(run.status),
+                ..Default::default()
+            });
+        }
         let Ok(state) = self.upgrade() else {
             return normalized_thread_lifecycle_from_inputs(ThreadLifecycleInputs::default());
         };
@@ -1675,7 +1838,9 @@ impl AgentControl {
                         )
                         .await
                 {
-                    warn!("failed to close superseded thread-spawn edge for {open_child_id}: {err}");
+                    warn!(
+                        "failed to close superseded thread-spawn edge for {open_child_id}: {err}"
+                    );
                 }
             }
         }

@@ -5,6 +5,7 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::thread::ThreadService;
 use codex_agent_runtime::SpawnAgentForkMode;
+use codex_agent_runtime::SpawnAgentProvider;
 use protocol::models::ResponseItem;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadListAgentsResult;
@@ -38,6 +39,14 @@ fn to_runtime_spawn_request(
     codex_agent_runtime::SpawnAgentToolRequest {
         message: request.message,
         task_name: request.task_name,
+        provider: request.provider.map(|provider| match provider {
+            thread_service_api::ThreadSpawnAgentProvider::Native => SpawnAgentProvider::Native,
+            thread_service_api::ThreadSpawnAgentProvider::CodexCli => SpawnAgentProvider::CodexCli,
+            thread_service_api::ThreadSpawnAgentProvider::ClaudeCli => {
+                SpawnAgentProvider::ClaudeCli
+            }
+            thread_service_api::ThreadSpawnAgentProvider::Opencode => SpawnAgentProvider::Opencode,
+        }),
         agent_type: request.agent_type,
         cwd: request.cwd,
         model: request.model,

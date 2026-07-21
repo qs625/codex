@@ -51,12 +51,12 @@ use protocol::models::ResponseItem;
 use protocol::openai_models::ReasoningEffort;
 use protocol::permissions::FileSystemSandboxPolicy;
 use protocol::protocol::AgentStatus;
-use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::EventMsg;
 use protocol::protocol::McpServerRefreshConfig;
 use protocol::protocol::Op;
 use protocol::protocol::Submission;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::TokenUsage;
 use protocol::protocol::TurnAbortReason;
 use protocol::protocol::W3cTraceContext;
@@ -199,11 +199,22 @@ pub enum ThreadSpawnAgentForkMode {
     LastNTurns { last_n_turns: usize },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadSpawnAgentProvider {
+    Native,
+    CodexCli,
+    ClaudeCli,
+    Opencode,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadSpawnAgentRequest {
     pub message: String,
     pub task_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ThreadSpawnAgentProvider>,
     pub agent_type: Option<String>,
     pub cwd: Option<AbsolutePathBuf>,
     pub model: Option<String>,

@@ -401,6 +401,132 @@ async fn get_status_returns_not_found_without_manager() {
 }
 
 #[tokio::test]
+async fn get_status_returns_external_agent_status_without_manager() {
+    let control = AgentControl::default();
+    let thread_id = ThreadId::new();
+    control.external_agents.insert_running(ExternalAgentRun {
+        thread_id,
+        parent_thread_id: ThreadId::new(),
+        agent_path: AgentPath::try_from("/root/external").expect("agent path"),
+        provider: SpawnAgentProvider::CodexCli,
+        status: AgentStatus::Running,
+        last_task_message: Some("do work".to_string()),
+        abort_handle: None,
+    });
+
+    let got = control.get_status(thread_id).await;
+    assert_eq!(got, AgentStatus::Running);
+}
+
+#[tokio::test]
+async fn direct_agent_children_are_active_includes_external_runs() {
+    let control = AgentControl::default();
+    let parent_thread_id = ThreadId::new();
+    control.external_agents.insert_running(ExternalAgentRun {
+        thread_id: ThreadId::new(),
+        parent_thread_id,
+        agent_path: AgentPath::try_from("/root/external").expect("agent path"),
+        provider: SpawnAgentProvider::ClaudeCli,
+        status: AgentStatus::Running,
+        last_task_message: Some("do work".to_string()),
+        abort_handle: None,
+    });
+
+    assert!(
+        control
+            .direct_agent_children_are_active(parent_thread_id)
+            .await
+    );
+}
+
+#[tokio::test]
+async fn list_agents_includes_external_runs_with_prefix_filter() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    harness.control.state.register_root_thread(root_thread_id);
+    let external_thread_id = ThreadId::new();
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: AgentPath::try_from("/root/external").expect("agent path"),
+            provider: SpawnAgentProvider::CodexCli,
+            status: AgentStatus::Completed(Some("done".to_string())),
+            last_task_message: Some("do work".to_string()),
+            abort_handle: None,
+        });
+
+    let agents = harness
+        .control
+        .list_agents(root_thread_id, &SessionSource::Exec, Some("external"))
+        .await
+        .expect("list agents");
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].agent_name, "/root/external");
+    assert_eq!(
+        agents[0].lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("done".to_string()))
+    );
+    assert_eq!(agents[0].last_task_message.as_deref(), Some("do work"));
+}
+
+#[tokio::test]
+async fn external_completion_after_close_does_not_notify_parent() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let external_thread_id = ThreadId::new();
+    let child_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    harness.control.state.register_root_thread(root_thread_id);
+    harness
+        .control
+        .state
+        .register_agent_metadata(AgentMetadata {
+            agent_id: Some(external_thread_id),
+            agent_path: Some(child_agent_path.clone()),
+            counted: false,
+            ..Default::default()
+        });
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: child_agent_path.clone(),
+            provider: SpawnAgentProvider::CodexCli,
+            status: AgentStatus::Running,
+            last_task_message: Some("do work".to_string()),
+            abort_handle: None,
+        });
+    harness
+        .control
+        .close_agent(external_thread_id)
+        .await
+        .expect("close external agent");
+
+    harness
+        .control
+        .complete_external_agent(
+            external_thread_id,
+            AgentStatus::Completed(Some("late".to_string())),
+        )
+        .await;
+
+    assert!(!captured_child_completion(
+        &harness.manager.captured_ops(),
+        root_thread_id,
+        &child_agent_path,
+        &AgentPath::root()
+    ));
+    assert_eq!(
+        harness.control.get_status(external_thread_id).await,
+        AgentStatus::Shutdown
+    );
+}
+
+#[tokio::test]
 async fn on_event_updates_status_from_task_started() {
     let status = agent_status_from_event(&EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: "turn-1".to_string(),
@@ -1575,13 +1701,7 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         .session
         .enqueue_mailbox_communication(queued_update)
         .await;
-    assert!(
-        worker_thread
-            .codex
-            .session
-            .has_pending_input()
-            .await
-    );
+    assert!(worker_thread.codex.session.has_pending_input().await);
     let baseline_op_count = harness.manager.captured_ops().len();
 
     emit_turn_complete(&worker_thread, "done").await;
@@ -1793,11 +1913,7 @@ async fn list_agents_restores_completed_child_from_persisted_root_when_registry_
             agent_role: None,
         });
     let listed_agents = restarted_control
-        .list_agents(
-            worker_thread_id,
-            &restored_worker_source_without_path,
-            None,
-        )
+        .list_agents(worker_thread_id, &restored_worker_source_without_path, None)
         .await
         .expect("list agents should succeed from restored subagent source without path");
 
@@ -1854,11 +1970,7 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         .await
         .expect("worker shutdown should release the live path");
     assert!(
-        harness
-            .manager
-            .get_thread(worker_thread_id)
-            .await
-            .is_err(),
+        harness.manager.get_thread(worker_thread_id).await.is_err(),
         "worker should be absent from the live registry"
     );
     let listed_agents = harness
@@ -1910,7 +2022,8 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
         listed_agents
             .iter()
             .any(|agent| agent.agent_name == worker_path.to_string()
-                && agent.lifecycle_status == ThreadLifecycleStatus::completed(Some("done".to_string())))
+                && agent.lifecycle_status
+                    == ThreadLifecycleStatus::completed(Some("done".to_string())))
     );
     let captured_ops = harness.manager.captured_ops();
     assert_eq!(
@@ -1954,7 +2067,12 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
 
     timeout(Duration::from_secs(5), async {
         loop {
-            if restored_worker_thread.codex.session.has_pending_input().await {
+            if restored_worker_thread
+                .codex
+                .session
+                .has_pending_input()
+                .await
+            {
                 break;
             }
             sleep(Duration::from_millis(25)).await;
@@ -1963,7 +2081,11 @@ async fn restored_completed_child_path_resolves_and_receives_followup_after_regi
     .await
     .expect("restored child should receive followup pending input");
     assert_eq!(
-        restored_worker_thread.codex.session.get_pending_input().await,
+        restored_worker_thread
+            .codex
+            .session
+            .get_pending_input()
+            .await,
         vec![PendingInputItem::from(communication)],
         "restored child should receive and consume the followup before its next completion",
     );
@@ -2262,7 +2384,10 @@ async fn followup_task_by_path_does_not_restore_archived_persisted_child() {
         "unexpected error: {err}",
     );
     assert!(
-        restarted_manager.get_thread(worker_thread_id).await.is_err(),
+        restarted_manager
+            .get_thread(worker_thread_id)
+            .await
+            .is_err(),
         "archived child should remain non-live after failed path followup",
     );
 }
@@ -2339,7 +2464,10 @@ async fn followup_task_by_thread_id_does_not_restore_archived_persisted_child() 
         "unexpected error: {err}",
     );
     assert!(
-        restarted_manager.get_thread(worker_thread_id).await.is_err(),
+        restarted_manager
+            .get_thread(worker_thread_id)
+            .await
+            .is_err(),
         "archived child should remain non-live after failed thread-id followup",
     );
 }
@@ -2409,7 +2537,10 @@ async fn followup_task_by_path_does_not_restore_deleted_metadata_child() {
         "unexpected error: {err}",
     );
     assert!(
-        restarted_manager.get_thread(worker_thread_id).await.is_err(),
+        restarted_manager
+            .get_thread(worker_thread_id)
+            .await
+            .is_err(),
         "deleted child should remain non-live after failed path followup",
     );
 }
@@ -2479,7 +2610,10 @@ async fn followup_task_by_thread_id_does_not_restore_deleted_metadata_child() {
         "unexpected error: {err}",
     );
     assert!(
-        restarted_manager.get_thread(worker_thread_id).await.is_err(),
+        restarted_manager
+            .get_thread(worker_thread_id)
+            .await
+            .is_err(),
         "deleted child should remain non-live after failed thread-id followup",
     );
 }
@@ -2565,13 +2699,11 @@ async fn followup_task_by_path_restores_latest_completed_generation_after_stale_
         .expect("test should simulate a stale open edge from an older server");
 
     let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
-    Box::pin(
-        restarted_control.resume_agent_from_rollout(
-            harness.config.clone(),
-            root_thread_id,
-            SessionSource::Exec,
-        ),
-    )
+    Box::pin(restarted_control.resume_agent_from_rollout(
+        harness.config.clone(),
+        root_thread_id,
+        SessionSource::Exec,
+    ))
     .await
     .expect("full tree resume should skip the stale duplicate generation");
 
@@ -2716,13 +2848,11 @@ async fn followup_task_by_path_ignores_archived_old_generation() {
         .expect("test should simulate a stale open edge for archived generation");
 
     let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
-    Box::pin(
-        restarted_control.resume_agent_from_rollout(
-            harness.config.clone(),
-            root_thread_id,
-            SessionSource::Exec,
-        ),
-    )
+    Box::pin(restarted_control.resume_agent_from_rollout(
+        harness.config.clone(),
+        root_thread_id,
+        SessionSource::Exec,
+    ))
     .await
     .expect("full tree resume should skip archived old generation");
 
@@ -2731,11 +2861,17 @@ async fn followup_task_by_path_ignores_archived_old_generation() {
         .await
         .expect("root thread should be live after restart");
     assert!(
-        restarted_manager.get_thread(archived_worker_id).await.is_err(),
+        restarted_manager
+            .get_thread(archived_worker_id)
+            .await
+            .is_err(),
         "full tree resume should not restore archived generation",
     );
     assert!(
-        restarted_manager.get_thread(current_worker_id).await.is_ok(),
+        restarted_manager
+            .get_thread(current_worker_id)
+            .await
+            .is_ok(),
         "full tree resume should restore current non-archived generation",
     );
     let root_turn = restored_root_thread.codex.session.new_default_turn().await;
@@ -4363,9 +4499,15 @@ async fn direct_subagent_paths_use_live_source_when_registry_metadata_is_missing
     wait_for_live_thread_spawn_children(&harness.control, parent_thread_id, &[worker_thread_id])
         .await;
 
-    harness.control.state.release_spawned_thread(worker_thread_id);
+    harness
+        .control
+        .state
+        .release_spawned_thread(worker_thread_id);
 
-    let direct_paths = harness.control.direct_subagent_paths(parent_thread_id).await;
+    let direct_paths = harness
+        .control
+        .direct_subagent_paths(parent_thread_id)
+        .await;
     assert_eq!(direct_paths, vec![worker_path]);
 }
 
