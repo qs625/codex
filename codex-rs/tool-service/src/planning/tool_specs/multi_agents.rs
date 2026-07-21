@@ -35,18 +35,6 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions) -> ToolSpec {
                 .to_string(),
         )),
     );
-    properties.insert(
-        "provider".to_string(),
-        JsonSchema::string_enum(
-            vec![
-                json!("native"),
-                json!("codex_cli"),
-                json!("claude_cli"),
-                json!("opencode"),
-            ],
-            Some("Optional agent provider. Omit or use native for built-in Codex subagents; use codex_cli, claude_cli, or opencode to run an external one-shot code agent CLI.".to_string()),
-        ),
-    );
 
     ToolSpec::Function(ResponsesApiTool {
         name: "spawn_agent".to_string(),
@@ -67,6 +55,118 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions) -> ToolSpec {
             options.hide_agent_type_model_reasoning,
         )),
     })
+}
+
+pub fn create_spawn_external_agent_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "task_name".to_string(),
+            JsonSchema::string(Some(
+                "Task name for the external agent. Use lowercase letters, digits, and underscores."
+                    .to_string(),
+            )),
+        ),
+        (
+            "provider".to_string(),
+            JsonSchema::string_enum(
+                vec![json!("codex_cli"), json!("claude_cli"), json!("opencode")],
+                Some("External code agent provider to launch.".to_string()),
+            ),
+        ),
+        (
+            "cwd".to_string(),
+            JsonSchema::string(Some(
+                "Working directory for the external CLI agent. Required.".to_string(),
+            )),
+        ),
+        (
+            "message".to_string(),
+            JsonSchema::string(Some(
+                "Initial plain-text task for the external code agent.".to_string(),
+            )),
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "spawn_external_agent".to_string(),
+        description: "Spawn an external code-agent CLI as a child in the current agent tree. External agents use the external-agent JSON tool protocol for collaboration; use spawn_agent only for native my-codex agents.".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec![
+                "task_name".to_string(),
+                "provider".to_string(),
+                "cwd".to_string(),
+                "message".to_string(),
+            ]),
+            Some(false.into()),
+        ),
+        output_schema: Some(spawn_agent_output_schema_v2(false)),
+    })
+}
+
+pub fn create_followup_external_task_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "target".to_string(),
+            JsonSchema::string(Some(
+                "External or native agent id/canonical task name to message.".to_string(),
+            )),
+        ),
+        (
+            "message".to_string(),
+            JsonSchema::string(Some(
+                "Message text to send through the shared agent bus.".to_string(),
+            )),
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "followup_external_task".to_string(),
+        description: "Send a follow-up message from the external-agent collaboration surface. This uses the same backend agent bus as native followup_task while keeping the model-visible external protocol separate.".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(properties, Some(vec!["target".to_string(), "message".to_string()]), Some(false.into())),
+        output_schema: None,
+    })
+}
+
+pub fn create_poll_external_event_tool() -> ToolSpec {
+    ToolSpec::Function(ResponsesApiTool {
+        name: "poll_external_event".to_string(),
+        description: "Wait for the next external-agent bus event. This first implementation reports a clear unsupported result for model-visible calls until external CLI sessions have an interactive input channel.".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "supported": { "type": "boolean" },
+                "message": { "type": "string" }
+            },
+            "required": ["supported", "message"],
+            "additionalProperties": false
+        })),
+    })
+}
+
+pub fn create_list_external_agents_tool() -> ToolSpec {
+    let ToolSpec::Function(mut tool) = create_list_agents_tool() else {
+        unreachable!("list_agents is a function tool");
+    };
+    tool.name = "list_external_agents".to_string();
+    tool.description = "List agents visible to the external-agent collaboration surface, including native and external agents with lifecycle/provider metadata.".to_string();
+    ToolSpec::Function(tool)
+}
+
+pub fn create_close_external_agent_tool() -> ToolSpec {
+    let ToolSpec::Function(mut tool) = create_close_agent_tool_v2() else {
+        unreachable!("close_agent is a function tool");
+    };
+    tool.name = "close_external_agent".to_string();
+    tool.description = "Close an external-agent collaboration target and any open descendants when no longer needed.".to_string();
+    ToolSpec::Function(tool)
 }
 
 pub fn create_followup_task_tool() -> ToolSpec {

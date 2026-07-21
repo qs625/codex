@@ -90,6 +90,7 @@ pub use tool_session_api::MultiAgentToolSession;
 pub use tool_session_api::SpawnAgentProvider;
 pub use tool_session_api::SpawnAgentToolRequest;
 pub use tool_session_api::SpawnAgentToolResult;
+pub use tool_session_api::SpawnExternalAgentToolRequest;
 pub use tool_session_api::WaitAgentReason;
 pub use tool_session_api::WaitAgentToolResult;
 pub use tool_session_api::wait_agent_result_from_message;

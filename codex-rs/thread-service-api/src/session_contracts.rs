@@ -224,6 +224,15 @@ pub struct ThreadSpawnAgentRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSpawnExternalAgentRequest {
+    pub message: String,
+    pub task_name: String,
+    pub provider: ThreadSpawnAgentProvider,
+    pub cwd: AbsolutePathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ThreadSpawnAgentResult {
     WithNickname {
@@ -678,7 +687,22 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         request: ThreadSpawnAgentRequest,
     ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>>;
 
+    fn spawn_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnExternalAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>>;
+
     fn followup_task<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
+
+    fn followup_external_task<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
@@ -710,7 +734,21 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         target: String,
     ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
 
+    fn close_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
+
     fn list_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+
+    fn list_external_agents<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,

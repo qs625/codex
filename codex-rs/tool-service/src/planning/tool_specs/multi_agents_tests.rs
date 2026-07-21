@@ -85,17 +85,7 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     assert!(properties.contains_key("task_name"));
     assert!(properties.contains_key("message"));
     assert!(properties.contains_key("cwd"));
-    assert_eq!(
-        properties
-            .get("provider")
-            .and_then(|schema| schema.enum_values.as_ref()),
-        Some(&vec![
-            json!("native"),
-            json!("codex_cli"),
-            json!("claude_cli"),
-            json!("opencode"),
-        ])
-    );
+    assert!(!properties.contains_key("provider"));
     assert!(properties.contains_key("fork_turns"));
     assert!(!properties.contains_key("agent_mode"));
     assert!(!properties.contains_key("items"));
@@ -127,6 +117,53 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     );
     assert_eq!(
         output_schema.expect("spawn_agent output schema")["required"],
+        json!(["task_name", "nickname"])
+    );
+}
+
+#[test]
+fn spawn_external_agent_tool_requires_provider_cwd_and_message() {
+    let ToolSpec::Function(ResponsesApiTool {
+        name,
+        description,
+        parameters,
+        output_schema,
+        ..
+    }) = create_spawn_external_agent_tool()
+    else {
+        panic!("spawn_external_agent should be a function tool");
+    };
+    assert_eq!(name, "spawn_external_agent");
+    assert!(description.contains("external code-agent CLI"));
+    assert!(description.contains("spawn_agent only for native"));
+    let properties = parameters
+        .properties
+        .as_ref()
+        .expect("spawn_external_agent should use object params");
+    assert_eq!(
+        properties
+            .get("provider")
+            .and_then(|schema| schema.enum_values.as_ref()),
+        Some(&vec![
+            json!("codex_cli"),
+            json!("claude_cli"),
+            json!("opencode")
+        ])
+    );
+    assert!(properties.contains_key("task_name"));
+    assert!(properties.contains_key("cwd"));
+    assert!(properties.contains_key("message"));
+    assert_eq!(
+        parameters.required.as_ref(),
+        Some(&vec![
+            "task_name".to_string(),
+            "provider".to_string(),
+            "cwd".to_string(),
+            "message".to_string(),
+        ])
+    );
+    assert_eq!(
+        output_schema.expect("spawn_external_agent output schema")["required"],
         json!(["task_name", "nickname"])
     );
 }
@@ -255,7 +292,8 @@ fn list_agents_tool_lifecycle_schema_includes_interrupted_final() {
 
     assert_eq!(
         output_schema.expect("list_agents output schema")["properties"]["agents"]["items"]["properties"]
-            ["lifecycle_status"]["allOf"][0]["oneOf"][4]["properties"]["result"]["oneOf"][2]["properties"]["type"]["enum"],
+            ["lifecycle_status"]["allOf"][0]["oneOf"][4]["properties"]["result"]["oneOf"][2]["properties"]
+            ["type"]["enum"],
         json!(["interrupted"])
     );
 }
