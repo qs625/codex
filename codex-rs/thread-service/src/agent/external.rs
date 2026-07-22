@@ -31,6 +31,7 @@ use tokio::process::ChildStdin;
 use tokio::process::ChildStdout;
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
 const MAX_EXTERNAL_OUTPUT_CHARS: usize = 12_000;
@@ -556,6 +557,7 @@ impl OpencodeHttpSession {
         let session_id = create_opencode_session(&client, &base_url, &cwd).await?;
         let (input_tx, input_rx) = mpsc::unbounded_channel();
         let (event_tx, events) = mpsc::unbounded_channel();
+        let (subscription_tx, mut subscription_rx) = watch::channel(None);
         tokio::spawn(write_opencode_provider_input(
             client.clone(),
             base_url.clone(),
@@ -563,10 +565,17 @@ impl OpencodeHttpSession {
             cwd.clone(),
             input_rx,
             event_tx.clone(),
+            subscription_rx.clone(),
         ));
         tokio::spawn(read_opencode_events(
-            client, base_url, session_id, cwd, event_tx,
+            client,
+            base_url,
+            session_id,
+            cwd,
+            event_tx,
+            subscription_tx,
         ));
+        wait_for_opencode_event_subscription(&mut subscription_rx).await?;
         Ok(Self {
             child,
             input_sink: ExternalInputSink::new(input_tx),
@@ -679,7 +688,12 @@ async fn write_opencode_provider_input(
     cwd: PathBuf,
     mut input_rx: mpsc::UnboundedReceiver<String>,
     event_tx: mpsc::UnboundedSender<Result<ExternalProcessEvent, String>>,
+    mut subscription_rx: watch::Receiver<Option<Result<(), String>>>,
 ) {
+    if let Err(err) = wait_for_opencode_event_subscription(&mut subscription_rx).await {
+        let _ = event_tx.send(Ok(ExternalProcessEvent::StdinError(err)));
+        return;
+    }
     while let Some(content) = input_rx.recv().await {
         let result = client
             .post(format!("{base_url}/session/{session_id}/prompt_async"))
@@ -716,6 +730,7 @@ async fn read_opencode_events(
     session_id: String,
     cwd: PathBuf,
     event_tx: mpsc::UnboundedSender<Result<ExternalProcessEvent, String>>,
+    subscription_tx: watch::Sender<Option<Result<(), String>>>,
 ) {
     let response = match client
         .get(format!("{base_url}/event"))
@@ -725,19 +740,22 @@ async fn read_opencode_events(
     {
         Ok(response) => response,
         Err(err) => {
-            let _ = event_tx.send(Err(format!(
-                "failed to subscribe to opencode events: {err}"
-            )));
+            let message = format!("failed to subscribe to opencode events: {err}");
+            let _ = subscription_tx.send(Some(Err(message.clone())));
+            let _ = event_tx.send(Err(message));
             return;
         }
     };
     if !response.status().is_success() {
-        let _ = event_tx.send(Err(format!(
+        let message = format!(
             "failed to subscribe to opencode events: HTTP {}",
             response.status()
-        )));
+        );
+        let _ = subscription_tx.send(Some(Err(message.clone())));
+        let _ = event_tx.send(Err(message));
         return;
     }
+    let _ = subscription_tx.send(Some(Ok(())));
     let mut stream = response.bytes_stream();
     let mut pending = String::new();
     let mut text_buffer = String::new();
@@ -760,6 +778,19 @@ async fn read_opencode_events(
         }
     }
     let _ = event_tx.send(Err("opencode event stream closed".to_string()));
+}
+
+async fn wait_for_opencode_event_subscription(
+    subscription_rx: &mut watch::Receiver<Option<Result<(), String>>>,
+) -> Result<(), String> {
+    loop {
+        if let Some(result) = subscription_rx.borrow().clone() {
+            return result;
+        }
+        subscription_rx.changed().await.map_err(|_| {
+            "opencode event subscription closed before reporting readiness".to_string()
+        })?;
+    }
 }
 
 fn opencode_event_from_sse_line(
@@ -1179,6 +1210,14 @@ pub(crate) type SharedExternalAgentRegistry = Arc<ExternalAgentRegistry>;
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::Duration;
+    use tokio::time::sleep;
+    use tokio::time::timeout;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
 
     #[test]
     fn parses_codex_jsonl_completion_and_unknown_status() {
@@ -1412,6 +1451,101 @@ mod tests {
         assert!(spec.args.contains(&"serve".to_string()));
         assert!(spec.args.contains(&"--port".to_string()));
         assert!(spec.args.contains(&"0".to_string()));
+    }
+
+    #[tokio::test]
+    async fn opencode_writer_waits_for_event_subscription_before_prompt() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/ses_1/prompt_async"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let (subscription_tx, subscription_rx) = watch::channel(None);
+        let writer = tokio::spawn(write_opencode_provider_input(
+            reqwest::Client::new(),
+            server.uri(),
+            "ses_1".to_string(),
+            PathBuf::from("/tmp/work"),
+            input_rx,
+            event_tx,
+            subscription_rx,
+        ));
+
+        input_tx.send("hello".to_string()).expect("queue prompt");
+        sleep(Duration::from_millis(50)).await;
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("requests")
+                .is_empty()
+        );
+
+        subscription_tx
+            .send(Some(Ok(())))
+            .expect("publish event subscription readiness");
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let requests = server.received_requests().await.expect("requests");
+                if requests.len() == 1 {
+                    return;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("prompt sent after event subscription readiness");
+
+        drop(input_tx);
+        writer.await.expect("writer task");
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn opencode_writer_reports_event_subscription_failure_without_prompt() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/ses_1/prompt_async"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let (subscription_tx, subscription_rx) = watch::channel(None);
+        let writer = tokio::spawn(write_opencode_provider_input(
+            reqwest::Client::new(),
+            server.uri(),
+            "ses_1".to_string(),
+            PathBuf::from("/tmp/work"),
+            input_rx,
+            event_tx,
+            subscription_rx,
+        ));
+
+        input_tx.send("hello".to_string()).expect("queue prompt");
+        subscription_tx
+            .send(Some(Err(
+                "failed to subscribe to opencode events: HTTP 500".to_string(),
+            )))
+            .expect("publish event subscription failure");
+        writer.await.expect("writer task");
+
+        assert_eq!(
+            event_rx.recv().await,
+            Some(Ok(ExternalProcessEvent::StdinError(
+                "failed to subscribe to opencode events: HTTP 500".to_string()
+            )))
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("requests")
+                .is_empty()
+        );
     }
 
     #[test]
