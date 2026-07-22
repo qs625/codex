@@ -77,7 +77,12 @@ pub(crate) fn source_kind_matches(source: &CoreSessionSource, filter: &[ThreadSo
             source,
             CoreSessionSource::SubAgent(CoreSubAgentSource::Other(_))
         ),
-        ThreadSourceKind::Unknown => matches!(source, CoreSessionSource::Unknown),
+        ThreadSourceKind::Unknown => {
+            matches!(
+                source,
+                CoreSessionSource::Unknown | CoreSessionSource::Custom(_)
+            )
+        }
     })
 }
 
@@ -153,6 +158,18 @@ mod tests {
         assert!(!source_kind_matches(
             &spawn,
             &[ThreadSourceKind::SubAgentReview]
+        ));
+    }
+
+    #[test]
+    fn source_kind_unknown_matches_custom_sources() {
+        assert!(source_kind_matches(
+            &CoreSessionSource::Custom("root-worker-prototype".to_string()),
+            &[ThreadSourceKind::Unknown]
+        ));
+        assert!(source_kind_matches(
+            &CoreSessionSource::Unknown,
+            &[ThreadSourceKind::Unknown]
         ));
     }
 }
