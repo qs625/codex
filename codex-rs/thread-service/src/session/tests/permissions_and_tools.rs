@@ -2033,7 +2033,7 @@ async fn build_initial_context_emits_standalone_multiagent_context() {
 }
 
 #[test]
-fn model_visible_tool_specs_context_section_includes_external_agent_tool_specs() {
+fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
     let provider_schema =
         tool_service_api::JsonSchema::string(Some("External agent provider.".to_string()));
     let spawn_external_agent = tool_service_api::ToolSpec::Function(
@@ -2072,9 +2072,25 @@ fn model_visible_tool_specs_context_section_includes_external_agent_tool_specs()
             },
         ));
     }
+    for tool_name in ["exec_command", "apply_patch", "spawn_agent", "followup_task"] {
+        specs.push(tool_service_api::ToolSpec::Function(
+            tool_service_api::ResponsesApiTool {
+                name: tool_name.to_string(),
+                description: "Native model API tool.".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: tool_service_api::JsonSchema::object(
+                    std::collections::BTreeMap::new(),
+                    /*required*/ None,
+                    /*additional_properties*/ None,
+                ),
+                output_schema: None,
+            },
+        ));
+    }
 
-    let tool_specs_section = Session::model_visible_tool_specs_context_section(&specs)
-        .expect("expected model-visible tool specs section");
+    let tool_specs_section = Session::external_agent_tool_specs_context_section(&specs)
+        .expect("expected external agent tool specs section");
 
     for tool_name in [
         "spawn_external_agent",
@@ -2088,6 +2104,12 @@ fn model_visible_tool_specs_context_section_includes_external_agent_tool_specs()
             "expected external tool spec for {tool_name}, got {tool_specs_section}"
         );
     }
+    for tool_name in ["exec_command", "apply_patch", "spawn_agent", "followup_task"] {
+        assert!(
+            !tool_specs_section.contains(&format!("\"name\": \"{tool_name}\"")),
+            "did not expect native model API tool {tool_name} in external section, got {tool_specs_section}"
+        );
+    }
     assert!(
         tool_specs_section.contains("\"parameters\""),
         "expected serialized tool parameters schema, got {tool_specs_section}"
@@ -2096,12 +2118,26 @@ fn model_visible_tool_specs_context_section_includes_external_agent_tool_specs()
         tool_specs_section.contains("\"provider\""),
         "expected spawn_external_agent provider schema, got {tool_specs_section}"
     );
+    assert!(
+        tool_specs_section.contains("<external_agent_tools>")
+            && tool_specs_section.contains("</external_agent_tools>"),
+        "expected external agent tools wrapper, got {tool_specs_section}"
+    );
+    assert!(
+        !tool_specs_section.contains("<model_visible_tools>"),
+        "did not expect legacy model-visible tools wrapper, got {tool_specs_section}"
+    );
+    assert!(
+        tool_specs_section.contains("独立的外部 CLI agent 协作总线")
+            && tool_specs_section.contains("模型 API tool config"),
+        "expected Chinese external tool bus guidance, got {tool_specs_section}"
+    );
 }
 
 #[test]
-fn model_visible_tool_specs_context_section_truncates_non_ascii_on_char_boundary() {
+fn external_agent_tool_specs_context_section_truncates_non_ascii_on_char_boundary() {
     let spec = tool_service_api::ToolSpec::Function(tool_service_api::ResponsesApiTool {
-        name: "long_non_ascii_tool".to_string(),
+        name: "spawn_external_agent".to_string(),
         description: "说明".repeat(30_000),
         strict: false,
         defer_loading: None,
@@ -2113,7 +2149,7 @@ fn model_visible_tool_specs_context_section_truncates_non_ascii_on_char_boundary
         output_schema: None,
     });
 
-    let section = Session::model_visible_tool_specs_context_section(&[spec])
+    let section = Session::external_agent_tool_specs_context_section(&[spec])
         .expect("expected tool specs section");
 
     assert!(
@@ -2122,8 +2158,8 @@ fn model_visible_tool_specs_context_section_truncates_non_ascii_on_char_boundary
         section.len()
     );
     assert!(
-        section.contains("<model_visible_tools>"),
-        "expected valid model-visible tools wrapper"
+        section.contains("<external_agent_tools>"),
+        "expected valid external agent tools wrapper"
     );
 }
 

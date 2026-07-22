@@ -1355,7 +1355,7 @@ async fn resumed_history_injects_initial_context_on_first_context_update_only() 
         .await;
     expected.extend(
         session
-            .build_initial_context_for_model_visible_tools(&turn_context)
+            .build_initial_context_for_external_agent_tools(&turn_context)
             .await,
     );
     let history_after_seed = session.clone_history().await;
