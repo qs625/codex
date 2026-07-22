@@ -2908,6 +2908,76 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
 }
 
 #[tokio::test]
+async fn pending_event_driven_tool_display_waits_for_request_construction_consumption() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    let trigger = EventDrivenToolTrigger {
+        tool: "fs_subscribe".to_string(),
+        title: "File watch triggered".to_string(),
+        text: "build.log changed".to_string(),
+    };
+    sess.enqueue_async_input(PendingInputItem::from(ResponseItem::EventDrivenTool {
+        id: Some("subscription-event-1".to_string()),
+        trigger: trigger.clone(),
+    }))
+    .await;
+
+    let poll_result = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("poll_event should wake");
+    assert!(!poll_result.timed_out);
+    assert_eq!(poll_result.source_hint.as_deref(), Some("async_input"));
+
+    while let Ok(event) = rx.try_recv() {
+        assert!(
+            !matches!(event.msg, EventMsg::EventDrivenToolCompleted(_)),
+            "event-driven tool display must not be emitted before request construction consumes it"
+        );
+    }
+
+    let pending_input = sess.get_pending_input().await;
+    assert_eq!(pending_input.len(), 1);
+    for pending_input_item in pending_input {
+        match hooks::inspect_pending_input(sess.as_ref(), tc.as_ref(), pending_input_item).await {
+            hooks::PendingInputHookDisposition::Accepted(pending_input) => {
+                hooks::record_pending_input(sess.as_ref(), tc.as_ref(), *pending_input).await;
+            }
+            hooks::PendingInputHookDisposition::Blocked { .. } => {
+                panic!("event-driven tool input should not be blocked")
+            }
+        }
+    }
+
+    let completed = timeout(Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event channel open");
+            if let EventMsg::EventDrivenToolCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("event-driven tool display should be emitted after consumption");
+    assert_eq!(completed.id, "subscription-event-1");
+    assert_eq!(completed.trigger, trigger);
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
 async fn poll_event_backoff_is_thread_scoped_and_resets_after_event() {
     let (sess, _tc, _rx_event) = make_session_and_context_with_rx().await;
     let request = thread_service_api::ThreadPollEventRequest {
