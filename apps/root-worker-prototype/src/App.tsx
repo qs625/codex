@@ -75,6 +75,7 @@ import {
   getThreadAncestorIds,
   getThreadItemNotificationSyntheticTurnStatus,
   getThreadSubtreeIds,
+  getThreadSubtreeIdsChildrenFirst,
   getThreadItemNotificationTargetThreadIds,
   getTreeRootThreadId,
   getThreadDepth,
@@ -1970,6 +1971,35 @@ function App() {
     }
   }
 
+  async function archiveProjectThread(threadId: string) {
+    setError(null);
+    setTreeMenu(null);
+    try {
+      const projectThreadIds = new Set(
+        projectSidebar.projects.map((project) => project.tree.threadId),
+      );
+      if (!projectThreadIds.has(threadId)) {
+        throw new Error("Only project chats can be deleted from Projects.");
+      }
+      const archive = window.codexDesktop.archiveThread;
+      if (typeof archive !== "function") {
+        throw new Error(
+          "This build does not expose archiveThread. Please reload Electron.",
+        );
+      }
+      const threadIdsToArchive = getThreadSubtreeIdsChildrenFirst(
+        threads,
+        threadId,
+      );
+      for (const archivedThreadId of threadIdsToArchive) {
+        await archive(archivedThreadId);
+      }
+      removeThreadLocally(threadIdsToArchive);
+    } catch (archiveError) {
+      setError(toErrorMessage(archiveError));
+    }
+  }
+
   function toggleTreeNode(threadId: string) {
     setCollapsedPaths((current) =>
       current.includes(threadId)
@@ -2615,6 +2645,7 @@ function App() {
           isCreatingChatThread={isCreatingChatThread}
           newProjectName={newProjectName}
           onArchiveChatThread={(threadId) => void archiveChatThread(threadId)}
+          onArchiveProjectThread={(threadId) => void archiveProjectThread(threadId)}
           onCreateChatThread={() => void createBlankChatThread()}
           onCreateProjectThread={() => void openWorkspaceProject()}
           onOpenMenu={setTreeMenu}
@@ -2725,6 +2756,7 @@ function App() {
       <TreeContextMenu
         threads={threads}
         treeMenu={treeMenu}
+        onArchiveProjectThread={(threadId) => void archiveProjectThread(threadId)}
         onArchiveThread={(threadId) => void archiveThread(threadId)}
       />
     </div>

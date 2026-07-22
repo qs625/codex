@@ -339,6 +339,15 @@ export function getThreadSubtreeIds(threads: Thread[], rootThreadId: string) {
   return subtreeIds;
 }
 
+export function getThreadSubtreeIdsChildrenFirst(
+  threads: Thread[],
+  rootThreadId: string,
+) {
+  return [...getThreadSubtreeIds(threads, rootThreadId)].sort(
+    (left, right) => getThreadDepth(threads, right) - getThreadDepth(threads, left),
+  );
+}
+
 export function getThreadAncestorIds(threads: Thread[], threadId: string) {
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   const ancestorIds: string[] = [];

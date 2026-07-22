@@ -18,6 +18,7 @@ import {
   getThreadItemNotificationTargetThreadIds,
   getThreadAncestorIds,
   getThreadPath,
+  getThreadSubtreeIdsChildrenFirst,
   shouldNotifyProjectThreadCompleted,
   isThreadThinking,
   mergeThreadSnapshot,
@@ -422,6 +423,28 @@ test("buildProjectAgentSidebar makes subagents inherit their project root", () =
   assert.equal(project?.tree.children[0]?.threadId, "owner");
   assert.equal(project?.tree.children[0]?.children[0]?.threadId, "reviewer");
   assert.equal(sidebar.projects.length, 1);
+});
+
+test("getThreadSubtreeIdsChildrenFirst returns only a project subtree deepest first", () => {
+  const root = makeSidebarThread({ id: "project-root", cwd: "/work/project" });
+  const owner = makeSubagentThread("owner", "project-root", "/root/owner");
+  const reviewer = makeSubagentThread("reviewer", "owner", "/root/owner/reviewer");
+  const siblingProject = makeSidebarThread({
+    id: "sibling-root",
+    cwd: "/work/sibling",
+  });
+  const chat = makeSidebarThread({ id: "chat", cwd: "" });
+
+  assert.deepEqual(
+    getThreadSubtreeIdsChildrenFirst([
+      root,
+      owner,
+      reviewer,
+      siblingProject,
+      chat,
+    ], "project-root"),
+    ["reviewer", "owner", "project-root"],
+  );
 });
 
 test("buildProjectAgentSidebar uses root thread status and aggregates project counts", () => {
