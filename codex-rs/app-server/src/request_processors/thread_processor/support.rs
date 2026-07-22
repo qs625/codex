@@ -159,16 +159,6 @@ pub(super) fn reconstruct_thread_turns_for_turns_list(
     turns
 }
 
-pub(crate) fn suppress_init_only_display_turns(turns: &mut Vec<Turn>) {
-    if !turns.is_empty()
-        && turns
-            .iter()
-            .all(|turn| turn.items.iter().all(|item| matches!(item, ThreadItem::InjectedContext { .. })))
-    {
-        turns.clear();
-    }
-}
-
 pub(super) async fn read_thread_history_items(
     thread_store: &dyn ThreadStore,
     thread_id: ThreadId,

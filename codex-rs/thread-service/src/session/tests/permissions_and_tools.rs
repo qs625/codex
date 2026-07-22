@@ -2032,6 +2032,101 @@ async fn build_initial_context_emits_standalone_multiagent_context() {
     );
 }
 
+#[test]
+fn model_visible_tool_specs_context_section_includes_external_agent_tool_specs() {
+    let provider_schema =
+        tool_service_api::JsonSchema::string(Some("External agent provider.".to_string()));
+    let spawn_external_agent = tool_service_api::ToolSpec::Function(
+        tool_service_api::ResponsesApiTool {
+            name: "spawn_external_agent".to_string(),
+            description: "Spawn an external code agent.".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: tool_service_api::JsonSchema::object(
+                std::collections::BTreeMap::from([("provider".to_string(), provider_schema)]),
+                Some(vec!["provider".to_string()]),
+                /*additional_properties*/ None,
+            ),
+            output_schema: None,
+        },
+    );
+    let mut specs = vec![spawn_external_agent];
+    for tool_name in [
+        "followup_external_task",
+        "poll_external_event",
+        "list_external_agents",
+        "close_external_agent",
+    ] {
+        specs.push(tool_service_api::ToolSpec::Function(
+            tool_service_api::ResponsesApiTool {
+                name: tool_name.to_string(),
+                description: "External code-agent tool.".to_string(),
+                strict: false,
+                defer_loading: None,
+                parameters: tool_service_api::JsonSchema::object(
+                    std::collections::BTreeMap::new(),
+                    /*required*/ None,
+                    /*additional_properties*/ None,
+                ),
+                output_schema: None,
+            },
+        ));
+    }
+
+    let tool_specs_section = Session::model_visible_tool_specs_context_section(&specs)
+        .expect("expected model-visible tool specs section");
+
+    for tool_name in [
+        "spawn_external_agent",
+        "followup_external_task",
+        "poll_external_event",
+        "list_external_agents",
+        "close_external_agent",
+    ] {
+        assert!(
+            tool_specs_section.contains(tool_name),
+            "expected external tool spec for {tool_name}, got {tool_specs_section}"
+        );
+    }
+    assert!(
+        tool_specs_section.contains("\"parameters\""),
+        "expected serialized tool parameters schema, got {tool_specs_section}"
+    );
+    assert!(
+        tool_specs_section.contains("\"provider\""),
+        "expected spawn_external_agent provider schema, got {tool_specs_section}"
+    );
+}
+
+#[test]
+fn model_visible_tool_specs_context_section_truncates_non_ascii_on_char_boundary() {
+    let spec = tool_service_api::ToolSpec::Function(tool_service_api::ResponsesApiTool {
+        name: "long_non_ascii_tool".to_string(),
+        description: "说明".repeat(30_000),
+        strict: false,
+        defer_loading: None,
+        parameters: tool_service_api::JsonSchema::object(
+            std::collections::BTreeMap::new(),
+            /*required*/ None,
+            /*additional_properties*/ None,
+        ),
+        output_schema: None,
+    });
+
+    let section = Session::model_visible_tool_specs_context_section(&[spec])
+        .expect("expected tool specs section");
+
+    assert!(
+        section.contains("... truncated ..."),
+        "expected truncated marker, got section with len {}",
+        section.len()
+    );
+    assert!(
+        section.contains("<model_visible_tools>"),
+        "expected valid model-visible tools wrapper"
+    );
+}
+
 #[tokio::test]
 async fn build_initial_context_uses_root_scope_agent_metadata_path() {
     let (session, turn_context) = make_session_and_context().await;

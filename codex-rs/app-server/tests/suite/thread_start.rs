@@ -15,9 +15,12 @@ use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
+use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStatusChangedNotification;
+use app_server_protocol::Turn;
 use app_server_protocol::TurnEnvironmentParams;
+use app_server_protocol::TurnStatus;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::PathBufExt;
@@ -118,6 +121,46 @@ fn is_injected_context_item_completed_for_thread(
             == Some("injectedContext")
 }
 
+fn assert_single_completed_init_context_turn(turns: &[Turn], context: &str) {
+    let mut injected_context_count = 0;
+    let mut init_context_text = String::new();
+    for turn in turns {
+        for item in &turn.items {
+            if let ThreadItem::InjectedContext {
+                title, sections, ..
+            } = item
+            {
+                injected_context_count += 1;
+                assert_eq!(title, "Init Context", "{context}");
+                assert_eq!(turn.status, TurnStatus::Completed, "{context}");
+                for section in sections {
+                    init_context_text.push_str(&section.text);
+                    init_context_text.push('\n');
+                }
+            }
+        }
+    }
+    assert_eq!(
+        injected_context_count, 1,
+        "{context} should include exactly one Init Context display item"
+    );
+    for expected in [
+        "<model_visible_tools>",
+        "spawn_external_agent",
+        "followup_external_task",
+        "poll_external_event",
+        "list_external_agents",
+        "close_external_agent",
+        "\"parameters\"",
+        "\"provider\"",
+    ] {
+        assert!(
+            init_context_text.contains(expected),
+            "{context} should include model-visible external tool spec text {expected}, got {init_context_text}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn thread_start_deprecates_persist_extended_history_true() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
@@ -214,9 +257,9 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     );
     assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
-    assert!(
-        thread.turns.is_empty(),
-        "thread/start response should not include initial context display turns"
+    assert_single_completed_init_context_turn(
+        &thread.turns,
+        "thread/start response should include initial context display turns",
     );
     let thread_path = thread.path.clone().expect("thread path should be present");
     assert!(thread_path.is_absolute(), "thread path should be absolute");
@@ -555,7 +598,7 @@ instruction_files = [
 }
 
 #[tokio::test]
-async fn thread_start_with_project_context_does_not_display_initial_context(
+async fn thread_start_with_project_context_displays_initial_context(
 ) -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
@@ -607,9 +650,9 @@ instruction_files = [
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(response)?;
 
-    assert!(
-        thread.turns.is_empty(),
-        "project thread/start response should not include initial context display turns"
+    assert_single_completed_init_context_turn(
+        &thread.turns,
+        "project thread/start response should include initial context display turns",
     );
     let started = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -619,9 +662,9 @@ instruction_files = [
     let started: ThreadStartedNotification =
         serde_json::from_value(started.params.expect("params must be present"))?;
     assert_eq!(started.thread.id, thread.id);
-    assert!(
-        started.thread.turns.is_empty(),
-        "project thread/started notification should not include initial context display turns"
+    assert_single_completed_init_context_turn(
+        &started.thread.turns,
+        "project thread/started notification should include initial context display turns",
     );
     assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
 

@@ -1353,7 +1353,11 @@ async fn resumed_history_injects_initial_context_on_first_context_update_only() 
     session
         .record_context_updates_and_set_reference_context_item(&turn_context)
         .await;
-    expected.extend(session.build_initial_context(&turn_context).await);
+    expected.extend(
+        session
+            .build_initial_context_for_model_visible_tools(&turn_context)
+            .await,
+    );
     let history_after_seed = session.clone_history().await;
     assert_eq!(expected, history_after_seed.raw_items());
 

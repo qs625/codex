@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Weak;
 
 fn developer_instructions_contains_section(
     developer_instructions: Option<&str>,
@@ -31,6 +32,101 @@ fn append_developer_instructions_section(
 }
 
 impl Session {
+    const MODEL_VISIBLE_TOOL_SPECS_CONTEXT_MAX_CHARS: usize = 48_000;
+
+    fn self_arc_for_initial_context(&self) -> Option<Arc<Self>> {
+        self.self_weak
+            .get()
+            .and_then(Weak::upgrade)
+    }
+
+    async fn model_visible_tool_specs_for_initial_context(
+        &self,
+        turn_context: &TurnContext,
+    ) -> Vec<tool_service_api::ToolSpec> {
+        let Some(sess) = self.self_arc_for_initial_context() else {
+            warn!("skipping model-visible tool specs for initial context without session Arc");
+            return Vec::new();
+        };
+        let Some(turn_context) = turn_context.self_weak.get().and_then(Weak::upgrade) else {
+            warn!("skipping model-visible tool specs for initial context without turn context Arc");
+            return Vec::new();
+        };
+        let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
+            Arc::clone(&sess) as Arc<dyn thread_service_api::ThreadSessionCapability>;
+        let tool_inputs = match crate::session::turn::built_tools(
+            Arc::clone(&sess),
+            Arc::clone(&turn_context),
+            Arc::downgrade(&session_capability),
+            &[],
+            &std::collections::HashSet::new(),
+            Some(turn_context.turn_skills.outcome.as_ref()),
+            &CancellationToken::new(),
+        )
+        .await
+        {
+            Ok(tool_inputs) => tool_inputs,
+            Err(err) => {
+                warn!("failed to build model-visible tool specs for initial context: {err}");
+                return Vec::new();
+            }
+        };
+        crate::session::turn::model_visible_tool_specs(&sess, &turn_context, &tool_inputs)
+    }
+
+    fn truncate_model_visible_tool_specs_json(json: &mut String) {
+        if json.len() <= Self::MODEL_VISIBLE_TOOL_SPECS_CONTEXT_MAX_CHARS {
+            return;
+        }
+        let truncate_at = json
+            .char_indices()
+            .map(|(idx, _)| idx)
+            .take_while(|idx| *idx <= Self::MODEL_VISIBLE_TOOL_SPECS_CONTEXT_MAX_CHARS)
+            .last()
+            .unwrap_or(0);
+        json.truncate(truncate_at);
+        json.push_str("\n... truncated ...");
+    }
+
+    pub(crate) fn model_visible_tool_specs_context_section(
+        specs: &[tool_service_api::ToolSpec],
+    ) -> Option<String> {
+        if specs.is_empty() {
+            return None;
+        }
+        let mut specs_json = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let Ok(value) = serde_json::to_value(spec) else {
+                warn!("failed to serialize model-visible tool spec for initial context");
+                continue;
+            };
+            specs_json.push(value);
+        }
+        if specs_json.is_empty() {
+            return None;
+        }
+        let mut json =
+            serde_json::to_string_pretty(&specs_json).unwrap_or_else(|_| "[]".to_string());
+        Self::truncate_model_visible_tool_specs_json(&mut json);
+        Some(format!(
+            "<model_visible_tools>\nThese are the tool specs currently visible to the model for this turn.\n```json\n{json}\n```\n</model_visible_tools>"
+        ))
+    }
+
+    pub(crate) async fn build_initial_context_for_model_visible_tools(
+        &self,
+        turn_context: &TurnContext,
+    ) -> Vec<ResponseItem> {
+        let model_visible_tool_specs = self
+            .model_visible_tool_specs_for_initial_context(turn_context)
+            .await;
+        self.build_initial_context_with_model_visible_tool_specs(
+            turn_context,
+            &model_visible_tool_specs,
+        )
+        .await
+    }
+
     fn init_context_workflow_registry(
         &self,
         turn_context: &TurnContext,
@@ -1366,6 +1462,19 @@ impl Session {
         &self,
         turn_context: &TurnContext,
     ) -> Vec<ResponseItem> {
+        self.build_initial_context_with_model_visible_tool_specs(turn_context, &[])
+            .await
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "MCP app context rendering reads through the session-owned manager guard"
+    )]
+    async fn build_initial_context_with_model_visible_tool_specs(
+        &self,
+        turn_context: &TurnContext,
+        model_visible_tool_specs: &[tool_service_api::ToolSpec],
+    ) -> Vec<ResponseItem> {
         let mut developer_sections = Vec::<String>::with_capacity(8);
         let mut contextual_user_sections = Vec::<String>::with_capacity(2);
         let mut separate_developer_sections = Vec::<String>::new();
@@ -1524,6 +1633,11 @@ impl Session {
             AvailableAgentsInstructions::from_agent_roles(&turn_context.config.agent_roles)
         {
             developer_sections.push(agent_instructions.render());
+        }
+        if let Some(tool_specs_section) =
+            Self::model_visible_tool_specs_context_section(model_visible_tool_specs)
+        {
+            developer_sections.push(tool_specs_section);
         }
         let plugin_capability_summaries = self
             .services
@@ -1705,7 +1819,8 @@ impl Session {
         };
         let should_inject_full_context = reference_context_item.is_none();
         let context_items = if should_inject_full_context {
-            self.build_initial_context(turn_context).await
+            self.build_initial_context_for_model_visible_tools(turn_context)
+                .await
         } else {
             // Steady-state path: append only context diffs to minimize token overhead.
             self.build_settings_update_items(reference_context_item.as_ref(), turn_context)
