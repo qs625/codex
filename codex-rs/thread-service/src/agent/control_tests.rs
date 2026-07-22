@@ -489,28 +489,56 @@ async fn list_agents_includes_external_runs_with_prefix_filter() {
 }
 
 #[tokio::test]
-async fn spawn_external_agent_rejects_unsupported_provider_before_registration() {
+async fn spawn_external_agent_rejects_native_provider_before_registration() {
     let harness = AgentControlHarness::new().await;
-    for provider in [SpawnAgentProvider::CodexCli, SpawnAgentProvider::Opencode] {
-        let err = harness
-            .control
-            .spawn_external_agent_with_metadata(
-                harness.config.clone(),
-                provider,
-                "do work".to_string(),
-                SessionSource::Exec,
-                SpawnAgentOptions {
-                    fork_parent_spawn_call_id: None,
-                    fork_mode: None,
-                    environments: None,
-                    agent_mode: AgentMode::default(),
-                },
-            )
-            .await
-            .expect_err("unsupported provider should fail before registration");
+    let err = harness
+        .control
+        .spawn_external_agent_with_metadata(
+            harness.config.clone(),
+            SpawnAgentProvider::Native,
+            "do work".to_string(),
+            SessionSource::Exec,
+            SpawnAgentOptions {
+                fork_parent_spawn_call_id: None,
+                fork_mode: None,
+                environments: None,
+                agent_mode: AgentMode::default(),
+            },
+        )
+        .await
+        .expect_err("native provider should fail before registration");
 
-        assert!(err.to_string().contains("unsupported operation"));
-    }
+    assert!(
+        err.to_string()
+            .contains("native is not an external CLI provider")
+    );
+    assert!(harness.control.external_agents.list().is_empty());
+}
+
+#[tokio::test]
+async fn spawn_external_agent_accepts_codex_provider_before_session_source_check() {
+    let harness = AgentControlHarness::new().await;
+    let err = harness
+        .control
+        .spawn_external_agent_with_metadata(
+            harness.config.clone(),
+            SpawnAgentProvider::CodexCli,
+            "do work".to_string(),
+            SessionSource::Exec,
+            SpawnAgentOptions {
+                fork_parent_spawn_call_id: None,
+                fork_mode: None,
+                environments: None,
+                agent_mode: AgentMode::default(),
+            },
+        )
+        .await
+        .expect_err("invalid session source should still fail before registration");
+
+    assert!(
+        err.to_string()
+            .contains("external agents must be spawned as thread-spawn subagents")
+    );
     assert!(harness.control.external_agents.list().is_empty());
 }
 

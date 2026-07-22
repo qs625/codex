@@ -4,8 +4,58 @@ use protocol::openai_models::ModelServiceTier;
 use protocol::openai_models::ReasoningEffort;
 use protocol::openai_models::ReasoningEffortPreset;
 use serde_json::json;
+use std::collections::BTreeMap;
+use tool_service_api::JsonSchema;
 use tool_service_api::JsonSchemaPrimitiveType;
 use tool_service_api::JsonSchemaType;
+
+fn function_tool(tool: ToolSpec, expected_name: &str) -> ResponsesApiTool {
+    let ToolSpec::Function(tool) = tool else {
+        panic!("{expected_name} should be a function tool");
+    };
+    assert_eq!(tool.name, expected_name);
+    tool
+}
+
+fn property_shapes(tool: &ResponsesApiTool) -> BTreeMap<String, JsonSchema> {
+    tool.parameters
+        .properties
+        .as_ref()
+        .expect("function tool should use object params")
+        .iter()
+        .map(|(name, schema)| (name.clone(), schema_shape(schema)))
+        .collect()
+}
+
+fn schema_shape(schema: &JsonSchema) -> JsonSchema {
+    let mut shape = schema.clone();
+    shape.description = None;
+    shape.items = shape.items.map(|item| Box::new(schema_shape(&item)));
+    shape.properties = shape.properties.map(|properties| {
+        properties
+            .into_iter()
+            .map(|(name, schema)| (name, schema_shape(&schema)))
+            .collect()
+    });
+    shape.any_of = shape.any_of.map(|variants| {
+        variants
+            .into_iter()
+            .map(|schema| schema_shape(&schema))
+            .collect()
+    });
+    shape
+}
+
+fn required_params(tool: &ResponsesApiTool) -> Vec<String> {
+    tool.parameters.required.clone().unwrap_or_default()
+}
+
+fn assert_object_params(tool: &ResponsesApiTool) {
+    assert_eq!(
+        tool.parameters.schema_type,
+        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Object))
+    );
+}
 
 fn model_preset(id: &str, show_in_picker: bool) -> ModelPreset {
     ModelPreset {
@@ -123,17 +173,13 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
 
 #[test]
 fn spawn_external_agent_tool_requires_provider_cwd_and_message() {
-    let ToolSpec::Function(ResponsesApiTool {
-        name,
+    let tool = function_tool(create_spawn_external_agent_tool(), "spawn_external_agent");
+    let ResponsesApiTool {
         description,
         parameters,
         output_schema,
         ..
-    }) = create_spawn_external_agent_tool()
-    else {
-        panic!("spawn_external_agent should be a function tool");
-    };
-    assert_eq!(name, "spawn_external_agent");
+    } = tool;
     assert!(description.contains("external code-agent CLI"));
     assert!(description.contains("spawn_agent only for native"));
     let properties = parameters
@@ -144,7 +190,18 @@ fn spawn_external_agent_tool_requires_provider_cwd_and_message() {
         properties
             .get("provider")
             .and_then(|schema| schema.enum_values.as_ref()),
-        Some(&vec![json!("claude_cli")])
+        Some(&vec![
+            json!("claude_cli"),
+            json!("opencode"),
+            json!("codex_cli")
+        ])
+    );
+    assert!(
+        !properties
+            .get("provider")
+            .and_then(|schema| schema.enum_values.as_ref())
+            .is_some_and(|values| values.contains(&json!("native"))),
+        "native should not be exposed through the external spawn surface"
     );
     assert!(properties.contains_key("task_name"));
     assert!(properties.contains_key("cwd"));
@@ -162,6 +219,149 @@ fn spawn_external_agent_tool_requires_provider_cwd_and_message() {
         output_schema.expect("spawn_external_agent output schema")["required"],
         json!(["task_name", "nickname"])
     );
+}
+
+#[test]
+fn external_and_native_followup_tools_share_parameter_shape() {
+    let native = function_tool(create_followup_task_tool(), "followup_task");
+    let external = function_tool(
+        create_followup_external_task_tool(),
+        "followup_external_task",
+    );
+
+    assert_object_params(&native);
+    assert_object_params(&external);
+    assert_eq!(property_shapes(&external), property_shapes(&native));
+    assert_eq!(required_params(&external), required_params(&native));
+    assert_eq!(native.output_schema, None);
+    assert_eq!(external.output_schema, None);
+}
+
+#[test]
+fn external_and_native_list_tools_share_parameter_shape() {
+    let native = function_tool(create_list_agents_tool(), "list_agents");
+    let external = function_tool(create_list_external_agents_tool(), "list_external_agents");
+
+    assert_object_params(&native);
+    assert_object_params(&external);
+    assert_eq!(property_shapes(&external), property_shapes(&native));
+    assert_eq!(required_params(&external), required_params(&native));
+    assert_eq!(external.output_schema, native.output_schema);
+}
+
+#[test]
+fn external_and_native_close_tools_share_parameter_shape() {
+    let native = function_tool(create_close_agent_tool_v2(), "close_agent");
+    let external = function_tool(create_close_external_agent_tool(), "close_external_agent");
+
+    assert_object_params(&native);
+    assert_object_params(&external);
+    assert_eq!(property_shapes(&external), property_shapes(&native));
+    assert_eq!(required_params(&external), required_params(&native));
+    assert_eq!(external.output_schema, native.output_schema);
+}
+
+#[test]
+fn external_poll_keeps_empty_params_but_reports_unsupported_output() {
+    let native = function_tool(create_poll_event_tool(), "poll_event");
+    let external = function_tool(create_poll_external_event_tool(), "poll_external_event");
+
+    assert_object_params(&native);
+    assert_object_params(&external);
+    assert_eq!(property_shapes(&external), property_shapes(&native));
+    assert_eq!(required_params(&external), required_params(&native));
+    assert_ne!(external.output_schema, native.output_schema);
+    assert_eq!(
+        external
+            .output_schema
+            .expect("poll_external_event output schema"),
+        json!({
+            "type": "object",
+            "properties": {
+                "supported": { "type": "boolean" },
+                "message": { "type": "string" }
+            },
+            "required": ["supported", "message"],
+            "additionalProperties": false
+        })
+    );
+}
+
+#[test]
+fn spawn_external_agent_shares_common_fields_but_excludes_native_only_options() {
+    let native = function_tool(
+        create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+            available_models: vec![model_preset("visible", /*show_in_picker*/ true)],
+            agent_type_description: "role help".to_string(),
+            hide_agent_type_model_reasoning: false,
+            include_usage_hint: false,
+            usage_hint_text: None,
+            max_concurrent_threads_per_session: None,
+        }),
+        "spawn_agent",
+    );
+    let external = function_tool(create_spawn_external_agent_tool(), "spawn_external_agent");
+    let native_properties = native
+        .parameters
+        .properties
+        .as_ref()
+        .expect("spawn_agent should use object params");
+    let external_properties = external
+        .parameters
+        .properties
+        .as_ref()
+        .expect("spawn_external_agent should use object params");
+
+    for common_field in ["task_name", "cwd", "message"] {
+        assert!(
+            native_properties.contains_key(common_field),
+            "native spawn should include common field {common_field}"
+        );
+        assert!(
+            external_properties.contains_key(common_field),
+            "external spawn should include common field {common_field}"
+        );
+        assert_eq!(
+            external_properties
+                .get(common_field)
+                .and_then(|schema| schema.schema_type.as_ref()),
+            native_properties
+                .get(common_field)
+                .and_then(|schema| schema.schema_type.as_ref()),
+            "common field {common_field} should keep the same primitive shape"
+        );
+    }
+
+    assert_eq!(
+        required_params(&external),
+        vec![
+            "task_name".to_string(),
+            "provider".to_string(),
+            "cwd".to_string(),
+            "message".to_string()
+        ]
+    );
+    assert_eq!(
+        required_params(&native),
+        vec!["task_name".to_string(), "message".to_string()]
+    );
+    assert!(external_properties.contains_key("provider"));
+    for native_only_field in [
+        "agent_type",
+        "model",
+        "reasoning_effort",
+        "service_tier",
+        "fork_turns",
+    ] {
+        assert!(
+            native_properties.contains_key(native_only_field),
+            "native spawn should keep native-only field {native_only_field}"
+        );
+        assert!(
+            !external_properties.contains_key(native_only_field),
+            "external spawn should not expose native-only field {native_only_field}"
+        );
+    }
 }
 
 #[test]

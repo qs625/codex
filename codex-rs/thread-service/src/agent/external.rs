@@ -264,6 +264,8 @@ pub(crate) struct ExternalSessionSpec {
 pub(crate) enum ExternalProviderSessionTransport {
     /// Claude's stream-json CLI keeps the provider session open on stdin/stdout.
     ClaudeStreamJson,
+    /// Codex CLI app-server exposes a persistent JSON-RPC session over stdio.
+    CodexAppServerStdio,
     /// OpenCode's headless server exposes sessions over HTTP plus SSE events.
     OpencodeHttp,
 }
@@ -303,10 +305,11 @@ pub(crate) fn external_session_spec(
 ) -> Result<ExternalSessionSpec, String> {
     match provider {
         SpawnAgentProvider::Native => Err("native is not an external CLI provider".to_string()),
-        SpawnAgentProvider::CodexCli => Err(
-            "codex_cli exposes app-server/session transports, but the external-provider adapter has not implemented app-server JSON-RPC session creation, turn streaming, and resume-bound external_tool_result delivery yet; codex exec remains non-interactive and must not be used as a substitute"
-                .to_string(),
-        ),
+        SpawnAgentProvider::CodexCli => Ok(ExternalSessionSpec {
+            program: "codex",
+            args: vec!["app-server".to_string()],
+            transport: ExternalProviderSessionTransport::CodexAppServerStdio,
+        }),
         SpawnAgentProvider::ClaudeCli => Ok(ExternalSessionSpec {
             program: "claude",
             args: vec![
@@ -341,7 +344,7 @@ pub(crate) fn external_agent_context_prompt(message: &str) -> String {
 Use only this external-agent JSON protocol to collaborate with other agents. Do not call internal my-codex tools such as spawn_agent, followup_task, list_agents, poll_event, or close_agent.
 
 Available external tools:
-- spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json and opencode HTTP sessions; codex_cli has an app-server transport but requires a dedicated adapter before it can be exposed.
+- spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode" | "codex_cli", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json, opencode HTTP sessions, and codex_cli app-server stdio sessions.
 - followup_external_task: arguments {{ "target": string, "message": string }}
 - list_external_agents: arguments {{ "path_prefix"?: string }}
 - poll_external_event: currently unsupported for non-interactive CLI sessions; calling it returns an unsupported error.
@@ -363,6 +366,7 @@ Original task:
 
 pub(crate) enum ExternalStreamingSession {
     Cli(ExternalCliSession),
+    CodexAppServer(CodexAppServerSession),
     OpencodeHttp(OpencodeHttpSession),
 }
 
@@ -382,6 +386,7 @@ impl ExternalProviderSession for ExternalStreamingSession {
     fn input_sink(&self) -> ExternalInputSink {
         match self {
             ExternalStreamingSession::Cli(session) => session.input_sink.clone(),
+            ExternalStreamingSession::CodexAppServer(session) => session.input_sink.clone(),
             ExternalStreamingSession::OpencodeHttp(session) => session.input_sink.clone(),
         }
     }
@@ -390,6 +395,7 @@ impl ExternalProviderSession for ExternalStreamingSession {
         Box::pin(async move {
             match self {
                 ExternalStreamingSession::Cli(session) => session.next_event().await,
+                ExternalStreamingSession::CodexAppServer(session) => session.next_event().await,
                 ExternalStreamingSession::OpencodeHttp(session) => session.next_event().await,
             }
         })
@@ -399,6 +405,11 @@ impl ExternalProviderSession for ExternalStreamingSession {
 impl ExternalStreamingSession {
     pub(crate) async fn start(provider: SpawnAgentProvider, cwd: PathBuf) -> Result<Self, String> {
         let command = external_session_spec(provider, cwd.as_path())?;
+        if command.transport == ExternalProviderSessionTransport::CodexAppServerStdio {
+            return CodexAppServerSession::start(command, cwd)
+                .await
+                .map(ExternalStreamingSession::CodexAppServer);
+        }
         if command.transport == ExternalProviderSessionTransport::OpencodeHttp {
             return OpencodeHttpSession::start(command, cwd)
                 .await
@@ -456,6 +467,177 @@ impl ExternalStreamingSession {
             writer_errors,
             writer_errors_open: true,
         }))
+    }
+}
+
+pub(crate) struct CodexAppServerSession {
+    child: Child,
+    stdout: tokio::io::Lines<BufReader<ChildStdout>>,
+    stderr: tokio::io::Lines<BufReader<ChildStderr>>,
+    stdout_open: bool,
+    stderr_open: bool,
+    input_sink: ExternalInputSink,
+    writer_errors: mpsc::UnboundedReceiver<String>,
+    writer_errors_open: bool,
+    active_turn_id: Arc<Mutex<Option<String>>>,
+    pending_completion_event: Arc<Mutex<Option<ExternalCliEvent>>>,
+}
+
+impl CodexAppServerSession {
+    async fn start(command: ExternalSessionSpec, cwd: PathBuf) -> Result<Self, String> {
+        let mut child = Command::new(command.program)
+            .args(command.args)
+            .current_dir(&cwd)
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("codex_cli external provider unavailable: {err}"))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "codex_cli app-server did not expose stdin".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "codex_cli app-server did not expose stdout".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "codex_cli app-server did not expose stderr".to_string())?;
+        let mut stdout = BufReader::new(stdout).lines();
+
+        send_codex_jsonrpc_request(
+            &mut stdin,
+            1,
+            "initialize",
+            serde_json::json!({
+                "clientInfo": {
+                    "name": "external_codex_cli",
+                    "title": "External Codex CLI Agent",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+                "capabilities": {
+                    "experimentalApi": true,
+                },
+            }),
+        )
+        .await?;
+        read_codex_jsonrpc_response(&mut stdout, 1).await?;
+        write_codex_jsonrpc_line(
+            &mut stdin,
+            &serde_json::json!({
+                "method": "initialized",
+                "params": {},
+            }),
+        )
+        .await?;
+
+        send_codex_jsonrpc_request(
+            &mut stdin,
+            2,
+            "thread/start",
+            serde_json::json!({
+                "cwd": cwd.to_string_lossy(),
+                "threadSource": "subagent",
+            }),
+        )
+        .await?;
+        let start_response = read_codex_jsonrpc_response(&mut stdout, 2).await?;
+        let thread_id = start_response
+            .get("result")
+            .and_then(|result| result.get("thread"))
+            .and_then(|thread| thread.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "codex_cli thread/start response did not include thread.id".to_string())?
+            .to_string();
+
+        let active_turn_id = Arc::new(Mutex::new(None));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let (writer_error_tx, writer_errors) = mpsc::unbounded_channel();
+        tokio::spawn(write_codex_app_server_input(
+            stdin,
+            thread_id,
+            Arc::clone(&active_turn_id),
+            input_rx,
+            writer_error_tx,
+        ));
+
+        Ok(Self {
+            child,
+            stdout,
+            stderr: BufReader::new(stderr).lines(),
+            stdout_open: true,
+            stderr_open: true,
+            input_sink: ExternalInputSink::new(input_tx),
+            writer_errors,
+            writer_errors_open: true,
+            active_turn_id,
+            pending_completion_event,
+        })
+    }
+
+    async fn next_event(&mut self) -> Result<ExternalProcessEvent, String> {
+        loop {
+            if !self.stdout_open && !self.stderr_open {
+                return self.next_process_event().await;
+            }
+            tokio::select! {
+                error = self.writer_errors.recv(), if self.writer_errors_open => {
+                    match error {
+                        Some(error) => return Ok(ExternalProcessEvent::StdinError(error)),
+                        None => {
+                            self.writer_errors_open = false;
+                        }
+                    }
+                }
+                stdout = self.stdout.next_line(), if self.stdout_open => {
+                    match stdout {
+                        Ok(Some(line)) => {
+                            if let Some(event) = parse_codex_app_server_jsonrpc_line(
+                                &line,
+                                &self.active_turn_id,
+                                &self.pending_completion_event,
+                            ) {
+                                return Ok(event);
+                            }
+                        }
+                        Ok(None) => {
+                            self.stdout_open = false;
+                        }
+                        Err(err) => return Err(format!("failed to read codex_cli app-server stdout: {err}")),
+                    }
+                }
+                stderr = self.stderr.next_line(), if self.stderr_open => {
+                    match stderr {
+                        Ok(Some(line)) => {
+                            let line = line.trim();
+                            if !line.is_empty() {
+                                return Ok(ExternalProcessEvent::Cli(ExternalCliEvent::Status(
+                                    truncate_chars(line, MAX_EXTERNAL_ERROR_CHARS),
+                                )));
+                            }
+                        }
+                        Ok(None) => {
+                            self.stderr_open = false;
+                        }
+                        Err(err) => return Err(format!("failed to read codex_cli app-server stderr: {err}")),
+                    }
+                }
+            }
+        }
+    }
+
+    async fn next_process_event(&mut self) -> Result<ExternalProcessEvent, String> {
+        let status = self.child.wait().await.map_err(|err| {
+            format!("codex_cli app-server failed while waiting for process exit: {err}")
+        })?;
+        Ok(ExternalProcessEvent::ProcessExited {
+            success: status.success(),
+            status: status.to_string(),
+        })
     }
 }
 
@@ -900,6 +1082,122 @@ async fn write_external_provider_input(
     }
 }
 
+async fn write_codex_app_server_input(
+    mut stdin: ChildStdin,
+    thread_id: String,
+    active_turn_id: Arc<Mutex<Option<String>>>,
+    mut input_rx: mpsc::UnboundedReceiver<String>,
+    writer_error_tx: mpsc::UnboundedSender<String>,
+) {
+    let mut request_id = 3_u64;
+    while let Some(content) = input_rx.recv().await {
+        let active_turn = active_turn_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let (method, params) = codex_app_server_input_request(&thread_id, active_turn, &content);
+        let result = send_codex_jsonrpc_request(&mut stdin, request_id, method, params).await;
+        request_id = request_id.saturating_add(1);
+        if let Err(err) = result {
+            let _ = writer_error_tx.send(err);
+            return;
+        }
+    }
+}
+
+fn codex_app_server_input_request(
+    thread_id: &str,
+    active_turn: Option<String>,
+    content: &str,
+) -> (&'static str, serde_json::Value) {
+    if let Some(expected_turn_id) = active_turn {
+        (
+            "turn/steer",
+            serde_json::json!({
+                "threadId": thread_id,
+                "expectedTurnId": expected_turn_id,
+                "input": [codex_text_input(content)],
+            }),
+        )
+    } else {
+        (
+            "turn/start",
+            serde_json::json!({
+                "threadId": thread_id,
+                "input": [codex_text_input(content)],
+            }),
+        )
+    }
+}
+
+fn codex_text_input(content: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "text",
+        "text": content,
+        "textElements": [],
+    })
+}
+
+async fn send_codex_jsonrpc_request(
+    stdin: &mut ChildStdin,
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<(), String> {
+    write_codex_jsonrpc_line(
+        stdin,
+        &serde_json::json!({
+            "id": id,
+            "method": method,
+            "params": params,
+        }),
+    )
+    .await
+}
+
+async fn write_codex_jsonrpc_line(
+    stdin: &mut ChildStdin,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let line = serde_json::to_string(value)
+        .map_err(|err| format!("failed to encode codex_cli JSON-RPC request: {err}"))?;
+    stdin
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|err| format!("failed to write codex_cli app-server stdin: {err}"))?;
+    stdin
+        .write_all(b"\n")
+        .await
+        .map_err(|err| format!("failed to write codex_cli app-server stdin: {err}"))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|err| format!("failed to flush codex_cli app-server stdin: {err}"))
+}
+
+async fn read_codex_jsonrpc_response(
+    stdout: &mut tokio::io::Lines<BufReader<ChildStdout>>,
+    expected_id: u64,
+) -> Result<serde_json::Value, String> {
+    loop {
+        let line = stdout
+            .next_line()
+            .await
+            .map_err(|err| format!("failed to read codex_cli app-server stdout: {err}"))?
+            .ok_or_else(|| "codex_cli app-server closed stdout before response".to_string())?;
+        let value = serde_json::from_str::<serde_json::Value>(&line).map_err(|err| {
+            format!("failed to decode codex_cli app-server JSON-RPC line `{line}`: {err}")
+        })?;
+        if value.get("id").and_then(serde_json::Value::as_u64) != Some(expected_id) {
+            continue;
+        }
+        if let Some(error) = value.get("error") {
+            return Err(format!("codex_cli app-server request failed: {error}"));
+        }
+        return Ok(value);
+    }
+}
+
 pub(crate) fn provider_input_line(
     transport: ExternalProviderSessionTransport,
     content: &str,
@@ -914,6 +1212,7 @@ pub(crate) fn provider_input_line(
             "parent_tool_use_id": null,
         })
         .to_string(),
+        ExternalProviderSessionTransport::CodexAppServerStdio => content.to_string(),
         ExternalProviderSessionTransport::OpencodeHttp => content.to_string(),
     }
 }
@@ -1030,6 +1329,129 @@ fn external_tool_call_from_text(text: &str) -> Option<ExternalCliEvent> {
         let value = serde_json::from_str::<serde_json::Value>(line.trim()).ok()?;
         parse_external_tool_call_event(&value)
     })
+}
+
+fn parse_codex_app_server_jsonrpc_line(
+    line: &str,
+    active_turn_id: &Arc<Mutex<Option<String>>>,
+    pending_completion_event: &Arc<Mutex<Option<ExternalCliEvent>>>,
+) -> Option<ExternalProcessEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let value = match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(value) => value,
+        Err(_) => {
+            return Some(ExternalProcessEvent::Cli(ExternalCliEvent::Status(
+                truncate_chars(line, MAX_EXTERNAL_ERROR_CHARS),
+            )));
+        }
+    };
+    if let Some(error) = value.get("error") {
+        return Some(ExternalProcessEvent::StdinError(format!(
+            "codex_cli app-server request failed: {error}"
+        )));
+    }
+    let method = value.get("method").and_then(serde_json::Value::as_str)?;
+    let params = value.get("params").unwrap_or(&serde_json::Value::Null);
+    match method {
+        "turn/started" => {
+            if let Some(turn_id) = turn_id_from_params(params) {
+                set_active_turn_id(active_turn_id, Some(turn_id));
+            }
+            set_pending_codex_completion_event(pending_completion_event, None);
+            None
+        }
+        "turn/completed" => {
+            set_active_turn_id(active_turn_id, None);
+            let event = last_agent_message_text(params)
+                .map(codex_completion_event_from_text)
+                .or_else(|| take_pending_codex_completion_event(pending_completion_event))?;
+            Some(ExternalProcessEvent::Cli(event))
+        }
+        "item/completed" => {
+            if let Some(text) = item_agent_message_text(params) {
+                set_pending_codex_completion_event(
+                    pending_completion_event,
+                    Some(codex_completion_event_from_text(text)),
+                );
+            }
+            None
+        }
+        "item/agentMessage/delta" => None,
+        "warning" | "guardianWarning" | "configWarning" => {
+            text_field(params).map(|text| ExternalProcessEvent::Cli(ExternalCliEvent::Status(text)))
+        }
+        _ => None,
+    }
+}
+
+fn set_active_turn_id(active_turn_id: &Arc<Mutex<Option<String>>>, value: Option<String>) {
+    *active_turn_id
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+}
+
+fn set_pending_codex_completion_event(
+    pending_completion_event: &Arc<Mutex<Option<ExternalCliEvent>>>,
+    value: Option<ExternalCliEvent>,
+) {
+    *pending_completion_event
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
+}
+
+fn take_pending_codex_completion_event(
+    pending_completion_event: &Arc<Mutex<Option<ExternalCliEvent>>>,
+) -> Option<ExternalCliEvent> {
+    pending_completion_event
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+}
+
+fn turn_id_from_params(params: &serde_json::Value) -> Option<String> {
+    params
+        .get("turn")
+        .and_then(|turn| turn.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            params
+                .get("turnId")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn item_agent_message_text(params: &serde_json::Value) -> Option<String> {
+    let item = params.get("item")?;
+    if item.get("type").and_then(serde_json::Value::as_str) != Some("agentMessage") {
+        return None;
+    }
+    item.get("text")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
+fn last_agent_message_text(params: &serde_json::Value) -> Option<String> {
+    let items = params
+        .get("turn")
+        .and_then(|turn| turn.get("items"))
+        .and_then(serde_json::Value::as_array)?;
+    items.iter().rev().find_map(|item| {
+        if item.get("type").and_then(serde_json::Value::as_str) != Some("agentMessage") {
+            return None;
+        }
+        item.get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn codex_completion_event_from_text(text: String) -> ExternalCliEvent {
+    external_tool_call_from_text(&text).unwrap_or(ExternalCliEvent::Completion(text))
 }
 
 fn parse_codex_json_event(value: &serde_json::Value) -> Option<ExternalCliEvent> {
@@ -1407,11 +1829,15 @@ mod tests {
     }
 
     #[test]
-    fn codex_cli_is_unsupported_for_persistent_streaming() {
-        let err = external_session_spec(SpawnAgentProvider::CodexCli, Path::new("/tmp/work"))
-            .expect_err("codex session adapter is unsupported");
-        assert!(err.contains("app-server/session transports"));
-        assert!(err.contains("adapter has not implemented"));
+    fn builds_codex_app_server_session_command() {
+        let spec = external_session_spec(SpawnAgentProvider::CodexCli, Path::new("/tmp/work"))
+            .expect("codex app-server command");
+        assert_eq!(spec.program, "codex");
+        assert_eq!(
+            spec.transport,
+            ExternalProviderSessionTransport::CodexAppServerStdio
+        );
+        assert_eq!(spec.args, vec!["app-server".to_string()]);
     }
 
     #[test]
@@ -1437,6 +1863,217 @@ mod tests {
         assert_eq!(value["type"], "user");
         assert_eq!(value["message"]["role"], "user");
         assert_eq!(value["message"]["content"], "hello");
+    }
+
+    #[test]
+    fn parses_codex_app_server_turn_started_as_state_only() {
+        let active_turn_id = Arc::new(Mutex::new(None));
+        let pending_completion_event = Arc::new(Mutex::new(Some(ExternalCliEvent::Completion(
+            "stale".to_string(),
+        ))));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"turn/started","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"status":"inProgress","error":null,"startedAt":1,"completedAt":null,"durationMs":null}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert!(event.is_none());
+        assert_eq!(
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_deref(),
+            Some("turn_1")
+        );
+        assert!(
+            pending_completion_event
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ignores_codex_app_server_item_completed_external_tool_call_until_turn_completion() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","item":{"type":"agentMessage","id":"item_1","text":"{\"type\":\"external_tool_call\",\"id\":\"call_1\",\"tool\":\"list_external_agents\",\"arguments\":{}}"}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert!(event.is_none());
+        assert_eq!(
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_deref(),
+            Some("turn_1")
+        );
+        assert!(matches!(
+            pending_completion_event
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref(),
+            Some(ExternalCliEvent::ToolCall(_))
+        ));
+    }
+
+    #[test]
+    fn parses_codex_app_server_turn_completed_external_tool_call_and_clears_state() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let item_event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","item":{"type":"agentMessage","id":"item_1","text":"{\"type\":\"external_tool_call\",\"id\":\"call_1\",\"tool\":\"list_external_agents\",\"arguments\":{}}"}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+        let completed_event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"turn/completed","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":1,"completedAt":2,"durationMs":100}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert!(item_event.is_none());
+        assert_eq!(
+            completed_event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::ToolCall(
+                ExternalToolCall {
+                    id: "call_1".to_string(),
+                    tool: ExternalToolName::ListExternalAgents,
+                    arguments: json!({}),
+                }
+            )))
+        );
+        assert!(
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+        assert!(
+            pending_completion_event
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ignores_codex_app_server_plain_item_completed_until_turn_completion() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","item":{"type":"agentMessage","id":"item_1","text":"intermediate text"}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert!(event.is_none());
+        assert_eq!(
+            pending_completion_event
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref(),
+            Some(&ExternalCliEvent::Completion(
+                "intermediate text".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_turn_completed_as_completion_and_clears_state() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(Some(ExternalCliEvent::Completion(
+            "done".to_string(),
+        ))));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"turn/completed","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":1,"completedAt":2,"durationMs":100}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Completion(
+                "done".to_string()
+            )))
+        );
+        assert!(
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_response_error_as_stdin_error() {
+        let active_turn_id = Arc::new(Mutex::new(None));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"id":3,"error":{"code":-32602,"message":"bad expectedTurnId"}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::StdinError(
+                r#"codex_cli app-server request failed: {"code":-32602,"message":"bad expectedTurnId"}"#.to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn codex_app_server_tool_result_starts_next_turn_after_completion() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let (active_method, active_params) = codex_app_server_input_request(
+            "thr_1",
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+            "while active",
+        );
+        assert_eq!(active_method, "turn/steer");
+        assert_eq!(active_params["expectedTurnId"], "turn_1");
+
+        assert!(
+            parse_codex_app_server_jsonrpc_line(
+                r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","item":{"type":"agentMessage","id":"item_1","text":"{\"type\":\"external_tool_call\",\"id\":\"call_1\",\"tool\":\"list_external_agents\",\"arguments\":{}}"}}}"#,
+                &active_turn_id,
+                &pending_completion_event,
+            )
+            .is_none()
+        );
+        let completed_event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"turn/completed","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":1,"completedAt":2,"durationMs":100}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+        assert!(matches!(
+            completed_event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::ToolCall(_)))
+        ));
+
+        let result = ExternalToolResult::ok("call_1", json!({ "agents": [] }));
+        let (result_method, result_params) = codex_app_server_input_request(
+            "thr_1",
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone(),
+            &external_tool_result_input(&result),
+        );
+        assert_eq!(result_method, "turn/start");
+        assert!(result_params.get("expectedTurnId").is_none());
+        assert_eq!(
+            result_params["input"][0]["text"],
+            external_tool_result_input(&result)
+        );
     }
 
     #[test]
