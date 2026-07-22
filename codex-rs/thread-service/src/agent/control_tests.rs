@@ -812,7 +812,7 @@ impl FakeExternalStream {
     }
 }
 
-impl crate::agent::external::ExternalSessionTransport for FakeExternalStream {
+impl crate::agent::external::ExternalProviderSession for FakeExternalStream {
     fn input_sink(&self) -> crate::agent::external::ExternalInputSink {
         self.input_sink.clone()
     }

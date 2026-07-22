@@ -69,9 +69,10 @@ pub(crate) async fn spawn_external_agent_tool(
     if matches!(
         request.provider,
         codex_agent_runtime::SpawnAgentProvider::Native
+            | codex_agent_runtime::SpawnAgentProvider::CodexCli
     ) {
         return Err(FunctionCallError::RespondToModel(
-                "spawn_external_agent currently requires claude_cli provider; codex_cli and opencode server/session adapters are not implemented yet"
+            "spawn_external_agent currently supports claude_cli and opencode providers; codex_cli app-server adapter is not implemented yet"
                 .to_string(),
         ));
     }

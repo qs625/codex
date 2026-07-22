@@ -1,7 +1,7 @@
 use crate::agent::AgentStatus;
 use crate::agent::external::ExternalAgentRun;
 use crate::agent::external::ExternalProcessEvent;
-use crate::agent::external::ExternalSessionTransport;
+use crate::agent::external::ExternalProviderSession;
 use crate::agent::external::ExternalSpawnConfig;
 use crate::agent::external::ExternalStreamingSession;
 use crate::agent::external::ExternalToolCall;
@@ -428,7 +428,7 @@ impl AgentControl {
         stream: &mut S,
     ) -> AgentStatus
     where
-        S: ExternalSessionTransport + ?Sized,
+        S: ExternalProviderSession + ?Sized,
     {
         let provider_input = stream.input_sink();
         let initial_input = external_agent_context_prompt(&message);
@@ -1391,9 +1391,12 @@ impl AgentControl {
             }
             ExternalToolName::SpawnExternalAgent => {
                 let args: ExternalSpawnAgentArgs = parse_external_arguments(&call.arguments)?;
-                if matches!(args.provider, SpawnAgentProvider::Native) {
+                if matches!(
+                    args.provider,
+                    SpawnAgentProvider::Native | SpawnAgentProvider::CodexCli
+                ) {
                     return Err(FunctionCallError::RespondToModel(
-                        "spawn_external_agent currently requires claude_cli provider; codex_cli and opencode server/session adapters are not implemented yet"
+                        "spawn_external_agent currently supports claude_cli and opencode providers; codex_cli app-server adapter is not implemented yet"
                             .to_string(),
                     ));
                 }

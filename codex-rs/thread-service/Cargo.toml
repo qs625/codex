@@ -98,6 +98,7 @@ rollout-trace-api = { workspace = true }
 rollout-api = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-sandboxing-api = { workspace = true }
+reqwest = { workspace = true, features = ["json", "stream"] }
 state = { workspace = true, optional = true }
 thread-service-api = { workspace = true }
 thread-store-api = { workspace = true }
