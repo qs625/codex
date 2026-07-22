@@ -1,13 +1,17 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use codex_agent_roles::AgentRoleConfig;
 use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::LiveAgent;
 use codex_agent_runtime::SpawnAgentProvider;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use config_service::Config;
+use futures::StreamExt;
 use futures::future::BoxFuture;
 use protocol::AgentPath;
 use protocol::ThreadId;
@@ -17,6 +21,7 @@ use protocol::protocol::InterAgentOperation;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use thread_store_api::SharedLiveThread;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
@@ -26,24 +31,47 @@ use tokio::process::ChildStdin;
 use tokio::process::ChildStdout;
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio::task::AbortHandle;
 
 const MAX_EXTERNAL_OUTPUT_CHARS: usize = 12_000;
 const MAX_EXTERNAL_ERROR_CHARS: usize = 4_000;
 const MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS: usize = 8_000;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct ExternalAgentRun {
     pub(crate) thread_id: ThreadId,
     pub(crate) parent_thread_id: ThreadId,
     pub(crate) agent_path: AgentPath,
     pub(crate) provider: SpawnAgentProvider,
     pub(crate) depth: i32,
-    pub(crate) spawn_config: Option<Config>,
+    pub(crate) spawn_config: Option<ExternalSpawnConfig>,
     pub(crate) input_sink: Option<ExternalInputSink>,
+    pub(crate) live_thread: Option<SharedLiveThread>,
     pub(crate) status: AgentStatus,
     pub(crate) last_task_message: Option<String>,
     pub(crate) abort_handle: Option<AbortHandle>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExternalSpawnConfig {
+    pub(crate) cwd: AbsolutePathBuf,
+    pub(crate) agent_max_threads: Option<usize>,
+    pub(crate) agent_roles: BTreeMap<String, AgentRoleConfig>,
+    pub(crate) model_provider_id: String,
+    pub(crate) generate_memories: bool,
+}
+
+impl ExternalSpawnConfig {
+    pub(crate) fn from_config(config: &Config) -> Self {
+        Self {
+            cwd: config.cwd.clone(),
+            agent_max_threads: config.agent_max_threads,
+            agent_roles: config.agent_roles.clone(),
+            model_provider_id: config.model_provider_id.clone(),
+            generate_memories: config.memories.generate_memories,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -226,15 +254,18 @@ impl ExternalToolResult {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ExternalCommandSpec {
+pub(crate) struct ExternalSessionSpec {
     pub(crate) program: &'static str,
     pub(crate) args: Vec<String>,
-    pub(crate) transport: ExternalProviderTransport,
+    pub(crate) transport: ExternalProviderSessionTransport,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ExternalProviderTransport {
+pub(crate) enum ExternalProviderSessionTransport {
+    /// Claude's stream-json CLI keeps the provider session open on stdin/stdout.
     ClaudeStreamJson,
+    /// OpenCode's headless server exposes sessions over HTTP plus SSE events.
+    OpencodeHttp,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -261,22 +292,22 @@ impl ExternalInputSink {
     }
 }
 
-pub(crate) trait ExternalAgentStream: Send {
+pub(crate) trait ExternalProviderSession: Send {
     fn input_sink(&self) -> ExternalInputSink;
     fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<ExternalProcessEvent, String>>;
 }
 
-pub(crate) fn external_command_spec(
+pub(crate) fn external_session_spec(
     provider: SpawnAgentProvider,
     _cwd: &Path,
-) -> Result<ExternalCommandSpec, String> {
+) -> Result<ExternalSessionSpec, String> {
     match provider {
         SpawnAgentProvider::Native => Err("native is not an external CLI provider".to_string()),
         SpawnAgentProvider::CodexCli => Err(
-            "codex_cli does not expose a persistent stdin/stdout continuation protocol; codex exec is non-interactive and cannot receive external_tool_result in the same running process"
+            "codex_cli exposes app-server/session transports, but the external-provider adapter has not implemented app-server JSON-RPC session creation, turn streaming, and resume-bound external_tool_result delivery yet; codex exec remains non-interactive and must not be used as a substitute"
                 .to_string(),
         ),
-        SpawnAgentProvider::ClaudeCli => Ok(ExternalCommandSpec {
+        SpawnAgentProvider::ClaudeCli => Ok(ExternalSessionSpec {
             program: "claude",
             args: vec![
                 "-p".to_string(),
@@ -286,12 +317,20 @@ pub(crate) fn external_command_spec(
                 "stream-json".to_string(),
                 "--verbose".to_string(),
             ],
-            transport: ExternalProviderTransport::ClaudeStreamJson,
+            transport: ExternalProviderSessionTransport::ClaudeStreamJson,
         }),
-        SpawnAgentProvider::Opencode => Err(
-            "opencode exposes ACP/server transports, not the external JSON stdin/stdout tool-result protocol implemented here; opencode support requires a dedicated ACP adapter"
-                .to_string(),
-        ),
+        SpawnAgentProvider::Opencode => Ok(ExternalSessionSpec {
+            program: "opencode",
+            args: vec![
+                "serve".to_string(),
+                "--port".to_string(),
+                "0".to_string(),
+                "--hostname".to_string(),
+                "127.0.0.1".to_string(),
+                "--print-logs".to_string(),
+            ],
+            transport: ExternalProviderSessionTransport::OpencodeHttp,
+        }),
     }
 }
 
@@ -302,7 +341,7 @@ pub(crate) fn external_agent_context_prompt(message: &str) -> String {
 Use only this external-agent JSON protocol to collaborate with other agents. Do not call internal my-codex tools such as spawn_agent, followup_task, list_agents, poll_event, or close_agent.
 
 Available external tools:
-- spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli", "cwd": string, "message": string }}. Current persistent streaming support is limited to claude_cli; codex_cli and opencode return unsupported capability errors.
+- spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json and opencode HTTP sessions; codex_cli has an app-server transport but requires a dedicated adapter before it can be exposed.
 - followup_external_task: arguments {{ "target": string, "message": string }}
 - list_external_agents: arguments {{ "path_prefix"?: string }}
 - poll_external_event: currently unsupported for non-interactive CLI sessions; calling it returns an unsupported error.
@@ -322,7 +361,12 @@ Original task:
     )
 }
 
-pub(crate) struct ExternalStreamingSession {
+pub(crate) enum ExternalStreamingSession {
+    Cli(ExternalCliSession),
+    OpencodeHttp(OpencodeHttpSession),
+}
+
+pub(crate) struct ExternalCliSession {
     provider: SpawnAgentProvider,
     child: Child,
     stdout: tokio::io::Lines<BufReader<ChildStdout>>,
@@ -334,22 +378,32 @@ pub(crate) struct ExternalStreamingSession {
     writer_errors_open: bool,
 }
 
-impl ExternalAgentStream for ExternalStreamingSession {
+impl ExternalProviderSession for ExternalStreamingSession {
     fn input_sink(&self) -> ExternalInputSink {
-        self.input_sink.clone()
+        match self {
+            ExternalStreamingSession::Cli(session) => session.input_sink.clone(),
+            ExternalStreamingSession::OpencodeHttp(session) => session.input_sink.clone(),
+        }
     }
 
     fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<ExternalProcessEvent, String>> {
-        Box::pin(async move { self.next_event().await })
+        Box::pin(async move {
+            match self {
+                ExternalStreamingSession::Cli(session) => session.next_event().await,
+                ExternalStreamingSession::OpencodeHttp(session) => session.next_event().await,
+            }
+        })
     }
 }
 
 impl ExternalStreamingSession {
-    pub(crate) async fn start(
-        provider: SpawnAgentProvider,
-        cwd: PathBuf,
-    ) -> Result<Self, String> {
-        let command = external_command_spec(provider, cwd.as_path())?;
+    pub(crate) async fn start(provider: SpawnAgentProvider, cwd: PathBuf) -> Result<Self, String> {
+        let command = external_session_spec(provider, cwd.as_path())?;
+        if command.transport == ExternalProviderSessionTransport::OpencodeHttp {
+            return OpencodeHttpSession::start(command, cwd)
+                .await
+                .map(ExternalStreamingSession::OpencodeHttp);
+        }
         let transport = command.transport;
         let mut child = Command::new(command.program)
             .args(command.args)
@@ -391,7 +445,7 @@ impl ExternalStreamingSession {
             input_rx,
             writer_error_tx,
         ));
-        Ok(Self {
+        Ok(ExternalStreamingSession::Cli(ExternalCliSession {
             provider,
             child,
             stdout: BufReader::new(stdout).lines(),
@@ -401,9 +455,11 @@ impl ExternalStreamingSession {
             input_sink: ExternalInputSink::new(input_tx),
             writer_errors,
             writer_errors_open: true,
-        })
+        }))
     }
+}
 
+impl ExternalCliSession {
     async fn next_event(&mut self) -> Result<ExternalProcessEvent, String> {
         loop {
             if !self.stdout_open && !self.stderr_open {
@@ -465,8 +521,364 @@ impl ExternalStreamingSession {
     }
 }
 
+pub(crate) struct OpencodeHttpSession {
+    child: Child,
+    input_sink: ExternalInputSink,
+    events: mpsc::UnboundedReceiver<Result<ExternalProcessEvent, String>>,
+}
+
+impl OpencodeHttpSession {
+    async fn start(command: ExternalSessionSpec, cwd: PathBuf) -> Result<Self, String> {
+        let mut child = Command::new(command.program)
+            .args(command.args)
+            .current_dir(&cwd)
+            .kill_on_drop(true)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("opencode external provider unavailable: {err}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "opencode external provider did not expose stdout".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "opencode external provider did not expose stderr".to_string())?;
+        let (base_url, stdout, stderr) = wait_for_opencode_server_url(
+            BufReader::new(stdout).lines(),
+            BufReader::new(stderr).lines(),
+        )
+        .await?;
+        tokio::spawn(drain_opencode_logs(stdout));
+        tokio::spawn(drain_opencode_logs(stderr));
+
+        let client = reqwest::Client::new();
+        let session_id = create_opencode_session(&client, &base_url, &cwd).await?;
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let (event_tx, events) = mpsc::unbounded_channel();
+        let (subscription_tx, mut subscription_rx) = watch::channel(None);
+        tokio::spawn(write_opencode_provider_input(
+            client.clone(),
+            base_url.clone(),
+            session_id.clone(),
+            cwd.clone(),
+            input_rx,
+            event_tx.clone(),
+            subscription_rx.clone(),
+        ));
+        tokio::spawn(read_opencode_events(
+            client,
+            base_url,
+            session_id,
+            cwd,
+            event_tx,
+            subscription_tx,
+        ));
+        wait_for_opencode_event_subscription(&mut subscription_rx).await?;
+        Ok(Self {
+            child,
+            input_sink: ExternalInputSink::new(input_tx),
+            events,
+        })
+    }
+
+    async fn next_event(&mut self) -> Result<ExternalProcessEvent, String> {
+        tokio::select! {
+            event = self.events.recv() => {
+                event.unwrap_or_else(|| Err("opencode external provider event stream closed".to_string()))
+            }
+            status = self.child.wait() => {
+                let status = status.map_err(|err| {
+                    format!("opencode external provider failed while waiting for process exit: {err}")
+                })?;
+                Ok(ExternalProcessEvent::ProcessExited {
+                    success: status.success(),
+                    status: status.to_string(),
+                })
+            }
+        }
+    }
+}
+
+async fn wait_for_opencode_server_url(
+    mut stdout: tokio::io::Lines<BufReader<ChildStdout>>,
+    mut stderr: tokio::io::Lines<BufReader<ChildStderr>>,
+) -> Result<
+    (
+        String,
+        tokio::io::Lines<BufReader<ChildStdout>>,
+        tokio::io::Lines<BufReader<ChildStderr>>,
+    ),
+    String,
+> {
+    loop {
+        tokio::select! {
+            line = stdout.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        if let Some(url) = opencode_server_url_from_line(&line) {
+                            return Ok((url, stdout, stderr));
+                        }
+                    }
+                    Ok(None) => return Err("opencode server exited before printing listen URL".to_string()),
+                    Err(err) => return Err(format!("failed to read opencode stdout: {err}")),
+                }
+            }
+            line = stderr.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        if let Some(url) = opencode_server_url_from_line(&line) {
+                            return Ok((url, stdout, stderr));
+                        }
+                    }
+                    Ok(None) => return Err("opencode server exited before printing listen URL".to_string()),
+                    Err(err) => return Err(format!("failed to read opencode stderr: {err}")),
+                }
+            }
+        }
+    }
+}
+
+async fn drain_opencode_logs<R>(mut lines: tokio::io::Lines<BufReader<R>>)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    while matches!(lines.next_line().await, Ok(Some(_))) {}
+}
+
+fn opencode_server_url_from_line(line: &str) -> Option<String> {
+    let start = line.find("http://")?;
+    Some(line[start..].trim().to_string())
+}
+
+async fn create_opencode_session(
+    client: &reqwest::Client,
+    base_url: &str,
+    cwd: &Path,
+) -> Result<String, String> {
+    let response = client
+        .post(format!("{base_url}/session"))
+        .query(&[("directory", cwd.to_string_lossy().to_string())])
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|err| format!("failed to create opencode session: {err}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "failed to create opencode session: HTTP {}",
+            response.status()
+        ));
+    }
+    let value = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|err| format!("failed to decode opencode session response: {err}"))?;
+    value
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "opencode session response did not include id".to_string())
+}
+
+async fn write_opencode_provider_input(
+    client: reqwest::Client,
+    base_url: String,
+    session_id: String,
+    cwd: PathBuf,
+    mut input_rx: mpsc::UnboundedReceiver<String>,
+    event_tx: mpsc::UnboundedSender<Result<ExternalProcessEvent, String>>,
+    mut subscription_rx: watch::Receiver<Option<Result<(), String>>>,
+) {
+    if let Err(err) = wait_for_opencode_event_subscription(&mut subscription_rx).await {
+        let _ = event_tx.send(Ok(ExternalProcessEvent::StdinError(err)));
+        return;
+    }
+    while let Some(content) = input_rx.recv().await {
+        let result = client
+            .post(format!("{base_url}/session/{session_id}/prompt_async"))
+            .query(&[("directory", cwd.to_string_lossy().to_string())])
+            .json(&serde_json::json!({
+                "parts": [{
+                    "type": "text",
+                    "text": content,
+                }],
+            }))
+            .send()
+            .await
+            .map_err(|err| format!("failed to send opencode prompt: {err}"))
+            .and_then(|response| {
+                if response.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "failed to send opencode prompt: HTTP {}",
+                        response.status()
+                    ))
+                }
+            });
+        if let Err(err) = result {
+            let _ = event_tx.send(Ok(ExternalProcessEvent::StdinError(err)));
+            return;
+        }
+    }
+}
+
+async fn read_opencode_events(
+    client: reqwest::Client,
+    base_url: String,
+    session_id: String,
+    cwd: PathBuf,
+    event_tx: mpsc::UnboundedSender<Result<ExternalProcessEvent, String>>,
+    subscription_tx: watch::Sender<Option<Result<(), String>>>,
+) {
+    let response = match client
+        .get(format!("{base_url}/event"))
+        .query(&[("directory", cwd.to_string_lossy().to_string())])
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            let message = format!("failed to subscribe to opencode events: {err}");
+            let _ = subscription_tx.send(Some(Err(message.clone())));
+            let _ = event_tx.send(Err(message));
+            return;
+        }
+    };
+    if !response.status().is_success() {
+        let message = format!(
+            "failed to subscribe to opencode events: HTTP {}",
+            response.status()
+        );
+        let _ = subscription_tx.send(Some(Err(message.clone())));
+        let _ = event_tx.send(Err(message));
+        return;
+    }
+    let _ = subscription_tx.send(Some(Ok(())));
+    let mut stream = response.bytes_stream();
+    let mut pending = String::new();
+    let mut text_buffer = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(err) => {
+                let _ = event_tx.send(Err(format!("failed to read opencode events: {err}")));
+                return;
+            }
+        };
+        pending.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(newline) = pending.find('\n') {
+            let line = pending[..newline].trim_end_matches('\r').to_string();
+            pending.drain(..=newline);
+            if let Some(event) = opencode_event_from_sse_line(&line, &session_id, &mut text_buffer)
+            {
+                let _ = event_tx.send(Ok(event));
+            }
+        }
+    }
+    let _ = event_tx.send(Err("opencode event stream closed".to_string()));
+}
+
+async fn wait_for_opencode_event_subscription(
+    subscription_rx: &mut watch::Receiver<Option<Result<(), String>>>,
+) -> Result<(), String> {
+    loop {
+        if let Some(result) = subscription_rx.borrow().clone() {
+            return result;
+        }
+        subscription_rx.changed().await.map_err(|_| {
+            "opencode event subscription closed before reporting readiness".to_string()
+        })?;
+    }
+}
+
+fn opencode_event_from_sse_line(
+    line: &str,
+    session_id: &str,
+    text_buffer: &mut String,
+) -> Option<ExternalProcessEvent> {
+    let data = line.strip_prefix("data:")?.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(data).ok()?;
+    let properties = value.get("properties").unwrap_or(&serde_json::Value::Null);
+    let event_session_id = properties
+        .get("sessionID")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            properties
+                .get("part")
+                .and_then(|part| part.get("sessionID"))
+                .and_then(serde_json::Value::as_str)
+        });
+    if event_session_id != Some(session_id) {
+        return None;
+    }
+    let event_type = value.get("type").and_then(serde_json::Value::as_str)?;
+    match event_type {
+        "message.part.updated" => {
+            let part = properties.get("part")?;
+            if part.get("type").and_then(serde_json::Value::as_str) != Some("text") {
+                return None;
+            }
+            let text = part
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let is_complete = part.get("time").and_then(|time| time.get("end")).is_some();
+            if !is_complete {
+                if let Some(delta) = properties.get("delta").and_then(serde_json::Value::as_str) {
+                    text_buffer.push_str(delta);
+                } else {
+                    *text_buffer = text;
+                }
+                return None;
+            }
+            let text = if text.is_empty() {
+                std::mem::take(text_buffer)
+            } else {
+                text
+            };
+            Some(ExternalProcessEvent::Cli(
+                external_tool_call_from_text(&text).unwrap_or(ExternalCliEvent::Completion(text)),
+            ))
+        }
+        "session.next.text.delta" => {
+            if let Some(delta) = properties.get("delta").and_then(serde_json::Value::as_str) {
+                text_buffer.push_str(delta);
+            }
+            None
+        }
+        "message.part.delta" => {
+            if properties.get("field").and_then(serde_json::Value::as_str) == Some("text")
+                && let Some(delta) = properties.get("delta").and_then(serde_json::Value::as_str)
+            {
+                text_buffer.push_str(delta);
+            }
+            None
+        }
+        "session.next.text.ended" => {
+            let text = properties
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| std::mem::take(text_buffer));
+            Some(ExternalProcessEvent::Cli(
+                external_tool_call_from_text(&text).unwrap_or(ExternalCliEvent::Completion(text)),
+            ))
+        }
+        "session.error" => Some(ExternalProcessEvent::Cli(ExternalCliEvent::Status(
+            truncate_chars(data, MAX_EXTERNAL_ERROR_CHARS),
+        ))),
+        _ => None,
+    }
+}
+
 async fn write_external_provider_input(
-    transport: ExternalProviderTransport,
+    transport: ExternalProviderSessionTransport,
     mut stdin: ChildStdin,
     mut input_rx: mpsc::UnboundedReceiver<String>,
     writer_error_tx: mpsc::UnboundedSender<String>,
@@ -489,11 +901,11 @@ async fn write_external_provider_input(
 }
 
 pub(crate) fn provider_input_line(
-    transport: ExternalProviderTransport,
+    transport: ExternalProviderSessionTransport,
     content: &str,
 ) -> String {
     match transport {
-        ExternalProviderTransport::ClaudeStreamJson => serde_json::json!({
+        ExternalProviderSessionTransport::ClaudeStreamJson => serde_json::json!({
             "type": "user",
             "message": {
                 "role": "user",
@@ -502,6 +914,7 @@ pub(crate) fn provider_input_line(
             "parent_tool_use_id": null,
         })
         .to_string(),
+        ExternalProviderSessionTransport::OpencodeHttp => content.to_string(),
     }
 }
 
@@ -797,6 +1210,14 @@ pub(crate) type SharedExternalAgentRegistry = Arc<ExternalAgentRegistry>;
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::Duration;
+    use tokio::time::sleep;
+    use tokio::time::timeout;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
 
     #[test]
     fn parses_codex_jsonl_completion_and_unknown_status() {
@@ -911,11 +1332,7 @@ mod tests {
         assert!(!result.ok);
         let error = result.error.as_ref().expect("error");
         assert_eq!(error.code, "invalid_tool_call");
-        assert!(
-            error
-                .message
-                .contains("failed to parse external tool call")
-        );
+        assert!(error.message.contains("failed to parse external tool call"));
         assert!(error.message.len() <= MAX_EXTERNAL_ERROR_CHARS + 3);
     }
 
@@ -970,6 +1387,7 @@ mod tests {
             depth: 1,
             spawn_config: None,
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -990,17 +1408,21 @@ mod tests {
 
     #[test]
     fn codex_cli_is_unsupported_for_persistent_streaming() {
-        let err = external_command_spec(SpawnAgentProvider::CodexCli, Path::new("/tmp/work"))
-            .expect_err("codex persistent streaming is unsupported");
-        assert!(err.contains("persistent stdin/stdout continuation protocol"));
+        let err = external_session_spec(SpawnAgentProvider::CodexCli, Path::new("/tmp/work"))
+            .expect_err("codex session adapter is unsupported");
+        assert!(err.contains("app-server/session transports"));
+        assert!(err.contains("adapter has not implemented"));
     }
 
     #[test]
     fn builds_claude_stream_json_command() {
-        let spec = external_command_spec(SpawnAgentProvider::ClaudeCli, Path::new("/tmp/work"))
+        let spec = external_session_spec(SpawnAgentProvider::ClaudeCli, Path::new("/tmp/work"))
             .expect("claude command");
         assert_eq!(spec.program, "claude");
-        assert_eq!(spec.transport, ExternalProviderTransport::ClaudeStreamJson);
+        assert_eq!(
+            spec.transport,
+            ExternalProviderSessionTransport::ClaudeStreamJson
+        );
         assert!(spec.args.contains(&"-p".to_string()));
         assert!(spec.args.contains(&"--output-format".to_string()));
         assert!(spec.args.contains(&"stream-json".to_string()));
@@ -1010,7 +1432,7 @@ mod tests {
 
     #[test]
     fn builds_claude_stream_json_input_line() {
-        let line = provider_input_line(ExternalProviderTransport::ClaudeStreamJson, "hello");
+        let line = provider_input_line(ExternalProviderSessionTransport::ClaudeStreamJson, "hello");
         let value: serde_json::Value = serde_json::from_str(&line).expect("json line");
         assert_eq!(value["type"], "user");
         assert_eq!(value["message"]["role"], "user");
@@ -1018,9 +1440,179 @@ mod tests {
     }
 
     #[test]
-    fn opencode_requires_dedicated_acp_adapter() {
-        let err = external_command_spec(SpawnAgentProvider::Opencode, Path::new("/tmp/work"))
-            .expect_err("opencode external json transport is unsupported");
-        assert!(err.contains("dedicated ACP adapter"));
+    fn builds_opencode_http_session_command() {
+        let spec = external_session_spec(SpawnAgentProvider::Opencode, Path::new("/tmp/work"))
+            .expect("opencode command");
+        assert_eq!(spec.program, "opencode");
+        assert_eq!(
+            spec.transport,
+            ExternalProviderSessionTransport::OpencodeHttp
+        );
+        assert!(spec.args.contains(&"serve".to_string()));
+        assert!(spec.args.contains(&"--port".to_string()));
+        assert!(spec.args.contains(&"0".to_string()));
+    }
+
+    #[tokio::test]
+    async fn opencode_writer_waits_for_event_subscription_before_prompt() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/ses_1/prompt_async"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let (subscription_tx, subscription_rx) = watch::channel(None);
+        let writer = tokio::spawn(write_opencode_provider_input(
+            reqwest::Client::new(),
+            server.uri(),
+            "ses_1".to_string(),
+            PathBuf::from("/tmp/work"),
+            input_rx,
+            event_tx,
+            subscription_rx,
+        ));
+
+        input_tx.send("hello".to_string()).expect("queue prompt");
+        sleep(Duration::from_millis(50)).await;
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("requests")
+                .is_empty()
+        );
+
+        subscription_tx
+            .send(Some(Ok(())))
+            .expect("publish event subscription readiness");
+        timeout(Duration::from_secs(1), async {
+            loop {
+                let requests = server.received_requests().await.expect("requests");
+                if requests.len() == 1 {
+                    return;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("prompt sent after event subscription readiness");
+
+        drop(input_tx);
+        writer.await.expect("writer task");
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn opencode_writer_reports_event_subscription_failure_without_prompt() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/ses_1/prompt_async"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let (subscription_tx, subscription_rx) = watch::channel(None);
+        let writer = tokio::spawn(write_opencode_provider_input(
+            reqwest::Client::new(),
+            server.uri(),
+            "ses_1".to_string(),
+            PathBuf::from("/tmp/work"),
+            input_rx,
+            event_tx,
+            subscription_rx,
+        ));
+
+        input_tx.send("hello".to_string()).expect("queue prompt");
+        subscription_tx
+            .send(Some(Err(
+                "failed to subscribe to opencode events: HTTP 500".to_string(),
+            )))
+            .expect("publish event subscription failure");
+        writer.await.expect("writer task");
+
+        assert_eq!(
+            event_rx.recv().await,
+            Some(Ok(ExternalProcessEvent::StdinError(
+                "failed to subscribe to opencode events: HTTP 500".to_string()
+            )))
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("requests")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn parses_opencode_message_part_updated_text_end_as_completion() {
+        let mut buffer = String::new();
+        let event = opencode_event_from_sse_line(
+            r#"data: {"type":"message.part.updated","properties":{"part":{"id":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"text","text":"done","time":{"start":1,"end":2}}}}"#,
+            "ses_1",
+            &mut buffer,
+        )
+        .expect("event");
+        assert_eq!(
+            event,
+            ExternalProcessEvent::Cli(ExternalCliEvent::Completion("done".to_string()))
+        );
+    }
+
+    #[test]
+    fn parses_opencode_message_part_updated_external_tool_call() {
+        let mut buffer = String::new();
+        let event = opencode_event_from_sse_line(
+            r#"data: {"type":"message.part.updated","properties":{"part":{"id":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"text","text":"{\"type\":\"external_tool_call\",\"id\":\"call_1\",\"tool\":\"list_external_agents\",\"arguments\":{}}","time":{"start":1,"end":2}}}}"#,
+            "ses_1",
+            &mut buffer,
+        )
+        .expect("event");
+        assert_eq!(
+            event,
+            ExternalProcessEvent::Cli(ExternalCliEvent::ToolCall(ExternalToolCall {
+                id: "call_1".to_string(),
+                tool: ExternalToolName::ListExternalAgents,
+                arguments: json!({}),
+            }))
+        );
+    }
+
+    #[test]
+    fn ignores_opencode_events_for_other_sessions() {
+        let mut buffer = String::new();
+        let event = opencode_event_from_sse_line(
+            r#"data: {"type":"message.part.updated","properties":{"part":{"id":"prt_1","sessionID":"ses_other","messageID":"msg_1","type":"text","text":"done","time":{"start":1,"end":2}}}}"#,
+            "ses_1",
+            &mut buffer,
+        );
+        assert!(event.is_none());
+    }
+
+    #[test]
+    fn accumulates_opencode_message_part_updated_text_until_end() {
+        let mut buffer = String::new();
+        assert!(
+            opencode_event_from_sse_line(
+                r#"data: {"type":"message.part.updated","properties":{"delta":"hel","part":{"id":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"text","text":"hel","time":{"start":1}}}}"#,
+                "ses_1",
+                &mut buffer,
+            )
+            .is_none()
+        );
+        let event = opencode_event_from_sse_line(
+            r#"data: {"type":"message.part.updated","properties":{"part":{"id":"prt_1","sessionID":"ses_1","messageID":"msg_1","type":"text","text":"","time":{"start":1,"end":2}}}}"#,
+            "ses_1",
+            &mut buffer,
+        )
+        .expect("event");
+        assert_eq!(
+            event,
+            ExternalProcessEvent::Cli(ExternalCliEvent::Completion("hel".to_string()))
+        );
     }
 }
