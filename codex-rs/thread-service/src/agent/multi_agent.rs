@@ -356,7 +356,7 @@ async fn handle_spawn_agent_request(
     .await?;
     if provider_is_external(request.provider) {
         return Err(FunctionCallError::RespondToModel(
-            "spawn_agent is only for native my-codex agents; use spawn_external_agent for external code agents".to_string(),
+            "spawn_agent is only for Morpheus native agents; use spawn_external_agent for external code agents".to_string(),
         ));
     }
     if matches!(

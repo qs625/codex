@@ -37,6 +37,7 @@ use tokio::task::AbortHandle;
 const MAX_EXTERNAL_OUTPUT_CHARS: usize = 12_000;
 const MAX_EXTERNAL_ERROR_CHARS: usize = 4_000;
 const MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS: usize = 8_000;
+const CODEX_APP_SERVER_ENV_REMOVALS: &[&str] = &["CODEX_HOME", "CODEX_THREAD_ID"];
 
 #[derive(Clone)]
 pub(crate) struct ExternalAgentRun {
@@ -307,7 +308,11 @@ pub(crate) fn external_session_spec(
         SpawnAgentProvider::Native => Err("native is not an external CLI provider".to_string()),
         SpawnAgentProvider::CodexCli => Ok(ExternalSessionSpec {
             program: "codex",
-            args: vec!["app-server".to_string()],
+            args: vec![
+                "app-server".to_string(),
+                "--listen".to_string(),
+                "stdio://".to_string(),
+            ],
             transport: ExternalProviderSessionTransport::CodexAppServerStdio,
         }),
         SpawnAgentProvider::ClaudeCli => Ok(ExternalSessionSpec {
@@ -339,9 +344,9 @@ pub(crate) fn external_session_spec(
 
 pub(crate) fn external_agent_context_prompt(message: &str) -> String {
     format!(
-        r#"You are running as an external code agent connected to the my-codex backend bus.
+        r#"You are running as an external code agent connected to the Morpheus backend bus.
 
-Use only this external-agent JSON protocol to collaborate with other agents. Do not call internal my-codex tools such as spawn_agent, followup_task, list_agents, poll_event, or close_agent.
+Use only this external-agent JSON protocol to collaborate with other agents. Do not call internal Morpheus tools such as spawn_agent, followup_task, list_agents, poll_event, or close_agent.
 
 Available external tools:
 - spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode" | "codex_cli", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json, opencode HTTP sessions, and codex_cli app-server stdio sessions.
@@ -485,13 +490,8 @@ pub(crate) struct CodexAppServerSession {
 
 impl CodexAppServerSession {
     async fn start(command: ExternalSessionSpec, cwd: PathBuf) -> Result<Self, String> {
-        let mut child = Command::new(command.program)
-            .args(command.args)
-            .current_dir(&cwd)
-            .kill_on_drop(true)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+        let mut command = codex_app_server_command(command, &cwd);
+        let mut child = command
             .spawn()
             .map_err(|err| format!("codex_cli external provider unavailable: {err}"))?;
         let mut stdin = child
@@ -507,6 +507,7 @@ impl CodexAppServerSession {
             .take()
             .ok_or_else(|| "codex_cli app-server did not expose stderr".to_string())?;
         let mut stdout = BufReader::new(stdout).lines();
+        let mut stderr = BufReader::new(stderr).lines();
 
         send_codex_jsonrpc_request(
             &mut stdin,
@@ -524,10 +525,11 @@ impl CodexAppServerSession {
             }),
         )
         .await?;
-        read_codex_jsonrpc_response(&mut stdout, 1).await?;
+        read_codex_jsonrpc_response(&mut stdout, &mut stderr, 1).await?;
         write_codex_jsonrpc_line(
             &mut stdin,
             &serde_json::json!({
+                "jsonrpc": "2.0",
                 "method": "initialized",
                 "params": {},
             }),
@@ -544,7 +546,7 @@ impl CodexAppServerSession {
             }),
         )
         .await?;
-        let start_response = read_codex_jsonrpc_response(&mut stdout, 2).await?;
+        let start_response = read_codex_jsonrpc_response(&mut stdout, &mut stderr, 2).await?;
         let thread_id = start_response
             .get("result")
             .and_then(|result| result.get("thread"))
@@ -568,7 +570,7 @@ impl CodexAppServerSession {
         Ok(Self {
             child,
             stdout,
-            stderr: BufReader::new(stderr).lines(),
+            stderr,
             stdout_open: true,
             stderr_open: true,
             input_sink: ExternalInputSink::new(input_tx),
@@ -639,6 +641,21 @@ impl CodexAppServerSession {
             status: status.to_string(),
         })
     }
+}
+
+fn codex_app_server_command(spec: ExternalSessionSpec, cwd: &Path) -> Command {
+    let mut command = Command::new(spec.program);
+    command
+        .args(spec.args)
+        .current_dir(cwd)
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for env_name in CODEX_APP_SERVER_ENV_REMOVALS {
+        command.env_remove(env_name);
+    }
+    command
 }
 
 impl ExternalCliSession {
@@ -1144,15 +1161,20 @@ async fn send_codex_jsonrpc_request(
     method: &str,
     params: serde_json::Value,
 ) -> Result<(), String> {
-    write_codex_jsonrpc_line(
-        stdin,
-        &serde_json::json!({
-            "id": id,
-            "method": method,
-            "params": params,
-        }),
-    )
-    .await
+    write_codex_jsonrpc_line(stdin, &codex_jsonrpc_request_value(id, method, params)).await
+}
+
+fn codex_jsonrpc_request_value(
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    })
 }
 
 async fn write_codex_jsonrpc_line(
@@ -1177,25 +1199,65 @@ async fn write_codex_jsonrpc_line(
 
 async fn read_codex_jsonrpc_response(
     stdout: &mut tokio::io::Lines<BufReader<ChildStdout>>,
+    stderr: &mut tokio::io::Lines<BufReader<ChildStderr>>,
     expected_id: u64,
 ) -> Result<serde_json::Value, String> {
+    let mut stderr_preview = String::new();
+    let mut stderr_open = true;
     loop {
-        let line = stdout
-            .next_line()
-            .await
-            .map_err(|err| format!("failed to read codex_cli app-server stdout: {err}"))?
-            .ok_or_else(|| "codex_cli app-server closed stdout before response".to_string())?;
-        let value = serde_json::from_str::<serde_json::Value>(&line).map_err(|err| {
-            format!("failed to decode codex_cli app-server JSON-RPC line `{line}`: {err}")
-        })?;
-        if value.get("id").and_then(serde_json::Value::as_u64) != Some(expected_id) {
-            continue;
+        tokio::select! {
+            stdout_line = stdout.next_line() => {
+                let line = stdout_line
+                    .map_err(|err| format!("failed to read codex_cli app-server stdout: {err}"))?
+                    .ok_or_else(|| codex_closed_stdout_before_response_error(&stderr_preview))?;
+                let value = serde_json::from_str::<serde_json::Value>(&line).map_err(|err| {
+                    format!("failed to decode codex_cli app-server JSON-RPC line `{line}`: {err}")
+                })?;
+                if value.get("id").and_then(serde_json::Value::as_u64) != Some(expected_id) {
+                    continue;
+                }
+                if let Some(error) = value.get("error") {
+                    return Err(format!("codex_cli app-server request failed: {error}"));
+                }
+                return Ok(value);
+            }
+            stderr_line = stderr.next_line(), if stderr_open => {
+                match stderr_line {
+                    Ok(Some(line)) => append_codex_startup_stderr(&mut stderr_preview, &line),
+                    Ok(None) => stderr_open = false,
+                    Err(err) => {
+                        append_codex_startup_stderr(
+                            &mut stderr_preview,
+                            &format!("failed to read codex_cli app-server stderr: {err}"),
+                        );
+                        stderr_open = false;
+                    }
+                }
+            }
         }
-        if let Some(error) = value.get("error") {
-            return Err(format!("codex_cli app-server request failed: {error}"));
-        }
-        return Ok(value);
     }
+}
+
+fn append_codex_startup_stderr(preview: &mut String, line: &str) {
+    let line = line.trim();
+    if line.is_empty() {
+        return;
+    }
+    if !preview.is_empty() {
+        preview.push('\n');
+    }
+    preview.push_str(line);
+    *preview = truncate_chars(preview, MAX_EXTERNAL_ERROR_CHARS);
+}
+
+fn codex_closed_stdout_before_response_error(stderr_preview: &str) -> String {
+    if stderr_preview.trim().is_empty() {
+        return "codex_cli app-server closed stdout before response".to_string();
+    }
+    format!(
+        "codex_cli app-server closed stdout before response; stderr: {}",
+        truncate_chars(stderr_preview.trim(), MAX_EXTERNAL_ERROR_CHARS)
+    )
 }
 
 pub(crate) fn provider_input_line(
@@ -1764,7 +1826,7 @@ mod tests {
         assert!(context.contains("spawn_external_agent"));
         assert!(context.contains("external_tool_call"));
         assert!(context.contains("external_tool_result"));
-        assert!(context.contains("Do not call internal my-codex tools"));
+        assert!(context.contains("Do not call internal Morpheus tools"));
         assert!(context.contains("review this patch"));
     }
 
@@ -1837,7 +1899,49 @@ mod tests {
             spec.transport,
             ExternalProviderSessionTransport::CodexAppServerStdio
         );
-        assert_eq!(spec.args, vec!["app-server".to_string()]);
+        assert_eq!(
+            spec.args,
+            vec![
+                "app-server".to_string(),
+                "--listen".to_string(),
+                "stdio://".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_app_server_command_clears_morpheus_runtime_environment() {
+        let spec = external_session_spec(SpawnAgentProvider::CodexCli, Path::new("/tmp/work"))
+            .expect("codex app-server command");
+        let command = codex_app_server_command(spec, Path::new("/tmp/work"));
+        let envs = command
+            .as_std()
+            .get_envs()
+            .map(|(name, value)| (name.to_string_lossy().to_string(), value.is_some()))
+            .collect::<Vec<_>>();
+
+        assert!(envs.contains(&("CODEX_HOME".to_string(), false)));
+        assert!(envs.contains(&("CODEX_THREAD_ID".to_string(), false)));
+    }
+
+    #[test]
+    fn codex_jsonrpc_request_includes_standard_version_field() {
+        let value = codex_jsonrpc_request_value(3, "turn/start", json!({ "threadId": "thr_1" }));
+
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], 3);
+        assert_eq!(value["method"], "turn/start");
+        assert_eq!(value["params"]["threadId"], "thr_1");
+    }
+
+    #[test]
+    fn codex_closed_stdout_error_includes_startup_stderr() {
+        let error = codex_closed_stdout_before_response_error(
+            "Error: failed to initialize sqlite state runtime",
+        );
+
+        assert!(error.contains("closed stdout before response"));
+        assert!(error.contains("failed to initialize sqlite state runtime"));
     }
 
     #[test]
