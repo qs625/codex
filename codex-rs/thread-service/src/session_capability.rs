@@ -782,6 +782,24 @@ impl ThreadSessionCapability for Session {
         })
     }
 
+    fn append_conversation_item_with_observed_event<'a>(
+        &'a self,
+        item: ResponseItem,
+        event: EventMsg,
+    ) -> SessionCapabilityFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            if let Some(item_id) = response_item_id(&item) {
+                self.queue_model_observed_display_event(item_id.to_string(), event)
+                    .await;
+            } else {
+                tracing::warn!(
+                    "cannot defer observed display event for model item without stable id"
+                );
+            }
+            self.append_conversation_item(item).await
+        })
+    }
+
     fn sandbox_runtime(&self) -> SharedSandboxRuntime {
         self.sandbox_runtime()
     }
@@ -2027,6 +2045,20 @@ fn turn_context(turn: &dyn ThreadTurnCapability) -> Option<&TurnContext> {
 
 fn session_arc(session: &Session) -> Option<Arc<Session>> {
     session.self_weak.get().and_then(std::sync::Weak::upgrade)
+}
+
+fn response_item_id(item: &ResponseItem) -> Option<&str> {
+    match item {
+        ResponseItem::CommandWait { id, .. }
+        | ResponseItem::CommandWriteStdin { id, .. }
+        | ResponseItem::CommandExecutionNotification { id, .. }
+        | ResponseItem::WorkflowRunProgress { id, .. }
+        | ResponseItem::EventCommandEvent { id, .. }
+        | ResponseItem::EventDrivenTool { id, .. }
+        | ResponseItem::ThreadGoalUpdate { id, .. }
+        | ResponseItem::InterAgentCommunication { id, .. } => id.as_deref(),
+        _ => None,
+    }
 }
 
 fn invalid_turn_message() -> String {

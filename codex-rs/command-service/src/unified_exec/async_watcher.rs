@@ -21,14 +21,17 @@ use super::events::emit_unified_exec_end_with_output;
 use super::resolve_aggregated_output;
 use super::split_valid_utf8_prefix;
 use crate::time_utils::now_unix_timestamp_ms;
+use codex_shell_utils::parse_command::parse_command;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::exec_output::ExecToolCallOutput;
 use protocol::exec_output::StreamOutput;
 use protocol::models::CommandExecutionNotificationKind;
 use protocol::models::ResponseItem;
 use protocol::protocol::EventMsg;
+use protocol::protocol::ExecCommandEndEvent;
 use protocol::protocol::ExecCommandNotifyOn;
 use protocol::protocol::ExecCommandOutputDeltaEvent;
+use protocol::protocol::ExecCommandSource;
 use protocol::protocol::ExecCommandStatus;
 use protocol::protocol::ExecOutputStream;
 
@@ -136,6 +139,58 @@ pub(crate) fn spawn_exit_watcher(
         let background_session_active = notification_state.is_background_session_active();
         let process_id = background_session_active.then(|| process_id.to_string());
         let failure_message = process.failure_message();
+        if background_session_active {
+            let status = if failure_message.is_some() {
+                ExecCommandStatus::Failed
+            } else {
+                ExecCommandStatus::Completed
+            };
+            let output = exit_output_for_unified_exec(
+                Arc::clone(&transcript),
+                String::new(),
+                process.exit_code().unwrap_or(-1),
+                failure_message.clone(),
+                duration,
+            )
+            .await;
+            let completed_at_ms = now_unix_timestamp_ms();
+            let event = exec_end_event_for_unified_exec(
+                call_id.clone(),
+                turn_ref.runtime_turn_id_str().to_string(),
+                command.clone(),
+                cwd.clone(),
+                process_id,
+                output.clone(),
+                duration,
+                initial_wait_ms,
+                command_notification_filter_to_protocol(notify_on),
+                status,
+                completed_at_ms,
+            );
+            let notification_output = resolve_exit_notification_output(
+                &transcript,
+                &exit_notification_output,
+                notify_on,
+                failure_message.as_deref(),
+            )
+            .await;
+            let item = ResponseItem::CommandExecutionNotification {
+                id: Some(format!("{call_id}:notification:exit")),
+                command_item_id: call_id,
+                kind: CommandExecutionNotificationKind::Exit,
+                message: "Command exit notification received.".to_string(),
+                output: notification_output,
+                exit_code: process.exit_code(),
+                created_at_ms: completed_at_ms,
+            };
+            let _ = session_ref
+                .append_conversation_item_with_observed_event(item, event)
+                .await;
+            notification_state
+                .notify(CommandNotificationKind::Exit)
+                .await;
+            return;
+        }
         if let Some(message) = failure_message.clone() {
             emit_failed_exec_end_for_unified_exec(
                 Arc::clone(&session_ref),
@@ -170,29 +225,66 @@ pub(crate) fn spawn_exit_watcher(
             )
             .await;
         }
-        if background_session_active {
-            let output = resolve_exit_notification_output(
-                &transcript,
-                &exit_notification_output,
-                notify_on,
-                failure_message.as_deref(),
-            )
-            .await;
-            let item = ResponseItem::CommandExecutionNotification {
-                id: Some(format!("{call_id}:notification:exit")),
-                command_item_id: call_id,
-                kind: CommandExecutionNotificationKind::Exit,
-                message: "Command exit notification received.".to_string(),
-                output,
-                exit_code: process.exit_code(),
-                created_at_ms: now_unix_timestamp_ms(),
-            };
-            let _ = session_ref.append_conversation_item(item).await;
-            notification_state
-                .notify(CommandNotificationKind::Exit)
-                .await;
-        }
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn exec_end_event_for_unified_exec(
+    call_id: String,
+    turn_id: String,
+    command: Vec<String>,
+    cwd: AbsolutePathBuf,
+    process_id: Option<String>,
+    output: ExecToolCallOutput,
+    duration: Duration,
+    initial_wait_ms: u64,
+    notify_on: ExecCommandNotifyOn,
+    status: ExecCommandStatus,
+    completed_at_ms: i64,
+) -> EventMsg {
+    EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+        call_id,
+        process_id,
+        turn_id,
+        completed_at_ms,
+        command: command.clone(),
+        cwd,
+        parsed_cmd: parse_command(&command),
+        source: ExecCommandSource::UnifiedExecStartup,
+        interaction_input: None,
+        initial_wait_ms: Some(initial_wait_ms),
+        notify_on: Some(notify_on),
+        stdout: output.stdout.text.clone(),
+        stderr: output.stderr.text.clone(),
+        aggregated_output: output.aggregated_output.text.clone(),
+        exit_code: output.exit_code,
+        duration,
+        formatted_output: output.aggregated_output.text,
+        status,
+    })
+}
+
+async fn exit_output_for_unified_exec(
+    transcript: Arc<Mutex<HeadTailBuffer>>,
+    fallback_output: String,
+    exit_code: i32,
+    failure_message: Option<String>,
+    duration: Duration,
+) -> ExecToolCallOutput {
+    let stdout = resolve_aggregated_output(&transcript, fallback_output).await;
+    let (stderr, aggregated_output) = match failure_message {
+        Some(message) if stdout.is_empty() => (message.clone(), message),
+        Some(message) => (message.clone(), format!("{stdout}\n{message}")),
+        None => (String::new(), stdout.clone()),
+    };
+    ExecToolCallOutput {
+        exit_code: if stderr.is_empty() { exit_code } else { -1 },
+        stdout: StreamOutput::new(stdout),
+        stderr: StreamOutput::new(stderr),
+        aggregated_output: StreamOutput::new(aggregated_output),
+        duration,
+        timed_out: false,
+    }
 }
 
 async fn resolve_exit_notification_output(

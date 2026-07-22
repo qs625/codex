@@ -903,6 +903,19 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
         item: ResponseItem,
     ) -> SessionCapabilityFuture<'a, Result<String, String>>;
 
+    /// Queue one model-visible item and defer the paired display event until
+    /// the item is consumed while constructing a model request.
+    fn append_conversation_item_with_observed_event<'a>(
+        &'a self,
+        item: ResponseItem,
+        event: EventMsg,
+    ) -> SessionCapabilityFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            let _ = event;
+            self.append_conversation_item(item).await
+        })
+    }
+
     /// Sandbox runtime shared by the owning session.
     fn sandbox_runtime(&self) -> SharedSandboxRuntime;
 

@@ -1167,6 +1167,8 @@ impl Session {
             })
             .collect();
         self.record_conversation_items(turn_context, &items).await;
+        self.emit_model_observed_display_events(turn_context, &items)
+            .await;
         self.emit_completed_model_item_display_events(turn_context, &items)
             .await;
     }
@@ -1296,6 +1298,40 @@ impl Session {
 
             self.emit_completed_model_item_display_event(turn_context, item)
                 .await;
+        }
+    }
+
+    pub(crate) async fn queue_model_observed_display_event(
+        &self,
+        item_id: String,
+        event: EventMsg,
+    ) {
+        self.model_observed_display_events
+            .lock()
+            .await
+            .entry(item_id)
+            .or_default()
+            .push(event);
+    }
+
+    async fn emit_model_observed_display_events(
+        &self,
+        turn_context: &TurnContext,
+        items: &[ResponseItem],
+    ) {
+        let mut events = Vec::new();
+        {
+            let mut pending = self.model_observed_display_events.lock().await;
+            for item in items {
+                if let Some(item_id) = response_item_id(item)
+                    && let Some(mut item_events) = pending.remove(item_id)
+                {
+                    events.append(&mut item_events);
+                }
+            }
+        }
+        for event in events {
+            self.send_event(turn_context, event).await;
         }
     }
 
@@ -1882,6 +1918,20 @@ impl Session {
             additional_details: Some(additional_details),
         });
         self.send_event(turn_context, event).await;
+    }
+}
+
+fn response_item_id(item: &ResponseItem) -> Option<&str> {
+    match item {
+        ResponseItem::CommandWait { id, .. }
+        | ResponseItem::CommandWriteStdin { id, .. }
+        | ResponseItem::CommandExecutionNotification { id, .. }
+        | ResponseItem::WorkflowRunProgress { id, .. }
+        | ResponseItem::EventCommandEvent { id, .. }
+        | ResponseItem::EventDrivenTool { id, .. }
+        | ResponseItem::ThreadGoalUpdate { id, .. }
+        | ResponseItem::InterAgentCommunication { id, .. } => id.as_deref(),
+        _ => None,
     }
 }
 
