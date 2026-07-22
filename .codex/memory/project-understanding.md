@@ -96,6 +96,8 @@
 - agent 是否可见、是否 active、是否 complete，不能只从某一个 bookkeeping 字段推断；需要区分本地 active 状态、completion 投递状态，以及 reload 后是否重新注册到 runtime 索引。
 - child completion 相关逻辑的长期目标是“完成态事件投递正确”而不是“靠 bookkeeping 假装 child 仍 active”。
 - `list_agents` 这类查询面向的是 runtime 可见集合；如果需求是“重启后仍能列出已完成 agent”，通常要检查恢复后的 runtime 注册语义，而不是只改查询接口。
+- external agent 的长期目标是成为 backend thread/provider execution mode：thread lifecycle、followup/pending input、tool loop、close/abort、parent completion 应与 native thread 对齐，差异只应留在 model IO / provider transport adapter。
+- 当前 external runtime 仍是 live-only registry 技术债，但不能再用 one-shot/re-invocation 冒充连续 turn；支持的 provider 必须走常驻 stdin/stdout streaming transport，unsupported provider 要显式报 capability error。
 - 当前实现里不存在持久的 `PostTurn` 调度状态；turn 收尾更接近 `active_turn` 锁保护下的一段临界区。`thread_post_turn_state()` 会在 `active_turn.is_some()` 或存在 pending turn input 时直接视为 `ThreadActive`，然后才退化到 goal / child / command 的后续判断。
 - 因此后续修 turn 生命周期竞态时，首先要区分“当前 turn 的 pending_input”和“thread 级 mailbox / queued next-turn input”，以及它们各自是在持锁的哪个阶段被检查或搬运；不要把“有 active turn”误当成“当前 turn 一定还能消费新事件”。
 - active turn 下的 async input 先在 `active_turn` 调度锁保护下判定：若 `TurnState.accepts_async_input_for_current_turn()` 为真则并入 `turn_state.pending_input`，否则继续留在线程级 mailbox，等待后续 turn 消费。

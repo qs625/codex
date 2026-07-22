@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -7,6 +8,7 @@ use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::LiveAgent;
 use codex_agent_runtime::SpawnAgentProvider;
 use config_service::Config;
+use futures::future::BoxFuture;
 use protocol::AgentPath;
 use protocol::ThreadId;
 use protocol::protocol::AgentStatus;
@@ -15,14 +17,20 @@ use protocol::protocol::InterAgentOperation;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
+use tokio::process::Child;
+use tokio::process::ChildStderr;
+use tokio::process::ChildStdin;
+use tokio::process::ChildStdout;
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
 const MAX_EXTERNAL_OUTPUT_CHARS: usize = 12_000;
 const MAX_EXTERNAL_ERROR_CHARS: usize = 4_000;
 const MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS: usize = 8_000;
-pub(crate) const MAX_EXTERNAL_TRANSCRIPT_CHARS: usize = 24_000;
-pub(crate) const MAX_EXTERNAL_TOOL_ITERATIONS: usize = 8;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ExternalAgentRun {
@@ -32,6 +40,7 @@ pub(crate) struct ExternalAgentRun {
     pub(crate) provider: SpawnAgentProvider,
     pub(crate) depth: i32,
     pub(crate) spawn_config: Option<Config>,
+    pub(crate) input_sink: Option<ExternalInputSink>,
     pub(crate) status: AgentStatus,
     pub(crate) last_task_message: Option<String>,
     pub(crate) abort_handle: Option<AbortHandle>,
@@ -74,6 +83,16 @@ impl ExternalAgentRegistry {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(run) = runs.get_mut(&thread_id) {
             run.abort_handle = Some(abort_handle);
+        }
+    }
+
+    pub(crate) fn update_last_task_message(&self, thread_id: ThreadId, message: String) {
+        let mut runs = self
+            .runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(run) = runs.get_mut(&thread_id) {
+            run.last_task_message = Some(message);
         }
     }
 
@@ -210,33 +229,53 @@ impl ExternalToolResult {
 pub(crate) struct ExternalCommandSpec {
     pub(crate) program: &'static str,
     pub(crate) args: Vec<String>,
+    pub(crate) transport: ExternalProviderTransport,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExternalProviderTransport {
+    ClaudeStreamJson,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ExternalCliTurn {
-    pub(crate) status: AgentStatus,
-    pub(crate) tool_calls: Vec<ExternalToolCall>,
-    pub(crate) tool_call_errors: Vec<ExternalToolResult>,
-    pub(crate) transcript_lines: Vec<String>,
+pub(crate) enum ExternalProcessEvent {
+    Cli(ExternalCliEvent),
+    StdinError(String),
+    ProcessExited { success: bool, status: String },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExternalInputSink {
+    tx: mpsc::UnboundedSender<String>,
+}
+
+impl ExternalInputSink {
+    pub(crate) fn new(tx: mpsc::UnboundedSender<String>) -> Self {
+        Self { tx }
+    }
+
+    pub(crate) fn send(&self, content: String) -> Result<(), String> {
+        self.tx
+            .send(content)
+            .map_err(|_| "external provider stdin is closed".to_string())
+    }
+}
+
+pub(crate) trait ExternalAgentStream: Send {
+    fn input_sink(&self) -> ExternalInputSink;
+    fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<ExternalProcessEvent, String>>;
 }
 
 pub(crate) fn external_command_spec(
     provider: SpawnAgentProvider,
-    cwd: &Path,
-    message: &str,
+    _cwd: &Path,
 ) -> Result<ExternalCommandSpec, String> {
     match provider {
         SpawnAgentProvider::Native => Err("native is not an external CLI provider".to_string()),
-        SpawnAgentProvider::CodexCli => Ok(ExternalCommandSpec {
-            program: "codex",
-            args: vec![
-                "exec".to_string(),
-                "--json".to_string(),
-                "-C".to_string(),
-                cwd.to_string_lossy().into_owned(),
-                message.to_string(),
-            ],
-        }),
+        SpawnAgentProvider::CodexCli => Err(
+            "codex_cli does not expose a persistent stdin/stdout continuation protocol; codex exec is non-interactive and cannot receive external_tool_result in the same running process"
+                .to_string(),
+        ),
         SpawnAgentProvider::ClaudeCli => Ok(ExternalCommandSpec {
             program: "claude",
             args: vec![
@@ -246,32 +285,24 @@ pub(crate) fn external_command_spec(
                 "--input-format".to_string(),
                 "stream-json".to_string(),
                 "--verbose".to_string(),
-                message.to_string(),
             ],
+            transport: ExternalProviderTransport::ClaudeStreamJson,
         }),
         SpawnAgentProvider::Opencode => Err(
-            "opencode external provider is unavailable in this first-stage runtime; install opencode and use a later provider mode"
+            "opencode exposes ACP/server transports, not the external JSON stdin/stdout tool-result protocol implemented here; opencode support requires a dedicated ACP adapter"
                 .to_string(),
         ),
     }
 }
 
-pub(crate) fn external_agent_context_prompt(message: &str, transcript: &str) -> String {
-    let transcript_section = if transcript.trim().is_empty() {
-        "No prior external tool transcript.".to_string()
-    } else {
-        format!(
-            "External tool transcript so far, newest entries included as JSON lines:\n{}",
-            truncate_chars_from_start(transcript.trim(), MAX_EXTERNAL_TRANSCRIPT_CHARS)
-        )
-    };
+pub(crate) fn external_agent_context_prompt(message: &str) -> String {
     format!(
         r#"You are running as an external code agent connected to the my-codex backend bus.
 
 Use only this external-agent JSON protocol to collaborate with other agents. Do not call internal my-codex tools such as spawn_agent, followup_task, list_agents, poll_event, or close_agent.
 
 Available external tools:
-- spawn_external_agent: arguments {{ "task_name": string, "provider": "codex_cli" | "claude_cli" | "opencode", "cwd": string, "message": string }}
+- spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli", "cwd": string, "message": string }}. Current persistent streaming support is limited to claude_cli; codex_cli and opencode return unsupported capability errors.
 - followup_external_task: arguments {{ "target": string, "message": string }}
 - list_external_agents: arguments {{ "path_prefix"?: string }}
 - poll_external_event: currently unsupported for non-interactive CLI sessions; calling it returns an unsupported error.
@@ -284,103 +315,202 @@ The backend returns results as JSON objects:
 {{"type":"external_tool_result","id":"call_1","ok":true,"result":{{}}}}
 {{"type":"external_tool_result","id":"call_1","ok":false,"error":{{"code":"invalid_arguments","message":"..."}}}}
 
-When you receive an external_tool_result in the transcript, continue the task using that result. Emit another external_tool_call only if you need another backend action; otherwise finish with a normal final answer.
-
-{transcript_section}
+When the backend sends an external_tool_result as input, continue the task using that result. Emit another external_tool_call only if you need another backend action; otherwise finish with a normal final answer.
 
 Original task:
 {message}"#
     )
 }
 
-pub(crate) async fn run_external_cli_with_events(
+pub(crate) struct ExternalStreamingSession {
     provider: SpawnAgentProvider,
-    cwd: std::path::PathBuf,
-    message: String,
-    transcript: String,
-) -> ExternalCliTurn {
-    let injected_message = external_agent_context_prompt(&message, &transcript);
-    let command = match external_command_spec(provider, cwd.as_path(), &injected_message) {
-        Ok(command) => command,
-        Err(message) => return ExternalCliTurn::errored(message),
-    };
-    let child = Command::new(command.program)
-        .args(command.args)
-        .current_dir(cwd)
-        .kill_on_drop(true)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn();
-    let child = match child {
-        Ok(child) => child,
-        Err(err) => {
-            return ExternalCliTurn::errored(format!(
-                "{} external provider unavailable: {err}",
-                provider_name(provider)
-            ));
-        }
-    };
-    let output = match child.wait_with_output().await {
-        Ok(output) => output,
-        Err(err) => {
-            return ExternalCliTurn::errored(format!(
-                "{} external provider failed: {err}",
-                provider_name(provider)
-            ));
-        }
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let parsed = parse_external_stream(provider, &stdout);
-    let tool_calls = parsed
-        .iter()
-        .filter_map(|event| match event {
-            ExternalCliEvent::ToolCall(call) => Some(call.clone()),
-            _ => None,
-        })
-        .collect();
-    let tool_call_errors = parsed
-        .iter()
-        .filter_map(|event| match event {
-            ExternalCliEvent::ToolCallError(result) => Some(result.clone()),
-            _ => None,
-        })
-        .collect();
-    let transcript_lines = transcript_lines_from_events(&parsed);
-    let final_message = summarize_external_output(&parsed, &stdout);
-    let status = if output.status.success() {
-        AgentStatus::Completed(final_message)
-    } else {
-        let summary = first_non_empty([
-            final_message,
-            Some(truncate_chars(stderr.trim(), MAX_EXTERNAL_ERROR_CHARS)),
-        ])
-        .unwrap_or_else(|| {
-            format!(
-                "{} exited with status {}",
-                provider_name(provider),
-                output.status
-            )
-        });
-        AgentStatus::Errored(summary)
-    };
-    ExternalCliTurn {
-        status,
-        tool_calls,
-        tool_call_errors,
-        transcript_lines,
+    child: Child,
+    stdout: tokio::io::Lines<BufReader<ChildStdout>>,
+    stderr: tokio::io::Lines<BufReader<ChildStderr>>,
+    stdout_open: bool,
+    stderr_open: bool,
+    input_sink: ExternalInputSink,
+    writer_errors: mpsc::UnboundedReceiver<String>,
+    writer_errors_open: bool,
+}
+
+impl ExternalAgentStream for ExternalStreamingSession {
+    fn input_sink(&self) -> ExternalInputSink {
+        self.input_sink.clone()
+    }
+
+    fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<ExternalProcessEvent, String>> {
+        Box::pin(async move { self.next_event().await })
     }
 }
 
-impl ExternalCliTurn {
-    pub(crate) fn errored(message: String) -> Self {
-        Self {
-            status: AgentStatus::Errored(truncate_chars(&message, MAX_EXTERNAL_ERROR_CHARS)),
-            tool_calls: Vec::new(),
-            tool_call_errors: Vec::new(),
-            transcript_lines: Vec::new(),
+impl ExternalStreamingSession {
+    pub(crate) async fn start(
+        provider: SpawnAgentProvider,
+        cwd: PathBuf,
+    ) -> Result<Self, String> {
+        let command = external_command_spec(provider, cwd.as_path())?;
+        let transport = command.transport;
+        let mut child = Command::new(command.program)
+            .args(command.args)
+            .current_dir(cwd)
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|err| {
+                format!(
+                    "{} external provider unavailable: {err}",
+                    provider_name(provider)
+                )
+            })?;
+        let stdin = child.stdin.take().ok_or_else(|| {
+            format!(
+                "{} external provider did not expose stdin",
+                provider_name(provider)
+            )
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            format!(
+                "{} external provider did not expose stdout",
+                provider_name(provider)
+            )
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            format!(
+                "{} external provider did not expose stderr",
+                provider_name(provider)
+            )
+        })?;
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let (writer_error_tx, writer_errors) = mpsc::unbounded_channel();
+        tokio::spawn(write_external_provider_input(
+            transport,
+            stdin,
+            input_rx,
+            writer_error_tx,
+        ));
+        Ok(Self {
+            provider,
+            child,
+            stdout: BufReader::new(stdout).lines(),
+            stderr: BufReader::new(stderr).lines(),
+            stdout_open: true,
+            stderr_open: true,
+            input_sink: ExternalInputSink::new(input_tx),
+            writer_errors,
+            writer_errors_open: true,
+        })
+    }
+
+    async fn next_event(&mut self) -> Result<ExternalProcessEvent, String> {
+        loop {
+            if !self.stdout_open && !self.stderr_open {
+                return self.next_process_event().await;
+            }
+            tokio::select! {
+                error = self.writer_errors.recv(), if self.writer_errors_open => {
+                    match error {
+                        Some(error) => return Ok(ExternalProcessEvent::StdinError(error)),
+                        None => {
+                            self.writer_errors_open = false;
+                        }
+                    }
+                }
+                stdout = self.stdout.next_line(), if self.stdout_open => {
+                    match stdout {
+                        Ok(Some(line)) => {
+                            if let Some(event) = parse_external_line(self.provider, &line) {
+                                return Ok(ExternalProcessEvent::Cli(event));
+                            }
+                        }
+                        Ok(None) => {
+                            self.stdout_open = false;
+                        }
+                        Err(err) => return Err(format!("failed to read external provider stdout: {err}")),
+                    }
+                }
+                stderr = self.stderr.next_line(), if self.stderr_open => {
+                    match stderr {
+                        Ok(Some(line)) => {
+                            let line = line.trim();
+                            if !line.is_empty() {
+                                return Ok(ExternalProcessEvent::Cli(ExternalCliEvent::Status(
+                                    truncate_chars(line, MAX_EXTERNAL_ERROR_CHARS)
+                                )));
+                            }
+                        }
+                        Ok(None) => {
+                            self.stderr_open = false;
+                        }
+                        Err(err) => return Err(format!("failed to read external provider stderr: {err}")),
+                    }
+                }
+            }
         }
     }
+
+    async fn next_process_event(&mut self) -> Result<ExternalProcessEvent, String> {
+        let status = self.child.wait().await.map_err(|err| {
+            format!(
+                "{} external provider failed while waiting for process exit: {err}",
+                provider_name(self.provider)
+            )
+        })?;
+        Ok(ExternalProcessEvent::ProcessExited {
+            success: status.success(),
+            status: status.to_string(),
+        })
+    }
+}
+
+async fn write_external_provider_input(
+    transport: ExternalProviderTransport,
+    mut stdin: ChildStdin,
+    mut input_rx: mpsc::UnboundedReceiver<String>,
+    writer_error_tx: mpsc::UnboundedSender<String>,
+) {
+    while let Some(content) = input_rx.recv().await {
+        let line = provider_input_line(transport, &content);
+        if let Err(err) = stdin.write_all(line.as_bytes()).await {
+            let _ = writer_error_tx.send(format!("failed to write external provider stdin: {err}"));
+            return;
+        }
+        if let Err(err) = stdin.write_all(b"\n").await {
+            let _ = writer_error_tx.send(format!("failed to write external provider stdin: {err}"));
+            return;
+        }
+        if let Err(err) = stdin.flush().await {
+            let _ = writer_error_tx.send(format!("failed to flush external provider stdin: {err}"));
+            return;
+        }
+    }
+}
+
+pub(crate) fn provider_input_line(
+    transport: ExternalProviderTransport,
+    content: &str,
+) -> String {
+    match transport {
+        ExternalProviderTransport::ClaudeStreamJson => serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": content,
+            },
+            "parent_tool_use_id": null,
+        })
+        .to_string(),
+    }
+}
+
+pub(crate) fn external_tool_result_input(result: &ExternalToolResult) -> String {
+    external_tool_result_json_line(result)
+}
+
+pub(crate) fn bounded_external_output(message: &str) -> String {
+    truncate_chars(message.trim(), MAX_EXTERNAL_OUTPUT_CHARS)
 }
 
 pub(crate) fn external_metadata(run: &ExternalAgentRun) -> AgentMetadata {
@@ -427,6 +557,7 @@ pub(crate) fn completion_communication(run: &ExternalAgentRun) -> Option<InterAg
     )
 }
 
+#[cfg(test)]
 pub(crate) fn parse_external_stream(
     provider: SpawnAgentProvider,
     stream: &str,
@@ -535,37 +666,6 @@ fn parse_opencode_json_event(value: &serde_json::Value) -> Option<ExternalCliEve
     }
 }
 
-fn summarize_external_output(events: &[ExternalCliEvent], raw_stdout: &str) -> Option<String> {
-    events
-        .iter()
-        .rev()
-        .find_map(|event| match event {
-            ExternalCliEvent::Completion(text) | ExternalCliEvent::Message(text)
-                if !text.trim().is_empty() =>
-            {
-                Some(truncate_chars(text.trim(), MAX_EXTERNAL_OUTPUT_CHARS))
-            }
-            ExternalCliEvent::ToolCall(_) | ExternalCliEvent::ToolCallError(_) => None,
-            _ => None,
-        })
-        .or_else(|| {
-            let raw = raw_stdout.trim();
-            (!raw.is_empty()).then(|| truncate_chars(raw, MAX_EXTERNAL_OUTPUT_CHARS))
-        })
-}
-
-pub(crate) fn append_external_transcript_line(transcript: &mut String, line: String) {
-    let line = bounded_external_transcript_line(&line);
-    if line.trim().is_empty() {
-        return;
-    }
-    if !transcript.is_empty() {
-        transcript.push('\n');
-    }
-    transcript.push_str(&line);
-    trim_external_transcript_to_budget(transcript);
-}
-
 pub(crate) fn external_tool_result_json_line(result: &ExternalToolResult) -> String {
     let serialized = serde_json::to_string(result);
     let Ok(line) = serialized else {
@@ -617,59 +717,6 @@ pub(crate) fn external_tool_result_json_line(result: &ExternalToolResult) -> Str
     }
 }
 
-fn transcript_lines_from_events(events: &[ExternalCliEvent]) -> Vec<String> {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            ExternalCliEvent::ToolCall(call) => {
-                serde_json::to_string(&json_external_tool_call(call)).ok()
-            }
-            ExternalCliEvent::ToolCallError(_) => None,
-            ExternalCliEvent::Message(text) if !text.trim().is_empty() => Some(json_line(
-                "external_agent_message",
-                truncate_chars(text.trim(), MAX_EXTERNAL_OUTPUT_CHARS),
-            )),
-            ExternalCliEvent::Completion(text) if !text.trim().is_empty() => Some(json_line(
-                "external_agent_completion",
-                truncate_chars(text.trim(), MAX_EXTERNAL_OUTPUT_CHARS),
-            )),
-            ExternalCliEvent::Status(text) if !text.trim().is_empty() => Some(json_line(
-                "external_agent_status",
-                truncate_chars(text.trim(), MAX_EXTERNAL_ERROR_CHARS),
-            )),
-            _ => None,
-        })
-        .collect()
-}
-
-fn bounded_external_transcript_line(line: &str) -> String {
-    if line.chars().count() <= MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS {
-        return line.to_string();
-    }
-    if let Ok(result) = serde_json::from_str::<ExternalToolResult>(line) {
-        if result.result_type == "external_tool_result" {
-            return external_tool_result_json_line(&result);
-        }
-    }
-    json_line(
-        "external_agent_status",
-        format!(
-            "transcript line exceeded {MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS} characters and was summarized: {}",
-            truncate_chars(line, MAX_EXTERNAL_ERROR_CHARS)
-        ),
-    )
-}
-
-fn trim_external_transcript_to_budget(transcript: &mut String) {
-    while transcript.chars().count() > MAX_EXTERNAL_TRANSCRIPT_CHARS {
-        let Some(newline_index) = transcript.find('\n') else {
-            *transcript = bounded_external_transcript_line(transcript);
-            return;
-        };
-        transcript.drain(..=newline_index);
-    }
-}
-
 fn fallback_external_tool_result_line(id: &str, code: &str, message: &str) -> String {
     serde_json::json!({
         "type": "external_tool_result",
@@ -679,23 +726,6 @@ fn fallback_external_tool_result_line(id: &str, code: &str, message: &str) -> St
             "code": code,
             "message": message,
         },
-    })
-    .to_string()
-}
-
-fn json_external_tool_call(call: &ExternalToolCall) -> serde_json::Value {
-    serde_json::json!({
-        "type": "external_tool_call",
-        "id": &call.id,
-        "tool": &call.tool,
-        "arguments": &call.arguments,
-    })
-}
-
-fn json_line(line_type: &str, text: String) -> String {
-    serde_json::json!({
-        "type": line_type,
-        "text": text,
     })
     .to_string()
 }
@@ -745,13 +775,6 @@ fn provider_name(provider: SpawnAgentProvider) -> &'static str {
     }
 }
 
-fn first_non_empty(values: impl IntoIterator<Item = Option<String>>) -> Option<String> {
-    values
-        .into_iter()
-        .flatten()
-        .find(|value| !value.trim().is_empty())
-}
-
 fn truncate_chars(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -759,21 +782,6 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     let mut output = value.chars().take(max_chars).collect::<String>();
     output.push_str("...");
     output
-}
-
-fn truncate_chars_from_start(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let tail = value
-        .chars()
-        .rev()
-        .take(max_chars)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
-    format!("...{tail}")
 }
 
 pub(crate) fn provider_is_external(provider: Option<SpawnAgentProvider>) -> bool {
@@ -913,28 +921,12 @@ mod tests {
 
     #[test]
     fn external_context_injects_schema_and_forbids_internal_tool_names() {
-        let context = external_agent_context_prompt("review this patch", "");
+        let context = external_agent_context_prompt("review this patch");
         assert!(context.contains("spawn_external_agent"));
         assert!(context.contains("external_tool_call"));
         assert!(context.contains("external_tool_result"));
         assert!(context.contains("Do not call internal my-codex tools"));
         assert!(context.contains("review this patch"));
-    }
-
-    #[test]
-    fn external_context_includes_bounded_tool_result_transcript() {
-        let result = ExternalToolResult::ok(
-            "call_1",
-            json!({ "payload": "x".repeat(MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS + 100) }),
-        );
-        let mut transcript = "x".repeat(MAX_EXTERNAL_TRANSCRIPT_CHARS + 100);
-        append_external_transcript_line(&mut transcript, external_tool_result_json_line(&result));
-        let context = external_agent_context_prompt("continue work", &transcript);
-
-        assert!(context.contains("External tool transcript so far"));
-        assert!(context.contains("external_tool_result"));
-        assert!(context.contains("continue work"));
-        assert!(context.len() < MAX_EXTERNAL_TRANSCRIPT_CHARS + 3000);
     }
 
     #[test]
@@ -952,33 +944,6 @@ mod tests {
         assert_eq!(value["ok"], true);
         assert_eq!(value["result"]["truncated"], true);
     }
-
-    #[test]
-    fn append_external_transcript_line_preserves_latest_result_json_line() {
-        let result = ExternalToolResult::ok(
-            "call_1",
-            json!({ "payload": "x".repeat(MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS + 100) }),
-        );
-        let mut transcript = String::new();
-        for index in 0..10 {
-            append_external_transcript_line(
-                &mut transcript,
-                json_line(
-                    "external_agent_message",
-                    format!("{index}:{}", "x".repeat(MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS / 2)),
-                ),
-            );
-        }
-        append_external_transcript_line(&mut transcript, external_tool_result_json_line(&result));
-
-        let latest = transcript.lines().last().expect("latest transcript line");
-        let value: serde_json::Value = serde_json::from_str(latest).expect("valid latest json");
-        assert!(transcript.chars().count() <= MAX_EXTERNAL_TRANSCRIPT_CHARS);
-        assert_eq!(value["type"], "external_tool_result");
-        assert_eq!(value["id"], "call_1");
-        assert_eq!(value["result"]["truncated"], true);
-    }
-
 
     #[test]
     fn external_tool_error_result_is_bounded_json() {
@@ -1004,6 +969,7 @@ mod tests {
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
             spawn_config: None,
+            input_sink: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -1023,17 +989,38 @@ mod tests {
     }
 
     #[test]
-    fn builds_codex_exec_json_command() {
-        let spec = external_command_spec(
-            SpawnAgentProvider::CodexCli,
-            Path::new("/tmp/work"),
-            "do it",
-        )
-        .expect("codex command");
-        assert_eq!(spec.program, "codex");
-        assert_eq!(spec.args[0], "exec");
-        assert!(spec.args.contains(&"--json".to_string()));
-        assert!(spec.args.contains(&"-C".to_string()));
-        assert!(spec.args.contains(&"/tmp/work".to_string()));
+    fn codex_cli_is_unsupported_for_persistent_streaming() {
+        let err = external_command_spec(SpawnAgentProvider::CodexCli, Path::new("/tmp/work"))
+            .expect_err("codex persistent streaming is unsupported");
+        assert!(err.contains("persistent stdin/stdout continuation protocol"));
+    }
+
+    #[test]
+    fn builds_claude_stream_json_command() {
+        let spec = external_command_spec(SpawnAgentProvider::ClaudeCli, Path::new("/tmp/work"))
+            .expect("claude command");
+        assert_eq!(spec.program, "claude");
+        assert_eq!(spec.transport, ExternalProviderTransport::ClaudeStreamJson);
+        assert!(spec.args.contains(&"-p".to_string()));
+        assert!(spec.args.contains(&"--output-format".to_string()));
+        assert!(spec.args.contains(&"stream-json".to_string()));
+        assert!(spec.args.contains(&"--input-format".to_string()));
+        assert!(!spec.args.contains(&"do it".to_string()));
+    }
+
+    #[test]
+    fn builds_claude_stream_json_input_line() {
+        let line = provider_input_line(ExternalProviderTransport::ClaudeStreamJson, "hello");
+        let value: serde_json::Value = serde_json::from_str(&line).expect("json line");
+        assert_eq!(value["type"], "user");
+        assert_eq!(value["message"]["role"], "user");
+        assert_eq!(value["message"]["content"], "hello");
+    }
+
+    #[test]
+    fn opencode_requires_dedicated_acp_adapter() {
+        let err = external_command_spec(SpawnAgentProvider::Opencode, Path::new("/tmp/work"))
+            .expect_err("opencode external json transport is unsupported");
+        assert!(err.contains("dedicated ACP adapter"));
     }
 }
