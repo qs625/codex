@@ -65,6 +65,25 @@ function buildCreateThreadStartParams(payload = {}, options = {}) {
   });
 }
 
+function buildThreadListParams() {
+  return {
+    limit: 200,
+    modelProviders: [],
+    sourceKinds: [
+      "appServer",
+      "cli",
+      "vscode",
+      "exec",
+      "subAgent",
+      "subAgentReview",
+      "subAgentCompact",
+      "subAgentThreadSpawn",
+      "subAgentOther",
+      "unknown",
+    ],
+  };
+}
+
 function buildSubscribeThreadResumeParams(threadId) {
   return withRealtimeConversationFeature({ threadId, excludeTurns: true });
 }
@@ -77,6 +96,7 @@ module.exports = {
   CHAT_COMPAT_CWD_BASENAME,
   buildChatCompatCwd,
   buildCreateThreadStartParams,
+  buildThreadListParams,
   buildSubscribeThreadResumeParams,
   withRealtimeConversationFeature,
 };
