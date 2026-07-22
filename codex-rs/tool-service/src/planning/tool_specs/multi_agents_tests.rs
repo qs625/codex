@@ -181,7 +181,7 @@ fn spawn_external_agent_tool_requires_provider_cwd_and_message() {
         ..
     } = tool;
     assert!(description.contains("external code-agent CLI"));
-    assert!(description.contains("spawn_agent only for native"));
+    assert!(description.contains("spawn_agent only for Morpheus native"));
     let properties = parameters
         .properties
         .as_ref()

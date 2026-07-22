@@ -92,7 +92,7 @@ pub fn create_spawn_external_agent_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "spawn_external_agent".to_string(),
-        description: "Spawn an external code-agent CLI as a child in the current agent tree. External agents use the external-agent JSON tool protocol for collaboration; use spawn_agent only for native my-codex agents.".to_string(),
+        description: "Spawn an external code-agent CLI as a child in the current agent tree. External agents use the external-agent JSON tool protocol for collaboration; use spawn_agent only for Morpheus native agents.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(
