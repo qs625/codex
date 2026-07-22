@@ -18,8 +18,6 @@ use codex_analytics_api::AnalyticsEventsClient;
 use codex_approval_service_api::ApprovalServiceApi;
 use codex_auth_types::SharedAuthRuntime;
 use codex_code_mode_api::CodeModeRuntimeFactory;
-use config_service::Config;
-use config_service::skill_config_layer_stack_from_config_layer_stack;
 #[cfg(any(test, feature = "test-support"))]
 use codex_exec_server::EnvironmentManager;
 use codex_extension_api::ExtensionRegistry;
@@ -32,17 +30,16 @@ use codex_login::AuthManager;
 use codex_login::CodexAuth;
 #[cfg(any(test, feature = "test-support"))]
 use codex_login::model_provider_auth_manager;
-use model_service::AttestationProvider;
 use codex_network_proxy_api::DisabledNetworkProxyRuntimeFactory;
 use codex_network_proxy_api::SharedNetworkProxyRuntimeFactory;
 use codex_openai_files_api::DisabledOpenAiFileUploader;
 use codex_openai_files_api::SharedOpenAiFileUploader;
-use permissions_service::EmptyExecPolicyLoader;
-use permissions_service::ExecPolicyLoader;
 use codex_sandboxing_api::DisabledSandboxRuntime;
 use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use command_service_api::CommandServiceApi;
+use config_service::Config;
+use config_service::skill_config_layer_stack_from_config_layer_stack;
 use exec_server_api::ExecEnvironmentProvider;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
@@ -56,6 +53,7 @@ use mcp_service_api::McpConnectionRuntimeFactory;
 use mcp_service_api::McpServiceApi;
 use memory_service_api::DisabledMemoryToolDeveloperInstructionsProvider;
 use memory_service_api::SharedMemoryToolDeveloperInstructionsProvider;
+use model_service::AttestationProvider;
 use model_service::ModelService;
 use model_service::ModelServiceRuntimeDeps;
 use model_service_api::DisabledApiRuntimeFactory;
@@ -69,6 +67,8 @@ use model_service_api::SharedApiRuntimeFactory;
 use model_service_api::SharedModelProviderAuthManager;
 use model_service_api::SharedModelProviderFactory;
 use model_service_api::SharedModelServiceApi;
+use permissions_service::EmptyExecPolicyLoader;
+use permissions_service::ExecPolicyLoader;
 use plugin_service_api::DisabledPluginRuntime;
 use plugin_service_api::SharedPluginRuntime;
 use protocol::ThreadId;
@@ -76,6 +76,7 @@ use protocol::config_types::CollaborationModeMask;
 use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
 use protocol::mcp::CallToolResult;
+use protocol::models::BaseInstructions;
 use protocol::models::ResponseItem;
 use protocol::openai_models::ModelPreset;
 use protocol::openai_models::ModelsResponse;
@@ -89,6 +90,7 @@ use protocol::protocol::SessionConfiguredEvent;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
 use protocol::protocol::ThreadContextUsage;
+use protocol::protocol::ThreadMemoryMode;
 use protocol::protocol::ThreadSource;
 use protocol::protocol::TokenUsageInfo;
 use protocol::protocol::TurnEnvironmentSelection;
@@ -119,12 +121,16 @@ use thread_service_api::ThreadShutdownReport;
 use thread_store::LocalThreadStore;
 #[cfg(any(test, feature = "test-support"))]
 use thread_store::LocalThreadStoreConfig;
+use thread_store_api::CreateThreadParams;
 use thread_store_api::LiveThreadFactory;
 use thread_store_api::ReadThreadByRolloutPathParams;
 use thread_store_api::ReadThreadParams;
+use thread_store_api::SharedLiveThread;
 use thread_store_api::StoredThread;
 use thread_store_api::StoredThreadHistory;
+use thread_store_api::ThreadEventPersistenceMode;
 use thread_store_api::ThreadMetadataPatch;
+use thread_store_api::ThreadPersistenceMetadata;
 use thread_store_api::ThreadStore;
 use thread_store_api::ThreadStoreError;
 use thread_store_api::ThreadStoreResult;
@@ -953,7 +959,10 @@ impl ThreadService {
         let mut agent_path_reservation = agent_metadata
             .as_ref()
             .and_then(|metadata| metadata.agent_path.as_ref())
-            .map(|agent_path| self.agent_control().reserve_root_scope_agent_path(agent_path))
+            .map(|agent_path| {
+                self.agent_control()
+                    .reserve_root_scope_agent_path(agent_path)
+            })
             .transpose()?;
         let new_thread = Box::pin(self.state.spawn_thread_with_source(
             options.config,
@@ -1141,7 +1150,10 @@ impl ThreadService {
         let mut agent_path_reservation = agent_metadata
             .as_ref()
             .and_then(|metadata| metadata.agent_path.as_ref())
-            .map(|agent_path| self.agent_control().reserve_root_scope_agent_path(agent_path))
+            .map(|agent_path| {
+                self.agent_control()
+                    .reserve_root_scope_agent_path(agent_path)
+            })
             .transpose()?;
         let thread_source = initial_history.get_resumed_thread_source();
         let new_thread = Box::pin(self.state.spawn_thread_with_source(
@@ -1481,6 +1493,52 @@ impl ThreadServiceState {
                     }
                 }
                 err => CodexErr::Fatal(format!("failed to read stored thread {thread_id}: {err}")),
+            })
+    }
+
+    pub(crate) async fn create_external_thread_persistence(
+        &self,
+        cwd: &AbsolutePathBuf,
+        model_provider_id: String,
+        generate_memories: bool,
+        thread_id: ThreadId,
+        session_source: SessionSource,
+        agent_metadata: AgentMetadata,
+    ) -> CodexResult<SharedLiveThread> {
+        self.live_thread_factory
+            .create(
+                Arc::clone(&self.thread_store),
+                CreateThreadParams {
+                    thread_id,
+                    forked_from_id: None,
+                    source: session_source,
+                    thread_source: Some(ThreadSource::Subagent),
+                    base_instructions: BaseInstructions {
+                        text: String::new(),
+                    },
+                    dynamic_tools: Vec::new(),
+                    metadata: ThreadPersistenceMetadata {
+                        cwd: Some(cwd.to_path_buf()),
+                        model_provider: model_provider_id,
+                        memory_mode: if generate_memories {
+                            ThreadMemoryMode::Enabled
+                        } else {
+                            ThreadMemoryMode::Disabled
+                        },
+                        root_agent_role: agent_metadata.agent_role,
+                        root_agent_path: agent_metadata
+                            .agent_path
+                            .as_ref()
+                            .map(ToString::to_string),
+                    },
+                    event_persistence_mode: ThreadEventPersistenceMode::Limited,
+                },
+            )
+            .await
+            .map_err(|err| {
+                CodexErr::Fatal(format!(
+                    "failed to create persisted external thread {thread_id}: {err}"
+                ))
             })
     }
 

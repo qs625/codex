@@ -71,7 +71,7 @@ pub fn create_spawn_external_agent_tool() -> ToolSpec {
             JsonSchema::string_enum(
                 vec![json!("claude_cli")],
                 Some(
-                    "External code agent provider to launch. Current persistent streaming support is claude_cli only."
+                    "External code agent provider to launch. Current external session transport support is claude_cli only; codex_cli and opencode require dedicated server/session adapters before exposure."
                         .to_string(),
                 ),
             ),

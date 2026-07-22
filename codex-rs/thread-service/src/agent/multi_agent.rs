@@ -71,7 +71,7 @@ pub(crate) async fn spawn_external_agent_tool(
         codex_agent_runtime::SpawnAgentProvider::Native
     ) {
         return Err(FunctionCallError::RespondToModel(
-            "spawn_external_agent currently requires claude_cli provider for persistent streaming"
+                "spawn_external_agent currently requires claude_cli provider; codex_cli and opencode server/session adapters are not implemented yet"
                 .to_string(),
         ));
     }

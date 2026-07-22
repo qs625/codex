@@ -30,6 +30,7 @@ use protocol::protocol::ErrorEvent;
 use protocol::protocol::Event;
 use protocol::protocol::EventMsg;
 use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::RolloutItem;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
 use protocol::protocol::ThreadLifecycleStatus;
@@ -44,6 +45,7 @@ use tempfile::TempDir;
 use thread_store::LocalThreadStore;
 use thread_store::LocalThreadStoreConfig;
 use thread_store_api::ArchiveThreadParams;
+use thread_store_api::ReadThreadParams;
 use thread_store_api::ThreadStore;
 use tokio::time::Duration;
 use tokio::time::sleep;
@@ -412,6 +414,7 @@ async fn get_status_returns_external_agent_status_without_manager() {
         depth: 1,
         spawn_config: None,
         input_sink: None,
+        live_thread: None,
         status: AgentStatus::Running,
         last_task_message: Some("do work".to_string()),
         abort_handle: None,
@@ -433,6 +436,7 @@ async fn direct_agent_children_are_active_includes_external_runs() {
         depth: 1,
         spawn_config: None,
         input_sink: None,
+        live_thread: None,
         status: AgentStatus::Running,
         last_task_message: Some("do work".to_string()),
         abort_handle: None,
@@ -460,8 +464,9 @@ async fn list_agents_includes_external_runs_with_prefix_filter() {
             agent_path: AgentPath::try_from("/root/external").expect("agent path"),
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Completed(Some("done".to_string())),
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -534,8 +539,9 @@ async fn external_completion_after_close_does_not_notify_parent() {
             agent_path: child_agent_path.clone(),
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -581,8 +587,9 @@ async fn external_tool_call_lists_visible_agents() {
             agent_path: AgentPath::try_from("/root/external").expect("agent path"),
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -625,8 +632,9 @@ async fn external_tool_call_malformed_arguments_returns_bounded_error() {
             agent_path: AgentPath::try_from("/root/external").expect("agent path"),
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -681,8 +689,9 @@ async fn external_tool_call_followup_to_native_uses_agent_bus() {
             agent_path: external_agent_path.clone(),
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -735,8 +744,9 @@ async fn followup_to_external_agent_enters_external_input_queue() {
             agent_path: external_agent_path.clone(),
             provider: SpawnAgentProvider::ClaudeCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: Some(crate::agent::external::ExternalInputSink::new(input_tx)),
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("initial".to_string()),
             abort_handle: None,
@@ -802,17 +812,15 @@ impl FakeExternalStream {
     }
 }
 
-impl crate::agent::external::ExternalAgentStream for FakeExternalStream {
+impl crate::agent::external::ExternalSessionTransport for FakeExternalStream {
     fn input_sink(&self) -> crate::agent::external::ExternalInputSink {
         self.input_sink.clone()
     }
 
     fn next_event<'a>(
         &'a mut self,
-    ) -> futures::future::BoxFuture<
-        'a,
-        Result<crate::agent::external::ExternalProcessEvent, String>,
-    > {
+    ) -> futures::future::BoxFuture<'a, Result<crate::agent::external::ExternalProcessEvent, String>>
+    {
         Box::pin(async move {
             self.events
                 .pop_front()
@@ -836,8 +844,9 @@ async fn external_stream_loop_writes_tool_result_to_same_process() {
             agent_path: AgentPath::try_from("/root/external").expect("agent path"),
             provider: SpawnAgentProvider::ClaudeCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("inspect agents".to_string()),
             abort_handle: None,
@@ -893,8 +902,9 @@ async fn external_stream_loop_handles_multiple_tool_calls_without_iteration_cap(
             agent_path: AgentPath::try_from("/root/external").expect("agent path"),
             provider: SpawnAgentProvider::ClaudeCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("inspect agents".to_string()),
             abort_handle: None,
@@ -909,9 +919,11 @@ async fn external_stream_loop_handles_multiple_tool_calls_without_iteration_cap(
                 }),
             )
         })
-        .chain(std::iter::once(crate::agent::external::ExternalProcessEvent::Cli(
-            crate::agent::external::ExternalCliEvent::Message("finished".to_string()),
-        )))
+        .chain(std::iter::once(
+            crate::agent::external::ExternalProcessEvent::Cli(
+                crate::agent::external::ExternalCliEvent::Message("finished".to_string()),
+            ),
+        ))
         .collect::<Vec<_>>();
     let mut stream = FakeExternalStream::new(events);
     let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -950,8 +962,9 @@ async fn external_stream_loop_writes_malformed_tool_error_and_finishes() {
             agent_path: AgentPath::try_from("/root/external").expect("agent path"),
             provider: SpawnAgentProvider::ClaudeCli,
             depth: 1,
-            spawn_config: Some(harness.config.clone()),
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("recover malformed call".to_string()),
             abort_handle: None,
@@ -980,7 +993,10 @@ async fn external_stream_loop_writes_malformed_tool_error_and_finishes() {
         )
         .await;
 
-    assert_eq!(status, AgentStatus::Completed(Some("recovered".to_string())));
+    assert_eq!(
+        status,
+        AgentStatus::Completed(Some("recovered".to_string()))
+    );
     let _initial = stream.next_input().await;
     let error = stream.next_input().await;
     assert_eq!(error.matches("\"id\":\"call_bad\"").count(), 1);
@@ -991,11 +1007,10 @@ async fn external_stream_loop_writes_malformed_tool_error_and_finishes() {
 async fn external_stream_loop_delivers_followup_input_to_same_process() {
     let harness = AgentControlHarness::new().await;
     let external_thread_id = ThreadId::new();
-    let mut stream = FakeExternalStream::new(vec![
-        crate::agent::external::ExternalProcessEvent::Cli(
+    let mut stream =
+        FakeExternalStream::new(vec![crate::agent::external::ExternalProcessEvent::Cli(
             crate::agent::external::ExternalCliEvent::Message("done".to_string()),
-        ),
-    ]);
+        )]);
     let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
     input_tx
         .send("follow up while running".to_string())
@@ -1038,6 +1053,192 @@ async fn external_stream_loop_returns_stdin_error() {
         .await;
 
     assert_eq!(status, AgentStatus::Errored("broken pipe".to_string()));
+}
+
+#[tokio::test]
+async fn external_completed_agent_is_listed_from_persisted_thread_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some("persist me".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path.clone(),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            last_task_message: Some("persist me".to_string()),
+            abort_handle: None,
+        });
+    let mut stream =
+        FakeExternalStream::new(vec![crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("persisted done".to_string()),
+        )]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            "persist me".to_string(),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+    assert_eq!(
+        status,
+        AgentStatus::Completed(Some("persisted done".to_string()))
+    );
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let agents = restarted_control
+        .list_agents(root_thread_id, &SessionSource::Exec, Some("external"))
+        .await
+        .expect("list persisted external agents");
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].agent_name, "/root/external");
+    assert_eq!(agents[0].agent_nickname.as_deref(), Some("worker"));
+    assert_eq!(agents[0].agent_role.as_deref(), Some("claude_cli"));
+    assert_eq!(
+        agents[0].lifecycle_status,
+        ThreadLifecycleStatus::completed(Some("persisted done".to_string()))
+    );
+
+    let stored = restarted_manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external thread");
+    let items = stored.history.expect("history").items;
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "persist me"
+    )));
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::AgentMessage(event)) if event.message == "persisted done"
+    )));
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::TurnComplete(event))
+            if event.last_agent_message.as_deref() == Some("persisted done")
+    )));
+}
+
+#[tokio::test]
+async fn external_running_agent_without_live_process_is_interrupted_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some("unfinished".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path.clone(),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            last_task_message: Some("unfinished".to_string()),
+            abort_handle: None,
+        });
+
+    harness
+        .control
+        .persist_external_terminal_status(external_thread_id, &AgentStatus::Running)
+        .await;
+    harness
+        .control
+        .persist_external_user_message(external_thread_id, "unfinished")
+        .await;
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let agents = restarted_control
+        .list_agents(root_thread_id, &SessionSource::Exec, Some("external"))
+        .await
+        .expect("list persisted external agents");
+    assert_eq!(agents.len(), 1);
+    assert_eq!(
+        agents[0].lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: protocol::protocol::ThreadLifecycleFinalStatus::Interrupted,
+        }
+    );
 }
 
 #[tokio::test]

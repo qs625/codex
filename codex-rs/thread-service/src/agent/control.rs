@@ -1,18 +1,19 @@
 use crate::agent::AgentStatus;
 use crate::agent::external::ExternalAgentRun;
-use crate::agent::external::ExternalAgentStream;
+use crate::agent::external::ExternalProcessEvent;
+use crate::agent::external::ExternalSessionTransport;
+use crate::agent::external::ExternalSpawnConfig;
+use crate::agent::external::ExternalStreamingSession;
 use crate::agent::external::ExternalToolCall;
 use crate::agent::external::ExternalToolName;
 use crate::agent::external::ExternalToolResult;
-use crate::agent::external::ExternalProcessEvent;
-use crate::agent::external::ExternalStreamingSession;
 use crate::agent::external::SharedExternalAgentRegistry;
 use crate::agent::external::bounded_external_output;
 use crate::agent::external::completion_communication;
-use crate::agent::external::external_command_spec;
+use crate::agent::external::external_agent_context_prompt;
 use crate::agent::external::external_live_agent;
 use crate::agent::external::external_metadata;
-use crate::agent::external::external_agent_context_prompt;
+use crate::agent::external::external_session_spec;
 use crate::agent::external::external_tool_result_input;
 use crate::agent::spawn_support::thread_spawn_source;
 use crate::runtime_shell_snapshot::ShellSnapshot;
@@ -23,6 +24,7 @@ use crate::thread::ThreadConfigSnapshot;
 use crate::thread::ThreadServiceState;
 use chrono::DateTime;
 use chrono::Utc;
+use codex_agent_roles::AgentRoleConfig;
 use codex_agent_roles::DEFAULT_ROLE_NAME;
 use codex_agent_roles::resolve_role_config;
 use codex_agent_runtime::AgentMetadata;
@@ -61,6 +63,7 @@ use codex_agent_runtime::thread_spawn_parent_thread_id;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use futures::future::BoxFuture;
 use protocol::AgentPath;
 use protocol::SessionId;
 use protocol::ThreadId;
@@ -68,15 +71,21 @@ use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
 #[cfg(test)]
 use protocol::models::ResponseItem;
+use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::ErrorEvent;
 use protocol::protocol::InitialHistory;
 use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::InterAgentOperation;
 use protocol::protocol::Op;
 use protocol::protocol::ResumedHistory;
+use protocol::protocol::RolloutItem;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
 use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadSource;
+use protocol::protocol::TurnCompleteEvent;
+use protocol::protocol::TurnStartedEvent;
+use protocol::protocol::UserMessageEvent;
 use serde::Deserialize;
 use serde_json::json;
 use state_api::DirectionalThreadSpawnEdgeStatus;
@@ -93,8 +102,9 @@ use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::LiveThreadStatusRuntime;
 use thread_store_api::ReadThreadParams;
-use tokio::sync::watch;
+use thread_store_api::SharedLiveThread;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tool_service_api::FunctionCallError;
 use tracing::warn;
 
@@ -157,6 +167,15 @@ struct ExternalCloseAgentArgs {
     target: String,
 }
 
+struct ExternalToolContext {
+    thread_id: ThreadId,
+    parent_thread_id: ThreadId,
+    agent_path: AgentPath,
+    provider: SpawnAgentProvider,
+    depth: i32,
+    spawn_config: Option<ExternalSpawnConfig>,
+}
+
 fn parse_external_arguments<T>(arguments: &serde_json::Value) -> Result<T, FunctionCallError>
 where
     T: for<'de> Deserialize<'de>,
@@ -166,13 +185,29 @@ where
     })
 }
 
-fn external_session_source(run: &ExternalAgentRun) -> SessionSource {
-    SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+fn external_tool_context(run: &ExternalAgentRun) -> ExternalToolContext {
+    ExternalToolContext {
+        thread_id: run.thread_id,
         parent_thread_id: run.parent_thread_id,
+        agent_path: run.agent_path.clone(),
+        provider: run.provider,
         depth: run.depth,
-        agent_path: Some(run.agent_path.clone()),
-        agent_nickname: Some(provider_label(run.provider).to_string()),
-        agent_role: Some(provider_label(run.provider).to_string()),
+        spawn_config: run.spawn_config.clone(),
+    }
+}
+
+fn external_session_source_for(
+    parent_thread_id: ThreadId,
+    depth: i32,
+    agent_path: AgentPath,
+    provider: SpawnAgentProvider,
+) -> SessionSource {
+    SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id,
+        depth,
+        agent_path: Some(agent_path),
+        agent_nickname: Some(provider_label(provider).to_string()),
+        agent_role: Some(provider_label(provider).to_string()),
     })
 }
 
@@ -244,6 +279,7 @@ impl AgentControl {
         session_source: SessionSource,
         options: SpawnAgentOptions,
     ) -> CodexResult<LiveAgent> {
+        let config = ExternalSpawnConfig::from_config(&config);
         self.spawn_external_agent_with_metadata_sync(
             config,
             provider,
@@ -251,77 +287,113 @@ impl AgentControl {
             session_source,
             options,
         )
+        .await
     }
 
     fn spawn_external_agent_with_metadata_sync(
         &self,
-        config: config_service::Config,
+        config: ExternalSpawnConfig,
         provider: SpawnAgentProvider,
         message: String,
         session_source: SessionSource,
         options: SpawnAgentOptions,
-    ) -> CodexResult<LiveAgent> {
-        external_command_spec(provider, config.cwd.as_path())
-            .map_err(CodexErr::UnsupportedOperation)?;
-        let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-            parent_thread_id,
-            depth,
-            agent_path,
-            agent_role,
-            ..
-        }) = session_source
-        else {
-            return Err(CodexErr::UnsupportedOperation(
-                "external agents must be spawned as thread-spawn subagents".to_string(),
-            ));
-        };
-
-        let mut reservation = self.state.reserve_spawn_slot(config.agent_max_threads)?;
-        let (_session_source, mut agent_metadata) = self.prepare_thread_spawn(
-            &mut reservation,
-            &config,
-            parent_thread_id,
-            depth,
-            agent_path,
-            agent_role,
-            options.agent_mode,
-            None,
-        )?;
-        let thread_id = ThreadId::new();
-        let agent_path = agent_metadata.agent_path.clone().ok_or_else(|| {
-            CodexErr::UnsupportedOperation("external agent is missing agent path".to_string())
-        })?;
-        let (input_tx, input_rx) = mpsc::unbounded_channel();
-        agent_metadata.agent_id = Some(thread_id);
-        agent_metadata.last_task_message = Some(message.clone());
-        reservation.commit(agent_metadata);
-
-        let run = ExternalAgentRun {
-            thread_id,
-            parent_thread_id,
-            agent_path,
-            provider,
-            depth,
-            spawn_config: Some(config.clone()),
-            input_sink: Some(crate::agent::external::ExternalInputSink::new(input_tx)),
-            status: AgentStatus::Running,
-            last_task_message: Some(message.clone()),
-            abort_handle: None,
-        };
-        self.external_agents.insert_running(run.clone());
-
+    ) -> BoxFuture<'static, CodexResult<LiveAgent>> {
         let control = self.clone();
-        let cwd = config.cwd.as_path().to_path_buf();
-        let handle = tokio::spawn(async move {
-            let status = control
-                .run_external_agent_loop(thread_id, provider, cwd, message, input_rx)
-                .await;
-            control.complete_external_agent(thread_id, status).await;
-        });
-        self.external_agents
-            .attach_abort_handle(thread_id, handle.abort_handle());
+        Box::pin(async move {
+            external_session_spec(provider, config.cwd.as_path())
+                .map_err(CodexErr::UnsupportedOperation)?;
+            let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth,
+                agent_path,
+                agent_role: _,
+                ..
+            }) = session_source
+            else {
+                return Err(CodexErr::UnsupportedOperation(
+                    "external agents must be spawned as thread-spawn subagents".to_string(),
+                ));
+            };
 
-        Ok(external_live_agent(&run))
+            let (session_source, agent_metadata, thread_id, agent_path) = {
+                let mut reservation = control.state.reserve_spawn_slot(config.agent_max_threads)?;
+                let (session_source, mut agent_metadata) = control
+                    .prepare_thread_spawn_with_roles(
+                        &mut reservation,
+                        &config.agent_roles,
+                        parent_thread_id,
+                        depth,
+                        agent_path,
+                        Some(provider_label(provider).to_string()),
+                        options.agent_mode,
+                        None,
+                    )?;
+                let thread_id = ThreadId::new();
+                let agent_path = agent_metadata.agent_path.clone().ok_or_else(|| {
+                    CodexErr::UnsupportedOperation(
+                        "external agent is missing agent path".to_string(),
+                    )
+                })?;
+                agent_metadata.agent_id = Some(thread_id);
+                agent_metadata.last_task_message = Some(message.clone());
+                reservation.commit(agent_metadata.clone());
+                (session_source, agent_metadata, thread_id, agent_path)
+            };
+            let (input_tx, input_rx) = mpsc::unbounded_channel();
+            let live_thread = match control
+                .create_external_thread_persistence(
+                    &config,
+                    thread_id,
+                    session_source.clone(),
+                    &agent_metadata,
+                )
+                .await
+            {
+                Ok(live_thread) => live_thread,
+                Err(err) => {
+                    control.state.release_spawned_thread(thread_id);
+                    return Err(err);
+                }
+            };
+            control
+                .persist_thread_spawn_edge_for_source(thread_id, Some(&session_source))
+                .await;
+
+            let run = ExternalAgentRun {
+                thread_id,
+                parent_thread_id,
+                agent_path,
+                provider,
+                depth,
+                spawn_config: Some(config.clone()),
+                input_sink: Some(crate::agent::external::ExternalInputSink::new(input_tx)),
+                live_thread: Some(live_thread),
+                status: AgentStatus::Running,
+                last_task_message: Some(message.clone()),
+                abort_handle: None,
+            };
+            let live_agent = external_live_agent(&run);
+            control.external_agents.insert_running(run);
+            if let Ok(state) = control.upgrade() {
+                state.notify_thread_started(thread_id);
+            }
+
+            let task_control = control.clone();
+            let cwd = config.cwd.as_path().to_path_buf();
+            let handle = tokio::spawn(async move {
+                let status = task_control
+                    .run_external_agent_loop(thread_id, provider, cwd, message, input_rx)
+                    .await;
+                task_control
+                    .complete_external_agent(thread_id, status)
+                    .await;
+            });
+            control
+                .external_agents
+                .attach_abort_handle(thread_id, handle.abort_handle());
+
+            Ok(live_agent)
+        })
     }
 
     async fn run_external_agent_loop(
@@ -334,7 +406,15 @@ impl AgentControl {
     ) -> AgentStatus {
         let mut stream = match ExternalStreamingSession::start(provider, cwd).await {
             Ok(stream) => stream,
-            Err(message) => return AgentStatus::Errored(message),
+            Err(message) => {
+                self.persist_external_error(thread_id, &message).await;
+                self.persist_external_terminal_status(
+                    thread_id,
+                    &AgentStatus::Errored(message.clone()),
+                )
+                .await;
+                return AgentStatus::Errored(message);
+            }
         };
         self.run_external_agent_stream_loop(thread_id, message, input_rx, &mut stream)
             .await
@@ -348,10 +428,16 @@ impl AgentControl {
         stream: &mut S,
     ) -> AgentStatus
     where
-        S: ExternalAgentStream + ?Sized,
+        S: ExternalSessionTransport + ?Sized,
     {
         let provider_input = stream.input_sink();
-        if let Err(err) = provider_input.send(external_agent_context_prompt(&message)) {
+        let initial_input = external_agent_context_prompt(&message);
+        self.persist_external_terminal_status(thread_id, &AgentStatus::Running)
+            .await;
+        self.persist_external_user_message(thread_id, &message)
+            .await;
+        if let Err(err) = provider_input.send(initial_input) {
+            self.persist_external_error(thread_id, &err).await;
             return AgentStatus::Errored(err);
         }
         let mut input_rx = Some(input_rx);
@@ -367,7 +453,9 @@ impl AgentControl {
                 } => {
                     match input {
                         Some(input) => {
+                            self.persist_external_user_message(thread_id, &input).await;
                             if let Err(err) = provider_input.send(input) {
+                                self.persist_external_error(thread_id, &err).await;
                                 return AgentStatus::Errored(err);
                             }
                         }
@@ -379,19 +467,33 @@ impl AgentControl {
                 event = stream.next_event() => {
                     match event {
                         Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::ToolCall(call))) => {
+                            self.persist_external_agent_message(
+                                thread_id,
+                                &serde_json::to_string(&call).unwrap_or_else(|_| "external_tool_call".to_string()),
+                            ).await;
                             let result = self.dispatch_external_tool_call(thread_id, call).await;
-                            if let Err(err) = provider_input.send(external_tool_result_input(&result)) {
+                            let result_input = external_tool_result_input(&result);
+                            self.persist_external_user_message(thread_id, &result_input).await;
+                            if let Err(err) = provider_input.send(result_input) {
+                                self.persist_external_error(thread_id, &err).await;
                                 return AgentStatus::Errored(err);
                             }
                         }
                         Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::ToolCallError(result))) => {
-                            if let Err(err) = provider_input.send(external_tool_result_input(&result)) {
+                            let result_input = external_tool_result_input(&result);
+                            self.persist_external_user_message(thread_id, &result_input).await;
+                            if let Err(err) = provider_input.send(result_input) {
+                                self.persist_external_error(thread_id, &err).await;
                                 return AgentStatus::Errored(err);
                             }
                         }
                         Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Message(text)))
                         | Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Completion(text))) => {
-                            return AgentStatus::Completed(Some(bounded_external_output(&text)));
+                            let output = bounded_external_output(&text);
+                            let status = AgentStatus::Completed(Some(output.clone()));
+                            self.persist_external_agent_message(thread_id, &output).await;
+                            self.persist_external_terminal_status(thread_id, &status).await;
+                            return status;
                         }
                         Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Status(text))) => {
                             if !text.trim().is_empty() {
@@ -399,22 +501,156 @@ impl AgentControl {
                             }
                         }
                         Ok(ExternalProcessEvent::StdinError(error)) => {
+                            self.persist_external_error(thread_id, &error).await;
+                            self.persist_external_terminal_status(thread_id, &AgentStatus::Errored(error.clone())).await;
                             return AgentStatus::Errored(error);
                         }
                         Ok(ExternalProcessEvent::ProcessExited { success, status }) => {
                             if success {
-                                return AgentStatus::Completed(last_status);
+                                let status = AgentStatus::Completed(last_status);
+                                self.persist_external_terminal_status(thread_id, &status).await;
+                                return status;
                             }
-                            return AgentStatus::Errored(
-                                last_status.unwrap_or_else(|| {
+                            let error = last_status.unwrap_or_else(|| {
                                     format!("external provider exited with status {status}")
-                                })
-                            );
+                                });
+                            self.persist_external_error(thread_id, &error).await;
+                            self.persist_external_terminal_status(thread_id, &AgentStatus::Errored(error.clone())).await;
+                            return AgentStatus::Errored(error);
                         }
-                        Err(err) => return AgentStatus::Errored(err),
+                        Err(err) => {
+                            self.persist_external_error(thread_id, &err).await;
+                            self.persist_external_terminal_status(thread_id, &AgentStatus::Errored(err.clone())).await;
+                            return AgentStatus::Errored(err);
+                        }
                     }
                 }
             }
+        }
+    }
+
+    async fn create_external_thread_persistence(
+        &self,
+        config: &ExternalSpawnConfig,
+        thread_id: ThreadId,
+        session_source: SessionSource,
+        agent_metadata: &AgentMetadata,
+    ) -> CodexResult<SharedLiveThread> {
+        let state = self.upgrade()?;
+        state
+            .create_external_thread_persistence(
+                &config.cwd,
+                config.model_provider_id.clone(),
+                config.generate_memories,
+                thread_id,
+                session_source,
+                agent_metadata.clone(),
+            )
+            .await
+    }
+
+    async fn external_live_thread(&self, thread_id: ThreadId) -> Option<SharedLiveThread> {
+        self.external_agents
+            .get(thread_id)
+            .and_then(|run| run.live_thread)
+    }
+
+    async fn persist_external_items(&self, thread_id: ThreadId, items: Vec<RolloutItem>) {
+        let Some(live_thread) = self.external_live_thread(thread_id).await else {
+            return;
+        };
+        if let Err(err) = live_thread.append_items(&items).await {
+            warn!("failed to persist external thread items for {thread_id}: {err}");
+            return;
+        }
+        if let Err(err) = live_thread.flush().await {
+            warn!("failed to flush external thread items for {thread_id}: {err}");
+        }
+    }
+
+    async fn persist_external_user_message(&self, thread_id: ThreadId, message: &str) {
+        self.persist_external_items(
+            thread_id,
+            vec![RolloutItem::EventMsg(
+                protocol::protocol::EventMsg::UserMessage(UserMessageEvent {
+                    message: bounded_external_output(message),
+                    images: None,
+                    local_images: Vec::new(),
+                    skills: Vec::new(),
+                    text_elements: Vec::new(),
+                }),
+            )],
+        )
+        .await;
+    }
+
+    async fn persist_external_agent_message(&self, thread_id: ThreadId, message: &str) {
+        self.persist_external_items(
+            thread_id,
+            vec![RolloutItem::EventMsg(
+                protocol::protocol::EventMsg::AgentMessage(AgentMessageEvent {
+                    message: bounded_external_output(message),
+                    phase: None,
+                    memory_citation: None,
+                }),
+            )],
+        )
+        .await;
+    }
+
+    async fn persist_external_error(&self, thread_id: ThreadId, message: &str) {
+        self.persist_external_items(
+            thread_id,
+            vec![RolloutItem::EventMsg(protocol::protocol::EventMsg::Error(
+                ErrorEvent {
+                    message: bounded_external_output(message),
+                    codex_error_info: None,
+                },
+            ))],
+        )
+        .await;
+    }
+
+    async fn persist_external_terminal_status(&self, thread_id: ThreadId, status: &AgentStatus) {
+        let event = match status {
+            AgentStatus::Completed(last_agent_message) => {
+                protocol::protocol::EventMsg::TurnComplete(TurnCompleteEvent {
+                    turn_id: uuid::Uuid::new_v4().to_string(),
+                    last_agent_message: last_agent_message.clone(),
+                    completed_at: Some(Utc::now().timestamp()),
+                    duration_ms: None,
+                    time_to_first_token_ms: None,
+                })
+            }
+            AgentStatus::Errored(message) => protocol::protocol::EventMsg::Error(ErrorEvent {
+                message: bounded_external_output(message),
+                codex_error_info: None,
+            }),
+            AgentStatus::Shutdown => protocol::protocol::EventMsg::ShutdownComplete,
+            AgentStatus::Interrupted => {
+                protocol::protocol::EventMsg::TurnAborted(protocol::protocol::TurnAbortedEvent {
+                    turn_id: Some(uuid::Uuid::new_v4().to_string()),
+                    reason: protocol::protocol::TurnAbortReason::Interrupted,
+                    completed_at: Some(Utc::now().timestamp()),
+                    duration_ms: None,
+                })
+            }
+            AgentStatus::PendingInit | AgentStatus::Running | AgentStatus::NotFound => {
+                protocol::protocol::EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: uuid::Uuid::new_v4().to_string(),
+                    started_at: Some(Utc::now().timestamp()),
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })
+            }
+        };
+        self.persist_external_items(thread_id, vec![RolloutItem::EventMsg(event)])
+            .await;
+        if is_final(status)
+            && let Some(live_thread) = self.external_live_thread(thread_id).await
+            && let Err(err) = live_thread.shutdown().await
+        {
+            warn!("failed to shutdown external thread persistence for {thread_id}: {err}");
         }
     }
 
@@ -995,7 +1231,20 @@ impl AgentControl {
     /// agent and any live descendants reached from the in-memory tree.
     pub(crate) async fn close_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         if self.external_agents.get(agent_id).is_some() {
+            if let Ok(state) = self.upgrade()
+                && let Some(state_db_ctx) = state.thread_state_runtime()
+                && let Err(err) = state_db_ctx
+                    .set_thread_spawn_edge_status(
+                        agent_id,
+                        DirectionalThreadSpawnEdgeStatus::Closed,
+                    )
+                    .await
+            {
+                warn!("failed to persist external thread-spawn edge status for {agent_id}: {err}");
+            }
             self.external_agents.shutdown(agent_id);
+            self.persist_external_terminal_status(agent_id, &AgentStatus::Shutdown)
+                .await;
             self.state.release_spawned_thread(agent_id);
             return Ok(agent_id.to_string());
         }
@@ -1071,17 +1320,17 @@ impl AgentControl {
         sender_thread_id: ThreadId,
         call: ExternalToolCall,
     ) -> ExternalToolResult {
-        let Some(sender_run) = self.external_agents.get(sender_thread_id) else {
-            return ExternalToolResult::error(
-                call.id,
-                "agent_not_found",
-                "external sender is not registered",
-            );
+        let sender = {
+            let Some(sender_run) = self.external_agents.get(sender_thread_id) else {
+                return ExternalToolResult::error(
+                    call.id,
+                    "agent_not_found",
+                    "external sender is not registered",
+                );
+            };
+            external_tool_context(&sender_run)
         };
-        match self
-            .dispatch_external_tool_call_inner(&sender_run, &call)
-            .await
-        {
+        match self.dispatch_external_tool_call_inner(sender, &call).await {
             Ok(result) => ExternalToolResult::ok(call.id, result),
             Err(err) => ExternalToolResult::error(call.id, "tool_error", err.to_string()),
         }
@@ -1089,15 +1338,20 @@ impl AgentControl {
 
     async fn dispatch_external_tool_call_inner(
         &self,
-        sender_run: &ExternalAgentRun,
+        sender: ExternalToolContext,
         call: &ExternalToolCall,
     ) -> Result<serde_json::Value, FunctionCallError> {
         match call.tool {
             ExternalToolName::ListExternalAgents => {
                 let args: ExternalListAgentsArgs = parse_external_arguments(&call.arguments)?;
-                let source = external_session_source(sender_run);
+                let source = external_session_source_for(
+                    sender.parent_thread_id,
+                    sender.depth,
+                    sender.agent_path.clone(),
+                    sender.provider,
+                );
                 let agents = self
-                    .list_agents(sender_run.thread_id, &source, args.path_prefix.as_deref())
+                    .list_agents(sender.thread_id, &source, args.path_prefix.as_deref())
                     .await
                     .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
                 serde_json::to_value(codex_agent_runtime::ListAgentsToolResult { agents })
@@ -1106,7 +1360,7 @@ impl AgentControl {
             ExternalToolName::FollowupExternalTask => {
                 let args: ExternalFollowupTaskArgs = parse_external_arguments(&call.arguments)?;
                 let receiver_thread_id =
-                    self.resolve_external_target(sender_run, &args.target).await?;
+                    self.resolve_external_target(&sender.agent_path, &args.target)?;
                 let receiver_agent = self
                     .state
                     .agent_metadata_for_thread(receiver_thread_id)
@@ -1122,13 +1376,13 @@ impl AgentControl {
                     )
                 })?;
                 let communication = InterAgentCommunication::new(
-                    sender_run.agent_path.clone(),
+                    sender.agent_path.clone(),
                     receiver_agent_path,
                     Vec::new(),
                     args.message,
                     InterAgentOperation::FollowupTask,
                 )
-                .with_thread_ids(sender_run.thread_id, receiver_thread_id)
+                .with_thread_ids(sender.thread_id, receiver_thread_id)
                 .with_trigger_turn(true);
                 self.send_inter_agent_communication(receiver_thread_id, communication)
                     .await
@@ -1139,20 +1393,25 @@ impl AgentControl {
                 let args: ExternalSpawnAgentArgs = parse_external_arguments(&call.arguments)?;
                 if matches!(args.provider, SpawnAgentProvider::Native) {
                     return Err(FunctionCallError::RespondToModel(
-                        "spawn_external_agent currently requires claude_cli provider for persistent streaming"
+                        "spawn_external_agent currently requires claude_cli provider; codex_cli and opencode server/session adapters are not implemented yet"
                             .to_string(),
                     ));
                 }
-                let mut config = sender_run.spawn_config.clone().ok_or_else(|| {
+                let mut config = sender.spawn_config.clone().ok_or_else(|| {
                     FunctionCallError::RespondToModel(
                         "external sender cannot spawn children without spawn config".to_string(),
                     )
                 })?;
                 config.cwd = args.cwd;
-                let child_depth = sender_run.depth.saturating_add(1);
+                let child_depth = sender.depth.saturating_add(1);
                 let spawn_source = thread_spawn_source(
-                    sender_run.thread_id,
-                    &external_session_source(sender_run),
+                    sender.thread_id,
+                    &external_session_source_for(
+                        sender.parent_thread_id,
+                        sender.depth,
+                        sender.agent_path.clone(),
+                        sender.provider,
+                    ),
                     child_depth,
                     None,
                     Some(args.task_name),
@@ -1171,6 +1430,7 @@ impl AgentControl {
                             agent_mode: AgentMode::default(),
                         },
                     )
+                    .await
                     .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
                 Ok(json!({
                     "task_name": spawned
@@ -1184,7 +1444,7 @@ impl AgentControl {
             }
             ExternalToolName::CloseExternalAgent => {
                 let args: ExternalCloseAgentArgs = parse_external_arguments(&call.arguments)?;
-                let target = self.resolve_external_target(sender_run, &args.target).await?;
+                let target = self.resolve_external_target(&sender.agent_path, &args.target)?;
                 let previous_status = self.get_status(target).await;
                 self.close_agent(target)
                     .await
@@ -1198,12 +1458,12 @@ impl AgentControl {
         }
     }
 
-    async fn resolve_external_target(
+    fn resolve_external_target(
         &self,
-        sender_run: &ExternalAgentRun,
+        sender_agent_path: &AgentPath,
         target: &str,
     ) -> Result<ThreadId, FunctionCallError> {
-        let agent_path = resolve_agent_reference_path(&sender_run.agent_path, target)
+        let agent_path = resolve_agent_reference_path(sender_agent_path, target)
             .map_err(FunctionCallError::RespondToModel)?;
         if let Some(thread_id) = self.state.agent_id_for_path(&agent_path) {
             return Ok(thread_id);
@@ -1740,21 +2000,25 @@ impl AgentControl {
         } else {
             None
         };
-        registered_agents.extend(
-            self.external_agents
-                .list()
-                .into_iter()
-                .filter(|run| {
-                    scoped_thread_ids
-                        .as_ref()
-                        .is_none_or(|thread_ids| thread_ids.contains(&run.parent_thread_id))
-                })
-                .filter(|run| {
-                    registered_thread_ids.insert(run.thread_id)
-                        && registered_agent_paths.insert(run.agent_path.to_string())
-                })
-                .map(|run| external_metadata(&run)),
-        );
+        for run in self.external_agents.list().into_iter().filter(|run| {
+            scoped_thread_ids
+                .as_ref()
+                .is_none_or(|thread_ids| thread_ids.contains(&run.parent_thread_id))
+        }) {
+            let metadata = external_metadata(&run);
+            if let Some(existing) = registered_agents
+                .iter_mut()
+                .find(|candidate| candidate.agent_id == Some(run.thread_id))
+            {
+                *existing = metadata;
+                continue;
+            }
+            if registered_thread_ids.insert(run.thread_id)
+                && registered_agent_paths.insert(run.agent_path.to_string())
+            {
+                registered_agents.push(metadata);
+            }
+        }
         let plan = list_agents_plan(&current_agent_path, path_prefix, registered_agents)
             .map_err(CodexErr::UnsupportedOperation)?;
 
@@ -1945,12 +2209,16 @@ impl AgentControl {
             })
             .await
             .ok()?;
+        let is_external_agent = is_persisted_external_agent(&stored_thread);
         let history = stored_thread.history?;
         let mut status = history.items.iter().filter_map(|item| match item {
             protocol::protocol::RolloutItem::EventMsg(event) => agent_status_from_event(event),
             _ => None,
         });
-        status.next_back().filter(is_final)
+        status
+            .next_back()
+            .filter(is_final)
+            .or_else(|| is_external_agent.then_some(AgentStatus::Interrupted))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1958,6 +2226,30 @@ impl AgentControl {
         &self,
         reservation: &mut SpawnReservation,
         config: &config_service::Config,
+        parent_thread_id: ThreadId,
+        depth: i32,
+        agent_path: Option<AgentPath>,
+        agent_role: Option<String>,
+        agent_mode: AgentMode,
+        preferred_agent_nickname: Option<String>,
+    ) -> CodexResult<(SessionSource, AgentMetadata)> {
+        self.prepare_thread_spawn_with_roles(
+            reservation,
+            &config.agent_roles,
+            parent_thread_id,
+            depth,
+            agent_path,
+            agent_role,
+            agent_mode,
+            preferred_agent_nickname,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_thread_spawn_with_roles(
+        &self,
+        reservation: &mut SpawnReservation,
+        agent_roles: &std::collections::BTreeMap<String, AgentRoleConfig>,
         parent_thread_id: ThreadId,
         depth: i32,
         agent_path: Option<AgentPath>,
@@ -1975,7 +2267,7 @@ impl AgentControl {
             self.state.register_root_thread(parent_thread_id);
         }
         let role_name = agent_role.as_deref().unwrap_or(DEFAULT_ROLE_NAME);
-        let configured_candidates = resolve_role_config(&config.agent_roles, role_name)
+        let configured_candidates = resolve_role_config(agent_roles, role_name)
             .and_then(|role| role.nickname_candidates.as_deref());
         prepare_thread_spawn_plan(
             reservation,
@@ -2243,6 +2535,18 @@ fn persisted_agent_metadata_from_state_metadata(
         agent_role: metadata.agent_role.clone(),
         ..Default::default()
     })
+}
+
+fn is_persisted_external_agent(thread: &thread_store_api::StoredThread) -> bool {
+    let is_external_label = |label: &str| matches!(label, "codex_cli" | "claude_cli" | "opencode");
+    matches!(
+        &thread.source,
+        SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. })
+    ) && thread
+        .agent_role
+        .as_deref()
+        .or(thread.agent_nickname.as_deref())
+        .is_some_and(is_external_label)
 }
 
 #[cfg(test)]

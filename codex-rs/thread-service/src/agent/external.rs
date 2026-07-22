@@ -1,12 +1,15 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use codex_agent_roles::AgentRoleConfig;
 use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::LiveAgent;
 use codex_agent_runtime::SpawnAgentProvider;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use config_service::Config;
 use futures::future::BoxFuture;
 use protocol::AgentPath;
@@ -17,6 +20,7 @@ use protocol::protocol::InterAgentOperation;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use thread_store_api::SharedLiveThread;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
@@ -32,18 +36,40 @@ const MAX_EXTERNAL_OUTPUT_CHARS: usize = 12_000;
 const MAX_EXTERNAL_ERROR_CHARS: usize = 4_000;
 const MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS: usize = 8_000;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct ExternalAgentRun {
     pub(crate) thread_id: ThreadId,
     pub(crate) parent_thread_id: ThreadId,
     pub(crate) agent_path: AgentPath,
     pub(crate) provider: SpawnAgentProvider,
     pub(crate) depth: i32,
-    pub(crate) spawn_config: Option<Config>,
+    pub(crate) spawn_config: Option<ExternalSpawnConfig>,
     pub(crate) input_sink: Option<ExternalInputSink>,
+    pub(crate) live_thread: Option<SharedLiveThread>,
     pub(crate) status: AgentStatus,
     pub(crate) last_task_message: Option<String>,
     pub(crate) abort_handle: Option<AbortHandle>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExternalSpawnConfig {
+    pub(crate) cwd: AbsolutePathBuf,
+    pub(crate) agent_max_threads: Option<usize>,
+    pub(crate) agent_roles: BTreeMap<String, AgentRoleConfig>,
+    pub(crate) model_provider_id: String,
+    pub(crate) generate_memories: bool,
+}
+
+impl ExternalSpawnConfig {
+    pub(crate) fn from_config(config: &Config) -> Self {
+        Self {
+            cwd: config.cwd.clone(),
+            agent_max_threads: config.agent_max_threads,
+            agent_roles: config.agent_roles.clone(),
+            model_provider_id: config.model_provider_id.clone(),
+            generate_memories: config.memories.generate_memories,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -226,14 +252,15 @@ impl ExternalToolResult {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ExternalCommandSpec {
+pub(crate) struct ExternalSessionSpec {
     pub(crate) program: &'static str,
     pub(crate) args: Vec<String>,
-    pub(crate) transport: ExternalProviderTransport,
+    pub(crate) transport: ExternalProviderSessionTransport,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ExternalProviderTransport {
+pub(crate) enum ExternalProviderSessionTransport {
+    /// Claude's stream-json CLI keeps the provider session open on stdin/stdout.
     ClaudeStreamJson,
 }
 
@@ -261,22 +288,22 @@ impl ExternalInputSink {
     }
 }
 
-pub(crate) trait ExternalAgentStream: Send {
+pub(crate) trait ExternalSessionTransport: Send {
     fn input_sink(&self) -> ExternalInputSink;
     fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<ExternalProcessEvent, String>>;
 }
 
-pub(crate) fn external_command_spec(
+pub(crate) fn external_session_spec(
     provider: SpawnAgentProvider,
     _cwd: &Path,
-) -> Result<ExternalCommandSpec, String> {
+) -> Result<ExternalSessionSpec, String> {
     match provider {
         SpawnAgentProvider::Native => Err("native is not an external CLI provider".to_string()),
         SpawnAgentProvider::CodexCli => Err(
-            "codex_cli does not expose a persistent stdin/stdout continuation protocol; codex exec is non-interactive and cannot receive external_tool_result in the same running process"
+            "codex_cli exposes app-server/session transports, but the external-provider adapter has not implemented app-server JSON-RPC session creation, turn streaming, and resume-bound external_tool_result delivery yet; codex exec remains non-interactive and must not be used as a substitute"
                 .to_string(),
         ),
-        SpawnAgentProvider::ClaudeCli => Ok(ExternalCommandSpec {
+        SpawnAgentProvider::ClaudeCli => Ok(ExternalSessionSpec {
             program: "claude",
             args: vec![
                 "-p".to_string(),
@@ -286,10 +313,10 @@ pub(crate) fn external_command_spec(
                 "stream-json".to_string(),
                 "--verbose".to_string(),
             ],
-            transport: ExternalProviderTransport::ClaudeStreamJson,
+            transport: ExternalProviderSessionTransport::ClaudeStreamJson,
         }),
         SpawnAgentProvider::Opencode => Err(
-            "opencode exposes ACP/server transports, not the external JSON stdin/stdout tool-result protocol implemented here; opencode support requires a dedicated ACP adapter"
+            "opencode exposes HTTP OpenAPI and ACP JSON-RPC session transports, but the external-provider adapter has not implemented session/new, session/prompt, session/resume/load, and event translation yet"
                 .to_string(),
         ),
     }
@@ -302,7 +329,7 @@ pub(crate) fn external_agent_context_prompt(message: &str) -> String {
 Use only this external-agent JSON protocol to collaborate with other agents. Do not call internal my-codex tools such as spawn_agent, followup_task, list_agents, poll_event, or close_agent.
 
 Available external tools:
-- spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli", "cwd": string, "message": string }}. Current persistent streaming support is limited to claude_cli; codex_cli and opencode return unsupported capability errors.
+- spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli", "cwd": string, "message": string }}. Current external session transport support is limited to claude_cli; codex_cli and opencode have server/session transports but require dedicated adapters before they can be exposed.
 - followup_external_task: arguments {{ "target": string, "message": string }}
 - list_external_agents: arguments {{ "path_prefix"?: string }}
 - poll_external_event: currently unsupported for non-interactive CLI sessions; calling it returns an unsupported error.
@@ -334,7 +361,7 @@ pub(crate) struct ExternalStreamingSession {
     writer_errors_open: bool,
 }
 
-impl ExternalAgentStream for ExternalStreamingSession {
+impl ExternalSessionTransport for ExternalStreamingSession {
     fn input_sink(&self) -> ExternalInputSink {
         self.input_sink.clone()
     }
@@ -345,11 +372,8 @@ impl ExternalAgentStream for ExternalStreamingSession {
 }
 
 impl ExternalStreamingSession {
-    pub(crate) async fn start(
-        provider: SpawnAgentProvider,
-        cwd: PathBuf,
-    ) -> Result<Self, String> {
-        let command = external_command_spec(provider, cwd.as_path())?;
+    pub(crate) async fn start(provider: SpawnAgentProvider, cwd: PathBuf) -> Result<Self, String> {
+        let command = external_session_spec(provider, cwd.as_path())?;
         let transport = command.transport;
         let mut child = Command::new(command.program)
             .args(command.args)
@@ -466,7 +490,7 @@ impl ExternalStreamingSession {
 }
 
 async fn write_external_provider_input(
-    transport: ExternalProviderTransport,
+    transport: ExternalProviderSessionTransport,
     mut stdin: ChildStdin,
     mut input_rx: mpsc::UnboundedReceiver<String>,
     writer_error_tx: mpsc::UnboundedSender<String>,
@@ -489,11 +513,11 @@ async fn write_external_provider_input(
 }
 
 pub(crate) fn provider_input_line(
-    transport: ExternalProviderTransport,
+    transport: ExternalProviderSessionTransport,
     content: &str,
 ) -> String {
     match transport {
-        ExternalProviderTransport::ClaudeStreamJson => serde_json::json!({
+        ExternalProviderSessionTransport::ClaudeStreamJson => serde_json::json!({
             "type": "user",
             "message": {
                 "role": "user",
@@ -911,11 +935,7 @@ mod tests {
         assert!(!result.ok);
         let error = result.error.as_ref().expect("error");
         assert_eq!(error.code, "invalid_tool_call");
-        assert!(
-            error
-                .message
-                .contains("failed to parse external tool call")
-        );
+        assert!(error.message.contains("failed to parse external tool call"));
         assert!(error.message.len() <= MAX_EXTERNAL_ERROR_CHARS + 3);
     }
 
@@ -970,6 +990,7 @@ mod tests {
             depth: 1,
             spawn_config: None,
             input_sink: None,
+            live_thread: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -990,17 +1011,21 @@ mod tests {
 
     #[test]
     fn codex_cli_is_unsupported_for_persistent_streaming() {
-        let err = external_command_spec(SpawnAgentProvider::CodexCli, Path::new("/tmp/work"))
-            .expect_err("codex persistent streaming is unsupported");
-        assert!(err.contains("persistent stdin/stdout continuation protocol"));
+        let err = external_session_spec(SpawnAgentProvider::CodexCli, Path::new("/tmp/work"))
+            .expect_err("codex session adapter is unsupported");
+        assert!(err.contains("app-server/session transports"));
+        assert!(err.contains("adapter has not implemented"));
     }
 
     #[test]
     fn builds_claude_stream_json_command() {
-        let spec = external_command_spec(SpawnAgentProvider::ClaudeCli, Path::new("/tmp/work"))
+        let spec = external_session_spec(SpawnAgentProvider::ClaudeCli, Path::new("/tmp/work"))
             .expect("claude command");
         assert_eq!(spec.program, "claude");
-        assert_eq!(spec.transport, ExternalProviderTransport::ClaudeStreamJson);
+        assert_eq!(
+            spec.transport,
+            ExternalProviderSessionTransport::ClaudeStreamJson
+        );
         assert!(spec.args.contains(&"-p".to_string()));
         assert!(spec.args.contains(&"--output-format".to_string()));
         assert!(spec.args.contains(&"stream-json".to_string()));
@@ -1010,7 +1035,7 @@ mod tests {
 
     #[test]
     fn builds_claude_stream_json_input_line() {
-        let line = provider_input_line(ExternalProviderTransport::ClaudeStreamJson, "hello");
+        let line = provider_input_line(ExternalProviderSessionTransport::ClaudeStreamJson, "hello");
         let value: serde_json::Value = serde_json::from_str(&line).expect("json line");
         assert_eq!(value["type"], "user");
         assert_eq!(value["message"]["role"], "user");
@@ -1019,8 +1044,9 @@ mod tests {
 
     #[test]
     fn opencode_requires_dedicated_acp_adapter() {
-        let err = external_command_spec(SpawnAgentProvider::Opencode, Path::new("/tmp/work"))
+        let err = external_session_spec(SpawnAgentProvider::Opencode, Path::new("/tmp/work"))
             .expect_err("opencode external json transport is unsupported");
-        assert!(err.contains("dedicated ACP adapter"));
+        assert!(err.contains("HTTP OpenAPI and ACP JSON-RPC session transports"));
+        assert!(err.contains("adapter has not implemented"));
     }
 }
