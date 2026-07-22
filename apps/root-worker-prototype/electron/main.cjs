@@ -24,6 +24,7 @@ const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const {
   buildChatCompatCwd,
   buildCreateThreadStartParams,
+  buildThreadListParams,
   buildSubscribeThreadResumeParams,
 } = require("./threadConfig.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
@@ -451,21 +452,10 @@ function handleStartupError(error) {
 }
 
 async function listThreads(cwd) {
-  const response = await appServerClient.request("thread/list", {
-    limit: 200,
-    sourceKinds: [
-      "appServer",
-      "cli",
-      "vscode",
-      "exec",
-      "subAgent",
-      "subAgentReview",
-      "subAgentCompact",
-      "subAgentThreadSpawn",
-      "subAgentOther",
-      "unknown",
-    ],
-  });
+  const response = await appServerClient.request(
+    "thread/list",
+    buildThreadListParams(),
+  );
   return response.data.map(normalizeThread);
 }
 
