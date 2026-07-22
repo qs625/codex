@@ -742,6 +742,61 @@ test("mergeThreadSnapshot drops equivalent init context from later snapshots", (
   assert.deepEqual(merged.turns, [nextTurn]);
 });
 
+test("mergeThreadSnapshot keeps one completed init context after first user turn", () => {
+  const initContextTurn: Turn = {
+    id: "turn-init",
+    items: [makeInitContextItem("ctx-start")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1000,
+  };
+  const userTurn: Turn = {
+    id: "turn-user",
+    items: [
+      makeInitContextItem("ctx-read"),
+      {
+        type: "userMessage",
+        id: "user-1",
+        content: [{ type: "text", text: "hello" }],
+      },
+    ],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 3,
+    completedAt: 4,
+    durationMs: 1000,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [initContextTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [userTurn],
+    },
+  );
+  const initContextEntries = buildConversationEntries(merged).filter(
+    (entry) => entry.toolName === "Init Context",
+  );
+
+  assert.equal(initContextEntries.length, 1);
+  assert.deepEqual(
+    merged.turns
+      .flatMap((turn) =>
+        turn.items
+          .filter((item) => item.type === "injectedContext")
+          .map(() => turn.status),
+      ),
+    ["completed"],
+  );
+});
+
 test("mergeThreadSnapshot preserves distinct non-init injected contexts", () => {
   const existingContext: ThreadItem = {
     type: "injectedContext",

@@ -13,7 +13,6 @@ mod start;
 mod support;
 
 pub(crate) use self::runtime::thread_processor_new_thread;
-pub(crate) use self::support::suppress_init_only_display_turns;
 pub(crate) use self::support::thread_from_stored_thread;
 use self::runtime::*;
 use self::support::*;

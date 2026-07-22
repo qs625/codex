@@ -58,7 +58,9 @@ async fn record_context_updates_and_set_reference_context_item_injects_full_cont
         .record_context_updates_and_set_reference_context_item(&turn_context)
         .await;
     let history = session.clone_history().await;
-    let initial_context = session.build_initial_context(&turn_context).await;
+    let initial_context = session
+        .build_initial_context_for_model_visible_tools(&turn_context)
+        .await;
     assert_eq!(history.raw_items().to_vec(), initial_context);
 
     let current_context = session.reference_context_item().await;
@@ -190,7 +192,11 @@ async fn record_context_updates_and_set_reference_context_item_reinjects_full_co
 
     let history = session.clone_history().await;
     let mut expected_history = vec![compacted_summary];
-    expected_history.extend(session.build_initial_context(&turn_context).await);
+    expected_history.extend(
+        session
+            .build_initial_context_for_model_visible_tools(&turn_context)
+            .await,
+    );
     assert_eq!(history.raw_items().to_vec(), expected_history);
 }
 

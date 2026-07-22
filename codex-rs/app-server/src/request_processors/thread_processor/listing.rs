@@ -255,7 +255,6 @@ impl ThreadRequestProcessor {
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
                 if include_turns && let Some(history) = history {
                     thread.turns = build_api_turns_from_rollout_items(&history.items);
-                    suppress_init_only_display_turns(&mut thread.turns);
                 }
                 Ok(Some(thread))
             }
@@ -423,7 +422,6 @@ impl ThreadRequestProcessor {
             has_live_running_thread,
             active_turn,
         );
-        suppress_init_only_display_turns(&mut turns);
         for turn in &mut turns {
             match items_view {
                 TurnItemsView::NotLoaded => {

@@ -275,6 +275,7 @@ impl ThreadRequestProcessor {
         listener_task_context: ListenerTaskContext,
         thread_runtime: Arc<dyn ThreadProcessorThreadRuntime>,
         live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+        thread_store: Arc<dyn ThreadStore>,
         config_manager: ConfigManager,
         request_id: ConnectionRequestId,
         app_server_client_name: Option<String>,
@@ -511,6 +512,20 @@ impl ThreadRequestProcessor {
                 .await,
             /*has_in_progress_turn*/ false,
         );
+        if !config_snapshot.ephemeral {
+            let history_items = read_thread_history_items(thread_store.as_ref(), thread_id)
+                .instrument(tracing::info_span!(
+                    "app_server.thread_start.read_initial_history",
+                    otel.name = "app_server.thread_start.read_initial_history",
+                ))
+                .await
+                .map_err(|err| {
+                    internal_error(format!(
+                        "failed to read initial thread history for thread id {thread_id}: {err}"
+                    ))
+                })?;
+            thread.turns = build_api_turns_from_rollout_items(&history_items);
+        }
 
         let sandbox = thread_response_sandbox_policy(
             &config_snapshot.permission_profile,
@@ -534,7 +549,7 @@ impl ThreadRequestProcessor {
             active_permission_profile,
             reasoning_effort: config_snapshot.reasoning_effort,
         };
-        let notif = thread_started_notification(thread.clone());
+        let notif = thread_started_notification_with_turns(thread.clone());
         listener_task_context
             .outgoing
             .send_response(request_id, response)

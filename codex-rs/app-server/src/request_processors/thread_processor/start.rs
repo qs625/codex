@@ -85,6 +85,7 @@ impl ThreadRequestProcessor {
         let config_manager = self.config_manager.clone();
         let thread_runtime = Arc::clone(&self.thread_runtime);
         let live_threads = Arc::clone(&self.live_threads);
+        let thread_store = Arc::clone(&self.thread_store);
         let outgoing = Arc::clone(&listener_task_context.outgoing);
         let error_request_id = request_id.clone();
         let thread_start_task = async move {
@@ -92,6 +93,7 @@ impl ThreadRequestProcessor {
                 listener_task_context,
                 thread_runtime,
                 live_threads,
+                thread_store,
                 config_manager,
                 request_id,
                 app_server_client_name,

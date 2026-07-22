@@ -251,6 +251,10 @@ pub(super) fn thread_started_notification(mut thread: Thread) -> ThreadStartedNo
     ThreadStartedNotification { thread }
 }
 
+pub(super) fn thread_started_notification_with_turns(thread: Thread) -> ThreadStartedNotification {
+    ThreadStartedNotification { thread }
+}
+
 #[cfg(test)]
 pub(crate) fn summary_to_thread(
     summary: ConversationSummary,
