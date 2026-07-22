@@ -134,6 +134,7 @@ pub struct Session {
     pub(super) mailbox: Mailbox,
     pub(super) mailbox_rx: Mutex<MailboxReceiver>,
     pub(crate) idle_pending_input: Mutex<Vec<crate::PendingInputItem>>,
+    pub(crate) model_observed_display_events: Mutex<HashMap<String, Vec<EventMsg>>>,
     pub(crate) scheduler: Mutex<()>,
     #[cfg(test)]
     pub(crate) goal_continuation_before_launch_hook:

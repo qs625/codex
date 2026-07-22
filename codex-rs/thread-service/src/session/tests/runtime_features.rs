@@ -2357,6 +2357,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         mailbox,
         mailbox_rx: Mutex::new(mailbox_rx),
         idle_pending_input: Mutex::new(Vec::new()),
+        model_observed_display_events: Mutex::new(HashMap::new()),
         scheduler: Mutex::new(()),
         goal_continuation_before_launch_hook: Mutex::new(None),
         goal_runtime: codex_agent_runtime::GoalRuntimeState::new(),

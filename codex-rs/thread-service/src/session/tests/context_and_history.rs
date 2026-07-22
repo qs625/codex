@@ -2791,6 +2791,123 @@ async fn poll_event_wakes_for_command_exit_notification() {
 }
 
 #[tokio::test]
+async fn deferred_command_exit_display_waits_for_request_construction_consumption() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    let command = vec!["sh".to_string(), "-c".to_string(), "echo done".to_string()];
+    let notification = ResponseItem::CommandExecutionNotification {
+        id: Some("cmd-1:notification:exit".to_string()),
+        command_item_id: "cmd-1".to_string(),
+        kind: protocol::models::CommandExecutionNotificationKind::Exit,
+        message: "Command exit notification received.".to_string(),
+        output: Some("done\n".to_string()),
+        exit_code: Some(0),
+        created_at_ms: 1234,
+    };
+    let exec_end = EventMsg::ExecCommandEnd(protocol::protocol::ExecCommandEndEvent {
+        call_id: "cmd-1".to_string(),
+        process_id: Some("1".to_string()),
+        turn_id: tc.sub_id.clone(),
+        completed_at_ms: 1235,
+        command: command.clone(),
+        #[allow(deprecated)]
+        cwd: tc.cwd.clone(),
+        parsed_cmd: codex_shell_utils::parse_command::parse_command(&command),
+        source: protocol::protocol::ExecCommandSource::UnifiedExecStartup,
+        interaction_input: None,
+        initial_wait_ms: Some(1000),
+        notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+        stdout: "done\n".to_string(),
+        stderr: String::new(),
+        aggregated_output: "done\n".to_string(),
+        exit_code: 0,
+        duration: Duration::from_millis(10),
+        formatted_output: "done\n".to_string(),
+        status: protocol::protocol::ExecCommandStatus::Completed,
+    });
+
+    thread_service_api::ThreadSessionCapability::append_conversation_item_with_observed_event(
+        sess.as_ref(),
+        notification,
+        exec_end,
+    )
+    .await
+    .expect("append pending command notification");
+
+    let poll_result = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("poll_event should wake");
+    assert!(!poll_result.timed_out);
+    assert_eq!(poll_result.source_hint.as_deref(), Some("command_exit"));
+
+    while let Ok(event) = rx.try_recv() {
+        assert!(
+            !matches!(event.msg, EventMsg::ExecCommandEnd(_)),
+            "ExecCommandEnd must not be displayed before request construction consumes the notification"
+        );
+    }
+
+    let pending_input = sess.get_pending_input().await;
+    assert_eq!(pending_input.len(), 1);
+    for pending_input_item in pending_input {
+        match hooks::inspect_pending_input(sess.as_ref(), tc.as_ref(), pending_input_item).await {
+            hooks::PendingInputHookDisposition::Accepted(pending_input) => {
+                hooks::record_pending_input(sess.as_ref(), tc.as_ref(), *pending_input).await;
+            }
+            hooks::PendingInputHookDisposition::Blocked { .. } => {
+                panic!("command notification should not be blocked")
+            }
+        }
+    }
+
+    timeout(Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event channel open");
+            assert!(
+                !matches!(
+                    event.msg,
+                    EventMsg::CommandExecutionNotificationCompleted(_)
+                ),
+                "command notification display must not precede the deferred ExecCommandEnd"
+            );
+            if matches!(event.msg, EventMsg::ExecCommandEnd(_)) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("deferred exec end should be emitted before the notification display");
+    timeout(Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event channel open");
+            if matches!(
+                event.msg,
+                EventMsg::CommandExecutionNotificationCompleted(_)
+            ) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("notification display should be emitted");
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
 async fn poll_event_backoff_is_thread_scoped_and_resets_after_event() {
     let (sess, _tc, _rx_event) = make_session_and_context_with_rx().await;
     let request = thread_service_api::ThreadPollEventRequest {

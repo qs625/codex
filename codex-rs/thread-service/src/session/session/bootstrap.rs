@@ -584,6 +584,7 @@ impl Session {
                 mailbox,
                 mailbox_rx: Mutex::new(mailbox_rx),
                 idle_pending_input: Mutex::new(Vec::new()),
+                model_observed_display_events: Mutex::new(HashMap::new()),
                 scheduler: Mutex::new(()),
                 #[cfg(test)]
                 goal_continuation_before_launch_hook: Mutex::new(None),
