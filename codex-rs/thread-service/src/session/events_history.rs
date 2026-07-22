@@ -32,7 +32,14 @@ fn append_developer_instructions_section(
 }
 
 impl Session {
-    const MODEL_VISIBLE_TOOL_SPECS_CONTEXT_MAX_CHARS: usize = 48_000;
+    const EXTERNAL_AGENT_TOOL_SPECS_CONTEXT_MAX_CHARS: usize = 48_000;
+    const EXTERNAL_AGENT_TOOL_NAMES: &'static [&'static str] = &[
+        "spawn_external_agent",
+        "followup_external_task",
+        "poll_external_event",
+        "list_external_agents",
+        "close_external_agent",
+    ];
 
     fn self_arc_for_initial_context(&self) -> Option<Arc<Self>> {
         self.self_weak
@@ -40,16 +47,16 @@ impl Session {
             .and_then(Weak::upgrade)
     }
 
-    async fn model_visible_tool_specs_for_initial_context(
+    async fn external_agent_tool_specs_for_initial_context(
         &self,
         turn_context: &TurnContext,
     ) -> Vec<tool_service_api::ToolSpec> {
         let Some(sess) = self.self_arc_for_initial_context() else {
-            warn!("skipping model-visible tool specs for initial context without session Arc");
+            warn!("skipping external agent tool specs for initial context without session Arc");
             return Vec::new();
         };
         let Some(turn_context) = turn_context.self_weak.get().and_then(Weak::upgrade) else {
-            warn!("skipping model-visible tool specs for initial context without turn context Arc");
+            warn!("skipping external agent tool specs for initial context without turn context Arc");
             return Vec::new();
         };
         let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
@@ -67,37 +74,53 @@ impl Session {
         {
             Ok(tool_inputs) => tool_inputs,
             Err(err) => {
-                warn!("failed to build model-visible tool specs for initial context: {err}");
+                warn!("failed to build external agent tool specs for initial context: {err}");
                 return Vec::new();
             }
         };
         crate::session::turn::model_visible_tool_specs(&sess, &turn_context, &tool_inputs)
+            .into_iter()
+            .filter(Self::is_external_agent_tool_spec)
+            .collect()
     }
 
-    fn truncate_model_visible_tool_specs_json(json: &mut String) {
-        if json.len() <= Self::MODEL_VISIBLE_TOOL_SPECS_CONTEXT_MAX_CHARS {
+    fn is_external_agent_tool_spec(spec: &tool_service_api::ToolSpec) -> bool {
+        match spec {
+            tool_service_api::ToolSpec::Function(tool) => {
+                Self::EXTERNAL_AGENT_TOOL_NAMES.contains(&tool.name.as_str())
+            }
+            _ => false,
+        }
+    }
+
+    fn truncate_external_agent_tool_specs_json(json: &mut String) {
+        if json.len() <= Self::EXTERNAL_AGENT_TOOL_SPECS_CONTEXT_MAX_CHARS {
             return;
         }
         let truncate_at = json
             .char_indices()
             .map(|(idx, _)| idx)
-            .take_while(|idx| *idx <= Self::MODEL_VISIBLE_TOOL_SPECS_CONTEXT_MAX_CHARS)
+            .take_while(|idx| *idx <= Self::EXTERNAL_AGENT_TOOL_SPECS_CONTEXT_MAX_CHARS)
             .last()
             .unwrap_or(0);
         json.truncate(truncate_at);
         json.push_str("\n... truncated ...");
     }
 
-    pub(crate) fn model_visible_tool_specs_context_section(
+    pub(crate) fn external_agent_tool_specs_context_section(
         specs: &[tool_service_api::ToolSpec],
     ) -> Option<String> {
+        let specs = specs
+            .iter()
+            .filter(|spec| Self::is_external_agent_tool_spec(spec))
+            .collect::<Vec<_>>();
         if specs.is_empty() {
             return None;
         }
         let mut specs_json = Vec::with_capacity(specs.len());
         for spec in specs {
             let Ok(value) = serde_json::to_value(spec) else {
-                warn!("failed to serialize model-visible tool spec for initial context");
+                warn!("failed to serialize external agent tool spec for initial context");
                 continue;
             };
             specs_json.push(value);
@@ -107,22 +130,22 @@ impl Session {
         }
         let mut json =
             serde_json::to_string_pretty(&specs_json).unwrap_or_else(|_| "[]".to_string());
-        Self::truncate_model_visible_tool_specs_json(&mut json);
+        Self::truncate_external_agent_tool_specs_json(&mut json);
         Some(format!(
-            "<model_visible_tools>\nThese are the tool specs currently visible to the model for this turn.\n```json\n{json}\n```\n</model_visible_tools>"
+            "<external_agent_tools>\n这些 external agent tools 属于独立的外部 CLI agent 协作总线。内置/native tools 已经通过模型 API tool config 暴露，不会在这里重复注入。协调外部 CLI agents 时，请按下面的 tool specs、schemas 和参数说明使用这些 external tools。\n```json\n{json}\n```\n</external_agent_tools>"
         ))
     }
 
-    pub(crate) async fn build_initial_context_for_model_visible_tools(
+    pub(crate) async fn build_initial_context_for_external_agent_tools(
         &self,
         turn_context: &TurnContext,
     ) -> Vec<ResponseItem> {
-        let model_visible_tool_specs = self
-            .model_visible_tool_specs_for_initial_context(turn_context)
+        let external_agent_tool_specs = self
+            .external_agent_tool_specs_for_initial_context(turn_context)
             .await;
-        self.build_initial_context_with_model_visible_tool_specs(
+        self.build_initial_context_with_external_agent_tool_specs(
             turn_context,
-            &model_visible_tool_specs,
+            &external_agent_tool_specs,
         )
         .await
     }
@@ -1462,7 +1485,7 @@ impl Session {
         &self,
         turn_context: &TurnContext,
     ) -> Vec<ResponseItem> {
-        self.build_initial_context_with_model_visible_tool_specs(turn_context, &[])
+        self.build_initial_context_with_external_agent_tool_specs(turn_context, &[])
             .await
     }
 
@@ -1470,10 +1493,10 @@ impl Session {
         clippy::await_holding_invalid_type,
         reason = "MCP app context rendering reads through the session-owned manager guard"
     )]
-    async fn build_initial_context_with_model_visible_tool_specs(
+    async fn build_initial_context_with_external_agent_tool_specs(
         &self,
         turn_context: &TurnContext,
-        model_visible_tool_specs: &[tool_service_api::ToolSpec],
+        external_agent_tool_specs: &[tool_service_api::ToolSpec],
     ) -> Vec<ResponseItem> {
         let mut developer_sections = Vec::<String>::with_capacity(8);
         let mut contextual_user_sections = Vec::<String>::with_capacity(2);
@@ -1635,7 +1658,7 @@ impl Session {
             developer_sections.push(agent_instructions.render());
         }
         if let Some(tool_specs_section) =
-            Self::model_visible_tool_specs_context_section(model_visible_tool_specs)
+            Self::external_agent_tool_specs_context_section(external_agent_tool_specs)
         {
             developer_sections.push(tool_specs_section);
         }
@@ -1819,7 +1842,7 @@ impl Session {
         };
         let should_inject_full_context = reference_context_item.is_none();
         let context_items = if should_inject_full_context {
-            self.build_initial_context_for_model_visible_tools(turn_context)
+            self.build_initial_context_for_external_agent_tools(turn_context)
                 .await
         } else {
             // Steady-state path: append only context diffs to minimize token overhead.

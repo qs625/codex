@@ -145,7 +145,9 @@ fn assert_single_completed_init_context_turn(turns: &[Turn], context: &str) {
         "{context} should include exactly one Init Context display item"
     );
     for expected in [
-        "<model_visible_tools>",
+        "<external_agent_tools>",
+        "独立的外部 CLI agent 协作总线",
+        "模型 API tool config",
         "spawn_external_agent",
         "followup_external_task",
         "poll_external_event",
@@ -156,7 +158,20 @@ fn assert_single_completed_init_context_turn(turns: &[Turn], context: &str) {
     ] {
         assert!(
             init_context_text.contains(expected),
-            "{context} should include model-visible external tool spec text {expected}, got {init_context_text}"
+            "{context} should include external agent tool spec text {expected}, got {init_context_text}"
+        );
+    }
+    for unexpected in [
+        "<model_visible_tools>",
+        "\"name\": \"exec_command\"",
+        "\"name\": \"apply_patch\"",
+        "\"name\": \"spawn_agent\"",
+        "\"name\": \"followup_task\"",
+        "\"name\": \"poll_event\"",
+    ] {
+        assert!(
+            !init_context_text.contains(unexpected),
+            "{context} should not include native/model-visible tool spec text {unexpected}, got {init_context_text}"
         );
     }
 }
