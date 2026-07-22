@@ -618,6 +618,23 @@ svg {
   padding-bottom: 2px;
 }
 
+.project-tree-root {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  border-radius: 10px;
+}
+
+.project-tree-root:hover,
+.project-tree-root:focus-within,
+.project-tree-root.selected {
+  background: rgba(28, 25, 23, 0.05);
+}
+
+.project-tree-root.contains-selected {
+  background: rgba(28, 25, 23, 0.04);
+}
+
 .tree-node-root::before {
   display: none;
 }
@@ -626,6 +643,57 @@ svg {
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.project-tree-root > .project-tree-button {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-radius: 10px 0 0 10px;
+}
+
+.project-tree-root > .project-tree-button.selected,
+.project-tree-root > .project-tree-button.contains-selected {
+  background: transparent;
+}
+
+.project-delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  margin-top: 7px;
+  margin-right: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #a8a29e;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.project-delete-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.project-tree-root:hover .project-delete-button,
+.project-tree-root:focus-within .project-delete-button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-delete-button:hover,
+.project-delete-button:focus-visible {
+  background: rgba(185, 28, 28, 0.1);
+  color: #b91c1c;
+  outline: none;
 }
 
 .tree-node::before {

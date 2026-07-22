@@ -757,6 +757,7 @@ export type ConversationCell = {
 
 export type TreeMenuState = {
   threadId: string;
+  kind?: "agent" | "project";
   x: number;
   y: number;
 };

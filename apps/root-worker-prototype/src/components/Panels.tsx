@@ -91,6 +91,7 @@ export function SidebarPanel({
   isCreatingChatThread,
   newProjectName,
   onArchiveChatThread,
+  onArchiveProjectThread,
   onCreateChatThread,
   onCreateProjectThread,
   onOpenMenu,
@@ -109,6 +110,7 @@ export function SidebarPanel({
   isCreatingChatThread?: boolean;
   newProjectName: string;
   onArchiveChatThread: (threadId: string) => void;
+  onArchiveProjectThread: (threadId: string) => void;
   onCreateChatThread: () => void;
   onCreateProjectThread: () => void;
   onOpenMenu: (menu: TreeMenuState | null) => void;
@@ -169,6 +171,7 @@ export function SidebarPanel({
               key={project.id}
               collapsedProjectSet={collapsedProjectSet}
               collapsedSet={collapsedSet}
+              onArchiveProjectThread={onArchiveProjectThread}
               onOpenMenu={onOpenMenu}
               onSelectProject={onSelectProject}
               onSelectThread={onSelectThread}
@@ -759,10 +762,11 @@ function sanitizeAgentPathSegment(value: string) {
   return isValidAgentPathSegment(trimmed) ? trimmed : "";
 }
 
-function ProjectSection({
+export function ProjectSection({
   collapsedProjectSet,
   collapsedSet,
   onOpenMenu,
+  onArchiveProjectThread,
   onSelectProject,
   onSelectThread,
   onToggleProject,
@@ -773,6 +777,7 @@ function ProjectSection({
   collapsedProjectSet: Set<string>;
   collapsedSet: Set<string>;
   onOpenMenu: (menu: TreeMenuState | null) => void;
+  onArchiveProjectThread: (threadId: string) => void;
   onSelectProject: (projectId: string, threadId: string) => void;
   onSelectThread: (threadId: string) => void;
   onToggleProject: (projectId: string) => void;
@@ -802,7 +807,23 @@ function ProjectSection({
   return (
     <section className="project-section">
       <div
-        className="tree-node tree-node-root project-tree-root"
+        className={[
+          "tree-node tree-node-root project-tree-root",
+          isSelected ? "selected" : null,
+          !isSelected && containsSelected ? "contains-selected" : null,
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpenMenu({
+            threadId: project.tree.threadId,
+            kind: "project",
+            x: event.clientX,
+            y: event.clientY,
+          });
+        }}
         style={{ "--depth": 0 } as CSSProperties}
       >
         <button
@@ -841,6 +862,18 @@ function ProjectSection({
               {counts.join(" · ")}
             </span>
           ) : null}
+        </button>
+        <button
+          type="button"
+          className="project-delete-button"
+          aria-label={`Delete project ${project.label}`}
+          title={`Delete project ${project.label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onArchiveProjectThread(project.tree.threadId);
+          }}
+        >
+          <TrashIcon />
         </button>
       </div>
       {!isCollapsed ? (
@@ -1958,10 +1991,12 @@ export function TreeContextMenu({
   threads,
   treeMenu,
   onArchiveThread,
+  onArchiveProjectThread,
 }: {
   threads: Thread[];
   treeMenu: TreeMenuState | null;
   onArchiveThread: (threadId: string) => void;
+  onArchiveProjectThread: (threadId: string) => void;
 }) {
   if (!treeMenu) {
     return null;
@@ -1970,7 +2005,15 @@ export function TreeContextMenu({
   const thread = threads.find(
     (candidate) => candidate.id === treeMenu.threadId,
   );
-  if (!thread || isRootThread(thread)) {
+  if (!thread) {
+    return null;
+  }
+
+  const isProjectMenu = treeMenu.kind === "project";
+  if (isProjectMenu && !isRootThread(thread)) {
+    return null;
+  }
+  if (!isProjectMenu && isRootThread(thread)) {
     return null;
   }
 
@@ -1985,9 +2028,19 @@ export function TreeContextMenu({
       <button
         type="button"
         className="tree-context-menu-item danger"
-        onClick={() => onArchiveThread(treeMenu.threadId)}
+        onClick={() =>
+          isProjectMenu
+            ? onArchiveProjectThread(treeMenu.threadId)
+            : onArchiveThread(treeMenu.threadId)
+        }
       >
-        {descendantCount > 0 ? "Delete Subagent Tree" : "Delete Agent"}
+        {isProjectMenu
+          ? descendantCount > 0
+            ? "Delete Project Tree"
+            : "Delete Project"
+          : descendantCount > 0
+            ? "Delete Subagent Tree"
+            : "Delete Agent"}
       </button>
     </div>
   );

@@ -14,7 +14,9 @@ import type {
 const {
   NewThreadDialog,
   NewThreadPopover,
+  ProjectSection,
   SidebarPanel,
+  TreeContextMenu,
   buildBlankChatThreadDraft,
   buildNewThreadDraft,
   defaultNewThreadStartParams,
@@ -22,6 +24,11 @@ const {
   isValidNewThreadAgentPath,
   resolveNewThreadStartParamsForProject,
 } = await import("./Panels");
+
+type ReactElementProps = {
+  children?: React.ReactNode;
+  [key: string]: unknown;
+};
 
 function makeThread(id: string, cwd: string, name: string): Thread {
   return {
@@ -121,6 +128,7 @@ function renderSidebar(
       isCreatingChatThread={options?.isCreatingChatThread}
       newProjectName="Project chat"
       onArchiveChatThread={() => {}}
+      onArchiveProjectThread={() => {}}
       onCreateChatThread={() => {}}
       onCreateProjectThread={() => {}}
       onOpenMenu={() => {}}
@@ -135,6 +143,48 @@ function renderSidebar(
       workspacePath="/work/alpha"
     />,
   );
+}
+
+function findElementByAriaLabel(
+  node: React.ReactNode,
+  ariaLabel: string,
+): React.ReactElement<ReactElementProps> | null {
+  if (!React.isValidElement(node)) {
+    return null;
+  }
+  const element = node as React.ReactElement<ReactElementProps>;
+  if (element.props["aria-label"] === ariaLabel) {
+    return element;
+  }
+  const children = React.Children.toArray(element.props.children);
+  for (const child of children) {
+    const found = findElementByAriaLabel(child, ariaLabel);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+function findElementByClassName(
+  node: React.ReactNode,
+  className: string,
+): React.ReactElement<ReactElementProps> | null {
+  if (!React.isValidElement(node)) {
+    return null;
+  }
+  const element = node as React.ReactElement<ReactElementProps>;
+  if (element.props.className === className) {
+    return element;
+  }
+  const children = React.Children.toArray(element.props.children);
+  for (const child of children) {
+    const found = findElementByClassName(child, className);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
 }
 
 test("SidebarPanel renders projects with nested subagents and no extra root row", () => {
@@ -500,7 +550,7 @@ test("SidebarPanel renders Chat group conversations separately", () => {
   assert.match(markup, /No projects yet/);
 });
 
-test("SidebarPanel keeps chat delete controls out of project tree rows", () => {
+test("SidebarPanel exposes project delete only on project roots", () => {
   const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
     makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev")),
   ]);
@@ -516,9 +566,84 @@ test("SidebarPanel keeps chat delete controls out of project tree rows", () => {
 
   const markup = renderSidebar(sidebar);
 
+  assert.match(markup, /aria-label="Delete project alpha"/);
   assert.match(markup, /aria-label="Delete chat General Q&amp;A"/);
+  assert.doesNotMatch(markup, /Delete project owner_dev/);
+  assert.doesNotMatch(markup, /Delete project General Q&amp;A/);
   assert.doesNotMatch(markup, /Delete chat owner_dev/);
   assert.doesNotMatch(markup, /Delete chat Alpha chat/);
+});
+
+test("ProjectSection delete calls project archive without selecting the row", () => {
+  const root = makeNode(makeThread("root-alpha", "/work/alpha", "Alpha chat"), [
+    makeNode(makeThread("owner-alpha", "/work/alpha", "owner_dev")),
+  ]);
+  const project = makeProject("project:/work/alpha", "alpha", root);
+  const archivedThreadIds: string[] = [];
+  const selectedThreadIds: string[] = [];
+  let stoppedPropagation = false;
+  const element = ProjectSection({
+    collapsedProjectSet: new Set(),
+    collapsedSet: new Set(),
+    onArchiveProjectThread: (threadId: string) =>
+      archivedThreadIds.push(threadId),
+    onOpenMenu: () => {},
+    onSelectProject: (_projectId: string, threadId: string) =>
+      selectedThreadIds.push(threadId),
+    onSelectThread: () => {},
+    onToggleProject: () => {},
+    onToggleTreeNode: () => {},
+    project,
+    selectedThreadId: null,
+  });
+  const deleteButton = findElementByAriaLabel(element, "Delete project alpha");
+
+  assert.ok(deleteButton);
+  const onClick = deleteButton.props.onClick as (event: {
+    stopPropagation: () => void;
+  }) => void;
+  onClick({
+    stopPropagation: () => {
+      stoppedPropagation = true;
+    },
+  });
+
+  assert.deepEqual(archivedThreadIds, ["root-alpha"]);
+  assert.deepEqual(selectedThreadIds, []);
+  assert.equal(stoppedPropagation, true);
+});
+
+test("TreeContextMenu routes project root deletion to the project archive callback", () => {
+  const root = makeThread("root-alpha", "/work/alpha", "Alpha chat");
+  const child = makeSubagentThread(
+    "owner-alpha",
+    "/work/alpha",
+    "owner_dev",
+    "root-alpha",
+  );
+  const archivedProjectThreadIds: string[] = [];
+  const archivedAgentThreadIds: string[] = [];
+  const element = TreeContextMenu({
+    threads: [root, child],
+    treeMenu: { threadId: "root-alpha", kind: "project", x: 10, y: 20 },
+    onArchiveProjectThread: (threadId: string) =>
+      archivedProjectThreadIds.push(threadId),
+    onArchiveThread: (threadId: string) =>
+      archivedAgentThreadIds.push(threadId),
+  });
+  const markup = renderToStaticMarkup(element);
+
+  assert.match(markup, /Delete Project Tree/);
+  const menuItem = findElementByClassName(
+    element,
+    "tree-context-menu-item danger",
+  );
+  assert.ok(menuItem);
+  const onClick = menuItem.props.onClick as () => void;
+  onClick();
+
+  assert.deepEqual(archivedProjectThreadIds, ["root-alpha"]);
+  assert.deepEqual(archivedAgentThreadIds, []);
 });
 
 test("SidebarPanel keeps chat as a flat list outside tree collapse", () => {
