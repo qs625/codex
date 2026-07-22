@@ -1391,13 +1391,9 @@ impl AgentControl {
             }
             ExternalToolName::SpawnExternalAgent => {
                 let args: ExternalSpawnAgentArgs = parse_external_arguments(&call.arguments)?;
-                if matches!(
-                    args.provider,
-                    SpawnAgentProvider::Native | SpawnAgentProvider::CodexCli
-                ) {
+                if matches!(args.provider, SpawnAgentProvider::Native) {
                     return Err(FunctionCallError::RespondToModel(
-                        "spawn_external_agent currently supports claude_cli and opencode providers; codex_cli app-server adapter is not implemented yet"
-                            .to_string(),
+                        "spawn_external_agent requires an external provider".to_string(),
                     ));
                 }
                 let mut config = sender.spawn_config.clone().ok_or_else(|| {
