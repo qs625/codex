@@ -411,6 +411,7 @@ async fn get_status_returns_external_agent_status_without_manager() {
         provider: SpawnAgentProvider::CodexCli,
         depth: 1,
         spawn_config: None,
+        input_sink: None,
         status: AgentStatus::Running,
         last_task_message: Some("do work".to_string()),
         abort_handle: None,
@@ -431,6 +432,7 @@ async fn direct_agent_children_are_active_includes_external_runs() {
         provider: SpawnAgentProvider::ClaudeCli,
         depth: 1,
         spawn_config: None,
+        input_sink: None,
         status: AgentStatus::Running,
         last_task_message: Some("do work".to_string()),
         abort_handle: None,
@@ -459,6 +461,7 @@ async fn list_agents_includes_external_runs_with_prefix_filter() {
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
             spawn_config: Some(harness.config.clone()),
+            input_sink: None,
             status: AgentStatus::Completed(Some("done".to_string())),
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -478,6 +481,32 @@ async fn list_agents_includes_external_runs_with_prefix_filter() {
         ThreadLifecycleStatus::completed(Some("done".to_string()))
     );
     assert_eq!(agents[0].last_task_message.as_deref(), Some("do work"));
+}
+
+#[tokio::test]
+async fn spawn_external_agent_rejects_unsupported_provider_before_registration() {
+    let harness = AgentControlHarness::new().await;
+    for provider in [SpawnAgentProvider::CodexCli, SpawnAgentProvider::Opencode] {
+        let err = harness
+            .control
+            .spawn_external_agent_with_metadata(
+                harness.config.clone(),
+                provider,
+                "do work".to_string(),
+                SessionSource::Exec,
+                SpawnAgentOptions {
+                    fork_parent_spawn_call_id: None,
+                    fork_mode: None,
+                    environments: None,
+                    agent_mode: AgentMode::default(),
+                },
+            )
+            .await
+            .expect_err("unsupported provider should fail before registration");
+
+        assert!(err.to_string().contains("unsupported operation"));
+    }
+    assert!(harness.control.external_agents.list().is_empty());
 }
 
 #[tokio::test]
@@ -506,6 +535,7 @@ async fn external_completion_after_close_does_not_notify_parent() {
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
             spawn_config: Some(harness.config.clone()),
+            input_sink: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -552,6 +582,7 @@ async fn external_tool_call_lists_visible_agents() {
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
             spawn_config: Some(harness.config.clone()),
+            input_sink: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -595,6 +626,7 @@ async fn external_tool_call_malformed_arguments_returns_bounded_error() {
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
             spawn_config: Some(harness.config.clone()),
+            input_sink: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -650,6 +682,7 @@ async fn external_tool_call_followup_to_native_uses_agent_bus() {
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
             spawn_config: Some(harness.config.clone()),
+            input_sink: None,
             status: AgentStatus::Running,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
@@ -686,105 +719,13 @@ async fn external_tool_call_followup_to_native_uses_agent_bus() {
 }
 
 #[tokio::test]
-async fn external_run_loop_reinvokes_with_list_result_transcript() {
+async fn followup_to_external_agent_enters_external_input_queue() {
     let harness = AgentControlHarness::new().await;
     let root_thread_id = ThreadId::new();
-    let external_thread_id = ThreadId::new();
-    harness.control.state.register_root_thread(root_thread_id);
-    harness
-        .control
-        .external_agents
-        .insert_running(ExternalAgentRun {
-            thread_id: external_thread_id,
-            parent_thread_id: root_thread_id,
-            agent_path: AgentPath::try_from("/root/external").expect("agent path"),
-            provider: SpawnAgentProvider::CodexCli,
-            depth: 1,
-            spawn_config: Some(harness.config.clone()),
-            status: AgentStatus::Running,
-            last_task_message: Some("inspect agents".to_string()),
-            abort_handle: None,
-        });
-    let prompts = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let prompts_for_invoker = std::sync::Arc::clone(&prompts);
-    let calls_for_invoker = std::sync::Arc::clone(&calls);
-
-    let status = harness
-        .control
-        .run_external_agent_loop_with_invoker(
-            external_thread_id,
-            SpawnAgentProvider::CodexCli,
-            harness.config.cwd.as_path().to_path_buf(),
-            "inspect agents".to_string(),
-            move |_provider, _cwd, message, transcript| {
-                prompts_for_invoker
-                    .lock()
-                    .expect("prompts lock")
-                    .push(crate::agent::external::external_agent_context_prompt(
-                        &message,
-                        &transcript,
-                    ));
-                let call_index =
-                    calls_for_invoker.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                std::future::ready(if call_index == 0 {
-                    crate::agent::external::ExternalCliTurn {
-                        status: AgentStatus::Completed(Some("need list".to_string())),
-                        tool_calls: vec![ExternalToolCall {
-                            id: "call_1".to_string(),
-                            tool: ExternalToolName::ListExternalAgents,
-                            arguments: serde_json::json!({ "path_prefix": "/root/external" }),
-                        }],
-                        tool_call_errors: Vec::new(),
-                        transcript_lines: vec![serde_json::json!({
-                            "type": "external_tool_call",
-                            "id": "call_1",
-                            "tool": "list_external_agents",
-                            "arguments": { "path_prefix": "/root/external" },
-                        })
-                        .to_string()],
-                    }
-                } else {
-                    crate::agent::external::ExternalCliTurn {
-                        status: AgentStatus::Completed(Some("done after result".to_string())),
-                        tool_calls: Vec::new(),
-                        tool_call_errors: Vec::new(),
-                        transcript_lines: Vec::new(),
-                    }
-                })
-            },
-        )
-        .await;
-
-    assert_eq!(
-        status,
-        AgentStatus::Completed(Some("done after result".to_string()))
-    );
-    let prompts = prompts.lock().expect("prompts lock");
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("external_tool_result"));
-    assert!(prompts[1].contains("\"agents\""));
-    assert!(prompts[1].contains("/root/external"));
-}
-
-#[tokio::test]
-async fn external_run_loop_followup_result_drives_continuation() {
-    let harness = AgentControlHarness::new().await;
-    let root_thread_id = ThreadId::new();
-    harness.control.state.register_root_thread(root_thread_id);
-    let (native_thread_id, _native_thread) = harness.start_thread().await;
-    let native_agent_path = AgentPath::try_from("/root/native").expect("agent path");
-    harness
-        .control
-        .state
-        .register_agent_metadata(AgentMetadata {
-            agent_id: Some(native_thread_id),
-            agent_path: Some(native_agent_path.clone()),
-            counted: false,
-            ..Default::default()
-        });
     let external_thread_id = ThreadId::new();
     let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    harness.control.state.register_root_thread(root_thread_id);
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
     harness
         .control
         .external_agents
@@ -792,86 +733,153 @@ async fn external_run_loop_followup_result_drives_continuation() {
             thread_id: external_thread_id,
             parent_thread_id: root_thread_id,
             agent_path: external_agent_path.clone(),
-            provider: SpawnAgentProvider::CodexCli,
+            provider: SpawnAgentProvider::ClaudeCli,
             depth: 1,
             spawn_config: Some(harness.config.clone()),
+            input_sink: Some(crate::agent::external::ExternalInputSink::new(input_tx)),
             status: AgentStatus::Running,
-            last_task_message: Some("coordinate".to_string()),
+            last_task_message: Some("initial".to_string()),
             abort_handle: None,
         });
-    let second_transcript = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let second_transcript_for_invoker = std::sync::Arc::clone(&second_transcript);
-    let calls_for_invoker = std::sync::Arc::clone(&calls);
+
+    harness
+        .control
+        .send_inter_agent_communication(
+            external_thread_id,
+            InterAgentCommunication::new(
+                AgentPath::root(),
+                external_agent_path,
+                Vec::new(),
+                "please continue".to_string(),
+                InterAgentOperation::FollowupTask,
+            )
+            .with_thread_ids(root_thread_id, external_thread_id)
+            .with_trigger_turn(true),
+        )
+        .await
+        .expect("deliver external followup");
+
+    assert_eq!(
+        input_rx.recv().await.expect("external input"),
+        "please continue"
+    );
+    assert_eq!(
+        harness
+            .control
+            .external_agents
+            .get(external_thread_id)
+            .expect("external run")
+            .last_task_message
+            .as_deref(),
+        Some("please continue")
+    );
+}
+
+struct FakeExternalStream {
+    input_sink: crate::agent::external::ExternalInputSink,
+    input_rx: async_channel::Receiver<String>,
+    events: VecDeque<crate::agent::external::ExternalProcessEvent>,
+}
+
+impl FakeExternalStream {
+    fn new(events: Vec<crate::agent::external::ExternalProcessEvent>) -> Self {
+        let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (record_tx, record_rx) = async_channel::unbounded();
+        tokio::spawn(async move {
+            while let Some(input) = input_rx.recv().await {
+                let _ = record_tx.send(input).await;
+            }
+        });
+        Self {
+            input_sink: crate::agent::external::ExternalInputSink::new(input_tx),
+            input_rx: record_rx,
+            events: events.into(),
+        }
+    }
+
+    async fn next_input(&self) -> String {
+        self.input_rx.recv().await.expect("provider input")
+    }
+}
+
+impl crate::agent::external::ExternalAgentStream for FakeExternalStream {
+    fn input_sink(&self) -> crate::agent::external::ExternalInputSink {
+        self.input_sink.clone()
+    }
+
+    fn next_event<'a>(
+        &'a mut self,
+    ) -> futures::future::BoxFuture<
+        'a,
+        Result<crate::agent::external::ExternalProcessEvent, String>,
+    > {
+        Box::pin(async move {
+            self.events
+                .pop_front()
+                .ok_or_else(|| "fake stream exhausted".to_string())
+        })
+    }
+}
+
+#[tokio::test]
+async fn external_stream_loop_writes_tool_result_to_same_process() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let external_thread_id = ThreadId::new();
+    harness.control.state.register_root_thread(root_thread_id);
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: AgentPath::try_from("/root/external").expect("agent path"),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(harness.config.clone()),
+            input_sink: None,
+            status: AgentStatus::Running,
+            last_task_message: Some("inspect agents".to_string()),
+            abort_handle: None,
+        });
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::ToolCall(ExternalToolCall {
+                id: "call_1".to_string(),
+                tool: ExternalToolName::ListExternalAgents,
+                arguments: serde_json::json!({ "path_prefix": "/root/external" }),
+            }),
+        ),
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("done after result".to_string()),
+        ),
+    ]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let status = harness
         .control
-        .run_external_agent_loop_with_invoker(
+        .run_external_agent_stream_loop(
             external_thread_id,
-            SpawnAgentProvider::CodexCli,
-            harness.config.cwd.as_path().to_path_buf(),
-            "coordinate".to_string(),
-            move |_provider, _cwd, _message, transcript| {
-                let call_index =
-                    calls_for_invoker.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if call_index == 1 {
-                    *second_transcript_for_invoker
-                        .lock()
-                        .expect("transcript lock") = Some(transcript.clone());
-                }
-                std::future::ready(if call_index == 0 {
-                    crate::agent::external::ExternalCliTurn {
-                        status: AgentStatus::Completed(Some("need followup".to_string())),
-                        tool_calls: vec![ExternalToolCall {
-                            id: "call_1".to_string(),
-                            tool: ExternalToolName::FollowupExternalTask,
-                            arguments: serde_json::json!({
-                                "target": "/root/native",
-                                "message": "please check this"
-                            }),
-                        }],
-                        tool_call_errors: Vec::new(),
-                        transcript_lines: Vec::new(),
-                    }
-                } else {
-                    crate::agent::external::ExternalCliTurn {
-                        status: AgentStatus::Completed(Some("continued after delivery".to_string())),
-                        tool_calls: Vec::new(),
-                        tool_call_errors: Vec::new(),
-                        transcript_lines: Vec::new(),
-                    }
-                })
-            },
+            "inspect agents".to_string(),
+            input_rx,
+            &mut stream,
         )
         .await;
 
     assert_eq!(
         status,
-        AgentStatus::Completed(Some("continued after delivery".to_string()))
+        AgentStatus::Completed(Some("done after result".to_string()))
     );
-    let transcript = second_transcript
-        .lock()
-        .expect("transcript lock")
-        .clone()
-        .expect("second transcript");
-    assert!(transcript.contains("external_tool_result"));
-    assert!(transcript.contains("\"delivered\":true"));
-    let captured = harness.manager.captured_ops();
-    assert!(captured.iter().any(|(thread_id, op)| {
-        *thread_id == native_thread_id
-            && matches!(
-                op,
-                Op::InterAgentCommunication { communication }
-                    if communication.author == external_agent_path
-                        && communication.recipient == native_agent_path
-                        && communication.content == "please check this"
-                        && communication.trigger_turn
-            )
-    }));
+    let initial = stream.next_input().await;
+    assert!(initial.contains("external-agent JSON protocol"));
+    let result = stream.next_input().await;
+    assert!(result.contains("external_tool_result"));
+    assert!(result.contains("\"agents\""));
+    assert!(result.contains("/root/external"));
 }
 
 #[tokio::test]
-async fn external_run_loop_stops_at_max_iterations() {
+async fn external_stream_loop_handles_multiple_tool_calls_without_iteration_cap() {
     let harness = AgentControlHarness::new().await;
     let root_thread_id = ThreadId::new();
     let external_thread_id = ThreadId::new();
@@ -883,45 +891,52 @@ async fn external_run_loop_stops_at_max_iterations() {
             thread_id: external_thread_id,
             parent_thread_id: root_thread_id,
             agent_path: AgentPath::try_from("/root/external").expect("agent path"),
-            provider: SpawnAgentProvider::CodexCli,
+            provider: SpawnAgentProvider::ClaudeCli,
             depth: 1,
             spawn_config: Some(harness.config.clone()),
+            input_sink: None,
             status: AgentStatus::Running,
-            last_task_message: Some("loop forever".to_string()),
+            last_task_message: Some("inspect agents".to_string()),
             abort_handle: None,
         });
+    let events = (0..10)
+        .map(|index| {
+            crate::agent::external::ExternalProcessEvent::Cli(
+                crate::agent::external::ExternalCliEvent::ToolCall(ExternalToolCall {
+                    id: format!("call_{index}"),
+                    tool: ExternalToolName::ListExternalAgents,
+                    arguments: serde_json::json!({}),
+                }),
+            )
+        })
+        .chain(std::iter::once(crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("finished".to_string()),
+        )))
+        .collect::<Vec<_>>();
+    let mut stream = FakeExternalStream::new(events);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let status = harness
         .control
-        .run_external_agent_loop_with_invoker(
+        .run_external_agent_stream_loop(
             external_thread_id,
-            SpawnAgentProvider::CodexCli,
-            harness.config.cwd.as_path().to_path_buf(),
-            "loop forever".to_string(),
-            |_provider, _cwd, _message, _transcript| {
-                std::future::ready(crate::agent::external::ExternalCliTurn {
-                    status: AgentStatus::Completed(Some("need list".to_string())),
-                    tool_calls: vec![ExternalToolCall {
-                        id: "call_1".to_string(),
-                        tool: ExternalToolName::ListExternalAgents,
-                        arguments: serde_json::json!({}),
-                    }],
-                    tool_call_errors: Vec::new(),
-                    transcript_lines: Vec::new(),
-                })
-            },
+            "inspect agents".to_string(),
+            input_rx,
+            &mut stream,
         )
         .await;
 
-    assert_matches!(
-        status,
-        AgentStatus::Errored(message)
-            if message.contains("external tool iteration limit reached")
-    );
+    assert_eq!(status, AgentStatus::Completed(Some("finished".to_string())));
+    let _initial = stream.next_input().await;
+    for index in 0..10 {
+        let result = stream.next_input().await;
+        assert!(result.contains(&format!("\"id\":\"call_{index}\"")));
+        assert!(result.contains("external_tool_result"));
+    }
 }
 
 #[tokio::test]
-async fn external_run_loop_reinvokes_once_for_malformed_tool_result() {
+async fn external_stream_loop_writes_malformed_tool_error_and_finishes() {
     let harness = AgentControlHarness::new().await;
     let root_thread_id = ThreadId::new();
     let external_thread_id = ThreadId::new();
@@ -933,64 +948,96 @@ async fn external_run_loop_reinvokes_once_for_malformed_tool_result() {
             thread_id: external_thread_id,
             parent_thread_id: root_thread_id,
             agent_path: AgentPath::try_from("/root/external").expect("agent path"),
-            provider: SpawnAgentProvider::CodexCli,
+            provider: SpawnAgentProvider::ClaudeCli,
             depth: 1,
             spawn_config: Some(harness.config.clone()),
+            input_sink: None,
             status: AgentStatus::Running,
             last_task_message: Some("recover malformed call".to_string()),
             abort_handle: None,
         });
-    let second_transcript = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let second_transcript_for_invoker = std::sync::Arc::clone(&second_transcript);
-    let calls_for_invoker = std::sync::Arc::clone(&calls);
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::ToolCallError(ExternalToolResult::error(
+                "call_bad",
+                "invalid_tool_call",
+                "failed to parse external tool call",
+            )),
+        ),
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("recovered".to_string()),
+        ),
+    ]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let status = harness
         .control
-        .run_external_agent_loop_with_invoker(
+        .run_external_agent_stream_loop(
             external_thread_id,
-            SpawnAgentProvider::CodexCli,
-            harness.config.cwd.as_path().to_path_buf(),
             "recover malformed call".to_string(),
-            move |_provider, _cwd, _message, transcript| {
-                let call_index =
-                    calls_for_invoker.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if call_index == 1 {
-                    *second_transcript_for_invoker
-                        .lock()
-                        .expect("transcript lock") = Some(transcript.clone());
-                }
-                std::future::ready(if call_index == 0 {
-                    crate::agent::external::ExternalCliTurn {
-                        status: AgentStatus::Completed(Some("bad tool call".to_string())),
-                        tool_calls: Vec::new(),
-                        tool_call_errors: vec![ExternalToolResult::error(
-                            "call_bad",
-                            "invalid_tool_call",
-                            "failed to parse external tool call",
-                        )],
-                        transcript_lines: Vec::new(),
-                    }
-                } else {
-                    crate::agent::external::ExternalCliTurn {
-                        status: AgentStatus::Completed(Some("recovered".to_string())),
-                        tool_calls: Vec::new(),
-                        tool_call_errors: Vec::new(),
-                        transcript_lines: Vec::new(),
-                    }
-                })
-            },
+            input_rx,
+            &mut stream,
         )
         .await;
 
     assert_eq!(status, AgentStatus::Completed(Some("recovered".to_string())));
-    let transcript = second_transcript
-        .lock()
-        .expect("transcript lock")
-        .clone()
-        .expect("second transcript");
-    assert_eq!(transcript.matches("\"id\":\"call_bad\"").count(), 1);
-    assert!(transcript.contains("invalid_tool_call"));
+    let _initial = stream.next_input().await;
+    let error = stream.next_input().await;
+    assert_eq!(error.matches("\"id\":\"call_bad\"").count(), 1);
+    assert!(error.contains("invalid_tool_call"));
+}
+
+#[tokio::test]
+async fn external_stream_loop_delivers_followup_input_to_same_process() {
+    let harness = AgentControlHarness::new().await;
+    let external_thread_id = ThreadId::new();
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("done".to_string()),
+        ),
+    ]);
+    let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+    input_tx
+        .send("follow up while running".to_string())
+        .expect("send followup");
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            "initial task".to_string(),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+
+    assert_eq!(status, AgentStatus::Completed(Some("done".to_string())));
+    let initial = stream.next_input().await;
+    let followup = stream.next_input().await;
+    assert!(initial.contains("initial task"));
+    assert_eq!(followup, "follow up while running");
+}
+
+#[tokio::test]
+async fn external_stream_loop_returns_stdin_error() {
+    let harness = AgentControlHarness::new().await;
+    let external_thread_id = ThreadId::new();
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::StdinError("broken pipe".to_string()),
+    ]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            "initial task".to_string(),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+
+    assert_eq!(status, AgentStatus::Errored("broken pipe".to_string()));
 }
 
 #[tokio::test]

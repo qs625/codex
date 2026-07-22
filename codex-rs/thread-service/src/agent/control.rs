@@ -1,17 +1,19 @@
 use crate::agent::AgentStatus;
 use crate::agent::external::ExternalAgentRun;
-use crate::agent::external::ExternalCliTurn;
+use crate::agent::external::ExternalAgentStream;
 use crate::agent::external::ExternalToolCall;
 use crate::agent::external::ExternalToolName;
 use crate::agent::external::ExternalToolResult;
-use crate::agent::external::MAX_EXTERNAL_TOOL_ITERATIONS;
+use crate::agent::external::ExternalProcessEvent;
+use crate::agent::external::ExternalStreamingSession;
 use crate::agent::external::SharedExternalAgentRegistry;
-use crate::agent::external::append_external_transcript_line;
+use crate::agent::external::bounded_external_output;
 use crate::agent::external::completion_communication;
+use crate::agent::external::external_command_spec;
 use crate::agent::external::external_live_agent;
 use crate::agent::external::external_metadata;
-use crate::agent::external::external_tool_result_json_line;
-use crate::agent::external::run_external_cli_with_events;
+use crate::agent::external::external_agent_context_prompt;
+use crate::agent::external::external_tool_result_input;
 use crate::agent::spawn_support::thread_spawn_source;
 use crate::runtime_shell_snapshot::ShellSnapshot;
 use crate::session::emit_subagent_session_started;
@@ -81,7 +83,6 @@ use state_api::DirectionalThreadSpawnEdgeStatus;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Weak;
@@ -93,6 +94,7 @@ use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::LiveThreadStatusRuntime;
 use thread_store_api::ReadThreadParams;
 use tokio::sync::watch;
+use tokio::sync::mpsc;
 use tool_service_api::FunctionCallError;
 use tracing::warn;
 
@@ -259,6 +261,8 @@ impl AgentControl {
         session_source: SessionSource,
         options: SpawnAgentOptions,
     ) -> CodexResult<LiveAgent> {
+        external_command_spec(provider, config.cwd.as_path())
+            .map_err(CodexErr::UnsupportedOperation)?;
         let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
             parent_thread_id,
             depth,
@@ -287,6 +291,7 @@ impl AgentControl {
         let agent_path = agent_metadata.agent_path.clone().ok_or_else(|| {
             CodexErr::UnsupportedOperation("external agent is missing agent path".to_string())
         })?;
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
         agent_metadata.agent_id = Some(thread_id);
         agent_metadata.last_task_message = Some(message.clone());
         reservation.commit(agent_metadata);
@@ -298,6 +303,7 @@ impl AgentControl {
             provider,
             depth,
             spawn_config: Some(config.clone()),
+            input_sink: Some(crate::agent::external::ExternalInputSink::new(input_tx)),
             status: AgentStatus::Running,
             last_task_message: Some(message.clone()),
             abort_handle: None,
@@ -308,7 +314,7 @@ impl AgentControl {
         let cwd = config.cwd.as_path().to_path_buf();
         let handle = tokio::spawn(async move {
             let status = control
-                .run_external_agent_loop(thread_id, provider, cwd, message)
+                .run_external_agent_loop(thread_id, provider, cwd, message, input_rx)
                 .await;
             control.complete_external_agent(thread_id, status).await;
         });
@@ -324,61 +330,92 @@ impl AgentControl {
         provider: SpawnAgentProvider,
         cwd: PathBuf,
         message: String,
+        input_rx: mpsc::UnboundedReceiver<String>,
     ) -> AgentStatus {
-        self.run_external_agent_loop_with_invoker(
-            thread_id,
-            provider,
-            cwd,
-            message,
-            run_external_cli_with_events,
-        )
-        .await
+        let mut stream = match ExternalStreamingSession::start(provider, cwd).await {
+            Ok(stream) => stream,
+            Err(message) => return AgentStatus::Errored(message),
+        };
+        self.run_external_agent_stream_loop(thread_id, message, input_rx, &mut stream)
+            .await
     }
 
-    async fn run_external_agent_loop_with_invoker<F, Fut>(
+    async fn run_external_agent_stream_loop<S>(
         &self,
         thread_id: ThreadId,
-        provider: SpawnAgentProvider,
-        cwd: PathBuf,
         message: String,
-        mut invoke: F,
+        input_rx: mpsc::UnboundedReceiver<String>,
+        stream: &mut S,
     ) -> AgentStatus
     where
-        F: FnMut(SpawnAgentProvider, PathBuf, String, String) -> Fut + Send,
-        Fut: Future<Output = ExternalCliTurn> + Send,
+        S: ExternalAgentStream + ?Sized,
     {
-        let mut transcript = String::new();
-        for iteration in 0..MAX_EXTERNAL_TOOL_ITERATIONS {
-            let turn = invoke(provider, cwd.clone(), message.clone(), transcript.clone()).await;
-            for line in turn.transcript_lines {
-                append_external_transcript_line(&mut transcript, line);
-            }
-            let had_tool_call_errors = !turn.tool_call_errors.is_empty();
-            for result in turn.tool_call_errors {
-                append_external_transcript_line(
-                    &mut transcript,
-                    external_tool_result_json_line(&result),
-                );
-            }
-            if turn.tool_calls.is_empty() && !had_tool_call_errors {
-                return turn.status;
-            }
-            for tool_call in turn.tool_calls {
-                let result = self.dispatch_external_tool_call(thread_id, tool_call).await;
-                append_external_transcript_line(
-                    &mut transcript,
-                    external_tool_result_json_line(&result),
-                );
-            }
-            if iteration + 1 == MAX_EXTERNAL_TOOL_ITERATIONS {
-                return AgentStatus::Errored(format!(
-                    "external tool iteration limit reached after {MAX_EXTERNAL_TOOL_ITERATIONS} iterations"
-                ));
+        let provider_input = stream.input_sink();
+        if let Err(err) = provider_input.send(external_agent_context_prompt(&message)) {
+            return AgentStatus::Errored(err);
+        }
+        let mut input_rx = Some(input_rx);
+        let mut last_status = None::<String>;
+        loop {
+            tokio::select! {
+                biased;
+                input = async {
+                    match input_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending::<Option<String>>().await,
+                    }
+                } => {
+                    match input {
+                        Some(input) => {
+                            if let Err(err) = provider_input.send(input) {
+                                return AgentStatus::Errored(err);
+                            }
+                        }
+                        None => {
+                            input_rx = None;
+                        }
+                    }
+                }
+                event = stream.next_event() => {
+                    match event {
+                        Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::ToolCall(call))) => {
+                            let result = self.dispatch_external_tool_call(thread_id, call).await;
+                            if let Err(err) = provider_input.send(external_tool_result_input(&result)) {
+                                return AgentStatus::Errored(err);
+                            }
+                        }
+                        Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::ToolCallError(result))) => {
+                            if let Err(err) = provider_input.send(external_tool_result_input(&result)) {
+                                return AgentStatus::Errored(err);
+                            }
+                        }
+                        Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Message(text)))
+                        | Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Completion(text))) => {
+                            return AgentStatus::Completed(Some(bounded_external_output(&text)));
+                        }
+                        Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Status(text))) => {
+                            if !text.trim().is_empty() {
+                                last_status = Some(text);
+                            }
+                        }
+                        Ok(ExternalProcessEvent::StdinError(error)) => {
+                            return AgentStatus::Errored(error);
+                        }
+                        Ok(ExternalProcessEvent::ProcessExited { success, status }) => {
+                            if success {
+                                return AgentStatus::Completed(last_status);
+                            }
+                            return AgentStatus::Errored(
+                                last_status.unwrap_or_else(|| {
+                                    format!("external provider exited with status {status}")
+                                })
+                            );
+                        }
+                        Err(err) => return AgentStatus::Errored(err),
+                    }
+                }
             }
         }
-        AgentStatus::Errored(format!(
-            "external tool iteration limit reached after {MAX_EXTERNAL_TOOL_ITERATIONS} iterations"
-        ))
     }
 
     async fn spawn_agent_internal(
@@ -886,10 +923,21 @@ impl AgentControl {
         agent_id: ThreadId,
         communication: InterAgentCommunication,
     ) -> CodexResult<String> {
-        if self.external_agents.get(agent_id).is_some() {
-            return Err(CodexErr::UnsupportedOperation(
-                "followup_task is not supported for one-shot external CLI agents".to_string(),
-            ));
+        if let Some(run) = self.external_agents.get(agent_id) {
+            let input_sink = run.input_sink.ok_or_else(|| {
+                CodexErr::UnsupportedOperation(
+                    "external agent is not ready to receive followup input".to_string(),
+                )
+            })?;
+            let last_task_message = communication.content.clone();
+            input_sink.send(communication.content).map_err(|err| {
+                CodexErr::UnsupportedOperation(format!(
+                    "failed to deliver followup_task to external agent: {err}"
+                ))
+            })?;
+            self.external_agents
+                .update_last_task_message(agent_id, last_task_message);
+            return Ok(agent_id.to_string());
         }
         let last_task_message = communication.content.clone();
         let state = self.upgrade()?;
@@ -1091,7 +1139,7 @@ impl AgentControl {
                 let args: ExternalSpawnAgentArgs = parse_external_arguments(&call.arguments)?;
                 if matches!(args.provider, SpawnAgentProvider::Native) {
                     return Err(FunctionCallError::RespondToModel(
-                        "spawn_external_agent requires codex_cli, claude_cli, or opencode provider"
+                        "spawn_external_agent currently requires claude_cli provider for persistent streaming"
                             .to_string(),
                     ));
                 }

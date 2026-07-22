@@ -69,8 +69,11 @@ pub fn create_spawn_external_agent_tool() -> ToolSpec {
         (
             "provider".to_string(),
             JsonSchema::string_enum(
-                vec![json!("codex_cli"), json!("claude_cli"), json!("opencode")],
-                Some("External code agent provider to launch.".to_string()),
+                vec![json!("claude_cli")],
+                Some(
+                    "External code agent provider to launch. Current persistent streaming support is claude_cli only."
+                        .to_string(),
+                ),
             ),
         ),
         (

@@ -144,11 +144,7 @@ fn spawn_external_agent_tool_requires_provider_cwd_and_message() {
         properties
             .get("provider")
             .and_then(|schema| schema.enum_values.as_ref()),
-        Some(&vec![
-            json!("codex_cli"),
-            json!("claude_cli"),
-            json!("opencode")
-        ])
+        Some(&vec![json!("claude_cli")])
     );
     assert!(properties.contains_key("task_name"));
     assert!(properties.contains_key("cwd"));
