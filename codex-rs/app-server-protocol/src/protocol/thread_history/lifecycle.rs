@@ -10,6 +10,8 @@ use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::protocol::CompactedItem;
 use protocol::protocol::ContextCompactedEvent;
 use protocol::protocol::ErrorEvent;
+use protocol::protocol::ExternalTerminalStatus;
+use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::ThreadRolledBackEvent;
 use protocol::protocol::TurnAbortedEvent;
 use protocol::protocol::TurnCompleteEvent;
@@ -81,6 +83,36 @@ impl ThreadHistoryBuilder {
             codex_error_info: payload.codex_error_info.clone().map(Into::into),
             additional_details: None,
         });
+    }
+
+    pub(super) fn handle_external_terminal_status(
+        &mut self,
+        payload: &ExternalTerminalStatusEvent,
+    ) {
+        let Some(turn) = self
+            .current_turn
+            .as_mut()
+            .filter(|turn| turn.id == payload.turn_id)
+        else {
+            return;
+        };
+        turn.completed_at = Some(payload.terminal_at_ms / 1000);
+        match payload.status {
+            ExternalTerminalStatus::Errored => {
+                turn.status = TurnStatus::Failed;
+                turn.error = Some(V2TurnError {
+                    message: payload.message.clone().unwrap_or_default(),
+                    codex_error_info: None,
+                    additional_details: None,
+                });
+            }
+            ExternalTerminalStatus::Shutdown => {
+                if matches!(turn.status, TurnStatus::Completed | TurnStatus::InProgress) {
+                    turn.status = TurnStatus::Completed;
+                }
+            }
+        }
+        self.finish_current_turn();
     }
 
     pub(super) fn handle_turn_aborted(&mut self, payload: &TurnAbortedEvent) {

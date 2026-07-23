@@ -188,6 +188,9 @@ impl ThreadHistoryBuilder {
             EventMsg::RawResponseItem(_) => {}
             EventMsg::HookStarted(_) | EventMsg::HookCompleted(_) => {}
             EventMsg::Error(payload) => self.handle_error(payload),
+            EventMsg::ExternalTerminalStatus(payload) => {
+                self.handle_external_terminal_status(payload);
+            }
             EventMsg::TokenCount(_) => {}
             EventMsg::ThreadRolledBack(payload) => self.handle_thread_rollback(payload),
             EventMsg::TurnAborted(payload) => self.handle_turn_aborted(payload),

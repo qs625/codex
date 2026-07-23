@@ -1,6 +1,67 @@
 use super::*;
 
     #[test]
+    fn external_terminal_status_marks_turn_failed_without_display_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-external".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(
+                protocol::protocol::ExternalTerminalStatusEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-external".into(),
+                    status: protocol::protocol::ExternalTerminalStatus::Errored,
+                    message: Some("provider failed".into()),
+                    terminal_at_ms: 1_700_000_123_000,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].status, TurnStatus::Failed);
+        assert_eq!(turns[0].completed_at, Some(1_700_000_123));
+        assert_eq!(
+            turns[0].error.as_ref().map(|error| error.message.as_str()),
+            Some("provider failed")
+        );
+        assert!(turns[0].items.is_empty());
+    }
+
+    #[test]
+    fn external_shutdown_terminal_status_marks_turn_completed_without_display_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-external".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(
+                protocol::protocol::ExternalTerminalStatusEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-external".into(),
+                    status: protocol::protocol::ExternalTerminalStatus::Shutdown,
+                    message: None,
+                    terminal_at_ms: 1_700_000_124_000,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].status, TurnStatus::Completed);
+        assert_eq!(turns[0].completed_at, Some(1_700_000_124));
+        assert!(turns[0].error.is_none());
+        assert!(turns[0].items.is_empty());
+    }
+
+    #[test]
     fn replays_image_generation_end_events_into_turn_history() {
         let items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
@@ -394,4 +455,3 @@ use super::*;
             ]
         );
     }
-

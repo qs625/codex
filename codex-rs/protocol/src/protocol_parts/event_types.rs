@@ -188,6 +188,7 @@ pub enum EventMsg {
     BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent),
     ExternalToolCallStarted(ExternalToolCallDisplayEvent),
     ExternalToolCallCompleted(ExternalToolCallDisplayEvent),
+    ExternalTerminalStatus(ExternalTerminalStatusEvent),
     WorkflowRunProgressCompleted(WorkflowRunProgressDisplayEvent),
     EventCommandEventCompleted(EventCommandDisplayEvent),
     EventDrivenToolCompleted(EventDrivenToolDisplayEvent),

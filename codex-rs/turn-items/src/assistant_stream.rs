@@ -158,6 +158,7 @@ pub fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::BuiltinToolCallCompleted(_)
         | EventMsg::ExternalToolCallStarted(_)
         | EventMsg::ExternalToolCallCompleted(_)
+        | EventMsg::ExternalTerminalStatus(_)
         | EventMsg::WorkflowRunProgressCompleted(_)
         | EventMsg::EventCommandEventCompleted(_)
         | EventMsg::EventDrivenToolCompleted(_)

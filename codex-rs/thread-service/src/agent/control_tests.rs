@@ -1424,6 +1424,33 @@ impl crate::agent::external::ExternalProviderSession for FakeExternalStream {
     }
 }
 
+struct ClosedInputExternalStream {
+    input_sink: crate::agent::external::ExternalInputSink,
+}
+
+impl ClosedInputExternalStream {
+    fn new() -> Self {
+        let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(input_rx);
+        Self {
+            input_sink: crate::agent::external::ExternalInputSink::new(input_tx),
+        }
+    }
+}
+
+impl crate::agent::external::ExternalProviderSession for ClosedInputExternalStream {
+    fn input_sink(&self) -> crate::agent::external::ExternalInputSink {
+        self.input_sink.clone()
+    }
+
+    fn next_event<'a>(
+        &'a mut self,
+    ) -> futures::future::BoxFuture<'a, Result<crate::agent::external::ExternalProcessEvent, String>>
+    {
+        Box::pin(std::future::pending())
+    }
+}
+
 #[tokio::test]
 async fn external_stream_loop_writes_tool_result_to_same_process() {
     let harness = AgentControlHarness::new().await;
@@ -1722,6 +1749,109 @@ async fn external_stream_loop_persists_tool_call_errors_as_failed_typed_events()
         RolloutItem::EventMsg(EventMsg::UserMessage(event))
             if event.message.contains("external_tool_result")
     )));
+}
+
+#[tokio::test]
+async fn external_stream_loop_persists_closed_stdin_as_terminal_error() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path =
+        AgentPath::try_from("/root/external_stdin_closed").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some("stdin will close".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: AgentPath::try_from("/root/external_stdin_closed").expect("agent path"),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            last_task_message: Some("stdin will close".to_string()),
+            abort_handle: None,
+        });
+    let mut stream = ClosedInputExternalStream::new();
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            "stdin will close".to_string(),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+
+    assert_eq!(
+        status,
+        AgentStatus::Errored("external provider stdin is closed".to_string())
+    );
+    let stored = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external thread");
+    let items = stored.history.expect("history").items;
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(event))
+            if event.status == protocol::protocol::ExternalTerminalStatus::Errored
+                && event.message.as_deref() == Some("external provider stdin is closed")
+    )));
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let agents = restarted_control
+        .list_agents(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some("external_stdin_closed"),
+        )
+        .await
+        .expect("list persisted external agents");
+    assert_eq!(agents.len(), 1);
+    assert_eq!(
+        agents[0].lifecycle_status,
+        ThreadLifecycleStatus::errored(Some("external provider stdin is closed".to_string()))
+    );
 }
 
 #[tokio::test]
@@ -2079,6 +2209,184 @@ async fn external_running_agent_without_live_process_is_interrupted_after_restar
 }
 
 #[tokio::test]
+async fn external_errored_agent_is_listed_from_persisted_thread_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external_errored").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some("fail me".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path,
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            last_task_message: Some("fail me".to_string()),
+            abort_handle: None,
+        });
+
+    let large_error = "provider failed ".repeat(2000);
+    harness
+        .control
+        .persist_external_terminal_status(
+            external_thread_id,
+            &AgentStatus::Errored(large_error.clone()),
+        )
+        .await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let agents = restarted_control
+        .list_agents(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some("external_errored"),
+        )
+        .await
+        .expect("list persisted external agents");
+    assert_eq!(agents.len(), 1);
+    let ThreadLifecycleStatus::Final {
+        result: protocol::protocol::ThreadLifecycleFinalStatus::Errored { message },
+    } = &agents[0].lifecycle_status
+    else {
+        panic!(
+            "expected errored lifecycle, got {:?}",
+            agents[0].lifecycle_status
+        );
+    };
+    let message = message.as_ref().expect("bounded error message");
+    assert!(message.contains("provider failed"));
+    assert!(message.len() < large_error.len());
+
+    let stored = restarted_manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external thread");
+    let items = stored.history.expect("history").items;
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(event))
+            if event.status == protocol::protocol::ExternalTerminalStatus::Errored
+                && event.message.as_ref().is_some_and(|message| message.len() < large_error.len())
+    )));
+}
+
+#[tokio::test]
+async fn external_shutdown_agent_is_listed_from_open_persisted_thread_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external_shutdown").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some("shutdown me".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: AgentPath::try_from("/root/external_shutdown").expect("agent path"),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            last_task_message: Some("shutdown me".to_string()),
+            abort_handle: None,
+        });
+
+    harness
+        .control
+        .persist_external_terminal_status(external_thread_id, &AgentStatus::Shutdown)
+        .await;
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let agents = restarted_control
+        .list_agents(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some("external_shutdown"),
+        )
+        .await
+        .expect("list persisted external agents");
+    assert_eq!(agents.len(), 1);
+    assert_eq!(
+        agents[0].lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: protocol::protocol::ThreadLifecycleFinalStatus::Shutdown,
+        }
+    );
+}
+
+#[tokio::test]
 async fn external_closed_agent_is_not_restored_after_restart() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
@@ -2232,6 +2540,35 @@ async fn on_event_updates_status_from_turn_aborted() {
 async fn on_event_updates_status_from_shutdown_complete() {
     let status = agent_status_from_event(&EventMsg::ShutdownComplete);
     assert_eq!(status, Some(AgentStatus::Shutdown));
+}
+
+#[tokio::test]
+async fn on_event_updates_status_from_external_terminal_status() {
+    let thread_id = ThreadId::new();
+    let errored = agent_status_from_event(&EventMsg::ExternalTerminalStatus(
+        protocol::protocol::ExternalTerminalStatusEvent {
+            thread_id,
+            turn_id: "turn-1".to_string(),
+            status: protocol::protocol::ExternalTerminalStatus::Errored,
+            message: Some("provider failed".to_string()),
+            terminal_at_ms: 1,
+        },
+    ));
+    assert_eq!(
+        errored,
+        Some(AgentStatus::Errored("provider failed".to_string()))
+    );
+
+    let shutdown = agent_status_from_event(&EventMsg::ExternalTerminalStatus(
+        protocol::protocol::ExternalTerminalStatusEvent {
+            thread_id,
+            turn_id: "turn-1".to_string(),
+            status: protocol::protocol::ExternalTerminalStatus::Shutdown,
+            message: None,
+            terminal_at_ms: 2,
+        },
+    ));
+    assert_eq!(shutdown, Some(AgentStatus::Shutdown));
 }
 
 #[tokio::test]

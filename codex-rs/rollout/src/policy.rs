@@ -190,6 +190,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::BuiltinToolCallCompleted(_)
         | EventMsg::ExternalToolCallStarted(_)
         | EventMsg::ExternalToolCallCompleted(_)
+        | EventMsg::ExternalTerminalStatus(_)
         | EventMsg::WorkflowRunProgressCompleted(_)
         | EventMsg::EventCommandEventCompleted(_)
         | EventMsg::EventDrivenToolCompleted(_)
@@ -307,6 +308,8 @@ mod tests {
     use protocol::protocol::CollabWaitingBeginEvent;
     use protocol::protocol::CollabWaitingEndEvent;
     use protocol::protocol::EventMsg;
+    use protocol::protocol::ExternalTerminalStatus;
+    use protocol::protocol::ExternalTerminalStatusEvent;
     use protocol::protocol::ExternalToolCallDisplayEvent;
     use protocol::protocol::ExternalToolCallStatus;
     use protocol::protocol::ItemCompletedEvent;
@@ -314,8 +317,8 @@ mod tests {
     use protocol::protocol::ThreadContextUsageCategoryBreakdown;
     use protocol::protocol::ThreadContextUsageLoadedSkills;
     use protocol::protocol::ThreadContextUsageToolBreakdown;
-    use protocol::protocol::ThreadLifecycleStatus;
     use protocol::protocol::ThreadContextUsageUpdatedEvent;
+    use protocol::protocol::ThreadLifecycleStatus;
 
     #[test]
     fn limited_mode_persists_thread_context_usage() {
@@ -436,10 +439,8 @@ mod tests {
     #[test]
     fn limited_mode_sanitizes_unified_exec_command_end_output() {
         let large_output = "x".repeat(PERSISTED_EXEC_AGGREGATED_OUTPUT_MAX_BYTES + 100);
-        let expected_truncated = truncate_middle_chars(
-            &large_output,
-            PERSISTED_EXEC_AGGREGATED_OUTPUT_MAX_BYTES,
-        );
+        let expected_truncated =
+            truncate_middle_chars(&large_output, PERSISTED_EXEC_AGGREGATED_OUTPUT_MAX_BYTES);
         let persisted = persisted_rollout_items(
             &[RolloutItem::EventMsg(EventMsg::ExecCommandEnd(
                 protocol::protocol::ExecCommandEndEvent {
@@ -732,5 +733,37 @@ mod tests {
                 true
             );
         }
+    }
+
+    #[test]
+    fn limited_mode_persists_external_terminal_status_without_generic_terminal_events() {
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000001").expect("valid thread");
+        let external_terminal = EventMsg::ExternalTerminalStatus(ExternalTerminalStatusEvent {
+            thread_id,
+            turn_id: "turn-1".into(),
+            status: ExternalTerminalStatus::Errored,
+            message: Some("provider failed".into()),
+            terminal_at_ms: 1,
+        });
+
+        assert_eq!(
+            should_persist_event_msg(&external_terminal, EventPersistenceMode::Limited),
+            true
+        );
+        assert_eq!(
+            should_persist_event_msg(
+                &EventMsg::Error(protocol::protocol::ErrorEvent {
+                    message: "generic error".into(),
+                    codex_error_info: None,
+                }),
+                EventPersistenceMode::Limited,
+            ),
+            false
+        );
+        assert_eq!(
+            should_persist_event_msg(&EventMsg::ShutdownComplete, EventPersistenceMode::Limited),
+            false
+        );
     }
 }

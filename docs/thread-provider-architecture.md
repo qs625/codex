@@ -93,6 +93,10 @@ error。它们不改变 replay 或 display handling。
   event，下游 replay 仍应通过 typed `EventMsg -> ThreadItem` 路径处理。
 - Rollout `Limited` 仍是 reload contract。任何 reload 需要的 provider event
   都必须以有界 payload 持久化到 thread history/replay 实际消费的 view 中。
+- external provider 的 Errored / Shutdown 终态是 durable lifecycle fact，应通过
+  external-specific bounded terminal event 进入 `Limited`。不要为此全局扩大
+  generic `Error` 或 `ShutdownComplete` 的 Limited policy；Completed / Interrupted
+  继续复用既有 `TurnComplete` / `TurnAborted`。
 - Root-worker tree 和 right-panel state 消费 normalized thread metadata 与 typed
   thread item。parent-child edge 必须来自 thread metadata/spawn edge，而不是
   client 里的 orphan promotion。

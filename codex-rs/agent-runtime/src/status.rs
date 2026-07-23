@@ -14,6 +14,12 @@ pub fn agent_status_from_event(msg: &EventMsg) -> Option<AgentStatus> {
         },
         EventMsg::Error(ev) => Some(AgentStatus::Errored(ev.message.clone())),
         EventMsg::ShutdownComplete => Some(AgentStatus::Shutdown),
+        EventMsg::ExternalTerminalStatus(ev) => match ev.status {
+            protocol::protocol::ExternalTerminalStatus::Errored => {
+                Some(AgentStatus::Errored(ev.message.clone().unwrap_or_default()))
+            }
+            protocol::protocol::ExternalTerminalStatus::Shutdown => Some(AgentStatus::Shutdown),
+        },
         _ => None,
     }
 }

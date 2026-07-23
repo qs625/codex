@@ -143,6 +143,14 @@ pub enum ExternalToolCallStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum ExternalTerminalStatus {
+    Errored,
+    Shutdown,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BuiltinToolCallDisplayEvent {
@@ -167,6 +175,18 @@ pub struct ExternalToolCallDisplayEvent {
     pub status: ExternalToolCallStatus,
     pub output: Option<serde_json::Value>,
     pub lifecycle_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalTerminalStatusEvent {
+    pub thread_id: ThreadId,
+    pub turn_id: String,
+    pub status: ExternalTerminalStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+    pub terminal_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]

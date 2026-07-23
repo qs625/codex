@@ -76,6 +76,8 @@ use protocol::error::Result as CodexResult;
 use protocol::models::ResponseItem;
 use protocol::protocol::AgentMessageEvent;
 use protocol::protocol::ErrorEvent;
+use protocol::protocol::ExternalTerminalStatus;
+use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::ExternalToolCallDisplayEvent;
 use protocol::protocol::ExternalToolCallStatus;
 use protocol::protocol::InitialHistory;
@@ -495,6 +497,12 @@ impl AgentControl {
             .await;
         if let Err(err) = provider_input.send(initial_input) {
             self.persist_external_error(thread_id, &err).await;
+            self.persist_external_terminal_status_with_turn_id(
+                thread_id,
+                Some(&turn_id),
+                &AgentStatus::Errored(err.clone()),
+            )
+            .await;
             return AgentStatus::Errored(err);
         }
         let mut input_rx = Some(input_rx);
@@ -513,6 +521,11 @@ impl AgentControl {
                             self.persist_external_user_message(thread_id, &input).await;
                             if let Err(err) = provider_input.send(input) {
                                 self.persist_external_error(thread_id, &err).await;
+                                self.persist_external_terminal_status_with_turn_id(
+                                    thread_id,
+                                    Some(&turn_id),
+                                    &AgentStatus::Errored(err.clone()),
+                                ).await;
                                 return AgentStatus::Errored(err);
                             }
                         }
@@ -538,6 +551,11 @@ impl AgentControl {
                             let result_input = external_tool_result_input(&result);
                             if let Err(err) = provider_input.send(result_input) {
                                 self.persist_external_error(thread_id, &err).await;
+                                self.persist_external_terminal_status_with_turn_id(
+                                    thread_id,
+                                    Some(&turn_id),
+                                    &AgentStatus::Errored(err.clone()),
+                                ).await;
                                 return AgentStatus::Errored(err);
                             }
                         }
@@ -552,6 +570,11 @@ impl AgentControl {
                             let result_input = external_tool_result_input(&result);
                             if let Err(err) = provider_input.send(result_input) {
                                 self.persist_external_error(thread_id, &err).await;
+                                self.persist_external_terminal_status_with_turn_id(
+                                    thread_id,
+                                    Some(&turn_id),
+                                    &AgentStatus::Errored(err.clone()),
+                                ).await;
                                 return AgentStatus::Errored(err);
                             }
                         }
@@ -725,11 +748,24 @@ impl AgentControl {
                     time_to_first_token_ms: None,
                 })
             }
-            AgentStatus::Errored(message) => protocol::protocol::EventMsg::Error(ErrorEvent {
-                message: bounded_external_output(message),
-                codex_error_info: None,
-            }),
-            AgentStatus::Shutdown => protocol::protocol::EventMsg::ShutdownComplete,
+            AgentStatus::Errored(message) => {
+                protocol::protocol::EventMsg::ExternalTerminalStatus(ExternalTerminalStatusEvent {
+                    thread_id,
+                    turn_id: turn_id(),
+                    status: ExternalTerminalStatus::Errored,
+                    message: Some(bounded_external_output(message)),
+                    terminal_at_ms: Utc::now().timestamp_millis(),
+                })
+            }
+            AgentStatus::Shutdown => {
+                protocol::protocol::EventMsg::ExternalTerminalStatus(ExternalTerminalStatusEvent {
+                    thread_id,
+                    turn_id: turn_id(),
+                    status: ExternalTerminalStatus::Shutdown,
+                    message: None,
+                    terminal_at_ms: Utc::now().timestamp_millis(),
+                })
+            }
             AgentStatus::Interrupted => {
                 protocol::protocol::EventMsg::TurnAborted(protocol::protocol::TurnAbortedEvent {
                     turn_id: Some(turn_id()),
