@@ -206,9 +206,10 @@ inspection runtime；MCP refresh 的 live thread ids、config refresh snapshot �
 queued `Op::RefreshMcpServers` submit 已改到 inspection / command runtime。
 bespoke `CollabCloseEnd` receiver loaded check 已改到 inspection runtime。
 thread read/listing 的 copied token/context usage reads 已改到 usage runtime。
-turn context override validation 已改到 live turn runtime。
-`AppServerLiveThreadRegistry::live_thread_handle()` 仍只保留给 listener / full live
-history 这类需要事件流或完整 persisted history handle 的路径；turn processor 里剩余
+turn context override validation 已改到 live turn runtime。旧
+`LiveThreadRegistry` / `AppServerLiveThreadRegistry` surface 现在只保留
+`live_thread_handle()` 和 `thread_history()`，用于 listener / full live history 这类
+需要事件流或完整 persisted history handle 的路径；turn processor 里剩余
 的 app-server-local turn runtime 只覆盖环境选择校验、live `Config` 读取、
 conversation item injection、steer 和 detached review fork 这些尚未
 provider-neutral 化的 native-only 能力。后续阶段再继续拆出更窄 handle。

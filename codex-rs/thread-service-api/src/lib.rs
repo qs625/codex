@@ -561,82 +561,11 @@ pub trait LiveThreadHandle: SessionCommandHandle + Send + Sync {
 pub trait LiveThreadRegistry: Send + Sync {
     type Thread: LiveThreadHandle + 'static;
 
-    /// List all live thread ids known to this registry.
-    fn list_thread_ids(&self) -> impl Future<Output = Vec<ThreadId>> + Send + '_;
-
-    /// Return the session source applied to newly created live threads.
-    fn session_source(&self) -> SessionSource;
-
     /// Return the live thread handle for event-stream consumers that need a stable owner.
     fn live_thread_handle(
         &self,
         thread_id: ThreadId,
     ) -> impl Future<Output = CodexResult<Arc<Self::Thread>>> + Send + '_;
-
-    /// Return lightweight identity metadata for a loaded live thread.
-    fn live_thread_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<LiveThreadInfo>> + Send + '_;
-
-    /// Return presentation-oriented live metadata for a loaded live thread.
-    fn live_thread_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<LiveThreadSnapshot>> + Send + '_;
-
-    /// List `thread_id` plus all known live/persisted descendants in its agent subtree.
-    fn list_agent_subtree_thread_ids(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<Vec<ThreadId>>> + Send + '_;
-
-    /// Submit an operation to a specific live thread.
-    fn send_op(
-        &self,
-        thread_id: ThreadId,
-        op: Op,
-    ) -> impl Future<Output = CodexResult<String>> + Send + '_;
-
-    /// Submit an operation with optional request trace context to a specific live thread.
-    fn send_op_with_trace(
-        &self,
-        thread_id: ThreadId,
-        op: Op,
-        trace: Option<W3cTraceContext>,
-    ) -> impl Future<Output = CodexResult<String>> + Send + '_;
-
-    /// Return the latest agent lifecycle status for a specific live thread.
-    fn thread_agent_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<AgentStatus>> + Send + '_;
-
-    /// Return the coarse runtime status for a specific live thread.
-    fn thread_runtime_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<ThreadRuntimeStatus>> + Send + '_;
-
-    /// Return whether a feature is enabled for a specific live thread.
-    fn thread_feature_enabled(
-        &self,
-        thread_id: ThreadId,
-        feature: Feature,
-    ) -> impl Future<Output = CodexResult<bool>> + Send + '_;
-
-    /// Set per-client metadata used by turn/runtime behavior for a specific live thread.
-    fn set_thread_app_server_client_info(
-        &self,
-        thread_id: ThreadId,
-        info: AppServerClientInfo,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
-    /// Return the guardian trunk rollout path for a specific live thread.
-    fn thread_guardian_trunk_rollout_path(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<Option<PathBuf>>> + Send + '_;
 
     /// Return live persisted history for a specific loaded thread.
     fn thread_history(
