@@ -14,7 +14,7 @@ use protocol::subscriptions::PersistedSubscription;
 use thread_service::ThreadService;
 use thread_service::config::Config;
 use thread_service_api::ActiveEventSubscriptionTracker;
-use thread_service_api::LiveThreadRegistry;
+use thread_service_api::LiveThreadConversationRuntime;
 use thread_store_api::ReadThreadParams;
 use thread_store_api::ThreadMetadataPatch;
 
@@ -86,7 +86,7 @@ impl FileSubscriptionThreadHost for ThreadService {
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
             let _ = self
-                .append_thread_conversation_item(thread_id, item)
+                .append_live_thread_conversation_item(thread_id, item)
                 .await
                 .map_err(|err| err.to_string())?;
             Ok(())

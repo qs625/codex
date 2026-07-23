@@ -264,6 +264,19 @@ pub trait LiveThreadCommandRuntime: Send + Sync {
     fn remove_live_thread(&self, thread_id: ThreadId) -> impl Future<Output = bool> + Send + '_;
 }
 
+/// Conversation append surface for live threads without exposing concrete handles.
+///
+/// Implementations enqueue a prebuilt conversation item through the live thread
+/// input path so it can be consumed like other async input.
+pub trait LiveThreadConversationRuntime: Send + Sync {
+    /// Append a single prebuilt conversation item to a specific live thread.
+    fn append_live_thread_conversation_item(
+        &self,
+        thread_id: ThreadId,
+        item: ResponseItem,
+    ) -> impl Future<Output = CodexResult<String>> + Send + '_;
+}
+
 /// Turn preflight surface for live threads without exposing concrete handles.
 ///
 /// Implementations validate turn-scoped inputs against the live thread but do
@@ -591,13 +604,6 @@ pub trait LiveThreadRegistry: Send + Sync {
         thread_id: ThreadId,
         op: Op,
         trace: Option<W3cTraceContext>,
-    ) -> impl Future<Output = CodexResult<String>> + Send + '_;
-
-    /// Append a model-visible conversation item to a specific live thread.
-    fn append_thread_conversation_item(
-        &self,
-        thread_id: ThreadId,
-        item: ResponseItem,
     ) -> impl Future<Output = CodexResult<String>> + Send + '_;
 
     /// Return the latest agent lifecycle status for a specific live thread.

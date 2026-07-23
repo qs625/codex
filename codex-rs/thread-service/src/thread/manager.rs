@@ -2061,6 +2061,20 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadConversationRuntime for ThreadServiceState {
+    fn append_live_thread_conversation_item(
+        &self,
+        thread_id: ThreadId,
+        item: ResponseItem,
+    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.append_message(item).await
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadTurnRuntime for ThreadServiceState {
     fn validate_live_thread_turn_context_overrides(
         &self,
@@ -2471,6 +2485,21 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadService {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadConversationRuntime for ThreadService {
+    fn append_live_thread_conversation_item(
+        &self,
+        thread_id: ThreadId,
+        item: ResponseItem,
+    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
+        thread_service_api::LiveThreadConversationRuntime::append_live_thread_conversation_item(
+            self.state.as_ref(),
+            thread_id,
+            item,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadTurnRuntime for ThreadService {
     fn validate_live_thread_turn_context_overrides(
         &self,
@@ -2823,17 +2852,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
         async move {
             let thread = self.get_thread(thread_id).await?;
             thread.submit_with_trace(op, trace).await
-        }
-    }
-
-    fn append_thread_conversation_item(
-        &self,
-        thread_id: ThreadId,
-        item: ResponseItem,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.append_message(item).await
         }
     }
 
