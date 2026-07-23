@@ -558,7 +558,7 @@ async fn thread_turns_list_supports_requested_items_view() -> Result<()> {
     assert_eq!(not_loaded.items_view, TurnItemsView::NotLoaded);
     assert!(not_loaded.items.is_empty());
     assert_eq!(not_loaded.id, full.id);
-    assert_eq!(not_loaded.lifecycle_status, full.lifecycle_status);
+    assert_eq!(not_loaded.status, full.status);
     assert_eq!(not_loaded.started_at, full.started_at);
     assert_eq!(not_loaded.completed_at, full.completed_at);
     assert_eq!(not_loaded.duration_ms, full.duration_ms);

@@ -57,7 +57,7 @@ async fn thread_unsubscribe_keeps_thread_loaded_until_idle_timeout() -> Result<(
     )
     .await??;
     let unsubscribe = to_response::<ThreadUnsubscribeResponse>(unsubscribe_resp)?;
-    assert_eq!(unsubscribe.lifecycle_status, ThreadUnsubscribeStatus::Unsubscribed);
+    assert_eq!(unsubscribe.status, ThreadUnsubscribeStatus::Unsubscribed);
 
     assert!(
         timeout(
@@ -212,7 +212,7 @@ async fn thread_unsubscribe_during_turn_keeps_turn_running() -> Result<()> {
     )
     .await??;
     let unsubscribe = to_response::<ThreadUnsubscribeResponse>(unsubscribe_resp)?;
-    assert_eq!(unsubscribe.lifecycle_status, ThreadUnsubscribeStatus::Unsubscribed);
+    assert_eq!(unsubscribe.status, ThreadUnsubscribeStatus::Unsubscribed);
 
     let closed_while_tool_call_blocked = timeout(
         std::time::Duration::from_millis(250),
@@ -304,7 +304,7 @@ async fn thread_unsubscribe_preserves_cached_status_before_idle_unload() -> Resu
     )
     .await??;
     let unsubscribe = to_response::<ThreadUnsubscribeResponse>(unsubscribe_resp)?;
-    assert_eq!(unsubscribe.lifecycle_status, ThreadUnsubscribeStatus::Unsubscribed);
+    assert_eq!(unsubscribe.status, ThreadUnsubscribeStatus::Unsubscribed);
     assert!(
         timeout(
             std::time::Duration::from_millis(250),
@@ -353,10 +353,7 @@ async fn thread_unsubscribe_reports_not_subscribed_before_idle_unload() -> Resul
     )
     .await??;
     let first_unsubscribe = to_response::<ThreadUnsubscribeResponse>(first_unsubscribe_resp)?;
-    assert_eq!(
-        first_unsubscribe.lifecycle_status,
-        ThreadUnsubscribeStatus::Unsubscribed
-    );
+    assert_eq!(first_unsubscribe.status, ThreadUnsubscribeStatus::Unsubscribed);
 
     let second_unsubscribe_id = mcp
         .send_thread_unsubscribe_request(ThreadUnsubscribeParams { thread_id })
@@ -368,7 +365,7 @@ async fn thread_unsubscribe_reports_not_subscribed_before_idle_unload() -> Resul
     .await??;
     let second_unsubscribe = to_response::<ThreadUnsubscribeResponse>(second_unsubscribe_resp)?;
     assert_eq!(
-        second_unsubscribe.lifecycle_status,
+        second_unsubscribe.status,
         ThreadUnsubscribeStatus::NotSubscribed
     );
 

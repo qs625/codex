@@ -93,12 +93,17 @@ async fn thread_status_changed_emits_runtime_updates() -> Result<()> {
                     continue;
                 }
                 match notification.lifecycle_status {
+                    ThreadLifecycleStatus::Initializing => {}
                     ThreadLifecycleStatus::Active { .. } => {
                         saw_active_running = true;
                     }
                     ThreadLifecycleStatus::Waiting { .. } => {}
                     ThreadLifecycleStatus::Final {
-                        result: ThreadLifecycleFinalStatus::Completed { .. },
+                        result:
+                            ThreadLifecycleFinalStatus::Completed { .. }
+                            | ThreadLifecycleFinalStatus::Errored { .. }
+                            | ThreadLifecycleFinalStatus::Interrupted
+                            | ThreadLifecycleFinalStatus::Shutdown,
                     } => {
                         if saw_active_running {
                             saw_idle_after_turn = true;

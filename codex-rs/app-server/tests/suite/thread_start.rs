@@ -1107,7 +1107,7 @@ async fn thread_start_emits_mcp_server_status_updated_notifications() -> Result<
         anyhow::bail!("unexpected notification variant");
     };
     assert_eq!(failed.name, "optional_broken");
-    assert_eq!(failed.lifecycle_status, McpServerStartupState::Failed);
+    assert_eq!(failed.status, McpServerStartupState::Failed);
     assert!(
         failed
             .error
