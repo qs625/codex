@@ -877,46 +877,7 @@ impl ThreadService {
         &self,
         thread_id: ThreadId,
     ) -> CodexResult<Vec<ThreadId>> {
-        let thread = self.state.get_thread(thread_id).await?;
-
-        let mut subtree_thread_ids = Vec::new();
-        let mut seen_thread_ids = HashSet::new();
-        subtree_thread_ids.push(thread_id);
-        seen_thread_ids.insert(thread_id);
-
-        if let Some(state_db_ctx) = thread.state_db() {
-            for status in [
-                DirectionalThreadSpawnEdgeStatus::Open,
-                DirectionalThreadSpawnEdgeStatus::Closed,
-            ] {
-                for descendant_id in state_db_ctx
-                    .list_thread_spawn_descendants_with_status(thread_id, status)
-                    .await
-                    .map_err(|err| {
-                        CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
-                    })?
-                {
-                    if seen_thread_ids.insert(descendant_id) {
-                        subtree_thread_ids.push(descendant_id);
-                    }
-                }
-            }
-        }
-
-        for descendant_id in thread
-            .codex
-            .session
-            .services
-            .agent_control
-            .list_live_agent_subtree_thread_ids(thread_id)
-            .await?
-        {
-            if seen_thread_ids.insert(descendant_id) {
-                subtree_thread_ids.push(descendant_id);
-            }
-        }
-
-        Ok(subtree_thread_ids)
+        self.state.list_agent_subtree_thread_ids(thread_id).await
     }
 
     pub async fn start_thread(&self, config: Config) -> CodexResult<NewThread> {
@@ -1480,6 +1441,53 @@ impl ThreadServiceState {
             Some(thread) if !thread.session_source.is_internal() => Ok(thread.clone()),
             Some(_) | None => Err(CodexErr::ThreadNotFound(thread_id)),
         }
+    }
+
+    /// List `thread_id` plus all known descendants in its spawn subtree.
+    pub(crate) async fn list_agent_subtree_thread_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<Vec<ThreadId>> {
+        let thread = self.get_thread(thread_id).await?;
+
+        let mut subtree_thread_ids = Vec::new();
+        let mut seen_thread_ids = HashSet::new();
+        subtree_thread_ids.push(thread_id);
+        seen_thread_ids.insert(thread_id);
+
+        if let Some(state_db_ctx) = thread.state_db() {
+            for status in [
+                DirectionalThreadSpawnEdgeStatus::Open,
+                DirectionalThreadSpawnEdgeStatus::Closed,
+            ] {
+                for descendant_id in state_db_ctx
+                    .list_thread_spawn_descendants_with_status(thread_id, status)
+                    .await
+                    .map_err(|err| {
+                        CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
+                    })?
+                {
+                    if seen_thread_ids.insert(descendant_id) {
+                        subtree_thread_ids.push(descendant_id);
+                    }
+                }
+            }
+        }
+
+        for descendant_id in thread
+            .codex
+            .session
+            .services
+            .agent_control
+            .list_live_agent_subtree_thread_ids(thread_id)
+            .await?
+        {
+            if seen_thread_ids.insert(descendant_id) {
+                subtree_thread_ids.push(descendant_id);
+            }
+        }
+
+        Ok(subtree_thread_ids)
     }
 
     pub(crate) async fn read_stored_thread(
@@ -2226,6 +2234,30 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadFeedbackRuntime for ThreadServiceState {
+    fn list_agent_subtree_thread_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Vec<ThreadId>>> + Send + '_ {
+        ThreadServiceState::list_agent_subtree_thread_ids(self, thread_id)
+    }
+
+    fn thread_guardian_trunk_rollout_path(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Option<PathBuf>>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            Ok(thread.guardian_trunk_rollout_path().await)
+        }
+    }
+
+    fn session_source(&self) -> SessionSource {
+        self.session_source.clone()
+    }
+}
+
 impl thread_service_api::LiveThreadStateRuntimeSource for ThreadServiceState {
     fn thread_state_runtime(&self) -> Option<state_api::SharedStateDbRuntime> {
         self.state_db
@@ -2396,6 +2428,33 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadService {
             thread_id,
             feature,
         )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadFeedbackRuntime for ThreadService {
+    fn list_agent_subtree_thread_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Vec<ThreadId>>> + Send + '_ {
+        thread_service_api::LiveThreadFeedbackRuntime::list_agent_subtree_thread_ids(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn thread_guardian_trunk_rollout_path(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Option<PathBuf>>> + Send + '_ {
+        thread_service_api::LiveThreadFeedbackRuntime::thread_guardian_trunk_rollout_path(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn session_source(&self) -> SessionSource {
+        thread_service_api::LiveThreadFeedbackRuntime::session_source(self.state.as_ref())
     }
 }
 

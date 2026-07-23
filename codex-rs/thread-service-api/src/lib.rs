@@ -330,6 +330,27 @@ pub trait LiveThreadInspectionRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<bool>> + Send + '_;
 }
 
+/// Feedback collection surface for live thread metadata without exposing handles.
+///
+/// Implementations own any provider-specific lookup required to gather copied
+/// thread ids, rollout paths, and session metadata used by feedback uploads.
+pub trait LiveThreadFeedbackRuntime: Send + Sync {
+    /// List `thread_id` plus all known live/persisted descendants in its agent subtree.
+    fn list_agent_subtree_thread_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<Vec<ThreadId>>> + Send + '_;
+
+    /// Return the guardian trunk rollout path for a specific live thread.
+    fn thread_guardian_trunk_rollout_path(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<Option<PathBuf>>> + Send + '_;
+
+    /// Return the session source applied to newly created live threads.
+    fn session_source(&self) -> SessionSource;
+}
+
 /// Source for optional persistent thread state runtime owned by the live thread manager.
 ///
 /// Consumers that need spawn-edge or thread metadata persistence should depend

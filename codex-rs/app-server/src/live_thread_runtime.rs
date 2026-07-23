@@ -8,6 +8,7 @@ use protocol::protocol::AgentStatus;
 use protocol::protocol::Event;
 use protocol::protocol::Op;
 use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::TokenUsageInfo;
 use protocol::protocol::W3cTraceContext;
@@ -15,6 +16,7 @@ use skill_service_api::SkillWatchPath;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadConfigRefreshSnapshot;
+use thread_service_api::LiveThreadFeedbackRuntime;
 use thread_service_api::LiveThreadHandle;
 use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
@@ -242,6 +244,45 @@ where
         Box::pin(LiveThreadInspectionRuntime::live_thread_feature_enabled(
             self, thread_id, feature,
         ))
+    }
+}
+
+pub(crate) trait AppServerLiveThreadFeedbackRuntime: Send + Sync {
+    fn list_agent_subtree_thread_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Vec<ThreadId>>>;
+
+    fn thread_guardian_trunk_rollout_path(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Option<std::path::PathBuf>>>;
+
+    fn session_source(&self) -> SessionSource;
+}
+
+impl<T> AppServerLiveThreadFeedbackRuntime for T
+where
+    T: LiveThreadFeedbackRuntime + Send + Sync,
+{
+    fn list_agent_subtree_thread_ids(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Vec<ThreadId>>> {
+        Box::pin(LiveThreadFeedbackRuntime::list_agent_subtree_thread_ids(
+            self, thread_id,
+        ))
+    }
+
+    fn thread_guardian_trunk_rollout_path(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Option<std::path::PathBuf>>> {
+        Box::pin(LiveThreadFeedbackRuntime::thread_guardian_trunk_rollout_path(self, thread_id))
+    }
+
+    fn session_source(&self) -> SessionSource {
+        LiveThreadFeedbackRuntime::session_source(self)
     }
 }
 

@@ -1,52 +1,11 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadFeedbackRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
-use futures::future::BoxFuture;
-
-pub(crate) trait ThreadFeedbackRuntime: Send + Sync {
-    fn list_agent_subtree_thread_ids(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Vec<ThreadId>>>;
-
-    fn thread_guardian_trunk_rollout_path(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Option<PathBuf>>>;
-
-    fn session_source(&self) -> protocol::protocol::SessionSource;
-}
-
-impl<T> ThreadFeedbackRuntime for T
-where
-    T: LiveThreadRegistry + Send + Sync,
-{
-    fn list_agent_subtree_thread_ids(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Vec<ThreadId>>> {
-        Box::pin(LiveThreadRegistry::list_agent_subtree_thread_ids(
-            self, thread_id,
-        ))
-    }
-
-    fn thread_guardian_trunk_rollout_path(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Option<PathBuf>>> {
-        Box::pin(LiveThreadRegistry::thread_guardian_trunk_rollout_path(
-            self, thread_id,
-        ))
-    }
-
-    fn session_source(&self) -> protocol::protocol::SessionSource {
-        LiveThreadRegistry::session_source(self)
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct FeedbackRequestProcessor {
     auth_manager: Arc<AuthManager>,
-    thread_runtime: Arc<dyn ThreadFeedbackRuntime>,
+    thread_runtime: Arc<dyn AppServerLiveThreadFeedbackRuntime>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     config: Arc<Config>,
     feedback: CodexFeedback,
@@ -64,11 +23,11 @@ impl FeedbackRequestProcessor {
         state_db: Option<StateDbHandle>,
     ) -> Self
     where
-        R: ThreadFeedbackRuntime + AppServerLiveThreadInspectionRuntime + 'static,
+        R: AppServerLiveThreadFeedbackRuntime + AppServerLiveThreadInspectionRuntime + 'static,
     {
         let live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime> =
             thread_runtime.clone();
-        let thread_runtime: Arc<dyn ThreadFeedbackRuntime> = thread_runtime;
+        let thread_runtime: Arc<dyn AppServerLiveThreadFeedbackRuntime> = thread_runtime;
         Self {
             auth_manager,
             thread_runtime,
