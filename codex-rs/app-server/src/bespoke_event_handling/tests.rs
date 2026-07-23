@@ -249,6 +249,7 @@
                 self.thread_service.clone(),
                 self.thread_service.clone(),
                 self.thread_service.clone(),
+                self.thread_service.clone(),
                 self.outgoing.clone(),
                 self.thread_state.clone(),
                 self.thread_watch_manager.clone(),

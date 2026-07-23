@@ -356,10 +356,11 @@ pub(super) async fn handle_error(
 }
 
 pub(super) async fn on_request_user_input_response(
+    conversation_id: ThreadId,
     event_turn_id: String,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     thread_state: Arc<Mutex<ThreadState>>,
     user_input_guard: ThreadWatchActiveGuard,
 ) {
@@ -374,8 +375,8 @@ pub(super) async fn on_request_user_input_response(
             let empty = CoreRequestUserInputResponse {
                 answers: HashMap::new(),
             };
-            if let Err(err) = conversation
-                .submit_op(Op::UserInputAnswer {
+            if let Err(err) = live_thread_command
+                .submit_live_thread_op(conversation_id, Op::UserInputAnswer {
                     id: event_turn_id,
                     response: empty,
                 })
@@ -390,8 +391,8 @@ pub(super) async fn on_request_user_input_response(
             let empty = CoreRequestUserInputResponse {
                 answers: HashMap::new(),
             };
-            if let Err(err) = conversation
-                .submit_op(Op::UserInputAnswer {
+            if let Err(err) = live_thread_command
+                .submit_live_thread_op(conversation_id, Op::UserInputAnswer {
                     id: event_turn_id,
                     response: empty,
                 })
@@ -425,8 +426,8 @@ pub(super) async fn on_request_user_input_response(
             .collect(),
     };
 
-    if let Err(err) = conversation
-        .submit_op(Op::UserInputAnswer {
+    if let Err(err) = live_thread_command
+        .submit_live_thread_op(conversation_id, Op::UserInputAnswer {
             id: event_turn_id,
             response,
         })
@@ -437,11 +438,12 @@ pub(super) async fn on_request_user_input_response(
 }
 
 pub(super) async fn on_mcp_server_elicitation_response(
+    conversation_id: ThreadId,
     server_name: String,
     request_id: protocol::mcp::RequestId,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
 ) {
@@ -450,8 +452,8 @@ pub(super) async fn on_mcp_server_elicitation_response(
     drop(permission_guard);
     let response = mcp_server_elicitation_response_from_client_result(response);
 
-    if let Err(err) = conversation
-        .submit_op(Op::ResolveElicitation {
+    if let Err(err) = live_thread_command
+        .submit_live_thread_op(conversation_id, Op::ResolveElicitation {
             server_name,
             request_id,
             decision: response.action.to_core(),
@@ -505,10 +507,11 @@ pub(super) fn mcp_server_elicitation_response_from_client_result(
 
 pub(super) async fn on_request_permissions_response(
     pending_response: PendingRequestPermissionsResponse,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     thread_state: Arc<Mutex<ThreadState>>,
 ) {
     let PendingRequestPermissionsResponse {
+        conversation_id,
         call_id,
         requested_permissions,
         request_cwd,
@@ -529,8 +532,8 @@ pub(super) async fn on_request_permissions_response(
     };
     outgoing.track_effective_permissions_approval_response(pending_request_id, response.clone());
 
-    if let Err(err) = conversation
-        .submit_op(Op::RequestPermissionsResponse {
+    if let Err(err) = live_thread_command
+        .submit_live_thread_op(conversation_id, Op::RequestPermissionsResponse {
             id: call_id,
             response,
         })
@@ -541,6 +544,7 @@ pub(super) async fn on_request_permissions_response(
 }
 
 pub(super) struct PendingRequestPermissionsResponse {
+    pub(super) conversation_id: ThreadId,
     pub(super) call_id: String,
     pub(super) requested_permissions: CoreRequestPermissionProfile,
     pub(super) request_cwd: AbsolutePathBuf,
@@ -647,10 +651,11 @@ pub(super) fn map_file_change_approval_decision(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn on_file_change_request_approval_response(
+    conversation_id: ThreadId,
     item_id: String,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    codex: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
 ) {
@@ -680,8 +685,8 @@ pub(super) async fn on_file_change_request_approval_response(
         }
     };
 
-    if let Err(err) = codex
-        .submit_op(Op::PatchApproval {
+    if let Err(err) = live_thread_command
+        .submit_live_thread_op(conversation_id, Op::PatchApproval {
             id: item_id,
             decision,
         })
@@ -700,7 +705,7 @@ pub(super) async fn on_command_execution_request_approval_response(
     completion_item: Option<CommandExecutionCompletionItem>,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
@@ -804,8 +809,8 @@ pub(super) async fn on_command_execution_request_approval_response(
         .await;
     }
 
-    if let Err(err) = conversation
-        .submit_op(Op::ExecApproval {
+    if let Err(err) = live_thread_command
+        .submit_live_thread_op(conversation_id, Op::ExecApproval {
             id: approval_id.unwrap_or_else(|| item_id.clone()),
             turn_id: Some(event_turn_id),
             decision,

@@ -14,12 +14,13 @@ pub(super) struct CommandExecutionCompletionItem {
 
 pub(super) async fn handle_apply_patch_approval_request(
     conversation_id: &ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     outgoing: &ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
     event: protocol::protocol::ApplyPatchApprovalRequestEvent,
 ) {
+    let conversation_id = *conversation_id;
     let permission_guard = thread_watch_manager
         .note_permission_requested(&conversation_id.to_string())
         .await;
@@ -38,10 +39,11 @@ pub(super) async fn handle_apply_patch_approval_request(
         .await;
     tokio::spawn(async move {
         on_file_change_request_approval_response(
+            conversation_id,
             item_id,
             pending_request_id,
             rx,
-            conversation,
+            live_thread_command,
             thread_state.clone(),
             permission_guard,
         )
@@ -53,7 +55,7 @@ pub(super) async fn handle_apply_patch_approval_request(
 pub(super) async fn handle_exec_approval_request(
     conversation_id: ThreadId,
     event_turn_id: String,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
@@ -167,7 +169,7 @@ pub(super) async fn handle_exec_approval_request(
             completion_item,
             pending_request_id,
             rx,
-            conversation,
+            live_thread_command,
             outgoing,
             thread_state.clone(),
             permission_guard,
@@ -179,12 +181,13 @@ pub(super) async fn handle_exec_approval_request(
 pub(super) async fn handle_request_user_input(
     conversation_id: &ThreadId,
     event_turn_id: String,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     outgoing: &ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
     request: protocol::protocol::RequestUserInputEvent,
 ) {
+    let conversation_id = *conversation_id;
     let user_input_guard = thread_watch_manager
         .note_user_input_requested(&conversation_id.to_string())
         .await;
@@ -219,10 +222,11 @@ pub(super) async fn handle_request_user_input(
         .await;
     tokio::spawn(async move {
         on_request_user_input_response(
+            conversation_id,
             event_turn_id,
             pending_request_id,
             rx,
-            conversation,
+            live_thread_command,
             thread_state,
             user_input_guard,
         )
@@ -232,12 +236,13 @@ pub(super) async fn handle_request_user_input(
 
 pub(super) async fn handle_elicitation_request(
     conversation_id: &ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     outgoing: &ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
     request: protocol::approvals::ElicitationRequestEvent,
 ) {
+    let conversation_id = *conversation_id;
     let permission_guard = thread_watch_manager
         .note_permission_requested(&conversation_id.to_string())
         .await;
@@ -258,8 +263,8 @@ pub(super) async fn handle_elicitation_request(
                 request_id = ?request.id,
                 "failed to parse typed MCP elicitation schema"
             );
-            if let Err(err) = conversation
-                .submit_op(Op::ResolveElicitation {
+            if let Err(err) = live_thread_command
+                .submit_live_thread_op(conversation_id, Op::ResolveElicitation {
                     server_name: request.server_name,
                     request_id: request.id,
                     decision: protocol::approvals::ElicitationAction::Cancel,
@@ -284,11 +289,12 @@ pub(super) async fn handle_elicitation_request(
         .await;
     tokio::spawn(async move {
         on_mcp_server_elicitation_response(
+            conversation_id,
             request.server_name,
             request.id,
             pending_request_id,
             rx,
-            conversation,
+            live_thread_command,
             thread_state,
             permission_guard,
         )
@@ -298,13 +304,14 @@ pub(super) async fn handle_elicitation_request(
 
 pub(super) async fn handle_request_permissions(
     conversation_id: &ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
     request: protocol::request_permissions::RequestPermissionsEvent,
 ) {
+    let conversation_id = *conversation_id;
     let permission_guard = thread_watch_manager
         .note_permission_requested(&conversation_id.to_string())
         .await;
@@ -312,7 +319,7 @@ pub(super) async fn handle_request_permissions(
     let request_cwd = match request.cwd.clone() {
         Some(cwd) => cwd,
         None => match live_thread_inspection
-            .live_thread_config_snapshot(*conversation_id)
+            .live_thread_config_snapshot(conversation_id)
             .await
         {
             Ok(snapshot) => snapshot.cwd,
@@ -321,8 +328,8 @@ pub(super) async fn handle_request_permissions(
                     "failed to read live thread config snapshot for request permissions {conversation_id}: {err}"
                 );
                 drop(permission_guard);
-                if let Err(err) = conversation
-                    .submit_op(Op::RequestPermissionsResponse {
+                if let Err(err) = live_thread_command
+                    .submit_live_thread_op(conversation_id, Op::RequestPermissionsResponse {
                         id: request.call_id,
                         response: CoreRequestPermissionsResponse {
                             permissions: Default::default(),
@@ -351,6 +358,7 @@ pub(super) async fn handle_request_permissions(
         .send_request(ServerRequestPayload::PermissionsRequestApproval(params))
         .await;
     let pending_response = PendingRequestPermissionsResponse {
+        conversation_id,
         call_id: request.call_id,
         requested_permissions,
         request_cwd,
@@ -360,16 +368,17 @@ pub(super) async fn handle_request_permissions(
         request_permissions_guard: permission_guard,
     };
     tokio::spawn(async move {
-        on_request_permissions_response(pending_response, conversation, thread_state).await;
+        on_request_permissions_response(pending_response, live_thread_command, thread_state).await;
     });
 }
 
 pub(super) async fn handle_dynamic_tool_call_request(
     conversation_id: &ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     outgoing: &ThreadScopedOutgoingMessageSender,
     request: protocol::dynamic_tools::DynamicToolCallRequest,
 ) {
+    let conversation_id = *conversation_id;
     let call_id = request.call_id;
     let turn_id = request.turn_id;
     let namespace = request.namespace;
@@ -406,6 +415,12 @@ pub(super) async fn handle_dynamic_tool_call_request(
         .send_request(ServerRequestPayload::DynamicToolCall(params))
         .await;
     tokio::spawn(async move {
-        crate::dynamic_tools::on_call_response(call_id, rx, conversation).await;
+        crate::dynamic_tools::on_call_response(
+            conversation_id,
+            call_id,
+            rx,
+            live_thread_command,
+        )
+        .await;
     });
 }

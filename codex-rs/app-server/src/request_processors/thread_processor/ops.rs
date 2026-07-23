@@ -183,6 +183,7 @@ impl ThreadRequestProcessor {
             live_thread_listener: Arc::clone(&self.live_thread_listener),
             live_thread_inspection: Arc::clone(&self.live_thread_inspection),
             thread_lifecycle_runtime: Arc::clone(&self.thread_lifecycle_runtime),
+            live_thread_command: Arc::clone(&self.live_thread_command),
             live_thread_usage: Arc::clone(&self.live_thread_usage),
             live_thread_goal: Arc::clone(&self.live_thread_goal),
             live_thread_skill_watch: Arc::clone(&self.live_thread_skill_watch),

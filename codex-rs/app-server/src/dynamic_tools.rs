@@ -3,18 +3,20 @@ use app_server_protocol::DynamicToolCallResponse;
 use protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
 use protocol::dynamic_tools::DynamicToolResponse as CoreDynamicToolResponse;
 use protocol::protocol::Op;
+use protocol::ThreadId;
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::error;
 
-use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
+use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::outgoing_message::ClientRequestResult;
 use crate::server_request_error::is_turn_transition_server_request_error;
 
 pub(crate) async fn on_call_response(
+    conversation_id: ThreadId,
     call_id: String,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
 ) {
     let response = receiver.await;
     let (response, _error) = match response {
@@ -41,8 +43,8 @@ pub(crate) async fn on_call_response(
             .collect(),
         success,
     };
-    if let Err(err) = conversation
-        .submit_op(Op::DynamicToolResponse {
+    if let Err(err) = live_thread_command
+        .submit_live_thread_op(conversation_id, Op::DynamicToolResponse {
             id: call_id.clone(),
             response: core_response,
         })

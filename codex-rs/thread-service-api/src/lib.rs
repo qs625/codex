@@ -303,8 +303,6 @@ pub trait LiveThreadHistoryRuntime: Send + Sync {
 pub trait LiveThreadListenerHandle: Send + Sync {
     fn next_event(&self) -> impl Future<Output = CodexResult<Event>> + Send + '_;
 
-    fn submit_thread_op(&self, op: Op) -> impl Future<Output = CodexResult<String>> + Send + '_;
-
     fn read_thread(
         &self,
         include_archived: bool,
@@ -318,10 +316,6 @@ where
 {
     fn next_event(&self) -> impl Future<Output = CodexResult<Event>> + Send + '_ {
         LiveThreadHandle::next_event(self)
-    }
-
-    fn submit_thread_op(&self, op: Op) -> impl Future<Output = CodexResult<String>> + Send + '_ {
-        LiveThreadHandle::submit_thread_op(self, op)
     }
 
     fn read_thread(

@@ -1,5 +1,6 @@
 use super::*;
 use super::context_usage_replay::ThreadUsageSource;
+use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
@@ -15,6 +16,7 @@ pub(super) struct ListenerTaskContext {
     pub(super) live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     pub(super) thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
+    pub(super) live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     pub(super) live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     pub(super) live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
     pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
@@ -278,6 +280,7 @@ pub(super) async fn ensure_listener_task_running(
         outgoing,
         live_thread_inspection,
         thread_lifecycle_runtime,
+        live_thread_command,
         live_thread_usage,
         live_thread_goal,
         thread_state_manager,
@@ -347,6 +350,7 @@ pub(super) async fn ensure_listener_task_running(
                         conversation.clone(),
                         live_thread_inspection.clone(),
                         thread_lifecycle_runtime.clone(),
+                        live_thread_command.clone(),
                         live_thread_usage.clone(),
                         thread_outgoing,
                         thread_state.clone(),

@@ -1280,6 +1280,7 @@ impl TurnRequestProcessor {
             live_thread_listener: self.live_thread_listener.clone(),
             live_thread_inspection: self.live_thread_inspection.clone(),
             thread_lifecycle_runtime: self.thread_lifecycle_runtime.clone(),
+            live_thread_command: self.live_thread_command.clone(),
             live_thread_usage: self.live_thread_usage.clone(),
             live_thread_goal: self.live_thread_goal.clone(),
             live_thread_skill_watch: self.live_thread_skill_watch.clone(),

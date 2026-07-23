@@ -83,8 +83,6 @@ where
 pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
     fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>>;
 
-    fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;
-
     fn read_thread(
         &self,
         include_archived: bool,
@@ -98,10 +96,6 @@ where
 {
     fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>> {
         Box::pin(LiveThreadListenerHandle::next_event(self))
-    }
-
-    fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>> {
-        Box::pin(LiveThreadListenerHandle::submit_thread_op(self, op))
     }
 
     fn read_thread(

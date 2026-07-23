@@ -229,7 +229,9 @@ reads 也已改到 inspection runtime。thread read/listing、cold
 resume/fork 和 running resume usage replay 的 copied token/context usage reads 已改到 usage runtime。
 turn context override validation 已改到 live turn runtime。thread/read 和
 thread/turns/list 的 live persisted history 读取已改到 history runtime。listener event
-stream、submit 和 read-thread handle 读取仍在 listener runtime；memory consolidation
+stream 和 read-thread handle 读取仍在 listener runtime；bespoke approval /
+elicitation / user-input / permissions responses 以及 dynamic tool responses 的
+listener submit 已改到 command runtime；memory consolidation
 startup/shutdown/status/token usage 已改到 memory-specific handle。detached review
 thread assembly 的 read-thread 也已改到 narrow runtime/store read 路径。旧
 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` surface 和 app-server

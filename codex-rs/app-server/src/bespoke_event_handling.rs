@@ -1,5 +1,6 @@
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
+use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
@@ -134,6 +135,7 @@ pub(crate) async fn apply_bespoke_event_handling(
     conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<tokio::sync::Mutex<ThreadState>>,
@@ -373,7 +375,7 @@ pub(crate) async fn apply_bespoke_event_handling(
         EventMsg::ApplyPatchApprovalRequest(event) => {
             handle_apply_patch_approval_request(
                 &conversation_id,
-                conversation,
+                live_thread_command,
                 &outgoing,
                 thread_state.clone(),
                 &thread_watch_manager,
@@ -385,7 +387,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             handle_exec_approval_request(
                 conversation_id,
                 event_turn_id,
-                conversation,
+                live_thread_command,
                 outgoing,
                 thread_state.clone(),
                 &thread_watch_manager,
@@ -397,7 +399,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             handle_request_user_input(
                 &conversation_id,
                 event_turn_id,
-                conversation,
+                live_thread_command,
                 &outgoing,
                 thread_state,
                 &thread_watch_manager,
@@ -408,7 +410,7 @@ pub(crate) async fn apply_bespoke_event_handling(
         EventMsg::ElicitationRequest(request) => {
             handle_elicitation_request(
                 &conversation_id,
-                conversation,
+                live_thread_command,
                 &outgoing,
                 thread_state,
                 &thread_watch_manager,
@@ -419,8 +421,8 @@ pub(crate) async fn apply_bespoke_event_handling(
         EventMsg::RequestPermissions(request) => {
             handle_request_permissions(
                 &conversation_id,
-                conversation,
                 live_thread_inspection,
+                live_thread_command,
                 outgoing,
                 thread_state,
                 &thread_watch_manager,
@@ -429,8 +431,13 @@ pub(crate) async fn apply_bespoke_event_handling(
             .await;
         }
         EventMsg::DynamicToolCallRequest(request) => {
-            handle_dynamic_tool_call_request(&conversation_id, conversation, &outgoing, request)
-                .await;
+            handle_dynamic_tool_call_request(
+                &conversation_id,
+                live_thread_command,
+                &outgoing,
+                request,
+            )
+            .await;
         }
         EventMsg::McpToolCallBegin(_) | EventMsg::McpToolCallEnd(_) => {
             // Deprecated MCP tool-call events are still fanned out for legacy clients.
