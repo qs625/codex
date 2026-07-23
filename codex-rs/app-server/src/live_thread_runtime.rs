@@ -39,37 +39,6 @@ use thread_store_api::StoredThread;
 use thread_store_api::StoredThreadHistory;
 use thread_store_api::ThreadStoreResult;
 
-/// Object-safe live thread surface consumed by app-server listener/display code.
-///
-/// This keeps app-server orchestration depending on capability traits instead
-/// of concrete `codex-core` thread types. Runtime owner crates can implement
-/// the underlying `LiveThreadHandle`; this facade only boxes the futures needed
-/// at the app-server boundary.
-pub(crate) trait AppServerLiveThreadHandle: Send + Sync {
-    fn read_thread(
-        &self,
-        include_archived: bool,
-        include_history: bool,
-    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>>;
-}
-
-impl<T> AppServerLiveThreadHandle for T
-where
-    T: LiveThreadHandle + ?Sized,
-{
-    fn read_thread(
-        &self,
-        include_archived: bool,
-        include_history: bool,
-    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>> {
-        Box::pin(LiveThreadHandle::read_thread(
-            self,
-            include_archived,
-            include_history,
-        ))
-    }
-}
-
 /// Object-safe live thread surface needed by memory consolidation.
 pub(crate) trait AppServerMemoryConsolidationThreadHandle: Send + Sync {
     fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;

@@ -1,6 +1,5 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
@@ -11,6 +10,7 @@ use crate::request_processors::thread_processor::thread_processor_new_thread;
 use futures::future::BoxFuture;
 use model_service_api::SharedModelServiceApi;
 use thread_service_api::AppServerClientInfo;
+use thread_store_api::ReadThreadParams;
 
 pub(crate) trait TurnProcessorRuntime: Send + Sync {
     fn validate_environment_selections(
@@ -43,11 +43,15 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         config: Config,
         trace: Option<protocol::protocol::W3cTraceContext>,
     ) -> BoxFuture<'a, CodexResult<DetachedReviewThread>>;
+
+    fn read_detached_review_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'a, CodexResult<StoredThread>>;
 }
 
 pub(crate) struct DetachedReviewThread {
     thread_id: ThreadId,
-    thread: Arc<dyn AppServerLiveThreadHandle>,
 }
 
 impl TurnProcessorRuntime for ThreadService {
@@ -113,8 +117,24 @@ impl TurnProcessorRuntime for ThreadService {
             .await?;
             let new_thread = thread_processor_new_thread(new_thread);
             let thread_id = new_thread.thread_id;
-            let thread: Arc<dyn AppServerLiveThreadHandle> = new_thread.thread;
-            Ok(DetachedReviewThread { thread_id, thread })
+            Ok(DetachedReviewThread { thread_id })
+        })
+    }
+
+    fn read_detached_review_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'a, CodexResult<StoredThread>> {
+        Box::pin(async move {
+            ThreadService::read_thread(
+                self,
+                ReadThreadParams {
+                    thread_id,
+                    include_archived: true,
+                    include_history: false,
+                },
+            )
+            .await
         })
     }
 }
@@ -1155,10 +1175,7 @@ impl TurnRequestProcessor {
             config.model = Some(review_model.clone());
         }
 
-        let DetachedReviewThread {
-            thread_id,
-            thread: review_thread,
-        } = self
+        let DetachedReviewThread { thread_id } = self
             .turn_runtime
             .fork_detached_review_thread(
                 parent_thread_id,
@@ -1182,10 +1199,9 @@ impl TurnRequestProcessor {
         );
 
         let fallback_provider = self.config.model_provider_id.as_str();
-        match review_thread
-            .read_thread(
-                /*include_archived*/ true, /*include_history*/ false,
-            )
+        match self
+            .turn_runtime
+            .read_detached_review_thread(thread_id)
             .await
         {
             Ok(stored_thread) => {

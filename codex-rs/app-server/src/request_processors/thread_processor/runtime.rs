@@ -27,7 +27,7 @@ impl ThreadProcessorMetadataRuntime for ThreadService {
     }
 }
 
-pub(crate) trait ThreadProcessorCreatedThread: AppServerLiveThreadHandle {
+pub(crate) trait ThreadProcessorCreatedThread: Send + Sync {
     fn record_startup_phase(
         &self,
         phase: &'static str,
