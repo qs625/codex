@@ -658,15 +658,4 @@ pub trait LiveThreadRegistry: Send + Sync {
         thread_id: ThreadId,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 
-    /// Increment the out-of-band elicitation pause counter for a live thread.
-    fn increment_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<u64>> + Send + '_;
-
-    /// Decrement the out-of-band elicitation pause counter for a live thread.
-    fn decrement_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<u64>> + Send + '_;
 }

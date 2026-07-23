@@ -2939,25 +2939,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
         }
     }
 
-    fn increment_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.increment_out_of_band_elicitation_count().await
-        }
-    }
-
-    fn decrement_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.decrement_out_of_band_elicitation_count().await
-        }
-    }
 }
 
 fn thread_store_rollout_read_error(err: ThreadStoreError) -> CodexErr {
