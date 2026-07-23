@@ -42,6 +42,7 @@ use protocol::user_input::UserInput;
 use state_api::DirectionalThreadSpawnEdgeStatus;
 use state_api::ThreadGoalStatus as StateThreadGoalStatus;
 use tempfile::TempDir;
+use thread_service_api::LiveThreadRegistry;
 use thread_store::LocalThreadStore;
 use thread_store::LocalThreadStoreConfig;
 use thread_store_api::ArchiveThreadParams;
@@ -548,16 +549,41 @@ async fn external_completion_after_close_does_not_notify_parent() {
     let root_thread_id = ThreadId::new();
     let external_thread_id = ThreadId::new();
     let child_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = external_session_source_for(
+        root_thread_id,
+        1,
+        child_agent_path.clone(),
+        SpawnAgentProvider::CodexCli,
+    );
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(child_agent_path.clone()),
+        agent_nickname: Some("codex_cli".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
     harness.control.state.register_root_thread(root_thread_id);
     harness
         .control
         .state
-        .register_agent_metadata(AgentMetadata {
-            agent_id: Some(external_thread_id),
-            agent_path: Some(child_agent_path.clone()),
-            counted: false,
-            ..Default::default()
-        });
+        .register_agent_metadata(agent_metadata.clone());
+    harness
+        .control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            external_thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                external_thread_id,
+                session_source,
+                &agent_metadata,
+            ),
+            AgentStatus::Running,
+        )
+        .await;
     harness
         .control
         .external_agents
@@ -567,7 +593,7 @@ async fn external_completion_after_close_does_not_notify_parent() {
             agent_path: child_agent_path.clone(),
             provider: SpawnAgentProvider::CodexCli,
             depth: 1,
-            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            spawn_config: Some(external_config),
             input_sink: None,
             live_thread: None,
             status: AgentStatus::Running,
@@ -596,6 +622,14 @@ async fn external_completion_after_close_does_not_notify_parent() {
     ));
     assert_eq!(
         harness.control.get_status(external_thread_id).await,
+        AgentStatus::Shutdown
+    );
+    assert_eq!(
+        harness
+            .manager
+            .thread_agent_status(external_thread_id)
+            .await
+            .expect("external live status should be visible to app-server"),
         AgentStatus::Shutdown
     );
 }

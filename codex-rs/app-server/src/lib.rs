@@ -1,17 +1,17 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use codex_arg0::Arg0DispatchPaths;
-use config_service::ConfigLoadError;
-use config_service::TextRange as CoreTextRange;
-use config_service::LoaderOverrides;
-use config_service::NoopThreadConfigLoader;
-use config_service::RemoteThreadConfigLoader;
-use config_service::ThreadConfigLoader;
-use config_service::LocalConfigLayerLoader;
-use config_service::ConfigLayerStackOrdering;
 use codex_config_types::ConfigLayerSource;
 use codex_login::AuthManager;
 use codex_utils_cli::CliConfigOverrides;
+use config_service::ConfigLayerStackOrdering;
+use config_service::ConfigLoadError;
+use config_service::LoaderOverrides;
+use config_service::LocalConfigLayerLoader;
+use config_service::NoopThreadConfigLoader;
+use config_service::RemoteThreadConfigLoader;
+use config_service::TextRange as CoreTextRange;
+use config_service::ThreadConfigLoader;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::ErrorKind;
@@ -51,10 +51,10 @@ use app_server_protocol::TextPosition as AppTextPosition;
 use app_server_protocol::TextRange as AppTextRange;
 use codex_analytics::AppServerRpcTransport;
 use codex_exec_server::EnvironmentManager;
-use permissions_service::ExecPolicyError;
-use permissions_service::check_execpolicy_for_warnings;
 use codex_feedback::CodexFeedback;
 use exec_server_api::ExecServerRuntimePaths;
+use permissions_service::ExecPolicyError;
+use permissions_service::check_execpolicy_for_warnings;
 use protocol::protocol::SessionSource;
 use rollout::state_db as rollout_state_db;
 use state::log_db;
@@ -1042,19 +1042,37 @@ pub async fn run_main_with_transport_options(
                                         initialized_connection_ids.push(*connection_id);
                                     }
                                 }
-                                processor
-                                    .try_attach_thread_listener(
-                                        thread_created.thread_id(),
-                                        initialized_connection_ids.clone(),
-                                    )
-                                    .await;
-                                if matches!(thread_created, ThreadCreatedEvent::Started(_)) {
-                                    processor
-                                        .emit_thread_started_notification_to_connections(
-                                            thread_created.thread_id(),
-                                            &initialized_connection_ids,
-                                        )
-                                        .await;
+                                match thread_created {
+                                    ThreadCreatedEvent::Started(thread_id) => {
+                                        processor
+                                            .try_attach_thread_listener(
+                                                thread_id,
+                                                initialized_connection_ids.clone(),
+                                            )
+                                            .await;
+                                        processor
+                                            .emit_thread_started_notification_to_connections(
+                                                thread_id,
+                                                &initialized_connection_ids,
+                                            )
+                                            .await;
+                                    }
+                                    ThreadCreatedEvent::Resumed(thread_id) => {
+                                        processor
+                                            .try_attach_thread_listener(
+                                                thread_id,
+                                                initialized_connection_ids.clone(),
+                                            )
+                                            .await;
+                                    }
+                                    ThreadCreatedEvent::StatusChanged(thread_id) => {
+                                        processor
+                                            .emit_thread_status_changed_notification_to_connections(
+                                                thread_id,
+                                                &initialized_connection_ids,
+                                            )
+                                            .await;
+                                    }
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {

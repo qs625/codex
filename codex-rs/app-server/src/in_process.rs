@@ -77,12 +77,12 @@ use app_server_protocol::ServerNotification;
 use app_server_protocol::ServerRequest;
 use codex_analytics::AppServerRpcTransport;
 use codex_arg0::Arg0DispatchPaths;
-use config_service::LoaderOverrides;
-use config_service::ThreadConfigLoader;
-use config_service::CloudRequirementsLoader;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
+use config_service::CloudRequirementsLoader;
+use config_service::LoaderOverrides;
+use config_service::ThreadConfigLoader;
 use protocol::protocol::SessionSource;
 pub use rollout::StateDbHandle;
 pub use state::log_db::LogDbLayer;
@@ -501,19 +501,37 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                                 } else {
                                     Vec::<ConnectionId>::new()
                                 };
-                                processor
-                                    .try_attach_thread_listener(
-                                        thread_created.thread_id(),
-                                        connection_ids.clone(),
-                                    )
-                                    .await;
-                                if matches!(thread_created, ThreadCreatedEvent::Started(_)) {
-                                    processor
-                                        .emit_thread_started_notification_to_connections(
-                                            thread_created.thread_id(),
-                                            &connection_ids,
-                                        )
-                                        .await;
+                                match thread_created {
+                                    ThreadCreatedEvent::Started(thread_id) => {
+                                        processor
+                                            .try_attach_thread_listener(
+                                                thread_id,
+                                                connection_ids.clone(),
+                                            )
+                                            .await;
+                                        processor
+                                            .emit_thread_started_notification_to_connections(
+                                                thread_id,
+                                                &connection_ids,
+                                            )
+                                            .await;
+                                    }
+                                    ThreadCreatedEvent::Resumed(thread_id) => {
+                                        processor
+                                            .try_attach_thread_listener(
+                                                thread_id,
+                                                connection_ids.clone(),
+                                            )
+                                            .await;
+                                    }
+                                    ThreadCreatedEvent::StatusChanged(thread_id) => {
+                                        processor
+                                            .emit_thread_status_changed_notification_to_connections(
+                                                thread_id,
+                                                &connection_ids,
+                                            )
+                                            .await;
+                                    }
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {

@@ -115,6 +115,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use thread_service_api::ActiveEventSubscriptionTracker;
+use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::ThreadCreatedEvent;
 use thread_service_api::ThreadShutdownReport;
 #[cfg(any(test, feature = "test-support"))]
@@ -150,6 +151,12 @@ static FORCE_TEST_THREAD_SERVICE_BEHAVIOR: AtomicBool = AtomicBool::new(false);
 
 type CapturedOps = Vec<(ThreadId, Op)>;
 type SharedCapturedOps = Arc<std::sync::Mutex<CapturedOps>>;
+
+#[derive(Clone, Debug)]
+struct ExternalLiveThreadRecord {
+    snapshot: LiveThreadSnapshot,
+    status: AgentStatus,
+}
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn set_thread_service_test_mode_for_tests(enabled: bool) {
@@ -248,6 +255,7 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
 /// function to require an `Arc<&Self>`.
 pub(crate) struct ThreadServiceState {
     threads: Arc<RwLock<HashMap<ThreadId, Arc<CodexThread>>>>,
+    external_live_threads: Arc<RwLock<HashMap<ThreadId, ExternalLiveThreadRecord>>>,
     thread_created_tx: broadcast::Sender<ThreadCreatedEvent>,
     auth_runtime: SharedAuthRuntime,
     provider_auth_manager: Option<SharedModelProviderAuthManager>,
@@ -445,6 +453,7 @@ impl ThreadService {
         Self {
             state: Arc::new(ThreadServiceState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
+                external_live_threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 model_service,
                 provider_auth_manager,
@@ -587,6 +596,7 @@ impl ThreadService {
         Self {
             state: Arc::new(ThreadServiceState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
+                external_live_threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 model_service,
                 provider_auth_manager,
@@ -1542,6 +1552,28 @@ impl ThreadServiceState {
             })
     }
 
+    pub(crate) async fn register_external_live_thread_snapshot(
+        &self,
+        thread_id: ThreadId,
+        snapshot: LiveThreadSnapshot,
+        status: AgentStatus,
+    ) {
+        self.external_live_threads
+            .write()
+            .await
+            .insert(thread_id, ExternalLiveThreadRecord { snapshot, status });
+    }
+
+    pub(crate) async fn update_external_live_thread_status(
+        &self,
+        thread_id: ThreadId,
+        status: AgentStatus,
+    ) {
+        if let Some(record) = self.external_live_threads.write().await.get_mut(&thread_id) {
+            record.status = status;
+        }
+    }
+
     /// Send an operation to a thread by ID.
     pub(crate) async fn send_op(&self, thread_id: ThreadId, op: Op) -> CodexResult<String> {
         let thread = self.get_thread(thread_id).await?;
@@ -1896,6 +1928,12 @@ impl ThreadServiceState {
             .send(ThreadCreatedEvent::Resumed(thread_id));
     }
 
+    pub(crate) fn notify_thread_status_changed(&self, thread_id: ThreadId) {
+        let _ = self
+            .thread_created_tx
+            .send(ThreadCreatedEvent::StatusChanged(thread_id));
+    }
+
     async fn parent_rollout_thread_trace_for_source(
         &self,
         session_source: &SessionSource,
@@ -2020,6 +2058,9 @@ impl thread_service_api::LiveThreadStatusRuntime for ThreadServiceState {
         thread_id: ThreadId,
     ) -> impl std::future::Future<Output = CodexResult<AgentStatus>> + Send + '_ {
         async move {
+            if let Some(record) = self.external_live_threads.read().await.get(&thread_id) {
+                return Ok(record.status.clone());
+            }
             let thread = self.get_thread(thread_id).await?;
             Ok(thread.agent_status().await)
         }
@@ -2051,6 +2092,9 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
     + Send
     + '_ {
         async move {
+            if let Some(record) = self.external_live_threads.read().await.get(&thread_id) {
+                return Ok(record.snapshot.config_snapshot.clone());
+            }
             let thread = self.get_thread(thread_id).await?;
             Ok(thread.config_snapshot().await)
         }
@@ -2139,6 +2183,15 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
     ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadSnapshot>> + Send + '_
     {
         async move {
+            if let Some(record) = self
+                .state
+                .external_live_threads
+                .read()
+                .await
+                .get(&thread_id)
+            {
+                return Ok(record.snapshot.clone());
+            }
             let thread = self.get_thread(thread_id).await?;
             Ok(thread_service_api::LiveThreadSnapshot {
                 info: thread_service_api::LiveThreadInfo {
@@ -2196,6 +2249,15 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
         thread_id: ThreadId,
     ) -> impl std::future::Future<Output = CodexResult<AgentStatus>> + Send + '_ {
         async move {
+            if let Some(record) = self
+                .state
+                .external_live_threads
+                .read()
+                .await
+                .get(&thread_id)
+            {
+                return Ok(record.status.clone());
+            }
             let thread = self.get_thread(thread_id).await?;
             Ok(thread.agent_status().await)
         }

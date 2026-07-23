@@ -425,6 +425,34 @@ test("buildProjectAgentSidebar makes subagents inherit their project root", () =
   assert.equal(sidebar.projects.length, 1);
 });
 
+test("buildProjectAgentSidebar keeps live external codex cli subagents under their parent", () => {
+  const root = makeSidebarThread({ id: "project-root", cwd: "/work/project" });
+  const external = makeSubagentThread(
+    "external-codex",
+    "project-root",
+    "/root/codex_external_subagent",
+    {
+      agentRole: "codex_cli",
+      agentNickname: "codex_cli",
+      lifecycleStatus: {
+        type: "final" as const,
+        result: { type: "completed" as const, lastAgentMessage: "ready" },
+      },
+    },
+  );
+
+  const sidebar = buildProjectAgentSidebar([root, external]);
+  const child = sidebar.projects[0]?.tree.children[0];
+
+  assert.equal(child?.threadId, "external-codex");
+  assert.equal(child?.label, "codex_external_subagent");
+  assert.deepEqual(child?.thread?.lifecycleStatus, {
+    type: "final",
+    result: { type: "completed", lastAgentMessage: "ready" },
+  });
+  assert.equal(sidebar.chat.conversations.length, 0);
+});
+
 test("getThreadSubtreeIdsChildrenFirst returns only a project subtree deepest first", () => {
   const root = makeSidebarThread({ id: "project-root", cwd: "/work/project" });
   const owner = makeSubagentThread("owner", "project-root", "/root/owner");

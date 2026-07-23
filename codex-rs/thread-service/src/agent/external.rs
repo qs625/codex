@@ -57,9 +57,18 @@ pub(crate) struct ExternalAgentRun {
 #[derive(Clone)]
 pub(crate) struct ExternalSpawnConfig {
     pub(crate) cwd: AbsolutePathBuf,
+    pub(crate) workspace_roots: Vec<AbsolutePathBuf>,
     pub(crate) agent_max_threads: Option<usize>,
     pub(crate) agent_roles: BTreeMap<String, AgentRoleConfig>,
+    pub(crate) model: String,
     pub(crate) model_provider_id: String,
+    pub(crate) service_tier: Option<String>,
+    pub(crate) approval_policy: protocol::protocol::AskForApproval,
+    pub(crate) approvals_reviewer: protocol::config_types::ApprovalsReviewer,
+    pub(crate) permission_profile: protocol::models::PermissionProfile,
+    pub(crate) active_permission_profile: Option<protocol::models::ActivePermissionProfile>,
+    pub(crate) reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
+    pub(crate) personality: Option<protocol::config_types::Personality>,
     pub(crate) generate_memories: bool,
 }
 
@@ -67,9 +76,18 @@ impl ExternalSpawnConfig {
     pub(crate) fn from_config(config: &Config) -> Self {
         Self {
             cwd: config.cwd.clone(),
+            workspace_roots: config.workspace_roots.clone(),
             agent_max_threads: config.agent_max_threads,
             agent_roles: config.agent_roles.clone(),
+            model: config.model.clone().unwrap_or_default(),
             model_provider_id: config.model_provider_id.clone(),
+            service_tier: config.service_tier.clone(),
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: config.approvals_reviewer,
+            permission_profile: config.permissions.effective_permission_profile(),
+            active_permission_profile: config.permissions.active_permission_profile(),
+            reasoning_effort: config.model_reasoning_effort,
+            personality: config.personality,
             generate_memories: config.memories.generate_memories,
         }
     }

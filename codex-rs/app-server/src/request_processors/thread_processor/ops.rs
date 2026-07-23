@@ -1,6 +1,10 @@
 use super::*;
+use app_server_protocol::ThreadLifecycleActiveFlag;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadStatusChangedNotification;
 use codex_agent_runtime::AgentMetadata;
 use protocol::AgentPath;
+use protocol::protocol::AgentStatus;
 
 #[derive(Debug, Clone)]
 pub(super) struct ThreadStartAgent {
@@ -36,6 +40,24 @@ pub(super) fn parse_thread_start_agent(
         agent_path: None,
         agent_role: Some(agent_role),
     }))
+}
+
+fn thread_lifecycle_status_from_agent_status(status: &AgentStatus) -> ThreadLifecycleStatus {
+    match status {
+        AgentStatus::PendingInit => ThreadLifecycleStatus::Initializing,
+        AgentStatus::Running => ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        },
+        AgentStatus::Completed(message) => ThreadLifecycleStatus::completed(message.clone()),
+        AgentStatus::Errored(message) => ThreadLifecycleStatus::errored(Some(message.clone())),
+        AgentStatus::Interrupted => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        },
+        AgentStatus::Shutdown => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        },
+        AgentStatus::NotFound => ThreadLifecycleStatus::NotLoaded,
+    }
 }
 
 impl ThreadRequestProcessor {
@@ -210,7 +232,10 @@ impl ThreadRequestProcessor {
         self.outgoing.request_trace_context(request_id).await
     }
 
-    pub(super) async fn send_persist_extended_history_deprecation_notice(&self, connection_id: ConnectionId) {
+    pub(super) async fn send_persist_extended_history_deprecation_notice(
+        &self,
+        connection_id: ConnectionId,
+    ) {
         self.outgoing
             .send_server_notification_to_connections(
                 &[connection_id],
@@ -234,17 +259,56 @@ impl ThreadRequestProcessor {
             return;
         };
         let mut loaded_thread = build_thread_from_live_snapshot(thread_id, &live_snapshot);
-        loaded_thread.lifecycle_status = resolve_thread_status(
-            self.thread_watch_manager
-                .loaded_status_for_thread(&loaded_thread.id)
-                .await,
-            /*has_in_progress_turn*/ false,
-        );
+        let watch_status = self
+            .thread_watch_manager
+            .loaded_status_for_thread(&loaded_thread.id)
+            .await;
+        let agent_status = self.live_threads.thread_agent_status(thread_id).await.ok();
+        loaded_thread.lifecycle_status = agent_status
+            .as_ref()
+            .map(thread_lifecycle_status_from_agent_status)
+            .unwrap_or_else(|| {
+                resolve_thread_status(watch_status, /*has_in_progress_turn*/ false)
+            });
         let notif = thread_started_notification(loaded_thread);
         self.outgoing
             .send_server_notification_to_connections(
                 connection_ids,
                 ServerNotification::ThreadStarted(notif),
+            )
+            .await;
+    }
+
+    pub(crate) async fn emit_thread_status_changed_notification_to_connections(
+        &self,
+        thread_id: ThreadId,
+        connection_ids: &[ConnectionId],
+    ) {
+        if connection_ids.is_empty() {
+            return;
+        }
+        let thread_id_string = thread_id.to_string();
+        let watch_status = self
+            .thread_watch_manager
+            .loaded_status_for_thread(&thread_id_string)
+            .await;
+        let lifecycle_status = self
+            .live_threads
+            .thread_agent_status(thread_id)
+            .await
+            .ok()
+            .as_ref()
+            .map(thread_lifecycle_status_from_agent_status)
+            .unwrap_or_else(|| {
+                resolve_thread_status(watch_status, /*has_in_progress_turn*/ false)
+            });
+        self.outgoing
+            .send_server_notification_to_connections(
+                connection_ids,
+                ServerNotification::ThreadStatusChanged(ThreadStatusChangedNotification {
+                    thread_id: thread_id_string,
+                    lifecycle_status,
+                }),
             )
             .await;
     }
@@ -855,7 +919,9 @@ impl ThreadRequestProcessor {
         Ok(ThreadMemoryModeSetResponse {})
     }
 
-    pub(super) async fn memory_reset_response_inner(&self) -> Result<MemoryResetResponse, JSONRPCErrorError> {
+    pub(super) async fn memory_reset_response_inner(
+        &self,
+    ) -> Result<MemoryResetResponse, JSONRPCErrorError> {
         let state_db = self
             .state_db
             .clone()
