@@ -154,6 +154,23 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
 迁到窄接口，最后再删除旧接口里的 native/external 重复方法。这个顺序能避免一次性
 重写所有 tool crate。
 
+当前过渡实现已将 `thread_service_api::ThreadServiceApi` 拆成四个窄边界：
+
+- `ThreadLifecycleRuntime`：provider-neutral lifecycle 的预留边界；当前先作为
+  marker trait，避免 lifecycle API 继续被塞回 collaboration 或 event trait。
+- `NativeAgentRuntime`：承载 native Morpheus `spawn_agent`、`followup_task`、
+  `close_agent` 和 `list_agents`。
+- `ThreadCollaborationRuntime`：承载 external collaboration tool surface，并继承
+  `NativeAgentRuntime` 以保持现有 model-visible collaboration facade 兼容。
+- `ThreadEventRuntime`：承载 `poll_event`、wait backoff 和
+  `record_model_items_and_emit_display_events`。
+
+旧 `ThreadServiceApi` 现在只是
+`ThreadLifecycleRuntime + ThreadCollaborationRuntime + ThreadEventRuntime` 的兼容
+facade，并通过 blanket impl 自动为实现窄 trait 的 runtime 提供旧 API。当前调用点
+仍可继续依赖 `ThreadServiceApi`；后续阶段再把 tool service 和 app-server 调用逐步
+改到窄 trait。
+
 禁止路径：
 
 - 不要把 `ThreadTurnCapability` 或完整 `Session` 塞进 external provider adapter。

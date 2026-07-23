@@ -558,7 +558,11 @@ mod tests {
     use protocol::protocol::SessionSource;
     use protocol::protocol::SubAgentSource;
     use thread_service::test_support;
+    use thread_service_api::NativeAgentRuntime;
     use thread_service_api::ThreadCloseAgentResult;
+    use thread_service_api::ThreadCollaborationRuntime;
+    use thread_service_api::ThreadEventRuntime;
+    use thread_service_api::ThreadLifecycleRuntime;
     use thread_service_api::ThreadListAgentsResult;
     use thread_service_api::ThreadPollEventRequest;
     use thread_service_api::ThreadPollEventResult;
@@ -570,7 +574,9 @@ mod tests {
 
     struct StubThreadServiceApi;
 
-    impl ThreadServiceApi for StubThreadServiceApi {
+    impl ThreadLifecycleRuntime for StubThreadServiceApi {}
+
+    impl NativeAgentRuntime for StubThreadServiceApi {
         fn spawn_agent<'a>(
             &'a self,
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
@@ -595,6 +601,26 @@ mod tests {
             Box::pin(async { unreachable!("followup_task should not be called in this test") })
         }
 
+        fn close_agent<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _target: String,
+        ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
+            Box::pin(async { unreachable!("close_agent should not be called in this test") })
+        }
+
+        fn list_agents<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _path_prefix: Option<String>,
+        ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
+            Box::pin(async { unreachable!("list_agents should not be called in this test") })
+        }
+    }
+
+    impl ThreadCollaborationRuntime for StubThreadServiceApi {
         fn spawn_external_agent<'a>(
             &'a self,
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
@@ -618,6 +644,30 @@ mod tests {
             })
         }
 
+        fn close_external_agent<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _target: String,
+        ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
+            Box::pin(async {
+                unreachable!("close_external_agent should not be called in this test")
+            })
+        }
+
+        fn list_external_agents<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _path_prefix: Option<String>,
+        ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
+            Box::pin(async {
+                unreachable!("list_external_agents should not be called in this test")
+            })
+        }
+    }
+
+    impl ThreadEventRuntime for StubThreadServiceApi {
         fn poll_event<'a>(
             &'a self,
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
@@ -637,43 +687,12 @@ mod tests {
             })
         }
 
-        fn close_agent<'a>(
+        fn reset_thread_wait_backoff<'a>(
             &'a self,
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
-            _call_id: String,
-            _target: String,
-        ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
-            Box::pin(async { unreachable!("close_agent should not be called in this test") })
-        }
-
-        fn close_external_agent<'a>(
-            &'a self,
-            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
-            _call_id: String,
-            _target: String,
-        ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
+        ) -> ThreadServiceFuture<'a, ()> {
             Box::pin(async {
-                unreachable!("close_external_agent should not be called in this test")
-            })
-        }
-
-        fn list_agents<'a>(
-            &'a self,
-            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
-            _call_id: String,
-            _path_prefix: Option<String>,
-        ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
-            Box::pin(async { unreachable!("list_agents should not be called in this test") })
-        }
-
-        fn list_external_agents<'a>(
-            &'a self,
-            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
-            _call_id: String,
-            _path_prefix: Option<String>,
-        ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
-            Box::pin(async {
-                unreachable!("list_external_agents should not be called in this test")
+                unreachable!("reset_thread_wait_backoff should not be called in this test")
             })
         }
 

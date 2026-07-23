@@ -673,25 +673,26 @@ where
 /// Boxed future returned by thread domain service APIs.
 pub type ThreadServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Thread domain service API.
+/// Provider-neutral lifecycle runtime boundary.
 ///
-/// This trait is the owner boundary for thread-specific business operations
-/// such as multi-agent lifecycle actions and thread-owned model/display item
-/// emission. Callers should depend on this trait instead of concrete session
-/// runtime types.
-pub trait ThreadServiceApi: Send + Sync + 'static {
+/// This is the future home for lifecycle operations such as start, input,
+/// status, close, list/read, and restore once those APIs move behind
+/// provider-neutral handles. The first split keeps it as a narrow marker so
+/// those operations do not get folded into collaboration or tool capability
+/// traits while existing call sites continue to use `ThreadServiceApi`.
+pub trait ThreadLifecycleRuntime: Send + Sync + 'static {}
+
+/// Morpheus-only native agent runtime operations.
+///
+/// These methods carry native role/type/model semantics and are not required of
+/// external provider adapters. External provider support remains on
+/// `ThreadCollaborationRuntime` as a separate model-visible tool surface.
+pub trait NativeAgentRuntime: Send + Sync + 'static {
     fn spawn_agent<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         request: ThreadSpawnAgentRequest,
-    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>>;
-
-    fn spawn_external_agent<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadTurnCapability>,
-        call_id: String,
-        request: ThreadSpawnExternalAgentRequest,
     ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>>;
 
     fn followup_task<'a>(
@@ -702,6 +703,35 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         message: String,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
 
+    fn close_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
+
+    fn list_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+}
+
+/// Model-visible collaboration tool runtime.
+///
+/// This facade keeps native and external tool names separate while preventing
+/// callers from depending on concrete session/runtime types. Native-only
+/// methods are inherited from `NativeAgentRuntime`; external provider methods
+/// remain explicit until provider routing is fully unified.
+pub trait ThreadCollaborationRuntime: NativeAgentRuntime + Send + Sync + 'static {
+    fn spawn_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnExternalAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>>;
+
     fn followup_external_task<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -710,6 +740,27 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         message: String,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
 
+    fn close_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
+
+    fn list_external_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+}
+
+/// Thread event kernel runtime.
+///
+/// These methods own event wakeup/backoff and thread-owned display item
+/// emission. Providers and collaboration tools should emit facts through this
+/// boundary instead of owning replay/display branching.
+pub trait ThreadEventRuntime: Send + Sync + 'static {
     fn poll_event<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -727,39 +778,26 @@ pub trait ThreadServiceApi: Send + Sync + 'static {
         turn: Arc<dyn ThreadTurnCapability>,
     ) -> ThreadServiceFuture<'a, ()>;
 
-    fn close_agent<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadTurnCapability>,
-        call_id: String,
-        target: String,
-    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
-
-    fn close_external_agent<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadTurnCapability>,
-        call_id: String,
-        target: String,
-    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
-
-    fn list_agents<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadTurnCapability>,
-        call_id: String,
-        path_prefix: Option<String>,
-    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
-
-    fn list_external_agents<'a>(
-        &'a self,
-        turn: Arc<dyn ThreadTurnCapability>,
-        call_id: String,
-        path_prefix: Option<String>,
-    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
-
     fn record_model_items_and_emit_display_events<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
         items: Vec<ResponseItem>,
     ) -> ThreadServiceFuture<'a, Result<(), String>>;
+}
+
+/// Backward-compatible thread domain service facade.
+///
+/// Existing call sites can keep depending on `ThreadServiceApi` while new code
+/// selects the narrower lifecycle, collaboration, native-agent, or event
+/// runtime traits directly.
+pub trait ThreadServiceApi:
+    ThreadLifecycleRuntime + ThreadCollaborationRuntime + ThreadEventRuntime
+{
+}
+
+impl<T> ThreadServiceApi for T where
+    T: ThreadLifecycleRuntime + ThreadCollaborationRuntime + ThreadEventRuntime
+{
 }
 
 pub trait ThreadSessionCapability: Send + Sync + 'static {
