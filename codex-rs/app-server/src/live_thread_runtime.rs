@@ -36,7 +36,6 @@ use thread_service_api::LiveThreadListenerRuntime;
 use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadSkillWatchRuntime;
 use thread_service_api::LiveThreadSnapshot;
-use thread_service_api::LiveThreadStatusRuntime;
 use thread_service_api::LiveThreadTurnRuntime;
 use thread_service_api::LiveThreadUsageRuntime;
 use thread_service_api::ThreadConfigSnapshot;
@@ -507,27 +506,6 @@ where
                 self, thread_id,
             ),
         )
-    }
-}
-
-pub(crate) trait AppServerLiveThreadStatusRuntime: Send + Sync {
-    fn live_thread_agent_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<AgentStatus>>;
-}
-
-impl<T> AppServerLiveThreadStatusRuntime for T
-where
-    T: LiveThreadStatusRuntime + Send + Sync,
-{
-    fn live_thread_agent_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<AgentStatus>> {
-        Box::pin(LiveThreadStatusRuntime::live_thread_agent_status(
-            self, thread_id,
-        ))
     }
 }
 

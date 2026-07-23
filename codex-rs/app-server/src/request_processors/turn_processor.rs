@@ -4,7 +4,6 @@ use crate::live_thread_runtime::AppServerLiveThreadConversationInjectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSteerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
@@ -13,6 +12,7 @@ use thread_service::NativeDetachedReviewRuntime;
 use thread_service::NativeMemoryStartupConfigRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
 use thread_service_api::AppServerClientInfo;
+use thread_service_api::ThreadLifecycleRuntime;
 
 #[derive(Clone)]
 pub(crate) struct TurnRequestProcessor {
@@ -21,7 +21,7 @@ pub(crate) struct TurnRequestProcessor {
     environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
     memory_startup_config_runtime: Arc<dyn NativeMemoryStartupConfigRuntime>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
-    live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
+    thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     live_thread_injection: Arc<dyn AppServerLiveThreadConversationInjectionRuntime>,
     live_thread_steer: Arc<dyn AppServerLiveThreadSteerRuntime>,
@@ -81,7 +81,7 @@ impl TurnRequestProcessor {
             environment_runtime: thread_service.clone(),
             memory_startup_config_runtime: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),
-            live_thread_status: thread_service.clone(),
+            thread_lifecycle_runtime: thread_service.clone(),
             live_thread_command: thread_service.clone(),
             live_thread_injection: thread_service.clone(),
             live_thread_steer: thread_service.clone(),
@@ -1193,7 +1193,7 @@ impl TurnRequestProcessor {
         if !is_startup_interrupt {
             let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
             let is_running = matches!(
-                self.live_thread_status
+                self.thread_lifecycle_runtime
                     .live_thread_agent_status(thread_uuid)
                     .await
                     .map_err(|err| match err {

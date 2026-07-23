@@ -406,7 +406,7 @@ impl ThreadRequestProcessor {
         // the server has to rebuild the full turn list until turn metadata is indexed
         // separately.
         let live_agent_status = self
-            .live_thread_status
+            .thread_lifecycle_runtime
             .live_thread_agent_status(thread_uuid)
             .await
             .ok();

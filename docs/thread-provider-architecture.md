@@ -158,7 +158,10 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
 
 - `ThreadLifecycleRuntime`：provider-neutral lifecycle 边界；当前已承载
   `shutdown_all_threads_bounded`、`subscribe_thread_created` 和
-  `active_event_subscriptions`，供 app-server thread processor 直接依赖。root
+  `active_event_subscriptions`，并承载 live thread status read / native status watch，
+  供 app-server thread/turn processor 直接依赖。status read 仍保留 native/external
+  live record fallback 语义；status watch 仍只承载 native live thread subscription，
+  不宣称 external live records 已支持 watch。root
   start/resume/fork 仍不属于该 provider-neutral trait，因为这些请求还携带完整
   `Config` 与 native dynamic tool/environment 结构，直接搬入 `thread-service-api`
   会引入不合适的依赖方向；它们当前收口到 thread-service crate 内的
@@ -181,24 +184,28 @@ creation/environment runtime。app-server 只把 `NewThread` 投影成 response 
 `SessionConfiguredEvent`。这仍不是 external provider root start support；后续阶段
 需要把 provider-neutral request DTO 和 routing 从这些 native-only DTO 中继续拆出。
 
-live thread runtime 的 command/status/inspection 也已开始迁移到 provider-neutral
-surfaces：
+live thread runtime 的 command/inspection 能力也已开始迁移到 provider-neutral
+surfaces，status 已进一步收口到 lifecycle 边界：
 
 - `LiveThreadInspectionRuntime` 承载 loaded ids、loaded check、
   `LiveThreadInfo` 和 `LiveThreadSnapshot` 等 copied fact。
-- `LiveThreadStatusRuntime` 承载 copied `AgentStatus` / status watch。
+- status read / subscribe 已提升到 `ThreadLifecycleRuntime`；旧
+  `LiveThreadStatusRuntime` 仅作为 thread-service 内部 native agent control 的过渡
+  compatibility surface 保留。
 - `LiveThreadCommandRuntime` 承载 submit op、submit op with trace、client info
   写入和 loaded-thread remove。
 - `LiveThreadShutdownRuntime` 承载不暴露 concrete handle 的 shutdown-and-wait
   语义。
 
 app-server thread processor 的 thread loaded list、thread/read live snapshot merge、
-turns/list live status、thread started/status notifications、resume-running thread
+resume-running thread
 checks、submit op、client info 写入、out-of-band elicitation counter 操作，以及
 archive 前 shutdown/remove 路径已改到这些窄 runtime。listener idle-unload 的
 live-thread removal 已改到 command runtime。turn processor 的 turn/start
-snapshot 读取、turn/review/realtime/interrupt `Op` 提交、interrupt status check、
+snapshot 读取、turn/review/realtime/interrupt `Op` 提交、
 realtime feature check 和 app-server client info 写入也已改到这些窄 runtime。
+app-server 的 turns/list live status、thread started/status notifications 和
+turn interrupt status check 已改到 lifecycle runtime。
 apps processor 的 apps feature check、feedback
 processor 的 live rollout path lookup、thread goal processor 的 live rollout path /
 ephemeral-thread checks 也已改到 inspection runtime。thread goal processor 的

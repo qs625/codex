@@ -693,6 +693,16 @@ pub trait ThreadLifecycleRuntime: Send + Sync + 'static {
 
     fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent>;
 
+    fn live_thread_agent_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<AgentStatus>>;
+
+    fn subscribe_live_thread_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<watch::Receiver<AgentStatus>>>;
+
     fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker>;
 }
 

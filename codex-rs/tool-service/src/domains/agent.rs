@@ -590,6 +590,29 @@ mod tests {
             unreachable!("subscribe_thread_created should not be called in this test")
         }
 
+        fn live_thread_agent_status<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+        ) -> ThreadServiceFuture<'a, protocol::error::Result<protocol::protocol::AgentStatus>> {
+            Box::pin(async {
+                unreachable!("live_thread_agent_status should not be called in this test")
+            })
+        }
+
+        fn subscribe_live_thread_status<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+        ) -> ThreadServiceFuture<
+            'a,
+            protocol::error::Result<
+                tokio::sync::watch::Receiver<protocol::protocol::AgentStatus>,
+            >,
+        > {
+            Box::pin(async {
+                unreachable!("subscribe_live_thread_status should not be called in this test")
+            })
+        }
+
         fn active_event_subscriptions(
             &self,
         ) -> Arc<thread_service_api::ActiveEventSubscriptionTracker> {

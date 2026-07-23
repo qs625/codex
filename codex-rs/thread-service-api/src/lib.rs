@@ -429,10 +429,13 @@ pub trait LiveThreadShutdownRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<String>> + Send + '_;
 }
 
-/// Status surface for live threads without exposing concrete thread handles.
+/// Transitional status surface for live threads without exposing concrete thread handles.
 ///
 /// Implementations own the mapping from runtime lifecycle state to
-/// `AgentStatus` and the watch channel used to observe status changes.
+/// `AgentStatus` and the watch channel used to observe status changes. New
+/// app-server lifecycle callers should use `ThreadLifecycleRuntime`; this trait
+/// remains for internal live-thread compatibility during the provider boundary
+/// migration.
 pub trait LiveThreadStatusRuntime: Send + Sync {
     fn live_thread_agent_status(
         &self,

@@ -275,7 +275,7 @@ impl ThreadRequestProcessor {
             .loaded_status_for_thread(&loaded_thread.id)
             .await;
         let agent_status = self
-            .live_thread_status
+            .thread_lifecycle_runtime
             .live_thread_agent_status(thread_id)
             .await
             .ok();
@@ -308,7 +308,7 @@ impl ThreadRequestProcessor {
             .loaded_status_for_thread(&thread_id_string)
             .await;
         let lifecycle_status = self
-            .live_thread_status
+            .thread_lifecycle_runtime
             .live_thread_agent_status(thread_id)
             .await
             .ok()
