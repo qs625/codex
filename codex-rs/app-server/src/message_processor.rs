@@ -1337,6 +1337,9 @@ impl MessageProcessor {
             ClientRequest::AgentTypeList { params, .. } => {
                 self.catalog_processor.agent_type_list(params).await
             }
+            ClientRequest::ThreadProviderList { params, .. } => {
+                self.catalog_processor.thread_provider_list(params).await
+            }
             ClientRequest::ExperimentalFeatureList { params, .. } => {
                 self.catalog_processor
                     .experimental_feature_list(params)

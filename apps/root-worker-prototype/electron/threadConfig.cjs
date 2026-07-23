@@ -48,6 +48,7 @@ function buildCreateThreadStartParams(payload = {}, options = {}) {
 
   return withRealtimeConversationFeature({
     ...(cwd ? { cwd } : {}),
+    threadProvider: payloadObject.threadProvider || undefined,
     taskName: payloadObject.taskName || undefined,
     agentType: payloadObject.agentType || undefined,
     model: payloadObject.model || undefined,

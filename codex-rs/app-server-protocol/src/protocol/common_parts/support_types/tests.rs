@@ -881,6 +881,38 @@ fn serialize_list_agent_types() -> Result<()> {
 }
 
 #[test]
+fn serialize_list_thread_providers() -> Result<()> {
+    let request = ClientRequest::ThreadProviderList {
+        request_id: RequestId::Integer(8),
+        params: v2::ThreadProviderListParams::default(),
+    };
+    assert_eq!(
+        json!({
+            "method": "threadProvider/list",
+            "id": 8,
+            "params": {
+                "cwd": null
+            }
+        }),
+        serde_json::to_value(&request)?,
+    );
+    Ok(())
+}
+
+#[test]
+fn serialize_thread_start_with_thread_provider() -> Result<()> {
+    let params = v2::ThreadStartParams {
+        thread_provider: Some("native".to_string()),
+        ..v2::ThreadStartParams::default()
+    };
+    assert_eq!(
+        serde_json::to_value(&params)?["threadProvider"],
+        json!("native")
+    );
+    Ok(())
+}
+
+#[test]
 fn serialize_model_provider_capabilities_read() -> Result<()> {
     let request = ClientRequest::ModelProviderCapabilitiesRead {
         request_id: RequestId::Integer(7),

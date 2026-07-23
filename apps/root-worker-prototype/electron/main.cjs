@@ -171,6 +171,11 @@ ipcMain.handle("codex:listAgentTypes", async (_event, cwd = defaultWorkspace) =>
   return appServerClient.request("agentType/list", { cwd });
 });
 
+ipcMain.handle("codex:listThreadProviders", async (_event, cwd = defaultWorkspace) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("threadProvider/list", { cwd });
+});
+
 ipcMain.handle("codex:selectProjectDirectory", async (event, defaultPath) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(window ?? undefined, {

@@ -75,6 +75,8 @@ import type {
   RunModelListResponse,
   SidebarProjectNode,
   Thread,
+  ThreadProviderDescriptor,
+  ThreadProviderListResponse,
   ThreadGoal,
   ThreadSkill,
   TreeMenuState,
@@ -84,6 +86,7 @@ import type {
 } from "../types";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
+const EMPTY_MODEL_PROVIDERS: string[] = [];
 
 export function SidebarPanel({
   collapsedSet,
@@ -291,9 +294,17 @@ export function NewThreadPopover({
   const [projectPath, setProjectPath] = useState(workspacePath);
   const initialThreadStartParams = defaultNewThreadStartParams(workspacePath);
   const [taskName, setTaskName] = useState(initialThreadStartParams.taskName);
+  const [threadProvider, setThreadProvider] = useState("native");
   const [agentType, setAgentType] = useState("");
   const [model, setModel] = useState("");
   const [modelProvider, setModelProvider] = useState("");
+  const [threadProviders, setThreadProviders] = useState<
+    ThreadProviderDescriptor[]
+  >([]);
+  const [threadProvidersError, setThreadProvidersError] = useState<string | null>(
+    null,
+  );
+  const [isLoadingThreadProviders, setIsLoadingThreadProviders] = useState(false);
   const [agentTypes, setAgentTypes] = useState<AgentTypeOption[]>([]);
   const [agentTypesError, setAgentTypesError] = useState<string | null>(null);
   const [isLoadingAgentTypes, setIsLoadingAgentTypes] = useState(false);
@@ -309,6 +320,16 @@ export function NewThreadPopover({
   const defaultThreadStartParams = defaultNewThreadStartParams(trimmedProjectPath);
   const trimmedTaskName = taskName.trim();
   const pathPreview = trimmedTaskName ? `/${trimmedTaskName}` : "";
+  const selectedThreadProvider =
+    threadProviders.find((provider) => provider.id === threadProvider) ?? null;
+  const providerControls = resolveNewThreadProviderControls({
+    fallbackAgentTypes: agentTypes,
+    selectedThreadProvider,
+  });
+  const effectiveThreadProvider = providerControls.effectiveThreadProvider;
+  const providerAgentTypes = providerControls.agentTypes;
+  const providerModelProviders = providerControls.modelProviders;
+  const canSelectModel = providerControls.canSelectModel;
   const modelProviders = useMemo(
     () =>
       [
@@ -320,9 +341,25 @@ export function NewThreadPopover({
       ].sort(),
     [models],
   );
-  const selectableModels = modelProvider
-    ? models.filter((modelOption) => modelOption.modelProvider === modelProvider)
-    : models;
+  const selectableModelProviders = useMemo(
+    () =>
+      providerModelProviders.length > 0
+        ? modelProviders.filter((provider) => providerModelProviders.includes(provider))
+        : modelProviders,
+    [modelProviders, providerModelProviders],
+  );
+  const selectableModels = useMemo(
+    () =>
+      modelProvider
+        ? models.filter((modelOption) => modelOption.modelProvider === modelProvider)
+        : models.filter(
+            (modelOption) =>
+              selectableModelProviders.length === 0 ||
+              !modelOption.modelProvider ||
+              selectableModelProviders.includes(modelOption.modelProvider),
+          ),
+    [modelProvider, models, selectableModelProviders],
+  );
   const selectedRunModel =
     models.find((modelOption) => getNewThreadModelKey(modelOption) === model) ??
     null;
@@ -333,7 +370,8 @@ export function NewThreadPopover({
   const canCreate =
     (mode === "chat" || trimmedProjectPath.length > 0) &&
     trimmedTaskName.length > 0 &&
-    !taskNameError;
+    !taskNameError &&
+    providerControls.canStartThread;
 
   useEffect(() => {
     if (
@@ -359,14 +397,40 @@ export function NewThreadPopover({
 
   useEffect(() => {
     if (!trimmedProjectPath) {
+      setThreadProviders([]);
+      setThreadProvidersError(null);
       setAgentTypes([]);
       setAgentTypesError(null);
       return;
     }
 
     let cancelled = false;
+    setIsLoadingThreadProviders(true);
+    setThreadProvidersError(null);
     setIsLoadingAgentTypes(true);
     setAgentTypesError(null);
+    window.codexDesktop
+      .listThreadProviders(trimmedProjectPath)
+      .then((response: ThreadProviderListResponse) => {
+        if (!cancelled) {
+          const providers = response.data ?? [];
+          setThreadProviders(providers);
+          if (!providers.some((provider) => provider.id === threadProvider)) {
+            setThreadProvider(providers[0]?.id ?? "native");
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setThreadProviders([]);
+          setThreadProvidersError(toErrorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingThreadProviders(false);
+        }
+      });
     window.codexDesktop
       .listAgentTypes(trimmedProjectPath)
       .then((response: AgentTypeListResponse) => {
@@ -390,6 +454,21 @@ export function NewThreadPopover({
       cancelled = true;
     };
   }, [trimmedProjectPath]);
+
+  useEffect(() => {
+    if (effectiveThreadProvider !== "native") {
+      setAgentType("");
+      setModel("");
+      setModelProvider("");
+      setReasoningEffort("");
+      setServiceTier("");
+      return;
+    }
+    if (modelProvider && !selectableModelProviders.includes(modelProvider)) {
+      setModelProvider("");
+      setModel("");
+    }
+  }, [effectiveThreadProvider, modelProvider, selectableModelProviders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -458,11 +537,15 @@ export function NewThreadPopover({
     onSubmit(
       buildNewThreadDraft(mode, trimmedProjectPath, {
         taskName,
+        threadProvider:
+          effectiveThreadProvider === "native" ? "" : effectiveThreadProvider,
         agentType,
-        model: selectedRunModel?.model ?? "",
-        modelProvider: selectedRunModel?.modelProvider ?? modelProvider,
-        reasoningEffort,
-        serviceTier,
+        model: canSelectModel ? (selectedRunModel?.model ?? "") : "",
+        modelProvider: canSelectModel
+          ? (selectedRunModel?.modelProvider ?? modelProvider)
+          : "",
+        reasoningEffort: canSelectModel ? reasoningEffort : "",
+        serviceTier: canSelectModel ? serviceTier : "",
       }),
     );
   };
@@ -553,15 +636,38 @@ export function NewThreadPopover({
       </label>
 
       <label className="sidebar-create-field">
+        <span>threadProvider</span>
+        <select
+          onChange={(event) => setThreadProvider(event.target.value)}
+          value={effectiveThreadProvider}
+        >
+          <option value="native">
+            {isLoadingThreadProviders ? "Loading providers..." : "Morpheus"}
+          </option>
+          {threadProviders
+            .filter((provider) => provider.id !== "native")
+            .map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.displayName}
+              </option>
+            ))}
+        </select>
+        {threadProvidersError ? (
+          <em className="sidebar-create-error">{threadProvidersError}</em>
+        ) : null}
+      </label>
+
+      <label className="sidebar-create-field">
         <span>agentType</span>
         <select
+          disabled={effectiveThreadProvider !== "native"}
           onChange={(event) => setAgentType(event.target.value)}
           value={agentType}
         >
           <option value="">
             {isLoadingAgentTypes ? "Loading agent types..." : "Use default"}
           </option>
-          {agentTypes.map((agentTypeOption) => (
+          {providerAgentTypes.map((agentTypeOption) => (
             <option key={agentTypeOption.name} value={agentTypeOption.name}>
               {agentTypeOption.name}
               {agentTypeOption.description
@@ -579,6 +685,7 @@ export function NewThreadPopover({
         <label className="sidebar-create-field">
           <span>modelProvider</span>
           <select
+            disabled={!canSelectModel}
             onChange={(event) => {
               setModelProvider(event.target.value);
               setModel("");
@@ -586,9 +693,13 @@ export function NewThreadPopover({
             value={modelProvider}
           >
             <option value="">
-              {isLoadingModels ? "Loading providers..." : "Use default"}
+              {!canSelectModel
+                ? "Provider default"
+                : isLoadingModels
+                  ? "Loading providers..."
+                  : "Use default"}
             </option>
-            {modelProviders.map((provider) => (
+            {selectableModelProviders.map((provider) => (
               <option key={provider} value={provider}>
                 {provider}
               </option>
@@ -598,11 +709,16 @@ export function NewThreadPopover({
         <label className="sidebar-create-field">
           <span>model</span>
           <select
+            disabled={!canSelectModel}
             onChange={(event) => selectModel(event.target.value)}
             value={model}
           >
             <option value="">
-              {isLoadingModels ? "Loading models..." : "Use default"}
+              {!canSelectModel
+                ? "Provider default"
+                : isLoadingModels
+                  ? "Loading models..."
+                  : "Use default"}
             </option>
             {selectableModels.map((modelOption) => (
               <option
@@ -664,6 +780,7 @@ export function buildNewThreadDraft(
     Pick<
       NewThreadDraft,
       | "taskName"
+      | "threadProvider"
       | "agentType"
       | "model"
       | "modelProvider"
@@ -679,6 +796,7 @@ export function buildNewThreadDraft(
     mode,
     projectPath: projectPath.trim(),
     taskName,
+    threadProvider: optionalThreadStartParam(params.threadProvider),
     agentType: optionalThreadStartParam(params.agentType),
     model: optionalThreadStartParam(params.model),
     modelProvider: optionalThreadStartParam(params.modelProvider),
@@ -687,11 +805,34 @@ export function buildNewThreadDraft(
   };
 }
 
+export function resolveNewThreadProviderControls({
+  fallbackAgentTypes,
+  selectedThreadProvider,
+}: {
+  fallbackAgentTypes: AgentTypeOption[];
+  selectedThreadProvider: ThreadProviderDescriptor | null;
+}) {
+  const effectiveThreadProvider = selectedThreadProvider?.id ?? "native";
+  const isNative = effectiveThreadProvider === "native";
+  const modelSelectionMode =
+    selectedThreadProvider?.modelSelection?.mode ??
+    (isNative ? "catalog" : "providerDefault");
+  return {
+    effectiveThreadProvider,
+    agentTypes: selectedThreadProvider?.agentTypes ?? (isNative ? fallbackAgentTypes : []),
+    modelProviders:
+      selectedThreadProvider?.modelSelection?.modelProviders ?? EMPTY_MODEL_PROVIDERS,
+    canSelectModel: modelSelectionMode === "catalog",
+    canStartThread: selectedThreadProvider?.capabilities.startThread ?? true,
+  };
+}
+
 export function buildBlankChatThreadDraft(): NewThreadDraft {
   return {
     mode: "chat",
     projectPath: "",
     taskName: "",
+    threadProvider: null,
     agentType: null,
     model: null,
     modelProvider: null,

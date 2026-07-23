@@ -417,6 +417,13 @@ export type { ThreadMetadataGitInfoUpdateParams } from "./ThreadMetadataGitInfoU
 export type { ThreadMetadataUpdateParams } from "./ThreadMetadataUpdateParams";
 export type { ThreadMetadataUpdateResponse } from "./ThreadMetadataUpdateResponse";
 export type { ThreadNameUpdatedNotification } from "./ThreadNameUpdatedNotification";
+export type { ThreadProviderCapabilities } from "./ThreadProviderCapabilities";
+export type { ThreadProviderDescriptor } from "./ThreadProviderDescriptor";
+export type { ThreadProviderKind } from "./ThreadProviderKind";
+export type { ThreadProviderListParams } from "./ThreadProviderListParams";
+export type { ThreadProviderListResponse } from "./ThreadProviderListResponse";
+export type { ThreadProviderModelSelection } from "./ThreadProviderModelSelection";
+export type { ThreadProviderModelSelectionMode } from "./ThreadProviderModelSelectionMode";
 export type { ThreadReadParams } from "./ThreadReadParams";
 export type { ThreadReadResponse } from "./ThreadReadResponse";
 export type { ThreadRealtimeAudioChunk } from "./ThreadRealtimeAudioChunk";

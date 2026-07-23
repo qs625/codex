@@ -112,6 +112,42 @@ fn errors_to_info(errors: &[SkillError]) -> Vec<app_server_protocol::SkillErrorI
         .collect()
 }
 
+fn native_agent_types(config: &Config) -> Vec<AgentType> {
+    let mut items = built_in_configs()
+        .iter()
+        .map(|(name, role)| AgentType {
+            name: name.clone(),
+            description: role.description.clone(),
+            built_in: true,
+        })
+        .collect::<Vec<_>>();
+
+    for (name, role) in &config.agent_roles {
+        if let Some(item) = items.iter_mut().find(|item| item.name == *name) {
+            item.description = role.description.clone();
+            item.built_in = false;
+        } else {
+            items.push(AgentType {
+                name: name.clone(),
+                description: role.description.clone(),
+                built_in: false,
+            });
+        }
+    }
+
+    items.sort_by(|left, right| {
+        if left.name == DEFAULT_ROLE_NAME && right.name != DEFAULT_ROLE_NAME {
+            return std::cmp::Ordering::Less;
+        }
+        if right.name == DEFAULT_ROLE_NAME && left.name != DEFAULT_ROLE_NAME {
+            return std::cmp::Ordering::Greater;
+        }
+        left.name.cmp(&right.name)
+    });
+
+    items
+}
+
 impl CatalogRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<R>(
@@ -181,6 +217,15 @@ impl CatalogRequestProcessor {
         params: AgentTypeListParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         self.list_agent_types(params)
+            .await
+            .map(|response| Some(response.into()))
+    }
+
+    pub(crate) async fn thread_provider_list(
+        &self,
+        params: ThreadProviderListParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.list_thread_providers(params)
             .await
             .map(|response| Some(response.into()))
     }
@@ -319,39 +364,109 @@ impl CatalogRequestProcessor {
     ) -> Result<AgentTypeListResponse, JSONRPCErrorError> {
         let AgentTypeListParams { cwd } = params;
         let config = self.load_latest_config(cwd).await?;
-        let mut items = built_in_configs()
+        Ok(AgentTypeListResponse {
+            data: native_agent_types(&config),
+        })
+    }
+
+    async fn list_thread_providers(
+        &self,
+        params: ThreadProviderListParams,
+    ) -> Result<ThreadProviderListResponse, JSONRPCErrorError> {
+        let ThreadProviderListParams { cwd } = params;
+        let config = self.load_latest_config(cwd).await?;
+        let mut models = supported_models(
+            self.catalog_runtime.as_ref(),
+            &config,
+            /*include_hidden*/ false,
+        )
+        .await;
+        add_configured_model(&mut models, &config);
+        let mut model_providers = models
             .iter()
-            .map(|(name, role)| AgentType {
-                name: name.clone(),
-                description: role.description.clone(),
-                built_in: true,
-            })
+            .filter_map(|model| model.model_provider.clone())
             .collect::<Vec<_>>();
+        model_providers.sort();
+        model_providers.dedup();
 
-        for (name, role) in &config.agent_roles {
-            if let Some(item) = items.iter_mut().find(|item| item.name == *name) {
-                item.description = role.description.clone();
-                item.built_in = false;
-            } else {
-                items.push(AgentType {
-                    name: name.clone(),
-                    description: role.description.clone(),
-                    built_in: false,
-                });
-            }
-        }
+        let native = ThreadProviderDescriptor {
+            id: "native".to_string(),
+            display_name: "Morpheus".to_string(),
+            kind: ThreadProviderKind::Native,
+            description: "Native Morpheus runtime with agent roles, model catalog, tools, compact, workflow, and unified EventMsg replay.".to_string(),
+            agent_types: native_agent_types(&config),
+            model_selection: ThreadProviderModelSelection {
+                mode: ThreadProviderModelSelectionMode::Catalog,
+                model_providers,
+            },
+            capabilities: ThreadProviderCapabilities {
+                start_thread: true,
+                send_input: true,
+                close_thread: true,
+                list_children: true,
+                restore_thread: true,
+                event_stream: true,
+                spawn_child: true,
+                compact: true,
+                workflow: true,
+                poll_event: true,
+                command_session: true,
+                permissions: true,
+                dynamic_tools: true,
+            },
+        };
 
-        items.sort_by(|left, right| {
-            if left.name == DEFAULT_ROLE_NAME && right.name != DEFAULT_ROLE_NAME {
-                return std::cmp::Ordering::Less;
-            }
-            if right.name == DEFAULT_ROLE_NAME && left.name != DEFAULT_ROLE_NAME {
-                return std::cmp::Ordering::Greater;
-            }
-            left.name.cmp(&right.name)
+        let external_capabilities = ThreadProviderCapabilities {
+            start_thread: false,
+            send_input: true,
+            close_thread: true,
+            list_children: true,
+            restore_thread: false,
+            event_stream: true,
+            spawn_child: true,
+            compact: false,
+            workflow: false,
+            poll_event: false,
+            command_session: false,
+            permissions: false,
+            dynamic_tools: false,
+        };
+        let external_model_selection = ThreadProviderModelSelection {
+            mode: ThreadProviderModelSelectionMode::ProviderDefault,
+            model_providers: Vec::new(),
+        };
+        let external = [
+            (
+                "claude_cli",
+                "Claude Code",
+                "External Claude CLI session normalized by the external-agent adapter.",
+            ),
+            (
+                "opencode",
+                "OpenCode",
+                "External OpenCode session normalized by the external-agent adapter.",
+            ),
+            (
+                "codex_cli",
+                "Codex CLI",
+                "External official Codex CLI app-server session normalized by the external-agent adapter.",
+            ),
+        ]
+        .into_iter()
+        .map(|(id, display_name, description)| ThreadProviderDescriptor {
+            id: id.to_string(),
+            display_name: display_name.to_string(),
+            kind: ThreadProviderKind::ExternalCli,
+            description: description.to_string(),
+            agent_types: Vec::new(),
+            model_selection: external_model_selection.clone(),
+            capabilities: external_capabilities.clone(),
         });
 
-        Ok(AgentTypeListResponse { data: items })
+        let mut data = Vec::with_capacity(4);
+        data.push(native);
+        data.extend(external);
+        Ok(ThreadProviderListResponse { data })
     }
 
     async fn list_collaboration_modes(

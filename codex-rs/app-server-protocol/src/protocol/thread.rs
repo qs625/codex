@@ -98,12 +98,15 @@ impl<'de> Deserialize<'de> for DynamicToolSpec {
 // === Threads, Turns, and Items ===
 // Thread APIs
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(
-    Serialize, Deserialize, Debug, Clone, PartialEq, Default, ExperimentalApi,
-)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, ExperimentalApi)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
 pub struct ThreadStartParams {
+    /// Provider that owns the thread lifecycle. Omitted keeps legacy native
+    /// Morpheus behavior. External providers are advertised by
+    /// `threadProvider/list` before their root `thread/start` path is enabled.
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub thread_provider: Option<String>,
     #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
     pub model: Option<String>,
     #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
@@ -245,9 +248,7 @@ pub struct ThreadStartResponse {
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(
-    Serialize, Deserialize, Debug, Default, Clone, PartialEq, ExperimentalApi,
-)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, ExperimentalApi)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
 /// There are three ways to resume a thread:
@@ -373,9 +374,7 @@ pub struct ThreadResumeResponse {
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
-#[derive(
-    Serialize, Deserialize, Debug, Default, Clone, PartialEq, ExperimentalApi,
-)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, ExperimentalApi)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
 /// There are two ways to fork a thread:

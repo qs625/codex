@@ -4300,6 +4300,18 @@
       ],
       "type": "object"
     },
+    "ThreadProviderListParams": {
+      "properties": {
+        "cwd": {
+          "description": "Workspace path whose config should be used for native role and model discovery.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ThreadReadParams": {
       "properties": {
         "includeTurns": {
@@ -4697,6 +4709,13 @@
           ]
         },
         "taskName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadProvider": {
+          "description": "Provider that owns the thread lifecycle. Omitted keeps legacy native Morpheus behavior. External providers are advertised by `threadProvider/list` before their root `thread/start` path is enabled.",
           "type": [
             "string",
             "null"
@@ -6396,6 +6415,30 @@
         "params"
       ],
       "title": "AgentType/listRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "threadProvider/list"
+          ],
+          "title": "ThreadProvider/listRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadProviderListParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "ThreadProvider/listRequest",
       "type": "object"
     },
     {
