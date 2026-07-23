@@ -155,6 +155,45 @@ impl AgentControlHarness {
     }
 }
 
+async fn register_external_live_thread(
+    harness: &AgentControlHarness,
+    thread_id: ThreadId,
+    agent_path: &str,
+    status: AgentStatus,
+) {
+    let child_agent_path = AgentPath::try_from(agent_path).expect("agent path");
+    let session_source = external_session_source_for(
+        ThreadId::new(),
+        1,
+        child_agent_path.clone(),
+        SpawnAgentProvider::CodexCli,
+    );
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(thread_id),
+        agent_path: Some(child_agent_path),
+        agent_nickname: Some("codex_cli".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    harness
+        .control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                thread_id,
+                session_source,
+                &agent_metadata,
+            ),
+            status,
+        )
+        .await;
+}
+
 fn has_subagent_notification(history_items: &[ResponseItem]) -> bool {
     history_items.iter().any(|item| {
         let ResponseItem::Message { role, content, .. } = item else {
@@ -629,6 +668,114 @@ async fn inspection_runtime_includes_external_live_records() {
         harness.manager.live_thread_info(ThreadId::new()).await,
         Err(CodexErr::ThreadNotFound(_))
     ));
+}
+
+#[tokio::test]
+async fn remove_live_thread_removes_external_live_record_visibility() {
+    let harness = AgentControlHarness::new().await;
+    let external_thread_id = ThreadId::new();
+    register_external_live_thread(
+        &harness,
+        external_thread_id,
+        "/root/external_remove",
+        AgentStatus::Running,
+    )
+    .await;
+
+    assert!(
+        harness
+            .manager
+            .is_live_thread_loaded(external_thread_id)
+            .await
+    );
+    assert!(harness.manager.remove_live_thread(external_thread_id).await);
+    assert!(!harness.manager.remove_live_thread(external_thread_id).await);
+
+    let live_thread_ids = harness.manager.list_live_thread_ids().await;
+    assert!(!live_thread_ids.contains(&external_thread_id));
+    assert!(
+        !harness
+            .manager
+            .is_live_thread_loaded(external_thread_id)
+            .await
+    );
+    assert_matches!(
+        harness.manager.live_thread_info(external_thread_id).await,
+        Err(CodexErr::ThreadNotFound(id)) if id == external_thread_id
+    );
+    assert_matches!(
+        harness
+            .manager
+            .live_thread_agent_status(external_thread_id)
+            .await,
+        Err(CodexErr::ThreadNotFound(id)) if id == external_thread_id
+    );
+    assert_matches!(
+        harness
+            .manager
+            .live_thread_runtime_status(external_thread_id)
+            .await,
+        Err(CodexErr::ThreadNotFound(id)) if id == external_thread_id
+    );
+    assert_matches!(
+        harness
+            .manager
+            .subscribe_live_thread_status(external_thread_id)
+            .await,
+        Err(CodexErr::ThreadNotFound(id)) if id == external_thread_id
+    );
+}
+
+#[tokio::test]
+async fn remove_live_thread_preserves_native_and_missing_semantics() {
+    let harness = AgentControlHarness::new().await;
+    let (native_thread_id, _native_thread) = harness.start_thread().await;
+
+    assert!(harness.manager.is_live_thread_loaded(native_thread_id).await);
+    assert!(harness.manager.remove_live_thread(native_thread_id).await);
+    assert!(!harness.manager.remove_live_thread(native_thread_id).await);
+    assert!(!harness.manager.is_live_thread_loaded(native_thread_id).await);
+    assert_matches!(
+        harness.manager.live_thread_info(native_thread_id).await,
+        Err(CodexErr::ThreadNotFound(id)) if id == native_thread_id
+    );
+
+    assert!(!harness.manager.remove_live_thread(ThreadId::new()).await);
+}
+
+#[tokio::test]
+async fn remove_live_thread_removes_same_id_external_fallback() {
+    let harness = AgentControlHarness::new().await;
+    let (thread_id, _native_thread) = harness.start_thread().await;
+    register_external_live_thread(
+        &harness,
+        thread_id,
+        "/root/external_remove_same_id",
+        AgentStatus::Shutdown,
+    )
+    .await;
+
+    assert!(harness.manager.remove_live_thread(thread_id).await);
+
+    let live_thread_ids = harness.manager.list_live_thread_ids().await;
+    assert!(!live_thread_ids.contains(&thread_id));
+    assert!(!harness.manager.is_live_thread_loaded(thread_id).await);
+    assert_matches!(
+        harness.manager.live_thread_info(thread_id).await,
+        Err(CodexErr::ThreadNotFound(id)) if id == thread_id
+    );
+    assert_matches!(
+        harness.manager.live_thread_agent_status(thread_id).await,
+        Err(CodexErr::ThreadNotFound(id)) if id == thread_id
+    );
+    assert_matches!(
+        harness.manager.live_thread_runtime_status(thread_id).await,
+        Err(CodexErr::ThreadNotFound(id)) if id == thread_id
+    );
+    assert_matches!(
+        harness.manager.subscribe_live_thread_status(thread_id).await,
+        Err(CodexErr::ThreadNotFound(id)) if id == thread_id
+    );
 }
 
 #[tokio::test]

@@ -1240,7 +1240,7 @@ impl ThreadService {
     }
 
     pub async fn remove_live_thread(&self, thread_id: ThreadId) -> bool {
-        self.remove_thread(&thread_id).await.is_some()
+        self.state.remove_live_thread(thread_id).await
     }
 
     pub async fn shutdown_live_thread(&self, thread_id: ThreadId) -> CodexResult<String> {
@@ -1609,12 +1609,18 @@ impl ThreadServiceState {
     }
 
     pub(crate) async fn remove_live_thread(&self, thread_id: ThreadId) -> bool {
-        let removed = self.threads.write().await.remove(&thread_id);
-        if removed.is_some() {
+        let native_removed = self.threads.write().await.remove(&thread_id).is_some();
+        if native_removed {
             self.root_agent_registry
                 .release_uncounted_thread_metadata(thread_id);
         }
-        removed.is_some()
+        let external_removed = self
+            .external_live_threads
+            .write()
+            .await
+            .remove(&thread_id)
+            .is_some();
+        native_removed || external_removed
     }
 
     pub(crate) async fn shutdown_all_threads_bounded(

@@ -159,12 +159,13 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
 - `ThreadLifecycleRuntime`：provider-neutral lifecycle 边界；当前已承载
   `shutdown_all_threads_bounded`、per-thread live shutdown/removal、
   `subscribe_thread_created` 和 `active_event_subscriptions`，并承载 live thread
-  agent/runtime status read / native status watch，供 app-server thread/turn processor
+  agent/runtime status read / status watch，供 app-server thread/turn processor
   直接依赖。agent status read 仍保留 native/external live record fallback 语义；
   runtime status read 对 native 保留 post-turn wait semantics，对 external live record
   只提供 Active/Complete 粗粒度映射；status watch 支持 native live thread subscription
-  和 external live record watch，但不宣称 external close/remove/reload 已完成。root
-  start/resume/fork 仍不属于该 provider-neutral trait，因为这些请求还携带完整
+  和 external live record watch。live-thread removal 会删除 native live thread 或
+  external live record，但不宣称 external close policy、reload/list_agents durable
+  recovery 已完成。root start/resume/fork 仍不属于该 provider-neutral trait，因为这些请求还携带完整
   `Config` 与 native dynamic tool/environment 结构，直接搬入 `thread-service-api`
   会引入不合适的依赖方向；它们当前收口到 thread-service crate 内的
   `NativeThreadCreationRuntime` / `NativeThreadEnvironmentRuntime`。
@@ -197,8 +198,9 @@ surfaces，status、app-server archive 与 listener idle-unload 的 per-thread s
 - single-thread shutdown 已提升到 `ThreadLifecycleRuntime`；旧
   `LiveThreadShutdownRuntime` compatibility surface 已删除。
 - app-server archive、listener idle-unload 和 native agent cleanup 的 live-thread
-  removal 已提升到 `ThreadLifecycleRuntime`；`LiveThreadCommandRuntime::remove_live_thread`
-  compatibility method 已删除。
+  removal 已提升到 `ThreadLifecycleRuntime`；该 primitive 会删除 native live thread 或
+  external live record；`LiveThreadCommandRuntime::remove_live_thread` compatibility method
+  已删除。
 - listener handle 不再暴露 shutdown/wait；idle-unload teardown 通过
   `ThreadLifecycleRuntime::shutdown_live_thread` 和 `remove_live_thread` 完成。
 - `LiveThreadCommandRuntime` 承载 submit op、submit op with trace 和 client info 写入。
