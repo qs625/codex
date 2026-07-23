@@ -25,7 +25,8 @@ use thread_service_api::LiveThreadHandle;
 use thread_service_api::LiveThreadHistoryRuntime;
 use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
-use thread_service_api::LiveThreadRegistry;
+use thread_service_api::LiveThreadListenerHandle;
+use thread_service_api::LiveThreadListenerRuntime;
 use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadSkillWatchRuntime;
 use thread_service_api::LiveThreadSnapshot;
@@ -47,13 +48,9 @@ use thread_store_api::ThreadStoreResult;
 pub(crate) trait AppServerLiveThreadHandle: Send + Sync {
     fn session_configured(&self) -> SessionConfiguredEvent;
 
-    fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>>;
-
     fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;
 
     fn agent_status(&self) -> BoxFuture<'_, AgentStatus>;
-
-    fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus>;
 
     fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot>;
 
@@ -66,8 +63,6 @@ pub(crate) trait AppServerLiveThreadHandle: Send + Sync {
     fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>>;
 
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
-
-    fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>>;
 
     fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>>;
 
@@ -84,20 +79,12 @@ where
         LiveThreadHandle::session_configured(self)
     }
 
-    fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>> {
-        Box::pin(LiveThreadHandle::next_event(self))
-    }
-
     fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>> {
         Box::pin(LiveThreadHandle::submit_thread_op(self, op))
     }
 
     fn agent_status(&self) -> BoxFuture<'_, AgentStatus> {
         Box::pin(LiveThreadHandle::agent_status(self))
-    }
-
-    fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus> {
-        Box::pin(LiveThreadHandle::runtime_thread_status(self))
     }
 
     fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot> {
@@ -124,10 +111,6 @@ where
         Box::pin(LiveThreadHandle::thread_context_usage(self))
     }
 
-    fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadHandle::apply_goal_resume_runtime_effects(self))
-    }
-
     fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>> {
         Box::pin(LiveThreadHandle::continue_active_goal_if_idle(self))
     }
@@ -141,12 +124,122 @@ where
     }
 }
 
-/// Object-safe live thread registry surface needed by app-server listeners.
-pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
-    fn live_thread_handle(
+/// Object-safe live thread surface consumed by app-server listener/event-stream code.
+pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
+    fn session_configured(&self) -> SessionConfiguredEvent;
+
+    fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>>;
+
+    fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;
+
+    fn agent_status(&self) -> BoxFuture<'_, AgentStatus>;
+
+    fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus>;
+
+    fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot>;
+
+    fn read_thread(
+        &self,
+        include_archived: bool,
+        include_history: bool,
+    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>>;
+
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>>;
+
+    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
+
+    fn shutdown_and_wait(&self) -> BoxFuture<'_, CodexResult<()>>;
+
+    fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>>;
+
+    fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>>;
+}
+
+impl<T> AppServerLiveThreadListenerHandle for T
+where
+    T: LiveThreadListenerHandle + ?Sized,
+{
+    fn session_configured(&self) -> SessionConfiguredEvent {
+        LiveThreadListenerHandle::session_configured(self)
+    }
+
+    fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>> {
+        Box::pin(LiveThreadListenerHandle::next_event(self))
+    }
+
+    fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>> {
+        Box::pin(LiveThreadListenerHandle::submit_thread_op(self, op))
+    }
+
+    fn agent_status(&self) -> BoxFuture<'_, AgentStatus> {
+        Box::pin(LiveThreadListenerHandle::agent_status(self))
+    }
+
+    fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus> {
+        Box::pin(LiveThreadListenerHandle::runtime_thread_status(self))
+    }
+
+    fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot> {
+        Box::pin(LiveThreadListenerHandle::config_snapshot(self))
+    }
+
+    fn read_thread(
+        &self,
+        include_archived: bool,
+        include_history: bool,
+    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>> {
+        Box::pin(LiveThreadListenerHandle::read_thread(
+            self,
+            include_archived,
+            include_history,
+        ))
+    }
+
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
+        Box::pin(LiveThreadListenerHandle::token_usage_info(self))
+    }
+
+    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
+        Box::pin(LiveThreadListenerHandle::thread_context_usage(self))
+    }
+
+    fn shutdown_and_wait(&self) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadListenerHandle::shutdown_and_wait(self))
+    }
+
+    fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadListenerHandle::apply_goal_resume_runtime_effects(
+            self,
+        ))
+    }
+
+    fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadListenerHandle::continue_active_goal_if_idle(self))
+    }
+}
+
+pub(crate) trait AppServerLiveThreadListenerRuntime: Send + Sync {
+    fn live_thread_listener_handle(
         &self,
         thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Arc<dyn AppServerLiveThreadHandle>>>;
+    ) -> BoxFuture<'_, CodexResult<Arc<dyn AppServerLiveThreadListenerHandle>>>;
+}
+
+impl<T> AppServerLiveThreadListenerRuntime for T
+where
+    T: LiveThreadListenerRuntime + Send + Sync,
+{
+    fn live_thread_listener_handle(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Arc<dyn AppServerLiveThreadListenerHandle>>> {
+        Box::pin(async move {
+            let thread =
+                LiveThreadListenerRuntime::live_thread_listener_handle(self, thread_id).await?;
+            let thread: Arc<dyn AppServerLiveThreadListenerHandle> = thread;
+            Ok(thread)
+        })
+    }
 }
 
 pub(crate) trait AppServerLiveThreadHistoryRuntime: Send + Sync {
@@ -553,21 +646,5 @@ where
         Box::pin(LiveThreadShutdownRuntime::shutdown_live_thread(
             self, thread_id,
         ))
-    }
-}
-
-impl<T> AppServerLiveThreadRegistry for T
-where
-    T: LiveThreadRegistry + Send + Sync,
-{
-    fn live_thread_handle(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Arc<dyn AppServerLiveThreadHandle>>> {
-        Box::pin(async move {
-            let thread = LiveThreadRegistry::live_thread_handle(self, thread_id).await?;
-            let thread: Arc<dyn AppServerLiveThreadHandle> = thread;
-            Ok(thread)
-        })
     }
 }

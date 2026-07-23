@@ -1,15 +1,15 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadRegistry;
+use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
+use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
-    pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+    pub(super) live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     pub(super) live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
@@ -148,8 +148,8 @@ pub(super) async fn ensure_conversation_listener(
     connection_id: ConnectionId,
 ) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
     let conversation = match listener_task_context
-        .live_threads
-        .live_thread_handle(conversation_id)
+        .live_thread_listener
+        .live_thread_listener_handle(conversation_id)
         .await
     {
         Ok(conv) => conv,
@@ -219,7 +219,7 @@ pub(super) fn log_listener_attach_result(
 pub(super) async fn ensure_listener_task_running(
     listener_task_context: ListenerTaskContext,
     conversation_id: ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
 ) -> Result<(), JSONRPCErrorError> {
     let (cancel_tx, mut cancel_rx) = oneshot::channel();
@@ -379,7 +379,7 @@ pub(super) async fn ensure_listener_task_running(
 }
 
 pub(super) async fn wait_for_thread_shutdown(
-    thread: &Arc<dyn AppServerLiveThreadHandle>,
+    thread: &Arc<dyn AppServerLiveThreadListenerHandle>,
 ) -> ThreadShutdownResult {
     match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
         Ok(Ok(())) => ThreadShutdownResult::Complete,
@@ -395,7 +395,7 @@ pub(super) async fn unload_thread_without_subscribers(
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_id: ThreadId,
-    thread: Arc<dyn AppServerLiveThreadHandle>,
+    thread: Arc<dyn AppServerLiveThreadListenerHandle>,
 ) {
     info!("thread {thread_id} has no subscribers and is idle; shutting down");
 
@@ -443,7 +443,7 @@ pub(super) async fn unload_thread_without_subscribers(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_thread_listener_command(
     conversation_id: ThreadId,
-    conversation: &Arc<dyn AppServerLiveThreadHandle>,
+    conversation: &Arc<dyn AppServerLiveThreadListenerHandle>,
     codex_home: &Path,
     thread_state_manager: &ThreadStateManager,
     thread_state: &Arc<Mutex<ThreadState>>,
@@ -513,7 +513,7 @@ pub(super) async fn handle_thread_listener_command(
 )]
 pub(super) async fn handle_pending_thread_resume_request(
     conversation_id: ThreadId,
-    conversation: &Arc<dyn AppServerLiveThreadHandle>,
+    conversation: &Arc<dyn AppServerLiveThreadListenerHandle>,
     _codex_home: &Path,
     thread_state_manager: &ThreadStateManager,
     thread_state: &Arc<Mutex<ThreadState>>,

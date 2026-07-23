@@ -42,7 +42,7 @@ use protocol::user_input::UserInput;
 use state_api::DirectionalThreadSpawnEdgeStatus;
 use state_api::ThreadGoalStatus as StateThreadGoalStatus;
 use tempfile::TempDir;
-use thread_service_api::LiveThreadRegistry;
+use thread_service_api::LiveThreadStatusRuntime;
 use thread_store::LocalThreadStore;
 use thread_store::LocalThreadStoreConfig;
 use thread_store_api::ArchiveThreadParams;
@@ -627,7 +627,7 @@ async fn external_completion_after_close_does_not_notify_parent() {
     assert_eq!(
         harness
             .manager
-            .thread_agent_status(external_thread_id)
+            .live_thread_agent_status(external_thread_id)
             .await
             .expect("external live status should be visible to app-server"),
         AgentStatus::Shutdown

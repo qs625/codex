@@ -1,7 +1,7 @@
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
-use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::outgoing_message::ClientRequestResult;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
 use crate::request_processors::populate_thread_turns_from_history;
@@ -127,7 +127,7 @@ use tracing::error;
 pub(crate) async fn apply_bespoke_event_handling(
     event: Event,
     conversation_id: ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<tokio::sync::Mutex<ThreadState>>,

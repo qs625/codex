@@ -5,7 +5,7 @@ use crate::live_thread_runtime::AppServerLiveThreadElicitationRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadRegistry;
+use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadShutdownRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
@@ -429,7 +429,7 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
 #[derive(Clone)]
 pub(crate) struct ThreadRequestProcessor {
     pub(super) thread_runtime: Arc<dyn ThreadProcessorThreadRuntime>,
-    pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+    pub(super) live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     pub(super) live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
     pub(super) live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
@@ -475,7 +475,7 @@ impl ThreadRequestProcessor {
     ) -> Self {
         Self {
             thread_runtime: thread_service.clone(),
-            live_threads: thread_service.clone(),
+            live_thread_listener: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),
             live_thread_status: thread_service.clone(),
             live_thread_command: thread_service.clone(),

@@ -79,7 +79,7 @@ impl ThreadRequestProcessor {
         );
         typesafe_overrides.ephemeral = ephemeral;
         let listener_task_context = ListenerTaskContext {
-            live_threads: Arc::clone(&self.live_threads),
+            live_thread_listener: Arc::clone(&self.live_thread_listener),
             live_thread_inspection: Arc::clone(&self.live_thread_inspection),
             live_thread_command: Arc::clone(&self.live_thread_command),
             live_thread_skill_watch: Arc::clone(&self.live_thread_skill_watch),
@@ -428,7 +428,7 @@ impl ThreadRequestProcessor {
                         connection_id,
                         thread_id,
                         &token_usage_thread,
-                        codex_thread.as_ref(),
+                        &codex_thread,
                         token_usage_turn_id,
                     )
                     .await;
@@ -437,7 +437,7 @@ impl ThreadRequestProcessor {
                         connection_id,
                         thread_id,
                         &token_usage_thread,
-                        codex_thread.as_ref(),
+                        &codex_thread,
                         response_history.get_rollout_items().as_slice(),
                     )
                     .await;
@@ -1057,7 +1057,7 @@ impl ThreadRequestProcessor {
         if thread.context_usage.is_none() {
             thread.context_usage = Some(
                 super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
-                    forked_thread.as_ref(),
+                    &forked_thread,
                     history_items.as_slice(),
                 )
                 .await
@@ -1117,7 +1117,7 @@ impl ThreadRequestProcessor {
                 connection_id,
                 thread_id,
                 &token_usage_thread,
-                forked_thread.as_ref(),
+                &forked_thread,
                 token_usage_turn_id,
             )
             .await;
@@ -1126,7 +1126,7 @@ impl ThreadRequestProcessor {
                 connection_id,
                 thread_id,
                 &token_usage_thread,
-                forked_thread.as_ref(),
+                &forked_thread,
                 history_items.as_slice(),
             )
             .await;

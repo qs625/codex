@@ -14,7 +14,7 @@ pub(super) struct CommandExecutionCompletionItem {
 
 pub(super) async fn handle_apply_patch_approval_request(
     conversation_id: &ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     outgoing: &ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
@@ -53,7 +53,7 @@ pub(super) async fn handle_apply_patch_approval_request(
 pub(super) async fn handle_exec_approval_request(
     conversation_id: ThreadId,
     event_turn_id: String,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
@@ -179,7 +179,7 @@ pub(super) async fn handle_exec_approval_request(
 pub(super) async fn handle_request_user_input(
     conversation_id: &ThreadId,
     event_turn_id: String,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     outgoing: &ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
@@ -232,7 +232,7 @@ pub(super) async fn handle_request_user_input(
 
 pub(super) async fn handle_elicitation_request(
     conversation_id: &ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     outgoing: &ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
@@ -298,7 +298,7 @@ pub(super) async fn handle_elicitation_request(
 
 pub(super) async fn handle_request_permissions(
     conversation_id: &ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
@@ -340,7 +340,7 @@ pub(super) async fn handle_request_permissions(
 
 pub(super) async fn handle_dynamic_tool_call_request(
     conversation_id: &ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     outgoing: &ThreadScopedOutgoingMessageSender,
     request: protocol::dynamic_tools::DynamicToolCallRequest,
 ) {

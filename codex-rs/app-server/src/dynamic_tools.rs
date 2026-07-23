@@ -7,14 +7,14 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::error;
 
-use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::outgoing_message::ClientRequestResult;
 use crate::server_request_error::is_turn_transition_server_request_error;
 
 pub(crate) async fn on_call_response(
     call_id: String,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
 ) {
     let response = receiver.await;
     let (response, _error) = match response {

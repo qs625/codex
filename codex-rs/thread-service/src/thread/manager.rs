@@ -2096,6 +2096,18 @@ impl thread_service_api::LiveThreadHistoryRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadListenerRuntime for ThreadServiceState {
+    type ListenerHandle = CodexThread;
+
+    fn live_thread_listener_handle(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Arc<Self::ListenerHandle>>> + Send + '_ {
+        self.get_thread(thread_id)
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadTurnRuntime for ThreadServiceState {
     fn validate_live_thread_turn_context_overrides(
         &self,
@@ -2536,6 +2548,21 @@ impl thread_service_api::LiveThreadHistoryRuntime for ThreadService {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadListenerRuntime for ThreadService {
+    type ListenerHandle = CodexThread;
+
+    fn live_thread_listener_handle(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Arc<Self::ListenerHandle>>> + Send + '_ {
+        thread_service_api::LiveThreadListenerRuntime::live_thread_listener_handle(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadTurnRuntime for ThreadService {
     fn validate_live_thread_turn_context_overrides(
         &self,
@@ -2803,17 +2830,6 @@ fn stored_thread_to_initial_history(
 }
 
 #[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadRegistry for ThreadService {
-    type Thread = CodexThread;
-
-    fn live_thread_handle(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<Arc<Self::Thread>>> + Send + '_ {
-        self.get_thread(thread_id)
-    }
-}
-
 fn thread_store_rollout_read_error(err: ThreadStoreError) -> CodexErr {
     match err {
         ThreadStoreError::ThreadNotFound { thread_id } => CodexErr::ThreadNotFound(thread_id),

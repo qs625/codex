@@ -287,6 +287,108 @@ pub trait LiveThreadHistoryRuntime: Send + Sync {
     ) -> impl Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_;
 }
 
+/// Live thread surface needed by listener/event-stream orchestration.
+pub trait LiveThreadListenerHandle: Send + Sync {
+    fn session_configured(&self) -> SessionConfiguredEvent;
+
+    fn next_event(&self) -> impl Future<Output = CodexResult<Event>> + Send + '_;
+
+    fn submit_thread_op(&self, op: Op) -> impl Future<Output = CodexResult<String>> + Send + '_;
+
+    fn agent_status(&self) -> impl Future<Output = AgentStatus> + Send + '_;
+
+    fn runtime_thread_status(&self) -> impl Future<Output = ThreadRuntimeStatus> + Send + '_;
+
+    fn config_snapshot(&self) -> impl Future<Output = ThreadConfigSnapshot> + Send + '_;
+
+    fn read_thread(
+        &self,
+        include_archived: bool,
+        include_history: bool,
+    ) -> impl Future<Output = ThreadStoreResult<StoredThread>> + Send + '_;
+
+    fn token_usage_info(&self) -> impl Future<Output = Option<TokenUsageInfo>> + Send + '_;
+
+    fn thread_context_usage(&self) -> impl Future<Output = ThreadContextUsage> + Send + '_;
+
+    fn shutdown_and_wait(&self) -> impl Future<Output = CodexResult<()>> + Send + '_;
+
+    fn apply_goal_resume_runtime_effects(
+        &self,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+
+    fn continue_active_goal_if_idle(&self) -> impl Future<Output = CodexResult<()>> + Send + '_;
+}
+
+impl<T> LiveThreadListenerHandle for T
+where
+    T: LiveThreadHandle + ?Sized,
+{
+    fn session_configured(&self) -> SessionConfiguredEvent {
+        LiveThreadHandle::session_configured(self)
+    }
+
+    fn next_event(&self) -> impl Future<Output = CodexResult<Event>> + Send + '_ {
+        LiveThreadHandle::next_event(self)
+    }
+
+    fn submit_thread_op(&self, op: Op) -> impl Future<Output = CodexResult<String>> + Send + '_ {
+        LiveThreadHandle::submit_thread_op(self, op)
+    }
+
+    fn agent_status(&self) -> impl Future<Output = AgentStatus> + Send + '_ {
+        LiveThreadHandle::agent_status(self)
+    }
+
+    fn runtime_thread_status(&self) -> impl Future<Output = ThreadRuntimeStatus> + Send + '_ {
+        LiveThreadHandle::runtime_thread_status(self)
+    }
+
+    fn config_snapshot(&self) -> impl Future<Output = ThreadConfigSnapshot> + Send + '_ {
+        LiveThreadHandle::config_snapshot(self)
+    }
+
+    fn read_thread(
+        &self,
+        include_archived: bool,
+        include_history: bool,
+    ) -> impl Future<Output = ThreadStoreResult<StoredThread>> + Send + '_ {
+        LiveThreadHandle::read_thread(self, include_archived, include_history)
+    }
+
+    fn token_usage_info(&self) -> impl Future<Output = Option<TokenUsageInfo>> + Send + '_ {
+        LiveThreadHandle::token_usage_info(self)
+    }
+
+    fn thread_context_usage(&self) -> impl Future<Output = ThreadContextUsage> + Send + '_ {
+        LiveThreadHandle::thread_context_usage(self)
+    }
+
+    fn shutdown_and_wait(&self) -> impl Future<Output = CodexResult<()>> + Send + '_ {
+        LiveThreadHandle::shutdown_and_wait(self)
+    }
+
+    fn apply_goal_resume_runtime_effects(
+        &self,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_ {
+        LiveThreadHandle::apply_goal_resume_runtime_effects(self)
+    }
+
+    fn continue_active_goal_if_idle(&self) -> impl Future<Output = CodexResult<()>> + Send + '_ {
+        LiveThreadHandle::continue_active_goal_if_idle(self)
+    }
+}
+
+/// Listener/event-stream lookup surface for loaded live threads.
+pub trait LiveThreadListenerRuntime: Send + Sync {
+    type ListenerHandle: LiveThreadListenerHandle + 'static;
+
+    fn live_thread_listener_handle(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<Arc<Self::ListenerHandle>>> + Send + '_;
+}
+
 /// Turn preflight surface for live threads without exposing concrete handles.
 ///
 /// Implementations validate turn-scoped inputs against the live thread but do
@@ -565,15 +667,4 @@ pub trait LiveThreadHandle: SessionCommandHandle + Send + Sync {
     fn decrement_out_of_band_elicitation_count(
         &self,
     ) -> impl Future<Output = CodexResult<u64>> + Send + '_;
-}
-
-/// Full handle lookup surface for a collection of live threads.
-pub trait LiveThreadRegistry: Send + Sync {
-    type Thread: LiveThreadHandle + 'static;
-
-    /// Return the live thread handle for event-stream consumers that need a stable owner.
-    fn live_thread_handle(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<Arc<Self::Thread>>> + Send + '_;
 }

@@ -359,7 +359,7 @@ pub(super) async fn on_request_user_input_response(
     event_turn_id: String,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
     user_input_guard: ThreadWatchActiveGuard,
 ) {
@@ -441,7 +441,7 @@ pub(super) async fn on_mcp_server_elicitation_response(
     request_id: protocol::mcp::RequestId,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
 ) {
@@ -505,7 +505,7 @@ pub(super) fn mcp_server_elicitation_response_from_client_result(
 
 pub(super) async fn on_request_permissions_response(
     pending_response: PendingRequestPermissionsResponse,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
 ) {
     let PendingRequestPermissionsResponse {
@@ -650,7 +650,7 @@ pub(super) async fn on_file_change_request_approval_response(
     item_id: String,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    codex: Arc<dyn AppServerLiveThreadHandle>,
+    codex: Arc<dyn AppServerLiveThreadListenerHandle>,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,
 ) {
@@ -700,7 +700,7 @@ pub(super) async fn on_command_execution_request_approval_response(
     completion_item: Option<CommandExecutionCompletionItem>,
     pending_request_id: RequestId,
     receiver: oneshot::Receiver<ClientRequestResult>,
-    conversation: Arc<dyn AppServerLiveThreadHandle>,
+    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     permission_guard: ThreadWatchActiveGuard,

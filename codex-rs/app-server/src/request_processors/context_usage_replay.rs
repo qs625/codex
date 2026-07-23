@@ -18,6 +18,7 @@ use protocol::protocol::ThreadContextUsageToolBreakdown;
 use protocol::protocol::TokenUsageInfo;
 
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingMessageSender;
 
@@ -27,16 +28,36 @@ pub(super) trait ThreadUsageSource: Send + Sync {
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
 }
 
-impl<T> ThreadUsageSource for T
-where
-    T: AppServerLiveThreadHandle + ?Sized,
-{
+impl ThreadUsageSource for dyn AppServerLiveThreadHandle + '_ {
     fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
         AppServerLiveThreadHandle::token_usage_info(self)
     }
 
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
         AppServerLiveThreadHandle::thread_context_usage(self)
+    }
+}
+
+impl<T> ThreadUsageSource for Arc<T>
+where
+    T: AppServerLiveThreadHandle + ?Sized,
+{
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
+        AppServerLiveThreadHandle::token_usage_info(self.as_ref())
+    }
+
+    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
+        AppServerLiveThreadHandle::thread_context_usage(self.as_ref())
+    }
+}
+
+impl ThreadUsageSource for dyn AppServerLiveThreadListenerHandle + '_ {
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
+        AppServerLiveThreadListenerHandle::token_usage_info(self)
+    }
+
+    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
+        AppServerLiveThreadListenerHandle::thread_context_usage(self)
     }
 }
 
