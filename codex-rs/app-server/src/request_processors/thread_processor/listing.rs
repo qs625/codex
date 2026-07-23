@@ -693,7 +693,7 @@ impl ThreadRequestProcessor {
         };
 
         match self
-            .thread_runtime
+            .native_thread_creation
             .resume_thread_with_history_and_source(
                 config,
                 thread_history,
@@ -703,11 +703,12 @@ impl ThreadRequestProcessor {
             )
             .await
         {
-            Ok(ThreadProcessorNewThread {
-                thread_id,
-                session_configured,
-                ..
-            }) => {
+            Ok(new_thread) => {
+                let ThreadProcessorNewThread {
+                    thread_id,
+                    session_configured,
+                    ..
+                } = thread_processor_new_thread(new_thread);
                 let config_snapshot = match self
                     .live_thread_inspection
                     .live_thread_config_snapshot(thread_id)

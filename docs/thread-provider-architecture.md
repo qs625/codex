@@ -159,9 +159,10 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
 - `ThreadLifecycleRuntime`：provider-neutral lifecycle 边界；当前已承载
   `shutdown_all_threads_bounded`、`subscribe_thread_created` 和
   `active_event_subscriptions`，供 app-server thread processor 直接依赖。root
-  start/resume/fork 仍保留在 app-server 的过渡 trait 中，因为这些请求还携带完整
+  start/resume/fork 仍不属于该 provider-neutral trait，因为这些请求还携带完整
   `Config` 与 native dynamic tool/environment 结构，直接搬入 `thread-service-api`
-  会引入不合适的依赖方向。
+  会引入不合适的依赖方向；它们当前收口到 thread-service crate 内的
+  `NativeThreadCreationRuntime` / `NativeThreadEnvironmentRuntime`。
 - `NativeAgentRuntime`：承载 native Morpheus `spawn_agent`、`followup_task`、
   `close_agent` 和 `list_agents`。
 - `ThreadCollaborationRuntime`：承载 external collaboration tool surface，并继承
@@ -174,8 +175,11 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
 facade，并通过 blanket impl 自动为实现窄 trait 的 runtime 提供旧 API。app-server
 thread processor 的 shutdown、thread-created 订阅和 active event subscription
 tracker 已改到 `ThreadLifecycleRuntime`；root start/resume/fork 的具体创建调用点
-仍通过 app-server-local 过渡 trait 继承该 lifecycle 边界。后续阶段再把 tool
-service 和 app-server 剩余调用逐步改到窄 trait。
+已从 app-server-local `ThreadProcessorThreadRuntime` 迁到 thread-service native
+creation/environment runtime。app-server 只把 `NewThread` 投影成 response assembly
+需要的 `thread_id`、telemetry-only created-thread handle 和
+`SessionConfiguredEvent`。这仍不是 external provider root start support；后续阶段
+需要把 provider-neutral request DTO 和 routing 从这些 native-only DTO 中继续拆出。
 
 live thread runtime 的 command/status/inspection 也已开始迁移到 provider-neutral
 surfaces：
@@ -218,7 +222,10 @@ thread assembly 的 read-thread 也已改到 narrow runtime/store read 路径。
 transitional `AppServerLiveThreadHandle` 均已删除；turn processor 里剩余
 的 app-server-local turn runtime 只覆盖环境选择校验、live `Config` 读取、
 conversation item injection、steer 和 detached review fork 这些尚未
-provider-neutral 化的 native-only 能力。后续阶段再继续拆出更窄 handle。
+provider-neutral 化的 native-only 能力。thread processor 已不再保留 broad
+creation facade；native root start/resume/fork 仍通过
+`NativeThreadCreationRuntime` 明确标记为 native-only 过渡层。后续阶段再继续拆出
+更窄 handle。
 
 禁止路径：
 

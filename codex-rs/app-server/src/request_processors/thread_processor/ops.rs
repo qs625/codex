@@ -360,7 +360,8 @@ impl ThreadRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn thread_start_task(
         listener_task_context: ListenerTaskContext,
-        thread_runtime: Arc<dyn ThreadProcessorThreadRuntime>,
+        native_thread_creation: Arc<dyn NativeThreadCreationRuntime>,
+        environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
         live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
         thread_store: Arc<dyn ThreadStore>,
         config_manager: ConfigManager,
@@ -459,7 +460,7 @@ impl ThreadRequestProcessor {
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let environments = environments
-            .unwrap_or_else(|| thread_runtime.default_environment_selections(&config.cwd));
+            .unwrap_or_else(|| environment_runtime.default_environment_selections(&config.cwd));
         let dynamic_tools = dynamic_tools.unwrap_or_default();
         let core_dynamic_tools = if dynamic_tools.is_empty() {
             Vec::new()
@@ -478,12 +479,7 @@ impl ThreadRequestProcessor {
         };
         let core_dynamic_tool_count = core_dynamic_tools.len();
         let create_thread_started_at = std::time::Instant::now();
-        let ThreadProcessorNewThread {
-            thread_id,
-            thread: created_thread,
-            session_configured,
-            ..
-        } = thread_runtime
+        let new_thread = native_thread_creation
             .start_thread_with_options(StartThreadOptions {
                 config,
                 initial_history: match session_start_source
@@ -516,6 +512,12 @@ impl ThreadRequestProcessor {
             ))
             .await
             .map_err(thread_start_create_error)?;
+        let ThreadProcessorNewThread {
+            thread_id,
+            thread: created_thread,
+            session_configured,
+            ..
+        } = thread_processor_new_thread(new_thread);
         created_thread.record_startup_phase(
             "thread_start_create_thread",
             create_thread_started_at.elapsed(),
@@ -715,7 +717,7 @@ impl ThreadRequestProcessor {
                 .collect::<Vec<_>>()
         });
         if let Some(environment_selections) = environment_selections.as_ref() {
-            self.thread_runtime
+            self.environment_runtime
                 .validate_environment_selections(environment_selections)
                 .map_err(|err| invalid_request(environment_selection_error_message(err)))?;
         }

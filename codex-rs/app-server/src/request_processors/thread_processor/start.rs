@@ -95,7 +95,8 @@ impl ThreadRequestProcessor {
         };
         let request_trace = request_context.request_trace();
         let config_manager = self.config_manager.clone();
-        let thread_runtime = Arc::clone(&self.thread_runtime);
+        let native_thread_creation = Arc::clone(&self.native_thread_creation);
+        let environment_runtime = Arc::clone(&self.environment_runtime);
         let live_thread_command = Arc::clone(&self.live_thread_command);
         let thread_store = Arc::clone(&self.thread_store);
         let outgoing = Arc::clone(&listener_task_context.outgoing);
@@ -103,7 +104,8 @@ impl ThreadRequestProcessor {
         let thread_start_task = async move {
             if let Err(error) = Self::thread_start_task(
                 listener_task_context,
-                thread_runtime,
+                native_thread_creation,
+                environment_runtime,
                 live_thread_command,
                 thread_store,
                 config_manager,
@@ -290,7 +292,7 @@ impl ThreadRequestProcessor {
         let parent_trace = self.request_trace_context(&request_id).await;
 
         let resume_result = if let Some(session_source) = resume_session_source {
-            self.thread_runtime
+            self.native_thread_creation
                 .resume_thread_with_history_and_source(
                     config.clone(),
                     thread_history,
@@ -300,7 +302,7 @@ impl ThreadRequestProcessor {
                 )
                 .await
         } else {
-            self.thread_runtime
+            self.native_thread_creation
                 .resume_thread_with_history(
                     config.clone(),
                     thread_history,
@@ -311,11 +313,12 @@ impl ThreadRequestProcessor {
         };
 
         match resume_result {
-            Ok(ThreadProcessorNewThread {
-                thread_id,
-                session_configured,
-                ..
-            }) => {
+            Ok(new_thread) => {
+                let ThreadProcessorNewThread {
+                    thread_id,
+                    session_configured,
+                    ..
+                } = thread_processor_new_thread(new_thread);
                 if let Err(err) = self
                     .set_app_server_client_info(
                         thread_id,
@@ -988,12 +991,8 @@ impl ThreadRequestProcessor {
         let fallback_model_provider = config.model_provider_id.clone();
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
 
-        let ThreadProcessorNewThread {
-            thread_id,
-            session_configured,
-            ..
-        } = self
-            .thread_runtime
+        let new_thread = self
+            .native_thread_creation
             .fork_thread_from_history(
                 ForkSnapshot::Interrupted,
                 config,
@@ -1014,6 +1013,11 @@ impl ThreadRequestProcessor {
                 CodexErr::InvalidRequest(message) => invalid_request(message),
                 err => internal_error(format!("error forking thread: {err}")),
             })?;
+        let ThreadProcessorNewThread {
+            thread_id,
+            session_configured,
+            ..
+        } = thread_processor_new_thread(new_thread);
 
         self.set_app_server_client_info(
             thread_id,
