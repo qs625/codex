@@ -48,9 +48,10 @@ pub(crate) struct ExternalAgentRun {
     pub(crate) provider: SpawnAgentProvider,
     pub(crate) depth: i32,
     pub(crate) spawn_config: Option<ExternalSpawnConfig>,
-    pub(crate) input_sink: Option<ExternalInputSink>,
+    pub(crate) input_sink: Option<ExternalAgentInputSink>,
     pub(crate) live_thread: Option<SharedLiveThread>,
     pub(crate) status: AgentStatus,
+    pub(crate) active_turn_id: Option<String>,
     pub(crate) last_task_message: Option<String>,
     pub(crate) abort_handle: Option<AbortHandle>,
 }
@@ -115,15 +116,6 @@ impl ExternalAgentRegistry {
             .cloned()
     }
 
-    pub(crate) fn get_by_path(&self, agent_path: &AgentPath) -> Option<ExternalAgentRun> {
-        self.runs
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .find(|run| &run.agent_path == agent_path)
-            .cloned()
-    }
-
     pub(crate) fn attach_abort_handle(&self, thread_id: ThreadId, abort_handle: AbortHandle) {
         let mut runs = self
             .runs
@@ -144,6 +136,47 @@ impl ExternalAgentRegistry {
         }
     }
 
+    pub(crate) fn begin_root_turn(
+        &self,
+        thread_id: ThreadId,
+        turn_id: String,
+    ) -> Result<ExternalAgentInputSink, String> {
+        let mut runs = self
+            .runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let run = runs
+            .get_mut(&thread_id)
+            .ok_or_else(|| "external root thread not found".to_string())?;
+        if !run.agent_path.is_root() {
+            return Err("external thread is not a root thread".to_string());
+        }
+        if !matches!(run.status, AgentStatus::PendingInit | AgentStatus::Running) {
+            return Err("external root thread is no longer accepting input".to_string());
+        }
+        if run.active_turn_id.is_some() {
+            return Err("external root thread already has an active turn".to_string());
+        }
+        let input_sink = run
+            .input_sink
+            .clone()
+            .ok_or_else(|| "external root thread cannot receive input".to_string())?;
+        run.active_turn_id = Some(turn_id);
+        Ok(input_sink)
+    }
+
+    pub(crate) fn clear_active_turn(&self, thread_id: ThreadId, turn_id: &str) {
+        let mut runs = self
+            .runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(run) = runs.get_mut(&thread_id)
+            && run.active_turn_id.as_deref() == Some(turn_id)
+        {
+            run.active_turn_id = None;
+        }
+    }
+
     pub(crate) fn shutdown(&self, thread_id: ThreadId) -> Option<ExternalAgentRun> {
         let mut runs = self
             .runs
@@ -151,6 +184,7 @@ impl ExternalAgentRegistry {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let run = runs.get_mut(&thread_id)?;
         run.status = AgentStatus::Shutdown;
+        run.active_turn_id = None;
         if let Some(abort_handle) = run.abort_handle.take() {
             abort_handle.abort();
         }
@@ -174,6 +208,7 @@ impl ExternalAgentRegistry {
             return None;
         }
         run.status = status;
+        run.active_turn_id = None;
         run.abort_handle = None;
         Some(run.clone())
     }
@@ -310,6 +345,37 @@ impl ExternalInputSink {
     pub(crate) fn send(&self, content: String) -> Result<(), String> {
         self.tx
             .send(content)
+            .map_err(|_| "external provider stdin is closed".to_string())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExternalAgentInput {
+    pub(crate) turn_id: Option<String>,
+    pub(crate) content: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ExternalAgentInputSink {
+    tx: mpsc::UnboundedSender<ExternalAgentInput>,
+}
+
+impl ExternalAgentInputSink {
+    pub(crate) fn new(tx: mpsc::UnboundedSender<ExternalAgentInput>) -> Self {
+        Self { tx }
+    }
+
+    pub(crate) fn send(&self, content: String) -> Result<(), String> {
+        self.send_with_turn_id(None, content)
+    }
+
+    pub(crate) fn send_with_turn_id(
+        &self,
+        turn_id: Option<String>,
+        content: String,
+    ) -> Result<(), String> {
+        self.tx
+            .send(ExternalAgentInput { turn_id, content })
             .map_err(|_| "external provider stdin is closed".to_string())
     }
 }
@@ -1942,6 +2008,7 @@ mod tests {
             input_sink: None,
             live_thread: None,
             status: AgentStatus::Running,
+            active_turn_id: None,
             last_task_message: Some("do work".to_string()),
             abort_handle: None,
         });

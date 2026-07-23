@@ -7,6 +7,7 @@ mod native_steer_runtime;
 
 pub use codex::CodexThread;
 pub(crate) use codex::thread_config_snapshot_sandbox_policy;
+pub use manager::NewExternalRootThread;
 pub use manager::NewThread;
 pub use manager::StartThreadOptions;
 pub use manager::ThreadAuthRuntimes;

@@ -93,6 +93,7 @@ pub use thread::NativeThreadCreationRuntime;
 pub use thread::NativeThreadEnvironmentRuntime;
 pub use thread::NativeThreadSteerRuntime;
 pub use thread::NewThread;
+pub use thread::NewExternalRootThread;
 pub use thread::StartThreadOptions;
 pub use thread::ThreadAuthRuntimes;
 pub use thread::ThreadConfigSnapshot;

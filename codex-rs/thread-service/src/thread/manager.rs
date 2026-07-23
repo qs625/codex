@@ -1,5 +1,6 @@
 use crate::StateDbHandle;
 use crate::agent::AgentControl;
+use crate::agent::external::SharedExternalAgentRegistry;
 use crate::environment_selection::default_thread_environment_selections;
 use crate::environment_selection::resolve_environment_selections;
 use crate::runtime_shell_snapshot::ShellSnapshot;
@@ -13,6 +14,7 @@ use crate::thread::CodexThread;
 use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::AgentRegistry;
 use codex_agent_runtime::LiveAgentShutdownAction;
+use codex_agent_runtime::SpawnAgentProvider;
 use codex_agent_runtime::live_agent_shutdown_action;
 use codex_analytics_api::AnalyticsEventsClient;
 use codex_approval_service_api::ApprovalServiceApi;
@@ -202,6 +204,11 @@ pub struct NewThread {
     pub session_configured: SessionConfiguredEvent,
 }
 
+pub struct NewExternalRootThread {
+    pub thread_id: ThreadId,
+    pub session_configured: SessionConfiguredEvent,
+}
+
 enum ShutdownOutcome {
     Complete,
     SubmitFailed,
@@ -273,6 +280,7 @@ pub(crate) struct ResumeThreadWithHistoryOptions {
 pub(crate) struct ThreadServiceState {
     threads: Arc<RwLock<HashMap<ThreadId, Arc<CodexThread>>>>,
     external_live_threads: Arc<RwLock<HashMap<ThreadId, ExternalLiveThreadRecord>>>,
+    external_root_agents: SharedExternalAgentRegistry,
     thread_created_tx: broadcast::Sender<ThreadCreatedEvent>,
     auth_runtime: SharedAuthRuntime,
     provider_auth_manager: Option<SharedModelProviderAuthManager>,
@@ -471,6 +479,7 @@ impl ThreadService {
             state: Arc::new(ThreadServiceState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 external_live_threads: Arc::new(RwLock::new(HashMap::new())),
+                external_root_agents: SharedExternalAgentRegistry::default(),
                 thread_created_tx,
                 model_service,
                 provider_auth_manager,
@@ -614,6 +623,7 @@ impl ThreadService {
             state: Arc::new(ThreadServiceState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 external_live_threads: Arc::new(RwLock::new(HashMap::new())),
+                external_root_agents: SharedExternalAgentRegistry::default(),
                 thread_created_tx,
                 model_service,
                 provider_auth_manager,
@@ -1244,7 +1254,41 @@ impl ThreadService {
     }
 
     pub async fn shutdown_live_thread(&self, thread_id: ThreadId) -> CodexResult<String> {
+        if self
+            .root_external_agent_control()
+            .has_external_root_thread(thread_id)
+        {
+            return self
+                .root_external_agent_control()
+                .close_external_root_thread(thread_id)
+                .await;
+        }
         self.state.shutdown_live_thread(thread_id).await
+    }
+
+    pub async fn start_external_root_thread(
+        &self,
+        config: Config,
+        provider: SpawnAgentProvider,
+    ) -> CodexResult<NewExternalRootThread> {
+        self.root_external_agent_control()
+            .start_external_root_thread(config, provider, self.state.session_source.clone())
+            .await
+    }
+
+    pub async fn submit_external_root_input(
+        &self,
+        thread_id: ThreadId,
+        message: String,
+    ) -> CodexResult<String> {
+        self.root_external_agent_control()
+            .send_external_root_input(thread_id, message)
+            .await
+    }
+
+    pub fn has_external_root_thread(&self, thread_id: ThreadId) -> bool {
+        self.root_external_agent_control()
+            .has_external_root_thread(thread_id)
     }
 
     pub async fn live_thread_agent_status(&self, thread_id: ThreadId) -> CodexResult<AgentStatus> {
@@ -1377,6 +1421,14 @@ impl ThreadService {
         AgentControl::new_with_registry(
             Arc::downgrade(&self.state),
             Arc::clone(&self.state.root_agent_registry),
+        )
+    }
+
+    fn root_external_agent_control(&self) -> AgentControl {
+        AgentControl::new_with_external_registry(
+            Arc::downgrade(&self.state),
+            Arc::clone(&self.state.root_agent_registry),
+            self.state.external_root_agents.clone(),
         )
     }
 
@@ -1516,6 +1568,7 @@ impl ThreadServiceState {
         generate_memories: bool,
         thread_id: ThreadId,
         session_source: SessionSource,
+        thread_source: ThreadSource,
         agent_metadata: AgentMetadata,
     ) -> CodexResult<SharedLiveThread> {
         self.live_thread_factory
@@ -1525,7 +1578,7 @@ impl ThreadServiceState {
                     thread_id,
                     forked_from_id: None,
                     source: session_source,
-                    thread_source: Some(ThreadSource::Subagent),
+                    thread_source: Some(thread_source),
                     base_instructions: BaseInstructions {
                         text: String::new(),
                     },
@@ -1562,17 +1615,14 @@ impl ThreadServiceState {
         status: AgentStatus,
     ) {
         let (status_tx, _status_rx) = tokio::sync::watch::channel(status.clone());
-        self.external_live_threads
-            .write()
-            .await
-            .insert(
-                thread_id,
-                ExternalLiveThreadRecord {
-                    snapshot,
-                    status,
-                    status_tx,
-                },
-            );
+        self.external_live_threads.write().await.insert(
+            thread_id,
+            ExternalLiveThreadRecord {
+                snapshot,
+                status,
+                status_tx,
+            },
+        );
     }
 
     pub(crate) async fn update_external_live_thread_status(
@@ -2192,7 +2242,9 @@ impl thread_service_api::ThreadLifecycleRuntime for ThreadServiceState {
         &'a self,
         thread_id: ThreadId,
     ) -> thread_service_api::ThreadServiceFuture<'a, CodexResult<AgentStatus>> {
-        Box::pin(ThreadServiceState::live_thread_agent_status(self, thread_id))
+        Box::pin(ThreadServiceState::live_thread_agent_status(
+            self, thread_id,
+        ))
     }
 
     fn live_thread_runtime_status<'a>(
@@ -2390,7 +2442,11 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
     ) -> impl std::future::Future<Output = bool> + Send + '_ {
         async move {
             self.get_thread(thread_id).await.is_ok()
-                || self.external_live_threads.read().await.contains_key(&thread_id)
+                || self
+                    .external_live_threads
+                    .read()
+                    .await
+                    .contains_key(&thread_id)
         }
     }
 
@@ -2642,10 +2698,8 @@ impl thread_service_api::LiveThreadGoalRuntime for ThreadServiceState {
     ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
         async move {
             let thread = self.get_thread(thread_id).await?;
-            thread_service_api::LiveThreadHandle::apply_goal_resume_runtime_effects(
-                thread.as_ref(),
-            )
-            .await
+            thread_service_api::LiveThreadHandle::apply_goal_resume_runtime_effects(thread.as_ref())
+                .await
         }
     }
 
