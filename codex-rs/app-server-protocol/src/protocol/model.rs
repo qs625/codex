@@ -88,6 +88,87 @@ pub struct AgentTypeListResponse {
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadProviderListParams {
+    /// Workspace path whose config should be used for native role and model discovery.
+    #[cfg_attr(feature = "schema-export", ts(optional = nullable))]
+    pub cwd: Option<PathBuf>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadProviderListResponse {
+    pub data: Vec<ThreadProviderDescriptor>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadProviderDescriptor {
+    pub id: String,
+    pub display_name: String,
+    pub kind: ThreadProviderKind,
+    pub description: String,
+    pub agent_types: Vec<AgentType>,
+    pub model_selection: ThreadProviderModelSelection,
+    pub capabilities: ThreadProviderCapabilities,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum ThreadProviderKind {
+    Native,
+    ExternalCli,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadProviderModelSelection {
+    pub mode: ThreadProviderModelSelectionMode,
+    #[serde(default)]
+    pub model_providers: Vec<String>,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub enum ThreadProviderModelSelectionMode {
+    Catalog,
+    ProviderDefault,
+    None,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadProviderCapabilities {
+    pub start_thread: bool,
+    pub send_input: bool,
+    pub close_thread: bool,
+    pub list_children: bool,
+    pub restore_thread: bool,
+    pub event_stream: bool,
+    pub spawn_child: bool,
+    pub compact: bool,
+    pub workflow: bool,
+    pub poll_event: bool,
+    pub command_session: bool,
+    pub permissions: bool,
+    pub dynamic_tools: bool,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]

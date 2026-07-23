@@ -1394,6 +1394,7 @@ function App() {
         threadMode: draft?.mode === "chat" ? "chat" : "project",
         name,
         taskName: draft?.taskName,
+        threadProvider: draft?.threadProvider,
         agentType: draft?.agentType,
         model: draft?.model,
         modelProvider: draft?.modelProvider,

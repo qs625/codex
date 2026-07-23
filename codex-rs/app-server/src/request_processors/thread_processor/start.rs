@@ -11,6 +11,7 @@ impl ThreadRequestProcessor {
         request_context: RequestContext,
     ) -> Result<(), JSONRPCErrorError> {
         let ThreadStartParams {
+            thread_provider,
             model,
             model_provider,
             reasoning_effort,
@@ -36,6 +37,13 @@ impl ThreadRequestProcessor {
             environments,
             persist_extended_history,
         } = params;
+        if let Some(thread_provider) = thread_provider.as_deref()
+            && thread_provider != "native"
+        {
+            return Err(invalid_request(format!(
+                "thread provider '{thread_provider}' is advertised but does not support thread/start yet"
+            )));
+        }
         if sandbox.is_some() && permissions.is_some() {
             return Err(invalid_request(
                 "`permissions` cannot be combined with `sandbox`",
@@ -267,7 +275,9 @@ impl ThreadRequestProcessor {
             && let Err(err) =
                 codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
         {
-            self.outgoing.send_error(request_id, invalid_request(err)).await;
+            self.outgoing
+                .send_error(request_id, invalid_request(err))
+                .await;
             return Ok(());
         }
 

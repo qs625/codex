@@ -219,6 +219,50 @@ async fn thread_start_deprecates_persist_extended_history_true() -> Result<()> {
 }
 
 #[tokio::test]
+async fn thread_start_accepts_native_thread_provider_and_rejects_external_provider() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let native_req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("native".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let native_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(native_req_id)),
+    )
+    .await??;
+    let _native_started: ThreadStartResponse = to_response(native_response)?;
+
+    let external_req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("claude_cli".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let external_error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(external_req_id)),
+    )
+    .await??;
+    assert_eq!(external_error.error.code, INVALID_REQUEST_ERROR_CODE);
+    assert!(
+        external_error
+            .error
+            .message
+            .contains("does not support thread/start yet")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
     // Provide a mock server and config so model wiring is valid.
     let server = create_mock_responses_server_repeating_assistant("Done").await;

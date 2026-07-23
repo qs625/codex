@@ -120,6 +120,7 @@ test("buildCreateThreadStartParams creates read-only chat thread params", () => 
       cwd: "/work/project",
       name: "Ignored by thread/start",
       taskName: "Ask about tools",
+      threadProvider: "native",
       model: "gpt-5",
       serviceTier: null,
     },
@@ -131,6 +132,7 @@ test("buildCreateThreadStartParams creates read-only chat thread params", () => 
   assert.equal(params.sandbox, undefined);
   assert.equal(params.approvalPolicy, "never");
   assert.equal(params.taskName, "Ask about tools");
+  assert.equal(params.threadProvider, "native");
   assert.equal(params.model, "gpt-5");
   assert.equal(params.serviceTier, null);
   assert.equal(params.config.features.realtime_conversation, true);

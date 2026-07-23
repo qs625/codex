@@ -743,6 +743,11 @@ client_request_definitions! {
         serialization: None,
         response: v2::AgentTypeListResponse,
     },
+    ThreadProviderList => "threadProvider/list" {
+        params: v2::ThreadProviderListParams,
+        serialization: None,
+        response: v2::ThreadProviderListResponse,
+    },
     ModelProviderCapabilitiesRead => "modelProvider/capabilities/read" {
         params: v2::ModelProviderCapabilitiesReadParams,
         serialization: None,

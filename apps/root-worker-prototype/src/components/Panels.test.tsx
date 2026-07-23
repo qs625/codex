@@ -22,6 +22,7 @@ const {
   defaultNewThreadStartParams,
   isValidAgentPathSegment,
   isValidNewThreadAgentPath,
+  resolveNewThreadProviderControls,
   resolveNewThreadStartParamsForProject,
 } = await import("./Panels");
 
@@ -353,6 +354,7 @@ test("buildBlankChatThreadDraft creates a cwd-free chat draft", () => {
     mode: "chat",
     projectPath: "",
     taskName: "",
+    threadProvider: null,
     agentType: null,
     model: null,
     modelProvider: null,
@@ -377,6 +379,7 @@ test("NewThreadPopover renders thread/start parameter fields", () => {
   assert.doesNotMatch(markup, /<span>Title<\/span>/);
   assert.match(markup, /taskName/);
   assert.match(markup, /Path preview/);
+  assert.match(markup, /threadProvider/);
   assert.match(markup, /agentType/);
   assert.match(markup, /modelProvider/);
   assert.match(markup, /<select>/);
@@ -412,6 +415,7 @@ test("buildNewThreadDraft trims thread start params", () => {
   assert.deepEqual(
     buildNewThreadDraft("project", "  /work/new  ", {
       taskName: "  owner_dev  ",
+      threadProvider: "  native  ",
       agentType: "  feature-owner  ",
       model: "  gpt-5.4  ",
       modelProvider: "  openai  ",
@@ -422,6 +426,7 @@ test("buildNewThreadDraft trims thread start params", () => {
       mode: "project",
       projectPath: "/work/new",
       taskName: "owner_dev",
+      threadProvider: "native",
       agentType: "feature-owner",
       model: "gpt-5.4",
       modelProvider: "openai",
@@ -447,6 +452,7 @@ test("buildNewThreadDraft trims thread start params", () => {
       mode: "project",
       projectPath: "/work/new",
       taskName: "",
+      threadProvider: null,
       agentType: null,
       model: null,
       modelProvider: null,
@@ -454,6 +460,54 @@ test("buildNewThreadDraft trims thread start params", () => {
       serviceTier: null,
     },
   );
+});
+
+test("new thread provider controls gate external model and role fields", () => {
+  const nativeControls = resolveNewThreadProviderControls({
+    fallbackAgentTypes: [{ name: "feature-owner", builtIn: false }],
+    selectedThreadProvider: null,
+  });
+  assert.equal(nativeControls.effectiveThreadProvider, "native");
+  assert.equal(nativeControls.canSelectModel, true);
+  assert.equal(nativeControls.canStartThread, true);
+  assert.deepEqual(nativeControls.agentTypes, [
+    { name: "feature-owner", builtIn: false },
+  ]);
+
+  const externalControls = resolveNewThreadProviderControls({
+    fallbackAgentTypes: [{ name: "feature-owner", builtIn: false }],
+    selectedThreadProvider: {
+      id: "claude_cli",
+      displayName: "Claude Code",
+      kind: "externalCli",
+      description: "External Claude CLI",
+      agentTypes: [],
+      modelSelection: {
+        mode: "providerDefault",
+        modelProviders: [],
+      },
+      capabilities: {
+        startThread: false,
+        sendInput: true,
+        closeThread: true,
+        listChildren: true,
+        restoreThread: false,
+        eventStream: true,
+        spawnChild: true,
+        compact: false,
+        workflow: false,
+        pollEvent: false,
+        commandSession: false,
+        permissions: false,
+        dynamicTools: false,
+      },
+    },
+  });
+  assert.equal(externalControls.effectiveThreadProvider, "claude_cli");
+  assert.equal(externalControls.canSelectModel, false);
+  assert.equal(externalControls.canStartThread, false);
+  assert.deepEqual(externalControls.agentTypes, []);
+  assert.deepEqual(externalControls.modelProviders, []);
 });
 
 test("new thread agent path validation matches backend path rules", () => {

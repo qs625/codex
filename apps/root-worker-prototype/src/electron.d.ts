@@ -32,6 +32,38 @@ declare global {
           builtIn?: boolean;
         }>;
       }>;
+      listThreadProviders: (cwd?: string) => Promise<{
+        data: Array<{
+          id: string;
+          displayName: string;
+          kind: "native" | "externalCli";
+          description: string;
+          agentTypes: Array<{
+            name: string;
+            description?: string | null;
+            builtIn?: boolean;
+          }>;
+          modelSelection: {
+            mode: "catalog" | "providerDefault" | "none";
+            modelProviders: string[];
+          };
+          capabilities: {
+            startThread: boolean;
+            sendInput: boolean;
+            closeThread: boolean;
+            listChildren: boolean;
+            restoreThread: boolean;
+            eventStream: boolean;
+            spawnChild: boolean;
+            compact: boolean;
+            workflow: boolean;
+            pollEvent: boolean;
+            commandSession: boolean;
+            permissions: boolean;
+            dynamicTools: boolean;
+          };
+        }>;
+      }>;
       selectProjectDirectory: (
         defaultPath?: string,
       ) => Promise<{ path: string | null }>;
@@ -48,6 +80,7 @@ declare global {
         cwd?: string;
         name?: string;
         taskName?: string | null;
+        threadProvider?: string | null;
         agentType?: string | null;
         model?: string | null;
         modelProvider?: string | null;

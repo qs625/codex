@@ -10,7 +10,12 @@ import type { ThreadSource } from "./ThreadSource";
 import type { ThreadStartSource } from "./ThreadStartSource";
 import type { JsonValue } from "./serde_json/JsonValue";
 
-export type ThreadStartParams = {model?: string | null, modelProvider?: string | null, reasoningEffort?: ReasoningEffort | null, serviceTier?: string | null | null, cwd?: string | null, taskName?: string | null, agentType?: string | null, approvalPolicy?: AskForApproval | null, /**
+export type ThreadStartParams = {/**
+ * Provider that owns the thread lifecycle. Omitted keeps legacy native
+ * Morpheus behavior. External providers are advertised by
+ * `threadProvider/list` before their root `thread/start` path is enabled.
+ */
+threadProvider?: string | null, model?: string | null, modelProvider?: string | null, reasoningEffort?: ReasoningEffort | null, serviceTier?: string | null | null, cwd?: string | null, taskName?: string | null, agentType?: string | null, approvalPolicy?: AskForApproval | null, /**
  * Override where approval requests are routed for review on this thread
  * and subsequent turns.
  */

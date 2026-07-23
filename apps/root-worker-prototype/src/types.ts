@@ -560,6 +560,42 @@ export type AgentTypeListResponse = {
   data: AgentTypeOption[];
 };
 
+export type ThreadProviderModelSelectionMode =
+  | "catalog"
+  | "providerDefault"
+  | "none";
+
+export type ThreadProviderDescriptor = {
+  id: string;
+  displayName: string;
+  kind: "native" | "externalCli";
+  description: string;
+  agentTypes: AgentTypeOption[];
+  modelSelection: {
+    mode: ThreadProviderModelSelectionMode;
+    modelProviders: string[];
+  };
+  capabilities: {
+    startThread: boolean;
+    sendInput: boolean;
+    closeThread: boolean;
+    listChildren: boolean;
+    restoreThread: boolean;
+    eventStream: boolean;
+    spawnChild: boolean;
+    compact: boolean;
+    workflow: boolean;
+    pollEvent: boolean;
+    commandSession: boolean;
+    permissions: boolean;
+    dynamicTools: boolean;
+  };
+};
+
+export type ThreadProviderListResponse = {
+  data: ThreadProviderDescriptor[];
+};
+
 export type NotificationEnvelope = {
   type: "notification" | "status" | "ready";
   notification?: {
@@ -688,6 +724,7 @@ export type NewThreadDraft = {
   mode: "project" | "chat";
   projectPath: string;
   taskName: string;
+  threadProvider: string | null;
   agentType: string | null;
   model: string | null;
   modelProvider: string | null;

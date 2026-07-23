@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "cwd": {
+      "description": "Workspace path whose config should be used for native role and model discovery.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "title": "ThreadProviderListParams",
+  "type": "object"
+}

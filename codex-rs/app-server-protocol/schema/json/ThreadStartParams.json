@@ -280,6 +280,13 @@
         "null"
       ]
     },
+    "threadProvider": {
+      "description": "Provider that owns the thread lifecycle. Omitted keeps legacy native Morpheus behavior. External providers are advertised by `threadProvider/list` before their root `thread/start` path is enabled.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "threadSource": {
       "anyOf": [
         {
