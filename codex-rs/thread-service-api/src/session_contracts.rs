@@ -13,7 +13,11 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::ActiveEventSubscriptionTracker;
+use crate::ThreadCreatedEvent;
+use crate::ThreadShutdownReport;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
@@ -66,6 +70,7 @@ use session_telemetry_api::SharedSessionTelemetry;
 use state_api::ExternalGoalSet;
 use state_api::SharedStateDbRuntime;
 use tokio::sync::Mutex;
+use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tool_types::FunctionCallError;
@@ -675,12 +680,21 @@ pub type ThreadServiceFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a
 
 /// Provider-neutral lifecycle runtime boundary.
 ///
-/// This is the future home for lifecycle operations such as start, input,
-/// status, close, list/read, and restore once those APIs move behind
-/// provider-neutral handles. The first split keeps it as a narrow marker so
-/// those operations do not get folded into collaboration or tool capability
-/// traits while existing call sites continue to use `ThreadServiceApi`.
-pub trait ThreadLifecycleRuntime: Send + Sync + 'static {}
+/// This surface owns thread-level lifecycle coordination that is independent of
+/// model-visible tools and turn/session capabilities. Creation requests that
+/// still need concrete config/runtime handles stay behind adapter-specific
+/// traits until those request DTOs can move here without introducing dependency
+/// cycles.
+pub trait ThreadLifecycleRuntime: Send + Sync + 'static {
+    fn shutdown_all_threads_bounded<'a>(
+        &'a self,
+        timeout: Duration,
+    ) -> ThreadServiceFuture<'a, ThreadShutdownReport>;
+
+    fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent>;
+
+    fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker>;
+}
 
 /// Morpheus-only native agent runtime operations.
 ///

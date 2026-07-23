@@ -574,7 +574,28 @@ mod tests {
 
     struct StubThreadServiceApi;
 
-    impl ThreadLifecycleRuntime for StubThreadServiceApi {}
+    impl ThreadLifecycleRuntime for StubThreadServiceApi {
+        fn shutdown_all_threads_bounded<'a>(
+            &'a self,
+            _timeout: std::time::Duration,
+        ) -> ThreadServiceFuture<'a, thread_service_api::ThreadShutdownReport> {
+            Box::pin(async {
+                unreachable!("shutdown_all_threads_bounded should not be called in this test")
+            })
+        }
+
+        fn subscribe_thread_created(
+            &self,
+        ) -> tokio::sync::broadcast::Receiver<thread_service_api::ThreadCreatedEvent> {
+            unreachable!("subscribe_thread_created should not be called in this test")
+        }
+
+        fn active_event_subscriptions(
+            &self,
+        ) -> Arc<thread_service_api::ActiveEventSubscriptionTracker> {
+            unreachable!("active_event_subscriptions should not be called in this test")
+        }
+    }
 
     impl NativeAgentRuntime for StubThreadServiceApi {
         fn spawn_agent<'a>(

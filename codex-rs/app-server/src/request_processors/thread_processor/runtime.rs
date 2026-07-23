@@ -1,5 +1,6 @@
 use super::*;
 use codex_agent_runtime::AgentMetadata;
+use thread_service_api::ThreadLifecycleRuntime;
 
 pub(crate) trait ThreadProcessorMetadataRuntime: Send + Sync {
     fn update_thread_metadata<'a>(
@@ -23,34 +24,6 @@ impl ThreadProcessorMetadataRuntime for ThreadService {
             patch,
             include_archived,
         ))
-    }
-}
-
-pub(crate) trait ThreadProcessorLifecycleRuntime: Send + Sync {
-    fn shutdown_all_threads_bounded<'a>(
-        &'a self,
-        timeout: Duration,
-    ) -> futures::future::BoxFuture<'a, thread_service_api::ThreadShutdownReport>;
-
-    fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent>;
-
-    fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker>;
-}
-
-impl ThreadProcessorLifecycleRuntime for ThreadService {
-    fn shutdown_all_threads_bounded<'a>(
-        &'a self,
-        timeout: Duration,
-    ) -> futures::future::BoxFuture<'a, thread_service_api::ThreadShutdownReport> {
-        Box::pin(ThreadService::shutdown_all_threads_bounded(self, timeout))
-    }
-
-    fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent> {
-        ThreadService::subscribe_thread_created(self)
-    }
-
-    fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker> {
-        ThreadService::active_event_subscriptions(self)
     }
 }
 
@@ -95,7 +68,7 @@ pub(crate) fn thread_processor_new_thread(new_thread: NewThread) -> ThreadProces
     }
 }
 
-pub(crate) trait ThreadProcessorThreadRuntime: Send + Sync {
+pub(crate) trait ThreadProcessorThreadRuntime: ThreadLifecycleRuntime {
     fn default_environment_selections(
         &self,
         cwd: &AbsolutePathBuf,

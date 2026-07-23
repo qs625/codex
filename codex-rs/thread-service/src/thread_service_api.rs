@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::agent::multi_agent;
 use crate::session::session::Session;
@@ -10,6 +11,7 @@ use protocol::models::ResponseItem;
 use thread_service_api::NativeAgentRuntime;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
+use thread_service_api::ThreadCreatedEvent;
 use thread_service_api::ThreadEventRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
 use thread_service_api::ThreadListAgentsResult;
@@ -18,11 +20,13 @@ use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadPollEventTimeoutMetadata;
 use thread_service_api::ThreadServiceFuture;
+use thread_service_api::ThreadShutdownReport;
 use thread_service_api::ThreadSpawnAgentForkMode;
 use thread_service_api::ThreadSpawnAgentRequest;
 use thread_service_api::ThreadSpawnAgentResult;
 use thread_service_api::ThreadSpawnExternalAgentRequest;
 use thread_service_api::ThreadTurnCapability;
+use tokio::sync::broadcast;
 use tool_service_api::FunctionCallError;
 
 fn turn_context(
@@ -126,7 +130,24 @@ fn from_runtime_list_result(
     }
 }
 
-impl ThreadLifecycleRuntime for ThreadService {}
+impl ThreadLifecycleRuntime for ThreadService {
+    fn shutdown_all_threads_bounded<'a>(
+        &'a self,
+        timeout: Duration,
+    ) -> ThreadServiceFuture<'a, ThreadShutdownReport> {
+        Box::pin(ThreadService::shutdown_all_threads_bounded(self, timeout))
+    }
+
+    fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent> {
+        ThreadService::subscribe_thread_created(self)
+    }
+
+    fn active_event_subscriptions(
+        &self,
+    ) -> Arc<thread_service_api::ActiveEventSubscriptionTracker> {
+        ThreadService::active_event_subscriptions(self)
+    }
+}
 
 impl NativeAgentRuntime for ThreadService {
     fn spawn_agent<'a>(

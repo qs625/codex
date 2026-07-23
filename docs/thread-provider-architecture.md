@@ -156,8 +156,12 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
 
 当前过渡实现已将 `thread_service_api::ThreadServiceApi` 拆成四个窄边界：
 
-- `ThreadLifecycleRuntime`：provider-neutral lifecycle 的预留边界；当前先作为
-  marker trait，避免 lifecycle API 继续被塞回 collaboration 或 event trait。
+- `ThreadLifecycleRuntime`：provider-neutral lifecycle 边界；当前已承载
+  `shutdown_all_threads_bounded`、`subscribe_thread_created` 和
+  `active_event_subscriptions`，供 app-server thread processor 直接依赖。root
+  start/resume/fork 仍保留在 app-server 的过渡 trait 中，因为这些请求还携带完整
+  `Config` 与 native dynamic tool/environment 结构，直接搬入 `thread-service-api`
+  会引入不合适的依赖方向。
 - `NativeAgentRuntime`：承载 native Morpheus `spawn_agent`、`followup_task`、
   `close_agent` 和 `list_agents`。
 - `ThreadCollaborationRuntime`：承载 external collaboration tool surface，并继承
@@ -167,9 +171,11 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
 
 旧 `ThreadServiceApi` 现在只是
 `ThreadLifecycleRuntime + ThreadCollaborationRuntime + ThreadEventRuntime` 的兼容
-facade，并通过 blanket impl 自动为实现窄 trait 的 runtime 提供旧 API。当前调用点
-仍可继续依赖 `ThreadServiceApi`；后续阶段再把 tool service 和 app-server 调用逐步
-改到窄 trait。
+facade，并通过 blanket impl 自动为实现窄 trait 的 runtime 提供旧 API。app-server
+thread processor 的 shutdown、thread-created 订阅和 active event subscription
+tracker 已改到 `ThreadLifecycleRuntime`；root start/resume/fork 的具体创建调用点
+仍通过 app-server-local 过渡 trait 继承该 lifecycle 边界。后续阶段再把 tool
+service 和 app-server 剩余调用逐步改到窄 trait。
 
 禁止路径：
 

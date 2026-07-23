@@ -13,8 +13,8 @@ mod start;
 mod support;
 
 pub(crate) use self::runtime::thread_processor_new_thread;
-pub(crate) use self::support::thread_from_stored_thread;
 use self::runtime::*;
+pub(crate) use self::support::thread_from_stored_thread;
 use self::support::*;
 
 const THREAD_LIST_DEFAULT_LIMIT: usize = 25;
@@ -423,7 +423,7 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) thread_runtime: Arc<dyn ThreadProcessorThreadRuntime>,
     pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     pub(super) thread_metadata_runtime: Arc<dyn ThreadProcessorMetadataRuntime>,
-    pub(super) thread_lifecycle_runtime: Arc<dyn ThreadProcessorLifecycleRuntime>,
+    pub(super) thread_lifecycle_runtime: Arc<dyn thread_service_api::ThreadLifecycleRuntime>,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
     pub(super) arg0_paths: Arg0DispatchPaths,
     pub(super) config: Arc<Config>,
@@ -851,7 +851,6 @@ impl ThreadRequestProcessor {
         Ok((items, next_cursor))
     }
 }
-
 
 #[cfg(test)]
 #[path = "thread_processor_tests.rs"]
