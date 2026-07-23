@@ -593,6 +593,15 @@ mod tests {
             })
         }
 
+        fn remove_live_thread<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+        ) -> ThreadServiceFuture<'a, bool> {
+            Box::pin(async {
+                unreachable!("remove_live_thread should not be called in this test")
+            })
+        }
+
         fn subscribe_thread_created(
             &self,
         ) -> tokio::sync::broadcast::Receiver<thread_service_api::ThreadCreatedEvent> {

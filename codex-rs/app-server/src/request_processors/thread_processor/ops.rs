@@ -171,7 +171,9 @@ impl ThreadRequestProcessor {
                 ),
                 Err(_) => warn!("thread {thread_id} shutdown timed out; proceeding with archive"),
             }
-            self.live_thread_command.remove_live_thread(thread_id).await;
+            self.thread_lifecycle_runtime
+                .remove_live_thread(thread_id)
+                .await;
         }
         self.finalize_thread_teardown(thread_id).await;
     }
@@ -180,7 +182,7 @@ impl ThreadRequestProcessor {
         ListenerTaskContext {
             live_thread_listener: Arc::clone(&self.live_thread_listener),
             live_thread_inspection: Arc::clone(&self.live_thread_inspection),
-            live_thread_command: Arc::clone(&self.live_thread_command),
+            thread_lifecycle_runtime: Arc::clone(&self.thread_lifecycle_runtime),
             live_thread_skill_watch: Arc::clone(&self.live_thread_skill_watch),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),

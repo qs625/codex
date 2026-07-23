@@ -238,9 +238,10 @@ pub trait LiveThreadActivitySource: Send + Sync {
 
 /// Command surface for live thread operations that do not need concrete handles.
 ///
-/// Implementations own thread lookup, operation submission, and registry
-/// removal. Consumers should use this trait when they only need to drive or
-/// release a thread and do not need access to the concrete live thread object.
+/// Implementations own thread lookup, operation submission, and transitional
+/// registry removal for internal callers. New app-server teardown callers
+/// should use `ThreadLifecycleRuntime` for removal so command runtime stays
+/// focused on driving live operations during the provider boundary migration.
 pub trait LiveThreadCommandRuntime: Send + Sync {
     fn submit_live_thread_op(
         &self,

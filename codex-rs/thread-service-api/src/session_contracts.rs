@@ -696,6 +696,11 @@ pub trait ThreadLifecycleRuntime: Send + Sync + 'static {
         thread_id: ThreadId,
     ) -> ThreadServiceFuture<'a, CodexResult<String>>;
 
+    fn remove_live_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> ThreadServiceFuture<'a, bool>;
+
     fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent>;
 
     fn live_thread_agent_status<'a>(

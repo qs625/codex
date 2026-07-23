@@ -147,6 +147,15 @@ impl ThreadLifecycleRuntime for ThreadService {
         ))
     }
 
+    fn remove_live_thread<'a>(
+        &'a self,
+        thread_id: protocol::ThreadId,
+    ) -> ThreadServiceFuture<'a, bool> {
+        Box::pin(thread_service_api::LiveThreadCommandRuntime::remove_live_thread(
+            self, thread_id,
+        ))
+    }
+
     fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent> {
         ThreadService::subscribe_thread_created(self)
     }

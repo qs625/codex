@@ -527,8 +527,6 @@ pub(crate) trait AppServerLiveThreadCommandRuntime: Send + Sync {
         thread_id: ThreadId,
         info: AppServerClientInfo,
     ) -> BoxFuture<'_, CodexResult<()>>;
-
-    fn remove_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
 }
 
 pub(crate) trait AppServerLiveThreadConversationInjectionRuntime: Send + Sync {
@@ -645,11 +643,5 @@ where
         Box::pin(
             LiveThreadCommandRuntime::set_live_thread_app_server_client_info(self, thread_id, info),
         )
-    }
-
-    fn remove_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
-        Box::pin(LiveThreadCommandRuntime::remove_live_thread(
-            self, thread_id,
-        ))
     }
 }

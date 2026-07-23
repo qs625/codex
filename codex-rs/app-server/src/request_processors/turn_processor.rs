@@ -1273,7 +1273,7 @@ impl TurnRequestProcessor {
         ListenerTaskContext {
             live_thread_listener: self.live_thread_listener.clone(),
             live_thread_inspection: self.live_thread_inspection.clone(),
-            live_thread_command: self.live_thread_command.clone(),
+            thread_lifecycle_runtime: self.thread_lifecycle_runtime.clone(),
             live_thread_skill_watch: self.live_thread_skill_watch.clone(),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
