@@ -541,9 +541,6 @@ pub trait LiveThreadRegistry: Send + Sync {
     /// Return the session source applied to newly created live threads.
     fn session_source(&self) -> SessionSource;
 
-    /// Return whether a live thread is currently loaded in this registry.
-    fn is_thread_loaded(&self, thread_id: ThreadId) -> impl Future<Output = bool> + Send + '_;
-
     /// Return the live thread handle for event-stream consumers that need a stable owner.
     fn live_thread_handle(
         &self,

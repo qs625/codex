@@ -2715,13 +2715,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
         ThreadService::session_source(self)
     }
 
-    fn is_thread_loaded(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = bool> + Send + '_ {
-        async move { self.get_thread(thread_id).await.is_ok() }
-    }
-
     fn live_thread_handle(
         &self,
         thread_id: ThreadId,

@@ -1,6 +1,7 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 
@@ -9,6 +10,7 @@ pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60)
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
     pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+    pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     pub(super) live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     pub(super) thread_state_manager: ThreadStateManager,
@@ -259,7 +261,7 @@ pub(super) async fn ensure_listener_task_running(
     };
     let ListenerTaskContext {
         outgoing,
-        live_threads,
+        live_thread_inspection,
         live_thread_command,
         thread_state_manager,
         pending_thread_unloads,
@@ -323,7 +325,7 @@ pub(super) async fn ensure_listener_task_running(
                         event.clone(),
                         conversation_id,
                         conversation.clone(),
-                        live_threads.clone(),
+                        live_thread_inspection.clone(),
                         thread_outgoing,
                         thread_state.clone(),
                         thread_watch_manager.clone(),

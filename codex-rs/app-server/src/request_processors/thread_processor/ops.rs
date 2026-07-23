@@ -178,6 +178,7 @@ impl ThreadRequestProcessor {
     pub(super) fn listener_task_context(&self) -> ListenerTaskContext {
         ListenerTaskContext {
             live_threads: Arc::clone(&self.live_threads),
+            live_thread_inspection: Arc::clone(&self.live_thread_inspection),
             live_thread_command: Arc::clone(&self.live_thread_command),
             live_thread_skill_watch: Arc::clone(&self.live_thread_skill_watch),
             thread_state_manager: self.thread_state_manager.clone(),

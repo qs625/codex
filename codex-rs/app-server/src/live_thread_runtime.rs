@@ -140,8 +140,6 @@ where
 
 /// Object-safe live thread registry surface needed by app-server listeners.
 pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
-    fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
-
     fn live_thread_handle(
         &self,
         thread_id: ThreadId,
@@ -516,10 +514,6 @@ impl<T> AppServerLiveThreadRegistry for T
 where
     T: LiveThreadRegistry + Send + Sync,
 {
-    fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
-        Box::pin(LiveThreadRegistry::is_thread_loaded(self, thread_id))
-    }
-
     fn live_thread_handle(
         &self,
         thread_id: ThreadId,
