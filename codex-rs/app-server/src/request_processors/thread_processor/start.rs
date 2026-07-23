@@ -1,4 +1,5 @@
 use super::*;
+use super::context_usage_replay::ThreadUsageSource;
 use crate::request_processors::thread_processor::ops::parse_thread_start_agent;
 
 impl ThreadRequestProcessor {
@@ -416,6 +417,10 @@ impl ThreadRequestProcessor {
                 // `excludeTurns` is explicitly the cheap resume path, so avoid
                 // rebuilding history only to attribute a replayed usage update.
                 if let Some(token_usage_thread) = token_usage_thread {
+                    let usage_source = super::context_usage_replay::RuntimeThreadUsageSource::new(
+                        self.live_thread_usage.as_ref(),
+                        thread_id,
+                    );
                     let token_usage_turn_id = latest_token_usage_turn_id_from_rollout_items(
                         &response_history.get_rollout_items(),
                         token_usage_thread.turns.as_slice(),
@@ -428,7 +433,7 @@ impl ThreadRequestProcessor {
                         connection_id,
                         thread_id,
                         &token_usage_thread,
-                        &codex_thread,
+                        &usage_source,
                         token_usage_turn_id,
                     )
                     .await;
@@ -437,7 +442,7 @@ impl ThreadRequestProcessor {
                         connection_id,
                         thread_id,
                         &token_usage_thread,
-                        &codex_thread,
+                        &usage_source,
                         response_history.get_rollout_items().as_slice(),
                     )
                     .await;
@@ -829,13 +834,17 @@ impl ThreadRequestProcessor {
         thread.path = Some(rollout_path.to_path_buf());
         let history_items = thread_history.get_rollout_items();
         apply_thread_usage_from_rollout_items(&mut thread, history_items.as_slice());
-        if let Some(token_usage) = codex_thread.token_usage_info().await.map(Into::into) {
+        let usage_source = super::context_usage_replay::RuntimeThreadUsageSource::new(
+            self.live_thread_usage.as_ref(),
+            thread_id,
+        );
+        if let Some(token_usage) = usage_source.token_usage_info().await.map(Into::into) {
             thread.token_usage = Some(token_usage);
         }
         if thread.context_usage.is_none() {
             thread.context_usage = Some(
                 super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
-                    codex_thread,
+                    &usage_source,
                     history_items.as_slice(),
                 )
                 .await
@@ -1051,13 +1060,17 @@ impl ThreadRequestProcessor {
             .await
             .thread_source
             .map(Into::into);
-        if let Some(token_usage) = forked_thread.token_usage_info().await.map(Into::into) {
+        let usage_source = super::context_usage_replay::RuntimeThreadUsageSource::new(
+            self.live_thread_usage.as_ref(),
+            thread_id,
+        );
+        if let Some(token_usage) = usage_source.token_usage_info().await.map(Into::into) {
             thread.token_usage = Some(token_usage);
         }
         if thread.context_usage.is_none() {
             thread.context_usage = Some(
                 super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
-                    &forked_thread,
+                    &usage_source,
                     history_items.as_slice(),
                 )
                 .await
@@ -1117,7 +1130,7 @@ impl ThreadRequestProcessor {
                 connection_id,
                 thread_id,
                 &token_usage_thread,
-                &forked_thread,
+                &usage_source,
                 token_usage_turn_id,
             )
             .await;
@@ -1126,7 +1139,7 @@ impl ThreadRequestProcessor {
                 connection_id,
                 thread_id,
                 &token_usage_thread,
-                &forked_thread,
+                &usage_source,
                 history_items.as_slice(),
             )
             .await;

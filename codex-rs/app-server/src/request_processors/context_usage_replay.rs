@@ -17,8 +17,8 @@ use protocol::protocol::ThreadContextUsageLoadedSkills;
 use protocol::protocol::ThreadContextUsageToolBreakdown;
 use protocol::protocol::TokenUsageInfo;
 
-use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
+use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingMessageSender;
 
@@ -28,29 +28,6 @@ pub(super) trait ThreadUsageSource: Send + Sync {
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
 }
 
-impl ThreadUsageSource for dyn AppServerLiveThreadHandle + '_ {
-    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
-        AppServerLiveThreadHandle::token_usage_info(self)
-    }
-
-    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
-        AppServerLiveThreadHandle::thread_context_usage(self)
-    }
-}
-
-impl<T> ThreadUsageSource for Arc<T>
-where
-    T: AppServerLiveThreadHandle + ?Sized,
-{
-    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
-        AppServerLiveThreadHandle::token_usage_info(self.as_ref())
-    }
-
-    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
-        AppServerLiveThreadHandle::thread_context_usage(self.as_ref())
-    }
-}
-
 impl ThreadUsageSource for dyn AppServerLiveThreadListenerHandle + '_ {
     fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
         AppServerLiveThreadListenerHandle::token_usage_info(self)
@@ -58,6 +35,52 @@ impl ThreadUsageSource for dyn AppServerLiveThreadListenerHandle + '_ {
 
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
         AppServerLiveThreadListenerHandle::thread_context_usage(self)
+    }
+}
+
+pub(super) struct RuntimeThreadUsageSource<'a> {
+    runtime: &'a dyn AppServerLiveThreadUsageRuntime,
+    thread_id: ThreadId,
+}
+
+impl<'a> RuntimeThreadUsageSource<'a> {
+    pub(super) fn new(
+        runtime: &'a dyn AppServerLiveThreadUsageRuntime,
+        thread_id: ThreadId,
+    ) -> Self {
+        Self { runtime, thread_id }
+    }
+}
+
+impl ThreadUsageSource for RuntimeThreadUsageSource<'_> {
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
+        Box::pin(async move {
+            match self.runtime.thread_token_usage_info(self.thread_id).await {
+                Ok(info) => info,
+                Err(err) => {
+                    tracing::warn!(
+                        thread_id = %self.thread_id,
+                        "failed to read live token usage for replay: {err}"
+                    );
+                    None
+                }
+            }
+        })
+    }
+
+    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
+        Box::pin(async move {
+            match self.runtime.thread_context_usage(self.thread_id).await {
+                Ok(usage) => usage,
+                Err(err) => {
+                    tracing::warn!(
+                        thread_id = %self.thread_id,
+                        "failed to read live context usage for replay: {err}"
+                    );
+                    empty_thread_context_usage()
+                }
+            }
+        })
     }
 }
 
@@ -108,6 +131,29 @@ pub(super) async fn thread_context_usage_from_rollout_or_conversation(
         usage
     } else {
         legacy_thread_context_usage_from_rollout_items(rollout_items).unwrap_or(usage)
+    }
+}
+
+fn empty_thread_context_usage() -> ThreadContextUsage {
+    ThreadContextUsage {
+        total_bytes: 0,
+        budget_used_percent: None,
+        categories: ThreadContextUsageCategoryBreakdown {
+            compact: 0,
+            skills_metadata: 0,
+            concrete_skills: 0,
+            tools_metadata: 0,
+            tool_calls: 0,
+            user_messages: 0,
+            llm_messages: 0,
+            reasoning: 0,
+        },
+        loaded_skills: ThreadContextUsageLoadedSkills {
+            loaded_count: 0,
+            total_count: None,
+            skills: Vec::new(),
+        },
+        tool_breakdown: ThreadContextUsageToolBreakdown::default(),
     }
 }
 

@@ -55,10 +55,6 @@ pub(crate) trait AppServerLiveThreadHandle: Send + Sync {
         include_archived: bool,
         include_history: bool,
     ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>>;
-
-    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>>;
-
-    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
 }
 
 impl<T> AppServerLiveThreadHandle for T
@@ -83,14 +79,6 @@ where
             include_archived,
             include_history,
         ))
-    }
-
-    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
-        Box::pin(LiveThreadHandle::token_usage_info(self))
-    }
-
-    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
-        Box::pin(LiveThreadHandle::thread_context_usage(self))
     }
 }
 
