@@ -633,16 +633,4 @@ pub trait LiveThreadRegistry: Send + Sync {
         include_archived: bool,
     ) -> impl Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_;
 
-    /// Request shutdown for a specific live thread and wait until it terminates.
-    fn shutdown_thread_and_wait(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
-    /// Wait until a specific live thread terminates without issuing shutdown.
-    fn wait_thread_until_terminated(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
 }

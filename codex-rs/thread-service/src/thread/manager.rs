@@ -2911,27 +2911,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
         }
     }
 
-    fn shutdown_thread_and_wait(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.shutdown_and_wait().await
-        }
-    }
-
-    fn wait_thread_until_terminated(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.wait_until_terminated().await;
-            Ok(())
-        }
-    }
-
 }
 
 fn thread_store_rollout_read_error(err: ThreadStoreError) -> CodexErr {
