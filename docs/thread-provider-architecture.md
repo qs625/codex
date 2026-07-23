@@ -209,8 +209,9 @@ thread read/listing 的 copied token/context usage reads 已改到 usage runtime
 turn context override validation 已改到 live turn runtime。thread/read 和
 thread/turns/list 的 live persisted history 读取已改到 history runtime。listener
 event stream、idle unload 和 running resume 所需的 live handle 读取已改到
-listener runtime，旧 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` surface
-已删除；turn processor 里剩余
+listener runtime，memory consolidation startup/shutdown/status/token usage 已改到
+memory-specific handle。旧 `LiveThreadRegistry` / `AppServerLiveThreadRegistry`
+surface 已删除；turn processor 里剩余
 的 app-server-local turn runtime 只覆盖环境选择校验、live `Config` 读取、
 conversation item injection、steer 和 detached review fork 这些尚未
 provider-neutral 化的 native-only 能力。后续阶段再继续拆出更窄 handle。

@@ -48,10 +48,6 @@ use thread_store_api::ThreadStoreResult;
 pub(crate) trait AppServerLiveThreadHandle: Send + Sync {
     fn session_configured(&self) -> SessionConfiguredEvent;
 
-    fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;
-
-    fn agent_status(&self) -> BoxFuture<'_, AgentStatus>;
-
     fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot>;
 
     fn read_thread(
@@ -65,10 +61,6 @@ pub(crate) trait AppServerLiveThreadHandle: Send + Sync {
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
 
     fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>>;
-
-    fn shutdown_and_wait(&self) -> BoxFuture<'_, CodexResult<()>>;
-
-    fn wait_until_terminated(&self) -> BoxFuture<'_, ()>;
 }
 
 impl<T> AppServerLiveThreadHandle for T
@@ -77,14 +69,6 @@ where
 {
     fn session_configured(&self) -> SessionConfiguredEvent {
         LiveThreadHandle::session_configured(self)
-    }
-
-    fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>> {
-        Box::pin(LiveThreadHandle::submit_thread_op(self, op))
-    }
-
-    fn agent_status(&self) -> BoxFuture<'_, AgentStatus> {
-        Box::pin(LiveThreadHandle::agent_status(self))
     }
 
     fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot> {
@@ -114,13 +98,43 @@ where
     fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>> {
         Box::pin(LiveThreadHandle::continue_active_goal_if_idle(self))
     }
+}
 
-    fn shutdown_and_wait(&self) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadHandle::shutdown_and_wait(self))
+/// Object-safe live thread surface needed by memory consolidation.
+pub(crate) trait AppServerMemoryConsolidationThreadHandle: Send + Sync {
+    fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;
+
+    fn agent_status(&self) -> BoxFuture<'_, AgentStatus>;
+
+    fn wait_until_terminated(&self) -> BoxFuture<'_, ()>;
+
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>>;
+
+    fn shutdown_and_wait(&self) -> BoxFuture<'_, CodexResult<()>>;
+}
+
+impl<T> AppServerMemoryConsolidationThreadHandle for T
+where
+    T: LiveThreadHandle + ?Sized,
+{
+    fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>> {
+        Box::pin(LiveThreadHandle::submit_thread_op(self, op))
+    }
+
+    fn agent_status(&self) -> BoxFuture<'_, AgentStatus> {
+        Box::pin(LiveThreadHandle::agent_status(self))
     }
 
     fn wait_until_terminated(&self) -> BoxFuture<'_, ()> {
         Box::pin(LiveThreadHandle::wait_until_terminated(self))
+    }
+
+    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
+        Box::pin(LiveThreadHandle::token_usage_info(self))
+    }
+
+    fn shutdown_and_wait(&self) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadHandle::shutdown_and_wait(self))
     }
 }
 

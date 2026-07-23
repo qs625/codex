@@ -48,7 +48,7 @@ use thread_service::config::Config;
 use thread_service::resolve_installation_id;
 use thread_service_api::ThreadConfigSnapshot;
 
-use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerMemoryConsolidationThreadHandle;
 
 /// Composition-root capability needed by memory-service startup/consolidation.
 ///
@@ -64,12 +64,12 @@ pub(crate) trait MemoryServiceHost: Send + Sync {
     fn remove_consolidation_thread<'a>(
         &'a self,
         thread_id: ThreadId,
-    ) -> MemoryRuntimeFuture<'a, Option<Arc<dyn AppServerLiveThreadHandle>>>;
+    ) -> MemoryRuntimeFuture<'a, Option<Arc<dyn AppServerMemoryConsolidationThreadHandle>>>;
 }
 
 pub(crate) struct MemoryConsolidationThread {
     thread_id: ThreadId,
-    thread: Arc<dyn AppServerLiveThreadHandle>,
+    thread: Arc<dyn AppServerMemoryConsolidationThreadHandle>,
 }
 
 impl MemoryServiceHost for ThreadService {
@@ -97,7 +97,7 @@ impl MemoryServiceHost for ThreadService {
                     environments,
                 })
                 .await?;
-            let thread: Arc<dyn AppServerLiveThreadHandle> = thread;
+            let thread: Arc<dyn AppServerMemoryConsolidationThreadHandle> = thread;
             Ok(MemoryConsolidationThread { thread_id, thread })
         })
     }
@@ -105,11 +105,11 @@ impl MemoryServiceHost for ThreadService {
     fn remove_consolidation_thread<'a>(
         &'a self,
         thread_id: ThreadId,
-    ) -> MemoryRuntimeFuture<'a, Option<Arc<dyn AppServerLiveThreadHandle>>> {
+    ) -> MemoryRuntimeFuture<'a, Option<Arc<dyn AppServerMemoryConsolidationThreadHandle>>> {
         Box::pin(async move {
             self.remove_thread(&thread_id)
                 .await
-                .map(|thread| -> Arc<dyn AppServerLiveThreadHandle> { thread })
+                .map(|thread| -> Arc<dyn AppServerMemoryConsolidationThreadHandle> { thread })
         })
     }
 }
@@ -395,7 +395,7 @@ impl MemoryStartupRuntime for AppServerMemoryStartupAdapter {
 struct AppServerMemoryConsolidationAgent {
     host: Arc<dyn MemoryServiceHost>,
     thread_id: ThreadId,
-    thread: Arc<dyn AppServerLiveThreadHandle>,
+    thread: Arc<dyn AppServerMemoryConsolidationThreadHandle>,
 }
 
 impl MemoryConsolidationAgent for AppServerMemoryConsolidationAgent {
@@ -446,7 +446,7 @@ pub(crate) fn build_memory_startup_settings(
 async fn shutdown_consolidation_thread(
     thread_id: ThreadId,
     host: Arc<dyn MemoryServiceHost>,
-    thread: Arc<dyn AppServerLiveThreadHandle>,
+    thread: Arc<dyn AppServerMemoryConsolidationThreadHandle>,
 ) -> anyhow::Result<()> {
     let thread = host
         .remove_consolidation_thread(thread_id)
