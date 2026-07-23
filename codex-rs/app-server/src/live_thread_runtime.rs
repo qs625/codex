@@ -89,8 +89,6 @@ pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
 
     fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;
 
-    fn agent_status(&self) -> BoxFuture<'_, AgentStatus>;
-
     fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus>;
 
     fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot>;
@@ -116,10 +114,6 @@ where
 
     fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>> {
         Box::pin(LiveThreadListenerHandle::submit_thread_op(self, op))
-    }
-
-    fn agent_status(&self) -> BoxFuture<'_, AgentStatus> {
-        Box::pin(LiveThreadListenerHandle::agent_status(self))
     }
 
     fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus> {

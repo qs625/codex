@@ -307,8 +307,6 @@ pub trait LiveThreadListenerHandle: Send + Sync {
 
     fn submit_thread_op(&self, op: Op) -> impl Future<Output = CodexResult<String>> + Send + '_;
 
-    fn agent_status(&self) -> impl Future<Output = AgentStatus> + Send + '_;
-
     fn runtime_thread_status(&self) -> impl Future<Output = ThreadRuntimeStatus> + Send + '_;
 
     fn config_snapshot(&self) -> impl Future<Output = ThreadConfigSnapshot> + Send + '_;
@@ -334,10 +332,6 @@ where
 
     fn submit_thread_op(&self, op: Op) -> impl Future<Output = CodexResult<String>> + Send + '_ {
         LiveThreadHandle::submit_thread_op(self, op)
-    }
-
-    fn agent_status(&self) -> impl Future<Output = AgentStatus> + Send + '_ {
-        LiveThreadHandle::agent_status(self)
     }
 
     fn runtime_thread_status(&self) -> impl Future<Output = ThreadRuntimeStatus> + Send + '_ {

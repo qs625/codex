@@ -300,6 +300,7 @@ pub(super) async fn ensure_listener_task_running(
                         &thread_watch_manager,
                         &outgoing_for_task,
                         &pending_thread_unloads,
+                        &thread_lifecycle_runtime,
                         &live_thread_usage,
                         &live_thread_goal,
                         listener_command,
@@ -351,9 +352,23 @@ pub(super) async fn ensure_listener_task_running(
                     if !unloading_state.should_unload_now() {
                         continue;
                     }
-                    if matches!(conversation.agent_status().await, AgentStatus::Running) {
-                        unloading_state.note_thread_activity_observed();
-                        continue;
+                    match thread_lifecycle_runtime
+                        .live_thread_agent_status(conversation_id)
+                        .await
+                    {
+                        Ok(AgentStatus::Running) => {
+                            unloading_state.note_thread_activity_observed();
+                            continue;
+                        }
+                        Ok(_) => {}
+                        Err(err) => {
+                            tracing::warn!(
+                                thread_id = %conversation_id,
+                                "failed to read live thread agent status before idle unload: {err}"
+                            );
+                            unloading_state.note_thread_activity_observed();
+                            continue;
+                        }
                     }
                     {
                         let mut pending_thread_unloads = pending_thread_unloads.lock().await;
@@ -464,6 +479,7 @@ pub(super) async fn handle_thread_listener_command(
     thread_watch_manager: &ThreadWatchManager,
     outgoing: &Arc<OutgoingMessageSender>,
     pending_thread_unloads: &Arc<Mutex<HashSet<ThreadId>>>,
+    thread_lifecycle_runtime: &Arc<dyn ThreadLifecycleRuntime>,
     live_thread_usage: &Arc<dyn AppServerLiveThreadUsageRuntime>,
     live_thread_goal: &Arc<dyn AppServerLiveThreadGoalRuntime>,
     listener_command: ThreadListenerCommand,
@@ -479,6 +495,7 @@ pub(super) async fn handle_thread_listener_command(
                 thread_watch_manager,
                 outgoing,
                 pending_thread_unloads,
+                thread_lifecycle_runtime,
                 live_thread_usage,
                 live_thread_goal,
                 *resume_request,
@@ -538,6 +555,7 @@ pub(super) async fn handle_pending_thread_resume_request(
     thread_watch_manager: &ThreadWatchManager,
     outgoing: &Arc<OutgoingMessageSender>,
     pending_thread_unloads: &Arc<Mutex<HashSet<ThreadId>>>,
+    thread_lifecycle_runtime: &Arc<dyn ThreadLifecycleRuntime>,
     live_thread_usage: &Arc<dyn AppServerLiveThreadUsageRuntime>,
     live_thread_goal: &Arc<dyn AppServerLiveThreadGoalRuntime>,
     pending: crate::thread_state::PendingThreadResumeRequest,
@@ -554,11 +572,23 @@ pub(super) async fn handle_pending_thread_resume_request(
         active_turn_status = ?active_turn.as_ref().map(|turn| &turn.status),
         "composing running thread resume response"
     );
-    let has_live_in_progress_turn =
-        matches!(conversation.agent_status().await, AgentStatus::Running)
-            || active_turn
-                .as_ref()
-                .is_some_and(|turn| matches!(turn.status, TurnStatus::InProgress));
+    let has_live_running_status = match thread_lifecycle_runtime
+        .live_thread_agent_status(conversation_id)
+        .await
+    {
+        Ok(status) => matches!(status, AgentStatus::Running),
+        Err(err) => {
+            tracing::warn!(
+                thread_id = %conversation_id,
+                "failed to read live thread agent status while composing resume response: {err}"
+            );
+            false
+        }
+    };
+    let has_live_in_progress_turn = has_live_running_status
+        || active_turn
+            .as_ref()
+            .is_some_and(|turn| matches!(turn.status, TurnStatus::InProgress));
 
     let request_id = pending.request_id;
     let connection_id = request_id.connection_id;
