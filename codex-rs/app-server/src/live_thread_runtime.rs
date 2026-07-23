@@ -14,6 +14,7 @@ use protocol::protocol::W3cTraceContext;
 use skill_service_api::SkillWatchPath;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::LiveThreadCommandRuntime;
+use thread_service_api::LiveThreadConfigRefreshSnapshot;
 use thread_service_api::LiveThreadHandle;
 use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
@@ -185,6 +186,11 @@ pub(crate) trait AppServerLiveThreadInspectionRuntime: Send + Sync {
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>>;
 
+    fn live_thread_config_refresh_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<LiveThreadConfigRefreshSnapshot>>;
+
     fn live_thread_feature_enabled(
         &self,
         thread_id: ThreadId,
@@ -221,6 +227,13 @@ where
         ))
     }
 
+    fn live_thread_config_refresh_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<LiveThreadConfigRefreshSnapshot>> {
+        Box::pin(LiveThreadInspectionRuntime::live_thread_config_refresh_snapshot(self, thread_id))
+    }
+
     fn live_thread_feature_enabled(
         &self,
         thread_id: ThreadId,
@@ -254,6 +267,12 @@ where
 }
 
 pub(crate) trait AppServerLiveThreadCommandRuntime: Send + Sync {
+    fn submit_live_thread_op(
+        &self,
+        thread_id: ThreadId,
+        op: Op,
+    ) -> BoxFuture<'_, CodexResult<String>>;
+
     fn submit_live_thread_op_with_trace(
         &self,
         thread_id: ThreadId,
@@ -274,6 +293,16 @@ impl<T> AppServerLiveThreadCommandRuntime for T
 where
     T: LiveThreadCommandRuntime + Send + Sync,
 {
+    fn submit_live_thread_op(
+        &self,
+        thread_id: ThreadId,
+        op: Op,
+    ) -> BoxFuture<'_, CodexResult<String>> {
+        Box::pin(LiveThreadCommandRuntime::submit_live_thread_op(
+            self, thread_id, op,
+        ))
+    }
+
     fn submit_live_thread_op_with_trace(
         &self,
         thread_id: ThreadId,

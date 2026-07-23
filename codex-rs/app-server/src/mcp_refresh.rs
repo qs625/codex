@@ -1,4 +1,6 @@
 use crate::config_manager::ConfigManager;
+use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use codex_config_types::McpServerConfig;
 use futures::future::BoxFuture;
 use protocol::ThreadId;
@@ -6,49 +8,23 @@ use protocol::protocol::McpServerRefreshConfig;
 use protocol::protocol::Op;
 use std::collections::HashMap;
 use std::io;
-use std::sync::Arc;
 use thread_service::ThreadService;
 use thread_service::config::Config;
-use thread_service_api::LiveThreadRegistry;
+use thread_service_api::LiveThreadConfigRefreshSnapshot;
 use tracing::warn;
 
 /// Runtime capability needed to plan and queue MCP refreshes for live threads.
 ///
-/// Implementations own concrete thread lookup, config snapshots, MCP server
-/// planning, and op submission. The refresh helper stays generic so app-server
-/// request processors do not need to depend on a concrete `ThreadService`.
+/// Implementations own MCP server planning. Live thread inspection and command
+/// submission are supplied by the provider-neutral runtime surfaces.
 pub(crate) trait McpRefreshRuntime: Send + Sync {
-    fn list_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>>;
-
-    fn live_thread_config(&self, thread_id: ThreadId) -> BoxFuture<'_, io::Result<Arc<Config>>>;
-
     fn configured_mcp_servers<'a>(
         &'a self,
         config: &'a Config,
     ) -> BoxFuture<'a, HashMap<String, McpServerConfig>>;
-
-    fn queue_mcp_refresh(
-        &self,
-        thread_id: ThreadId,
-        config: McpServerRefreshConfig,
-    ) -> BoxFuture<'_, io::Result<()>>;
 }
 
 impl McpRefreshRuntime for ThreadService {
-    fn list_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>> {
-        Box::pin(ThreadService::list_thread_ids(self))
-    }
-
-    fn live_thread_config(&self, thread_id: ThreadId) -> BoxFuture<'_, io::Result<Arc<Config>>> {
-        Box::pin(async move {
-            ThreadService::live_thread_config(self, thread_id)
-                .await
-                .map_err(|err| {
-                    io::Error::other(format!("failed to load thread {thread_id}: {err}"))
-                })
-        })
-    }
-
     fn configured_mcp_servers<'a>(
         &'a self,
         config: &'a Config,
@@ -59,67 +35,78 @@ impl McpRefreshRuntime for ThreadService {
                 .await
         })
     }
-
-    fn queue_mcp_refresh(
-        &self,
-        thread_id: ThreadId,
-        config: McpServerRefreshConfig,
-    ) -> BoxFuture<'_, io::Result<()>> {
-        Box::pin(queue_refresh(thread_id, self, config))
-    }
 }
 
-pub(crate) async fn queue_strict_refresh(
-    runtime: &(impl McpRefreshRuntime + ?Sized),
+pub(crate) async fn queue_strict_refresh<R>(
+    runtime: &R,
     config_manager: &ConfigManager,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    R: McpRefreshRuntime
+        + AppServerLiveThreadInspectionRuntime
+        + AppServerLiveThreadCommandRuntime
+        + ?Sized,
+{
     config_manager
         .load_latest_config(/*fallback_cwd*/ None)
         .await?;
     let mut refreshes = Vec::new();
-    for thread_id in runtime.list_thread_ids().await {
-        let thread_config = runtime.live_thread_config(thread_id).await?;
-        let config = build_refresh_config(runtime, config_manager, thread_config).await?;
+    for thread_id in runtime.list_live_thread_ids().await {
+        let refresh_snapshot = live_thread_config_refresh_snapshot(runtime, thread_id).await?;
+        let config = build_refresh_config(runtime, config_manager, &refresh_snapshot).await?;
         refreshes.push((thread_id, config));
     }
     for (thread_id, config) in refreshes {
-        runtime.queue_mcp_refresh(thread_id, config).await?;
+        queue_refresh(runtime, thread_id, config).await?;
     }
     Ok(())
 }
 
-pub(crate) async fn queue_best_effort_refresh(
-    runtime: &(impl McpRefreshRuntime + ?Sized),
-    config_manager: &ConfigManager,
-) {
-    for thread_id in runtime.list_thread_ids().await {
-        let thread_config = match runtime.live_thread_config(thread_id).await {
-            Ok(thread_config) => thread_config,
+pub(crate) async fn queue_best_effort_refresh<R>(runtime: &R, config_manager: &ConfigManager)
+where
+    R: McpRefreshRuntime
+        + AppServerLiveThreadInspectionRuntime
+        + AppServerLiveThreadCommandRuntime
+        + ?Sized,
+{
+    for thread_id in runtime.list_live_thread_ids().await {
+        let refresh_snapshot = match live_thread_config_refresh_snapshot(runtime, thread_id).await {
+            Ok(refresh_snapshot) => refresh_snapshot,
             Err(err) => {
                 warn!("failed to load thread {thread_id} for MCP refresh: {err}");
                 continue;
             }
         };
-        let config = match build_refresh_config(runtime, config_manager, thread_config).await {
+        let config = match build_refresh_config(runtime, config_manager, &refresh_snapshot).await {
             Ok(config) => config,
             Err(err) => {
                 warn!("failed to build MCP refresh config for thread {thread_id}: {err}");
                 continue;
             }
         };
-        if let Err(err) = runtime.queue_mcp_refresh(thread_id, config).await {
+        if let Err(err) = queue_refresh(runtime, thread_id, config).await {
             warn!("{err}");
         }
     }
 }
 
+async fn live_thread_config_refresh_snapshot(
+    runtime: &(impl AppServerLiveThreadInspectionRuntime + ?Sized),
+    thread_id: ThreadId,
+) -> io::Result<LiveThreadConfigRefreshSnapshot> {
+    runtime
+        .live_thread_config_refresh_snapshot(thread_id)
+        .await
+        .map_err(|err| io::Error::other(format!("failed to load thread {thread_id}: {err}")))
+}
+
 async fn build_refresh_config(
     runtime: &(impl McpRefreshRuntime + ?Sized),
     config_manager: &ConfigManager,
-    thread_config: Arc<Config>,
+    refresh_snapshot: &LiveThreadConfigRefreshSnapshot,
 ) -> io::Result<McpServerRefreshConfig> {
     let config = config_manager
-        .load_latest_config_for_thread(thread_config.as_ref())
+        .load_latest_config_for_thread_refresh_snapshot(refresh_snapshot)
         .await?;
     let mcp_servers = runtime.configured_mcp_servers(&config).await;
     Ok(McpServerRefreshConfig {
@@ -131,16 +118,13 @@ async fn build_refresh_config(
     })
 }
 
-async fn queue_refresh<H>(
+async fn queue_refresh(
+    runtime: &(impl AppServerLiveThreadCommandRuntime + ?Sized),
     thread_id: ThreadId,
-    thread_registry: &H,
     config: McpServerRefreshConfig,
-) -> io::Result<()>
-where
-    H: LiveThreadRegistry + ?Sized,
-{
-    thread_registry
-        .send_op(thread_id, Op::RefreshMcpServers { config })
+) -> io::Result<()> {
+    runtime
+        .submit_live_thread_op(thread_id, Op::RefreshMcpServers { config })
         .await
         .map(|_| ())
         .map_err(|err| {
@@ -156,22 +140,23 @@ mod tests {
     use crate::extensions::FileSubscriptionThreadHost;
     use crate::extensions::thread_extensions;
     use codex_arg0::Arg0DispatchPaths;
+    use codex_exec_server::EnvironmentManager;
+    use codex_file_watcher::FileWatcher;
+    use codex_login::AuthManager;
+    use codex_login::CodexAuth;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+    use config_service::CloudRequirementsLoader;
     use config_service::LoaderOverrides;
     use config_service::ThreadConfigContext;
     use config_service::ThreadConfigLoadError;
     use config_service::ThreadConfigLoadErrorCode;
     use config_service::ThreadConfigLoader;
     use config_service::ThreadConfigSource;
-    use config_service::CloudRequirementsLoader;
-    use codex_exec_server::EnvironmentManager;
-    use codex_file_watcher::FileWatcher;
-    use codex_login::AuthManager;
-    use codex_login::CodexAuth;
-    use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use protocol::protocol::SessionSource;
     use std::future::Future;
     use std::pin::Pin;
+    use std::sync::Arc;
     use std::sync::Weak;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;

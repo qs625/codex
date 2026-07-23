@@ -39,6 +39,7 @@ use codex_sandboxing_api::SharedSandboxRuntime;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use command_service_api::CommandServiceApi;
 use config_service::Config;
+use config_service::ConfigLayerStackOrdering;
 use config_service::skill_config_layer_stack_from_config_layer_stack;
 use exec_server_api::ExecEnvironmentProvider;
 use futures::StreamExt;
@@ -2175,6 +2176,44 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
         }
     }
 
+    fn live_thread_config_refresh_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<
+        Output = CodexResult<thread_service_api::LiveThreadConfigRefreshSnapshot>,
+    > + Send
+    + '_ {
+        async move {
+            if let Some(record) = self.external_live_threads.read().await.get(&thread_id) {
+                return Ok(thread_service_api::LiveThreadConfigRefreshSnapshot {
+                    cwd: record.snapshot.config_snapshot.cwd.clone(),
+                    session_layers: Vec::new(),
+                });
+            }
+            let thread = self.get_thread(thread_id).await?;
+            let config = thread.config().await;
+            let session_layers = config
+                .config_layer_stack
+                .get_layers(
+                    ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                    /*include_disabled*/ true,
+                )
+                .into_iter()
+                .filter(|layer| {
+                    matches!(
+                        layer.name,
+                        codex_config_types::ConfigLayerSource::SessionFlags
+                    )
+                })
+                .cloned()
+                .collect();
+            Ok(thread_service_api::LiveThreadConfigRefreshSnapshot {
+                cwd: config.cwd.clone(),
+                session_layers,
+            })
+        }
+    }
+
     fn live_thread_feature_enabled(
         &self,
         thread_id: ThreadId,
@@ -2329,6 +2368,19 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadService {
     + Send
     + '_ {
         thread_service_api::LiveThreadInspectionRuntime::live_thread_config_snapshot(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn live_thread_config_refresh_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<
+        Output = CodexResult<thread_service_api::LiveThreadConfigRefreshSnapshot>,
+    > + Send
+    + '_ {
+        thread_service_api::LiveThreadInspectionRuntime::live_thread_config_refresh_snapshot(
             self.state.as_ref(),
             thread_id,
         )

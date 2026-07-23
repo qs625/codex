@@ -13536,6 +13536,7 @@ dependencies = [
  "codex-apply-patch",
  "codex-auth-types",
  "codex-code-mode-api",
+ "codex-config-state",
  "codex-config-types",
  "codex-connectors-api",
  "codex-features",

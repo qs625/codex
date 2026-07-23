@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 
+use codex_config_state::ConfigLayerEntry;
 use codex_config_types::ConstraintResult;
 use codex_features::Feature;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -79,6 +80,17 @@ pub struct ThreadConfigSnapshot {
     pub root_agent_path: Option<String>,
     pub root_agent_role: Option<String>,
     pub thread_source: Option<ThreadSource>,
+}
+
+/// Copied live thread config context needed to refresh app-server-owned MCP config.
+///
+/// This carries only the working directory and session config layers needed to
+/// rebuild the latest effective app-server config while preserving
+/// session-scoped overrides. It does not expose the concrete runtime `Config`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveThreadConfigRefreshSnapshot {
+    pub cwd: AbsolutePathBuf,
+    pub session_layers: Vec<ConfigLayerEntry>,
 }
 
 /// Turn context overrides that a caller wants to apply to the next live turn.
@@ -305,6 +317,11 @@ pub trait LiveThreadInspectionRuntime: Send + Sync {
         &self,
         thread_id: ThreadId,
     ) -> impl Future<Output = CodexResult<ThreadConfigSnapshot>> + Send + '_;
+
+    fn live_thread_config_refresh_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<LiveThreadConfigRefreshSnapshot>> + Send + '_;
 
     fn live_thread_feature_enabled(
         &self,

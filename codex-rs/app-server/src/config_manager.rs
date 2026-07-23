@@ -1,18 +1,21 @@
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader;
-use config_service::ConfigLoadOptions;
-use config_service::LoaderOverrides;
-use config_service::NoopThreadConfigLoader;
-use config_service::ThreadConfigLoader;
-use config_service::load_config_layers_state;
-use config_service::CloudRequirementsLoader;
-use config_service::ConfigLayerStack;
+use codex_config_types::ConfigLayerSource;
 use codex_exec_server::LOCAL_FS;
 use codex_features::feature_for_key;
 use codex_login::AuthManager;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_json_to_toml::json_to_toml;
+use config_service::CloudRequirementsLoader;
+use config_service::ConfigLayerStack;
+use config_service::ConfigLayerStackOrdering;
+use config_service::ConfigLoadOptions;
+use config_service::LoaderOverrides;
+use config_service::NoopThreadConfigLoader;
+use config_service::ThreadConfigLoader;
+use config_service::config_toml::ConfigToml;
+use config_service::load_config_layers_state;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -22,6 +25,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use thread_service::config::Config;
 use thread_service::config::ConfigOverrides;
+use thread_service_api::LiveThreadConfigRefreshSnapshot;
 use toml::Value as TomlValue;
 use tracing::warn;
 
@@ -149,16 +153,55 @@ impl ConfigManager {
         .await
     }
 
-    pub(crate) async fn load_latest_config_for_thread(
+    pub(crate) async fn load_latest_config_for_thread_refresh_snapshot(
         &self,
-        thread_config: &Config,
+        snapshot: &LiveThreadConfigRefreshSnapshot,
     ) -> std::io::Result<Config> {
         let refreshed_config = self
-            .load_latest_config(Some(thread_config.cwd.to_path_buf()))
+            .load_latest_config(Some(snapshot.cwd.to_path_buf()))
             .await?;
-        let mut config = thread_config
-            .rebuild_preserving_session_layers(&refreshed_config)
-            .await?;
+        let mut layers = refreshed_config
+            .config_layer_stack
+            .get_layers(
+                ConfigLayerStackOrdering::LowestPrecedenceFirst,
+                /*include_disabled*/ true,
+            )
+            .into_iter()
+            .filter(|layer| !matches!(layer.name, ConfigLayerSource::SessionFlags))
+            .cloned()
+            .collect::<Vec<_>>();
+        layers.extend(snapshot.session_layers.clone());
+        layers.sort_by_key(|layer| layer.name.precedence());
+
+        let config_layer_stack = ConfigLayerStack::new(
+            layers,
+            refreshed_config.config_layer_stack.requirements().clone(),
+            refreshed_config
+                .config_layer_stack
+                .requirements_toml()
+                .clone(),
+        )
+        .map_err(std::io::Error::other)?
+        .with_user_and_project_exec_policy_rules_ignored(
+            refreshed_config
+                .config_layer_stack
+                .ignore_user_and_project_exec_policy_rules(),
+        );
+        let cfg: ConfigToml = config_layer_stack
+            .effective_config()
+            .try_into()
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        let mut config = Config::load_config_with_layer_stack(
+            LOCAL_FS.as_ref(),
+            cfg,
+            ConfigOverrides {
+                cwd: Some(snapshot.cwd.to_path_buf()),
+                ..Default::default()
+            },
+            refreshed_config.codex_home.clone(),
+            config_layer_stack,
+        )
+        .await?;
         self.apply_runtime_feature_enablement(&mut config);
         self.apply_arg0_paths(&mut config);
         Ok(config)
