@@ -60,6 +60,17 @@ fn thread_lifecycle_status_from_agent_status(status: &AgentStatus) -> ThreadLife
     }
 }
 
+fn thread_status_changed_lifecycle_status(
+    authoritative_status: Option<&AgentStatus>,
+    live_agent_status: Option<&AgentStatus>,
+    watch_status: ThreadLifecycleStatus,
+) -> ThreadLifecycleStatus {
+    authoritative_status
+        .or(live_agent_status)
+        .map(thread_lifecycle_status_from_agent_status)
+        .unwrap_or_else(|| resolve_thread_status(watch_status, /*has_in_progress_turn*/ false))
+}
+
 impl ThreadRequestProcessor {
     pub(super) async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
         thread_service::AgentsMdManager::new(config)
@@ -304,26 +315,27 @@ impl ThreadRequestProcessor {
     pub(crate) async fn emit_thread_status_changed_notification_to_connections(
         &self,
         thread_id: ThreadId,
+        authoritative_status: Option<AgentStatus>,
         connection_ids: &[ConnectionId],
     ) {
         if connection_ids.is_empty() {
             return;
         }
         let thread_id_string = thread_id.to_string();
-        let watch_status = self
-            .thread_watch_manager
-            .loaded_status_for_thread(&thread_id_string)
-            .await;
-        let lifecycle_status = self
-            .thread_lifecycle_runtime
-            .live_thread_agent_status(thread_id)
-            .await
-            .ok()
-            .as_ref()
-            .map(thread_lifecycle_status_from_agent_status)
-            .unwrap_or_else(|| {
-                resolve_thread_status(watch_status, /*has_in_progress_turn*/ false)
-            });
+        let lifecycle_status = if let Some(authoritative_status) = authoritative_status.as_ref() {
+            thread_lifecycle_status_from_agent_status(authoritative_status)
+        } else {
+            let watch_status = self
+                .thread_watch_manager
+                .loaded_status_for_thread(&thread_id_string)
+                .await;
+            let live_agent_status = self
+                .thread_lifecycle_runtime
+                .live_thread_agent_status(thread_id)
+                .await
+                .ok();
+            thread_status_changed_lifecycle_status(None, live_agent_status.as_ref(), watch_status)
+        };
         self.outgoing
             .send_server_notification_to_connections(
                 connection_ids,
@@ -1317,5 +1329,46 @@ mod tests {
 
         assert_eq!(error.code, -32600);
         assert!(error.message.contains("already exists"));
+    }
+
+    #[test]
+    fn status_changed_payload_takes_precedence_when_live_status_missing() {
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            Some(&AgentStatus::Shutdown),
+            None,
+            ThreadLifecycleStatus::NotLoaded,
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Shutdown
+            }
+        );
+    }
+
+    #[test]
+    fn status_changed_without_payload_prefers_live_status() {
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            None,
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            ThreadLifecycleStatus::NotLoaded,
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+    }
+
+    #[test]
+    fn status_changed_without_payload_falls_back_to_watch_status() {
+        let watch_status = ThreadLifecycleStatus::Active {
+            active_flags: vec![ThreadLifecycleActiveFlag::Running],
+        };
+        let lifecycle_status =
+            thread_status_changed_lifecycle_status(None, None, watch_status.clone());
+
+        assert_eq!(lifecycle_status, watch_status);
     }
 }

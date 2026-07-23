@@ -1065,10 +1065,14 @@ pub async fn run_main_with_transport_options(
                                             )
                                             .await;
                                     }
-                                    ThreadCreatedEvent::StatusChanged(thread_id) => {
+                                    ThreadCreatedEvent::StatusChanged {
+                                        thread_id,
+                                        agent_status,
+                                    } => {
                                         processor
                                             .emit_thread_status_changed_notification_to_connections(
                                                 thread_id,
+                                                agent_status,
                                                 &initialized_connection_ids,
                                             )
                                             .await;

@@ -1292,16 +1292,14 @@ impl AgentControl {
                         "failed to persist external thread-spawn edge status for {agent_id}: {err}"
                     );
                 }
+                let agent_status = shutdown_run
+                    .as_ref()
+                    .map(|run| run.status.clone())
+                    .unwrap_or(AgentStatus::Shutdown);
                 state
-                    .update_external_live_thread_status(
-                        agent_id,
-                        shutdown_run
-                            .as_ref()
-                            .map(|run| run.status.clone())
-                            .unwrap_or(AgentStatus::Shutdown),
-                    )
+                    .update_external_live_thread_status(agent_id, agent_status.clone())
                     .await;
-                state.notify_thread_status_changed(agent_id);
+                state.notify_thread_status_changed_with_status(agent_id, Some(agent_status));
             }
             self.persist_external_terminal_status(agent_id, &AgentStatus::Shutdown)
                 .await;
@@ -1360,7 +1358,7 @@ impl AgentControl {
         state
             .update_external_live_thread_status(thread_id, run.status.clone())
             .await;
-        state.notify_thread_status_changed(thread_id);
+        state.notify_thread_status_changed_with_status(thread_id, Some(run.status.clone()));
         let Some(communication) = completion_communication(&run) else {
             return;
         };

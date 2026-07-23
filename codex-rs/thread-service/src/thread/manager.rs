@@ -2077,10 +2077,22 @@ impl ThreadServiceState {
             .send(ThreadCreatedEvent::Resumed(thread_id));
     }
 
+    #[allow(dead_code)]
     pub(crate) fn notify_thread_status_changed(&self, thread_id: ThreadId) {
+        self.notify_thread_status_changed_with_status(thread_id, None);
+    }
+
+    pub(crate) fn notify_thread_status_changed_with_status(
+        &self,
+        thread_id: ThreadId,
+        agent_status: Option<AgentStatus>,
+    ) {
         let _ = self
             .thread_created_tx
-            .send(ThreadCreatedEvent::StatusChanged(thread_id));
+            .send(ThreadCreatedEvent::StatusChanged {
+                thread_id,
+                agent_status,
+            });
     }
 
     async fn parent_rollout_thread_trace_for_source(

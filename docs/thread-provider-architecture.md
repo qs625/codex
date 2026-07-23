@@ -163,9 +163,12 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
   直接依赖。agent status read 仍保留 native/external live record fallback 语义；
   runtime status read 对 native 保留 post-turn wait semantics，对 external live record
   只提供 Active/Complete 粗粒度映射；status watch 支持 native live thread subscription
-  和 external live record watch。live-thread removal 会删除 native live thread 或
-  external live record，但不宣称 external close policy、reload/list_agents durable
-  recovery 已完成。root start/resume/fork 仍不属于该 provider-neutral trait，因为这些请求还携带完整
+  和 external live record watch。status-changed internal event 可携带权威
+  `AgentStatus` payload，供 app-server 在 live record 不可读时仍发出 terminal
+  lifecycle notification；外发 `ThreadStatusChangedNotification` shape 不变。
+  live-thread removal 会删除 native live thread 或 external live record，但不宣称
+  external close policy、reload/list_agents durable recovery 已完成。root
+  start/resume/fork 仍不属于该 provider-neutral trait，因为这些请求还携带完整
   `Config` 与 native dynamic tool/environment 结构，直接搬入 `thread-service-api`
   会引入不合适的依赖方向；它们当前收口到 thread-service crate 内的
   `NativeThreadCreationRuntime` / `NativeThreadEnvironmentRuntime`。

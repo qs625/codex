@@ -524,10 +524,14 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                                             )
                                             .await;
                                     }
-                                    ThreadCreatedEvent::StatusChanged(thread_id) => {
+                                    ThreadCreatedEvent::StatusChanged {
+                                        thread_id,
+                                        agent_status,
+                                    } => {
                                         processor
                                             .emit_thread_status_changed_notification_to_connections(
                                                 thread_id,
+                                                agent_status,
                                                 &connection_ids,
                                             )
                                             .await;

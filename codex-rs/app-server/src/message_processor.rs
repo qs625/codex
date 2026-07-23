@@ -846,10 +846,15 @@ impl MessageProcessor {
     pub(crate) async fn emit_thread_status_changed_notification_to_connections(
         &self,
         thread_id: ThreadId,
+        authoritative_status: Option<protocol::protocol::AgentStatus>,
         connection_ids: &[ConnectionId],
     ) {
         self.thread_processor
-            .emit_thread_status_changed_notification_to_connections(thread_id, connection_ids)
+            .emit_thread_status_changed_notification_to_connections(
+                thread_id,
+                authoritative_status,
+                connection_ids,
+            )
             .await;
     }
 

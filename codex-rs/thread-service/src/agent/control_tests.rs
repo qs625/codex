@@ -1000,6 +1000,140 @@ async fn external_completion_after_close_does_not_notify_parent() {
 }
 
 #[tokio::test]
+async fn external_close_status_changed_event_carries_shutdown_payload() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let external_thread_id = ThreadId::new();
+    let child_agent_path = AgentPath::try_from("/root/external_close_status").expect("agent path");
+    let session_source = external_session_source_for(
+        root_thread_id,
+        1,
+        child_agent_path.clone(),
+        SpawnAgentProvider::CodexCli,
+    );
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(child_agent_path.clone()),
+        agent_nickname: Some("codex_cli".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    harness.control.state.register_root_thread(root_thread_id);
+    harness
+        .control
+        .state
+        .register_agent_metadata(agent_metadata.clone());
+    harness
+        .control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            external_thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                external_thread_id,
+                session_source,
+                &agent_metadata,
+            ),
+            AgentStatus::Running,
+        )
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: child_agent_path,
+            provider: SpawnAgentProvider::CodexCli,
+            depth: 1,
+            spawn_config: Some(external_config),
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            last_task_message: Some("do work".to_string()),
+            abort_handle: None,
+        });
+    let mut thread_created_rx = harness.manager.subscribe_thread_created();
+
+    harness
+        .control
+        .close_agent(external_thread_id)
+        .await
+        .expect("close external agent");
+
+    let event = timeout(Duration::from_secs(1), thread_created_rx.recv())
+        .await
+        .expect("status changed event should arrive")
+        .expect("status changed event");
+    assert_eq!(event.thread_id(), external_thread_id);
+    assert_matches!(
+        event,
+        thread_service_api::ThreadCreatedEvent::StatusChanged {
+            thread_id,
+            agent_status: Some(AgentStatus::Shutdown),
+        } if thread_id == external_thread_id
+    );
+    assert_eq!(
+        harness
+            .manager
+            .live_thread_agent_status(external_thread_id)
+            .await
+            .expect("external close still leaves live Shutdown visible"),
+        AgentStatus::Shutdown
+    );
+}
+
+#[tokio::test]
+async fn external_completion_status_changed_event_carries_terminal_payload() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let external_thread_id = ThreadId::new();
+    let child_agent_path =
+        AgentPath::try_from("/root/external_complete_status").expect("agent path");
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    harness.control.state.register_root_thread(root_thread_id);
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: child_agent_path,
+            provider: SpawnAgentProvider::CodexCli,
+            depth: 1,
+            spawn_config: Some(external_config),
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            last_task_message: Some("do work".to_string()),
+            abort_handle: None,
+        });
+    let mut thread_created_rx = harness.manager.subscribe_thread_created();
+    let completed_status = AgentStatus::Completed(Some("done".to_string()));
+
+    harness
+        .control
+        .complete_external_agent(external_thread_id, completed_status.clone())
+        .await;
+
+    let event = timeout(Duration::from_secs(1), thread_created_rx.recv())
+        .await
+        .expect("status changed event should arrive")
+        .expect("status changed event");
+    assert_eq!(event.thread_id(), external_thread_id);
+    assert_matches!(
+        event,
+        thread_service_api::ThreadCreatedEvent::StatusChanged {
+            thread_id,
+            agent_status: Some(status),
+        } if thread_id == external_thread_id && status == completed_status
+    );
+}
+
+#[tokio::test]
 async fn external_tool_call_lists_visible_agents() {
     let harness = AgentControlHarness::new().await;
     let root_thread_id = ThreadId::new();
