@@ -44,6 +44,7 @@ use state_api::ThreadGoalStatus as StateThreadGoalStatus;
 use tempfile::TempDir;
 use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
+use thread_service_api::ThreadRuntimeStatus;
 use thread_store::LocalThreadStore;
 use thread_store::LocalThreadStoreConfig;
 use thread_store_api::ArchiveThreadParams;
@@ -628,6 +629,136 @@ async fn inspection_runtime_includes_external_live_records() {
         harness.manager.live_thread_info(ThreadId::new()).await,
         Err(CodexErr::ThreadNotFound(_))
     ));
+}
+
+#[tokio::test]
+async fn runtime_status_maps_external_live_records_to_coarse_status() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let manager = harness
+        .control
+        .upgrade()
+        .expect("manager should be available");
+
+    let statuses = [
+        (AgentStatus::PendingInit, ThreadRuntimeStatus::Active),
+        (AgentStatus::Running, ThreadRuntimeStatus::Active),
+        (AgentStatus::Interrupted, ThreadRuntimeStatus::Complete),
+        (
+            AgentStatus::Completed(Some("done".to_string())),
+            ThreadRuntimeStatus::Complete,
+        ),
+        (
+            AgentStatus::Errored("failed".to_string()),
+            ThreadRuntimeStatus::Complete,
+        ),
+        (AgentStatus::Shutdown, ThreadRuntimeStatus::Complete),
+        (AgentStatus::NotFound, ThreadRuntimeStatus::Complete),
+    ];
+
+    for (index, (agent_status, expected_runtime_status)) in statuses.into_iter().enumerate() {
+        let external_thread_id = ThreadId::new();
+        let child_agent_path =
+            AgentPath::try_from(format!("/root/external_{index}")).expect("agent path");
+        let session_source = external_session_source_for(
+            root_thread_id,
+            1,
+            child_agent_path.clone(),
+            SpawnAgentProvider::CodexCli,
+        );
+        let agent_metadata = AgentMetadata {
+            agent_id: Some(external_thread_id),
+            agent_path: Some(child_agent_path),
+            agent_nickname: Some("codex_cli".to_string()),
+            agent_role: Some("codex_cli".to_string()),
+            counted: false,
+            ..Default::default()
+        };
+        manager
+            .register_external_live_thread_snapshot(
+                external_thread_id,
+                external_live_thread_snapshot(
+                    &external_config,
+                    external_thread_id,
+                    session_source,
+                    &agent_metadata,
+                ),
+                agent_status,
+            )
+            .await;
+
+        let runtime_status = harness
+            .manager
+            .live_thread_runtime_status(external_thread_id)
+            .await
+            .expect("external runtime status");
+        assert_eq!(runtime_status, expected_runtime_status);
+    }
+}
+
+#[tokio::test]
+async fn runtime_status_preserves_native_and_missing_semantics() {
+    let harness = AgentControlHarness::new().await;
+    let (native_thread_id, native_thread) = harness.start_thread().await;
+    let expected_native_status = native_thread.runtime_thread_status().await;
+
+    let native_status = harness
+        .manager
+        .live_thread_runtime_status(native_thread_id)
+        .await
+        .expect("native runtime status");
+    assert_eq!(native_status, expected_native_status);
+
+    assert!(matches!(
+        harness.manager.live_thread_runtime_status(ThreadId::new()).await,
+        Err(CodexErr::ThreadNotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn runtime_status_prefers_native_when_external_record_has_same_id() {
+    let harness = AgentControlHarness::new().await;
+    let (thread_id, native_thread) = harness.start_thread().await;
+    let expected_native_status = native_thread.runtime_thread_status().await;
+    let child_agent_path = AgentPath::try_from("/root/external_same_id").expect("agent path");
+    let session_source = external_session_source_for(
+        ThreadId::new(),
+        1,
+        child_agent_path.clone(),
+        SpawnAgentProvider::CodexCli,
+    );
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(thread_id),
+        agent_path: Some(child_agent_path),
+        agent_nickname: Some("codex_cli".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    harness
+        .control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                thread_id,
+                session_source,
+                &agent_metadata,
+            ),
+            AgentStatus::Shutdown,
+        )
+        .await;
+
+    let runtime_status = harness
+        .manager
+        .live_thread_runtime_status(thread_id)
+        .await
+        .expect("native runtime status");
+    assert_eq!(runtime_status, expected_native_status);
 }
 
 #[tokio::test]

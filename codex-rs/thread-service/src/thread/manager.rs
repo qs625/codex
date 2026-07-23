@@ -159,6 +159,21 @@ struct ExternalLiveThreadRecord {
     status: AgentStatus,
 }
 
+fn external_agent_status_to_thread_runtime_status(
+    status: &AgentStatus,
+) -> thread_service_api::ThreadRuntimeStatus {
+    match status {
+        AgentStatus::PendingInit | AgentStatus::Running => {
+            thread_service_api::ThreadRuntimeStatus::Active
+        }
+        AgentStatus::Interrupted
+        | AgentStatus::Completed(_)
+        | AgentStatus::Errored(_)
+        | AgentStatus::Shutdown
+        | AgentStatus::NotFound => thread_service_api::ThreadRuntimeStatus::Complete,
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn set_thread_service_test_mode_for_tests(enabled: bool) {
     FORCE_TEST_THREAD_SERVICE_BEHAVIOR.store(enabled, Ordering::Relaxed);
@@ -1689,8 +1704,17 @@ impl ThreadServiceState {
         &self,
         thread_id: ThreadId,
     ) -> CodexResult<thread_service_api::ThreadRuntimeStatus> {
-        let thread = self.get_thread(thread_id).await?;
-        Ok(thread.runtime_thread_status().await)
+        match self.get_thread(thread_id).await {
+            Ok(thread) => Ok(thread.runtime_thread_status().await),
+            Err(CodexErr::ThreadNotFound(_)) => self
+                .external_live_threads
+                .read()
+                .await
+                .get(&thread_id)
+                .map(|record| external_agent_status_to_thread_runtime_status(&record.status))
+                .ok_or(CodexErr::ThreadNotFound(thread_id)),
+            Err(err) => Err(err),
+        }
     }
 
     pub(crate) async fn subscribe_live_thread_status(
