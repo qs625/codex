@@ -1,33 +1,30 @@
-# Thread Provider Architecture
+# Thread Provider 架构
 
-This document describes the target architecture for making native Morpheus
-threads and external CLI-backed threads share one lifecycle contract. The first
-implementation phase adds a provider descriptor catalog and wires the New
-conversation flow to it; the full runtime migration remains staged.
+本文档描述目标架构：让 native Morpheus thread 与外部 CLI 支撑的 thread
+共享同一套生命周期 contract。第一阶段先引入 provider descriptor catalog，
+并把 New conversation 流程接到该 catalog；完整 runtime 迁移仍分阶段推进。
 
-## Goals
+## 目标
 
-- Make `EventMsg` the canonical provider output. Native runtime events and
-  external provider stdout, JSON, or SSE messages must be normalized by their
-  adapter before app-server, rollout, replay, or root-worker see them.
-- Give clients one provider-neutral way to discover thread lifecycle support,
-  agent roles, model selection, and active capabilities.
-- Preserve legacy native `thread/start` behavior when provider fields are
-  omitted.
-- Keep external providers separate from native `agent_type`; `codex_cli`,
-  `claude_cli`, and `opencode` are provider ids, not Morpheus roles.
+- 让 `EventMsg` 成为 provider 的 canonical output。native runtime event 以及
+  external provider 的 stdout、JSON、SSE message，必须先由各自 adapter 归一化，
+  再进入 app-server、rollout、replay 或 root-worker。
+- 给客户端提供一套 provider-neutral 的发现方式，用于判断 thread lifecycle
+  支持范围、agent role、model selection 和 active capability。
+- 当 provider 字段省略时，保留既有 native `thread/start` 行为。
+- external provider 与 native `agent_type` 保持分离；`codex_cli`、
+  `claude_cli`、`opencode` 是 provider id，不是 Morpheus role。
 
-Non-goals for the first phase:
+第一阶段非目标：
 
-- Do not migrate every runtime operation behind the new trait at once.
-- Do not implement native-only features for external providers by pretending
-  support exists.
-- Do not parse raw external messages in root-worker.
-- Do not change ACP or introduce a third-party ACP dependency.
+- 不一次性把所有 runtime operation 都迁到新 trait 后面。
+- 不通过假装支持的方式为 external provider 暴露 native-only feature。
+- 不在 root-worker 解析 external raw message。
+- 不改变 ACP，也不引入第三方 ACP 依赖。
 
 ## Provider Contract
 
-The target backend contract is:
+目标后端 contract 如下：
 
 ```rust
 trait ThreadProvider {
@@ -42,105 +39,166 @@ trait ThreadProvider {
 }
 ```
 
-`ThreadProviderDescriptor` is the read-only discovery shape for that contract:
+`ThreadProviderDescriptor` 是该 contract 的只读 discovery shape：
 
-- `id` and `kind` identify the provider owner.
-- `agentTypes` is provider scoped. Native exposes Morpheus roles; external CLI
-  providers currently expose none.
-- `modelSelection` describes where model choice comes from: catalog,
-  provider default, none, or later an external config catalog.
-- `capabilities` gates active requests and UI controls only. Event consumption
-  never switches on capabilities.
+- `id` 和 `kind` 标识 provider owner。
+- `agentTypes` 是 provider scoped。native 暴露 Morpheus roles；external CLI
+  provider 当前不暴露任何 role。
+- `modelSelection` 描述 model choice 来源：catalog、provider default、none，
+  或后续的 external config catalog。
+- `capabilities` 只用于 gate active request 和 UI control。event consumption
+  永远不根据 capability 分叉。
 
-## Event Normalization
+## Event 归一化
 
-Adapters own raw message parsing:
+raw message parsing 由 adapter 负责：
 
-- Native Morpheus runtime emits existing `EventMsg` values directly from the
-  session, tool runtime, agent control, and command runtime.
-- Claude stream-json, OpenCode SSE/HTTP, and Codex CLI app-server transports
-  parse provider-specific messages in the external adapter and emit bounded
-  `EventMsg` values for assistant output, tool calls, tool results, lifecycle
-  status, completion, and errors.
-- Raw provider stdout, provider JSON envelopes, assistant marker text, and
-  transport logs are never display facts. They may be retained only as bounded
-  diagnostics behind adapter-owned errors.
+- Native Morpheus runtime 直接从 session、tool runtime、agent control 和
+  command runtime 发出现有 `EventMsg`。
+- Claude stream-json、OpenCode SSE/HTTP、Codex CLI app-server transport 在
+  external adapter 内解析 provider-specific message，并为 assistant output、
+  tool call、tool result、lifecycle status、completion 和 error 发出有界的
+  `EventMsg`。
+- raw provider stdout、provider JSON envelope、assistant marker text 和
+  transport log 都不是 display fact。它们只能作为 adapter-owned error 背后的
+  有界诊断信息保留。
 
-Unsupported active operations return typed unsupported-action errors at the
-provider boundary. They do not alter replay or display handling.
+不支持的 active operation 应在 provider boundary 返回 typed unsupported-action
+error。它们不改变 replay 或 display handling。
 
-## API And Client Flow
+## API 与客户端流程
 
-The compatible migration path is:
+兼容迁移路径如下：
 
-1. `threadProvider/list` returns provider descriptors for a cwd.
-2. Existing `agentType/list` and `model/list` stay available for legacy clients.
-3. `ThreadStartParams.threadProvider` is optional. Omitted or `native` keeps
-   current behavior. External ids are advertised but rejected by `thread/start`
-   until their root start path is migrated.
-4. Root-worker New conversation first selects provider, then shows provider
-   scoped roles and model selection:
+1. `threadProvider/list` 按 cwd 返回 provider descriptor。
+2. 既有 `agentType/list` 和 `model/list` 继续服务 legacy client。
+3. `ThreadStartParams.threadProvider` 是可选字段。省略或传 `native` 时保持当前
+   行为。external id 可以被 advertised，但在 root start path 完成迁移前，
+   `thread/start` 会拒绝它们。
+4. Root-worker New conversation 先选择 provider，再展示 provider scoped role
+   和 model selection：
    provider -> agent role/type -> model provider/model -> reasoning/service
-   tier -> create.
-5. External providers with `modelSelection: providerDefault` disable global
-   model pickers instead of borrowing unrelated config models.
+   tier -> create。
+5. `modelSelection: providerDefault` 的 external provider 会禁用全局 model
+   picker，而不是借用无关的 config model。
 
-## Runtime Boundaries
+## Runtime 边界
 
-- `thread/start`, `thread/read`, `thread/resume`, `thread/list`, status
-  notifications, followup input, close/cancel/archive, fork, compact, workflow,
-  goals, schedules, command sessions, approvals, sandbox profiles, and dynamic
-  tools should target a provider-neutral handle.
-- Provider descriptors may disable active calls such as compact, workflow,
-  command sessions, permissions, or `poll_event`; if a provider emits a valid
-  event for any displayed item, downstream replay still handles it through the
-  typed `EventMsg -> ThreadItem` path.
-- Rollout `Limited` remains the reload contract. Any provider event needed for
-  reload must be persisted in the view consumed by thread history/replay with a
-  bounded payload.
-- Root-worker tree and right-panel state consume normalized thread metadata and
-  typed thread items. Parent-child edges must come from thread metadata/spawn
-  edges, not orphan promotion in the client.
+- `thread/start`、`thread/read`、`thread/resume`、`thread/list`、status
+  notification、followup input、close/cancel/archive、fork、compact、workflow、
+  goal、schedule、command session、approval、sandbox profile 和 dynamic tool
+  都应指向 provider-neutral handle。
+- Provider descriptor 可以禁用 compact、workflow、command session、permission
+  或 `poll_event` 等 active call；但只要 provider 为某个展示项发出了合法
+  event，下游 replay 仍应通过 typed `EventMsg -> ThreadItem` 路径处理。
+- Rollout `Limited` 仍是 reload contract。任何 reload 需要的 provider event
+  都必须以有界 payload 持久化到 thread history/replay 实际消费的 view 中。
+- Root-worker tree 和 right-panel state 消费 normalized thread metadata 与 typed
+  thread item。parent-child edge 必须来自 thread metadata/spawn edge，而不是
+  client 里的 orphan promotion。
 
-## First Phase
+## Thread-Service API 与 Capability 拆分
 
-Implemented now:
+当前 thread-service 上挂了不少 API 和 capability trait，它们并不都应该进入
+`ThreadProvider`。迁移时要按调用者和语义拆成四类：
 
-- Protocol types for `ThreadProviderDescriptor`, provider capabilities, scoped
-  model selection, and `threadProvider/list`.
-- Optional `ThreadStartParams.threadProvider`; only omitted or `native` is
-  accepted by the current native `thread/start`.
-- App-server catalog descriptor source for native Morpheus plus external
-  `claude_cli`, `opencode`, and `codex_cli` skeleton descriptors.
-- Root-worker New conversation provider selector and provider-scoped gating for
-  agent type and model fields.
+- Provider-neutral lifecycle API：面向 app-server 和客户端请求，描述 thread
+  生命周期与 metadata。包括 start、send input、close/cancel、status、list/read、
+  resume/restore、parent-child edge、event stream。这类 API 应逐步迁到
+  `ThreadProvider` 或 provider-neutral handle 后面。
+- Shared coordination kernel：面向 native 与 external provider 共同复用的后端事实源。
+  包括 thread registry/thread store、spawn edge、pending input、completion
+  delivery、status notification、`poll_event` wakeup、bounded `EventMsg`
+  persistence。这类能力属于 thread-service core，不属于任意一个 provider trait。
+- Native/internal agent API：只服务 Morpheus 内部 agent/tool surface。包括
+  `spawn_agent` 的 `agent_type`/role/model 语义、固定 owner/reviewer 约定、
+  native `list_agents` 的 role/nickname/status 解释、native session 的 model-visible
+  tool 注入。这些应收口到 `NativeThreadProvider` 或 `NativeAgentControl` 内部，
+  不要求 external provider 实现。
+- Provider transport API：只存在于 external adapter 内部。包括 Claude stream-json、
+  OpenCode HTTP/SSE、Codex CLI app-server transport，以及 raw provider message
+  parsing。这些 API 的对外输出只能是 normalized `EventMsg` 与 provider terminal
+  status，不能泄漏到 root-worker 或 generic replay 层。
 
-## Later Phases
+因此 `thread_service_api::ThreadServiceApi` 不应继续无限扩张成所有 thread/tool
+操作的集合。迁移方向是把它拆成更窄的接口：
 
-- Move native thread start/status/input/close/list/restore behind a concrete
-  native `ThreadProvider`.
-- Move external spawn registry and live snapshot logic behind external provider
-  handles.
-- Persist external provider thread metadata and bounded normalized events so
-  completed external threads can be listed after reload and interrupted running
-  sessions have explicit terminal state.
-- Add provider-scoped external model catalogs where the provider can enumerate
-  them.
-- Route compact/workflow/goal/schedule/tool availability through provider
-  capabilities and typed unsupported-action errors.
-- Remove temporary duplicate catalog paths once root-worker and other clients
-  consume provider descriptors by default.
+- `ThreadLifecycleRuntime`：provider-neutral lifecycle/request facade，由
+  app-server 的 thread processor 使用。
+- `ThreadCollaborationRuntime`：模型工具侧的协作入口，保留 `spawn_agent`、
+  `followup_task`、`close_agent`、`list_agents` 等 tool surface，但内部先解析目标
+  provider，再路由到 native/external provider。这里可以继续保留 native/external
+  tool 名称分离，但实现不应复制两套 registry。
+- `ThreadEventRuntime`：`emit_event`、display event emission、rollout persistence、
+  status notification、`poll_event` wakeup 等 event kernel 能力。provider 只调用它
+  发 fact，不拥有 replay/display 分叉逻辑。
+- `NativeAgentRuntime`：Morpheus-only extension trait，只由 native provider 和
+  internal agent control 使用；external provider 不实现，也不通过空实现假装支持。
 
-## Test Matrix
+`ThreadTurnCapability`、`ThreadSessionCapability`、`ThreadRuntimeCapability` 仍是
+active turn/tool dispatch 的 capability，不是 provider capability。它们的改法是
+继续缩窄、按工具域拆分，而不是挂到 `ThreadProvider` 上：
 
-- Native default `thread/start` without provider remains equivalent to legacy
-  behavior.
-- Native provider descriptor includes Morpheus roles and catalog-backed model
-  providers.
-- External descriptors are listed but expose no native agent types and no
-  native-only capabilities.
-- Root-worker provider selector defaults to native, disables model controls for
-  provider-default external providers, and preserves legacy `agentType` and
-  model fields for native.
-- Thread read/list/resume/status display continues to consume typed
-  `EventMsg -> ThreadItem` facts without raw provider parsing.
+- shell/exec/apply_patch/network approval 相关方法留在 exec/sandbox tool runtime
+  的 turn capability。
+- MCP、dynamic tool、app tool policy、auth elicitation 留在 tool/session dispatch
+  capability。
+- multi-agent tool 只需要拿到 thread id、turn id、cwd/config、event emitter 和
+  collaboration runtime，不应该拿完整 native `TurnContext` 后再到处 downcast。
+- external provider adapter 不应持有完整 `TurnContext` 或 `Session`；它只拿
+  `ProviderExecutionContext`，其中包含 provider id、thread handle、cwd、bounded
+  event sink、input receiver、shutdown token 和必要的 persisted metadata writer。
+
+第一步可以保持现有 public trait 兼容，在 thread-service 内部新增窄接口并让
+`ThreadService` 同时实现旧接口和新接口。随后把调用点从旧的宽 `ThreadServiceApi`
+迁到窄接口，最后再删除旧接口里的 native/external 重复方法。这个顺序能避免一次性
+重写所有 tool crate。
+
+禁止路径：
+
+- 不要把 `ThreadTurnCapability` 或完整 `Session` 塞进 external provider adapter。
+- 不要让 `ThreadProvider` 继承 shell、MCP、approval、dynamic tool、agent job 等
+  tool capability。
+- 不要让 external provider 通过空的 `agent_type`/role 实现来满足 native agent API。
+- 不要为 native 与 external 维护两套 parent completion、pending input、status
+  notification 或 list registry。
+
+## 第一阶段
+
+当前已实现：
+
+- `ThreadProviderDescriptor`、provider capability、scoped model selection 和
+  `threadProvider/list` 的 protocol type。
+- 可选的 `ThreadStartParams.threadProvider`；当前 native `thread/start` 只接受
+  省略或 `native`。
+- App-server catalog descriptor source，覆盖 native Morpheus 以及 external
+  `claude_cli`、`opencode`、`codex_cli` skeleton descriptor。
+- Root-worker New conversation provider selector，以及面向 agent type 和 model
+  field 的 provider-scoped gating。
+
+## 后续阶段
+
+- 将 native thread start/status/input/close/list/restore 移到具体的 native
+  `ThreadProvider` 后面。
+- 将 external spawn registry 和 live snapshot logic 移到 external provider
+  handle 后面。
+- 持久化 external provider thread metadata 与有界 normalized event，使 completed
+  external thread 在 reload 后可被列出，interrupted running session 也能拥有明确
+  terminal state。
+- 在 provider 能枚举 model 时，增加 provider-scoped external model catalog。
+- 通过 provider capability 和 typed unsupported-action error 收口
+  compact/workflow/goal/schedule/tool availability。
+- 当 root-worker 和其他 client 默认消费 provider descriptor 后，移除临时重复的
+  catalog path。
+
+## 测试矩阵
+
+- 不带 provider 的 native default `thread/start` 与 legacy behavior 等价。
+- Native provider descriptor 包含 Morpheus roles 和 catalog-backed model
+  provider。
+- External descriptor 可以被列出，但不暴露 native agent type，也不暴露
+  native-only capability。
+- Root-worker provider selector 默认选 native；对 provider-default external
+  provider 禁用 model control；对 native 保留 legacy `agentType` 和 model field。
+- Thread read/list/resume/status display 继续消费 typed
+  `EventMsg -> ThreadItem` fact，不解析 raw provider。
