@@ -99,10 +99,9 @@ use thread_service_api::LiveThreadActivitySource;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
-use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadStateRuntimeSource;
-use thread_service_api::LiveThreadStatusRuntime;
+use thread_service_api::ThreadLifecycleRuntime;
 use thread_store_api::ReadThreadParams;
 use thread_store_api::SharedLiveThread;
 use tokio::sync::mpsc;
@@ -1251,7 +1250,7 @@ impl AgentControl {
     async fn handle_thread_request_result(
         &self,
         agent_id: ThreadId,
-        runtime: &(impl LiveThreadCommandRuntime + ?Sized),
+        runtime: &(impl ThreadLifecycleRuntime + ?Sized),
         result: CodexResult<String>,
     ) -> CodexResult<String> {
         if result
@@ -1259,7 +1258,7 @@ impl AgentControl {
             .err()
             .is_some_and(should_release_agent_after_thread_request_error)
         {
-            let _ = runtime.remove_live_thread(agent_id).await;
+            let _ = ThreadLifecycleRuntime::remove_live_thread(runtime, agent_id).await;
             self.state.release_spawned_thread(agent_id);
         }
         result
@@ -1269,8 +1268,8 @@ impl AgentControl {
     /// persisted spawn-edge state.
     pub(crate) async fn shutdown_live_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         let state = self.upgrade()?;
-        let result = state.shutdown_live_thread(agent_id).await;
-        let _ = state.remove_live_thread(agent_id).await;
+        let result = ThreadLifecycleRuntime::shutdown_live_thread(state.as_ref(), agent_id).await;
+        let _ = ThreadLifecycleRuntime::remove_live_thread(state.as_ref(), agent_id).await;
         self.state.release_spawned_thread(agent_id);
         result
     }
@@ -1343,8 +1342,7 @@ impl AgentControl {
             // No agent available if upgrade fails.
             return AgentStatus::NotFound;
         };
-        state
-            .live_thread_agent_status(agent_id)
+        ThreadLifecycleRuntime::live_thread_agent_status(state.as_ref(), agent_id)
             .await
             .unwrap_or(AgentStatus::NotFound)
     }
@@ -2016,7 +2014,7 @@ impl AgentControl {
         agent_id: ThreadId,
     ) -> CodexResult<watch::Receiver<AgentStatus>> {
         let state = self.upgrade()?;
-        state.subscribe_live_thread_status(agent_id).await
+        ThreadLifecycleRuntime::subscribe_live_thread_status(state.as_ref(), agent_id).await
     }
 
     pub(crate) async fn direct_subagent_paths(&self, parent_thread_id: ThreadId) -> Vec<AgentPath> {

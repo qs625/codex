@@ -49,7 +49,6 @@ use state_api::SharedStateDbRuntime;
 use thread_store_api::StoredThread;
 use thread_store_api::StoredThreadHistory;
 use thread_store_api::ThreadStoreResult;
-use tokio::sync::watch;
 
 pub use exec_runtime::*;
 pub use session_contracts::*;
@@ -238,10 +237,10 @@ pub trait LiveThreadActivitySource: Send + Sync {
 
 /// Command surface for live thread operations that do not need concrete handles.
 ///
-/// Implementations own thread lookup, operation submission, and transitional
-/// registry removal for internal callers. New app-server teardown callers
-/// should use `ThreadLifecycleRuntime` for removal so command runtime stays
-/// focused on driving live operations during the provider boundary migration.
+/// Implementations own thread lookup, operation submission, and client-info
+/// writes. Lifecycle teardown/status callers should use `ThreadLifecycleRuntime`
+/// so command runtime stays focused on driving live operations during the
+/// provider boundary migration.
 pub trait LiveThreadCommandRuntime: Send + Sync {
     fn submit_live_thread_op(
         &self,
@@ -261,8 +260,6 @@ pub trait LiveThreadCommandRuntime: Send + Sync {
         thread_id: ThreadId,
         info: AppServerClientInfo,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
-    fn remove_live_thread(&self, thread_id: ThreadId) -> impl Future<Output = bool> + Send + '_;
 }
 
 /// Conversation append surface for live threads without exposing concrete handles.
@@ -415,40 +412,6 @@ pub trait LiveThreadTurnRuntime: Send + Sync {
         thread_id: ThreadId,
         overrides: CodexThreadTurnContextOverrides,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-}
-
-/// Transitional shutdown surface for live agents without exposing concrete thread handles.
-///
-/// Implementations own any required rollout flush, lifecycle status checks,
-/// shutdown operation submission, and termination wait. Callers should use this
-/// trait when they only need to request agent shutdown and then release their own
-/// registry bookkeeping. New app-server lifecycle callers should use
-/// `ThreadLifecycleRuntime`; this trait remains for internal live-thread
-/// compatibility during the provider boundary migration.
-pub trait LiveThreadShutdownRuntime: Send + Sync {
-    fn shutdown_live_thread(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<String>> + Send + '_;
-}
-
-/// Transitional status surface for live threads without exposing concrete thread handles.
-///
-/// Implementations own the mapping from runtime lifecycle state to
-/// `AgentStatus` and the watch channel used to observe status changes. New
-/// app-server lifecycle callers should use `ThreadLifecycleRuntime`; this trait
-/// remains for internal live-thread compatibility during the provider boundary
-/// migration.
-pub trait LiveThreadStatusRuntime: Send + Sync {
-    fn live_thread_agent_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<AgentStatus>> + Send + '_;
-
-    fn subscribe_live_thread_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<watch::Receiver<AgentStatus>>> + Send + '_;
 }
 
 /// Read-only inspection surface for live threads without exposing concrete handles.

@@ -191,14 +191,12 @@ surfaces，status、app-server archive 前的 per-thread shutdown 和 teardown r
 - `LiveThreadInspectionRuntime` 承载 loaded ids、loaded check、
   `LiveThreadInfo` 和 `LiveThreadSnapshot` 等 copied fact。
 - status read / subscribe 已提升到 `ThreadLifecycleRuntime`；旧
-  `LiveThreadStatusRuntime` 仅作为 thread-service 内部 native agent control 的过渡
-  compatibility surface 保留。
-- app-server archive 准备阶段使用的 single-thread shutdown 已提升到
-  `ThreadLifecycleRuntime`；旧 `LiveThreadShutdownRuntime` 仅作为 thread-service 内部
-  native agent control 的过渡 compatibility surface 保留。
-- app-server archive 和 listener idle-unload 的 live-thread removal 已提升到
-  `ThreadLifecycleRuntime`；`LiveThreadCommandRuntime::remove_live_thread` 仅作为
-  thread-service 内部 native agent control 的过渡 compatibility method 保留。
+  `LiveThreadStatusRuntime` compatibility surface 已删除。
+- single-thread shutdown 已提升到 `ThreadLifecycleRuntime`；旧
+  `LiveThreadShutdownRuntime` compatibility surface 已删除。
+- app-server archive、listener idle-unload 和 native agent cleanup 的 live-thread
+  removal 已提升到 `ThreadLifecycleRuntime`；`LiveThreadCommandRuntime::remove_live_thread`
+  compatibility method 已删除。
 - `LiveThreadCommandRuntime` 承载 submit op、submit op with trace 和 client info 写入。
 
 app-server thread processor 的 thread loaded list、thread/read live snapshot merge、

@@ -1223,59 +1223,30 @@ impl ThreadService {
         removed
     }
 
+    pub async fn remove_live_thread(&self, thread_id: ThreadId) -> bool {
+        self.remove_thread(&thread_id).await.is_some()
+    }
+
+    pub async fn shutdown_live_thread(&self, thread_id: ThreadId) -> CodexResult<String> {
+        self.state.shutdown_live_thread(thread_id).await
+    }
+
+    pub async fn live_thread_agent_status(&self, thread_id: ThreadId) -> CodexResult<AgentStatus> {
+        self.state.live_thread_agent_status(thread_id).await
+    }
+
+    pub async fn subscribe_live_thread_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<tokio::sync::watch::Receiver<AgentStatus>> {
+        self.state.subscribe_live_thread_status(thread_id).await
+    }
+
     /// Tries to shut down all tracked threads concurrently within the provided timeout.
     /// Threads that complete shutdown are removed from the manager; incomplete shutdowns
     /// remain tracked so callers can retry or inspect them later.
     pub async fn shutdown_all_threads_bounded(&self, timeout: Duration) -> ThreadShutdownReport {
-        let threads = {
-            let threads = self.state.threads.read().await;
-            threads
-                .iter()
-                .map(|(thread_id, thread)| (*thread_id, Arc::clone(thread)))
-                .collect::<Vec<_>>()
-        };
-
-        let mut shutdowns = threads
-            .into_iter()
-            .map(|(thread_id, thread)| async move {
-                let outcome = match tokio::time::timeout(timeout, thread.shutdown_and_wait()).await
-                {
-                    Ok(Ok(())) => ShutdownOutcome::Complete,
-                    Ok(Err(_)) => ShutdownOutcome::SubmitFailed,
-                    Err(_) => ShutdownOutcome::TimedOut,
-                };
-                (thread_id, outcome)
-            })
-            .collect::<FuturesUnordered<_>>();
-        let mut report = ThreadShutdownReport::default();
-
-        while let Some((thread_id, outcome)) = shutdowns.next().await {
-            match outcome {
-                ShutdownOutcome::Complete => report.completed.push(thread_id),
-                ShutdownOutcome::SubmitFailed => report.submit_failed.push(thread_id),
-                ShutdownOutcome::TimedOut => report.timed_out.push(thread_id),
-            }
-        }
-
-        let mut tracked_threads = self.state.threads.write().await;
-        for thread_id in &report.completed {
-            if tracked_threads.remove(thread_id).is_some() {
-                self.state
-                    .root_agent_registry
-                    .release_uncounted_thread_metadata(*thread_id);
-            }
-        }
-
-        report
-            .completed
-            .sort_by_key(std::string::ToString::to_string);
-        report
-            .submit_failed
-            .sort_by_key(std::string::ToString::to_string);
-        report
-            .timed_out
-            .sort_by_key(std::string::ToString::to_string);
-        report
+        self.state.shutdown_all_threads_bounded(timeout).await
     }
 
     /// Fork an existing thread by snapshotting rollout history according to
@@ -1605,9 +1576,111 @@ impl ThreadServiceState {
         thread.append_message(message).await
     }
 
-    /// Remove a thread from the manager by ID, returning it when present.
-    pub(crate) async fn remove_thread(&self, thread_id: &ThreadId) -> Option<Arc<CodexThread>> {
-        self.threads.write().await.remove(thread_id)
+    pub(crate) async fn remove_live_thread(&self, thread_id: ThreadId) -> bool {
+        let removed = self.threads.write().await.remove(&thread_id);
+        if removed.is_some() {
+            self.root_agent_registry
+                .release_uncounted_thread_metadata(thread_id);
+        }
+        removed.is_some()
+    }
+
+    pub(crate) async fn shutdown_all_threads_bounded(
+        &self,
+        timeout: Duration,
+    ) -> ThreadShutdownReport {
+        let threads = {
+            let threads = self.threads.read().await;
+            threads
+                .iter()
+                .map(|(thread_id, thread)| (*thread_id, Arc::clone(thread)))
+                .collect::<Vec<_>>()
+        };
+
+        let mut shutdowns = threads
+            .into_iter()
+            .map(|(thread_id, thread)| async move {
+                let outcome = match tokio::time::timeout(timeout, thread.shutdown_and_wait()).await
+                {
+                    Ok(Ok(())) => ShutdownOutcome::Complete,
+                    Ok(Err(_)) => ShutdownOutcome::SubmitFailed,
+                    Err(_) => ShutdownOutcome::TimedOut,
+                };
+                (thread_id, outcome)
+            })
+            .collect::<FuturesUnordered<_>>();
+        let mut report = ThreadShutdownReport::default();
+
+        while let Some((thread_id, outcome)) = shutdowns.next().await {
+            match outcome {
+                ShutdownOutcome::Complete => report.completed.push(thread_id),
+                ShutdownOutcome::SubmitFailed => report.submit_failed.push(thread_id),
+                ShutdownOutcome::TimedOut => report.timed_out.push(thread_id),
+            }
+        }
+
+        let mut tracked_threads = self.threads.write().await;
+        for thread_id in &report.completed {
+            if tracked_threads.remove(thread_id).is_some() {
+                self.root_agent_registry
+                    .release_uncounted_thread_metadata(*thread_id);
+            }
+        }
+
+        report
+            .completed
+            .sort_by_key(std::string::ToString::to_string);
+        report
+            .submit_failed
+            .sort_by_key(std::string::ToString::to_string);
+        report
+            .timed_out
+            .sort_by_key(std::string::ToString::to_string);
+        report
+    }
+
+    pub(crate) async fn shutdown_live_thread(&self, thread_id: ThreadId) -> CodexResult<String> {
+        if let Ok(thread) = self.get_thread(thread_id).await {
+            thread.codex.session.ensure_rollout_materialized().await;
+            thread.codex.session.flush_rollout().await?;
+            let status = thread.agent_status().await;
+            let result = match live_agent_shutdown_action(/*thread_found*/ true, Some(&status)) {
+                LiveAgentShutdownAction::SubmitWithoutWait
+                | LiveAgentShutdownAction::SubmitAndWait => {
+                    self.send_op(thread_id, Op::Shutdown {}).await
+                }
+                LiveAgentShutdownAction::AlreadyShutdownWait => Ok(String::new()),
+            };
+            thread.wait_until_terminated().await;
+            return result;
+        }
+
+        match live_agent_shutdown_action(/*thread_found*/ false, None) {
+            LiveAgentShutdownAction::SubmitWithoutWait => {
+                self.send_op(thread_id, Op::Shutdown {}).await
+            }
+            LiveAgentShutdownAction::SubmitAndWait
+            | LiveAgentShutdownAction::AlreadyShutdownWait => Ok(String::new()),
+        }
+    }
+
+    pub(crate) async fn live_thread_agent_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<AgentStatus> {
+        if let Some(record) = self.external_live_threads.read().await.get(&thread_id) {
+            return Ok(record.status.clone());
+        }
+        let thread = self.get_thread(thread_id).await?;
+        Ok(thread.agent_status().await)
+    }
+
+    pub(crate) async fn subscribe_live_thread_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<tokio::sync::watch::Receiver<AgentStatus>> {
+        let thread = self.get_thread(thread_id).await?;
+        Ok(thread.subscribe_status())
     }
 
     /// Spawn a new thread with no history using a provided config.
@@ -2008,6 +2081,58 @@ impl thread_service_api::LiveThreadActivitySource for ThreadServiceState {
     }
 }
 
+impl thread_service_api::ThreadLifecycleRuntime for ThreadServiceState {
+    fn shutdown_all_threads_bounded<'a>(
+        &'a self,
+        timeout: Duration,
+    ) -> thread_service_api::ThreadServiceFuture<'a, ThreadShutdownReport> {
+        Box::pin(ThreadServiceState::shutdown_all_threads_bounded(
+            self, timeout,
+        ))
+    }
+
+    fn shutdown_live_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> thread_service_api::ThreadServiceFuture<'a, CodexResult<String>> {
+        Box::pin(ThreadServiceState::shutdown_live_thread(self, thread_id))
+    }
+
+    fn remove_live_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> thread_service_api::ThreadServiceFuture<'a, bool> {
+        Box::pin(ThreadServiceState::remove_live_thread(self, thread_id))
+    }
+
+    fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent> {
+        self.thread_created_tx.subscribe()
+    }
+
+    fn live_thread_agent_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> thread_service_api::ThreadServiceFuture<'a, CodexResult<AgentStatus>> {
+        Box::pin(ThreadServiceState::live_thread_agent_status(self, thread_id))
+    }
+
+    fn subscribe_live_thread_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> thread_service_api::ThreadServiceFuture<
+        'a,
+        CodexResult<tokio::sync::watch::Receiver<AgentStatus>>,
+    > {
+        Box::pin(ThreadServiceState::subscribe_live_thread_status(
+            self, thread_id,
+        ))
+    }
+
+    fn active_event_subscriptions(&self) -> Arc<ActiveEventSubscriptionTracker> {
+        Arc::clone(&self.active_event_subscriptions)
+    }
+}
+
 #[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
     fn submit_live_thread_op(
@@ -2052,12 +2177,6 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
         }
     }
 
-    fn remove_live_thread(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = bool> + Send + '_ {
-        async move { self.remove_thread(&thread_id).await.is_some() }
-    }
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -2136,68 +2255,6 @@ impl thread_service_api::LiveThreadTurnRuntime for ThreadServiceState {
                 .map_err(|err| {
                     CodexErr::InvalidRequest(format!("invalid turn context override: {err}"))
                 })
-        }
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadShutdownRuntime for ThreadServiceState {
-    fn shutdown_live_thread(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        async move {
-            if let Ok(thread) = self.get_thread(thread_id).await {
-                thread.codex.session.ensure_rollout_materialized().await;
-                thread.codex.session.flush_rollout().await?;
-                let status = thread.agent_status().await;
-                let result =
-                    match live_agent_shutdown_action(/*thread_found*/ true, Some(&status)) {
-                        LiveAgentShutdownAction::SubmitWithoutWait
-                        | LiveAgentShutdownAction::SubmitAndWait => {
-                            self.send_op(thread_id, Op::Shutdown {}).await
-                        }
-                        LiveAgentShutdownAction::AlreadyShutdownWait => Ok(String::new()),
-                    };
-                thread.wait_until_terminated().await;
-                return result;
-            }
-
-            match live_agent_shutdown_action(/*thread_found*/ false, None) {
-                LiveAgentShutdownAction::SubmitWithoutWait => {
-                    self.send_op(thread_id, Op::Shutdown {}).await
-                }
-                LiveAgentShutdownAction::SubmitAndWait
-                | LiveAgentShutdownAction::AlreadyShutdownWait => Ok(String::new()),
-            }
-        }
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadStatusRuntime for ThreadServiceState {
-    fn live_thread_agent_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<AgentStatus>> + Send + '_ {
-        async move {
-            if let Some(record) = self.external_live_threads.read().await.get(&thread_id) {
-                return Ok(record.status.clone());
-            }
-            let thread = self.get_thread(thread_id).await?;
-            Ok(thread.agent_status().await)
-        }
-    }
-
-    fn subscribe_live_thread_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<tokio::sync::watch::Receiver<AgentStatus>>>
-    + Send
-    + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            Ok(thread.subscribe_status())
         }
     }
 }
@@ -2531,15 +2588,6 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadService {
         )
     }
 
-    fn remove_live_thread(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = bool> + Send + '_ {
-        thread_service_api::LiveThreadCommandRuntime::remove_live_thread(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -2613,44 +2661,6 @@ impl thread_service_api::LiveThreadTurnRuntime for ThreadService {
             self.state.as_ref(),
             thread_id,
             overrides,
-        )
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadShutdownRuntime for ThreadService {
-    fn shutdown_live_thread(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
-        thread_service_api::LiveThreadShutdownRuntime::shutdown_live_thread(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
-}
-
-#[allow(clippy::manual_async_fn)]
-impl thread_service_api::LiveThreadStatusRuntime for ThreadService {
-    fn live_thread_agent_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<AgentStatus>> + Send + '_ {
-        thread_service_api::LiveThreadStatusRuntime::live_thread_agent_status(
-            self.state.as_ref(),
-            thread_id,
-        )
-    }
-
-    fn subscribe_live_thread_status(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<tokio::sync::watch::Receiver<AgentStatus>>>
-    + Send
-    + '_ {
-        thread_service_api::LiveThreadStatusRuntime::subscribe_live_thread_status(
-            self.state.as_ref(),
-            thread_id,
         )
     }
 }

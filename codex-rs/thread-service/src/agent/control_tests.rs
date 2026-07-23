@@ -42,7 +42,7 @@ use protocol::user_input::UserInput;
 use state_api::DirectionalThreadSpawnEdgeStatus;
 use state_api::ThreadGoalStatus as StateThreadGoalStatus;
 use tempfile::TempDir;
-use thread_service_api::LiveThreadStatusRuntime;
+use thread_service_api::ThreadLifecycleRuntime;
 use thread_store::LocalThreadStore;
 use thread_store::LocalThreadStoreConfig;
 use thread_store_api::ArchiveThreadParams;

@@ -142,18 +142,14 @@ impl ThreadLifecycleRuntime for ThreadService {
         &'a self,
         thread_id: protocol::ThreadId,
     ) -> ThreadServiceFuture<'a, protocol::error::Result<String>> {
-        Box::pin(thread_service_api::LiveThreadShutdownRuntime::shutdown_live_thread(
-            self, thread_id,
-        ))
+        Box::pin(ThreadService::shutdown_live_thread(self, thread_id))
     }
 
     fn remove_live_thread<'a>(
         &'a self,
         thread_id: protocol::ThreadId,
     ) -> ThreadServiceFuture<'a, bool> {
-        Box::pin(thread_service_api::LiveThreadCommandRuntime::remove_live_thread(
-            self, thread_id,
-        ))
+        Box::pin(ThreadService::remove_live_thread(self, thread_id))
     }
 
     fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent> {
@@ -164,9 +160,7 @@ impl ThreadLifecycleRuntime for ThreadService {
         &'a self,
         thread_id: protocol::ThreadId,
     ) -> ThreadServiceFuture<'a, protocol::error::Result<protocol::protocol::AgentStatus>> {
-        Box::pin(thread_service_api::LiveThreadStatusRuntime::live_thread_agent_status(
-            self, thread_id,
-        ))
+        Box::pin(ThreadService::live_thread_agent_status(self, thread_id))
     }
 
     fn subscribe_live_thread_status<'a>(
@@ -176,11 +170,7 @@ impl ThreadLifecycleRuntime for ThreadService {
         'a,
         protocol::error::Result<tokio::sync::watch::Receiver<protocol::protocol::AgentStatus>>,
     > {
-        Box::pin(
-            thread_service_api::LiveThreadStatusRuntime::subscribe_live_thread_status(
-                self, thread_id,
-            ),
-        )
+        Box::pin(ThreadService::subscribe_live_thread_status(self, thread_id))
     }
 
     fn active_event_subscriptions(
