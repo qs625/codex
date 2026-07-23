@@ -2,6 +2,7 @@ use super::*;
 use super::context_usage_replay::ThreadUsageSource;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
@@ -15,6 +16,7 @@ pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60)
 pub(super) struct ListenerTaskContext {
     pub(super) live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
+    pub(super) live_thread_history: Arc<dyn AppServerLiveThreadHistoryRuntime>,
     pub(super) thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
     pub(super) live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     pub(super) live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
@@ -279,6 +281,7 @@ pub(super) async fn ensure_listener_task_running(
     let ListenerTaskContext {
         outgoing,
         live_thread_inspection,
+        live_thread_history,
         thread_lifecycle_runtime,
         live_thread_command,
         live_thread_usage,
@@ -347,8 +350,8 @@ pub(super) async fn ensure_listener_task_running(
                     apply_bespoke_event_handling(
                         event.clone(),
                         conversation_id,
-                        conversation.clone(),
                         live_thread_inspection.clone(),
+                        live_thread_history.clone(),
                         thread_lifecycle_runtime.clone(),
                         live_thread_command.clone(),
                         live_thread_usage.clone(),

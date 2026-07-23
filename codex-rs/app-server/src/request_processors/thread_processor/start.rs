@@ -82,6 +82,7 @@ impl ThreadRequestProcessor {
         let listener_task_context = ListenerTaskContext {
             live_thread_listener: Arc::clone(&self.live_thread_listener),
             live_thread_inspection: Arc::clone(&self.live_thread_inspection),
+            live_thread_history: Arc::clone(&self.live_thread_history),
             thread_lifecycle_runtime: Arc::clone(&self.thread_lifecycle_runtime),
             live_thread_command: Arc::clone(&self.live_thread_command),
             live_thread_usage: Arc::clone(&self.live_thread_usage),

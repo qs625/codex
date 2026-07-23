@@ -2,6 +2,7 @@ use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadConversationInjectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
@@ -23,6 +24,7 @@ pub(crate) struct TurnRequestProcessor {
     environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
     memory_startup_config_runtime: Arc<dyn NativeMemoryStartupConfigRuntime>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
+    live_thread_history: Arc<dyn AppServerLiveThreadHistoryRuntime>,
     thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     live_thread_injection: Arc<dyn AppServerLiveThreadConversationInjectionRuntime>,
@@ -85,6 +87,7 @@ impl TurnRequestProcessor {
             environment_runtime: thread_service.clone(),
             memory_startup_config_runtime: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),
+            live_thread_history: thread_service.clone(),
             thread_lifecycle_runtime: thread_service.clone(),
             live_thread_command: thread_service.clone(),
             live_thread_injection: thread_service.clone(),
@@ -1279,6 +1282,7 @@ impl TurnRequestProcessor {
         ListenerTaskContext {
             live_thread_listener: self.live_thread_listener.clone(),
             live_thread_inspection: self.live_thread_inspection.clone(),
+            live_thread_history: self.live_thread_history.clone(),
             thread_lifecycle_runtime: self.thread_lifecycle_runtime.clone(),
             live_thread_command: self.live_thread_command.clone(),
             live_thread_usage: self.live_thread_usage.clone(),

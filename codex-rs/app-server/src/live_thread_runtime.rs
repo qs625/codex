@@ -82,12 +82,6 @@ where
 /// Object-safe live thread surface consumed by app-server listener/event-stream code.
 pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
     fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>>;
-
-    fn read_thread(
-        &self,
-        include_archived: bool,
-        include_history: bool,
-    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>>;
 }
 
 impl<T> AppServerLiveThreadListenerHandle for T
@@ -97,19 +91,6 @@ where
     fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>> {
         Box::pin(LiveThreadListenerHandle::next_event(self))
     }
-
-    fn read_thread(
-        &self,
-        include_archived: bool,
-        include_history: bool,
-    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>> {
-        Box::pin(LiveThreadListenerHandle::read_thread(
-            self,
-            include_archived,
-            include_history,
-        ))
-    }
-
 }
 
 pub(crate) trait AppServerLiveThreadListenerRuntime: Send + Sync {
@@ -142,6 +123,13 @@ pub(crate) trait AppServerLiveThreadHistoryRuntime: Send + Sync {
         thread_id: ThreadId,
         include_archived: bool,
     ) -> BoxFuture<'_, ThreadStoreResult<StoredThreadHistory>>;
+
+    fn read_live_thread(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+        include_history: bool,
+    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>>;
 }
 
 impl<T> AppServerLiveThreadHistoryRuntime for T
@@ -157,6 +145,20 @@ where
             self,
             thread_id,
             include_archived,
+        ))
+    }
+
+    fn read_live_thread(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+        include_history: bool,
+    ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>> {
+        Box::pin(LiveThreadHistoryRuntime::read_live_thread(
+            self,
+            thread_id,
+            include_archived,
+            include_history,
         ))
     }
 }

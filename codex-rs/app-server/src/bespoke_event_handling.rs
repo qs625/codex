@@ -1,8 +1,8 @@
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::outgoing_message::ClientRequestResult;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
@@ -132,8 +132,8 @@ use tracing::error;
 pub(crate) async fn apply_bespoke_event_handling(
     event: Event,
     conversation_id: ThreadId,
-    conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
+    live_thread_history: Arc<dyn AppServerLiveThreadHistoryRuntime>,
     thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
@@ -819,8 +819,9 @@ pub(crate) async fn apply_bespoke_event_handling(
                     }
                 };
                 let fallback_cwd = live_thread_snapshot.config_snapshot.cwd;
-                let stored_thread = match conversation
-                    .read_thread(
+                let stored_thread = match live_thread_history
+                    .read_live_thread(
+                        conversation_id,
                         /*include_archived*/ true, /*include_history*/ true,
                     )
                     .await

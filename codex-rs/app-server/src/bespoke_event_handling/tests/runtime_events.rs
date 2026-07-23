@@ -41,7 +41,7 @@ use super::*;
         );
         let thread_service::NewThread {
             thread_id: conversation_id,
-            thread: conversation,
+            thread: _,
             ..
         } = thread_service.start_thread(config.clone()).await?;
         let thread_state = new_thread_state();
@@ -90,7 +90,7 @@ use super::*;
                 }),
             },
             conversation_id,
-            conversation,
+            thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
@@ -129,7 +129,7 @@ use super::*;
         );
         let thread_service::NewThread {
             thread_id: conversation_id,
-            thread: conversation,
+            thread: _,
             ..
         } = thread_service.start_thread(config).await?;
         let thread_state = new_thread_state();
@@ -155,7 +155,7 @@ use super::*;
                 }),
             },
             conversation_id,
-            conversation,
+            thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
@@ -207,7 +207,7 @@ use super::*;
         );
         let thread_service::NewThread {
             thread_id: conversation_id,
-            thread: conversation,
+            thread: _,
             ..
         } = thread_service.start_thread(config).await?;
         let thread_state = new_thread_state();
@@ -236,7 +236,7 @@ use super::*;
                 msg: EventMsg::BuiltinToolCallStarted(started.clone()),
             },
             conversation_id,
-            conversation.clone(),
+            thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
@@ -292,7 +292,7 @@ use super::*;
                 msg: EventMsg::BuiltinToolCallCompleted(completed.clone()),
             },
             conversation_id,
-            conversation,
+            thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
@@ -343,7 +343,7 @@ use super::*;
         );
         let thread_service::NewThread {
             thread_id: conversation_id,
-            thread: conversation,
+            thread: _,
             ..
         } = thread_service.start_thread(config).await?;
         let thread_state = new_thread_state();
@@ -369,7 +369,7 @@ use super::*;
                 msg: EventMsg::BuiltinToolCallCompleted(failed.clone()),
             },
             conversation_id,
-            conversation,
+            thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
@@ -420,7 +420,7 @@ use super::*;
         );
         let thread_service::NewThread {
             thread_id: conversation_id,
-            thread: conversation,
+            thread: _,
             ..
         } = thread_service.start_thread(config.clone()).await?;
         let thread_state = new_thread_state();
@@ -448,7 +448,7 @@ use super::*;
                 }),
             },
             conversation_id,
-            conversation,
+            thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),
             thread_service.clone(),

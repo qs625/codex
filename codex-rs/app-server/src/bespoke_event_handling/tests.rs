@@ -46,7 +46,6 @@
     use protocol::protocol::UserMessageEvent;
     use serde_json::json;
     use tempfile::TempDir;
-    use thread_service::CodexThread;
     use thread_service::ThreadService;
     use thread_store::StoredThread;
     use thread_store::StoredThreadHistory;
@@ -229,7 +228,6 @@
 
     struct GuardianAssessmentTestContext {
         conversation_id: ThreadId,
-        conversation: Arc<CodexThread>,
         thread_service: Arc<ThreadService>,
         outgoing: ThreadScopedOutgoingMessageSender,
         thread_state: Arc<Mutex<ThreadState>>,
@@ -245,7 +243,7 @@
                     msg: EventMsg::GuardianAssessment(assessment),
                 },
                 self.conversation_id,
-                self.conversation.clone(),
+                self.thread_service.clone(),
                 self.thread_service.clone(),
                 self.thread_service.clone(),
                 self.thread_service.clone(),

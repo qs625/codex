@@ -308,7 +308,7 @@ use thread_service_api::ThreadLifecycleRuntime;
         );
         let thread_service::NewThread {
             thread_id: conversation_id,
-            thread: conversation,
+            thread: _,
             ..
         } = thread_service.start_thread(config.clone()).await?;
         let thread_state = new_thread_state();
@@ -325,7 +325,6 @@ use thread_service_api::ThreadLifecycleRuntime;
         );
         let guardian_context = GuardianAssessmentTestContext {
             conversation_id,
-            conversation: conversation.clone(),
             thread_service: thread_service.clone(),
             outgoing: outgoing.clone(),
             thread_state: thread_state.clone(),

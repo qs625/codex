@@ -297,17 +297,19 @@ pub trait LiveThreadHistoryRuntime: Send + Sync {
         thread_id: ThreadId,
         include_archived: bool,
     ) -> impl Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_;
+
+    /// Return a full stored thread for a specific loaded thread.
+    fn read_live_thread(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+        include_history: bool,
+    ) -> impl Future<Output = ThreadStoreResult<StoredThread>> + Send + '_;
 }
 
 /// Live thread surface needed by listener/event-stream orchestration.
 pub trait LiveThreadListenerHandle: Send + Sync {
     fn next_event(&self) -> impl Future<Output = CodexResult<Event>> + Send + '_;
-
-    fn read_thread(
-        &self,
-        include_archived: bool,
-        include_history: bool,
-    ) -> impl Future<Output = ThreadStoreResult<StoredThread>> + Send + '_;
 }
 
 impl<T> LiveThreadListenerHandle for T
@@ -317,15 +319,6 @@ where
     fn next_event(&self) -> impl Future<Output = CodexResult<Event>> + Send + '_ {
         LiveThreadHandle::next_event(self)
     }
-
-    fn read_thread(
-        &self,
-        include_archived: bool,
-        include_history: bool,
-    ) -> impl Future<Output = ThreadStoreResult<StoredThread>> + Send + '_ {
-        LiveThreadHandle::read_thread(self, include_archived, include_history)
-    }
-
 }
 
 /// Listener/event-stream lookup surface for loaded live threads.

@@ -2256,6 +2256,25 @@ impl thread_service_api::LiveThreadHistoryRuntime for ThreadServiceState {
             thread.load_history(include_archived).await
         }
     }
+
+    fn read_live_thread(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+        include_history: bool,
+    ) -> impl std::future::Future<Output = ThreadStoreResult<StoredThread>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await.map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    ThreadStoreError::ThreadNotFound { thread_id }
+                }
+                err => ThreadStoreError::Internal {
+                    message: err.to_string(),
+                },
+            })?;
+            thread.read_thread(include_archived, include_history).await
+        }
+    }
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -2674,6 +2693,20 @@ impl thread_service_api::LiveThreadHistoryRuntime for ThreadService {
             self.state.as_ref(),
             thread_id,
             include_archived,
+        )
+    }
+
+    fn read_live_thread(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+        include_history: bool,
+    ) -> impl std::future::Future<Output = ThreadStoreResult<StoredThread>> + Send + '_ {
+        thread_service_api::LiveThreadHistoryRuntime::read_live_thread(
+            self.state.as_ref(),
+            thread_id,
+            include_archived,
+            include_history,
         )
     }
 }
