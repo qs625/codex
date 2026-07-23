@@ -2433,6 +2433,17 @@ impl thread_service_api::LiveThreadGoalRuntime for ThreadServiceState {
             Ok(())
         }
     }
+
+    fn continue_thread_active_goal_if_idle(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread_service_api::LiveThreadHandle::continue_active_goal_if_idle(thread.as_ref())
+                .await
+        }
+    }
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -2783,6 +2794,16 @@ impl thread_service_api::LiveThreadGoalRuntime for ThreadService {
         thread_id: ThreadId,
     ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
         thread_service_api::LiveThreadGoalRuntime::apply_thread_external_goal_clear(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn continue_thread_active_goal_if_idle(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadGoalRuntime::continue_thread_active_goal_if_idle(
             self.state.as_ref(),
             thread_id,
         )

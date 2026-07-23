@@ -59,8 +59,6 @@ pub(crate) trait AppServerLiveThreadHandle: Send + Sync {
     fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>>;
 
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
-
-    fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>>;
 }
 
 impl<T> AppServerLiveThreadHandle for T
@@ -93,10 +91,6 @@ where
 
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
         Box::pin(LiveThreadHandle::thread_context_usage(self))
-    }
-
-    fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadHandle::continue_active_goal_if_idle(self))
     }
 }
 
@@ -463,6 +457,11 @@ pub(crate) trait AppServerLiveThreadGoalRuntime: Send + Sync {
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<()>>;
+
+    fn continue_thread_active_goal_if_idle(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<()>>;
 }
 
 impl<T> AppServerLiveThreadGoalRuntime for T
@@ -493,6 +492,15 @@ where
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<()>> {
         Box::pin(LiveThreadGoalRuntime::apply_thread_external_goal_clear(
+            self, thread_id,
+        ))
+    }
+
+    fn continue_thread_active_goal_if_idle(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadGoalRuntime::continue_thread_active_goal_if_idle(
             self, thread_id,
         ))
     }

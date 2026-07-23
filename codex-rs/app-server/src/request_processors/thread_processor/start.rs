@@ -443,7 +443,7 @@ impl ThreadRequestProcessor {
                     .await;
                 }
                 self.thread_goal_processor
-                    .emit_resume_goal_snapshot_and_continue(thread_id, codex_thread.as_ref())
+                    .emit_resume_goal_snapshot_and_continue(thread_id)
                     .await;
             }
             Err(err) => {
@@ -1132,6 +1132,9 @@ impl ThreadRequestProcessor {
             .await;
         }
 
+        self.thread_goal_processor
+            .emit_resume_goal_snapshot_and_continue(thread_id)
+            .await;
         self.outgoing
             .send_server_notification(ServerNotification::ThreadStarted(notif))
             .await;

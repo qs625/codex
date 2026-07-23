@@ -542,6 +542,12 @@ pub trait LiveThreadGoalRuntime: Send + Sync {
         &self,
         thread_id: ThreadId,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+
+    /// Continue an active goal for a specific live thread if that thread is idle.
+    fn continue_thread_active_goal_if_idle(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 }
 
 /// Out-of-band elicitation pause counter surface for live threads.

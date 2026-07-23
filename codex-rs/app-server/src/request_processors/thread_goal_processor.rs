@@ -1,6 +1,5 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
-use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use protocol::protocol::validate_thread_goal_objective;
 use state_api::protocol_goal_from_state;
@@ -70,18 +69,18 @@ impl ThreadGoalRequestProcessor {
             .map(|()| None)
     }
 
-    pub(crate) async fn emit_resume_goal_snapshot_and_continue(
-        &self,
-        thread_id: ThreadId,
-        thread: &dyn AppServerLiveThreadHandle,
-    ) {
+    pub(crate) async fn emit_resume_goal_snapshot_and_continue(&self, thread_id: ThreadId) {
         if !self.config.features.enabled(Feature::Goals) {
             return;
         }
         self.emit_thread_goal_snapshot(thread_id).await;
         // App-server owns resume response and snapshot ordering, so wait until
         // those are sent before letting core start goal continuation.
-        if let Err(err) = thread.continue_active_goal_if_idle().await {
+        if let Err(err) = self
+            .thread_runtime
+            .continue_thread_active_goal_if_idle(thread_id)
+            .await
+        {
             tracing::warn!("failed to continue active goal after resume: {err}");
         }
     }

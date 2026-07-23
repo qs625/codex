@@ -198,20 +198,21 @@ realtime feature check 和 app-server client info 写入也已改到这些窄 ru
 apps processor 的 apps feature check、feedback
 processor 的 live rollout path lookup、thread goal processor 的 live rollout path /
 ephemeral-thread checks 也已改到 inspection runtime。thread goal processor 的
-external goal prepare/apply runtime effects 已改到 goal runtime。feedback processor
-的 subtree ids、guardian rollout path 和 session source 读取已改到 feedback
-runtime。listener 的 skill watch path resolution 已改到 skill-watch runtime。MCP
-processor 的 thread-bound resource/tool request loaded check 已改到
-inspection runtime；MCP refresh 的 live thread ids、config refresh snapshot 和
-queued `Op::RefreshMcpServers` submit 已改到 inspection / command runtime。
-bespoke `CollabCloseEnd` receiver loaded check 已改到 inspection runtime。
-thread read/listing 的 copied token/context usage reads 已改到 usage runtime。
-turn context override validation 已改到 live turn runtime。thread/read 和
-thread/turns/list 的 live persisted history 读取已改到 history runtime。listener
-event stream、idle unload 和 running resume 所需的 live handle 读取已改到
-listener runtime，memory consolidation startup/shutdown/status/token usage 已改到
-memory-specific handle。旧 `LiveThreadRegistry` / `AppServerLiveThreadRegistry`
-surface 已删除；turn processor 里剩余
+external goal prepare/apply runtime effects 以及 cold resume/fork 后的 active goal
+continuation 已改到 goal runtime。feedback processor 的 subtree ids、guardian
+rollout path 和 session source 读取已改到 feedback runtime。listener 的 skill watch
+path resolution 已改到 skill-watch runtime。MCP processor 的 thread-bound
+resource/tool request loaded check 已改到 inspection runtime；MCP refresh 的 live
+thread ids、config refresh snapshot 和 queued `Op::RefreshMcpServers` submit 已改到
+inspection / command runtime。bespoke `CollabCloseEnd` receiver loaded check 已改到
+inspection runtime。thread read/listing 的 copied token/context usage reads 已改到
+usage runtime。turn context override validation 已改到 live turn runtime。thread/read
+和 thread/turns/list 的 live persisted history 读取已改到 history runtime。listener
+event stream、idle unload 和 running resume 所需的 live handle 读取已改到 listener
+runtime，memory consolidation startup/shutdown/status/token usage 已改到 memory-specific
+handle。旧 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` surface 已删除；
+start/resume/fork 的 transitional `AppServerLiveThreadHandle` 继续只覆盖 response
+assembly 所需的 copied read/config/usage/session 能力；turn processor 里剩余
 的 app-server-local turn runtime 只覆盖环境选择校验、live `Config` 读取、
 conversation item injection、steer 和 detached review fork 这些尚未
 provider-neutral 化的 native-only 能力。后续阶段再继续拆出更窄 handle。
