@@ -226,8 +226,11 @@ processor 的 `thread/inject_items` 已改到 conversation injection runtime，�
 runtime，保留 active-turn steer validation 和 typed `SteerInputError` 映射。detached
 review 的 current-history fork 和 metadata-only stored read 已改到 native detached
 review runtime；app-server 仍负责 listener attach、watch upsert、
-`ThreadStarted` notification 和 review turn submit orchestration。turn processor 里
-剩余的 app-server-local turn runtime 只覆盖 live `Config` 读取。thread processor
+`ThreadStarted` notification 和 review turn submit orchestration。turn memory
+startup 使用的 live full `Config` 读取已改到 native memory-startup config runtime；
+它继续与 copied `ThreadConfigSnapshot` 分工，前者只服务 native memory startup
+adapter/settings，后者仍服务 app-server response/session-source assembly。turn
+processor 已不再保留 app-server-local `TurnProcessorRuntime` leftover bucket。thread processor
 已不再保留 broad creation facade；native root start/resume/fork 仍通过
 `NativeThreadCreationRuntime` 明确标记为 native-only 过渡层。后续阶段再继续拆出更窄
 handle。

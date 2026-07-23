@@ -8,34 +8,18 @@ use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSteerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
-use futures::future::BoxFuture;
 use model_service_api::SharedModelServiceApi;
 use thread_service::NativeDetachedReviewRuntime;
+use thread_service::NativeMemoryStartupConfigRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
 use thread_service_api::AppServerClientInfo;
-
-pub(crate) trait TurnProcessorRuntime: Send + Sync {
-    fn live_thread_config<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'a, CodexResult<Arc<Config>>>;
-}
-
-impl TurnProcessorRuntime for ThreadService {
-    fn live_thread_config<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'a, CodexResult<Arc<Config>>> {
-        Box::pin(ThreadService::live_thread_config(self, thread_id))
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct TurnRequestProcessor {
     auth_manager: Arc<AuthManager>,
-    turn_runtime: Arc<dyn TurnProcessorRuntime>,
     detached_review_runtime: Arc<dyn NativeDetachedReviewRuntime>,
     environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
+    memory_startup_config_runtime: Arc<dyn NativeMemoryStartupConfigRuntime>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
@@ -93,9 +77,9 @@ impl TurnRequestProcessor {
     ) -> Self {
         Self {
             auth_manager,
-            turn_runtime: thread_service.clone(),
             detached_review_runtime: thread_service.clone(),
             environment_runtime: thread_service.clone(),
+            memory_startup_config_runtime: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),
             live_thread_status: thread_service.clone(),
             live_thread_command: thread_service.clone(),
@@ -622,8 +606,8 @@ impl TurnRequestProcessor {
                 })?
                 .config_snapshot;
             let thread_config = self
-                .turn_runtime
-                .live_thread_config(thread_id)
+                .memory_startup_config_runtime
+                .live_thread_memory_startup_config(thread_id)
                 .await
                 .map_err(|err| match err {
                     CodexErr::ThreadNotFound(thread_id) => {
