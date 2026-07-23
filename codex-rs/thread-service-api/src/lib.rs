@@ -416,12 +416,14 @@ pub trait LiveThreadTurnRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 }
 
-/// Shutdown surface for live agents without exposing concrete thread handles.
+/// Transitional shutdown surface for live agents without exposing concrete thread handles.
 ///
 /// Implementations own any required rollout flush, lifecycle status checks,
 /// shutdown operation submission, and termination wait. Callers should use this
-/// trait when they only need to request agent shutdown and then release their
-/// own registry bookkeeping.
+/// trait when they only need to request agent shutdown and then release their own
+/// registry bookkeeping. New app-server lifecycle callers should use
+/// `ThreadLifecycleRuntime`; this trait remains for internal live-thread
+/// compatibility during the provider boundary migration.
 pub trait LiveThreadShutdownRuntime: Send + Sync {
     fn shutdown_live_thread(
         &self,

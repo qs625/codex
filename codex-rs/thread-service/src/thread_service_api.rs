@@ -138,6 +138,15 @@ impl ThreadLifecycleRuntime for ThreadService {
         Box::pin(ThreadService::shutdown_all_threads_bounded(self, timeout))
     }
 
+    fn shutdown_live_thread<'a>(
+        &'a self,
+        thread_id: protocol::ThreadId,
+    ) -> ThreadServiceFuture<'a, protocol::error::Result<String>> {
+        Box::pin(thread_service_api::LiveThreadShutdownRuntime::shutdown_live_thread(
+            self, thread_id,
+        ))
+    }
+
     fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent> {
         ThreadService::subscribe_thread_created(self)
     }

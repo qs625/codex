@@ -157,7 +157,7 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
 当前过渡实现已将 `thread_service_api::ThreadServiceApi` 拆成四个窄边界：
 
 - `ThreadLifecycleRuntime`：provider-neutral lifecycle 边界；当前已承载
-  `shutdown_all_threads_bounded`、`subscribe_thread_created` 和
+  `shutdown_all_threads_bounded`、per-thread live shutdown、`subscribe_thread_created` 和
   `active_event_subscriptions`，并承载 live thread status read / native status watch，
   供 app-server thread/turn processor 直接依赖。status read 仍保留 native/external
   live record fallback 语义；status watch 仍只承载 native live thread subscription，
@@ -185,17 +185,19 @@ creation/environment runtime。app-server 只把 `NewThread` 投影成 response 
 需要把 provider-neutral request DTO 和 routing 从这些 native-only DTO 中继续拆出。
 
 live thread runtime 的 command/inspection 能力也已开始迁移到 provider-neutral
-surfaces，status 已进一步收口到 lifecycle 边界：
+surfaces，status 和 app-server archive 前的 per-thread shutdown 已进一步收口到
+lifecycle 边界：
 
 - `LiveThreadInspectionRuntime` 承载 loaded ids、loaded check、
   `LiveThreadInfo` 和 `LiveThreadSnapshot` 等 copied fact。
 - status read / subscribe 已提升到 `ThreadLifecycleRuntime`；旧
   `LiveThreadStatusRuntime` 仅作为 thread-service 内部 native agent control 的过渡
   compatibility surface 保留。
+- app-server archive 准备阶段使用的 single-thread shutdown 已提升到
+  `ThreadLifecycleRuntime`；旧 `LiveThreadShutdownRuntime` 仅作为 thread-service 内部
+  native agent control 的过渡 compatibility surface 保留。
 - `LiveThreadCommandRuntime` 承载 submit op、submit op with trace、client info
   写入和 loaded-thread remove。
-- `LiveThreadShutdownRuntime` 承载不暴露 concrete handle 的 shutdown-and-wait
-  语义。
 
 app-server thread processor 的 thread loaded list、thread/read live snapshot merge、
 resume-running thread
@@ -204,8 +206,8 @@ archive 前 shutdown/remove 路径已改到这些窄 runtime。listener idle-unl
 live-thread removal 已改到 command runtime。turn processor 的 turn/start
 snapshot 读取、turn/review/realtime/interrupt `Op` 提交、
 realtime feature check 和 app-server client info 写入也已改到这些窄 runtime。
-app-server 的 turns/list live status、thread started/status notifications 和
-turn interrupt status check 已改到 lifecycle runtime。
+app-server 的 turns/list live status、thread started/status notifications、turn
+interrupt status check 以及 archive 前 live shutdown 已改到 lifecycle runtime。
 apps processor 的 apps feature check、feedback
 processor 的 live rollout path lookup、thread goal processor 的 live rollout path /
 ephemeral-thread checks 也已改到 inspection runtime。thread goal processor 的

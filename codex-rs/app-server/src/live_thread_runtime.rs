@@ -33,7 +33,6 @@ use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadListenerHandle;
 use thread_service_api::LiveThreadListenerRuntime;
-use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadSkillWatchRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadTurnRuntime;
@@ -650,21 +649,6 @@ where
 
     fn remove_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
         Box::pin(LiveThreadCommandRuntime::remove_live_thread(
-            self, thread_id,
-        ))
-    }
-}
-
-pub(crate) trait AppServerLiveThreadShutdownRuntime: Send + Sync {
-    fn shutdown_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<String>>;
-}
-
-impl<T> AppServerLiveThreadShutdownRuntime for T
-where
-    T: LiveThreadShutdownRuntime + Send + Sync,
-{
-    fn shutdown_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<String>> {
-        Box::pin(LiveThreadShutdownRuntime::shutdown_live_thread(
             self, thread_id,
         ))
     }

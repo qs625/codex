@@ -160,7 +160,8 @@ impl ThreadRequestProcessor {
             info!("thread {thread_id} was active; shutting down");
             match tokio::time::timeout(
                 Duration::from_secs(10),
-                self.live_thread_shutdown.shutdown_live_thread(thread_id),
+                self.thread_lifecycle_runtime
+                    .shutdown_live_thread(thread_id),
             )
             .await
             {

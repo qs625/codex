@@ -584,6 +584,15 @@ mod tests {
             })
         }
 
+        fn shutdown_live_thread<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+        ) -> ThreadServiceFuture<'a, protocol::error::Result<String>> {
+            Box::pin(async {
+                unreachable!("shutdown_live_thread should not be called in this test")
+            })
+        }
+
         fn subscribe_thread_created(
             &self,
         ) -> tokio::sync::broadcast::Receiver<thread_service_api::ThreadCreatedEvent> {
