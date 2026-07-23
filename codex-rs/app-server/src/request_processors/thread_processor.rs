@@ -2,6 +2,7 @@ use super::*;
 use crate::error_code::method_not_found;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadElicitationRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
@@ -433,6 +434,7 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     pub(super) live_thread_history: Arc<dyn AppServerLiveThreadHistoryRuntime>,
     pub(super) live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
+    pub(super) live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
     pub(super) live_thread_elicitation: Arc<dyn AppServerLiveThreadElicitationRuntime>,
     pub(super) thread_metadata_runtime: Arc<dyn ThreadProcessorMetadataRuntime>,
     pub(super) thread_lifecycle_runtime: Arc<dyn thread_service_api::ThreadLifecycleRuntime>,
@@ -478,6 +480,7 @@ impl ThreadRequestProcessor {
             live_thread_skill_watch: thread_service.clone(),
             live_thread_history: thread_service.clone(),
             live_thread_usage: thread_service.clone(),
+            live_thread_goal: thread_service.clone(),
             live_thread_elicitation: thread_service.clone(),
             thread_metadata_runtime: thread_service.clone(),
             thread_lifecycle_runtime: thread_service,

@@ -1,5 +1,6 @@
 use super::*;
 use super::context_usage_replay::ThreadUsageSource;
+use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
@@ -15,6 +16,7 @@ pub(super) struct ListenerTaskContext {
     pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     pub(super) thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
     pub(super) live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
+    pub(super) live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
     pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     pub(super) thread_state_manager: ThreadStateManager,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
@@ -267,6 +269,7 @@ pub(super) async fn ensure_listener_task_running(
         live_thread_inspection,
         thread_lifecycle_runtime,
         live_thread_usage,
+        live_thread_goal,
         thread_state_manager,
         pending_thread_unloads,
         thread_watch_manager,
@@ -298,6 +301,7 @@ pub(super) async fn ensure_listener_task_running(
                         &outgoing_for_task,
                         &pending_thread_unloads,
                         &live_thread_usage,
+                        &live_thread_goal,
                         listener_command,
                     )
                     .await;
@@ -461,6 +465,7 @@ pub(super) async fn handle_thread_listener_command(
     outgoing: &Arc<OutgoingMessageSender>,
     pending_thread_unloads: &Arc<Mutex<HashSet<ThreadId>>>,
     live_thread_usage: &Arc<dyn AppServerLiveThreadUsageRuntime>,
+    live_thread_goal: &Arc<dyn AppServerLiveThreadGoalRuntime>,
     listener_command: ThreadListenerCommand,
 ) {
     match listener_command {
@@ -475,6 +480,7 @@ pub(super) async fn handle_thread_listener_command(
                 outgoing,
                 pending_thread_unloads,
                 live_thread_usage,
+                live_thread_goal,
                 *resume_request,
             )
             .await;
@@ -533,6 +539,7 @@ pub(super) async fn handle_pending_thread_resume_request(
     outgoing: &Arc<OutgoingMessageSender>,
     pending_thread_unloads: &Arc<Mutex<HashSet<ThreadId>>>,
     live_thread_usage: &Arc<dyn AppServerLiveThreadUsageRuntime>,
+    live_thread_goal: &Arc<dyn AppServerLiveThreadGoalRuntime>,
     pending: crate::thread_state::PendingThreadResumeRequest,
 ) {
     let active_turn = {
@@ -631,7 +638,9 @@ pub(super) async fn handle_pending_thread_resume_request(
     }
 
     if pending.emit_thread_goal_update
-        && let Err(err) = conversation.apply_goal_resume_runtime_effects().await
+        && let Err(err) = live_thread_goal
+            .apply_thread_goal_resume_runtime_effects(conversation_id)
+            .await
     {
         tracing::warn!("failed to apply goal resume runtime effects: {err}");
     }
@@ -716,7 +725,9 @@ pub(super) async fn handle_pending_thread_resume_request(
     // App-server owns resume response and snapshot ordering, so wait until
     // replay completes before letting core start goal continuation.
     if pending.emit_thread_goal_update
-        && let Err(err) = conversation.continue_active_goal_if_idle().await
+        && let Err(err) = live_thread_goal
+            .continue_thread_active_goal_if_idle(conversation_id)
+            .await
     {
         tracing::warn!("failed to continue active goal after running-thread resume: {err}");
     }

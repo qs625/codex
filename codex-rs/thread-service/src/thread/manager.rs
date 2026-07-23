@@ -2508,6 +2508,19 @@ impl thread_service_api::LiveThreadGoalRuntime for ThreadServiceState {
         }
     }
 
+    fn apply_thread_goal_resume_runtime_effects(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread_service_api::LiveThreadHandle::apply_goal_resume_runtime_effects(
+                thread.as_ref(),
+            )
+            .await
+        }
+    }
+
     fn continue_thread_active_goal_if_idle(
         &self,
         thread_id: ThreadId,
@@ -2836,6 +2849,16 @@ impl thread_service_api::LiveThreadGoalRuntime for ThreadService {
         thread_id: ThreadId,
     ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
         thread_service_api::LiveThreadGoalRuntime::apply_thread_external_goal_clear(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn apply_thread_goal_resume_runtime_effects(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadGoalRuntime::apply_thread_goal_resume_runtime_effects(
             self.state.as_ref(),
             thread_id,
         )

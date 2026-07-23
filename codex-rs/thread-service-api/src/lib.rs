@@ -318,12 +318,6 @@ pub trait LiveThreadListenerHandle: Send + Sync {
         include_archived: bool,
         include_history: bool,
     ) -> impl Future<Output = ThreadStoreResult<StoredThread>> + Send + '_;
-
-    fn apply_goal_resume_runtime_effects(
-        &self,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
-    fn continue_active_goal_if_idle(&self) -> impl Future<Output = CodexResult<()>> + Send + '_;
 }
 
 impl<T> LiveThreadListenerHandle for T
@@ -362,15 +356,6 @@ where
         LiveThreadHandle::read_thread(self, include_archived, include_history)
     }
 
-    fn apply_goal_resume_runtime_effects(
-        &self,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_ {
-        LiveThreadHandle::apply_goal_resume_runtime_effects(self)
-    }
-
-    fn continue_active_goal_if_idle(&self) -> impl Future<Output = CodexResult<()>> + Send + '_ {
-        LiveThreadHandle::continue_active_goal_if_idle(self)
-    }
 }
 
 /// Listener/event-stream lookup surface for loaded live threads.
@@ -504,6 +489,12 @@ pub trait LiveThreadGoalRuntime: Send + Sync {
 
     /// Apply runtime effects for an externally persisted goal clear.
     fn apply_thread_external_goal_clear(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+
+    /// Restore goal runtime state after a caller has replayed or resumed a thread.
+    fn apply_thread_goal_resume_runtime_effects(
         &self,
         thread_id: ThreadId,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;

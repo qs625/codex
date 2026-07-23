@@ -100,10 +100,6 @@ pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
         include_archived: bool,
         include_history: bool,
     ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>>;
-
-    fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>>;
-
-    fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>>;
 }
 
 impl<T> AppServerLiveThreadListenerHandle for T
@@ -146,15 +142,6 @@ where
         ))
     }
 
-    fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadListenerHandle::apply_goal_resume_runtime_effects(
-            self,
-        ))
-    }
-
-    fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadListenerHandle::continue_active_goal_if_idle(self))
-    }
 }
 
 pub(crate) trait AppServerLiveThreadListenerRuntime: Send + Sync {
@@ -403,6 +390,11 @@ pub(crate) trait AppServerLiveThreadGoalRuntime: Send + Sync {
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<()>>;
 
+    fn apply_thread_goal_resume_runtime_effects(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<()>>;
+
     fn continue_thread_active_goal_if_idle(
         &self,
         thread_id: ThreadId,
@@ -437,6 +429,15 @@ where
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<()>> {
         Box::pin(LiveThreadGoalRuntime::apply_thread_external_goal_clear(
+            self, thread_id,
+        ))
+    }
+
+    fn apply_thread_goal_resume_runtime_effects(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadGoalRuntime::apply_thread_goal_resume_runtime_effects(
             self, thread_id,
         ))
     }

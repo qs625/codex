@@ -1,6 +1,7 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadConversationInjectionRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
@@ -30,6 +31,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
+    live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
     model_service: SharedModelServiceApi,
     outgoing: Arc<OutgoingMessageSender>,
@@ -91,6 +93,7 @@ impl TurnRequestProcessor {
             live_thread_skill_watch: thread_service.clone(),
             live_thread_listener: thread_service.clone(),
             live_thread_usage: thread_service.clone(),
+            live_thread_goal: thread_service.clone(),
             memory_startup_host: thread_service,
             model_service,
             outgoing,
@@ -1278,6 +1281,7 @@ impl TurnRequestProcessor {
             live_thread_inspection: self.live_thread_inspection.clone(),
             thread_lifecycle_runtime: self.thread_lifecycle_runtime.clone(),
             live_thread_usage: self.live_thread_usage.clone(),
+            live_thread_goal: self.live_thread_goal.clone(),
             live_thread_skill_watch: self.live_thread_skill_watch.clone(),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
