@@ -223,6 +223,9 @@ impl ThreadRequestProcessor {
         let resume_session_source = resume_source_thread
             .as_ref()
             .map(stored_thread_session_source_with_agent_metadata);
+        let resume_agent_metadata = resume_source_thread
+            .as_ref()
+            .and_then(stored_thread_root_agent_metadata);
         let resume_agent_role = native_agent_role_for_resume(resume_session_source.as_ref());
 
         let history_cwd = thread_history.session_cwd();
@@ -278,7 +281,7 @@ impl ThreadRequestProcessor {
                     config.clone(),
                     thread_history,
                     session_source,
-                    None,
+                    resume_agent_metadata,
                     parent_trace,
                 )
                 .await
