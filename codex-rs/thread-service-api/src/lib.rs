@@ -351,6 +351,18 @@ pub trait LiveThreadFeedbackRuntime: Send + Sync {
     fn session_source(&self) -> SessionSource;
 }
 
+/// Skill watch path resolution surface without exposing concrete thread handles.
+///
+/// Implementations return copied watch path data for a live thread. Listener
+/// setup should fall back independently if this resolution fails.
+pub trait LiveThreadSkillWatchRuntime: Send + Sync {
+    /// Return file-system paths that should be watched for skill changes.
+    fn thread_skill_watch_paths(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_;
+}
+
 /// Goal runtime side-effect surface without exposing concrete thread handles.
 ///
 /// App-server owns the persisted goal mutation. Implementations should only
@@ -605,12 +617,6 @@ pub trait LiveThreadRegistry: Send + Sync {
         thread_id: ThreadId,
         include_archived: bool,
     ) -> impl Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_;
-
-    /// Return file-system paths that should be watched for skill changes for a live thread.
-    fn thread_skill_watch_paths(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_;
 
     /// Return the complete token usage snapshot for a specific live thread.
     fn thread_token_usage_info(

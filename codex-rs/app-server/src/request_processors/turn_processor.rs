@@ -3,6 +3,7 @@ use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
+use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
@@ -141,6 +142,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
+    live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
     model_service: SharedModelServiceApi,
@@ -195,6 +197,7 @@ impl TurnRequestProcessor {
             live_thread_inspection: thread_service.clone(),
             live_thread_status: thread_service.clone(),
             live_thread_command: thread_service.clone(),
+            live_thread_skill_watch: thread_service.clone(),
             live_threads: thread_service.clone(),
             memory_startup_host: thread_service,
             model_service,
@@ -1374,6 +1377,7 @@ impl TurnRequestProcessor {
     fn listener_task_context(&self) -> ListenerTaskContext {
         ListenerTaskContext {
             live_threads: self.live_threads.clone(),
+            live_thread_skill_watch: self.live_thread_skill_watch.clone(),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),

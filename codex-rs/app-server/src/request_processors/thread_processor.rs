@@ -6,6 +6,7 @@ use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
 use crate::live_thread_runtime::AppServerLiveThreadShutdownRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
@@ -431,6 +432,7 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
     pub(super) live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     pub(super) live_thread_shutdown: Arc<dyn AppServerLiveThreadShutdownRuntime>,
+    pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     pub(super) live_thread_elicitation: Arc<dyn AppServerLiveThreadElicitationRuntime>,
     pub(super) thread_metadata_runtime: Arc<dyn ThreadProcessorMetadataRuntime>,
     pub(super) thread_lifecycle_runtime: Arc<dyn thread_service_api::ThreadLifecycleRuntime>,
@@ -474,6 +476,7 @@ impl ThreadRequestProcessor {
             live_thread_status: thread_service.clone(),
             live_thread_command: thread_service.clone(),
             live_thread_shutdown: thread_service.clone(),
+            live_thread_skill_watch: thread_service.clone(),
             live_thread_elicitation: thread_service.clone(),
             thread_metadata_runtime: thread_service.clone(),
             thread_lifecycle_runtime: thread_service,

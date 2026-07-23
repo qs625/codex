@@ -2259,6 +2259,57 @@ impl thread_service_api::LiveThreadFeedbackRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadSkillWatchRuntime for ThreadServiceState {
+    fn thread_skill_watch_paths(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            let environments = thread.environment_selections().await;
+            let Some(environment_selection) = environments.first() else {
+                return Ok(Vec::new());
+            };
+            let Some(environment) = self
+                .environment_manager
+                .get_environment(&environment_selection.environment_id)
+            else {
+                warn!(
+                    "failed to register skills watcher for unknown environment `{}`",
+                    environment_selection.environment_id
+                );
+                return Ok(Vec::new());
+            };
+            if environment.is_remote() {
+                return Ok(Vec::new());
+            }
+
+            let config = thread.config().await;
+            let plugins_input = config.plugins_config_input();
+            let skills_input = SkillsLoadInput::new(
+                config.cwd.clone(),
+                self.plugin_runtime
+                    .effective_skill_roots_for_config(&plugins_input)
+                    .await,
+                skill_config_layer_stack_from_config_layer_stack(&config.config_layer_stack),
+                config.bundled_skills_enabled(),
+            );
+            let paths = self
+                .skill_service
+                .skill_root_paths_for_config(&skills_input, Some(environment.get_filesystem()))
+                .await
+                .into_iter()
+                .map(|root| SkillWatchPath {
+                    path: root.into_path_buf(),
+                    recursive: true,
+                })
+                .collect();
+            Ok(paths)
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadGoalRuntime for ThreadServiceState {
     fn prepare_thread_external_goal_mutation(
         &self,
@@ -2515,6 +2566,19 @@ impl thread_service_api::LiveThreadFeedbackRuntime for ThreadService {
 
     fn session_source(&self) -> SessionSource {
         thread_service_api::LiveThreadFeedbackRuntime::session_source(self.state.as_ref())
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadSkillWatchRuntime for ThreadService {
+    fn thread_skill_watch_paths(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_ {
+        thread_service_api::LiveThreadSkillWatchRuntime::thread_skill_watch_paths(
+            self.state.as_ref(),
+            thread_id,
+        )
     }
 }
 
@@ -2805,55 +2869,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
                 },
             })?;
             thread.load_history(include_archived).await
-        }
-    }
-
-    fn thread_skill_watch_paths(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            let environments = thread.environment_selections().await;
-            let Some(environment_selection) = environments.first() else {
-                return Ok(Vec::new());
-            };
-            let Some(environment) = self
-                .environment_provider()
-                .get_environment(&environment_selection.environment_id)
-            else {
-                warn!(
-                    "failed to register skills watcher for unknown environment `{}`",
-                    environment_selection.environment_id
-                );
-                return Ok(Vec::new());
-            };
-            if environment.is_remote() {
-                return Ok(Vec::new());
-            }
-
-            let config = thread.config().await;
-            let plugins_input = config.plugins_config_input();
-            let plugin_runtime = self.plugin_runtime();
-            let skills_input = SkillsLoadInput::new(
-                config.cwd.clone(),
-                plugin_runtime
-                    .effective_skill_roots_for_config(&plugins_input)
-                    .await,
-                skill_config_layer_stack_from_config_layer_stack(&config.config_layer_stack),
-                config.bundled_skills_enabled(),
-            );
-            let paths = self
-                .skill_service()
-                .skill_root_paths_for_config(&skills_input, Some(environment.get_filesystem()))
-                .await
-                .into_iter()
-                .map(|root| SkillWatchPath {
-                    path: root.into_path_buf(),
-                    recursive: true,
-                })
-                .collect();
-            Ok(paths)
         }
     }
 

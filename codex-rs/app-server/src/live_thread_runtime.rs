@@ -25,6 +25,7 @@ use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadRegistry;
 use thread_service_api::LiveThreadShutdownRuntime;
+use thread_service_api::LiveThreadSkillWatchRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadStatusRuntime;
 use thread_service_api::ThreadConfigSnapshot;
@@ -161,12 +162,28 @@ pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>>;
 
+    fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+}
+
+pub(crate) trait AppServerLiveThreadSkillWatchRuntime: Send + Sync {
     fn thread_skill_watch_paths(
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<Vec<SkillWatchPath>>>;
+}
 
-    fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+impl<T> AppServerLiveThreadSkillWatchRuntime for T
+where
+    T: LiveThreadSkillWatchRuntime + Send + Sync,
+{
+    fn thread_skill_watch_paths(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Vec<SkillWatchPath>>> {
+        Box::pin(LiveThreadSkillWatchRuntime::thread_skill_watch_paths(
+            self, thread_id,
+        ))
+    }
 }
 
 pub(crate) trait AppServerLiveThreadInspectionRuntime: Send + Sync {
@@ -513,15 +530,6 @@ where
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>> {
         Box::pin(LiveThreadRegistry::thread_context_usage(self, thread_id))
-    }
-
-    fn thread_skill_watch_paths(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Vec<SkillWatchPath>>> {
-        Box::pin(LiveThreadRegistry::thread_skill_watch_paths(
-            self, thread_id,
-        ))
     }
 
     fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {

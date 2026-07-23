@@ -199,7 +199,8 @@ processor 的 live rollout path lookup、thread goal processor 的 live rollout 
 ephemeral-thread checks 也已改到 inspection runtime。thread goal processor 的
 external goal prepare/apply runtime effects 已改到 goal runtime。feedback processor
 的 subtree ids、guardian rollout path 和 session source 读取已改到 feedback
-runtime。MCP processor 的 thread-bound resource/tool request loaded check 已改到
+runtime。listener 的 skill watch path resolution 已改到 skill-watch runtime。MCP
+processor 的 thread-bound resource/tool request loaded check 已改到
 inspection runtime；MCP refresh 的 live thread ids、config refresh snapshot 和
 queued `Op::RefreshMcpServers` submit 已改到 inspection / command runtime。
 `AppServerLiveThreadRegistry::live_thread_handle()` 仍只保留给 listener / full live

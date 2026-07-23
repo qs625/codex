@@ -80,6 +80,7 @@ impl ThreadRequestProcessor {
         typesafe_overrides.ephemeral = ephemeral;
         let listener_task_context = ListenerTaskContext {
             live_threads: Arc::clone(&self.live_threads),
+            live_thread_skill_watch: Arc::clone(&self.live_thread_skill_watch),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),

@@ -1,12 +1,14 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
+use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
     pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+    pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     pub(super) thread_state_manager: ThreadStateManager,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
     pub(super) pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
@@ -229,7 +231,7 @@ pub(super) async fn ensure_listener_task_running(
         )));
     };
     let skill_watch_paths = match listener_task_context
-        .live_threads
+        .live_thread_skill_watch
         .thread_skill_watch_paths(conversation_id)
         .await
     {
