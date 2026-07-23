@@ -223,9 +223,7 @@ impl ThreadRequestProcessor {
         let resume_session_source = resume_source_thread
             .as_ref()
             .map(stored_thread_session_source_with_agent_metadata);
-        let resume_agent_role = resume_session_source
-            .as_ref()
-            .and_then(protocol::protocol::SessionSource::get_agent_role);
+        let resume_agent_role = native_agent_role_for_resume(resume_session_source.as_ref());
 
         let history_cwd = thread_history.session_cwd();
         let mut typesafe_overrides = self.build_thread_config_overrides(
@@ -262,7 +260,7 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
-        if let Some(agent_role) = resume_agent_role.as_deref()
+        if let Some(agent_role) = resume_agent_role
             && let Err(err) =
                 codex_agent_runtime::apply_role_to_config(&mut config, Some(agent_role)).await
         {
