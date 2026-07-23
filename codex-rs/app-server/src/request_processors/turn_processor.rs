@@ -1,6 +1,9 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
+use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
 use futures::future::BoxFuture;
@@ -14,11 +17,6 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         environments: &[TurnEnvironmentSelection],
     ) -> CodexResult<()>;
 
-    fn live_thread_snapshot<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'a, CodexResult<LiveThreadSnapshot>>;
-
     fn live_thread_config<'a>(
         &'a self,
         thread_id: ThreadId,
@@ -30,23 +28,10 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         overrides: CodexThreadTurnContextOverrides,
     ) -> BoxFuture<'a, CodexResult<()>>;
 
-    fn send_op_with_trace<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        op: Op,
-        trace: Option<protocol::protocol::W3cTraceContext>,
-    ) -> BoxFuture<'a, CodexResult<String>>;
-
     fn inject_thread_conversation_items<'a>(
         &'a self,
         thread_id: ThreadId,
         items: Vec<ResponseItem>,
-    ) -> BoxFuture<'a, CodexResult<()>>;
-
-    fn set_thread_app_server_client_info<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        info: AppServerClientInfo,
     ) -> BoxFuture<'a, CodexResult<()>>;
 
     fn steer_thread_input<'a>(
@@ -56,17 +41,6 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         expected_turn_id: Option<String>,
         responsesapi_client_metadata: Option<HashMap<String, String>>,
     ) -> BoxFuture<'a, CodexResult<Result<String, SteerInputError>>>;
-
-    fn thread_feature_enabled<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        feature: Feature,
-    ) -> BoxFuture<'a, CodexResult<bool>>;
-
-    fn thread_agent_status<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'a, CodexResult<AgentStatus>>;
 
     fn fork_detached_review_thread<'a>(
         &'a self,
@@ -89,13 +63,6 @@ impl TurnProcessorRuntime for ThreadService {
         ThreadService::validate_environment_selections(self, environments)
     }
 
-    fn live_thread_snapshot<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'a, CodexResult<LiveThreadSnapshot>> {
-        Box::pin(LiveThreadRegistry::live_thread_snapshot(self, thread_id))
-    }
-
     fn live_thread_config<'a>(
         &'a self,
         thread_id: ThreadId,
@@ -113,17 +80,6 @@ impl TurnProcessorRuntime for ThreadService {
         ))
     }
 
-    fn send_op_with_trace<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        op: Op,
-        trace: Option<protocol::protocol::W3cTraceContext>,
-    ) -> BoxFuture<'a, CodexResult<String>> {
-        Box::pin(LiveThreadRegistry::send_op_with_trace(
-            self, thread_id, op, trace,
-        ))
-    }
-
     fn inject_thread_conversation_items<'a>(
         &'a self,
         thread_id: ThreadId,
@@ -131,16 +87,6 @@ impl TurnProcessorRuntime for ThreadService {
     ) -> BoxFuture<'a, CodexResult<()>> {
         Box::pin(ThreadService::inject_thread_conversation_items(
             self, thread_id, items,
-        ))
-    }
-
-    fn set_thread_app_server_client_info<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        info: AppServerClientInfo,
-    ) -> BoxFuture<'a, CodexResult<()>> {
-        Box::pin(LiveThreadRegistry::set_thread_app_server_client_info(
-            self, thread_id, info,
         ))
     }
 
@@ -161,23 +107,6 @@ impl TurnProcessorRuntime for ThreadService {
             )
             .await
         })
-    }
-
-    fn thread_feature_enabled<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        feature: Feature,
-    ) -> BoxFuture<'a, CodexResult<bool>> {
-        Box::pin(LiveThreadRegistry::thread_feature_enabled(
-            self, thread_id, feature,
-        ))
-    }
-
-    fn thread_agent_status<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'a, CodexResult<AgentStatus>> {
-        Box::pin(LiveThreadRegistry::thread_agent_status(self, thread_id))
     }
 
     fn fork_detached_review_thread<'a>(
@@ -209,6 +138,9 @@ impl TurnProcessorRuntime for ThreadService {
 pub(crate) struct TurnRequestProcessor {
     auth_manager: Arc<AuthManager>,
     turn_runtime: Arc<dyn TurnProcessorRuntime>,
+    live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
+    live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
     model_service: SharedModelServiceApi,
@@ -260,6 +192,9 @@ impl TurnRequestProcessor {
         Self {
             auth_manager,
             turn_runtime: thread_service.clone(),
+            live_thread_inspection: thread_service.clone(),
+            live_thread_status: thread_service.clone(),
+            live_thread_command: thread_service.clone(),
             live_threads: thread_service.clone(),
             memory_startup_host: thread_service,
             model_service,
@@ -560,7 +495,7 @@ impl TurnRequestProcessor {
         let snapshot = if params.permissions.is_some() || runtime_workspace_roots_request.is_some()
         {
             Some(
-                self.turn_runtime
+                self.live_thread_inspection
                     .live_thread_snapshot(thread_id)
                     .await
                     .map_err(|err| match err {
@@ -748,8 +683,8 @@ impl TurnRequestProcessor {
             }
         };
         let turn_id = self
-            .turn_runtime
-            .send_op_with_trace(
+            .live_thread_command
+            .submit_live_thread_op_with_trace(
                 thread_id,
                 turn_op,
                 self.request_trace_context(&request_id).await,
@@ -768,7 +703,7 @@ impl TurnRequestProcessor {
 
         if turn_has_input {
             let config_snapshot = self
-                .turn_runtime
+                .live_thread_inspection
                 .live_thread_snapshot(thread_id)
                 .await
                 .map_err(|err| match err {
@@ -869,8 +804,8 @@ impl TurnRequestProcessor {
             app_server_client_name.as_deref(),
             app_server_client_version.as_deref(),
         );
-        self.turn_runtime
-            .set_thread_app_server_client_info(
+        self.live_thread_command
+            .set_live_thread_app_server_client_info(
                 thread_id,
                 AppServerClientInfo {
                     app_server_client_name,
@@ -1018,8 +953,8 @@ impl TurnRequestProcessor {
         }
 
         let realtime_enabled = self
-            .turn_runtime
-            .thread_feature_enabled(thread_id, Feature::RealtimeConversation)
+            .live_thread_inspection
+            .live_thread_feature_enabled(thread_id, Feature::RealtimeConversation)
             .await
             .map_err(|err| match err {
                 CodexErr::ThreadNotFound(thread_id) => {
@@ -1047,8 +982,8 @@ impl TurnRequestProcessor {
         else {
             return Ok(None);
         };
-        self.turn_runtime
-            .send_op_with_trace(
+        self.live_thread_command
+            .submit_live_thread_op_with_trace(
                 thread_id,
                 Op::RealtimeConversationStart(ConversationStartParams {
                     output_modality: params.output_modality,
@@ -1084,8 +1019,8 @@ impl TurnRequestProcessor {
         else {
             return Ok(None);
         };
-        self.turn_runtime
-            .send_op_with_trace(
+        self.live_thread_command
+            .submit_live_thread_op_with_trace(
                 thread_id,
                 Op::RealtimeConversationAudio(ConversationAudioParams {
                     frame: params.audio.into(),
@@ -1112,8 +1047,8 @@ impl TurnRequestProcessor {
         else {
             return Ok(None);
         };
-        self.turn_runtime
-            .send_op_with_trace(
+        self.live_thread_command
+            .submit_live_thread_op_with_trace(
                 thread_id,
                 Op::RealtimeConversationText(ConversationTextParams { text: params.text }),
                 self.request_trace_context(request_id).await,
@@ -1138,8 +1073,8 @@ impl TurnRequestProcessor {
         else {
             return Ok(None);
         };
-        self.turn_runtime
-            .send_op_with_trace(
+        self.live_thread_command
+            .submit_live_thread_op_with_trace(
                 thread_id,
                 Op::RealtimeConversationClose,
                 self.request_trace_context(request_id).await,
@@ -1200,8 +1135,8 @@ impl TurnRequestProcessor {
         display_text: &str,
     ) -> std::result::Result<(), JSONRPCErrorError> {
         let turn_id = self
-            .turn_runtime
-            .send_op_with_trace(
+            .live_thread_command
+            .submit_live_thread_op_with_trace(
                 parent_thread_id,
                 Op::Review { review_request },
                 self.request_trace_context(request_id).await,
@@ -1288,8 +1223,8 @@ impl TurnRequestProcessor {
         }
 
         let turn_id = self
-            .turn_runtime
-            .send_op_with_trace(
+            .live_thread_command
+            .submit_live_thread_op_with_trace(
                 thread_id,
                 Op::Review { review_request },
                 self.request_trace_context(request_id).await,
@@ -1360,8 +1295,8 @@ impl TurnRequestProcessor {
         if !is_startup_interrupt {
             let thread_state = self.thread_state_manager.thread_state(thread_uuid).await;
             let is_running = matches!(
-                self.turn_runtime
-                    .thread_agent_status(thread_uuid)
+                self.live_thread_status
+                    .live_thread_agent_status(thread_uuid)
                     .await
                     .map_err(|err| match err {
                         CodexErr::ThreadNotFound(thread_id) => {
@@ -1396,8 +1331,8 @@ impl TurnRequestProcessor {
         // Submit the interrupt. Turn interrupts respond upon TurnAborted; startup
         // interrupts respond here because startup cancellation has no turn event.
         match self
-            .turn_runtime
-            .send_op_with_trace(
+            .live_thread_command
+            .submit_live_thread_op_with_trace(
                 thread_uuid,
                 Op::Interrupt,
                 self.request_trace_context(request_id).await,

@@ -191,9 +191,14 @@ surfaces：
 app-server thread processor 的 thread loaded list、thread/read live snapshot merge、
 turns/list live status、thread started/status notifications、resume-running thread
 checks、submit op、client info 写入，以及 archive 前 shutdown/remove 路径已改到这些
-窄 runtime。`AppServerLiveThreadRegistry::live_thread_handle()` 仍只保留给 listener /
-turn dispatch / full live history 这类需要事件流、`Op` submit owner 或完整 persisted
-history handle 的路径；后续阶段再继续拆出更窄 handle。
+窄 runtime。turn processor 的 turn/start snapshot 读取、turn/review/realtime/interrupt
+`Op` 提交、interrupt status check、realtime feature check 和 app-server client info
+写入也已改到这些窄 runtime。`AppServerLiveThreadRegistry::live_thread_handle()` 仍只
+保留给 listener / full live history 这类需要事件流或完整 persisted history handle 的
+路径；turn processor 里剩余的 app-server-local turn runtime 只覆盖环境选择校验、
+live `Config` 读取、turn context override validation、conversation item injection、
+steer 和 detached review fork 这些尚未 provider-neutral 化的 native-only 能力。
+后续阶段再继续拆出更窄 handle。
 
 禁止路径：
 

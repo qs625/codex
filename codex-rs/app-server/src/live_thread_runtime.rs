@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use codex_features::Feature;
 use futures::future::BoxFuture;
 use protocol::ThreadId;
 use protocol::error::Result as CodexResult;
@@ -183,6 +184,12 @@ pub(crate) trait AppServerLiveThreadInspectionRuntime: Send + Sync {
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>>;
+
+    fn live_thread_feature_enabled(
+        &self,
+        thread_id: ThreadId,
+        feature: Feature,
+    ) -> BoxFuture<'_, CodexResult<bool>>;
 }
 
 impl<T> AppServerLiveThreadInspectionRuntime for T
@@ -211,6 +218,16 @@ where
     ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>> {
         Box::pin(LiveThreadInspectionRuntime::live_thread_snapshot(
             self, thread_id,
+        ))
+    }
+
+    fn live_thread_feature_enabled(
+        &self,
+        thread_id: ThreadId,
+        feature: Feature,
+    ) -> BoxFuture<'_, CodexResult<bool>> {
+        Box::pin(LiveThreadInspectionRuntime::live_thread_feature_enabled(
+            self, thread_id, feature,
         ))
     }
 }
