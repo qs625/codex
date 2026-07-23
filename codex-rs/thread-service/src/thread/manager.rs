@@ -157,6 +157,7 @@ type SharedCapturedOps = Arc<std::sync::Mutex<CapturedOps>>;
 struct ExternalLiveThreadRecord {
     snapshot: LiveThreadSnapshot,
     status: AgentStatus,
+    status_tx: tokio::sync::watch::Sender<AgentStatus>,
 }
 
 fn external_agent_status_to_thread_runtime_status(
@@ -1560,10 +1561,18 @@ impl ThreadServiceState {
         snapshot: LiveThreadSnapshot,
         status: AgentStatus,
     ) {
+        let (status_tx, _status_rx) = tokio::sync::watch::channel(status.clone());
         self.external_live_threads
             .write()
             .await
-            .insert(thread_id, ExternalLiveThreadRecord { snapshot, status });
+            .insert(
+                thread_id,
+                ExternalLiveThreadRecord {
+                    snapshot,
+                    status,
+                    status_tx,
+                },
+            );
     }
 
     pub(crate) async fn update_external_live_thread_status(
@@ -1572,7 +1581,8 @@ impl ThreadServiceState {
         status: AgentStatus,
     ) {
         if let Some(record) = self.external_live_threads.write().await.get_mut(&thread_id) {
-            record.status = status;
+            record.status = status.clone();
+            record.status_tx.send_replace(status);
         }
     }
 
@@ -1721,8 +1731,17 @@ impl ThreadServiceState {
         &self,
         thread_id: ThreadId,
     ) -> CodexResult<tokio::sync::watch::Receiver<AgentStatus>> {
-        let thread = self.get_thread(thread_id).await?;
-        Ok(thread.subscribe_status())
+        match self.get_thread(thread_id).await {
+            Ok(thread) => Ok(thread.subscribe_status()),
+            Err(CodexErr::ThreadNotFound(_)) => self
+                .external_live_threads
+                .read()
+                .await
+                .get(&thread_id)
+                .map(|record| record.status_tx.subscribe())
+                .ok_or(CodexErr::ThreadNotFound(thread_id)),
+            Err(err) => Err(err),
+        }
     }
 
     /// Spawn a new thread with no history using a provided config.

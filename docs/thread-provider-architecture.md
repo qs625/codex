@@ -162,8 +162,8 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
   agent/runtime status read / native status watch，供 app-server thread/turn processor
   直接依赖。agent status read 仍保留 native/external live record fallback 语义；
   runtime status read 对 native 保留 post-turn wait semantics，对 external live record
-  只提供 Active/Complete 粗粒度映射；status watch 仍只承载 native live thread subscription，
-  不宣称 external live records 已支持 watch。root
+  只提供 Active/Complete 粗粒度映射；status watch 支持 native live thread subscription
+  和 external live record watch，但不宣称 external close/remove/reload 已完成。root
   start/resume/fork 仍不属于该 provider-neutral trait，因为这些请求还携带完整
   `Config` 与 native dynamic tool/environment 结构，直接搬入 `thread-service-api`
   会引入不合适的依赖方向；它们当前收口到 thread-service crate 内的

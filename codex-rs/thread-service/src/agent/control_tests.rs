@@ -1650,6 +1650,112 @@ async fn subscribe_status_errors_for_missing_thread() {
 }
 
 #[tokio::test]
+async fn subscribe_status_observes_external_live_record_updates() {
+    let harness = AgentControlHarness::new().await;
+    let external_thread_id = ThreadId::new();
+    let child_agent_path = AgentPath::try_from("/root/external_subscribe").expect("agent path");
+    let session_source = external_session_source_for(
+        ThreadId::new(),
+        1,
+        child_agent_path.clone(),
+        SpawnAgentProvider::CodexCli,
+    );
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(child_agent_path),
+        agent_nickname: Some("codex_cli".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    let manager = harness
+        .control
+        .upgrade()
+        .expect("manager should be available");
+    manager
+        .register_external_live_thread_snapshot(
+            external_thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                external_thread_id,
+                session_source,
+                &agent_metadata,
+            ),
+            AgentStatus::Running,
+        )
+        .await;
+
+    let mut status_rx = harness
+        .control
+        .subscribe_status(external_thread_id)
+        .await
+        .expect("subscribe_status should succeed for external live record");
+    assert_eq!(status_rx.borrow().clone(), AgentStatus::Running);
+
+    manager
+        .update_external_live_thread_status(
+            external_thread_id,
+            AgentStatus::Completed(Some("done".to_string())),
+        )
+        .await;
+
+    status_rx
+        .changed()
+        .await
+        .expect("external status update should notify receiver");
+    assert_eq!(
+        status_rx.borrow().clone(),
+        AgentStatus::Completed(Some("done".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn subscribe_status_prefers_native_when_external_record_has_same_id() {
+    let harness = AgentControlHarness::new().await;
+    let (thread_id, _thread) = harness.start_thread().await;
+    let child_agent_path =
+        AgentPath::try_from("/root/external_subscribe_same_id").expect("agent path");
+    let session_source = external_session_source_for(
+        ThreadId::new(),
+        1,
+        child_agent_path.clone(),
+        SpawnAgentProvider::CodexCli,
+    );
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(thread_id),
+        agent_path: Some(child_agent_path),
+        agent_nickname: Some("codex_cli".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    harness
+        .control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                thread_id,
+                session_source,
+                &agent_metadata,
+            ),
+            AgentStatus::Shutdown,
+        )
+        .await;
+
+    let status_rx = harness
+        .control
+        .subscribe_status(thread_id)
+        .await
+        .expect("subscribe_status should use native thread");
+    assert_eq!(status_rx.borrow().clone(), AgentStatus::PendingInit);
+}
+
+#[tokio::test]
 async fn subscribe_status_updates_on_shutdown() {
     let harness = AgentControlHarness::new().await;
     let (thread_id, thread) = harness.start_thread().await;
