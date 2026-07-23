@@ -1,4 +1,5 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
@@ -8,6 +9,7 @@ pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60)
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
     pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+    pub(super) live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     pub(super) thread_state_manager: ThreadStateManager,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
@@ -258,6 +260,7 @@ pub(super) async fn ensure_listener_task_running(
     let ListenerTaskContext {
         outgoing,
         live_threads,
+        live_thread_command,
         thread_state_manager,
         pending_thread_unloads,
         thread_watch_manager,
@@ -351,7 +354,7 @@ pub(super) async fn ensure_listener_task_running(
                         pending_thread_unloads.insert(conversation_id);
                     }
                     unload_thread_without_subscribers(
-                        live_threads.clone(),
+                        live_thread_command.clone(),
                         outgoing_for_task.clone(),
                         pending_thread_unloads.clone(),
                         thread_state_manager.clone(),
@@ -384,7 +387,7 @@ pub(super) async fn wait_for_thread_shutdown(
 }
 
 pub(super) async fn unload_thread_without_subscribers(
-    live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+    live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     outgoing: Arc<OutgoingMessageSender>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
@@ -404,7 +407,7 @@ pub(super) async fn unload_thread_without_subscribers(
     tokio::spawn(async move {
         match wait_for_thread_shutdown(&thread).await {
             ThreadShutdownResult::Complete => {
-                if !live_threads.remove_loaded_thread(thread_id).await {
+                if !live_thread_command.remove_live_thread(thread_id).await {
                     info!("thread {thread_id} was already removed before teardown finalized");
                     thread_watch_manager
                         .remove_thread(&thread_id.to_string())

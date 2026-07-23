@@ -642,9 +642,6 @@ pub trait LiveThreadRegistry: Send + Sync {
         thread_id: ThreadId,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 
-    /// Remove a terminated live thread from the registry.
-    fn remove_loaded_thread(&self, thread_id: ThreadId) -> impl Future<Output = bool> + Send + '_;
-
     /// Wait until a specific live thread terminates without issuing shutdown.
     fn wait_thread_until_terminated(
         &self,

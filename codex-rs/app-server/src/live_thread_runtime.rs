@@ -153,7 +153,6 @@ pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
         include_archived: bool,
     ) -> BoxFuture<'_, ThreadStoreResult<StoredThreadHistory>>;
 
-    fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
 }
 
 pub(crate) trait AppServerLiveThreadUsageRuntime: Send + Sync {
@@ -544,7 +543,4 @@ where
         ))
     }
 
-    fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
-        Box::pin(LiveThreadRegistry::remove_loaded_thread(self, thread_id))
-    }
 }

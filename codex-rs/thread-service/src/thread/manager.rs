@@ -2928,13 +2928,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
         }
     }
 
-    fn remove_loaded_thread(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = bool> + Send + '_ {
-        async move { self.remove_thread(&thread_id).await.is_some() }
-    }
-
     fn wait_thread_until_terminated(
         &self,
         thread_id: ThreadId,
