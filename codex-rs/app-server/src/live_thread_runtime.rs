@@ -9,7 +9,6 @@ use protocol::models::ResponseItem;
 use protocol::protocol::AgentStatus;
 use protocol::protocol::Event;
 use protocol::protocol::Op;
-use protocol::protocol::SessionConfiguredEvent;
 use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::TokenUsageInfo;
@@ -83,15 +82,11 @@ where
 
 /// Object-safe live thread surface consumed by app-server listener/event-stream code.
 pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
-    fn session_configured(&self) -> SessionConfiguredEvent;
-
     fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>>;
 
     fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;
 
     fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus>;
-
-    fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot>;
 
     fn read_thread(
         &self,
@@ -104,10 +99,6 @@ impl<T> AppServerLiveThreadListenerHandle for T
 where
     T: LiveThreadListenerHandle + ?Sized,
 {
-    fn session_configured(&self) -> SessionConfiguredEvent {
-        LiveThreadListenerHandle::session_configured(self)
-    }
-
     fn next_event(&self) -> BoxFuture<'_, CodexResult<Event>> {
         Box::pin(LiveThreadListenerHandle::next_event(self))
     }
@@ -118,10 +109,6 @@ where
 
     fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus> {
         Box::pin(LiveThreadListenerHandle::runtime_thread_status(self))
-    }
-
-    fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot> {
-        Box::pin(LiveThreadListenerHandle::config_snapshot(self))
     }
 
     fn read_thread(

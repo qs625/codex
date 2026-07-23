@@ -301,15 +301,11 @@ pub trait LiveThreadHistoryRuntime: Send + Sync {
 
 /// Live thread surface needed by listener/event-stream orchestration.
 pub trait LiveThreadListenerHandle: Send + Sync {
-    fn session_configured(&self) -> SessionConfiguredEvent;
-
     fn next_event(&self) -> impl Future<Output = CodexResult<Event>> + Send + '_;
 
     fn submit_thread_op(&self, op: Op) -> impl Future<Output = CodexResult<String>> + Send + '_;
 
     fn runtime_thread_status(&self) -> impl Future<Output = ThreadRuntimeStatus> + Send + '_;
-
-    fn config_snapshot(&self) -> impl Future<Output = ThreadConfigSnapshot> + Send + '_;
 
     fn read_thread(
         &self,
@@ -322,10 +318,6 @@ impl<T> LiveThreadListenerHandle for T
 where
     T: LiveThreadHandle + ?Sized,
 {
-    fn session_configured(&self) -> SessionConfiguredEvent {
-        LiveThreadHandle::session_configured(self)
-    }
-
     fn next_event(&self) -> impl Future<Output = CodexResult<Event>> + Send + '_ {
         LiveThreadHandle::next_event(self)
     }
@@ -336,10 +328,6 @@ where
 
     fn runtime_thread_status(&self) -> impl Future<Output = ThreadRuntimeStatus> + Send + '_ {
         LiveThreadHandle::runtime_thread_status(self)
-    }
-
-    fn config_snapshot(&self) -> impl Future<Output = ThreadConfigSnapshot> + Send + '_ {
-        LiveThreadHandle::config_snapshot(self)
     }
 
     fn read_thread(

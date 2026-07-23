@@ -256,7 +256,17 @@ pub(super) async fn ensure_listener_task_running(
     let watch_registration = listener_task_context
         .skills_watcher
         .register_thread_skill_watch_paths(skill_watch_paths);
-    let session_id = conversation.session_configured().session_id;
+    let session_id = listener_task_context
+        .live_thread_inspection
+        .live_thread_snapshot(conversation_id)
+        .await
+        .map_err(|err| {
+            internal_error(format!(
+                "failed to read live thread snapshot for listener {conversation_id}: {err}"
+            ))
+        })?
+        .info
+        .session_id;
     let (mut listener_command_rx, listener_generation) = {
         let mut thread_state = thread_state.lock().await;
         if thread_state.listener_matches(session_id) {
@@ -293,13 +303,13 @@ pub(super) async fn ensure_listener_task_running(
                     };
                     handle_thread_listener_command(
                         conversation_id,
-                        &conversation,
                         codex_home.as_path(),
                         &thread_state_manager,
                         &thread_state,
                         &thread_watch_manager,
                         &outgoing_for_task,
                         &pending_thread_unloads,
+                        &live_thread_inspection,
                         &thread_lifecycle_runtime,
                         &live_thread_usage,
                         &live_thread_goal,
@@ -472,13 +482,13 @@ pub(super) async fn unload_thread_without_subscribers(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_thread_listener_command(
     conversation_id: ThreadId,
-    conversation: &Arc<dyn AppServerLiveThreadListenerHandle>,
     codex_home: &Path,
     thread_state_manager: &ThreadStateManager,
     thread_state: &Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
     outgoing: &Arc<OutgoingMessageSender>,
     pending_thread_unloads: &Arc<Mutex<HashSet<ThreadId>>>,
+    live_thread_inspection: &Arc<dyn AppServerLiveThreadInspectionRuntime>,
     thread_lifecycle_runtime: &Arc<dyn ThreadLifecycleRuntime>,
     live_thread_usage: &Arc<dyn AppServerLiveThreadUsageRuntime>,
     live_thread_goal: &Arc<dyn AppServerLiveThreadGoalRuntime>,
@@ -488,13 +498,13 @@ pub(super) async fn handle_thread_listener_command(
         ThreadListenerCommand::SendThreadResumeResponse(resume_request) => {
             handle_pending_thread_resume_request(
                 conversation_id,
-                conversation,
                 codex_home,
                 thread_state_manager,
                 thread_state,
                 thread_watch_manager,
                 outgoing,
                 pending_thread_unloads,
+                live_thread_inspection,
                 thread_lifecycle_runtime,
                 live_thread_usage,
                 live_thread_goal,
@@ -548,13 +558,13 @@ pub(super) async fn handle_thread_listener_command(
 )]
 pub(super) async fn handle_pending_thread_resume_request(
     conversation_id: ThreadId,
-    conversation: &Arc<dyn AppServerLiveThreadListenerHandle>,
     _codex_home: &Path,
     thread_state_manager: &ThreadStateManager,
     thread_state: &Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
     outgoing: &Arc<OutgoingMessageSender>,
     pending_thread_unloads: &Arc<Mutex<HashSet<ThreadId>>>,
+    live_thread_inspection: &Arc<dyn AppServerLiveThreadInspectionRuntime>,
     thread_lifecycle_runtime: &Arc<dyn ThreadLifecycleRuntime>,
     live_thread_usage: &Arc<dyn AppServerLiveThreadUsageRuntime>,
     live_thread_goal: &Arc<dyn AppServerLiveThreadGoalRuntime>,
@@ -640,6 +650,24 @@ pub(super) async fn handle_pending_thread_resume_request(
         redact_thread_resume_payloads(&mut thread);
     }
 
+    let live_thread_snapshot = match live_thread_inspection
+        .live_thread_snapshot(conversation_id)
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            outgoing
+                .send_error(
+                    request_id,
+                    internal_error(format!(
+                        "failed to read live thread snapshot for resume {conversation_id}: {err}"
+                    )),
+                )
+                .await;
+            return;
+        }
+    };
+
     {
         let pending_thread_unloads = pending_thread_unloads.lock().await;
         if pending_thread_unloads.contains(&conversation_id) {
@@ -692,8 +720,7 @@ pub(super) async fn handle_pending_thread_resume_request(
     let sandbox = thread_response_sandbox_policy(&permission_profile, cwd.as_path());
     let active_permission_profile =
         thread_response_active_permission_profile(active_permission_profile);
-    let session_id = conversation.session_configured().session_id.to_string();
-    thread.session_id = session_id;
+    thread.session_id = live_thread_snapshot.info.session_id.to_string();
 
     let response = ThreadResumeResponse {
         thread,

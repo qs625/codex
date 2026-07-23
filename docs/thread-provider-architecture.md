@@ -222,12 +222,13 @@ path resolution 已改到 skill-watch runtime。MCP processor 的 thread-bound
 resource/tool request loaded check 已改到 inspection runtime；MCP refresh 的 live
 thread ids、config refresh snapshot 和 queued `Op::RefreshMcpServers` submit 已改到
 inspection / command runtime。bespoke `CollabCloseEnd` receiver loaded check 已改到
-inspection runtime。start/resume/fork/listing/review response assembly 的 copied
-session/config reads 也已改到 inspection runtime。thread read/listing、cold
+inspection runtime。start/resume/fork/listing/review response assembly，以及
+listener generation / running resume / rollback response / permissions request 所需的 copied session/config
+reads 也已改到 inspection runtime。thread read/listing、cold
 resume/fork 和 running resume usage replay 的 copied token/context usage reads 已改到 usage runtime。
 turn context override validation 已改到 live turn runtime。thread/read 和
 thread/turns/list 的 live persisted history 读取已改到 history runtime。listener event
-stream 和 running resume 所需的 read/session/config handle 读取已改到 listener runtime；memory consolidation
+stream、submit、runtime status 和 read-thread handle 读取仍在 listener runtime；memory consolidation
 startup/shutdown/status/token usage 已改到 memory-specific handle。detached review
 thread assembly 的 read-thread 也已改到 narrow runtime/store read 路径。旧
 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` surface 和 app-server

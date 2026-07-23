@@ -406,6 +406,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             handle_request_permissions(
                 &conversation_id,
                 conversation,
+                live_thread_inspection,
                 outgoing,
                 thread_state,
                 &thread_watch_manager,
@@ -779,7 +780,24 @@ pub(crate) async fn apply_bespoke_event_handling(
                         return;
                     }
                 };
-                let fallback_cwd = conversation.config_snapshot().await.cwd;
+                let live_thread_snapshot = match live_thread_inspection
+                    .live_thread_snapshot(conversation_id)
+                    .await
+                {
+                    Ok(snapshot) => snapshot,
+                    Err(err) => {
+                        outgoing
+                            .send_error(
+                                request_id.clone(),
+                                internal_error(format!(
+                                    "failed to read live thread snapshot for rollback {conversation_id}: {err}"
+                                )),
+                            )
+                            .await;
+                        return;
+                    }
+                };
+                let fallback_cwd = live_thread_snapshot.config_snapshot.cwd;
                 let stored_thread = match conversation
                     .read_thread(
                         /*include_archived*/ true, /*include_history*/ true,
@@ -804,7 +822,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                     .await;
                 let response = match thread_rollback_response_from_stored_thread(
                     stored_thread,
-                    conversation.session_configured().session_id.to_string(),
+                    live_thread_snapshot.info.session_id.to_string(),
                     fallback_model_provider.as_str(),
                     &fallback_cwd,
                     loaded_status,

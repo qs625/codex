@@ -299,6 +299,7 @@ pub(super) async fn handle_elicitation_request(
 pub(super) async fn handle_request_permissions(
     conversation_id: &ThreadId,
     conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
+    live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
@@ -310,7 +311,32 @@ pub(super) async fn handle_request_permissions(
     let requested_permissions = request.permissions.clone();
     let request_cwd = match request.cwd.clone() {
         Some(cwd) => cwd,
-        None => conversation.config_snapshot().await.cwd,
+        None => match live_thread_inspection
+            .live_thread_config_snapshot(*conversation_id)
+            .await
+        {
+            Ok(snapshot) => snapshot.cwd,
+            Err(err) => {
+                error!(
+                    "failed to read live thread config snapshot for request permissions {conversation_id}: {err}"
+                );
+                drop(permission_guard);
+                if let Err(err) = conversation
+                    .submit_op(Op::RequestPermissionsResponse {
+                        id: request.call_id,
+                        response: CoreRequestPermissionsResponse {
+                            permissions: Default::default(),
+                            scope: CorePermissionGrantScope::Turn,
+                            strict_auto_review: false,
+                        },
+                    })
+                    .await
+                {
+                    error!("failed to submit RequestPermissionsResponse: {err}");
+                }
+                return;
+            }
+        },
     };
     let params = PermissionsRequestApprovalParams {
         thread_id: conversation_id.to_string(),
