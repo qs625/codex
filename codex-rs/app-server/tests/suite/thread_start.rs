@@ -9,6 +9,8 @@ use app_server_protocol::McpServerStatusUpdatedNotification;
 use app_server_protocol::RequestId;
 use app_server_protocol::SandboxMode;
 use app_server_protocol::ServerNotification;
+use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadResumeParams;
@@ -17,8 +19,6 @@ use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
-use app_server_protocol::ThreadItem;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnEnvironmentParams;
@@ -91,11 +91,11 @@ async fn assert_no_startup_injected_context_replay(
     thread_id: &str,
 ) -> Result<()> {
     loop {
-        let message = match timeout(STARTUP_NOTIFICATION_QUIET_TIMEOUT, mcp.read_next_message()).await
-        {
-            Ok(result) => result?,
-            Err(_) => return Ok(()),
-        };
+        let message =
+            match timeout(STARTUP_NOTIFICATION_QUIET_TIMEOUT, mcp.read_next_message()).await {
+                Ok(result) => result?,
+                Err(_) => return Ok(()),
+            };
         if is_injected_context_item_completed_for_thread(&message, thread_id) {
             anyhow::bail!("thread/start should not replay Init Context as item/completed");
         }
@@ -240,23 +240,44 @@ async fn thread_start_accepts_native_thread_provider_and_rejects_external_provid
     .await??;
     let _native_started: ThreadStartResponse = to_response(native_response)?;
 
-    let external_req_id = mcp
+    for external_provider in ["claude_cli", "opencode", "codex_cli"] {
+        let external_req_id = mcp
+            .send_thread_start_request(ThreadStartParams {
+                thread_provider: Some(external_provider.to_string()),
+                ..Default::default()
+            })
+            .await?;
+        let external_error = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_error_message(RequestId::Integer(external_req_id)),
+        )
+        .await??;
+        assert_eq!(external_error.error.code, INVALID_REQUEST_ERROR_CODE);
+        assert!(
+            external_error
+                .error
+                .message
+                .contains("does not support thread/start yet")
+        );
+    }
+
+    let unknown_req_id = mcp
         .send_thread_start_request(ThreadStartParams {
-            thread_provider: Some("claude_cli".to_string()),
+            thread_provider: Some("unknown_provider".to_string()),
             ..Default::default()
         })
         .await?;
-    let external_error = timeout(
+    let unknown_error = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(external_req_id)),
+        mcp.read_stream_until_error_message(RequestId::Integer(unknown_req_id)),
     )
     .await??;
-    assert_eq!(external_error.error.code, INVALID_REQUEST_ERROR_CODE);
+    assert_eq!(unknown_error.error.code, INVALID_REQUEST_ERROR_CODE);
     assert!(
-        external_error
+        unknown_error
             .error
             .message
-            .contains("does not support thread/start yet")
+            .contains("unknown thread provider 'unknown_provider' for thread/start")
     );
 
     Ok(())
@@ -316,7 +337,10 @@ async fn thread_start_creates_thread_and_emits_started() -> Result<()> {
         !thread.ephemeral,
         "new persistent threads should not be ephemeral"
     );
-    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     assert_single_completed_init_context_turn(
         &thread.turns,
@@ -515,8 +539,7 @@ async fn thread_start_preserves_client_supplied_root_agent_path() -> Result<()> 
         .await?;
     let resumed_list_resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
-        reloaded_mcp
-            .read_stream_until_response_message(RequestId::Integer(resumed_list_req_id)),
+        reloaded_mcp.read_stream_until_response_message(RequestId::Integer(resumed_list_req_id)),
     )
     .await??;
     let resumed_listed = to_response::<ThreadListResponse>(resumed_list_resp)?
@@ -706,8 +729,7 @@ instruction_files = [
 }
 
 #[tokio::test]
-async fn thread_start_with_project_context_displays_initial_context(
-) -> Result<()> {
+async fn thread_start_with_project_context_displays_initial_context() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;

@@ -205,7 +205,7 @@ fn native_agent_role_for_resume(
 }
 
 fn is_external_agent_provider_label(label: &str) -> bool {
-    matches!(label, "codex_cli" | "claude_cli" | "opencode")
+    is_external_cli_thread_provider_id(label)
 }
 
 fn merge_persisted_resume_metadata(

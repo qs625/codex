@@ -174,8 +174,9 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
   会在 terminal Shutdown notification/persistence 后清理 external live record。durable
   default list / agent-reference recovery 基于 Open edge：Open edge 的 completed
   external agent 可恢复，显式 close 后的 Closed edge external agent 不进入默认协作集合。
-  这仍不宣称 full reload/root provider routing 已完成。root start/resume/fork
-  仍不属于该 provider-neutral trait，因为这些请求还携带完整
+  这仍不宣称 external root provider execution 已完成。root start/resume/fork
+  已在 app-server thread processor 收口 route/preflight，但仍不属于该
+  provider-neutral trait，因为这些请求还携带完整
   `Config` 与 native dynamic tool/environment 结构，直接搬入 `thread-service-api`
   会引入不合适的依赖方向；它们当前收口到 thread-service crate 内的
   `NativeThreadCreationRuntime` / `NativeThreadEnvironmentRuntime`。

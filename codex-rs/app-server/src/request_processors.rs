@@ -460,6 +460,38 @@ mod turn_processor;
 mod windows_sandbox_processor;
 mod workflow_processor;
 
+#[derive(Debug, Clone, Copy)]
+struct ExternalCliThreadProviderDescriptor {
+    id: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+}
+
+const EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS: &[ExternalCliThreadProviderDescriptor] = &[
+    ExternalCliThreadProviderDescriptor {
+        id: "claude_cli",
+        display_name: "Claude Code",
+        description: "External Claude CLI session normalized by the external-agent adapter.",
+    },
+    ExternalCliThreadProviderDescriptor {
+        id: "opencode",
+        display_name: "OpenCode",
+        description: "External OpenCode session normalized by the external-agent adapter.",
+    },
+    ExternalCliThreadProviderDescriptor {
+        id: "codex_cli",
+        display_name: "Codex CLI",
+        description:
+            "External official Codex CLI app-server session normalized by the external-agent adapter.",
+    },
+];
+
+fn is_external_cli_thread_provider_id(id: &str) -> bool {
+    EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS
+        .iter()
+        .any(|provider| provider.id == id)
+}
+
 pub(crate) use account_processor::AccountRequestProcessor;
 pub(crate) use apps_processor::AppsRequestProcessor;
 pub(crate) use catalog_processor::CatalogRequestProcessor;

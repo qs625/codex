@@ -79,6 +79,7 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
         );
         assert!(external.model_selection.model_providers.is_empty());
         assert!(!external.capabilities.start_thread);
+        assert!(!external.capabilities.restore_thread);
         assert!(external.capabilities.event_stream);
         assert!(!external.capabilities.compact);
         assert!(!external.capabilities.workflow);

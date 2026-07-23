@@ -435,33 +435,17 @@ impl CatalogRequestProcessor {
             mode: ThreadProviderModelSelectionMode::ProviderDefault,
             model_providers: Vec::new(),
         };
-        let external = [
-            (
-                "claude_cli",
-                "Claude Code",
-                "External Claude CLI session normalized by the external-agent adapter.",
-            ),
-            (
-                "opencode",
-                "OpenCode",
-                "External OpenCode session normalized by the external-agent adapter.",
-            ),
-            (
-                "codex_cli",
-                "Codex CLI",
-                "External official Codex CLI app-server session normalized by the external-agent adapter.",
-            ),
-        ]
-        .into_iter()
-        .map(|(id, display_name, description)| ThreadProviderDescriptor {
-            id: id.to_string(),
-            display_name: display_name.to_string(),
-            kind: ThreadProviderKind::ExternalCli,
-            description: description.to_string(),
-            agent_types: Vec::new(),
-            model_selection: external_model_selection.clone(),
-            capabilities: external_capabilities.clone(),
-        });
+        let external = EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS
+            .iter()
+            .map(|provider| ThreadProviderDescriptor {
+                id: provider.id.to_string(),
+                display_name: provider.display_name.to_string(),
+                kind: ThreadProviderKind::ExternalCli,
+                description: provider.description.to_string(),
+                agent_types: Vec::new(),
+                model_selection: external_model_selection.clone(),
+                capabilities: external_capabilities.clone(),
+            });
 
         let mut data = Vec::with_capacity(4);
         data.push(native);

@@ -2,6 +2,116 @@ use super::*;
 use super::context_usage_replay::ThreadUsageSource;
 use crate::request_processors::thread_processor::ops::parse_thread_start_agent;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootThreadProviderRoute {
+    Native,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootThreadProviderCapability {
+    StartThread,
+    RestoreThread,
+    ForkThread,
+}
+
+impl RootThreadProviderCapability {
+    fn method(self) -> &'static str {
+        match self {
+            Self::StartThread => "thread/start",
+            Self::RestoreThread => "thread/resume",
+            Self::ForkThread => "thread/fork",
+        }
+    }
+}
+
+fn resolve_root_thread_provider(
+    thread_provider: Option<&str>,
+    capability: RootThreadProviderCapability,
+) -> Result<RootThreadProviderRoute, JSONRPCErrorError> {
+    match thread_provider {
+        None | Some("native") => Ok(RootThreadProviderRoute::Native),
+        Some(provider) if is_external_cli_thread_provider_id(provider) => {
+            Err(invalid_request(format!(
+                "thread provider '{provider}' is advertised but does not support {} yet",
+                capability.method()
+            )))
+        }
+        Some(provider) => Err(invalid_request(format!(
+            "unknown thread provider '{provider}' for {}",
+            capability.method()
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod root_thread_provider_route_tests {
+    use super::*;
+    use crate::error_code::INVALID_REQUEST_ERROR_CODE;
+
+    #[test]
+    fn resolves_missing_and_native_provider_to_native_route() {
+        assert_eq!(
+            resolve_root_thread_provider(None, RootThreadProviderCapability::StartThread).unwrap(),
+            RootThreadProviderRoute::Native
+        );
+        assert_eq!(
+            resolve_root_thread_provider(Some("native"), RootThreadProviderCapability::StartThread)
+                .unwrap(),
+            RootThreadProviderRoute::Native
+        );
+    }
+
+    #[test]
+    fn rejects_advertised_external_root_provider_by_capability() {
+        for provider in ["claude_cli", "opencode", "codex_cli"] {
+            let error = resolve_root_thread_provider(
+                Some(provider),
+                RootThreadProviderCapability::StartThread,
+            )
+            .unwrap_err();
+
+            assert_eq!(error.code, INVALID_REQUEST_ERROR_CODE);
+            assert_eq!(
+                error.message,
+                format!(
+                    "thread provider '{provider}' is advertised but does not support thread/start yet"
+                )
+            );
+        }
+
+        let resume_error = resolve_root_thread_provider(
+            Some("claude_cli"),
+            RootThreadProviderCapability::RestoreThread,
+        )
+        .unwrap_err();
+        assert_eq!(resume_error.code, INVALID_REQUEST_ERROR_CODE);
+        assert!(resume_error.message.contains("thread/resume"));
+
+        let fork_error = resolve_root_thread_provider(
+            Some("opencode"),
+            RootThreadProviderCapability::ForkThread,
+        )
+        .unwrap_err();
+        assert_eq!(fork_error.code, INVALID_REQUEST_ERROR_CODE);
+        assert!(fork_error.message.contains("thread/fork"));
+    }
+
+    #[test]
+    fn rejects_unknown_root_provider() {
+        let error = resolve_root_thread_provider(
+            Some("unknown_provider"),
+            RootThreadProviderCapability::StartThread,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code, INVALID_REQUEST_ERROR_CODE);
+        assert_eq!(
+            error.message,
+            "unknown thread provider 'unknown_provider' for thread/start"
+        );
+    }
+}
+
 impl ThreadRequestProcessor {
     pub(super) async fn thread_start_inner(
         &self,
@@ -38,13 +148,10 @@ impl ThreadRequestProcessor {
             environments,
             persist_extended_history,
         } = params;
-        if let Some(thread_provider) = thread_provider.as_deref()
-            && thread_provider != "native"
-        {
-            return Err(invalid_request(format!(
-                "thread provider '{thread_provider}' is advertised but does not support thread/start yet"
-            )));
-        }
+        let RootThreadProviderRoute::Native = resolve_root_thread_provider(
+            thread_provider.as_deref(),
+            RootThreadProviderCapability::StartThread,
+        )?;
         if sandbox.is_some() && permissions.is_some() {
             return Err(invalid_request(
                 "`permissions` cannot be combined with `sandbox`",
@@ -143,6 +250,8 @@ impl ThreadRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
+        let RootThreadProviderRoute::Native =
+            resolve_root_thread_provider(None, RootThreadProviderCapability::RestoreThread)?;
         if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
             && self
                 .pending_thread_unloads
@@ -902,6 +1011,8 @@ impl ThreadRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
+        let RootThreadProviderRoute::Native =
+            resolve_root_thread_provider(None, RootThreadProviderCapability::ForkThread)?;
         let ThreadForkParams {
             thread_id,
             path,
