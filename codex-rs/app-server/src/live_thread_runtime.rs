@@ -1,20 +1,24 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use codex_features::Feature;
 use futures::future::BoxFuture;
 use protocol::ThreadId;
 use protocol::error::Result as CodexResult;
+use protocol::models::ResponseItem;
 use protocol::protocol::AgentStatus;
 use protocol::protocol::Event;
 use protocol::protocol::Op;
-use protocol::models::ResponseItem;
 use protocol::protocol::SessionConfiguredEvent;
 use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::TokenUsageInfo;
 use protocol::protocol::W3cTraceContext;
+use protocol::user_input::UserInput;
 use skill_service_api::SkillWatchPath;
 use state_api::ExternalGoalSet;
+use thread_service::NativeThreadSteerRuntime;
+use thread_service::SteerInputError;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::CodexThreadTurnContextOverrides;
 use thread_service_api::LiveThreadCommandRuntime;
@@ -572,6 +576,37 @@ where
                 self, thread_id, items,
             ),
         )
+    }
+}
+
+pub(crate) trait AppServerLiveThreadSteerRuntime: Send + Sync {
+    fn steer_live_thread_input(
+        &self,
+        thread_id: ThreadId,
+        input: Vec<UserInput>,
+        expected_turn_id: Option<String>,
+        responsesapi_client_metadata: Option<HashMap<String, String>>,
+    ) -> BoxFuture<'_, CodexResult<Result<String, SteerInputError>>>;
+}
+
+impl<T> AppServerLiveThreadSteerRuntime for T
+where
+    T: NativeThreadSteerRuntime + Send + Sync,
+{
+    fn steer_live_thread_input(
+        &self,
+        thread_id: ThreadId,
+        input: Vec<UserInput>,
+        expected_turn_id: Option<String>,
+        responsesapi_client_metadata: Option<HashMap<String, String>>,
+    ) -> BoxFuture<'_, CodexResult<Result<String, SteerInputError>>> {
+        Box::pin(NativeThreadSteerRuntime::steer_live_thread_input(
+            self,
+            thread_id,
+            input,
+            expected_turn_id,
+            responsesapi_client_metadata,
+        ))
     }
 }
 

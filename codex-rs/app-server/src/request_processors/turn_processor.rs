@@ -5,6 +5,7 @@ use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadSteerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
@@ -19,14 +20,6 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         &'a self,
         thread_id: ThreadId,
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>>;
-
-    fn steer_thread_input<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        input: Vec<CoreInputItem>,
-        expected_turn_id: Option<String>,
-        responsesapi_client_metadata: Option<HashMap<String, String>>,
-    ) -> BoxFuture<'a, CodexResult<Result<String, SteerInputError>>>;
 
     fn fork_detached_review_thread<'a>(
         &'a self,
@@ -51,25 +44,6 @@ impl TurnProcessorRuntime for ThreadService {
         thread_id: ThreadId,
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>> {
         Box::pin(ThreadService::live_thread_config(self, thread_id))
-    }
-
-    fn steer_thread_input<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        input: Vec<CoreInputItem>,
-        expected_turn_id: Option<String>,
-        responsesapi_client_metadata: Option<HashMap<String, String>>,
-    ) -> BoxFuture<'a, CodexResult<Result<String, SteerInputError>>> {
-        Box::pin(async move {
-            ThreadService::steer_thread_input(
-                self,
-                thread_id,
-                input,
-                expected_turn_id.as_deref(),
-                responsesapi_client_metadata,
-            )
-            .await
-        })
     }
 
     fn fork_detached_review_thread<'a>(
@@ -122,6 +96,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
     live_thread_injection: Arc<dyn AppServerLiveThreadConversationInjectionRuntime>,
+    live_thread_steer: Arc<dyn AppServerLiveThreadSteerRuntime>,
     live_thread_turn: Arc<dyn AppServerLiveThreadTurnRuntime>,
     live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
@@ -180,6 +155,7 @@ impl TurnRequestProcessor {
             live_thread_status: thread_service.clone(),
             live_thread_command: thread_service.clone(),
             live_thread_injection: thread_service.clone(),
+            live_thread_steer: thread_service.clone(),
             live_thread_turn: thread_service.clone(),
             live_thread_skill_watch: thread_service.clone(),
             live_thread_listener: thread_service.clone(),
@@ -842,8 +818,8 @@ impl TurnRequestProcessor {
             .collect();
 
         let turn_id = self
-            .turn_runtime
-            .steer_thread_input(
+            .live_thread_steer
+            .steer_live_thread_input(
                 thread_id,
                 mapped_items,
                 Some(params.expected_turn_id.clone()),

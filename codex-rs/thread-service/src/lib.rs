@@ -89,6 +89,7 @@ pub use thread::CodexThread;
 pub use thread::CodexThreadTurnContextOverrides;
 pub use thread::NativeThreadCreationRuntime;
 pub use thread::NativeThreadEnvironmentRuntime;
+pub use thread::NativeThreadSteerRuntime;
 pub use thread::NewThread;
 pub use thread::StartThreadOptions;
 pub use thread::ThreadAuthRuntimes;

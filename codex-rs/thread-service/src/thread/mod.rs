@@ -1,6 +1,7 @@
 mod codex;
 mod manager;
 mod native_creation_runtime;
+mod native_steer_runtime;
 
 pub use codex::CodexThread;
 pub(crate) use codex::thread_config_snapshot_sandbox_policy;
@@ -10,6 +11,7 @@ pub use manager::ThreadAuthRuntimes;
 pub use manager::ThreadService;
 pub use native_creation_runtime::NativeThreadCreationRuntime;
 pub use native_creation_runtime::NativeThreadEnvironmentRuntime;
+pub use native_steer_runtime::NativeThreadSteerRuntime;
 pub use thread_service_api::CodexThreadTurnContextOverrides;
 pub use thread_service_api::ThreadConfigSnapshot;
 pub use thread_service_api::ThreadCreatedEvent;
