@@ -161,6 +161,9 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
         .await?
         .expect("thread should be backfilled before init returns");
     assert_eq!(metadata.rollout_path, rollout_path);
+    let runtime = state::StateRuntime::init(home.path().to_path_buf(), "test-provider".to_string())
+        .await
+        .expect("state runtime should initialize");
     assert_eq!(
         runtime.get_backfill_state().await?.status,
         state::BackfillStatus::Complete

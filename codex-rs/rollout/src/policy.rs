@@ -589,7 +589,7 @@ mod tests {
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
                 prompt: "continue".into(),
-                status: ThreadLifecycleStatus::completed(None),
+                status: AgentStatus::Completed(None),
             }),
             EventMsg::CollabWaitingBegin(CollabWaitingBeginEvent {
                 call_id: "wait-begin".into(),
@@ -628,7 +628,7 @@ mod tests {
                 receiver_agent_path: receiver_agent_path.clone(),
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
-                status: ThreadLifecycleStatus::completed(None),
+                status: AgentStatus::Completed(None),
             }),
             EventMsg::CollabResumeBegin(CollabResumeBeginEvent {
                 call_id: "resume-begin".into(),
@@ -649,7 +649,7 @@ mod tests {
                 receiver_agent_path,
                 receiver_agent_nickname: None,
                 receiver_agent_role: None,
-                status: ThreadLifecycleStatus::completed(None),
+                status: AgentStatus::Completed(None),
             }),
         ];
 

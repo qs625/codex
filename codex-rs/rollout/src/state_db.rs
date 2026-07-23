@@ -101,7 +101,7 @@ async fn try_init_with_roots_and_backfill_lease(
     sqlite_home: PathBuf,
     default_model_provider_id: String,
     backfill_lease_seconds: i64,
-) -> anyhow::Result<StateDbHandle> {
+) -> anyhow::Result<std::sync::Arc<state::StateRuntime>> {
     try_init_with_roots_inner(
         codex_home,
         sqlite_home,
@@ -109,7 +109,6 @@ async fn try_init_with_roots_and_backfill_lease(
         Some(backfill_lease_seconds),
     )
     .await
-    .map(|runtime| runtime as StateDbHandle)
 }
 
 async fn try_init_with_roots_inner(
