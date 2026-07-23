@@ -1,9 +1,8 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use futures::future::BoxFuture;
 
 pub(crate) trait ThreadFeedbackRuntime: Send + Sync {
-    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>>;
-
     fn list_agent_subtree_thread_ids(
         &self,
         thread_id: ThreadId,
@@ -21,10 +20,6 @@ impl<T> ThreadFeedbackRuntime for T
 where
     T: LiveThreadRegistry + Send + Sync,
 {
-    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>> {
-        Box::pin(LiveThreadRegistry::live_thread_info(self, thread_id))
-    }
-
     fn list_agent_subtree_thread_ids(
         &self,
         thread_id: ThreadId,
@@ -52,6 +47,7 @@ where
 pub(crate) struct FeedbackRequestProcessor {
     auth_manager: Arc<AuthManager>,
     thread_runtime: Arc<dyn ThreadFeedbackRuntime>,
+    live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     config: Arc<Config>,
     feedback: CodexFeedback,
     log_db: Option<LogDbLayer>,
@@ -68,12 +64,15 @@ impl FeedbackRequestProcessor {
         state_db: Option<StateDbHandle>,
     ) -> Self
     where
-        R: ThreadFeedbackRuntime + 'static,
+        R: ThreadFeedbackRuntime + AppServerLiveThreadInspectionRuntime + 'static,
     {
+        let live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime> =
+            thread_runtime.clone();
         let thread_runtime: Arc<dyn ThreadFeedbackRuntime> = thread_runtime;
         Self {
             auth_manager,
             thread_runtime,
+            live_thread_inspection,
             config,
             feedback,
             log_db,
@@ -299,7 +298,10 @@ impl FeedbackRequestProcessor {
         conversation_id: ThreadId,
         state_db_ctx: Option<&StateDbHandle>,
     ) -> Option<PathBuf> {
-        if let Ok(live_info) = self.thread_runtime.live_thread_info(conversation_id).await
+        if let Ok(live_info) = self
+            .live_thread_inspection
+            .live_thread_info(conversation_id)
+            .await
             && let Some(rollout_path) = live_info.rollout_path
         {
             return Some(rollout_path);

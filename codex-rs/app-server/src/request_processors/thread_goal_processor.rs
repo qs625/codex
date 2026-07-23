@@ -1,5 +1,6 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use futures::future::BoxFuture;
 use protocol::protocol::validate_thread_goal_objective;
 use state_api::protocol_goal_from_state;
@@ -7,11 +8,6 @@ use state_api::state_goal_status_from_protocol;
 use state_api::validate_thread_goal_budget;
 
 pub(crate) trait ThreadGoalRuntime: Send + Sync {
-    fn live_thread_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, protocol::error::Result<LiveThreadInfo>>;
-
     fn prepare_thread_external_goal_mutation(
         &self,
         thread_id: ThreadId,
@@ -33,13 +29,6 @@ impl<T> ThreadGoalRuntime for T
 where
     T: LiveThreadRegistry + Send + Sync,
 {
-    fn live_thread_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, protocol::error::Result<LiveThreadInfo>> {
-        Box::pin(LiveThreadRegistry::live_thread_info(self, thread_id))
-    }
-
     fn prepare_thread_external_goal_mutation(
         &self,
         thread_id: ThreadId,
@@ -74,6 +63,7 @@ where
 #[derive(Clone)]
 pub(crate) struct ThreadGoalRequestProcessor {
     thread_runtime: Arc<dyn ThreadGoalRuntime>,
+    live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     outgoing: Arc<OutgoingMessageSender>,
     config: Arc<Config>,
     thread_state_manager: ThreadStateManager,
@@ -89,11 +79,14 @@ impl ThreadGoalRequestProcessor {
         state_db: Option<StateDbHandle>,
     ) -> Self
     where
-        R: ThreadGoalRuntime + 'static,
+        R: ThreadGoalRuntime + AppServerLiveThreadInspectionRuntime + 'static,
     {
+        let live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime> =
+            thread_runtime.clone();
         let thread_runtime: Arc<dyn ThreadGoalRuntime> = thread_runtime;
         Self {
             thread_runtime,
+            live_thread_inspection,
             outgoing,
             config,
             thread_state_manager,
@@ -167,7 +160,11 @@ impl ThreadGoalRequestProcessor {
 
         let thread_id = parse_thread_id_for_request(params.thread_id.as_str())?;
         let state_db = self.state_db_for_materialized_thread(thread_id).await?;
-        let live_thread_info = self.thread_runtime.live_thread_info(thread_id).await.ok();
+        let live_thread_info = self
+            .live_thread_inspection
+            .live_thread_info(thread_id)
+            .await
+            .ok();
         let rollout_path = match live_thread_info.as_ref() {
             Some(info) => info.rollout_path.clone().ok_or_else(|| {
                 invalid_request(format!(
@@ -344,7 +341,11 @@ impl ThreadGoalRequestProcessor {
 
         let thread_id = parse_thread_id_for_request(params.thread_id.as_str())?;
         let state_db = self.state_db_for_materialized_thread(thread_id).await?;
-        let live_thread_info = self.thread_runtime.live_thread_info(thread_id).await.ok();
+        let live_thread_info = self
+            .live_thread_inspection
+            .live_thread_info(thread_id)
+            .await
+            .ok();
         let rollout_path = match live_thread_info.as_ref() {
             Some(info) => info.rollout_path.clone().ok_or_else(|| {
                 invalid_request(format!(
@@ -416,7 +417,11 @@ impl ThreadGoalRequestProcessor {
         &self,
         thread_id: ThreadId,
     ) -> Result<StateDbHandle, JSONRPCErrorError> {
-        if let Ok(live_info) = self.thread_runtime.live_thread_info(thread_id).await {
+        if let Ok(live_info) = self
+            .live_thread_inspection
+            .live_thread_info(thread_id)
+            .await
+        {
             if live_info.rollout_path.is_none() {
                 return Err(invalid_request(format!(
                     "ephemeral thread does not support goals: {thread_id}"

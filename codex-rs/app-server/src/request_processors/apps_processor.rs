@@ -1,27 +1,11 @@
 use super::*;
-use futures::future::BoxFuture;
+use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 
 pub(crate) trait AppsRuntime: Send + Sync {
-    fn thread_feature_enabled(
-        &self,
-        thread_id: ThreadId,
-        feature: Feature,
-    ) -> BoxFuture<'_, CodexResult<bool>>;
-
     fn plugin_runtime(&self) -> plugin_service_api::SharedPluginRuntime;
 }
 
 impl AppsRuntime for ThreadService {
-    fn thread_feature_enabled(
-        &self,
-        thread_id: ThreadId,
-        feature: Feature,
-    ) -> BoxFuture<'_, CodexResult<bool>> {
-        Box::pin(LiveThreadRegistry::thread_feature_enabled(
-            self, thread_id, feature,
-        ))
-    }
-
     fn plugin_runtime(&self) -> plugin_service_api::SharedPluginRuntime {
         ThreadService::plugin_runtime(self)
     }
@@ -31,6 +15,7 @@ impl AppsRuntime for ThreadService {
 pub(crate) struct AppsRequestProcessor {
     auth_manager: Arc<AuthManager>,
     apps_runtime: Arc<dyn AppsRuntime>,
+    live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     outgoing: Arc<OutgoingMessageSender>,
     config_manager: ConfigManager,
     environment_manager: Arc<EnvironmentManager>,
@@ -47,12 +32,15 @@ impl AppsRequestProcessor {
         workspace_settings_cache: Arc<workspace_settings::WorkspaceSettingsCache>,
     ) -> Self
     where
-        R: AppsRuntime + 'static,
+        R: AppsRuntime + AppServerLiveThreadInspectionRuntime + 'static,
     {
+        let live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime> =
+            apps_runtime.clone();
         let apps_runtime: Arc<dyn AppsRuntime> = apps_runtime;
         Self {
             auth_manager,
             apps_runtime,
+            live_thread_inspection,
             outgoing,
             config_manager,
             environment_manager,
@@ -81,8 +69,8 @@ impl AppsRequestProcessor {
             let thread_id = ThreadId::from_string(thread_id)
                 .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
             let apps_enabled = self
-                .apps_runtime
-                .thread_feature_enabled(thread_id, Feature::Apps)
+                .live_thread_inspection
+                .live_thread_feature_enabled(thread_id, Feature::Apps)
                 .await
                 .map_err(|_| invalid_request(format!("thread not found: {thread_id}")))?;
 
