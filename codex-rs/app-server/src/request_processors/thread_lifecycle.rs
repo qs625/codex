@@ -346,6 +346,7 @@ pub(super) async fn ensure_listener_task_running(
                         conversation_id,
                         conversation.clone(),
                         live_thread_inspection.clone(),
+                        thread_lifecycle_runtime.clone(),
                         live_thread_usage.clone(),
                         thread_outgoing,
                         thread_state.clone(),

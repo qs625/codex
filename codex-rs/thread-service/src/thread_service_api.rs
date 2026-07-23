@@ -163,6 +163,14 @@ impl ThreadLifecycleRuntime for ThreadService {
         Box::pin(ThreadService::live_thread_agent_status(self, thread_id))
     }
 
+    fn live_thread_runtime_status<'a>(
+        &'a self,
+        thread_id: protocol::ThreadId,
+    ) -> ThreadServiceFuture<'a, protocol::error::Result<thread_service_api::ThreadRuntimeStatus>>
+    {
+        Box::pin(ThreadService::live_thread_runtime_status(self, thread_id))
+    }
+
     fn subscribe_live_thread_status<'a>(
         &'a self,
         thread_id: protocol::ThreadId,

@@ -121,6 +121,7 @@ use std::time::UNIX_EPOCH;
 use thread_history::build_item_from_guardian_event;
 use thread_service::review_format::format_review_findings_block;
 use thread_service::review_prompts;
+use thread_service_api::ThreadLifecycleRuntime;
 use thread_service_api::ThreadRuntimeStatus;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot;
@@ -132,6 +133,7 @@ pub(crate) async fn apply_bespoke_event_handling(
     conversation_id: ThreadId,
     conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
+    thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
     live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<tokio::sync::Mutex<ThreadState>>,
@@ -182,7 +184,19 @@ pub(crate) async fn apply_bespoke_event_handling(
             thread_watch_manager
                 .note_turn_completed(&conversation_id.to_string(), turn_failed)
                 .await;
-            let runtime_status = conversation.runtime_thread_status().await;
+            let runtime_status = match thread_lifecycle_runtime
+                .live_thread_runtime_status(conversation_id)
+                .await
+            {
+                Ok(status) => status,
+                Err(err) => {
+                    tracing::warn!(
+                        thread_id = %conversation_id,
+                        "failed to read live thread runtime status after turn complete: {err}"
+                    );
+                    ThreadRuntimeStatus::Complete
+                }
+            };
             thread_watch_manager
                 .note_post_turn_runtime_status(
                     &conversation_id.to_string(),

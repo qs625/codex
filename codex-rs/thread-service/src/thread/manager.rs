@@ -1235,6 +1235,13 @@ impl ThreadService {
         self.state.live_thread_agent_status(thread_id).await
     }
 
+    pub async fn live_thread_runtime_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<thread_service_api::ThreadRuntimeStatus> {
+        self.state.live_thread_runtime_status(thread_id).await
+    }
+
     pub async fn subscribe_live_thread_status(
         &self,
         thread_id: ThreadId,
@@ -1678,6 +1685,14 @@ impl ThreadServiceState {
         Ok(thread.agent_status().await)
     }
 
+    pub(crate) async fn live_thread_runtime_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<thread_service_api::ThreadRuntimeStatus> {
+        let thread = self.get_thread(thread_id).await?;
+        Ok(thread.runtime_thread_status().await)
+    }
+
     pub(crate) async fn subscribe_live_thread_status(
         &self,
         thread_id: ThreadId,
@@ -2117,6 +2132,18 @@ impl thread_service_api::ThreadLifecycleRuntime for ThreadServiceState {
         thread_id: ThreadId,
     ) -> thread_service_api::ThreadServiceFuture<'a, CodexResult<AgentStatus>> {
         Box::pin(ThreadServiceState::live_thread_agent_status(self, thread_id))
+    }
+
+    fn live_thread_runtime_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> thread_service_api::ThreadServiceFuture<
+        'a,
+        CodexResult<thread_service_api::ThreadRuntimeStatus>,
+    > {
+        Box::pin(ThreadServiceState::live_thread_runtime_status(
+            self, thread_id,
+        ))
     }
 
     fn subscribe_live_thread_status<'a>(

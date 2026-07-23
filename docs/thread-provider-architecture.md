@@ -209,8 +209,9 @@ shutdown/removal 已改到 lifecycle runtime。turn processor 的 turn/start
 snapshot 读取、turn/review/realtime/interrupt `Op` 提交、
 realtime feature check 和 app-server client info 写入也已改到这些窄 runtime。
 app-server 的 turns/list live status、thread started/status notifications、turn
-interrupt status check、archive 前 live shutdown 以及 archive/listener teardown
-removal，以及 listener lifecycle 的 live `AgentStatus` 读取已改到 lifecycle runtime。
+interrupt status check、archive 前 live shutdown、archive/listener teardown
+removal，以及 listener lifecycle 的 live `AgentStatus` 和 TurnComplete post-turn
+`ThreadRuntimeStatus` 读取已改到 lifecycle runtime。
 apps processor 的 apps feature check、feedback
 processor 的 live rollout path lookup、thread goal processor 的 live rollout path /
 ephemeral-thread checks 也已改到 inspection runtime。thread goal processor 的
@@ -228,7 +229,7 @@ reads 也已改到 inspection runtime。thread read/listing、cold
 resume/fork 和 running resume usage replay 的 copied token/context usage reads 已改到 usage runtime。
 turn context override validation 已改到 live turn runtime。thread/read 和
 thread/turns/list 的 live persisted history 读取已改到 history runtime。listener event
-stream、submit、runtime status 和 read-thread handle 读取仍在 listener runtime；memory consolidation
+stream、submit 和 read-thread handle 读取仍在 listener runtime；memory consolidation
 startup/shutdown/status/token usage 已改到 memory-specific handle。detached review
 thread assembly 的 read-thread 也已改到 narrow runtime/store read 路径。旧
 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` surface 和 app-server

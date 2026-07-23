@@ -37,7 +37,6 @@ use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadTurnRuntime;
 use thread_service_api::LiveThreadUsageRuntime;
 use thread_service_api::ThreadConfigSnapshot;
-use thread_service_api::ThreadRuntimeStatus;
 use thread_store_api::StoredThread;
 use thread_store_api::StoredThreadHistory;
 use thread_store_api::ThreadStoreResult;
@@ -86,8 +85,6 @@ pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
 
     fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>>;
 
-    fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus>;
-
     fn read_thread(
         &self,
         include_archived: bool,
@@ -105,10 +102,6 @@ where
 
     fn submit_op(&self, op: Op) -> BoxFuture<'_, CodexResult<String>> {
         Box::pin(LiveThreadListenerHandle::submit_thread_op(self, op))
-    }
-
-    fn runtime_thread_status(&self) -> BoxFuture<'_, ThreadRuntimeStatus> {
-        Box::pin(LiveThreadListenerHandle::runtime_thread_status(self))
     }
 
     fn read_thread(

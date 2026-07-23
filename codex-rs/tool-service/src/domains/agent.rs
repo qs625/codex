@@ -617,6 +617,18 @@ mod tests {
             })
         }
 
+        fn live_thread_runtime_status<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+        ) -> ThreadServiceFuture<
+            'a,
+            protocol::error::Result<thread_service_api::ThreadRuntimeStatus>,
+        > {
+            Box::pin(async {
+                unreachable!("live_thread_runtime_status should not be called in this test")
+            })
+        }
+
         fn subscribe_live_thread_status<'a>(
             &'a self,
             _thread_id: ThreadId,

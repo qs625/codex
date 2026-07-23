@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use crate::ActiveEventSubscriptionTracker;
 use crate::ThreadCreatedEvent;
+use crate::ThreadRuntimeStatus;
 use crate::ThreadShutdownReport;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
@@ -707,6 +708,11 @@ pub trait ThreadLifecycleRuntime: Send + Sync + 'static {
         &'a self,
         thread_id: ThreadId,
     ) -> ThreadServiceFuture<'a, CodexResult<AgentStatus>>;
+
+    fn live_thread_runtime_status<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<ThreadRuntimeStatus>>;
 
     fn subscribe_live_thread_status<'a>(
         &'a self,
