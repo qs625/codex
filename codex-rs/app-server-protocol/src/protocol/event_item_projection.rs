@@ -129,6 +129,16 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
             item: builtin_tool_call_thread_item(event),
             completed_at_ms: event.lifecycle_at_ms,
         }),
+        EventMsg::ExternalToolCallStarted(event) => Some(ProjectedEventItem::Started {
+            turn_id: event.turn_id.clone(),
+            item: external_tool_call_thread_item(event),
+            started_at_ms: event.lifecycle_at_ms,
+        }),
+        EventMsg::ExternalToolCallCompleted(event) => Some(ProjectedEventItem::Completed {
+            turn_id: event.turn_id.clone(),
+            item: external_tool_call_thread_item(event),
+            completed_at_ms: event.lifecycle_at_ms,
+        }),
         EventMsg::WorkflowRunProgressCompleted(event) => Some(ProjectedEventItem::Completed {
             turn_id: event.turn_id.clone(),
             item: ThreadItem::WorkflowRunProgress {
@@ -406,6 +416,26 @@ fn builtin_tool_call_thread_item(
                 DynamicToolCallStatus::Completed
             }
             protocol::protocol::BuiltinToolCallStatus::Failed => DynamicToolCallStatus::Failed,
+        },
+        output: event.output.clone(),
+    }
+}
+
+fn external_tool_call_thread_item(
+    event: &protocol::protocol::ExternalToolCallDisplayEvent,
+) -> ThreadItem {
+    ThreadItem::EventDrivenToolCall {
+        id: event.id.clone(),
+        tool: event.tool.clone(),
+        arguments: event.arguments.clone(),
+        status: match event.status {
+            protocol::protocol::ExternalToolCallStatus::InProgress => {
+                DynamicToolCallStatus::InProgress
+            }
+            protocol::protocol::ExternalToolCallStatus::Completed => {
+                DynamicToolCallStatus::Completed
+            }
+            protocol::protocol::ExternalToolCallStatus::Failed => DynamicToolCallStatus::Failed,
         },
         output: event.output.clone(),
     }

@@ -188,6 +188,8 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::CommandExecutionNotificationCompleted(_)
         | EventMsg::BuiltinToolCallStarted(_)
         | EventMsg::BuiltinToolCallCompleted(_)
+        | EventMsg::ExternalToolCallStarted(_)
+        | EventMsg::ExternalToolCallCompleted(_)
         | EventMsg::WorkflowRunProgressCompleted(_)
         | EventMsg::EventCommandEventCompleted(_)
         | EventMsg::EventDrivenToolCompleted(_)
@@ -305,6 +307,8 @@ mod tests {
     use protocol::protocol::CollabWaitingBeginEvent;
     use protocol::protocol::CollabWaitingEndEvent;
     use protocol::protocol::EventMsg;
+    use protocol::protocol::ExternalToolCallDisplayEvent;
+    use protocol::protocol::ExternalToolCallStatus;
     use protocol::protocol::ItemCompletedEvent;
     use protocol::protocol::ThreadContextUsage;
     use protocol::protocol::ThreadContextUsageCategoryBreakdown;
@@ -683,6 +687,41 @@ mod tests {
                     "timedOut": false,
                     "sourceHint": "user_input",
                 })),
+                lifecycle_at_ms: 2,
+            }),
+        ];
+
+        for event in events {
+            assert_eq!(
+                should_persist_event_msg(&event, EventPersistenceMode::Limited),
+                true
+            );
+        }
+    }
+
+    #[test]
+    fn limited_mode_persists_external_tool_call_events() {
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000001").expect("valid thread");
+        let events = [
+            EventMsg::ExternalToolCallStarted(ExternalToolCallDisplayEvent {
+                thread_id,
+                turn_id: "turn-1".into(),
+                id: "external-1".into(),
+                tool: "list_external_agents".into(),
+                arguments: serde_json::json!({ "path_prefix": "/root" }),
+                status: ExternalToolCallStatus::InProgress,
+                output: None,
+                lifecycle_at_ms: 1,
+            }),
+            EventMsg::ExternalToolCallCompleted(ExternalToolCallDisplayEvent {
+                thread_id,
+                turn_id: "turn-1".into(),
+                id: "external-1".into(),
+                tool: "list_external_agents".into(),
+                arguments: serde_json::json!({ "path_prefix": "/root" }),
+                status: ExternalToolCallStatus::Completed,
+                output: Some(serde_json::json!({ "agents": [] })),
                 lifecycle_at_ms: 2,
             }),
         ];

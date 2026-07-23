@@ -646,12 +646,7 @@ async fn inspection_runtime_includes_external_live_records() {
             .is_live_thread_loaded(native_thread_id)
             .await
     );
-    assert!(
-        !harness
-            .manager
-            .is_live_thread_loaded(ThreadId::new())
-            .await
-    );
+    assert!(!harness.manager.is_live_thread_loaded(ThreadId::new()).await);
 
     let external_info = harness
         .manager
@@ -731,10 +726,20 @@ async fn remove_live_thread_preserves_native_and_missing_semantics() {
     let harness = AgentControlHarness::new().await;
     let (native_thread_id, _native_thread) = harness.start_thread().await;
 
-    assert!(harness.manager.is_live_thread_loaded(native_thread_id).await);
+    assert!(
+        harness
+            .manager
+            .is_live_thread_loaded(native_thread_id)
+            .await
+    );
     assert!(harness.manager.remove_live_thread(native_thread_id).await);
     assert!(!harness.manager.remove_live_thread(native_thread_id).await);
-    assert!(!harness.manager.is_live_thread_loaded(native_thread_id).await);
+    assert!(
+        !harness
+            .manager
+            .is_live_thread_loaded(native_thread_id)
+            .await
+    );
     assert_matches!(
         harness.manager.live_thread_info(native_thread_id).await,
         Err(CodexErr::ThreadNotFound(id)) if id == native_thread_id
@@ -858,7 +863,10 @@ async fn runtime_status_preserves_native_and_missing_semantics() {
     assert_eq!(native_status, expected_native_status);
 
     assert!(matches!(
-        harness.manager.live_thread_runtime_status(ThreadId::new()).await,
+        harness
+            .manager
+            .live_thread_runtime_status(ThreadId::new())
+            .await,
         Err(CodexErr::ThreadNotFound(_))
     ));
 }
@@ -1472,6 +1480,248 @@ async fn external_stream_loop_writes_tool_result_to_same_process() {
     assert!(result.contains("external_tool_result"));
     assert!(result.contains("\"agents\""));
     assert!(result.contains("/root/external"));
+}
+
+#[tokio::test]
+async fn external_stream_loop_persists_tool_calls_as_typed_events() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some("inspect agents".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path,
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            last_task_message: Some("inspect agents".to_string()),
+            abort_handle: None,
+        });
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::ToolCall(ExternalToolCall {
+                id: "call_1".to_string(),
+                tool: ExternalToolName::ListExternalAgents,
+                arguments: serde_json::json!({ "path_prefix": "/root/external" }),
+            }),
+        ),
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("done after result".to_string()),
+        ),
+    ]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            "inspect agents".to_string(),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+
+    assert_eq!(
+        status,
+        AgentStatus::Completed(Some("done after result".to_string()))
+    );
+    let _initial = stream.next_input().await;
+    let result = stream.next_input().await;
+    assert!(result.contains("external_tool_result"));
+    assert!(result.contains("\"agents\""));
+
+    let stored = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external thread");
+    let items = stored.history.expect("history").items;
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::ExternalToolCallStarted(event))
+            if event.id == "call_1"
+                && event.tool == "list_external_agents"
+                && event.arguments == serde_json::json!({ "path_prefix": "/root/external" })
+                && event.status == protocol::protocol::ExternalToolCallStatus::InProgress
+                && event.output.is_none()
+    )));
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::ExternalToolCallCompleted(event))
+            if event.id == "call_1"
+                && event.tool == "list_external_agents"
+                && event.status == protocol::protocol::ExternalToolCallStatus::Completed
+                && event.output.as_ref().is_some_and(|output| output["agents"].is_array())
+    )));
+    assert!(!items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::AgentMessage(event))
+            if event.message.contains("external_tool_call")
+    )));
+    assert!(!items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::UserMessage(event))
+            if event.message.contains("external_tool_result")
+    )));
+}
+
+#[tokio::test]
+async fn external_stream_loop_persists_tool_call_errors_as_failed_typed_events() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some("recover malformed call".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path,
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            last_task_message: Some("recover malformed call".to_string()),
+            abort_handle: None,
+        });
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::ToolCallError(ExternalToolResult::error(
+                "call_bad",
+                "invalid_tool_call",
+                "failed to parse external tool call",
+            )),
+        ),
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("recovered".to_string()),
+        ),
+    ]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            "recover malformed call".to_string(),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+
+    assert_eq!(
+        status,
+        AgentStatus::Completed(Some("recovered".to_string()))
+    );
+    let _initial = stream.next_input().await;
+    let error = stream.next_input().await;
+    assert!(error.contains("external_tool_result"));
+    assert!(error.contains("invalid_tool_call"));
+
+    let stored = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external thread");
+    let items = stored.history.expect("history").items;
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::ExternalToolCallCompleted(event))
+            if event.id == "call_bad"
+                && event.tool == "external_tool"
+                && event.arguments.is_null()
+                && event.status == protocol::protocol::ExternalToolCallStatus::Failed
+                && event.output.as_ref().is_some_and(|output| {
+                    output["error"]["code"] == "invalid_tool_call"
+                        && output["error"]["message"]
+                            .as_str()
+                            .is_some_and(|message| {
+                                message.contains("failed to parse external tool call")
+                            })
+                })
+    )));
+    assert!(!items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::UserMessage(event))
+            if event.message.contains("external_tool_result")
+    )));
 }
 
 #[tokio::test]

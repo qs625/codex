@@ -37,6 +37,7 @@ use tokio::task::AbortHandle;
 const MAX_EXTERNAL_OUTPUT_CHARS: usize = 12_000;
 const MAX_EXTERNAL_ERROR_CHARS: usize = 4_000;
 const MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS: usize = 8_000;
+const MAX_EXTERNAL_TOOL_ARGUMENT_CHARS: usize = 8_000;
 const CODEX_APP_SERVER_ENV_REMOVALS: &[&str] = &["CODEX_HOME", "CODEX_THREAD_ID"];
 
 #[derive(Clone)]
@@ -1301,6 +1302,39 @@ pub(crate) fn external_tool_result_input(result: &ExternalToolResult) -> String 
     external_tool_result_json_line(result)
 }
 
+pub(crate) fn external_tool_name(tool: &ExternalToolName) -> String {
+    serde_json::to_value(tool)
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| format!("{tool:?}"))
+}
+
+pub(crate) fn bounded_external_tool_arguments(arguments: &JsonValue) -> JsonValue {
+    bounded_json_value(arguments, MAX_EXTERNAL_TOOL_ARGUMENT_CHARS)
+}
+
+pub(crate) fn bounded_external_tool_result(result: &ExternalToolResult) -> JsonValue {
+    if result.ok {
+        return result
+            .result
+            .as_ref()
+            .map(|value| bounded_json_value(value, MAX_EXTERNAL_OUTPUT_CHARS))
+            .unwrap_or(JsonValue::Null);
+    }
+
+    let error = result.error.as_ref();
+    serde_json::json!({
+        "error": {
+            "code": error
+                .map(|error| truncate_chars(&error.code, 128))
+                .unwrap_or_else(|| "tool_error".to_string()),
+            "message": error
+                .map(|error| truncate_chars(&error.message, MAX_EXTERNAL_ERROR_CHARS))
+                .unwrap_or_else(|| "external tool failed".to_string()),
+        }
+    })
+}
+
 pub(crate) fn bounded_external_output(message: &str) -> String {
     truncate_chars(message.trim(), MAX_EXTERNAL_OUTPUT_CHARS)
 }
@@ -1643,6 +1677,23 @@ fn fallback_external_tool_result_line(id: &str, code: &str, message: &str) -> St
         },
     })
     .to_string()
+}
+
+fn bounded_json_value(value: &JsonValue, max_chars: usize) -> JsonValue {
+    let serialized = serde_json::to_string(value);
+    let Ok(serialized) = serialized else {
+        return serde_json::json!({
+            "truncated": true,
+            "message": "failed to serialize external tool payload",
+        });
+    };
+    if serialized.chars().count() <= max_chars {
+        return value.clone();
+    }
+    serde_json::json!({
+        "truncated": true,
+        "preview": truncate_chars(&serialized, max_chars),
+    })
 }
 
 fn text_field(value: &serde_json::Value) -> Option<String> {

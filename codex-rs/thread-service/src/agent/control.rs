@@ -9,11 +9,14 @@ use crate::agent::external::ExternalToolName;
 use crate::agent::external::ExternalToolResult;
 use crate::agent::external::SharedExternalAgentRegistry;
 use crate::agent::external::bounded_external_output;
+use crate::agent::external::bounded_external_tool_arguments;
+use crate::agent::external::bounded_external_tool_result;
 use crate::agent::external::completion_communication;
 use crate::agent::external::external_agent_context_prompt;
 use crate::agent::external::external_live_agent;
 use crate::agent::external::external_metadata;
 use crate::agent::external::external_session_spec;
+use crate::agent::external::external_tool_name;
 use crate::agent::external::external_tool_result_input;
 use crate::agent::spawn_support::thread_spawn_source;
 use crate::runtime_shell_snapshot::ShellSnapshot;
@@ -73,6 +76,8 @@ use protocol::error::Result as CodexResult;
 use protocol::models::ResponseItem;
 use protocol::protocol::AgentMessageEvent;
 use protocol::protocol::ErrorEvent;
+use protocol::protocol::ExternalToolCallDisplayEvent;
+use protocol::protocol::ExternalToolCallStatus;
 use protocol::protocol::InitialHistory;
 use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::InterAgentOperation;
@@ -479,8 +484,13 @@ impl AgentControl {
     {
         let provider_input = stream.input_sink();
         let initial_input = external_agent_context_prompt(&message);
-        self.persist_external_terminal_status(thread_id, &AgentStatus::Running)
-            .await;
+        let turn_id = uuid::Uuid::new_v4().to_string();
+        self.persist_external_terminal_status_with_turn_id(
+            thread_id,
+            Some(&turn_id),
+            &AgentStatus::Running,
+        )
+        .await;
         self.persist_external_user_message(thread_id, &message)
             .await;
         if let Err(err) = provider_input.send(initial_input) {
@@ -514,21 +524,32 @@ impl AgentControl {
                 event = stream.next_event() => {
                     match event {
                         Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::ToolCall(call))) => {
-                            self.persist_external_agent_message(
-                                thread_id,
-                                &serde_json::to_string(&call).unwrap_or_else(|_| "external_tool_call".to_string()),
-                            ).await;
+                            let tool = external_tool_name(&call.tool);
+                            let arguments = bounded_external_tool_arguments(&call.arguments);
+                            self.persist_external_tool_call_started(thread_id, &turn_id, &call).await;
                             let result = self.dispatch_external_tool_call(thread_id, call).await;
+                            self.persist_external_tool_call_completed(
+                                thread_id,
+                                &turn_id,
+                                tool,
+                                arguments,
+                                &result,
+                            ).await;
                             let result_input = external_tool_result_input(&result);
-                            self.persist_external_user_message(thread_id, &result_input).await;
                             if let Err(err) = provider_input.send(result_input) {
                                 self.persist_external_error(thread_id, &err).await;
                                 return AgentStatus::Errored(err);
                             }
                         }
                         Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::ToolCallError(result))) => {
+                            self.persist_external_tool_call_completed(
+                                thread_id,
+                                &turn_id,
+                                "external_tool".to_string(),
+                                serde_json::Value::Null,
+                                &result,
+                            ).await;
                             let result_input = external_tool_result_input(&result);
-                            self.persist_external_user_message(thread_id, &result_input).await;
                             if let Err(err) = provider_input.send(result_input) {
                                 self.persist_external_error(thread_id, &err).await;
                                 return AgentStatus::Errored(err);
@@ -539,7 +560,11 @@ impl AgentControl {
                             let output = bounded_external_output(&text);
                             let status = AgentStatus::Completed(Some(output.clone()));
                             self.persist_external_agent_message(thread_id, &output).await;
-                            self.persist_external_terminal_status(thread_id, &status).await;
+                            self.persist_external_terminal_status_with_turn_id(
+                                thread_id,
+                                Some(&turn_id),
+                                &status,
+                            ).await;
                             return status;
                         }
                         Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Status(text))) => {
@@ -549,25 +574,41 @@ impl AgentControl {
                         }
                         Ok(ExternalProcessEvent::StdinError(error)) => {
                             self.persist_external_error(thread_id, &error).await;
-                            self.persist_external_terminal_status(thread_id, &AgentStatus::Errored(error.clone())).await;
+                            self.persist_external_terminal_status_with_turn_id(
+                                thread_id,
+                                Some(&turn_id),
+                                &AgentStatus::Errored(error.clone()),
+                            ).await;
                             return AgentStatus::Errored(error);
                         }
                         Ok(ExternalProcessEvent::ProcessExited { success, status }) => {
                             if success {
                                 let status = AgentStatus::Completed(last_status);
-                                self.persist_external_terminal_status(thread_id, &status).await;
+                                self.persist_external_terminal_status_with_turn_id(
+                                    thread_id,
+                                    Some(&turn_id),
+                                    &status,
+                                ).await;
                                 return status;
                             }
                             let error = last_status.unwrap_or_else(|| {
                                     format!("external provider exited with status {status}")
                                 });
                             self.persist_external_error(thread_id, &error).await;
-                            self.persist_external_terminal_status(thread_id, &AgentStatus::Errored(error.clone())).await;
+                            self.persist_external_terminal_status_with_turn_id(
+                                thread_id,
+                                Some(&turn_id),
+                                &AgentStatus::Errored(error.clone()),
+                            ).await;
                             return AgentStatus::Errored(error);
                         }
                         Err(err) => {
                             self.persist_external_error(thread_id, &err).await;
-                            self.persist_external_terminal_status(thread_id, &AgentStatus::Errored(err.clone())).await;
+                            self.persist_external_terminal_status_with_turn_id(
+                                thread_id,
+                                Some(&turn_id),
+                                &AgentStatus::Errored(err.clone()),
+                            ).await;
                             return AgentStatus::Errored(err);
                         }
                     }
@@ -659,10 +700,25 @@ impl AgentControl {
     }
 
     async fn persist_external_terminal_status(&self, thread_id: ThreadId, status: &AgentStatus) {
+        self.persist_external_terminal_status_with_turn_id(thread_id, None, status)
+            .await;
+    }
+
+    async fn persist_external_terminal_status_with_turn_id(
+        &self,
+        thread_id: ThreadId,
+        turn_id: Option<&str>,
+        status: &AgentStatus,
+    ) {
+        let turn_id = || {
+            turn_id
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        };
         let event = match status {
             AgentStatus::Completed(last_agent_message) => {
                 protocol::protocol::EventMsg::TurnComplete(TurnCompleteEvent {
-                    turn_id: uuid::Uuid::new_v4().to_string(),
+                    turn_id: turn_id(),
                     last_agent_message: last_agent_message.clone(),
                     completed_at: Some(Utc::now().timestamp()),
                     duration_ms: None,
@@ -676,7 +732,7 @@ impl AgentControl {
             AgentStatus::Shutdown => protocol::protocol::EventMsg::ShutdownComplete,
             AgentStatus::Interrupted => {
                 protocol::protocol::EventMsg::TurnAborted(protocol::protocol::TurnAbortedEvent {
-                    turn_id: Some(uuid::Uuid::new_v4().to_string()),
+                    turn_id: Some(turn_id()),
                     reason: protocol::protocol::TurnAbortReason::Interrupted,
                     completed_at: Some(Utc::now().timestamp()),
                     duration_ms: None,
@@ -684,7 +740,7 @@ impl AgentControl {
             }
             AgentStatus::PendingInit | AgentStatus::Running | AgentStatus::NotFound => {
                 protocol::protocol::EventMsg::TurnStarted(TurnStartedEvent {
-                    turn_id: uuid::Uuid::new_v4().to_string(),
+                    turn_id: turn_id(),
                     started_at: Some(Utc::now().timestamp()),
                     model_context_window: None,
                     collaboration_mode_kind: Default::default(),
@@ -699,6 +755,54 @@ impl AgentControl {
         {
             warn!("failed to shutdown external thread persistence for {thread_id}: {err}");
         }
+    }
+
+    async fn persist_external_tool_call_started(
+        &self,
+        thread_id: ThreadId,
+        turn_id: &str,
+        call: &ExternalToolCall,
+    ) {
+        let event =
+            protocol::protocol::EventMsg::ExternalToolCallStarted(ExternalToolCallDisplayEvent {
+                thread_id,
+                turn_id: turn_id.to_string(),
+                id: call.id.clone(),
+                tool: external_tool_name(&call.tool),
+                arguments: bounded_external_tool_arguments(&call.arguments),
+                status: ExternalToolCallStatus::InProgress,
+                output: None,
+                lifecycle_at_ms: Utc::now().timestamp_millis(),
+            });
+        self.persist_external_items(thread_id, vec![RolloutItem::EventMsg(event)])
+            .await;
+    }
+
+    async fn persist_external_tool_call_completed(
+        &self,
+        thread_id: ThreadId,
+        turn_id: &str,
+        tool: String,
+        arguments: serde_json::Value,
+        result: &ExternalToolResult,
+    ) {
+        let event =
+            protocol::protocol::EventMsg::ExternalToolCallCompleted(ExternalToolCallDisplayEvent {
+                thread_id,
+                turn_id: turn_id.to_string(),
+                id: result.id.clone(),
+                tool,
+                arguments,
+                status: if result.ok {
+                    ExternalToolCallStatus::Completed
+                } else {
+                    ExternalToolCallStatus::Failed
+                },
+                output: Some(bounded_external_tool_result(result)),
+                lifecycle_at_ms: Utc::now().timestamp_millis(),
+            });
+        self.persist_external_items(thread_id, vec![RolloutItem::EventMsg(event)])
+            .await;
     }
 
     async fn spawn_agent_internal(
