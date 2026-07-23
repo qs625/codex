@@ -989,13 +989,32 @@ async fn external_completion_after_close_does_not_notify_parent() {
         harness.control.get_status(external_thread_id).await,
         AgentStatus::Shutdown
     );
-    assert_eq!(
+    assert!(
+        !harness
+            .manager
+            .is_live_thread_loaded(external_thread_id)
+            .await
+    );
+    assert_matches!(
         harness
             .manager
             .live_thread_agent_status(external_thread_id)
-            .await
-            .expect("external live status should be visible to app-server"),
-        AgentStatus::Shutdown
+            .await,
+        Err(CodexErr::ThreadNotFound(id)) if id == external_thread_id
+    );
+    assert_matches!(
+        harness
+            .manager
+            .live_thread_runtime_status(external_thread_id)
+            .await,
+        Err(CodexErr::ThreadNotFound(id)) if id == external_thread_id
+    );
+    assert_matches!(
+        harness
+            .manager
+            .subscribe_live_thread_status(external_thread_id)
+            .await,
+        Err(CodexErr::ThreadNotFound(id)) if id == external_thread_id
     );
 }
 
@@ -1076,14 +1095,21 @@ async fn external_close_status_changed_event_carries_shutdown_payload() {
             agent_status: Some(AgentStatus::Shutdown),
         } if thread_id == external_thread_id
     );
-    assert_eq!(
-        harness
+    assert!(
+        !harness
             .manager
-            .live_thread_agent_status(external_thread_id)
+            .is_live_thread_loaded(external_thread_id)
             .await
-            .expect("external close still leaves live Shutdown visible"),
+    );
+    assert_matches!(
+        harness.manager.live_thread_info(external_thread_id).await,
+        Err(CodexErr::ThreadNotFound(id)) if id == external_thread_id
+    );
+    assert_eq!(
+        harness.control.get_status(external_thread_id).await,
         AgentStatus::Shutdown
     );
+    assert!(!harness.manager.remove_live_thread(external_thread_id).await);
 }
 
 #[tokio::test]

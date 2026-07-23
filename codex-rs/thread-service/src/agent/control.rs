@@ -1279,7 +1279,8 @@ impl AgentControl {
     pub(crate) async fn close_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         if self.external_agents.get(agent_id).is_some() {
             let shutdown_run = self.external_agents.shutdown(agent_id);
-            if let Ok(state) = self.upgrade() {
+            let state = self.upgrade().ok();
+            if let Some(state) = state.as_ref() {
                 if let Some(state_db_ctx) = state.thread_state_runtime()
                     && let Err(err) = state_db_ctx
                         .set_thread_spawn_edge_status(
@@ -1303,6 +1304,9 @@ impl AgentControl {
             }
             self.persist_external_terminal_status(agent_id, &AgentStatus::Shutdown)
                 .await;
+            if let Some(state) = state.as_ref() {
+                let _ = ThreadLifecycleRuntime::remove_live_thread(state.as_ref(), agent_id).await;
+            }
             self.state.release_spawned_thread(agent_id);
             return Ok(agent_id.to_string());
         }
