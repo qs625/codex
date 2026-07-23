@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use codex_config_types::McpServerConfig;
 use futures::future::BoxFuture;
 use mcp_service_api::SharedMcpAuthHeaderProvider;
@@ -55,8 +56,6 @@ pub(crate) trait McpProcessorRuntime: Send + Sync {
 
     fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, mcp_types::McpConfig>;
 
-    fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
-
     fn read_thread_mcp_resource<'a>(
         &'a self,
         thread_id: ThreadId,
@@ -99,12 +98,6 @@ impl McpProcessorRuntime for ThreadService {
         Box::pin(async move { config.to_mcp_config(self.plugin_runtime().as_ref()).await })
     }
 
-    fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
-        Box::pin(thread_service_api::LiveThreadRegistry::is_thread_loaded(
-            self, thread_id,
-        ))
-    }
-
     fn read_thread_mcp_resource<'a>(
         &'a self,
         thread_id: ThreadId,
@@ -134,6 +127,7 @@ impl McpProcessorRuntime for ThreadService {
 pub(crate) struct McpRequestProcessor {
     auth_manager: Arc<AuthManager>,
     runtime: Arc<dyn McpProcessorRuntime>,
+    live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     outgoing: Arc<OutgoingMessageSender>,
     config_manager: ConfigManager,
     environment_manager: Arc<EnvironmentManager>,
@@ -142,15 +136,17 @@ pub(crate) struct McpRequestProcessor {
 impl McpRequestProcessor {
     pub(crate) fn new(
         auth_manager: Arc<AuthManager>,
-        runtime: Arc<impl McpProcessorRuntime + 'static>,
+        runtime: Arc<impl McpProcessorRuntime + AppServerLiveThreadInspectionRuntime + 'static>,
         outgoing: Arc<OutgoingMessageSender>,
         config_manager: ConfigManager,
         environment_manager: Arc<EnvironmentManager>,
     ) -> Self {
+        let live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime> = runtime.clone();
         let runtime: Arc<dyn McpProcessorRuntime> = runtime;
         Self {
             auth_manager,
             runtime,
+            live_thread_inspection,
             outgoing,
             config_manager,
             environment_manager,
@@ -474,7 +470,11 @@ impl McpRequestProcessor {
 
         if let Some(thread_id) = thread_id {
             let thread_id = Self::parse_thread_id(&thread_id)?;
-            if !self.runtime.is_thread_loaded(thread_id).await {
+            if !self
+                .live_thread_inspection
+                .is_live_thread_loaded(thread_id)
+                .await
+            {
                 return Err(invalid_request(format!("thread not found: {thread_id}")));
             }
             let runtime = Arc::clone(&self.runtime);
@@ -547,7 +547,11 @@ impl McpRequestProcessor {
         let outgoing = Arc::clone(&self.outgoing);
         let thread_id = params.thread_id.clone();
         let parsed_thread_id = Self::parse_thread_id(&thread_id)?;
-        if !self.runtime.is_thread_loaded(parsed_thread_id).await {
+        if !self
+            .live_thread_inspection
+            .is_live_thread_loaded(parsed_thread_id)
+            .await
+        {
             return Err(invalid_request(format!(
                 "thread not found: {parsed_thread_id}"
             )));
