@@ -1,5 +1,6 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadConversationInjectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
@@ -18,12 +19,6 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         &'a self,
         thread_id: ThreadId,
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>>;
-
-    fn inject_thread_conversation_items<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        items: Vec<ResponseItem>,
-    ) -> BoxFuture<'a, CodexResult<()>>;
 
     fn steer_thread_input<'a>(
         &'a self,
@@ -56,16 +51,6 @@ impl TurnProcessorRuntime for ThreadService {
         thread_id: ThreadId,
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>> {
         Box::pin(ThreadService::live_thread_config(self, thread_id))
-    }
-
-    fn inject_thread_conversation_items<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        items: Vec<ResponseItem>,
-    ) -> BoxFuture<'a, CodexResult<()>> {
-        Box::pin(ThreadService::inject_thread_conversation_items(
-            self, thread_id, items,
-        ))
     }
 
     fn steer_thread_input<'a>(
@@ -136,6 +121,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
+    live_thread_injection: Arc<dyn AppServerLiveThreadConversationInjectionRuntime>,
     live_thread_turn: Arc<dyn AppServerLiveThreadTurnRuntime>,
     live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
@@ -193,6 +179,7 @@ impl TurnRequestProcessor {
             live_thread_inspection: thread_service.clone(),
             live_thread_status: thread_service.clone(),
             live_thread_command: thread_service.clone(),
+            live_thread_injection: thread_service.clone(),
             live_thread_turn: thread_service.clone(),
             live_thread_skill_watch: thread_service.clone(),
             live_thread_listener: thread_service.clone(),
@@ -781,8 +768,8 @@ impl TurnRequestProcessor {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(invalid_request)?;
 
-        self.turn_runtime
-            .inject_thread_conversation_items(thread_id, items)
+        self.live_thread_injection
+            .inject_live_thread_conversation_items(thread_id, items)
             .await
             .map_err(|err| match err {
                 CodexErr::ThreadNotFound(thread_id) => {

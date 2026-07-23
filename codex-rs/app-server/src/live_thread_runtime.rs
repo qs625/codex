@@ -7,6 +7,7 @@ use protocol::error::Result as CodexResult;
 use protocol::protocol::AgentStatus;
 use protocol::protocol::Event;
 use protocol::protocol::Op;
+use protocol::models::ResponseItem;
 use protocol::protocol::SessionConfiguredEvent;
 use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadContextUsage;
@@ -18,6 +19,7 @@ use thread_service_api::AppServerClientInfo;
 use thread_service_api::CodexThreadTurnContextOverrides;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadConfigRefreshSnapshot;
+use thread_service_api::LiveThreadConversationInjectionRuntime;
 use thread_service_api::LiveThreadElicitationRuntime;
 use thread_service_api::LiveThreadFeedbackRuntime;
 use thread_service_api::LiveThreadGoalRuntime;
@@ -546,6 +548,31 @@ pub(crate) trait AppServerLiveThreadCommandRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<()>>;
 
     fn remove_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+}
+
+pub(crate) trait AppServerLiveThreadConversationInjectionRuntime: Send + Sync {
+    fn inject_live_thread_conversation_items(
+        &self,
+        thread_id: ThreadId,
+        items: Vec<ResponseItem>,
+    ) -> BoxFuture<'_, CodexResult<()>>;
+}
+
+impl<T> AppServerLiveThreadConversationInjectionRuntime for T
+where
+    T: LiveThreadConversationInjectionRuntime + Send + Sync,
+{
+    fn inject_live_thread_conversation_items(
+        &self,
+        thread_id: ThreadId,
+        items: Vec<ResponseItem>,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(
+            LiveThreadConversationInjectionRuntime::inject_live_thread_conversation_items(
+                self, thread_id, items,
+            ),
+        )
+    }
 }
 
 pub(crate) trait AppServerLiveThreadTurnRuntime: Send + Sync {

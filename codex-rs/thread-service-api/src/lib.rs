@@ -277,6 +277,20 @@ pub trait LiveThreadConversationRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<String>> + Send + '_;
 }
 
+/// Conversation injection surface for live threads without exposing concrete handles.
+///
+/// Implementations record prebuilt conversation items directly into a live
+/// thread's conversation history. Unlike `LiveThreadConversationRuntime`, this
+/// must not enqueue async input or trigger pending work.
+pub trait LiveThreadConversationInjectionRuntime: Send + Sync {
+    /// Inject prebuilt conversation items into a specific live thread.
+    fn inject_live_thread_conversation_items(
+        &self,
+        thread_id: ThreadId,
+        items: Vec<ResponseItem>,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+}
+
 /// Persisted history read surface for loaded live threads without exposing handles.
 pub trait LiveThreadHistoryRuntime: Send + Sync {
     /// Return live persisted history for a specific loaded thread.

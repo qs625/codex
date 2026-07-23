@@ -2075,6 +2075,20 @@ impl thread_service_api::LiveThreadConversationRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadConversationInjectionRuntime for ThreadServiceState {
+    fn inject_live_thread_conversation_items(
+        &self,
+        thread_id: ThreadId,
+        items: Vec<ResponseItem>,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.inject_conversation_items(items).await
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadHistoryRuntime for ThreadServiceState {
     fn live_thread_history(
         &self,
@@ -2539,6 +2553,21 @@ impl thread_service_api::LiveThreadConversationRuntime for ThreadService {
             self.state.as_ref(),
             thread_id,
             item,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadConversationInjectionRuntime for ThreadService {
+    fn inject_live_thread_conversation_items(
+        &self,
+        thread_id: ThreadId,
+        items: Vec<ResponseItem>,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadConversationInjectionRuntime::inject_live_thread_conversation_items(
+            self.state.as_ref(),
+            thread_id,
+            items,
         )
     }
 }
