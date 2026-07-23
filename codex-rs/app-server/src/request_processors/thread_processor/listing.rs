@@ -227,7 +227,10 @@ impl ThreadRequestProcessor {
         Ok(thread)
     }
 
-    pub(super) async fn active_in_progress_turn_snapshot(&self, thread_id: ThreadId) -> Option<Turn> {
+    pub(super) async fn active_in_progress_turn_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> Option<Turn> {
         let thread_state = self.thread_state_manager.thread_state(thread_id).await;
         let state = thread_state.lock().await;
         state.active_in_progress_turn_snapshot()
@@ -733,7 +736,9 @@ impl ThreadRequestProcessor {
     ) {
         if let Ok(live_snapshot) = self.live_threads.live_thread_snapshot(thread_id).await {
             let loaded_thread = build_thread_from_live_snapshot(thread_id, &live_snapshot);
-            self.thread_watch_manager.upsert_thread(loaded_thread).await;
+            self.thread_watch_manager
+                .upsert_thread_silently(loaded_thread)
+                .await;
         }
 
         for connection_id in connection_ids {
@@ -773,7 +778,11 @@ fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns
             continue;
         }
 
-        if let Some(live_turn) = thread.turns.iter_mut().find(|turn| turn.id == persisted_turn.id) {
+        if let Some(live_turn) = thread
+            .turns
+            .iter_mut()
+            .find(|turn| turn.id == persisted_turn.id)
+        {
             restore_persisted_injected_context_items(live_turn, &persisted_injected_items);
             continue;
         }
@@ -781,9 +790,10 @@ fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns
         let mut injected_context_turn = persisted_turn.clone();
         injected_context_turn.items = persisted_injected_items;
         injected_context_turn.items_view = TurnItemsView::Full;
-        thread
-            .turns
-            .insert(persisted_index.min(thread.turns.len()), injected_context_turn);
+        thread.turns.insert(
+            persisted_index.min(thread.turns.len()),
+            injected_context_turn,
+        );
     }
 }
 
@@ -900,7 +910,10 @@ mod restore_persisted_injected_context_turns_tests {
         )]);
         let persisted_turns = vec![turn(
             "turn-1",
-            vec![injected_context_item("ctx-1", "persisted instruction_files text")],
+            vec![injected_context_item(
+                "ctx-1",
+                "persisted instruction_files text",
+            )],
         )];
 
         restore_persisted_injected_context_turns(&mut thread, &persisted_turns);
@@ -923,7 +936,10 @@ mod restore_persisted_injected_context_turns_tests {
         let persisted_turns = vec![
             turn(
                 "turn-1",
-                vec![injected_context_item("ctx-1", "persisted instruction_files text")],
+                vec![injected_context_item(
+                    "ctx-1",
+                    "persisted instruction_files text",
+                )],
             ),
             turn(
                 "turn-2",

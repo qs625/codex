@@ -162,12 +162,15 @@ pub struct AppServerClientInfo {
 pub enum ThreadCreatedEvent {
     Started(ThreadId),
     Resumed(ThreadId),
+    StatusChanged(ThreadId),
 }
 
 impl ThreadCreatedEvent {
     pub fn thread_id(&self) -> ThreadId {
         match self {
-            Self::Started(thread_id) | Self::Resumed(thread_id) => *thread_id,
+            Self::Started(thread_id)
+            | Self::Resumed(thread_id)
+            | Self::StatusChanged(thread_id) => *thread_id,
         }
     }
 }

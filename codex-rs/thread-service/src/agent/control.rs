@@ -97,8 +97,10 @@ use std::sync::Arc;
 use std::sync::Weak;
 use thread_service_api::LiveThreadActivitySource;
 use thread_service_api::LiveThreadCommandRuntime;
+use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadShutdownRuntime;
+use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::LiveThreadStatusRuntime;
 use thread_store_api::ReadThreadParams;
@@ -209,6 +211,39 @@ fn external_session_source_for(
         agent_nickname: Some(provider_label(provider).to_string()),
         agent_role: Some(provider_label(provider).to_string()),
     })
+}
+
+fn external_live_thread_snapshot(
+    config: &ExternalSpawnConfig,
+    thread_id: ThreadId,
+    session_source: SessionSource,
+    agent_metadata: &AgentMetadata,
+) -> LiveThreadSnapshot {
+    LiveThreadSnapshot {
+        info: LiveThreadInfo {
+            session_id: SessionId::from(thread_id),
+            rollout_path: None,
+        },
+        config_snapshot: ThreadConfigSnapshot {
+            model: config.model.clone(),
+            model_provider_id: config.model_provider_id.clone(),
+            service_tier: config.service_tier.clone(),
+            approval_policy: config.approval_policy,
+            approvals_reviewer: config.approvals_reviewer,
+            permission_profile: config.permission_profile.clone(),
+            active_permission_profile: config.active_permission_profile.clone(),
+            cwd: config.cwd.clone(),
+            workspace_roots: config.workspace_roots.clone(),
+            profile_workspace_roots: Vec::new(),
+            ephemeral: false,
+            reasoning_effort: config.reasoning_effort,
+            personality: config.personality,
+            session_source,
+            root_agent_path: agent_metadata.agent_path.as_ref().map(ToString::to_string),
+            root_agent_role: agent_metadata.agent_role.clone(),
+            thread_source: Some(ThreadSource::Subagent),
+        },
+    }
 }
 
 fn provider_label(provider: SpawnAgentProvider) -> &'static str {
@@ -357,6 +392,19 @@ impl AgentControl {
             };
             control
                 .persist_thread_spawn_edge_for_source(thread_id, Some(&session_source))
+                .await;
+            control
+                .upgrade()?
+                .register_external_live_thread_snapshot(
+                    thread_id,
+                    external_live_thread_snapshot(
+                        &config,
+                        thread_id,
+                        session_source.clone(),
+                        &agent_metadata,
+                    ),
+                    AgentStatus::Running,
+                )
                 .await;
 
             let run = ExternalAgentRun {
@@ -1231,18 +1279,31 @@ impl AgentControl {
     /// agent and any live descendants reached from the in-memory tree.
     pub(crate) async fn close_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         if self.external_agents.get(agent_id).is_some() {
-            if let Ok(state) = self.upgrade()
-                && let Some(state_db_ctx) = state.thread_state_runtime()
-                && let Err(err) = state_db_ctx
-                    .set_thread_spawn_edge_status(
+            let shutdown_run = self.external_agents.shutdown(agent_id);
+            if let Ok(state) = self.upgrade() {
+                if let Some(state_db_ctx) = state.thread_state_runtime()
+                    && let Err(err) = state_db_ctx
+                        .set_thread_spawn_edge_status(
+                            agent_id,
+                            DirectionalThreadSpawnEdgeStatus::Closed,
+                        )
+                        .await
+                {
+                    warn!(
+                        "failed to persist external thread-spawn edge status for {agent_id}: {err}"
+                    );
+                }
+                state
+                    .update_external_live_thread_status(
                         agent_id,
-                        DirectionalThreadSpawnEdgeStatus::Closed,
+                        shutdown_run
+                            .as_ref()
+                            .map(|run| run.status.clone())
+                            .unwrap_or(AgentStatus::Shutdown),
                     )
-                    .await
-            {
-                warn!("failed to persist external thread-spawn edge status for {agent_id}: {err}");
+                    .await;
+                state.notify_thread_status_changed(agent_id);
             }
-            self.external_agents.shutdown(agent_id);
             self.persist_external_terminal_status(agent_id, &AgentStatus::Shutdown)
                 .await;
             self.state.release_spawned_thread(agent_id);
@@ -1295,10 +1356,14 @@ impl AgentControl {
         else {
             return;
         };
-        let Some(communication) = completion_communication(&run) else {
+        let Ok(state) = self.upgrade() else {
             return;
         };
-        let Ok(state) = self.upgrade() else {
+        state
+            .update_external_live_thread_status(thread_id, run.status.clone())
+            .await;
+        state.notify_thread_status_changed(thread_id);
+        let Some(communication) = completion_communication(&run) else {
             return;
         };
         let parent_thread_id = run.parent_thread_id;

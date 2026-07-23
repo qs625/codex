@@ -843,6 +843,16 @@ impl MessageProcessor {
             .await;
     }
 
+    pub(crate) async fn emit_thread_status_changed_notification_to_connections(
+        &self,
+        thread_id: ThreadId,
+        connection_ids: &[ConnectionId],
+    ) {
+        self.thread_processor
+            .emit_thread_status_changed_notification_to_connections(thread_id, connection_ids)
+            .await;
+    }
+
     pub(crate) async fn drain_background_tasks(&self) {
         self.thread_processor.drain_background_tasks().await;
     }
