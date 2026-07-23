@@ -105,8 +105,6 @@ pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
 
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
 
-    fn shutdown_and_wait(&self) -> BoxFuture<'_, CodexResult<()>>;
-
     fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>>;
 
     fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>>;
@@ -158,10 +156,6 @@ where
 
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
         Box::pin(LiveThreadListenerHandle::thread_context_usage(self))
-    }
-
-    fn shutdown_and_wait(&self) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadListenerHandle::shutdown_and_wait(self))
     }
 
     fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>> {

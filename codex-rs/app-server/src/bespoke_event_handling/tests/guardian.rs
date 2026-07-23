@@ -494,7 +494,7 @@ use super::*;
         }
 
         assert!(rx.try_recv().is_err(), "no extra messages expected");
-        conversation.shutdown_and_wait().await?;
+        thread_service.shutdown_live_thread(conversation_id).await?;
+        thread_service.remove_live_thread(conversation_id).await;
         Ok(())
     }
-

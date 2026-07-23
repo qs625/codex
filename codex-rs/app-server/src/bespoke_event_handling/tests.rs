@@ -48,6 +48,7 @@
     use tempfile::TempDir;
     use thread_service::CodexThread;
     use thread_service::ThreadService;
+    use thread_service_api::ThreadLifecycleRuntime;
     use thread_store::StoredThread;
     use thread_store::StoredThreadHistory;
     use tokio::sync::Mutex;

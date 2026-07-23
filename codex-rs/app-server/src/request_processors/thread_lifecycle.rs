@@ -362,7 +362,6 @@ pub(super) async fn ensure_listener_task_running(
                         thread_state_manager.clone(),
                         thread_watch_manager.clone(),
                         conversation_id,
-                        conversation.clone(),
                     )
                     .await;
                     break;
@@ -379,10 +378,16 @@ pub(super) async fn ensure_listener_task_running(
 }
 
 pub(super) async fn wait_for_thread_shutdown(
-    thread: &Arc<dyn AppServerLiveThreadListenerHandle>,
+    thread_lifecycle_runtime: &Arc<dyn ThreadLifecycleRuntime>,
+    thread_id: ThreadId,
 ) -> ThreadShutdownResult {
-    match tokio::time::timeout(Duration::from_secs(10), thread.shutdown_and_wait()).await {
-        Ok(Ok(())) => ThreadShutdownResult::Complete,
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        thread_lifecycle_runtime.shutdown_live_thread(thread_id),
+    )
+    .await
+    {
+        Ok(Ok(_)) => ThreadShutdownResult::Complete,
         Ok(Err(_)) => ThreadShutdownResult::SubmitFailed,
         Err(_) => ThreadShutdownResult::TimedOut,
     }
@@ -395,7 +400,6 @@ pub(super) async fn unload_thread_without_subscribers(
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_id: ThreadId,
-    thread: Arc<dyn AppServerLiveThreadListenerHandle>,
 ) {
     info!("thread {thread_id} has no subscribers and is idle; shutting down");
 
@@ -407,7 +411,7 @@ pub(super) async fn unload_thread_without_subscribers(
     thread_state_manager.remove_thread_state(thread_id).await;
 
     tokio::spawn(async move {
-        match wait_for_thread_shutdown(&thread).await {
+        match wait_for_thread_shutdown(&thread_lifecycle_runtime, thread_id).await {
             ThreadShutdownResult::Complete => {
                 if !thread_lifecycle_runtime.remove_live_thread(thread_id).await {
                     info!("thread {thread_id} was already removed before teardown finalized");

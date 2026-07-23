@@ -1652,7 +1652,10 @@ impl ThreadServiceState {
                 LiveAgentShutdownAction::AlreadyShutdownWait => Ok(String::new()),
             };
             thread.wait_until_terminated().await;
-            return result;
+            return match result {
+                Err(CodexErr::InternalAgentDied) => Ok(String::new()),
+                result => result,
+            };
         }
 
         match live_agent_shutdown_action(/*thread_found*/ false, None) {

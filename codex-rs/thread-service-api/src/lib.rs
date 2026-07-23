@@ -323,8 +323,6 @@ pub trait LiveThreadListenerHandle: Send + Sync {
 
     fn thread_context_usage(&self) -> impl Future<Output = ThreadContextUsage> + Send + '_;
 
-    fn shutdown_and_wait(&self) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
     fn apply_goal_resume_runtime_effects(
         &self,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
@@ -374,10 +372,6 @@ where
 
     fn thread_context_usage(&self) -> impl Future<Output = ThreadContextUsage> + Send + '_ {
         LiveThreadHandle::thread_context_usage(self)
-    }
-
-    fn shutdown_and_wait(&self) -> impl Future<Output = CodexResult<()>> + Send + '_ {
-        LiveThreadHandle::shutdown_and_wait(self)
     }
 
     fn apply_goal_resume_runtime_effects(

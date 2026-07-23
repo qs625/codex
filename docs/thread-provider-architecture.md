@@ -185,8 +185,8 @@ creation/environment runtime。app-server 只把 `NewThread` 投影成 response 
 需要把 provider-neutral request DTO 和 routing 从这些 native-only DTO 中继续拆出。
 
 live thread runtime 的 command/inspection 能力也已开始迁移到 provider-neutral
-surfaces，status、app-server archive 前的 per-thread shutdown 和 teardown removal
-已进一步收口到 lifecycle 边界：
+surfaces，status、app-server archive 与 listener idle-unload 的 per-thread shutdown
+和 teardown removal 已进一步收口到 lifecycle 边界：
 
 - `LiveThreadInspectionRuntime` 承载 loaded ids、loaded check、
   `LiveThreadInfo` 和 `LiveThreadSnapshot` 等 copied fact。
@@ -197,13 +197,15 @@ surfaces，status、app-server archive 前的 per-thread shutdown 和 teardown r
 - app-server archive、listener idle-unload 和 native agent cleanup 的 live-thread
   removal 已提升到 `ThreadLifecycleRuntime`；`LiveThreadCommandRuntime::remove_live_thread`
   compatibility method 已删除。
+- listener handle 不再暴露 shutdown/wait；idle-unload teardown 通过
+  `ThreadLifecycleRuntime::shutdown_live_thread` 和 `remove_live_thread` 完成。
 - `LiveThreadCommandRuntime` 承载 submit op、submit op with trace 和 client info 写入。
 
 app-server thread processor 的 thread loaded list、thread/read live snapshot merge、
 resume-running thread
 checks、submit op、client info 写入和 out-of-band elicitation counter 操作已改到这些
 窄 runtime。archive 前 shutdown/removal 和 listener idle-unload 的 live-thread
-removal 已改到 lifecycle runtime。turn processor 的 turn/start
+shutdown/removal 已改到 lifecycle runtime。turn processor 的 turn/start
 snapshot 读取、turn/review/realtime/interrupt `Op` 提交、
 realtime feature check 和 app-server client info 写入也已改到这些窄 runtime。
 app-server 的 turns/list live status、thread started/status notifications、turn
@@ -224,7 +226,7 @@ session/config reads 也已改到 inspection runtime。thread read/listing 以�
 resume/fork usage replay 的 copied token/context usage reads 已改到 usage runtime。
 turn context override validation 已改到 live turn runtime。thread/read 和
 thread/turns/list 的 live persisted history 读取已改到 history runtime。listener event
-stream、idle unload 和 running resume 所需的 live handle 读取已改到 listener runtime；
+stream 和 running resume 所需的 live handle 读取已改到 listener runtime；
 running resume usage replay 仍通过 listener handle 读取。memory consolidation
 startup/shutdown/status/token usage 已改到 memory-specific handle。detached review
 thread assembly 的 read-thread 也已改到 narrow runtime/store read 路径。旧
