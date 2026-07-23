@@ -8,34 +8,17 @@ use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSteerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
-use crate::request_processors::thread_processor::thread_processor_new_thread;
 use futures::future::BoxFuture;
 use model_service_api::SharedModelServiceApi;
+use thread_service::NativeDetachedReviewRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
 use thread_service_api::AppServerClientInfo;
-use thread_store_api::ReadThreadParams;
 
 pub(crate) trait TurnProcessorRuntime: Send + Sync {
     fn live_thread_config<'a>(
         &'a self,
         thread_id: ThreadId,
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>>;
-
-    fn fork_detached_review_thread<'a>(
-        &'a self,
-        parent_thread_id: ThreadId,
-        config: Config,
-        trace: Option<protocol::protocol::W3cTraceContext>,
-    ) -> BoxFuture<'a, CodexResult<DetachedReviewThread>>;
-
-    fn read_detached_review_thread<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'a, CodexResult<StoredThread>>;
-}
-
-pub(crate) struct DetachedReviewThread {
-    thread_id: ThreadId,
 }
 
 impl TurnProcessorRuntime for ThreadService {
@@ -45,52 +28,13 @@ impl TurnProcessorRuntime for ThreadService {
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>> {
         Box::pin(ThreadService::live_thread_config(self, thread_id))
     }
-
-    fn fork_detached_review_thread<'a>(
-        &'a self,
-        parent_thread_id: ThreadId,
-        config: Config,
-        trace: Option<protocol::protocol::W3cTraceContext>,
-    ) -> BoxFuture<'a, CodexResult<DetachedReviewThread>> {
-        Box::pin(async move {
-            let new_thread = ThreadService::fork_live_thread_from_current_history(
-                self,
-                parent_thread_id,
-                ForkSnapshot::Interrupted,
-                config,
-                /*thread_source*/ None,
-                /*persist_extended_history*/ false,
-                trace,
-            )
-            .await?;
-            let new_thread = thread_processor_new_thread(new_thread);
-            let thread_id = new_thread.thread_id;
-            Ok(DetachedReviewThread { thread_id })
-        })
-    }
-
-    fn read_detached_review_thread<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'a, CodexResult<StoredThread>> {
-        Box::pin(async move {
-            ThreadService::read_thread(
-                self,
-                ReadThreadParams {
-                    thread_id,
-                    include_archived: true,
-                    include_history: false,
-                },
-            )
-            .await
-        })
-    }
 }
 
 #[derive(Clone)]
 pub(crate) struct TurnRequestProcessor {
     auth_manager: Arc<AuthManager>,
     turn_runtime: Arc<dyn TurnProcessorRuntime>,
+    detached_review_runtime: Arc<dyn NativeDetachedReviewRuntime>,
     environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
@@ -150,6 +94,7 @@ impl TurnRequestProcessor {
         Self {
             auth_manager,
             turn_runtime: thread_service.clone(),
+            detached_review_runtime: thread_service.clone(),
             environment_runtime: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),
             live_thread_status: thread_service.clone(),
@@ -1129,8 +1074,8 @@ impl TurnRequestProcessor {
             config.model = Some(review_model.clone());
         }
 
-        let DetachedReviewThread { thread_id } = self
-            .turn_runtime
+        let thread_id = self
+            .detached_review_runtime
             .fork_detached_review_thread(
                 parent_thread_id,
                 config,
@@ -1154,7 +1099,7 @@ impl TurnRequestProcessor {
 
         let fallback_provider = self.config.model_provider_id.as_str();
         match self
-            .turn_runtime
+            .detached_review_runtime
             .read_detached_review_thread(thread_id)
             .await
         {

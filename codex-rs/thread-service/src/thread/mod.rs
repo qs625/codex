@@ -1,6 +1,7 @@
 mod codex;
 mod manager;
 mod native_creation_runtime;
+mod native_detached_review_runtime;
 mod native_steer_runtime;
 
 pub use codex::CodexThread;
@@ -11,6 +12,7 @@ pub use manager::ThreadAuthRuntimes;
 pub use manager::ThreadService;
 pub use native_creation_runtime::NativeThreadCreationRuntime;
 pub use native_creation_runtime::NativeThreadEnvironmentRuntime;
+pub use native_detached_review_runtime::NativeDetachedReviewRuntime;
 pub use native_steer_runtime::NativeThreadSteerRuntime;
 pub use thread_service_api::CodexThreadTurnContextOverrides;
 pub use thread_service_api::ThreadConfigSnapshot;

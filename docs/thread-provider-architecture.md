@@ -223,10 +223,12 @@ transitional `AppServerLiveThreadHandle` 均已删除；thread/turn request 的
 environment selection validation 已共用 `NativeThreadEnvironmentRuntime`。turn
 processor 的 `thread/inject_items` 已改到 conversation injection runtime，明确区别
 于 subscription append 的 async-input path。`turn/steer` 已改到 native live steer
-runtime，保留 active-turn steer validation 和 typed `SteerInputError` 映射。turn
-processor 里剩余的 app-server-local turn runtime 只覆盖 live `Config` 读取和
-detached review fork/read 这些尚未 provider-neutral 化的 native-only 能力。thread
-processor 已不再保留 broad creation facade；native root start/resume/fork 仍通过
+runtime，保留 active-turn steer validation 和 typed `SteerInputError` 映射。detached
+review 的 current-history fork 和 metadata-only stored read 已改到 native detached
+review runtime；app-server 仍负责 listener attach、watch upsert、
+`ThreadStarted` notification 和 review turn submit orchestration。turn processor 里
+剩余的 app-server-local turn runtime 只覆盖 live `Config` 读取。thread processor
+已不再保留 broad creation facade；native root start/resume/fork 仍通过
 `NativeThreadCreationRuntime` 明确标记为 native-only 过渡层。后续阶段再继续拆出更窄
 handle。
 

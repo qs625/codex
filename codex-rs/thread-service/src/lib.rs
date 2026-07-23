@@ -87,6 +87,7 @@ pub(crate) mod web_search;
 pub use rollout_api::ForkSnapshot;
 pub use thread::CodexThread;
 pub use thread::CodexThreadTurnContextOverrides;
+pub use thread::NativeDetachedReviewRuntime;
 pub use thread::NativeThreadCreationRuntime;
 pub use thread::NativeThreadEnvironmentRuntime;
 pub use thread::NativeThreadSteerRuntime;
