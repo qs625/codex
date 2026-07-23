@@ -363,6 +363,24 @@ pub trait LiveThreadSkillWatchRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_;
 }
 
+/// Usage read surface without exposing concrete thread handles.
+///
+/// Implementations return copied usage snapshots for live threads. Persisted
+/// history and live turn merge behavior should stay with their own runtimes.
+pub trait LiveThreadUsageRuntime: Send + Sync {
+    /// Return the complete token usage snapshot for a specific live thread.
+    fn thread_token_usage_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<Option<TokenUsageInfo>>> + Send + '_;
+
+    /// Return the context usage snapshot for a specific live thread.
+    fn thread_context_usage(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<ThreadContextUsage>> + Send + '_;
+}
+
 /// Goal runtime side-effect surface without exposing concrete thread handles.
 ///
 /// App-server owns the persisted goal mutation. Implementations should only
@@ -617,18 +635,6 @@ pub trait LiveThreadRegistry: Send + Sync {
         thread_id: ThreadId,
         include_archived: bool,
     ) -> impl Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_;
-
-    /// Return the complete token usage snapshot for a specific live thread.
-    fn thread_token_usage_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<Option<TokenUsageInfo>>> + Send + '_;
-
-    /// Return the context usage snapshot for a specific live thread.
-    fn thread_context_usage(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<ThreadContextUsage>> + Send + '_;
 
     /// Request shutdown for a specific live thread and wait until it terminates.
     fn shutdown_thread_and_wait(

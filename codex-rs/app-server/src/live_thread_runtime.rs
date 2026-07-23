@@ -28,6 +28,7 @@ use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadSkillWatchRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadStatusRuntime;
+use thread_service_api::LiveThreadUsageRuntime;
 use thread_service_api::ThreadConfigSnapshot;
 use thread_service_api::ThreadRuntimeStatus;
 use thread_store_api::StoredThread;
@@ -152,6 +153,10 @@ pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
         include_archived: bool,
     ) -> BoxFuture<'_, ThreadStoreResult<StoredThreadHistory>>;
 
+    fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+}
+
+pub(crate) trait AppServerLiveThreadUsageRuntime: Send + Sync {
     fn thread_token_usage_info(
         &self,
         thread_id: ThreadId,
@@ -161,8 +166,29 @@ pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>>;
+}
 
-    fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+impl<T> AppServerLiveThreadUsageRuntime for T
+where
+    T: LiveThreadUsageRuntime + Send + Sync,
+{
+    fn thread_token_usage_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<Option<TokenUsageInfo>>> {
+        Box::pin(LiveThreadUsageRuntime::thread_token_usage_info(
+            self, thread_id,
+        ))
+    }
+
+    fn thread_context_usage(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>> {
+        Box::pin(LiveThreadUsageRuntime::thread_context_usage(
+            self, thread_id,
+        ))
+    }
 }
 
 pub(crate) trait AppServerLiveThreadSkillWatchRuntime: Send + Sync {
@@ -516,20 +542,6 @@ where
             thread_id,
             include_archived,
         ))
-    }
-
-    fn thread_token_usage_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<Option<TokenUsageInfo>>> {
-        Box::pin(LiveThreadRegistry::thread_token_usage_info(self, thread_id))
-    }
-
-    fn thread_context_usage(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>> {
-        Box::pin(LiveThreadRegistry::thread_context_usage(self, thread_id))
     }
 
     fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {

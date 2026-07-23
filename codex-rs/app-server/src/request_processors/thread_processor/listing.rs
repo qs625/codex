@@ -333,7 +333,7 @@ impl ThreadRequestProcessor {
             .await
             .map_err(|err| thread_read_history_load_error(thread_id, err))?;
         if let Some(token_usage) = self
-            .live_threads
+            .live_thread_usage
             .thread_token_usage_info(thread_id)
             .await
             .map_err(|err| {
@@ -351,7 +351,7 @@ impl ThreadRequestProcessor {
                 usage
             } else {
                 let usage = self
-                    .live_threads
+                    .live_thread_usage
                     .thread_context_usage(thread_id)
                     .await
                     .map_err(|err| {

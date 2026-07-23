@@ -2310,6 +2310,29 @@ impl thread_service_api::LiveThreadSkillWatchRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadUsageRuntime for ThreadServiceState {
+    fn thread_token_usage_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Option<TokenUsageInfo>>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            Ok(thread.token_usage_info().await)
+        }
+    }
+
+    fn thread_context_usage(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<ThreadContextUsage>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            Ok(thread.thread_context_usage().await)
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadGoalRuntime for ThreadServiceState {
     fn prepare_thread_external_goal_mutation(
         &self,
@@ -2576,6 +2599,29 @@ impl thread_service_api::LiveThreadSkillWatchRuntime for ThreadService {
         thread_id: ThreadId,
     ) -> impl std::future::Future<Output = CodexResult<Vec<SkillWatchPath>>> + Send + '_ {
         thread_service_api::LiveThreadSkillWatchRuntime::thread_skill_watch_paths(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadUsageRuntime for ThreadService {
+    fn thread_token_usage_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<Option<TokenUsageInfo>>> + Send + '_ {
+        thread_service_api::LiveThreadUsageRuntime::thread_token_usage_info(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn thread_context_usage(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<ThreadContextUsage>> + Send + '_ {
+        thread_service_api::LiveThreadUsageRuntime::thread_context_usage(
             self.state.as_ref(),
             thread_id,
         )
@@ -2869,26 +2915,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
                 },
             })?;
             thread.load_history(include_archived).await
-        }
-    }
-
-    fn thread_token_usage_info(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<Option<TokenUsageInfo>>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            Ok(thread.token_usage_info().await)
-        }
-    }
-
-    fn thread_context_usage(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<ThreadContextUsage>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            Ok(thread.thread_context_usage().await)
         }
     }
 

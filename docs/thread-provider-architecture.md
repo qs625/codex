@@ -203,6 +203,7 @@ runtime。listener 的 skill watch path resolution 已改到 skill-watch runtime
 processor 的 thread-bound resource/tool request loaded check 已改到
 inspection runtime；MCP refresh 的 live thread ids、config refresh snapshot 和
 queued `Op::RefreshMcpServers` submit 已改到 inspection / command runtime。
+thread read/listing 的 copied token/context usage reads 已改到 usage runtime。
 `AppServerLiveThreadRegistry::live_thread_handle()` 仍只保留给 listener / full live
 history 这类需要事件流或完整 persisted history handle 的路径；turn processor 里剩余
 的 app-server-local turn runtime 只覆盖环境选择校验、live `Config` 读取、turn
