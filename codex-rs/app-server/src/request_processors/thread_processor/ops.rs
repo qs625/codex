@@ -840,7 +840,7 @@ impl ThreadRequestProcessor {
         let thread_id = ThreadId::from_string(&params.thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
         let count = self
-            .live_threads
+            .live_thread_elicitation
             .increment_thread_out_of_band_elicitation_count(thread_id)
             .await
             .map_err(|err| match err {
@@ -864,7 +864,7 @@ impl ThreadRequestProcessor {
         let thread_id = ThreadId::from_string(&params.thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
         let count = self
-            .live_threads
+            .live_thread_elicitation
             .decrement_thread_out_of_band_elicitation_count(thread_id)
             .await
             .map_err(|err| match err {

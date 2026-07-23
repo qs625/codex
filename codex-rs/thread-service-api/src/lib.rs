@@ -376,6 +376,25 @@ pub trait LiveThreadGoalRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 }
 
+/// Out-of-band elicitation pause counter surface for live threads.
+///
+/// Implementations own the live counter state transitions. Callers should use
+/// the returned count to report paused state instead of deriving or mutating
+/// session pause state directly.
+pub trait LiveThreadElicitationRuntime: Send + Sync {
+    /// Increment the out-of-band elicitation pause counter for a live thread.
+    fn increment_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<u64>> + Send + '_;
+
+    /// Decrement the out-of-band elicitation pause counter for a live thread.
+    fn decrement_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<u64>> + Send + '_;
+}
+
 /// Source for optional persistent thread state runtime owned by the live thread manager.
 ///
 /// Consumers that need spawn-edge or thread metadata persistence should depend

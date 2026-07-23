@@ -190,10 +190,11 @@ surfaces：
 
 app-server thread processor 的 thread loaded list、thread/read live snapshot merge、
 turns/list live status、thread started/status notifications、resume-running thread
-checks、submit op、client info 写入，以及 archive 前 shutdown/remove 路径已改到这些
-窄 runtime。turn processor 的 turn/start snapshot 读取、turn/review/realtime/interrupt
-`Op` 提交、interrupt status check、realtime feature check 和 app-server client info
-写入也已改到这些窄 runtime。apps processor 的 apps feature check、feedback
+checks、submit op、client info 写入、out-of-band elicitation counter 操作，以及
+archive 前 shutdown/remove 路径已改到这些窄 runtime。turn processor 的 turn/start
+snapshot 读取、turn/review/realtime/interrupt `Op` 提交、interrupt status check、
+realtime feature check 和 app-server client info 写入也已改到这些窄 runtime。
+apps processor 的 apps feature check、feedback
 processor 的 live rollout path lookup、thread goal processor 的 live rollout path /
 ephemeral-thread checks 也已改到 inspection runtime。thread goal processor 的
 external goal prepare/apply runtime effects 已改到 goal runtime。feedback processor

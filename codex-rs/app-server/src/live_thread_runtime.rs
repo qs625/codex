@@ -17,6 +17,7 @@ use state_api::ExternalGoalSet;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadConfigRefreshSnapshot;
+use thread_service_api::LiveThreadElicitationRuntime;
 use thread_service_api::LiveThreadFeedbackRuntime;
 use thread_service_api::LiveThreadGoalRuntime;
 use thread_service_api::LiveThreadHandle;
@@ -159,16 +160,6 @@ pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>>;
-
-    fn increment_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<u64>>;
-
-    fn decrement_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<u64>>;
 
     fn thread_skill_watch_paths(
         &self,
@@ -339,6 +330,45 @@ where
     }
 }
 
+pub(crate) trait AppServerLiveThreadElicitationRuntime: Send + Sync {
+    fn increment_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<u64>>;
+
+    fn decrement_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<u64>>;
+}
+
+impl<T> AppServerLiveThreadElicitationRuntime for T
+where
+    T: LiveThreadElicitationRuntime + Send + Sync,
+{
+    fn increment_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<u64>> {
+        Box::pin(
+            LiveThreadElicitationRuntime::increment_thread_out_of_band_elicitation_count(
+                self, thread_id,
+            ),
+        )
+    }
+
+    fn decrement_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<u64>> {
+        Box::pin(
+            LiveThreadElicitationRuntime::decrement_thread_out_of_band_elicitation_count(
+                self, thread_id,
+            ),
+        )
+    }
+}
+
 pub(crate) trait AppServerLiveThreadStatusRuntime: Send + Sync {
     fn live_thread_agent_status(
         &self,
@@ -483,24 +513,6 @@ where
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<ThreadContextUsage>> {
         Box::pin(LiveThreadRegistry::thread_context_usage(self, thread_id))
-    }
-
-    fn increment_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<u64>> {
-        Box::pin(
-            LiveThreadRegistry::increment_thread_out_of_band_elicitation_count(self, thread_id),
-        )
-    }
-
-    fn decrement_thread_out_of_band_elicitation_count(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<u64>> {
-        Box::pin(
-            LiveThreadRegistry::decrement_thread_out_of_band_elicitation_count(self, thread_id),
-        )
     }
 
     fn thread_skill_watch_paths(

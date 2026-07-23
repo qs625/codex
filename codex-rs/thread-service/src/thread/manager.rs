@@ -2295,6 +2295,29 @@ impl thread_service_api::LiveThreadGoalRuntime for ThreadServiceState {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadElicitationRuntime for ThreadServiceState {
+    fn increment_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.increment_out_of_band_elicitation_count().await
+        }
+    }
+
+    fn decrement_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.decrement_out_of_band_elicitation_count().await
+        }
+    }
+}
+
 impl thread_service_api::LiveThreadStateRuntimeSource for ThreadServiceState {
     fn thread_state_runtime(&self) -> Option<state_api::SharedStateDbRuntime> {
         self.state_db
@@ -2524,6 +2547,29 @@ impl thread_service_api::LiveThreadGoalRuntime for ThreadService {
         thread_id: ThreadId,
     ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
         thread_service_api::LiveThreadGoalRuntime::apply_thread_external_goal_clear(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadElicitationRuntime for ThreadService {
+    fn increment_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_ {
+        thread_service_api::LiveThreadElicitationRuntime::increment_thread_out_of_band_elicitation_count(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn decrement_thread_out_of_band_elicitation_count(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<u64>> + Send + '_ {
+        thread_service_api::LiveThreadElicitationRuntime::decrement_thread_out_of_band_elicitation_count(
             self.state.as_ref(),
             thread_id,
         )
