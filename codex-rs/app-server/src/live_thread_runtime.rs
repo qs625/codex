@@ -13,10 +13,12 @@ use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::TokenUsageInfo;
 use protocol::protocol::W3cTraceContext;
 use skill_service_api::SkillWatchPath;
+use state_api::ExternalGoalSet;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadConfigRefreshSnapshot;
 use thread_service_api::LiveThreadFeedbackRuntime;
+use thread_service_api::LiveThreadGoalRuntime;
 use thread_service_api::LiveThreadHandle;
 use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
@@ -283,6 +285,57 @@ where
 
     fn session_source(&self) -> SessionSource {
         LiveThreadFeedbackRuntime::session_source(self)
+    }
+}
+
+pub(crate) trait AppServerLiveThreadGoalRuntime: Send + Sync {
+    fn prepare_thread_external_goal_mutation(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<()>>;
+
+    fn apply_thread_external_goal_set(
+        &self,
+        thread_id: ThreadId,
+        external_set: ExternalGoalSet,
+    ) -> BoxFuture<'_, CodexResult<()>>;
+
+    fn apply_thread_external_goal_clear(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<()>>;
+}
+
+impl<T> AppServerLiveThreadGoalRuntime for T
+where
+    T: LiveThreadGoalRuntime + Send + Sync,
+{
+    fn prepare_thread_external_goal_mutation(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadGoalRuntime::prepare_thread_external_goal_mutation(self, thread_id))
+    }
+
+    fn apply_thread_external_goal_set(
+        &self,
+        thread_id: ThreadId,
+        external_set: ExternalGoalSet,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadGoalRuntime::apply_thread_external_goal_set(
+            self,
+            thread_id,
+            external_set,
+        ))
+    }
+
+    fn apply_thread_external_goal_clear(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(LiveThreadGoalRuntime::apply_thread_external_goal_clear(
+            self, thread_id,
+        ))
     }
 }
 

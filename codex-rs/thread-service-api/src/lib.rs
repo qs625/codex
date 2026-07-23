@@ -351,6 +351,31 @@ pub trait LiveThreadFeedbackRuntime: Send + Sync {
     fn session_source(&self) -> SessionSource;
 }
 
+/// Goal runtime side-effect surface without exposing concrete thread handles.
+///
+/// App-server owns the persisted goal mutation. Implementations should only
+/// prepare or apply live runtime effects around that externally persisted fact.
+pub trait LiveThreadGoalRuntime: Send + Sync {
+    /// Prepare a specific live thread for an externally persisted goal mutation.
+    fn prepare_thread_external_goal_mutation(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+
+    /// Apply runtime effects for an externally persisted goal set/update.
+    fn apply_thread_external_goal_set(
+        &self,
+        thread_id: ThreadId,
+        external_set: ExternalGoalSet,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+
+    /// Apply runtime effects for an externally persisted goal clear.
+    fn apply_thread_external_goal_clear(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+}
+
 /// Source for optional persistent thread state runtime owned by the live thread manager.
 ///
 /// Consumers that need spawn-edge or thread metadata persistence should depend

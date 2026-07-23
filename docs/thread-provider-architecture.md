@@ -195,11 +195,12 @@ checks、submit op、client info 写入，以及 archive 前 shutdown/remove 路
 `Op` 提交、interrupt status check、realtime feature check 和 app-server client info
 写入也已改到这些窄 runtime。apps processor 的 apps feature check、feedback
 processor 的 live rollout path lookup、thread goal processor 的 live rollout path /
-ephemeral-thread checks 也已改到 inspection runtime。feedback processor 的
-subtree ids、guardian rollout path 和 session source 读取已改到 feedback runtime。
-MCP processor 的 thread-bound resource/tool request loaded check 已改到 inspection
-runtime；MCP refresh 的 live thread ids、config refresh snapshot 和 queued
-`Op::RefreshMcpServers` submit 已改到 inspection / command runtime。
+ephemeral-thread checks 也已改到 inspection runtime。thread goal processor 的
+external goal prepare/apply runtime effects 已改到 goal runtime。feedback processor
+的 subtree ids、guardian rollout path 和 session source 读取已改到 feedback
+runtime。MCP processor 的 thread-bound resource/tool request loaded check 已改到
+inspection runtime；MCP refresh 的 live thread ids、config refresh snapshot 和
+queued `Op::RefreshMcpServers` submit 已改到 inspection / command runtime。
 `AppServerLiveThreadRegistry::live_thread_handle()` 仍只保留给 listener / full live
 history 这类需要事件流或完整 persisted history handle 的路径；turn processor 里剩余
 的 app-server-local turn runtime 只覆盖环境选择校验、live `Config` 读取、turn

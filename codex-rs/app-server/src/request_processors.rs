@@ -401,7 +401,6 @@ use thread_service::path_utils;
 use thread_service_api::ActiveEventSubscriptionTracker;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::CodexThreadTurnContextOverrides;
-use thread_service_api::LiveThreadRegistry;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::ThreadConfigSnapshot;
 use thread_service_api::ThreadCreatedEvent;

@@ -1,68 +1,15 @@
 use super::*;
+use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
-use futures::future::BoxFuture;
 use protocol::protocol::validate_thread_goal_objective;
 use state_api::protocol_goal_from_state;
 use state_api::state_goal_status_from_protocol;
 use state_api::validate_thread_goal_budget;
 
-pub(crate) trait ThreadGoalRuntime: Send + Sync {
-    fn prepare_thread_external_goal_mutation(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, protocol::error::Result<()>>;
-
-    fn apply_thread_external_goal_set(
-        &self,
-        thread_id: ThreadId,
-        external_set: ExternalGoalSet,
-    ) -> BoxFuture<'_, protocol::error::Result<()>>;
-
-    fn apply_thread_external_goal_clear(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, protocol::error::Result<()>>;
-}
-
-impl<T> ThreadGoalRuntime for T
-where
-    T: LiveThreadRegistry + Send + Sync,
-{
-    fn prepare_thread_external_goal_mutation(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, protocol::error::Result<()>> {
-        Box::pin(LiveThreadRegistry::prepare_thread_external_goal_mutation(
-            self, thread_id,
-        ))
-    }
-
-    fn apply_thread_external_goal_set(
-        &self,
-        thread_id: ThreadId,
-        external_set: ExternalGoalSet,
-    ) -> BoxFuture<'_, protocol::error::Result<()>> {
-        Box::pin(LiveThreadRegistry::apply_thread_external_goal_set(
-            self,
-            thread_id,
-            external_set,
-        ))
-    }
-
-    fn apply_thread_external_goal_clear(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, protocol::error::Result<()>> {
-        Box::pin(LiveThreadRegistry::apply_thread_external_goal_clear(
-            self, thread_id,
-        ))
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct ThreadGoalRequestProcessor {
-    thread_runtime: Arc<dyn ThreadGoalRuntime>,
+    thread_runtime: Arc<dyn AppServerLiveThreadGoalRuntime>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     outgoing: Arc<OutgoingMessageSender>,
     config: Arc<Config>,
@@ -79,11 +26,11 @@ impl ThreadGoalRequestProcessor {
         state_db: Option<StateDbHandle>,
     ) -> Self
     where
-        R: ThreadGoalRuntime + AppServerLiveThreadInspectionRuntime + 'static,
+        R: AppServerLiveThreadGoalRuntime + AppServerLiveThreadInspectionRuntime + 'static,
     {
         let live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime> =
             thread_runtime.clone();
-        let thread_runtime: Arc<dyn ThreadGoalRuntime> = thread_runtime;
+        let thread_runtime: Arc<dyn AppServerLiveThreadGoalRuntime> = thread_runtime;
         Self {
             thread_runtime,
             live_thread_inspection,

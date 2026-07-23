@@ -2258,6 +2258,43 @@ impl thread_service_api::LiveThreadFeedbackRuntime for ThreadServiceState {
     }
 }
 
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadGoalRuntime for ThreadServiceState {
+    fn prepare_thread_external_goal_mutation(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.prepare_external_goal_mutation().await;
+            Ok(())
+        }
+    }
+
+    fn apply_thread_external_goal_set(
+        &self,
+        thread_id: ThreadId,
+        external_set: ExternalGoalSet,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.apply_external_goal_set(external_set).await;
+            Ok(())
+        }
+    }
+
+    fn apply_thread_external_goal_clear(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.apply_external_goal_clear().await;
+            Ok(())
+        }
+    }
+}
+
 impl thread_service_api::LiveThreadStateRuntimeSource for ThreadServiceState {
     fn thread_state_runtime(&self) -> Option<state_api::SharedStateDbRuntime> {
         self.state_db
@@ -2455,6 +2492,41 @@ impl thread_service_api::LiveThreadFeedbackRuntime for ThreadService {
 
     fn session_source(&self) -> SessionSource {
         thread_service_api::LiveThreadFeedbackRuntime::session_source(self.state.as_ref())
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadGoalRuntime for ThreadService {
+    fn prepare_thread_external_goal_mutation(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadGoalRuntime::prepare_thread_external_goal_mutation(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn apply_thread_external_goal_set(
+        &self,
+        thread_id: ThreadId,
+        external_set: ExternalGoalSet,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadGoalRuntime::apply_thread_external_goal_set(
+            self.state.as_ref(),
+            thread_id,
+            external_set,
+        )
+    }
+
+    fn apply_thread_external_goal_clear(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadGoalRuntime::apply_thread_external_goal_clear(
+            self.state.as_ref(),
+            thread_id,
+        )
     }
 }
 
