@@ -2061,6 +2061,25 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadTurnRuntime for ThreadServiceState {
+    fn validate_live_thread_turn_context_overrides(
+        &self,
+        thread_id: ThreadId,
+        overrides: thread_service_api::CodexThreadTurnContextOverrides,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread
+                .validate_turn_context_overrides(overrides)
+                .await
+                .map_err(|err| {
+                    CodexErr::InvalidRequest(format!("invalid turn context override: {err}"))
+                })
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadShutdownRuntime for ThreadServiceState {
     fn shutdown_live_thread(
         &self,
@@ -2447,6 +2466,21 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadService {
         thread_service_api::LiveThreadCommandRuntime::remove_live_thread(
             self.state.as_ref(),
             thread_id,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadTurnRuntime for ThreadService {
+    fn validate_live_thread_turn_context_overrides(
+        &self,
+        thread_id: ThreadId,
+        overrides: thread_service_api::CodexThreadTurnContextOverrides,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadTurnRuntime::validate_live_thread_turn_context_overrides(
+            self.state.as_ref(),
+            thread_id,
+            overrides,
         )
     }
 }
@@ -2863,22 +2897,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
                     CodexErr::InvalidRequest(format!(
                         "failed to set app server client info for thread {thread_id}: {err}"
                     ))
-                })
-        }
-    }
-
-    fn validate_thread_turn_context_overrides(
-        &self,
-        thread_id: ThreadId,
-        overrides: thread_service_api::CodexThreadTurnContextOverrides,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread
-                .validate_turn_context_overrides(overrides)
-                .await
-                .map_err(|err| {
-                    CodexErr::InvalidRequest(format!("invalid turn context override: {err}"))
                 })
         }
     }

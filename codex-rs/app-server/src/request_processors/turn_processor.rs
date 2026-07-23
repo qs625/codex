@@ -5,12 +5,12 @@ use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
 use futures::future::BoxFuture;
 use model_service_api::SharedModelServiceApi;
 use thread_service_api::AppServerClientInfo;
-use thread_service_api::LiveThreadRegistry;
 
 pub(crate) trait TurnProcessorRuntime: Send + Sync {
     fn validate_environment_selections(
@@ -22,12 +22,6 @@ pub(crate) trait TurnProcessorRuntime: Send + Sync {
         &'a self,
         thread_id: ThreadId,
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>>;
-
-    fn validate_thread_turn_context_overrides<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        overrides: CodexThreadTurnContextOverrides,
-    ) -> BoxFuture<'a, CodexResult<()>>;
 
     fn inject_thread_conversation_items<'a>(
         &'a self,
@@ -69,16 +63,6 @@ impl TurnProcessorRuntime for ThreadService {
         thread_id: ThreadId,
     ) -> BoxFuture<'a, CodexResult<Arc<Config>>> {
         Box::pin(ThreadService::live_thread_config(self, thread_id))
-    }
-
-    fn validate_thread_turn_context_overrides<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        overrides: CodexThreadTurnContextOverrides,
-    ) -> BoxFuture<'a, CodexResult<()>> {
-        Box::pin(LiveThreadRegistry::validate_thread_turn_context_overrides(
-            self, thread_id, overrides,
-        ))
     }
 
     fn inject_thread_conversation_items<'a>(
@@ -142,6 +126,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
+    live_thread_turn: Arc<dyn AppServerLiveThreadTurnRuntime>,
     live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     live_threads: Arc<dyn AppServerLiveThreadRegistry>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
@@ -197,6 +182,7 @@ impl TurnRequestProcessor {
             live_thread_inspection: thread_service.clone(),
             live_thread_status: thread_service.clone(),
             live_thread_command: thread_service.clone(),
+            live_thread_turn: thread_service.clone(),
             live_thread_skill_watch: thread_service.clone(),
             live_threads: thread_service.clone(),
             memory_startup_host: thread_service,
@@ -619,8 +605,8 @@ impl TurnRequestProcessor {
         // request can fail before accepting user input. The actual update is
         // still queued together with the input below to preserve submission order.
         if has_any_overrides {
-            self.turn_runtime
-                .validate_thread_turn_context_overrides(
+            self.live_thread_turn
+                .validate_live_thread_turn_context_overrides(
                     thread_id,
                     CodexThreadTurnContextOverrides {
                         cwd: cwd.clone(),

@@ -264,6 +264,19 @@ pub trait LiveThreadCommandRuntime: Send + Sync {
     fn remove_live_thread(&self, thread_id: ThreadId) -> impl Future<Output = bool> + Send + '_;
 }
 
+/// Turn preflight surface for live threads without exposing concrete handles.
+///
+/// Implementations validate turn-scoped inputs against the live thread but do
+/// not enqueue or apply those inputs.
+pub trait LiveThreadTurnRuntime: Send + Sync {
+    /// Validate turn context overrides before accepting new turn input.
+    fn validate_live_thread_turn_context_overrides(
+        &self,
+        thread_id: ThreadId,
+        overrides: CodexThreadTurnContextOverrides,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+}
+
 /// Shutdown surface for live agents without exposing concrete thread handles.
 ///
 /// Implementations own any required rollout flush, lifecycle status checks,
@@ -611,13 +624,6 @@ pub trait LiveThreadRegistry: Send + Sync {
         &self,
         thread_id: ThreadId,
         info: AppServerClientInfo,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
-    /// Validate turn context overrides for a specific live thread without committing them.
-    fn validate_thread_turn_context_overrides(
-        &self,
-        thread_id: ThreadId,
-        overrides: CodexThreadTurnContextOverrides,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 
     /// Return the guardian trunk rollout path for a specific live thread.

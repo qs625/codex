@@ -15,6 +15,7 @@ use protocol::protocol::W3cTraceContext;
 use skill_service_api::SkillWatchPath;
 use state_api::ExternalGoalSet;
 use thread_service_api::AppServerClientInfo;
+use thread_service_api::CodexThreadTurnContextOverrides;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadConfigRefreshSnapshot;
 use thread_service_api::LiveThreadElicitationRuntime;
@@ -28,6 +29,7 @@ use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadSkillWatchRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadStatusRuntime;
+use thread_service_api::LiveThreadTurnRuntime;
 use thread_service_api::LiveThreadUsageRuntime;
 use thread_service_api::ThreadConfigSnapshot;
 use thread_service_api::ThreadRuntimeStatus;
@@ -451,6 +453,31 @@ pub(crate) trait AppServerLiveThreadCommandRuntime: Send + Sync {
     ) -> BoxFuture<'_, CodexResult<()>>;
 
     fn remove_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+}
+
+pub(crate) trait AppServerLiveThreadTurnRuntime: Send + Sync {
+    fn validate_live_thread_turn_context_overrides(
+        &self,
+        thread_id: ThreadId,
+        overrides: CodexThreadTurnContextOverrides,
+    ) -> BoxFuture<'_, CodexResult<()>>;
+}
+
+impl<T> AppServerLiveThreadTurnRuntime for T
+where
+    T: LiveThreadTurnRuntime + Send + Sync,
+{
+    fn validate_live_thread_turn_context_overrides(
+        &self,
+        thread_id: ThreadId,
+        overrides: CodexThreadTurnContextOverrides,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(
+            LiveThreadTurnRuntime::validate_live_thread_turn_context_overrides(
+                self, thread_id, overrides,
+            ),
+        )
+    }
 }
 
 impl<T> AppServerLiveThreadCommandRuntime for T
