@@ -222,7 +222,8 @@ rollout path 和 session source 读取已改到 feedback runtime。listener 的 
 path resolution 已改到 skill-watch runtime。MCP processor 的 thread-bound
 resource/tool request loaded check 已改到 inspection runtime；MCP refresh 的 live
 thread ids、config refresh snapshot 和 queued `Op::RefreshMcpServers` submit 已改到
-inspection / command runtime。bespoke `CollabCloseEnd` receiver loaded check 已改到
+inspection / command runtime；inspection runtime 的 live ids、loaded check 和
+thread info 现在会包含 external live records。bespoke `CollabCloseEnd` receiver loaded check 已改到
 inspection runtime。start/resume/fork/listing/review response assembly，以及
 listener generation / running resume / rollback response / permissions request 所需的 copied session/config
 reads 也已改到 inspection runtime。thread read/listing、cold

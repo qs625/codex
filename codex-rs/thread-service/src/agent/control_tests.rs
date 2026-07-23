@@ -42,6 +42,7 @@ use protocol::user_input::UserInput;
 use state_api::DirectionalThreadSpawnEdgeStatus;
 use state_api::ThreadGoalStatus as StateThreadGoalStatus;
 use tempfile::TempDir;
+use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
 use thread_store::LocalThreadStore;
 use thread_store::LocalThreadStoreConfig;
@@ -541,6 +542,92 @@ async fn spawn_external_agent_accepts_codex_provider_before_session_source_check
             .contains("external agents must be spawned as thread-spawn subagents")
     );
     assert!(harness.control.external_agents.list().is_empty());
+}
+
+#[tokio::test]
+async fn inspection_runtime_includes_external_live_records() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let external_thread_id = ThreadId::new();
+    let child_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = external_session_source_for(
+        root_thread_id,
+        1,
+        child_agent_path.clone(),
+        SpawnAgentProvider::CodexCli,
+    );
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(child_agent_path),
+        agent_nickname: Some("codex_cli".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    let external_snapshot = external_live_thread_snapshot(
+        &external_config,
+        external_thread_id,
+        session_source,
+        &agent_metadata,
+    );
+    let expected_external_info = external_snapshot.info.clone();
+    harness
+        .control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            external_thread_id,
+            external_snapshot,
+            AgentStatus::Running,
+        )
+        .await;
+
+    let (native_thread_id, _native_thread) = harness.start_thread().await;
+
+    let live_thread_ids = harness.manager.list_live_thread_ids().await;
+    assert!(live_thread_ids.contains(&external_thread_id));
+    assert!(live_thread_ids.contains(&native_thread_id));
+    let external_id_count = live_thread_ids
+        .iter()
+        .filter(|thread_id| **thread_id == external_thread_id)
+        .count();
+    assert_eq!(external_id_count, 1);
+
+    assert!(
+        harness
+            .manager
+            .is_live_thread_loaded(external_thread_id)
+            .await
+    );
+    assert!(
+        harness
+            .manager
+            .is_live_thread_loaded(native_thread_id)
+            .await
+    );
+    assert!(
+        !harness
+            .manager
+            .is_live_thread_loaded(ThreadId::new())
+            .await
+    );
+
+    let external_info = harness
+        .manager
+        .live_thread_info(external_thread_id)
+        .await
+        .expect("external live info");
+    assert_eq!(external_info, expected_external_info);
+    harness
+        .manager
+        .live_thread_info(native_thread_id)
+        .await
+        .expect("native live info");
+    assert!(matches!(
+        harness.manager.live_thread_info(ThreadId::new()).await,
+        Err(CodexErr::ThreadNotFound(_))
+    ));
 }
 
 #[tokio::test]

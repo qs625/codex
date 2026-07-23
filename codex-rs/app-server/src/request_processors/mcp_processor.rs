@@ -56,6 +56,8 @@ pub(crate) trait McpProcessorRuntime: Send + Sync {
 
     fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, mcp_types::McpConfig>;
 
+    fn is_thread_mcp_runtime_available(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+
     fn read_thread_mcp_resource<'a>(
         &'a self,
         thread_id: ThreadId,
@@ -96,6 +98,10 @@ impl McpProcessorRuntime for ThreadService {
 
     fn mcp_config<'a>(&'a self, config: &'a Config) -> BoxFuture<'a, mcp_types::McpConfig> {
         Box::pin(async move { config.to_mcp_config(self.plugin_runtime().as_ref()).await })
+    }
+
+    fn is_thread_mcp_runtime_available(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
+        Box::pin(async move { self.get_thread(thread_id).await.is_ok() })
     }
 
     fn read_thread_mcp_resource<'a>(
@@ -470,13 +476,12 @@ impl McpRequestProcessor {
 
         if let Some(thread_id) = thread_id {
             let thread_id = Self::parse_thread_id(&thread_id)?;
-            if !self
-                .live_thread_inspection
-                .is_live_thread_loaded(thread_id)
-                .await
-            {
-                return Err(invalid_request(format!("thread not found: {thread_id}")));
-            }
+            ensure_thread_mcp_runtime_available(
+                self.live_thread_inspection.as_ref(),
+                self.runtime.as_ref(),
+                thread_id,
+            )
+            .await?;
             let runtime = Arc::clone(&self.runtime);
             let request_id = request_id.clone();
 
@@ -547,15 +552,12 @@ impl McpRequestProcessor {
         let outgoing = Arc::clone(&self.outgoing);
         let thread_id = params.thread_id.clone();
         let parsed_thread_id = Self::parse_thread_id(&thread_id)?;
-        if !self
-            .live_thread_inspection
-            .is_live_thread_loaded(parsed_thread_id)
-            .await
-        {
-            return Err(invalid_request(format!(
-                "thread not found: {parsed_thread_id}"
-            )));
-        }
+        ensure_thread_mcp_runtime_available(
+            self.live_thread_inspection.as_ref(),
+            self.runtime.as_ref(),
+            parsed_thread_id,
+        )
+        .await?;
         let runtime = Arc::clone(&self.runtime);
         let meta = with_mcp_tool_call_thread_id_meta(params.meta, &thread_id);
         let request_id = request_id.clone();
@@ -576,6 +578,21 @@ impl McpRequestProcessor {
         });
         Ok(())
     }
+}
+
+async fn ensure_thread_mcp_runtime_available(
+    live_thread_inspection: &(impl AppServerLiveThreadInspectionRuntime + ?Sized),
+    runtime: &(impl McpProcessorRuntime + ?Sized),
+    thread_id: ThreadId,
+) -> Result<(), JSONRPCErrorError> {
+    if live_thread_inspection
+        .is_live_thread_loaded(thread_id)
+        .await
+        && runtime.is_thread_mcp_runtime_available(thread_id).await
+    {
+        return Ok(());
+    }
+    Err(invalid_request(format!("thread not found: {thread_id}")))
 }
 
 fn with_mcp_tool_call_thread_id_meta(
@@ -599,5 +616,138 @@ fn with_mcp_tool_call_thread_id_meta(
             Some(serde_json::Value::Object(map))
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_features::Feature;
+    use protocol::error::CodexErr;
+    use protocol::error::Result as CodexResult;
+    use std::collections::HashSet;
+    use thread_service_api::LiveThreadConfigRefreshSnapshot;
+    use thread_service_api::LiveThreadInfo;
+    use thread_service_api::LiveThreadSnapshot;
+    use thread_service_api::ThreadConfigSnapshot;
+
+    #[tokio::test]
+    async fn thread_mcp_gate_rejects_loaded_thread_without_native_mcp_runtime() {
+        let thread_id = ThreadId::new();
+        let runtime = FakeMcpRuntime {
+            loaded_thread_ids: HashSet::from([thread_id]),
+            mcp_runtime_thread_ids: HashSet::new(),
+        };
+
+        let err = ensure_thread_mcp_runtime_available(&runtime, &runtime, thread_id)
+            .await
+            .expect_err("external-only thread should not enter native MCP runtime");
+
+        assert_eq!(err.message, format!("thread not found: {thread_id}"));
+    }
+
+    #[tokio::test]
+    async fn thread_mcp_gate_allows_loaded_native_mcp_runtime() {
+        let thread_id = ThreadId::new();
+        let runtime = FakeMcpRuntime {
+            loaded_thread_ids: HashSet::from([thread_id]),
+            mcp_runtime_thread_ids: HashSet::from([thread_id]),
+        };
+
+        ensure_thread_mcp_runtime_available(&runtime, &runtime, thread_id)
+            .await
+            .expect("native MCP runtime should be accepted");
+    }
+
+    struct FakeMcpRuntime {
+        loaded_thread_ids: HashSet<ThreadId>,
+        mcp_runtime_thread_ids: HashSet<ThreadId>,
+    }
+
+    impl McpProcessorRuntime for FakeMcpRuntime {
+        fn queue_strict_mcp_refresh(
+            self: Arc<Self>,
+            _config_manager: ConfigManager,
+        ) -> BoxFuture<'static, io::Result<()>> {
+            Box::pin(async { unreachable!("not used by gate tests") })
+        }
+
+        fn configured_mcp_servers<'a>(
+            &'a self,
+            _config: &'a Config,
+        ) -> BoxFuture<'a, HashMap<String, McpServerConfig>> {
+            Box::pin(async { unreachable!("not used by gate tests") })
+        }
+
+        fn mcp_config<'a>(&'a self, _config: &'a Config) -> BoxFuture<'a, mcp_types::McpConfig> {
+            Box::pin(async { unreachable!("not used by gate tests") })
+        }
+
+        fn is_thread_mcp_runtime_available(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
+            Box::pin(async move { self.mcp_runtime_thread_ids.contains(&thread_id) })
+        }
+
+        fn read_thread_mcp_resource<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _server: &'a str,
+            _uri: &'a str,
+        ) -> BoxFuture<'a, anyhow::Result<serde_json::Value>> {
+            Box::pin(async { unreachable!("not used by gate tests") })
+        }
+
+        fn call_thread_mcp_tool<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _server: &'a str,
+            _tool: &'a str,
+            _arguments: Option<serde_json::Value>,
+            _meta: Option<serde_json::Value>,
+        ) -> BoxFuture<'a, anyhow::Result<CallToolResult>> {
+            Box::pin(async { unreachable!("not used by gate tests") })
+        }
+    }
+
+    impl AppServerLiveThreadInspectionRuntime for FakeMcpRuntime {
+        fn list_live_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>> {
+            Box::pin(async { self.loaded_thread_ids.iter().copied().collect() })
+        }
+
+        fn is_live_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
+            Box::pin(async move { self.loaded_thread_ids.contains(&thread_id) })
+        }
+
+        fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>> {
+            Box::pin(async move { Err(CodexErr::ThreadNotFound(thread_id)) })
+        }
+
+        fn live_thread_snapshot(
+            &self,
+            thread_id: ThreadId,
+        ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>> {
+            Box::pin(async move { Err(CodexErr::ThreadNotFound(thread_id)) })
+        }
+
+        fn live_thread_config_snapshot(
+            &self,
+            thread_id: ThreadId,
+        ) -> BoxFuture<'_, CodexResult<ThreadConfigSnapshot>> {
+            Box::pin(async move { Err(CodexErr::ThreadNotFound(thread_id)) })
+        }
+
+        fn live_thread_config_refresh_snapshot(
+            &self,
+            thread_id: ThreadId,
+        ) -> BoxFuture<'_, CodexResult<LiveThreadConfigRefreshSnapshot>> {
+            Box::pin(async move { Err(CodexErr::ThreadNotFound(thread_id)) })
+        }
+
+        fn live_thread_feature_enabled(
+            &self,
+            thread_id: ThreadId,
+            _feature: Feature,
+        ) -> BoxFuture<'_, CodexResult<bool>> {
+            Box::pin(async move { Err(CodexErr::ThreadNotFound(thread_id)) })
+        }
     }
 }

@@ -2311,14 +2311,26 @@ impl thread_service_api::LiveThreadTurnRuntime for ThreadServiceState {
 #[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
     fn list_live_thread_ids(&self) -> impl std::future::Future<Output = Vec<ThreadId>> + Send + '_ {
-        self.list_thread_ids()
+        async move {
+            let mut thread_ids = self.list_thread_ids().await;
+            let mut seen: HashSet<ThreadId> = thread_ids.iter().copied().collect();
+            for thread_id in self.external_live_threads.read().await.keys().copied() {
+                if seen.insert(thread_id) {
+                    thread_ids.push(thread_id);
+                }
+            }
+            thread_ids
+        }
     }
 
     fn is_live_thread_loaded(
         &self,
         thread_id: ThreadId,
     ) -> impl std::future::Future<Output = bool> + Send + '_ {
-        async move { self.get_thread(thread_id).await.is_ok() }
+        async move {
+            self.get_thread(thread_id).await.is_ok()
+                || self.external_live_threads.read().await.contains_key(&thread_id)
+        }
     }
 
     fn live_thread_info(
@@ -2327,11 +2339,20 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
     ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadInfo>> + Send + '_
     {
         async move {
-            let thread = self.get_thread(thread_id).await?;
-            Ok(thread_service_api::LiveThreadInfo {
-                session_id: thread.session_configured().session_id,
-                rollout_path: thread.rollout_path(),
-            })
+            match self.get_thread(thread_id).await {
+                Ok(thread) => Ok(thread_service_api::LiveThreadInfo {
+                    session_id: thread.session_configured().session_id,
+                    rollout_path: thread.rollout_path(),
+                }),
+                Err(CodexErr::ThreadNotFound(_)) => self
+                    .external_live_threads
+                    .read()
+                    .await
+                    .get(&thread_id)
+                    .map(|record| record.snapshot.info.clone())
+                    .ok_or(CodexErr::ThreadNotFound(thread_id)),
+                Err(err) => Err(err),
+            }
         }
     }
 
