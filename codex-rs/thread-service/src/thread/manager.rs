@@ -2905,40 +2905,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
         }
     }
 
-    fn prepare_thread_external_goal_mutation(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.prepare_external_goal_mutation().await;
-            Ok(())
-        }
-    }
-
-    fn apply_thread_external_goal_set(
-        &self,
-        thread_id: ThreadId,
-        external_set: ExternalGoalSet,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.apply_external_goal_set(external_set).await;
-            Ok(())
-        }
-    }
-
-    fn apply_thread_external_goal_clear(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await?;
-            thread.apply_external_goal_clear().await;
-            Ok(())
-        }
-    }
-
 }
 
 fn thread_store_rollout_read_error(err: ThreadStoreError) -> CodexErr {

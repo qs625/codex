@@ -639,23 +639,4 @@ pub trait LiveThreadRegistry: Send + Sync {
         thread_id: ThreadId,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
 
-    /// Prepare a specific live thread for an externally persisted goal mutation.
-    fn prepare_thread_external_goal_mutation(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
-    /// Apply runtime effects for an externally persisted goal set/update.
-    fn apply_thread_external_goal_set(
-        &self,
-        thread_id: ThreadId,
-        external_set: ExternalGoalSet,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
-    /// Apply runtime effects for an externally persisted goal clear.
-    fn apply_thread_external_goal_clear(
-        &self,
-        thread_id: ThreadId,
-    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
-
 }
