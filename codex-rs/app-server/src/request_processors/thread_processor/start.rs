@@ -313,7 +313,6 @@ impl ThreadRequestProcessor {
         match resume_result {
             Ok(ThreadProcessorNewThread {
                 thread_id,
-                thread: codex_thread,
                 session_configured,
                 ..
             }) => {
@@ -347,7 +346,6 @@ impl ThreadRequestProcessor {
                 let mut thread = match self
                     .load_thread_from_resume_source_or_send_internal(
                         thread_id,
-                        codex_thread.as_ref(),
                         &response_history,
                         rollout_path.as_path(),
                         resume_source_thread,
@@ -363,9 +361,12 @@ impl ThreadRequestProcessor {
                         return Ok(());
                     }
                 };
-                thread.thread_source = codex_thread
-                    .config_snapshot()
+                let config_snapshot = self
+                    .live_thread_inspection
+                    .live_thread_config_snapshot(thread_id)
                     .await
+                    .map_err(|err| internal_error(format!("error resuming thread: {err}")))?;
+                thread.thread_source = config_snapshot
                     .thread_source
                     .map(Into::into);
 
@@ -383,7 +384,6 @@ impl ThreadRequestProcessor {
                     thread_status,
                     /*has_live_in_progress_turn*/ false,
                 );
-                let config_snapshot = codex_thread.config_snapshot().await;
                 let sandbox = thread_response_sandbox_policy(
                     &config_snapshot.permission_profile,
                     config_snapshot.cwd.as_path(),
@@ -771,14 +771,23 @@ impl ThreadRequestProcessor {
     pub(super) async fn load_thread_from_resume_source_or_send_internal(
         &self,
         thread_id: ThreadId,
-        codex_thread: &dyn AppServerLiveThreadHandle,
         thread_history: &InitialHistory,
         rollout_path: &Path,
         resume_source_thread: Option<StoredThread>,
         include_turns: bool,
     ) -> std::result::Result<Thread, String> {
-        let config_snapshot = codex_thread.config_snapshot().await;
-        let session_id = codex_thread.session_configured().session_id.to_string();
+        let config_snapshot = self
+            .live_thread_inspection
+            .live_thread_config_snapshot(thread_id)
+            .await
+            .map_err(|err| format!("failed to read live thread config snapshot: {err}"))?;
+        let session_id = self
+            .live_thread_inspection
+            .live_thread_info(thread_id)
+            .await
+            .map_err(|err| format!("failed to read live thread info: {err}"))?
+            .session_id
+            .to_string();
         let thread = match thread_history {
             InitialHistory::Resumed(resumed) => {
                 let fallback_provider = config_snapshot.model_provider_id.as_str();
@@ -981,7 +990,6 @@ impl ThreadRequestProcessor {
 
         let ThreadProcessorNewThread {
             thread_id,
-            thread: forked_thread,
             session_configured,
             ..
         } = self
@@ -1035,7 +1043,11 @@ impl ThreadRequestProcessor {
                 include_turns,
             )
         } else {
-            let config_snapshot = forked_thread.config_snapshot().await;
+            let config_snapshot = self
+                .live_thread_inspection
+                .live_thread_config_snapshot(thread_id)
+                .await
+                .map_err(|err| internal_error(format!("error forking thread: {err}")))?;
             // forked thread names do not inherit the source thread name
             let mut thread = build_thread_from_snapshot(
                 thread_id,
@@ -1055,9 +1067,12 @@ impl ThreadRequestProcessor {
             thread
         };
         thread.session_id = session_configured.session_id.to_string();
-        thread.thread_source = forked_thread
-            .config_snapshot()
+        let config_snapshot = self
+            .live_thread_inspection
+            .live_thread_config_snapshot(thread_id)
             .await
+            .map_err(|err| internal_error(format!("error forking thread: {err}")))?;
+        thread.thread_source = config_snapshot
             .thread_source
             .map(Into::into);
         let usage_source = super::context_usage_replay::RuntimeThreadUsageSource::new(
@@ -1088,7 +1103,6 @@ impl ThreadRequestProcessor {
                 .await,
             /*has_in_progress_turn*/ false,
         );
-        let config_snapshot = forked_thread.config_snapshot().await;
         let sandbox = thread_response_sandbox_policy(
             &config_snapshot.permission_profile,
             config_snapshot.cwd.as_path(),

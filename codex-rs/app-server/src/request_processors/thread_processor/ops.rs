@@ -543,13 +543,15 @@ impl ThreadRequestProcessor {
                 err => internal_error(format!("failed to set app server client info: {err}")),
             })?;
 
-        let config_snapshot = created_thread
-            .config_snapshot()
+        let config_snapshot = listener_task_context
+            .live_thread_inspection
+            .live_thread_config_snapshot(thread_id)
             .instrument(tracing::info_span!(
                 "app_server.thread_start.config_snapshot",
                 otel.name = "app_server.thread_start.config_snapshot",
             ))
-            .await;
+            .await
+            .map_err(thread_start_create_error)?;
         let mut thread = build_thread_from_snapshot(
             thread_id,
             session_configured.session_id.to_string(),

@@ -46,10 +46,6 @@ use thread_store_api::ThreadStoreResult;
 /// the underlying `LiveThreadHandle`; this facade only boxes the futures needed
 /// at the app-server boundary.
 pub(crate) trait AppServerLiveThreadHandle: Send + Sync {
-    fn session_configured(&self) -> SessionConfiguredEvent;
-
-    fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot>;
-
     fn read_thread(
         &self,
         include_archived: bool,
@@ -61,14 +57,6 @@ impl<T> AppServerLiveThreadHandle for T
 where
     T: LiveThreadHandle + ?Sized,
 {
-    fn session_configured(&self) -> SessionConfiguredEvent {
-        LiveThreadHandle::session_configured(self)
-    }
-
-    fn config_snapshot(&self) -> BoxFuture<'_, ThreadConfigSnapshot> {
-        Box::pin(LiveThreadHandle::config_snapshot(self))
-    }
-
     fn read_thread(
         &self,
         include_archived: bool,
@@ -331,6 +319,11 @@ pub(crate) trait AppServerLiveThreadInspectionRuntime: Send + Sync {
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>>;
 
+    fn live_thread_config_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<ThreadConfigSnapshot>>;
+
     fn live_thread_config_refresh_snapshot(
         &self,
         thread_id: ThreadId,
@@ -368,6 +361,15 @@ where
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>> {
         Box::pin(LiveThreadInspectionRuntime::live_thread_snapshot(
+            self, thread_id,
+        ))
+    }
+
+    fn live_thread_config_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<ThreadConfigSnapshot>> {
+        Box::pin(LiveThreadInspectionRuntime::live_thread_config_snapshot(
             self, thread_id,
         ))
     }

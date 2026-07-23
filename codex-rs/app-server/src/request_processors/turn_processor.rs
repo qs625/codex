@@ -1191,7 +1191,17 @@ impl TurnRequestProcessor {
             Ok(stored_thread) => {
                 let (mut thread, _) =
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
-                thread.session_id = review_thread.session_configured().session_id.to_string();
+                thread.session_id = self
+                    .live_thread_inspection
+                    .live_thread_info(thread_id)
+                    .await
+                    .map_err(|err| {
+                        invalid_request(format!(
+                            "failed to read review thread live info: {err}"
+                        ))
+                    })?
+                    .session_id
+                    .to_string();
                 self.thread_watch_manager
                     .upsert_thread_silently(thread.clone())
                     .await;

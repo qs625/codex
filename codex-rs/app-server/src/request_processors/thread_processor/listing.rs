@@ -705,14 +705,25 @@ impl ThreadRequestProcessor {
         {
             Ok(ThreadProcessorNewThread {
                 thread_id,
-                thread,
                 session_configured,
                 ..
             }) => {
-                let config_snapshot = thread.config_snapshot().await;
+                let config_snapshot = match self
+                    .live_thread_inspection
+                    .live_thread_config_snapshot(thread_id)
+                    .await
+                {
+                    Ok(config_snapshot) => config_snapshot,
+                    Err(err) => {
+                        warn!(
+                            "failed to read live config snapshot while restoring thread {thread_id}: {err}"
+                        );
+                        return;
+                    }
+                };
                 let mut loaded_thread = build_thread_from_snapshot(
                     thread_id,
-                    thread.session_configured().session_id.to_string(),
+                    session_configured.session_id.to_string(),
                     &config_snapshot,
                     session_configured.rollout_path,
                 );
