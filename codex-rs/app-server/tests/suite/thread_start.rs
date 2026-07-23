@@ -11,6 +11,8 @@ use app_server_protocol::SandboxMode;
 use app_server_protocol::ServerNotification;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadResumeParams;
+use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
@@ -432,6 +434,53 @@ async fn thread_start_preserves_client_supplied_root_agent_path() -> Result<()> 
         .find(|listed| listed.id == thread.id)
         .expect("created thread should appear in thread/list");
     assert_eq!(listed.agent_path.as_deref(), Some("/owner_dev"));
+    drop(mcp);
+
+    let mut reloaded_mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, reloaded_mcp.initialize()).await??;
+
+    let resume_req_id = reloaded_mcp
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: thread.id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        reloaded_mcp.read_stream_until_response_message(RequestId::Integer(resume_req_id)),
+    )
+    .await??;
+    let ThreadResumeResponse {
+        thread: resumed, ..
+    } = to_response::<ThreadResumeResponse>(resume_resp)?;
+    assert_eq!(resumed.agent_path.as_deref(), Some("/owner_dev"));
+
+    let resumed_list_req_id = reloaded_mcp
+        .send_thread_list_request(ThreadListParams {
+            cursor: None,
+            limit: None,
+            sort_key: None,
+            sort_direction: None,
+            model_providers: None,
+            source_kinds: None,
+            archived: None,
+            cwd: None,
+            use_state_db_only: false,
+            search_term: None,
+        })
+        .await?;
+    let resumed_list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        reloaded_mcp
+            .read_stream_until_response_message(RequestId::Integer(resumed_list_req_id)),
+    )
+    .await??;
+    let resumed_listed = to_response::<ThreadListResponse>(resumed_list_resp)?
+        .data
+        .into_iter()
+        .find(|listed| listed.id == thread.id)
+        .expect("resumed thread should appear in thread/list after restart");
+    assert_eq!(resumed_listed.agent_path.as_deref(), Some("/owner_dev"));
 
     Ok(())
 }
