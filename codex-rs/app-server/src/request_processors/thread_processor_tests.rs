@@ -1106,6 +1106,63 @@ mod thread_processor_behavior_tests {
         Ok(metadata)
     }
 
+    fn thread_spawn_source(
+        agent_nickname: Option<&str>,
+        agent_role: Option<&str>,
+    ) -> protocol::protocol::SessionSource {
+        protocol::protocol::SessionSource::SubAgent(
+            protocol::protocol::SubAgentSource::ThreadSpawn {
+                parent_thread_id: ThreadId::from_string("45d0a78f-4c28-49d8-abd1-aaec94c423a3")
+                    .expect("valid thread id"),
+                depth: 1,
+                agent_path: None,
+                agent_nickname: agent_nickname.map(ToString::to_string),
+                agent_role: agent_role.map(ToString::to_string),
+            },
+        )
+    }
+
+    #[test]
+    fn native_agent_role_for_resume_keeps_native_role() {
+        let source = thread_spawn_source(Some("worker"), Some("feature-owner"));
+
+        assert_eq!(
+            native_agent_role_for_resume(Some(&source)),
+            Some("feature-owner")
+        );
+    }
+
+    #[test]
+    fn native_agent_role_for_resume_keeps_unknown_native_role_for_validation() {
+        let source = thread_spawn_source(Some("custom-task"), Some("missing-role"));
+
+        assert_eq!(
+            native_agent_role_for_resume(Some(&source)),
+            Some("missing-role")
+        );
+    }
+
+    #[test]
+    fn native_agent_role_for_resume_skips_external_codex_provider_metadata() {
+        let source = thread_spawn_source(Some("codex_cli"), Some("codex_cli"));
+
+        assert_eq!(native_agent_role_for_resume(Some(&source)), None);
+    }
+
+    #[test]
+    fn native_agent_role_for_resume_skips_external_provider_metadata_without_nickname() {
+        let source = thread_spawn_source(None, Some("opencode"));
+
+        assert_eq!(native_agent_role_for_resume(Some(&source)), None);
+    }
+
+    #[test]
+    fn native_agent_role_for_resume_skips_external_provider_metadata_with_generated_nickname() {
+        let source = thread_spawn_source(Some("worker"), Some("claude_cli"));
+
+        assert_eq!(native_agent_role_for_resume(Some(&source)), None);
+    }
+
     #[test]
     fn summary_from_thread_metadata_formats_protocol_timestamps_as_seconds() -> Result<()> {
         let mut metadata =

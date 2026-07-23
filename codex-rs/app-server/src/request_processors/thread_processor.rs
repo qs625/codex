@@ -178,6 +178,30 @@ fn collect_resume_override_mismatches(
     mismatch_details
 }
 
+fn native_agent_role_for_resume(
+    session_source: Option<&protocol::protocol::SessionSource>,
+) -> Option<&str> {
+    let Some(protocol::protocol::SessionSource::SubAgent(
+        protocol::protocol::SubAgentSource::ThreadSpawn {
+            agent_role: Some(agent_role),
+            ..
+        },
+    )) = session_source
+    else {
+        return None;
+    };
+
+    if is_external_agent_provider_label(agent_role) {
+        return None;
+    }
+
+    Some(agent_role.as_str())
+}
+
+fn is_external_agent_provider_label(label: &str) -> bool {
+    matches!(label, "codex_cli" | "claude_cli" | "opencode")
+}
+
 fn merge_persisted_resume_metadata(
     request_overrides: &mut Option<HashMap<String, serde_json::Value>>,
     typesafe_overrides: &mut ConfigOverrides,
