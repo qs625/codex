@@ -6,6 +6,7 @@ import {
   appendAgentDelta,
   applyInitializedThreadUpdate,
   applyPendingThreadUpdates,
+  buildAgentTree,
   buildProjectAgentSidebar,
   buildCurrentThreadTodoItems,
   formatUpdatedLabel,
@@ -315,11 +316,34 @@ test("buildProjectAgentSidebar keeps Chat conversation subagents visible", () =>
   const sidebar = buildProjectAgentSidebar([chat, helper]);
 
   assert.equal(sidebar.projects.length, 0);
+  assert.equal(sidebar.chat.conversations.length, 1);
   assert.equal(sidebar.chat.conversations[0]?.threadId, "chat");
   assert.equal(
     sidebar.chat.conversations[0]?.children[0]?.threadId,
     "chat-helper",
   );
+});
+
+test("buildProjectAgentSidebar keeps subagents visible when their parent is outside the current list", () => {
+  const helper = makeSubagentThread("chat-helper", "missing-parent", "/root/helper", {
+    cwd: "/work/project",
+    updatedAt: 12,
+  });
+
+  const sidebar = buildProjectAgentSidebar([helper]);
+
+  assert.equal(sidebar.projects.length, 0);
+  assert.equal(sidebar.chat.conversations[0]?.threadId, "chat-helper");
+  assert.equal(sidebar.chat.conversations[0]?.label, "helper");
+});
+
+test("buildAgentTree promotes orphan subagents to visible tree roots", () => {
+  const helper = makeSubagentThread("chat-helper", "missing-parent", "/root/helper");
+
+  const tree = buildAgentTree([helper], null);
+
+  assert.equal(tree[0]?.threadId, "chat-helper");
+  assert.equal(tree[0]?.children.length, 0);
 });
 
 test("root thread labels distinguish project roots from no-project chats", () => {

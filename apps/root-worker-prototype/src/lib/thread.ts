@@ -37,7 +37,7 @@ export function buildAgentTree(
   }
 
   const threadById = new Map(threads.map((thread) => [thread.id, thread]));
-  const roots = threads.filter((thread) => !getParentThreadId(thread));
+  const roots = threads.filter((thread) => isTreeEntryRoot(thread, threadById));
   const byParent = new Map<string, string[]>();
   for (const thread of threads) {
     const parentId = getParentThreadId(thread);
@@ -103,11 +103,18 @@ export function buildAgentTree(
 }
 
 export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar {
-  const parentlessThreads = threads.filter(isRootThread);
+  const threadById = new Map(threads.map((thread) => [thread.id, thread]));
+  const sidebarRootThreads = threads.filter((thread) =>
+    isTreeEntryRoot(thread, threadById),
+  );
   const projectRootCandidates = new Map<string, Thread[]>();
   const chatThreads: Thread[] = [];
 
-  for (const thread of parentlessThreads) {
+  for (const thread of sidebarRootThreads) {
+    if (isOrphanSubagentThread(thread, threadById)) {
+      chatThreads.push(thread);
+      continue;
+    }
     const projectCwd = normalizeProjectCwd(thread.cwd);
     if (!projectCwd || isChatCompatCwd(projectCwd)) {
       chatThreads.push(thread);
@@ -169,6 +176,22 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
       conversations: chatConversations,
     },
   };
+}
+
+function isTreeEntryRoot(
+  thread: Thread,
+  threadById: ReadonlyMap<string, Thread>,
+) {
+  const parentId = getParentThreadId(thread);
+  return !parentId || !threadById.has(parentId);
+}
+
+function isOrphanSubagentThread(
+  thread: Thread,
+  threadById: ReadonlyMap<string, Thread>,
+) {
+  const parentId = getParentThreadId(thread);
+  return Boolean(parentId && !threadById.has(parentId) && isSubagentThread(thread));
 }
 
 export function pickInitialProjectThread(threads: Thread[]) {
