@@ -1,8 +1,10 @@
 use super::*;
+use super::context_usage_replay::ThreadUsageSource;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
@@ -12,6 +14,7 @@ pub(super) struct ListenerTaskContext {
     pub(super) live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     pub(super) thread_lifecycle_runtime: Arc<dyn ThreadLifecycleRuntime>,
+    pub(super) live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     pub(super) live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     pub(super) thread_state_manager: ThreadStateManager,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
@@ -263,6 +266,7 @@ pub(super) async fn ensure_listener_task_running(
         outgoing,
         live_thread_inspection,
         thread_lifecycle_runtime,
+        live_thread_usage,
         thread_state_manager,
         pending_thread_unloads,
         thread_watch_manager,
@@ -293,6 +297,7 @@ pub(super) async fn ensure_listener_task_running(
                         &thread_watch_manager,
                         &outgoing_for_task,
                         &pending_thread_unloads,
+                        &live_thread_usage,
                         listener_command,
                     )
                     .await;
@@ -326,6 +331,7 @@ pub(super) async fn ensure_listener_task_running(
                         conversation_id,
                         conversation.clone(),
                         live_thread_inspection.clone(),
+                        live_thread_usage.clone(),
                         thread_outgoing,
                         thread_state.clone(),
                         thread_watch_manager.clone(),
@@ -454,6 +460,7 @@ pub(super) async fn handle_thread_listener_command(
     thread_watch_manager: &ThreadWatchManager,
     outgoing: &Arc<OutgoingMessageSender>,
     pending_thread_unloads: &Arc<Mutex<HashSet<ThreadId>>>,
+    live_thread_usage: &Arc<dyn AppServerLiveThreadUsageRuntime>,
     listener_command: ThreadListenerCommand,
 ) {
     match listener_command {
@@ -467,6 +474,7 @@ pub(super) async fn handle_thread_listener_command(
                 thread_watch_manager,
                 outgoing,
                 pending_thread_unloads,
+                live_thread_usage,
                 *resume_request,
             )
             .await;
@@ -524,6 +532,7 @@ pub(super) async fn handle_pending_thread_resume_request(
     thread_watch_manager: &ThreadWatchManager,
     outgoing: &Arc<OutgoingMessageSender>,
     pending_thread_unloads: &Arc<Mutex<HashSet<ThreadId>>>,
+    live_thread_usage: &Arc<dyn AppServerLiveThreadUsageRuntime>,
     pending: crate::thread_state::PendingThreadResumeRequest,
 ) {
     let active_turn = {
@@ -555,13 +564,17 @@ pub(super) async fn handle_pending_thread_resume_request(
             pending.history_items.as_slice(),
         )
         .map(Into::into);
-    if let Some(token_usage) = conversation.token_usage_info().await.map(Into::into) {
+    let usage_source = super::context_usage_replay::RuntimeThreadUsageSource::new(
+        live_thread_usage.as_ref(),
+        conversation_id,
+    );
+    if let Some(token_usage) = usage_source.token_usage_info().await.map(Into::into) {
         thread.token_usage = Some(token_usage);
     }
     if thread.context_usage.is_none() {
         thread.context_usage = Some(
             super::context_usage_replay::thread_context_usage_from_rollout_or_conversation(
-                conversation.as_ref(),
+                &usage_source,
                 pending.history_items.as_slice(),
             )
             .await
@@ -673,7 +686,7 @@ pub(super) async fn handle_pending_thread_resume_request(
             connection_id,
             conversation_id,
             &token_usage_thread,
-            conversation.as_ref(),
+            &usage_source,
             token_usage_turn_id,
         )
         .await;
@@ -682,7 +695,7 @@ pub(super) async fn handle_pending_thread_resume_request(
             connection_id,
             conversation_id,
             &token_usage_thread,
-            conversation.as_ref(),
+            &usage_source,
             pending.history_items.as_slice(),
         )
         .await;

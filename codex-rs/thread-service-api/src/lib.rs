@@ -319,10 +319,6 @@ pub trait LiveThreadListenerHandle: Send + Sync {
         include_history: bool,
     ) -> impl Future<Output = ThreadStoreResult<StoredThread>> + Send + '_;
 
-    fn token_usage_info(&self) -> impl Future<Output = Option<TokenUsageInfo>> + Send + '_;
-
-    fn thread_context_usage(&self) -> impl Future<Output = ThreadContextUsage> + Send + '_;
-
     fn apply_goal_resume_runtime_effects(
         &self,
     ) -> impl Future<Output = CodexResult<()>> + Send + '_;
@@ -364,14 +360,6 @@ where
         include_history: bool,
     ) -> impl Future<Output = ThreadStoreResult<StoredThread>> + Send + '_ {
         LiveThreadHandle::read_thread(self, include_archived, include_history)
-    }
-
-    fn token_usage_info(&self) -> impl Future<Output = Option<TokenUsageInfo>> + Send + '_ {
-        LiveThreadHandle::token_usage_info(self)
-    }
-
-    fn thread_context_usage(&self) -> impl Future<Output = ThreadContextUsage> + Send + '_ {
-        LiveThreadHandle::thread_context_usage(self)
     }
 
     fn apply_goal_resume_runtime_effects(

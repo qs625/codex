@@ -2,8 +2,11 @@ use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
+use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::outgoing_message::ClientRequestResult;
 use crate::outgoing_message::ThreadScopedOutgoingMessageSender;
+use crate::request_processors::context_usage_replay::RuntimeThreadUsageSource;
+use crate::request_processors::context_usage_replay::ThreadUsageSource;
 use crate::request_processors::populate_thread_turns_from_history;
 use crate::request_processors::thread_from_stored_thread;
 use crate::server_request_error::is_turn_transition_server_request_error;
@@ -129,6 +132,7 @@ pub(crate) async fn apply_bespoke_event_handling(
     conversation_id: ThreadId,
     conversation: Arc<dyn AppServerLiveThreadListenerHandle>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
+    live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     outgoing: ThreadScopedOutgoingMessageSender,
     thread_state: Arc<tokio::sync::Mutex<ThreadState>>,
     thread_watch_manager: ThreadWatchManager,
@@ -843,7 +847,9 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
         }
         EventMsg::ThreadContextUsageUpdated(thread_context_usage_event) => {
-            let Some(token_usage) = conversation
+            let usage_source =
+                RuntimeThreadUsageSource::new(live_thread_usage.as_ref(), conversation_id);
+            let Some(token_usage) = usage_source
                 .token_usage_info()
                 .await
                 .map(ThreadTokenUsage::from)

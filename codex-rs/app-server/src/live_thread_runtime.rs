@@ -101,10 +101,6 @@ pub(crate) trait AppServerLiveThreadListenerHandle: Send + Sync {
         include_history: bool,
     ) -> BoxFuture<'_, ThreadStoreResult<StoredThread>>;
 
-    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>>;
-
-    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
-
     fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>>;
 
     fn continue_active_goal_if_idle(&self) -> BoxFuture<'_, CodexResult<()>>;
@@ -148,14 +144,6 @@ where
             include_archived,
             include_history,
         ))
-    }
-
-    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
-        Box::pin(LiveThreadListenerHandle::token_usage_info(self))
-    }
-
-    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
-        Box::pin(LiveThreadListenerHandle::thread_context_usage(self))
     }
 
     fn apply_goal_resume_runtime_effects(&self) -> BoxFuture<'_, CodexResult<()>> {

@@ -441,7 +441,7 @@ mod apps_processor;
 mod catalog_processor;
 mod command_exec_processor;
 mod config_processor;
-mod context_usage_replay;
+pub(crate) mod context_usage_replay;
 mod environment_processor;
 mod external_agent_config_processor;
 mod feedback_doctor_report;

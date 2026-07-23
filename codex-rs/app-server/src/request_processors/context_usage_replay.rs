@@ -17,34 +17,23 @@ use protocol::protocol::ThreadContextUsageLoadedSkills;
 use protocol::protocol::ThreadContextUsageToolBreakdown;
 use protocol::protocol::TokenUsageInfo;
 
-use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingMessageSender;
 
-pub(super) trait ThreadUsageSource: Send + Sync {
+pub(crate) trait ThreadUsageSource: Send + Sync {
     fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>>;
 
     fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage>;
 }
 
-impl ThreadUsageSource for dyn AppServerLiveThreadListenerHandle + '_ {
-    fn token_usage_info(&self) -> BoxFuture<'_, Option<TokenUsageInfo>> {
-        AppServerLiveThreadListenerHandle::token_usage_info(self)
-    }
-
-    fn thread_context_usage(&self) -> BoxFuture<'_, ThreadContextUsage> {
-        AppServerLiveThreadListenerHandle::thread_context_usage(self)
-    }
-}
-
-pub(super) struct RuntimeThreadUsageSource<'a> {
+pub(crate) struct RuntimeThreadUsageSource<'a> {
     runtime: &'a dyn AppServerLiveThreadUsageRuntime,
     thread_id: ThreadId,
 }
 
 impl<'a> RuntimeThreadUsageSource<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         runtime: &'a dyn AppServerLiveThreadUsageRuntime,
         thread_id: ThreadId,
     ) -> Self {

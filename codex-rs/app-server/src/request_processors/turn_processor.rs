@@ -6,6 +6,7 @@ use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSteerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
 use model_service_api::SharedModelServiceApi;
 use thread_service::NativeDetachedReviewRuntime;
@@ -28,6 +29,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_turn: Arc<dyn AppServerLiveThreadTurnRuntime>,
     live_thread_skill_watch: Arc<dyn AppServerLiveThreadSkillWatchRuntime>,
     live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
+    live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
     model_service: SharedModelServiceApi,
     outgoing: Arc<OutgoingMessageSender>,
@@ -88,6 +90,7 @@ impl TurnRequestProcessor {
             live_thread_turn: thread_service.clone(),
             live_thread_skill_watch: thread_service.clone(),
             live_thread_listener: thread_service.clone(),
+            live_thread_usage: thread_service.clone(),
             memory_startup_host: thread_service,
             model_service,
             outgoing,
@@ -1274,6 +1277,7 @@ impl TurnRequestProcessor {
             live_thread_listener: self.live_thread_listener.clone(),
             live_thread_inspection: self.live_thread_inspection.clone(),
             thread_lifecycle_runtime: self.thread_lifecycle_runtime.clone(),
+            live_thread_usage: self.live_thread_usage.clone(),
             live_thread_skill_watch: self.live_thread_skill_watch.clone(),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
