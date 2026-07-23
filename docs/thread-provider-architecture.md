@@ -167,9 +167,11 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
   `AgentStatus` payload，供 app-server 在 live record 不可读时仍发出 terminal
   lifecycle notification；外发 `ThreadStatusChangedNotification` shape 不变。
   live-thread removal 会删除 native live thread 或 external live record；external close
-  会在 terminal Shutdown notification/persistence 后清理 external live record，但不宣称
-  reload/list_agents durable recovery 已完成。root
-  start/resume/fork 仍不属于该 provider-neutral trait，因为这些请求还携带完整
+  会在 terminal Shutdown notification/persistence 后清理 external live record。durable
+  default list / agent-reference recovery 基于 Open edge：Open edge 的 completed
+  external agent 可恢复，显式 close 后的 Closed edge external agent 不进入默认协作集合。
+  这仍不宣称 full reload/root provider routing 已完成。root start/resume/fork
+  仍不属于该 provider-neutral trait，因为这些请求还携带完整
   `Config` 与 native dynamic tool/environment 结构，直接搬入 `thread-service-api`
   会引入不合适的依赖方向；它们当前收口到 thread-service crate 内的
   `NativeThreadCreationRuntime` / `NativeThreadEnvironmentRuntime`。

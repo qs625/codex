@@ -1829,6 +1829,108 @@ async fn external_running_agent_without_live_process_is_interrupted_after_restar
 }
 
 #[tokio::test]
+async fn external_closed_agent_is_not_restored_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external_closed").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some("close me".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &external_config,
+            external_thread_id,
+            session_source.clone(),
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            external_thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                external_thread_id,
+                session_source,
+                &agent_metadata,
+            ),
+            AgentStatus::Running,
+        )
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path.clone(),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(external_config),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            last_task_message: Some("close me".to_string()),
+            abort_handle: None,
+        });
+
+    harness
+        .control
+        .close_agent(external_thread_id)
+        .await
+        .expect("close external agent");
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let agents = restarted_control
+        .list_agents(root_thread_id, &SessionSource::Exec, None)
+        .await
+        .expect("list agents after restart");
+    assert!(
+        agents
+            .iter()
+            .all(|agent| agent.agent_name != external_agent_path.as_str()),
+        "closed external agent should not be restored into default list: {agents:?}",
+    );
+
+    let err = restarted_control
+        .resolve_agent_reference(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some(harness.config.clone()),
+            external_agent_path.as_str(),
+        )
+        .await
+        .expect_err("closed external agent path should not resolve after restart");
+    assert!(
+        err.to_string().contains("not found"),
+        "unexpected error: {err}",
+    );
+}
+
+#[tokio::test]
 async fn on_event_updates_status_from_task_started() {
     let status = agent_status_from_event(&EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: "turn-1".to_string(),
