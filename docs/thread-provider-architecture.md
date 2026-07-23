@@ -177,6 +177,24 @@ tracker 已改到 `ThreadLifecycleRuntime`；root start/resume/fork 的具体创
 仍通过 app-server-local 过渡 trait 继承该 lifecycle 边界。后续阶段再把 tool
 service 和 app-server 剩余调用逐步改到窄 trait。
 
+live thread runtime 的 command/status/inspection 也已开始迁移到 provider-neutral
+surfaces：
+
+- `LiveThreadInspectionRuntime` 承载 loaded ids、loaded check、
+  `LiveThreadInfo` 和 `LiveThreadSnapshot` 等 copied fact。
+- `LiveThreadStatusRuntime` 承载 copied `AgentStatus` / status watch。
+- `LiveThreadCommandRuntime` 承载 submit op、submit op with trace、client info
+  写入和 loaded-thread remove。
+- `LiveThreadShutdownRuntime` 承载不暴露 concrete handle 的 shutdown-and-wait
+  语义。
+
+app-server thread processor 的 thread loaded list、thread/read live snapshot merge、
+turns/list live status、thread started/status notifications、resume-running thread
+checks、submit op、client info 写入，以及 archive 前 shutdown/remove 路径已改到这些
+窄 runtime。`AppServerLiveThreadRegistry::live_thread_handle()` 仍只保留给 listener /
+turn dispatch / full live history 这类需要事件流、`Op` submit owner 或完整 persisted
+history handle 的路径；后续阶段再继续拆出更窄 handle。
+
 禁止路径：
 
 - 不要把 `ThreadTurnCapability` 或完整 `Session` 塞进 external provider adapter。

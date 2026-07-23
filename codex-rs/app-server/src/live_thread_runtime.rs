@@ -12,10 +12,14 @@ use protocol::protocol::TokenUsageInfo;
 use protocol::protocol::W3cTraceContext;
 use skill_service_api::SkillWatchPath;
 use thread_service_api::AppServerClientInfo;
+use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadHandle;
 use thread_service_api::LiveThreadInfo;
+use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadRegistry;
+use thread_service_api::LiveThreadShutdownRuntime;
 use thread_service_api::LiveThreadSnapshot;
+use thread_service_api::LiveThreadStatusRuntime;
 use thread_service_api::ThreadConfigSnapshot;
 use thread_service_api::ThreadRuntimeStatus;
 use thread_store_api::StoredThread;
@@ -127,36 +131,12 @@ where
 
 /// Object-safe live thread registry surface needed by app-server listeners.
 pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
-    fn list_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>>;
-
     fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
 
     fn live_thread_handle(
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<Arc<dyn AppServerLiveThreadHandle>>>;
-
-    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>>;
-
-    fn live_thread_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>>;
-
-    fn send_op_with_trace(
-        &self,
-        thread_id: ThreadId,
-        op: Op,
-        trace: Option<W3cTraceContext>,
-    ) -> BoxFuture<'_, CodexResult<String>>;
-
-    fn thread_agent_status(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<AgentStatus>>;
-
-    fn set_thread_app_server_client_info(
-        &self,
-        thread_id: ThreadId,
-        info: AppServerClientInfo,
-    ) -> BoxFuture<'_, CodexResult<()>>;
 
     fn thread_history(
         &self,
@@ -192,14 +172,138 @@ pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
     fn remove_loaded_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
 }
 
+pub(crate) trait AppServerLiveThreadInspectionRuntime: Send + Sync {
+    fn list_live_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>>;
+
+    fn is_live_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+
+    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>>;
+
+    fn live_thread_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>>;
+}
+
+impl<T> AppServerLiveThreadInspectionRuntime for T
+where
+    T: LiveThreadInspectionRuntime + Send + Sync,
+{
+    fn list_live_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>> {
+        Box::pin(LiveThreadInspectionRuntime::list_live_thread_ids(self))
+    }
+
+    fn is_live_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
+        Box::pin(LiveThreadInspectionRuntime::is_live_thread_loaded(
+            self, thread_id,
+        ))
+    }
+
+    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>> {
+        Box::pin(LiveThreadInspectionRuntime::live_thread_info(
+            self, thread_id,
+        ))
+    }
+
+    fn live_thread_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>> {
+        Box::pin(LiveThreadInspectionRuntime::live_thread_snapshot(
+            self, thread_id,
+        ))
+    }
+}
+
+pub(crate) trait AppServerLiveThreadStatusRuntime: Send + Sync {
+    fn live_thread_agent_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<AgentStatus>>;
+}
+
+impl<T> AppServerLiveThreadStatusRuntime for T
+where
+    T: LiveThreadStatusRuntime + Send + Sync,
+{
+    fn live_thread_agent_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> BoxFuture<'_, CodexResult<AgentStatus>> {
+        Box::pin(LiveThreadStatusRuntime::live_thread_agent_status(
+            self, thread_id,
+        ))
+    }
+}
+
+pub(crate) trait AppServerLiveThreadCommandRuntime: Send + Sync {
+    fn submit_live_thread_op_with_trace(
+        &self,
+        thread_id: ThreadId,
+        op: Op,
+        trace: Option<W3cTraceContext>,
+    ) -> BoxFuture<'_, CodexResult<String>>;
+
+    fn set_live_thread_app_server_client_info(
+        &self,
+        thread_id: ThreadId,
+        info: AppServerClientInfo,
+    ) -> BoxFuture<'_, CodexResult<()>>;
+
+    fn remove_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool>;
+}
+
+impl<T> AppServerLiveThreadCommandRuntime for T
+where
+    T: LiveThreadCommandRuntime + Send + Sync,
+{
+    fn submit_live_thread_op_with_trace(
+        &self,
+        thread_id: ThreadId,
+        op: Op,
+        trace: Option<W3cTraceContext>,
+    ) -> BoxFuture<'_, CodexResult<String>> {
+        Box::pin(LiveThreadCommandRuntime::submit_live_thread_op_with_trace(
+            self, thread_id, op, trace,
+        ))
+    }
+
+    fn set_live_thread_app_server_client_info(
+        &self,
+        thread_id: ThreadId,
+        info: AppServerClientInfo,
+    ) -> BoxFuture<'_, CodexResult<()>> {
+        Box::pin(
+            LiveThreadCommandRuntime::set_live_thread_app_server_client_info(self, thread_id, info),
+        )
+    }
+
+    fn remove_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
+        Box::pin(LiveThreadCommandRuntime::remove_live_thread(
+            self, thread_id,
+        ))
+    }
+}
+
+pub(crate) trait AppServerLiveThreadShutdownRuntime: Send + Sync {
+    fn shutdown_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<String>>;
+}
+
+impl<T> AppServerLiveThreadShutdownRuntime for T
+where
+    T: LiveThreadShutdownRuntime + Send + Sync,
+{
+    fn shutdown_live_thread(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<String>> {
+        Box::pin(LiveThreadShutdownRuntime::shutdown_live_thread(
+            self, thread_id,
+        ))
+    }
+}
+
 impl<T> AppServerLiveThreadRegistry for T
 where
     T: LiveThreadRegistry + Send + Sync,
 {
-    fn list_thread_ids(&self) -> BoxFuture<'_, Vec<ThreadId>> {
-        Box::pin(LiveThreadRegistry::list_thread_ids(self))
-    }
-
     fn is_thread_loaded(&self, thread_id: ThreadId) -> BoxFuture<'_, bool> {
         Box::pin(LiveThreadRegistry::is_thread_loaded(self, thread_id))
     }
@@ -213,42 +317,6 @@ where
             let thread: Arc<dyn AppServerLiveThreadHandle> = thread;
             Ok(thread)
         })
-    }
-
-    fn live_thread_info(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<LiveThreadInfo>> {
-        Box::pin(LiveThreadRegistry::live_thread_info(self, thread_id))
-    }
-
-    fn live_thread_snapshot(
-        &self,
-        thread_id: ThreadId,
-    ) -> BoxFuture<'_, CodexResult<LiveThreadSnapshot>> {
-        Box::pin(LiveThreadRegistry::live_thread_snapshot(self, thread_id))
-    }
-
-    fn send_op_with_trace(
-        &self,
-        thread_id: ThreadId,
-        op: Op,
-        trace: Option<W3cTraceContext>,
-    ) -> BoxFuture<'_, CodexResult<String>> {
-        Box::pin(LiveThreadRegistry::send_op_with_trace(
-            self, thread_id, op, trace,
-        ))
-    }
-
-    fn thread_agent_status(&self, thread_id: ThreadId) -> BoxFuture<'_, CodexResult<AgentStatus>> {
-        Box::pin(LiveThreadRegistry::thread_agent_status(self, thread_id))
-    }
-
-    fn set_thread_app_server_client_info(
-        &self,
-        thread_id: ThreadId,
-        info: AppServerClientInfo,
-    ) -> BoxFuture<'_, CodexResult<()>> {
-        Box::pin(LiveThreadRegistry::set_thread_app_server_client_info(
-            self, thread_id, info,
-        ))
     }
 
     fn thread_history(

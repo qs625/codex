@@ -2009,6 +2009,40 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
         self.send_op(thread_id, op)
     }
 
+    fn submit_live_thread_op_with_trace(
+        &self,
+        thread_id: ThreadId,
+        op: Op,
+        trace: Option<W3cTraceContext>,
+    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread.submit_with_trace(op, trace).await
+        }
+    }
+
+    fn set_live_thread_app_server_client_info(
+        &self,
+        thread_id: ThreadId,
+        info: thread_service_api::AppServerClientInfo,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            thread
+                .set_app_server_client_info(
+                    info.app_server_client_name,
+                    info.app_server_client_version,
+                    info.mcp_elicitations_auto_deny,
+                )
+                .await
+                .map_err(|err| {
+                    CodexErr::InvalidRequest(format!(
+                        "failed to set app server client info for thread {thread_id}: {err}"
+                    ))
+                })
+        }
+    }
+
     fn remove_live_thread(
         &self,
         thread_id: ThreadId,
@@ -2085,6 +2119,47 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
         self.list_thread_ids()
     }
 
+    fn is_live_thread_loaded(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = bool> + Send + '_ {
+        async move { self.get_thread(thread_id).await.is_ok() }
+    }
+
+    fn live_thread_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadInfo>> + Send + '_
+    {
+        async move {
+            let thread = self.get_thread(thread_id).await?;
+            Ok(thread_service_api::LiveThreadInfo {
+                session_id: thread.session_configured().session_id,
+                rollout_path: thread.rollout_path(),
+            })
+        }
+    }
+
+    fn live_thread_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadSnapshot>> + Send + '_
+    {
+        async move {
+            if let Some(record) = self.external_live_threads.read().await.get(&thread_id) {
+                return Ok(record.snapshot.clone());
+            }
+            let thread = self.get_thread(thread_id).await?;
+            Ok(thread_service_api::LiveThreadSnapshot {
+                info: thread_service_api::LiveThreadInfo {
+                    session_id: thread.session_configured().session_id,
+                    rollout_path: thread.rollout_path(),
+                },
+                config_snapshot: thread.config_snapshot().await,
+            })
+        }
+    }
+
     fn live_thread_config_snapshot(
         &self,
         thread_id: ThreadId,
@@ -2117,6 +2192,158 @@ impl thread_service_api::LiveThreadStateRuntimeSource for ThreadServiceState {
         self.state_db
             .as_ref()
             .map(|state_db| Arc::clone(state_db) as state_api::SharedStateDbRuntime)
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadCommandRuntime for ThreadService {
+    fn submit_live_thread_op(
+        &self,
+        thread_id: ThreadId,
+        op: Op,
+    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
+        thread_service_api::LiveThreadCommandRuntime::submit_live_thread_op(
+            self.state.as_ref(),
+            thread_id,
+            op,
+        )
+    }
+
+    fn submit_live_thread_op_with_trace(
+        &self,
+        thread_id: ThreadId,
+        op: Op,
+        trace: Option<W3cTraceContext>,
+    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
+        thread_service_api::LiveThreadCommandRuntime::submit_live_thread_op_with_trace(
+            self.state.as_ref(),
+            thread_id,
+            op,
+            trace,
+        )
+    }
+
+    fn set_live_thread_app_server_client_info(
+        &self,
+        thread_id: ThreadId,
+        info: thread_service_api::AppServerClientInfo,
+    ) -> impl std::future::Future<Output = CodexResult<()>> + Send + '_ {
+        thread_service_api::LiveThreadCommandRuntime::set_live_thread_app_server_client_info(
+            self.state.as_ref(),
+            thread_id,
+            info,
+        )
+    }
+
+    fn remove_live_thread(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = bool> + Send + '_ {
+        thread_service_api::LiveThreadCommandRuntime::remove_live_thread(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadShutdownRuntime for ThreadService {
+    fn shutdown_live_thread(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<String>> + Send + '_ {
+        thread_service_api::LiveThreadShutdownRuntime::shutdown_live_thread(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadStatusRuntime for ThreadService {
+    fn live_thread_agent_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<AgentStatus>> + Send + '_ {
+        thread_service_api::LiveThreadStatusRuntime::live_thread_agent_status(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn subscribe_live_thread_status(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<tokio::sync::watch::Receiver<AgentStatus>>>
+    + Send
+    + '_ {
+        thread_service_api::LiveThreadStatusRuntime::subscribe_live_thread_status(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadInspectionRuntime for ThreadService {
+    fn list_live_thread_ids(&self) -> impl std::future::Future<Output = Vec<ThreadId>> + Send + '_ {
+        thread_service_api::LiveThreadInspectionRuntime::list_live_thread_ids(self.state.as_ref())
+    }
+
+    fn is_live_thread_loaded(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = bool> + Send + '_ {
+        thread_service_api::LiveThreadInspectionRuntime::is_live_thread_loaded(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn live_thread_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadInfo>> + Send + '_
+    {
+        thread_service_api::LiveThreadInspectionRuntime::live_thread_info(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn live_thread_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::LiveThreadSnapshot>> + Send + '_
+    {
+        thread_service_api::LiveThreadInspectionRuntime::live_thread_snapshot(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn live_thread_config_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl std::future::Future<Output = CodexResult<thread_service_api::ThreadConfigSnapshot>>
+    + Send
+    + '_ {
+        thread_service_api::LiveThreadInspectionRuntime::live_thread_config_snapshot(
+            self.state.as_ref(),
+            thread_id,
+        )
+    }
+
+    fn live_thread_feature_enabled(
+        &self,
+        thread_id: ThreadId,
+        feature: Feature,
+    ) -> impl std::future::Future<Output = CodexResult<bool>> + Send + '_ {
+        thread_service_api::LiveThreadInspectionRuntime::live_thread_feature_enabled(
+            self.state.as_ref(),
+            thread_id,
+            feature,
+        )
     }
 }
 

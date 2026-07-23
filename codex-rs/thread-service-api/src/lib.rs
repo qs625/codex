@@ -236,6 +236,19 @@ pub trait LiveThreadCommandRuntime: Send + Sync {
         op: Op,
     ) -> impl Future<Output = CodexResult<String>> + Send + '_;
 
+    fn submit_live_thread_op_with_trace(
+        &self,
+        thread_id: ThreadId,
+        op: Op,
+        trace: Option<W3cTraceContext>,
+    ) -> impl Future<Output = CodexResult<String>> + Send + '_;
+
+    fn set_live_thread_app_server_client_info(
+        &self,
+        thread_id: ThreadId,
+        info: AppServerClientInfo,
+    ) -> impl Future<Output = CodexResult<()>> + Send + '_;
+
     fn remove_live_thread(&self, thread_id: ThreadId) -> impl Future<Output = bool> + Send + '_;
 }
 
@@ -275,6 +288,18 @@ pub trait LiveThreadStatusRuntime: Send + Sync {
 /// flags, configuration, or the loaded live thread set.
 pub trait LiveThreadInspectionRuntime: Send + Sync {
     fn list_live_thread_ids(&self) -> impl Future<Output = Vec<ThreadId>> + Send + '_;
+
+    fn is_live_thread_loaded(&self, thread_id: ThreadId) -> impl Future<Output = bool> + Send + '_;
+
+    fn live_thread_info(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<LiveThreadInfo>> + Send + '_;
+
+    fn live_thread_snapshot(
+        &self,
+        thread_id: ThreadId,
+    ) -> impl Future<Output = CodexResult<LiveThreadSnapshot>> + Send + '_;
 
     fn live_thread_config_snapshot(
         &self,

@@ -1,7 +1,11 @@
 use super::*;
 use crate::error_code::method_not_found;
+use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHandle;
+use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadRegistry;
+use crate::live_thread_runtime::AppServerLiveThreadShutdownRuntime;
+use crate::live_thread_runtime::AppServerLiveThreadStatusRuntime;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
 use tokio::sync::OnceCell;
@@ -422,6 +426,10 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
 pub(crate) struct ThreadRequestProcessor {
     pub(super) thread_runtime: Arc<dyn ThreadProcessorThreadRuntime>,
     pub(super) live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+    pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
+    pub(super) live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
+    pub(super) live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
+    pub(super) live_thread_shutdown: Arc<dyn AppServerLiveThreadShutdownRuntime>,
     pub(super) thread_metadata_runtime: Arc<dyn ThreadProcessorMetadataRuntime>,
     pub(super) thread_lifecycle_runtime: Arc<dyn thread_service_api::ThreadLifecycleRuntime>,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
@@ -460,6 +468,10 @@ impl ThreadRequestProcessor {
         Self {
             thread_runtime: thread_service.clone(),
             live_threads: thread_service.clone(),
+            live_thread_inspection: thread_service.clone(),
+            live_thread_status: thread_service.clone(),
+            live_thread_command: thread_service.clone(),
+            live_thread_shutdown: thread_service.clone(),
             thread_metadata_runtime: thread_service.clone(),
             thread_lifecycle_runtime: thread_service,
             outgoing,

@@ -90,8 +90,8 @@ impl ThreadRequestProcessor {
         self.restore_persisted_active_threads_on_startup().await;
         let ThreadLoadedListParams { cursor, limit } = params;
         let mut data: Vec<String> = self
-            .live_threads
-            .list_thread_ids()
+            .live_thread_inspection
+            .list_live_thread_ids()
             .await
             .into_iter()
             .map(|thread_id| thread_id.to_string())
@@ -156,7 +156,11 @@ impl ThreadRequestProcessor {
         thread_id: ThreadId,
         include_turns: bool,
     ) -> Result<Thread, ThreadReadViewError> {
-        let live_snapshot = self.live_threads.live_thread_snapshot(thread_id).await.ok();
+        let live_snapshot = self
+            .live_thread_inspection
+            .live_thread_snapshot(thread_id)
+            .await
+            .ok();
         let (mut thread, has_live_in_progress_turn) = if include_turns {
             if let Some(live_snapshot) = live_snapshot.as_ref() {
                 // Loaded thread with turns: keep the persisted turn projection available
@@ -402,8 +406,8 @@ impl ThreadRequestProcessor {
         // the server has to rebuild the full turn list until turn metadata is indexed
         // separately.
         let live_agent_status = self
-            .live_threads
-            .thread_agent_status(thread_uuid)
+            .live_thread_status
+            .live_thread_agent_status(thread_uuid)
             .await
             .ok();
         let has_live_running_thread = matches!(live_agent_status, Some(AgentStatus::Running));
@@ -505,7 +509,7 @@ impl ThreadRequestProcessor {
         }
 
         let live_snapshot = self
-            .live_threads
+            .live_thread_inspection
             .live_thread_snapshot(thread_id)
             .await
             .map_err(|_| {
@@ -545,7 +549,11 @@ impl ThreadRequestProcessor {
             .await;
 
         for thread_id in thread_ids {
-            if !self.live_threads.is_thread_loaded(thread_id).await {
+            if !self
+                .live_thread_inspection
+                .is_live_thread_loaded(thread_id)
+                .await
+            {
                 // Reconcile stale app-server bookkeeping when the thread has already been
                 // removed from the core manager.
                 self.finalize_thread_teardown(thread_id).await;
@@ -576,7 +584,11 @@ impl ThreadRequestProcessor {
             });
 
         for thread_id in thread_ids {
-            if self.live_threads.is_thread_loaded(thread_id).await {
+            if self
+                .live_thread_inspection
+                .is_live_thread_loaded(thread_id)
+                .await
+            {
                 continue;
             }
             self.restore_persisted_active_thread(thread_id).await;
@@ -734,7 +746,11 @@ impl ThreadRequestProcessor {
         thread_id: ThreadId,
         connection_ids: Vec<ConnectionId>,
     ) {
-        if let Ok(live_snapshot) = self.live_threads.live_thread_snapshot(thread_id).await {
+        if let Ok(live_snapshot) = self
+            .live_thread_inspection
+            .live_thread_snapshot(thread_id)
+            .await
+        {
             let loaded_thread = build_thread_from_live_snapshot(thread_id, &live_snapshot);
             self.thread_watch_manager
                 .upsert_thread_silently(loaded_thread)

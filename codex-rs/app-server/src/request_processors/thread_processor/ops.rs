@@ -88,8 +88,8 @@ impl ThreadRequestProcessor {
             app_server_client_name.as_deref(),
             app_server_client_version.as_deref(),
         );
-        self.live_threads
-            .set_thread_app_server_client_info(
+        self.live_thread_command
+            .set_live_thread_app_server_client_info(
                 thread_id,
                 AppServerClientInfo {
                     app_server_client_name,
@@ -127,7 +127,11 @@ impl ThreadRequestProcessor {
         let thread_id = ThreadId::from_string(&params.thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
-        if !self.live_threads.is_thread_loaded(thread_id).await {
+        if !self
+            .live_thread_inspection
+            .is_live_thread_loaded(thread_id)
+            .await
+        {
             self.finalize_thread_teardown(thread_id).await;
             return Ok(ThreadUnsubscribeResponse {
                 status: ThreadUnsubscribeStatus::NotLoaded,
@@ -148,25 +152,25 @@ impl ThreadRequestProcessor {
     }
 
     pub(super) async fn prepare_thread_for_archive(&self, thread_id: ThreadId) {
-        let removed_conversation = match self.live_threads.live_thread_handle(thread_id).await {
-            Ok(conversation) if self.live_threads.remove_loaded_thread(thread_id).await => {
-                Some(conversation)
-            }
-            Ok(_) | Err(_) => None,
-        };
-        if let Some(conversation) = removed_conversation {
+        if self
+            .live_thread_inspection
+            .is_live_thread_loaded(thread_id)
+            .await
+        {
             info!("thread {thread_id} was active; shutting down");
-            match wait_for_thread_shutdown(&conversation).await {
-                ThreadShutdownResult::Complete => {}
-                ThreadShutdownResult::SubmitFailed => {
-                    error!(
-                        "failed to submit Shutdown to thread {thread_id}; proceeding with archive"
-                    );
-                }
-                ThreadShutdownResult::TimedOut => {
-                    warn!("thread {thread_id} shutdown timed out; proceeding with archive");
-                }
+            match tokio::time::timeout(
+                Duration::from_secs(10),
+                self.live_thread_shutdown.shutdown_live_thread(thread_id),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) => error!(
+                    "failed to submit Shutdown to thread {thread_id}; proceeding with archive"
+                ),
+                Err(_) => warn!("thread {thread_id} shutdown timed out; proceeding with archive"),
             }
+            self.live_thread_command.remove_live_thread(thread_id).await;
         }
         self.finalize_thread_teardown(thread_id).await;
     }
@@ -255,7 +259,11 @@ impl ThreadRequestProcessor {
         if connection_ids.is_empty() {
             return;
         }
-        let Ok(live_snapshot) = self.live_threads.live_thread_snapshot(thread_id).await else {
+        let Ok(live_snapshot) = self
+            .live_thread_inspection
+            .live_thread_snapshot(thread_id)
+            .await
+        else {
             return;
         };
         let mut loaded_thread = build_thread_from_live_snapshot(thread_id, &live_snapshot);
@@ -263,7 +271,11 @@ impl ThreadRequestProcessor {
             .thread_watch_manager
             .loaded_status_for_thread(&loaded_thread.id)
             .await;
-        let agent_status = self.live_threads.thread_agent_status(thread_id).await.ok();
+        let agent_status = self
+            .live_thread_status
+            .live_thread_agent_status(thread_id)
+            .await
+            .ok();
         loaded_thread.lifecycle_status = agent_status
             .as_ref()
             .map(thread_lifecycle_status_from_agent_status)
@@ -293,8 +305,8 @@ impl ThreadRequestProcessor {
             .loaded_status_for_thread(&thread_id_string)
             .await;
         let lifecycle_status = self
-            .live_threads
-            .thread_agent_status(thread_id)
+            .live_thread_status
+            .live_thread_agent_status(thread_id)
             .await
             .ok()
             .as_ref()
@@ -320,11 +332,19 @@ impl ThreadRequestProcessor {
         op: Op,
         failure_message: &str,
     ) -> Result<String, JSONRPCErrorError> {
-        if !self.live_threads.is_thread_loaded(thread_id).await {
+        if !self
+            .live_thread_inspection
+            .is_live_thread_loaded(thread_id)
+            .await
+        {
             return Err(invalid_request(format!("thread not found: {thread_id}")));
         }
-        self.live_threads
-            .send_op_with_trace(thread_id, op, self.request_trace_context(request_id).await)
+        self.live_thread_command
+            .submit_live_thread_op_with_trace(
+                thread_id,
+                op,
+                self.request_trace_context(request_id).await,
+            )
             .await
             .map_err(|err| match err {
                 CodexErr::ThreadNotFound(_) => {
@@ -338,7 +358,7 @@ impl ThreadRequestProcessor {
     pub(super) async fn thread_start_task(
         listener_task_context: ListenerTaskContext,
         thread_runtime: Arc<dyn ThreadProcessorThreadRuntime>,
-        live_threads: Arc<dyn AppServerLiveThreadRegistry>,
+        live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
         thread_store: Arc<dyn ThreadStore>,
         config_manager: ConfigManager,
         request_id: ConnectionRequestId,
@@ -503,8 +523,8 @@ impl ThreadRequestProcessor {
             app_server_client_name.as_deref(),
             app_server_client_version.as_deref(),
         );
-        live_threads
-            .set_thread_app_server_client_info(
+        live_thread_command
+            .set_live_thread_app_server_client_info(
                 thread_id,
                 AppServerClientInfo {
                     app_server_client_name,
@@ -994,7 +1014,11 @@ impl ThreadRequestProcessor {
             self.config.model_provider_id.as_str(),
             &self.config.cwd,
         );
-        if let Ok(live_info) = self.live_threads.live_thread_info(thread_uuid).await {
+        if let Ok(live_info) = self
+            .live_thread_inspection
+            .live_thread_info(thread_uuid)
+            .await
+        {
             thread.session_id = live_info.session_id.to_string();
         }
         self.attach_thread_name(thread_uuid, &mut thread).await;

@@ -92,7 +92,7 @@ impl ThreadRequestProcessor {
         let request_trace = request_context.request_trace();
         let config_manager = self.config_manager.clone();
         let thread_runtime = Arc::clone(&self.thread_runtime);
-        let live_threads = Arc::clone(&self.live_threads);
+        let live_thread_command = Arc::clone(&self.live_thread_command);
         let thread_store = Arc::clone(&self.thread_store);
         let outgoing = Arc::clone(&listener_task_context.outgoing);
         let error_request_id = request_id.clone();
@@ -100,7 +100,7 @@ impl ThreadRequestProcessor {
             if let Err(error) = Self::thread_start_task(
                 listener_task_context,
                 thread_runtime,
-                live_threads,
+                live_thread_command,
                 thread_store,
                 config_manager,
                 request_id,
@@ -479,7 +479,10 @@ impl ThreadRequestProcessor {
     ) -> Result<bool, JSONRPCErrorError> {
         let running_thread = if params.history.is_some() {
             if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
-                && self.live_threads.is_thread_loaded(existing_thread_id).await
+                && self
+                    .live_thread_inspection
+                    .is_live_thread_loaded(existing_thread_id)
+                    .await
             {
                 return Err(invalid_request(format!(
                     "cannot resume thread {existing_thread_id} with history while it is already running"
@@ -495,7 +498,11 @@ impl ThreadRequestProcessor {
                 )
                 .await?;
             let existing_thread_id = source_thread.thread_id;
-            if let Ok(live_info) = self.live_threads.live_thread_info(existing_thread_id).await {
+            if let Ok(live_info) = self
+                .live_thread_inspection
+                .live_thread_info(existing_thread_id)
+                .await
+            {
                 if let (Some(requested_path), Some(active_path)) =
                     (params.path.as_ref(), live_info.rollout_path.as_ref())
                     && requested_path != active_path
@@ -511,7 +518,10 @@ impl ThreadRequestProcessor {
                 None
             }
         } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
-            && self.live_threads.is_thread_loaded(existing_thread_id).await
+            && self
+                .live_thread_inspection
+                .is_live_thread_loaded(existing_thread_id)
+                .await
         {
             let source_thread = self
                 .read_stored_thread_for_resume(
@@ -542,7 +552,7 @@ impl ThreadRequestProcessor {
                 }
             }
             let live_snapshot = self
-                .live_threads
+                .live_thread_inspection
                 .live_thread_snapshot(existing_thread_id)
                 .await
                 .map_err(|err| match err {
