@@ -9,15 +9,11 @@ use crate::memory_service_wiring::MemoryServiceHost;
 use crate::request_processors::thread_processor::thread_processor_new_thread;
 use futures::future::BoxFuture;
 use model_service_api::SharedModelServiceApi;
+use thread_service::NativeThreadEnvironmentRuntime;
 use thread_service_api::AppServerClientInfo;
 use thread_store_api::ReadThreadParams;
 
 pub(crate) trait TurnProcessorRuntime: Send + Sync {
-    fn validate_environment_selections(
-        &self,
-        environments: &[TurnEnvironmentSelection],
-    ) -> CodexResult<()>;
-
     fn live_thread_config<'a>(
         &'a self,
         thread_id: ThreadId,
@@ -55,13 +51,6 @@ pub(crate) struct DetachedReviewThread {
 }
 
 impl TurnProcessorRuntime for ThreadService {
-    fn validate_environment_selections(
-        &self,
-        environments: &[TurnEnvironmentSelection],
-    ) -> CodexResult<()> {
-        ThreadService::validate_environment_selections(self, environments)
-    }
-
     fn live_thread_config<'a>(
         &'a self,
         thread_id: ThreadId,
@@ -143,6 +132,7 @@ impl TurnProcessorRuntime for ThreadService {
 pub(crate) struct TurnRequestProcessor {
     auth_manager: Arc<AuthManager>,
     turn_runtime: Arc<dyn TurnProcessorRuntime>,
+    environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
     live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
     live_thread_status: Arc<dyn AppServerLiveThreadStatusRuntime>,
     live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
@@ -199,6 +189,7 @@ impl TurnRequestProcessor {
         Self {
             auth_manager,
             turn_runtime: thread_service.clone(),
+            environment_runtime: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),
             live_thread_status: thread_service.clone(),
             live_thread_command: thread_service.clone(),
@@ -424,7 +415,7 @@ impl TurnRequestProcessor {
                 .collect::<Vec<_>>()
         });
         if let Some(environment_selections) = environment_selections.as_ref() {
-            self.turn_runtime
+            self.environment_runtime
                 .validate_environment_selections(environment_selections)
                 .map_err(|err| invalid_request(environment_selection_error_message(err)))?;
         }

@@ -219,9 +219,10 @@ running resume usage replay 仍通过 listener handle 读取。memory consolidat
 startup/shutdown/status/token usage 已改到 memory-specific handle。detached review
 thread assembly 的 read-thread 也已改到 narrow runtime/store read 路径。旧
 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` surface 和 app-server
-transitional `AppServerLiveThreadHandle` 均已删除；turn processor 里剩余
-的 app-server-local turn runtime 只覆盖环境选择校验、live `Config` 读取、
-conversation item injection、steer 和 detached review fork 这些尚未
+transitional `AppServerLiveThreadHandle` 均已删除；thread/turn request 的
+environment selection validation 已共用 `NativeThreadEnvironmentRuntime`。turn
+processor 里剩余的 app-server-local turn runtime 只覆盖 live `Config` 读取、
+conversation item injection、steer 和 detached review fork/read 这些尚未
 provider-neutral 化的 native-only 能力。thread processor 已不再保留 broad
 creation facade；native root start/resume/fork 仍通过
 `NativeThreadCreationRuntime` 明确标记为 native-only 过渡层。后续阶段再继续拆出
