@@ -22,6 +22,7 @@ use thread_service_api::LiveThreadElicitationRuntime;
 use thread_service_api::LiveThreadFeedbackRuntime;
 use thread_service_api::LiveThreadGoalRuntime;
 use thread_service_api::LiveThreadHandle;
+use thread_service_api::LiveThreadHistoryRuntime;
 use thread_service_api::LiveThreadInfo;
 use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadRegistry;
@@ -146,13 +147,31 @@ pub(crate) trait AppServerLiveThreadRegistry: Send + Sync {
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<Arc<dyn AppServerLiveThreadHandle>>>;
+}
 
-    fn thread_history(
+pub(crate) trait AppServerLiveThreadHistoryRuntime: Send + Sync {
+    fn live_thread_history(
         &self,
         thread_id: ThreadId,
         include_archived: bool,
     ) -> BoxFuture<'_, ThreadStoreResult<StoredThreadHistory>>;
+}
 
+impl<T> AppServerLiveThreadHistoryRuntime for T
+where
+    T: LiveThreadHistoryRuntime + Send + Sync,
+{
+    fn live_thread_history(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+    ) -> BoxFuture<'_, ThreadStoreResult<StoredThreadHistory>> {
+        Box::pin(LiveThreadHistoryRuntime::live_thread_history(
+            self,
+            thread_id,
+            include_archived,
+        ))
+    }
 }
 
 pub(crate) trait AppServerLiveThreadUsageRuntime: Send + Sync {
@@ -551,17 +570,4 @@ where
             Ok(thread)
         })
     }
-
-    fn thread_history(
-        &self,
-        thread_id: ThreadId,
-        include_archived: bool,
-    ) -> BoxFuture<'_, ThreadStoreResult<StoredThreadHistory>> {
-        Box::pin(LiveThreadRegistry::thread_history(
-            self,
-            thread_id,
-            include_archived,
-        ))
-    }
-
 }

@@ -277,6 +277,16 @@ pub trait LiveThreadConversationRuntime: Send + Sync {
     ) -> impl Future<Output = CodexResult<String>> + Send + '_;
 }
 
+/// Persisted history read surface for loaded live threads without exposing handles.
+pub trait LiveThreadHistoryRuntime: Send + Sync {
+    /// Return live persisted history for a specific loaded thread.
+    fn live_thread_history(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+    ) -> impl Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_;
+}
+
 /// Turn preflight surface for live threads without exposing concrete handles.
 ///
 /// Implementations validate turn-scoped inputs against the live thread but do
@@ -557,7 +567,7 @@ pub trait LiveThreadHandle: SessionCommandHandle + Send + Sync {
     ) -> impl Future<Output = CodexResult<u64>> + Send + '_;
 }
 
-/// Lookup and command surface for a collection of live threads.
+/// Full handle lookup surface for a collection of live threads.
 pub trait LiveThreadRegistry: Send + Sync {
     type Thread: LiveThreadHandle + 'static;
 
@@ -566,12 +576,4 @@ pub trait LiveThreadRegistry: Send + Sync {
         &self,
         thread_id: ThreadId,
     ) -> impl Future<Output = CodexResult<Arc<Self::Thread>>> + Send + '_;
-
-    /// Return live persisted history for a specific loaded thread.
-    fn thread_history(
-        &self,
-        thread_id: ThreadId,
-        include_archived: bool,
-    ) -> impl Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_;
-
 }

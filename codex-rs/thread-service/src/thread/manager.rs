@@ -2075,6 +2075,27 @@ impl thread_service_api::LiveThreadConversationRuntime for ThreadServiceState {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadHistoryRuntime for ThreadServiceState {
+    fn live_thread_history(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+    ) -> impl std::future::Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_ {
+        async move {
+            let thread = self.get_thread(thread_id).await.map_err(|err| match err {
+                CodexErr::ThreadNotFound(thread_id) => {
+                    ThreadStoreError::ThreadNotFound { thread_id }
+                }
+                err => ThreadStoreError::Internal {
+                    message: err.to_string(),
+                },
+            })?;
+            thread.load_history(include_archived).await
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadTurnRuntime for ThreadServiceState {
     fn validate_live_thread_turn_context_overrides(
         &self,
@@ -2500,6 +2521,21 @@ impl thread_service_api::LiveThreadConversationRuntime for ThreadService {
 }
 
 #[allow(clippy::manual_async_fn)]
+impl thread_service_api::LiveThreadHistoryRuntime for ThreadService {
+    fn live_thread_history(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+    ) -> impl std::future::Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_ {
+        thread_service_api::LiveThreadHistoryRuntime::live_thread_history(
+            self.state.as_ref(),
+            thread_id,
+            include_archived,
+        )
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
 impl thread_service_api::LiveThreadTurnRuntime for ThreadService {
     fn validate_live_thread_turn_context_overrides(
         &self,
@@ -2776,25 +2812,6 @@ impl thread_service_api::LiveThreadRegistry for ThreadService {
     ) -> impl std::future::Future<Output = CodexResult<Arc<Self::Thread>>> + Send + '_ {
         self.get_thread(thread_id)
     }
-
-    fn thread_history(
-        &self,
-        thread_id: ThreadId,
-        include_archived: bool,
-    ) -> impl std::future::Future<Output = ThreadStoreResult<StoredThreadHistory>> + Send + '_ {
-        async move {
-            let thread = self.get_thread(thread_id).await.map_err(|err| match err {
-                CodexErr::ThreadNotFound(thread_id) => {
-                    ThreadStoreError::ThreadNotFound { thread_id }
-                }
-                err => ThreadStoreError::Internal {
-                    message: err.to_string(),
-                },
-            })?;
-            thread.load_history(include_archived).await
-        }
-    }
-
 }
 
 fn thread_store_rollout_read_error(err: ThreadStoreError) -> CodexErr {

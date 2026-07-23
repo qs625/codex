@@ -328,8 +328,8 @@ impl ThreadRequestProcessor {
     ) -> Result<bool, ThreadReadViewError> {
         self.attach_thread_name(thread_id, thread).await;
         let history = self
-            .live_threads
-            .thread_history(thread_id, /*include_archived*/ true)
+            .live_thread_history
+            .live_thread_history(thread_id, /*include_archived*/ true)
             .await
             .map_err(|err| thread_read_history_load_error(thread_id, err))?;
         if let Some(token_usage) = self
@@ -521,8 +521,8 @@ impl ThreadRequestProcessor {
             ));
         }
 
-        self.live_threads
-            .thread_history(thread_id, /*include_archived*/ true)
+        self.live_thread_history
+            .live_thread_history(thread_id, /*include_archived*/ true)
             .await
             .map(|history| history.items)
             .map_err(|err| thread_turns_list_history_load_error(thread_id, err))
