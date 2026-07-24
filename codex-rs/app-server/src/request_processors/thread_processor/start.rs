@@ -56,6 +56,16 @@ fn resolve_root_thread_provider(
     }
 }
 
+fn reject_unsupported_external_root_thread_provider(
+    thread_provider: &str,
+    capability: RootThreadProviderCapability,
+) -> Result<(), JSONRPCErrorError> {
+    if is_external_cli_thread_provider_id(thread_provider) {
+        resolve_root_thread_provider(Some(thread_provider), capability)?;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_external_root_start_params(
     task_name: &Option<String>,
@@ -685,6 +695,15 @@ impl ThreadRequestProcessor {
         let resume_agent_metadata = resume_source_thread
             .as_ref()
             .and_then(stored_thread_root_agent_metadata);
+        if let Some(source_thread) = resume_source_thread.as_ref()
+            && let Err(error) = reject_unsupported_external_root_thread_provider(
+                source_thread.model_provider.as_str(),
+                RootThreadProviderCapability::RestoreThread,
+            )
+        {
+            self.outgoing.send_error(request_id, error).await;
+            return Ok(());
+        }
         let resume_agent_role = native_agent_role_for_resume(resume_session_source.as_ref());
 
         let history_cwd = thread_history.session_cwd();
@@ -1377,6 +1396,10 @@ impl ThreadRequestProcessor {
         let source_thread = self
             .read_stored_thread_for_resume(&thread_id, path.as_ref(), /*include_history*/ true)
             .await?;
+        reject_unsupported_external_root_thread_provider(
+            source_thread.model_provider.as_str(),
+            RootThreadProviderCapability::ForkThread,
+        )?;
         let source_thread_id = source_thread.thread_id;
         let history_items = source_thread
             .history

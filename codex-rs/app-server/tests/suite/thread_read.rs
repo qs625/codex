@@ -108,6 +108,7 @@ use uuid::Uuid;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 #[cfg(not(windows))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
 fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(bin_dir)?;
@@ -1305,6 +1306,92 @@ fn thread_read_and_list_project_external_root_terminal_facts_without_live_runtim
             .find(|thread| thread.id == errored_id.to_string())
             .expect("thread/list should include errored external root");
         assert_eq!(listed_errored.lifecycle_status, errored_status);
+
+        client.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn external_root_resume_and_fork_are_rejected_before_native_creation() -> Result<()> {
+    run_current_thread_test_with_stack(async {
+        let codex_home = TempDir::new()?;
+        let thread_id =
+            protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000127")?;
+        let store_id = Uuid::new_v4().to_string();
+        create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
+        let store = InMemoryThreadStore::for_id(store_id.clone());
+        let _in_memory_store = InMemoryThreadStoreId { store_id };
+        seed_external_root_store_thread(&store, thread_id, codex_home.path(), Vec::new()).await?;
+
+        let loader_overrides = LoaderOverrides::without_managed_config_for_tests();
+        let config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .fallback_cwd(Some(codex_home.path().to_path_buf()))
+            .loader_overrides(loader_overrides.clone())
+            .build()
+            .await?;
+        let client = in_process::start(InProcessStartArgs {
+            arg0_paths: Arg0DispatchPaths::default(),
+            config: Arc::new(config),
+            cli_overrides: Vec::new(),
+            loader_overrides,
+            strict_config: false,
+            cloud_requirements: CloudRequirementsLoader::default(),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
+            feedback: CodexFeedback::new(),
+            log_db: None,
+            state_db: None,
+            environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+            config_warnings: Vec::new(),
+            session_source: SessionSource::Cli.into(),
+            enable_codex_api_key_env: false,
+            initialize: InitializeParams {
+                client_info: ClientInfo {
+                    name: "codex-app-server-tests".to_string(),
+                    title: None,
+                    version: "0.1.0".to_string(),
+                },
+                capabilities: Some(InitializeCapabilities {
+                    experimental_api: true,
+                    ..Default::default()
+                }),
+            },
+            channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        })
+        .await?;
+
+        let resume_error = client
+            .request(ClientRequest::ThreadResume {
+                request_id: RequestId::Integer(1),
+                params: ThreadResumeParams {
+                    thread_id: thread_id.to_string(),
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect_err("thread/resume should reject persisted external root threads");
+        assert_eq!(resume_error.code, INVALID_REQUEST_ERROR_CODE);
+        assert_eq!(
+            resume_error.message,
+            "thread provider 'claude_cli' is advertised but does not support thread/resume yet"
+        );
+
+        let fork_error = client
+            .request(ClientRequest::ThreadFork {
+                request_id: RequestId::Integer(2),
+                params: ThreadForkParams {
+                    thread_id: thread_id.to_string(),
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect_err("thread/fork should reject persisted external root threads");
+        assert_eq!(fork_error.code, INVALID_REQUEST_ERROR_CODE);
+        assert_eq!(
+            fork_error.message,
+            "thread provider 'claude_cli' is advertised but does not support thread/fork yet"
+        );
 
         client.shutdown().await?;
         Ok(())
