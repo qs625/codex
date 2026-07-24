@@ -136,6 +136,38 @@ async fn external_root_rejects_native_only_active_ops() -> Result<()> {
     )
     .await?;
 
+    let guardian_req = mcp
+        .send_thread_approve_guardian_denied_action_request(
+            ThreadApproveGuardianDeniedActionParams {
+                thread_id: thread_id.clone(),
+                event: json!({
+                    "id": "guardian-denied-1",
+                    "target_item_id": "guardian-target-1",
+                    "turn_id": "turn-1",
+                    "started_at_ms": 0,
+                    "completed_at_ms": 1,
+                    "status": "denied",
+                    "risk_level": "high",
+                    "user_authorization": "low",
+                    "rationale": "Would run a command on an external root thread.",
+                    "decision_source": "agent",
+                    "action": {
+                        "type": "command",
+                        "source": "shell",
+                        "command": "echo should-not-run",
+                        "cwd": codex_home.path().to_string_lossy(),
+                    },
+                }),
+            },
+        )
+        .await?;
+    expect_external_root_native_only_error(
+        &mut mcp,
+        guardian_req,
+        "thread/approveGuardianDeniedAction",
+    )
+    .await?;
+
     let rollback_req = mcp
         .send_thread_rollback_request(ThreadRollbackParams {
             thread_id: thread_id.clone(),
