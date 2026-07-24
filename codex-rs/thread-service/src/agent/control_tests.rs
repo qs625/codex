@@ -195,6 +195,29 @@ async fn register_external_live_thread(
         .await;
 }
 
+fn external_root_run(
+    config: &Config,
+    thread_id: ThreadId,
+    provider: SpawnAgentProvider,
+) -> ExternalAgentRun {
+    let mut spawn_config = ExternalSpawnConfig::from_config(config);
+    spawn_config.model_provider_id = provider_label(provider).to_string();
+    ExternalAgentRun {
+        thread_id,
+        parent_thread_id: thread_id,
+        agent_path: AgentPath::root(),
+        provider,
+        depth: 0,
+        spawn_config: Some(spawn_config),
+        input_sink: None,
+        live_thread: None,
+        status: AgentStatus::Running,
+        active_turn_id: None,
+        last_task_message: None,
+        abort_handle: None,
+    }
+}
+
 fn has_subagent_notification(history_items: &[ResponseItem]) -> bool {
     history_items.iter().any(|item| {
         let ResponseItem::Message { role, content, .. } = item else {
@@ -648,26 +671,41 @@ async fn root_external_followup_resolves_target_within_sender_scope() {
 }
 
 #[tokio::test]
-async fn root_external_tools_reject_child_spawn_and_self_targets() {
+async fn root_external_tools_spawn_child_and_reject_invalid_targets() {
     let harness = AgentControlHarness::new().await;
     let root_thread_id = ThreadId::new();
     harness
         .control
         .external_agents
-        .insert_running(ExternalAgentRun {
-            thread_id: root_thread_id,
-            parent_thread_id: root_thread_id,
-            agent_path: AgentPath::root(),
-            provider: SpawnAgentProvider::ClaudeCli,
-            depth: 0,
-            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
-            input_sink: None,
-            live_thread: None,
-            status: AgentStatus::Running,
-            active_turn_id: None,
-            last_task_message: None,
-            abort_handle: None,
-        });
+        .insert_running(external_root_run(
+            &harness.config,
+            root_thread_id,
+            SpawnAgentProvider::ClaudeCli,
+        ));
+
+    let native_spawn_result = harness
+        .control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "spawn_native".to_string(),
+                tool: ExternalToolName::SpawnExternalAgent,
+                arguments: serde_json::json!({
+                    "task_name": "native_worker",
+                    "provider": "native",
+                    "cwd": harness.config.cwd.display().to_string(),
+                    "message": "work"
+                }),
+            },
+        )
+        .await;
+    assert!(!native_spawn_result.ok);
+    assert!(native_spawn_result.error.as_ref().is_some_and(|error| {
+        error.code == "tool_error"
+            && error
+                .message
+                .contains("spawn_external_agent requires an external provider")
+    }));
 
     let spawn_result = harness
         .control
@@ -685,14 +723,75 @@ async fn root_external_tools_reject_child_spawn_and_self_targets() {
             },
         )
         .await;
-    assert!(!spawn_result.ok);
-    assert!(
-        spawn_result
-            .error
-            .as_ref()
-            .is_some_and(|error| error.code == "tool_error"
-                && error.message.contains("cannot spawn child agents yet"))
-    );
+    assert!(spawn_result.ok, "spawn failed: {:?}", spawn_result.error);
+    let spawn_result_json = spawn_result.result.expect("spawn tool result");
+    assert_eq!(spawn_result_json["task_name"], "/root/worker");
+    assert_eq!(spawn_result_json["provider"], "claude_cli");
+
+    let child_run = harness
+        .control
+        .external_agents
+        .list()
+        .into_iter()
+        .find(|run| run.agent_path.to_string() == "/root/worker")
+        .expect("spawned external child should be registered");
+    assert_eq!(child_run.parent_thread_id, root_thread_id);
+    assert_eq!(child_run.depth, 1);
+    assert_eq!(child_run.provider, SpawnAgentProvider::ClaudeCli);
+    assert_eq!(child_run.last_task_message.as_deref(), Some("work"));
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[child_run.thread_id])
+        .await;
+
+    let list_result = harness
+        .control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "list_1".to_string(),
+                tool: ExternalToolName::ListExternalAgents,
+                arguments: serde_json::json!({ "path_prefix": "/root/worker" }),
+            },
+        )
+        .await;
+    assert!(list_result.ok, "list failed: {:?}", list_result.error);
+    let agents = list_result.result.expect("list tool result")["agents"]
+        .as_array()
+        .expect("agents array")
+        .clone();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["agent_name"], "/root/worker");
+    assert_eq!(agents[0]["agent_nickname"], "claude_cli");
+    assert_eq!(agents[0]["agent_role"], "claude_cli");
+
+    let duplicate_spawn_result = harness
+        .control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "spawn_duplicate".to_string(),
+                tool: ExternalToolName::SpawnExternalAgent,
+                arguments: serde_json::json!({
+                    "task_name": "worker",
+                    "provider": "claude_cli",
+                    "cwd": harness.config.cwd.display().to_string(),
+                    "message": "duplicate"
+                }),
+            },
+        )
+        .await;
+    assert!(!duplicate_spawn_result.ok);
+    assert!(duplicate_spawn_result.error.as_ref().is_some_and(|error| {
+        error.code == "tool_error"
+            && error
+                .message
+                .contains("agent path `/root/worker` already exists in external root scope")
+    }));
+
+    let _previous_status = harness
+        .control
+        .close_agent(child_run.thread_id)
+        .await
+        .expect("spawned external child should close");
 
     let followup_result = harness
         .control
@@ -732,6 +831,104 @@ async fn root_external_tools_reject_child_spawn_and_self_targets() {
     assert!(close_result.error.as_ref().is_some_and(
         |error| error.code == "tool_error" && error.message.contains("cannot close themselves")
     ));
+}
+
+#[tokio::test]
+async fn root_external_child_spawn_paths_are_scoped_per_root_thread() {
+    let harness = AgentControlHarness::new().await;
+    let root_a = ThreadId::new();
+    let root_b = ThreadId::new();
+    harness
+        .control
+        .external_agents
+        .insert_running(external_root_run(
+            &harness.config,
+            root_a,
+            SpawnAgentProvider::ClaudeCli,
+        ));
+    harness
+        .control
+        .external_agents
+        .insert_running(external_root_run(
+            &harness.config,
+            root_b,
+            SpawnAgentProvider::ClaudeCli,
+        ));
+
+    let spawn_worker = |root_thread_id| {
+        harness.control.dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: format!("spawn_{root_thread_id}"),
+                tool: ExternalToolName::SpawnExternalAgent,
+                arguments: serde_json::json!({
+                    "task_name": "worker",
+                    "provider": "claude_cli",
+                    "cwd": harness.config.cwd.display().to_string(),
+                    "message": "work"
+                }),
+            },
+        )
+    };
+    let spawn_a = spawn_worker(root_a).await;
+    assert!(spawn_a.ok, "root A spawn failed: {:?}", spawn_a.error);
+    let spawn_b = spawn_worker(root_b).await;
+    assert!(spawn_b.ok, "root B spawn failed: {:?}", spawn_b.error);
+
+    let child_a = harness
+        .control
+        .external_agents
+        .list()
+        .into_iter()
+        .find(|run| run.parent_thread_id == root_a && run.agent_path.to_string() == "/root/worker")
+        .expect("root A child should be registered");
+    let child_b = harness
+        .control
+        .external_agents
+        .list()
+        .into_iter()
+        .find(|run| run.parent_thread_id == root_b && run.agent_path.to_string() == "/root/worker")
+        .expect("root B child should be registered");
+    assert_ne!(child_a.thread_id, child_b.thread_id);
+    wait_for_live_thread_spawn_children(&harness.control, root_a, &[child_a.thread_id]).await;
+    wait_for_live_thread_spawn_children(&harness.control, root_b, &[child_b.thread_id]).await;
+
+    for root_thread_id in [root_a, root_b] {
+        let list_result = harness
+            .control
+            .dispatch_external_tool_call(
+                root_thread_id,
+                ExternalToolCall {
+                    id: format!("list_{root_thread_id}"),
+                    tool: ExternalToolName::ListExternalAgents,
+                    arguments: serde_json::json!({ "path_prefix": "/root/worker" }),
+                },
+            )
+            .await;
+        assert!(
+            list_result.ok,
+            "root {root_thread_id} list failed: {:?}",
+            list_result.error
+        );
+        let agents = list_result.result.expect("list tool result")["agents"]
+            .as_array()
+            .expect("agents array")
+            .clone();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0]["agent_name"], "/root/worker");
+        assert_eq!(agents[0]["agent_nickname"], "claude_cli");
+    }
+
+    harness
+        .control
+        .close_agent(child_a.thread_id)
+        .await
+        .expect("root A child should close");
+    harness
+        .control
+        .close_agent(child_b.thread_id)
+        .await
+        .expect("root B child should close");
 }
 
 #[tokio::test]
