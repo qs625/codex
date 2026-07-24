@@ -98,7 +98,8 @@ tokenUsage: ThreadTokenUsage | null,
 contextUsage: ThreadContextUsage | null,
 /**
  * Populated only on responses that explicitly include display history, such as
- * `thread/resume`, `thread/rollback`, `thread/fork`, and `thread/read` (when `includeTurns` is true).
+ * `thread/resume`, `thread/rollback`, `thread/fork`, and
+ * `thread/read` (when `includeTurns` is true).
  * For `thread/start`, `thread/started`, and other metadata-only Thread payloads,
  * the turns field will be an empty list.
  */

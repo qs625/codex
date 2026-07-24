@@ -48,7 +48,12 @@
         "pollEvent": {
           "type": "boolean"
         },
+        "restoreSnapshot": {
+          "description": "Supports opening persisted thread history as a read-only snapshot.",
+          "type": "boolean"
+        },
         "restoreThread": {
+          "description": "Supports restoring a persisted thread into a live, interactive runtime.",
           "type": "boolean"
         },
         "sendInput": {
@@ -73,6 +78,7 @@
         "listChildren",
         "permissions",
         "pollEvent",
+        "restoreSnapshot",
         "restoreThread",
         "sendInput",
         "spawnChild",

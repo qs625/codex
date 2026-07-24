@@ -64,6 +64,14 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
     assert!(native.capabilities.compact);
     assert!(native.capabilities.workflow);
     assert!(native.capabilities.poll_event);
+    assert!(
+        native.capabilities.restore_thread,
+        "native should advertise live restore support"
+    );
+    assert!(
+        native.capabilities.restore_snapshot,
+        "native should advertise persisted snapshot restore support"
+    );
 
     for external_id in ["claude_cli", "opencode", "codex_cli"] {
         let external = response
@@ -82,7 +90,14 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
             external.capabilities.start_thread,
             "{external_id} should advertise root thread/start because the provider has a backend session transport"
         );
-        assert!(!external.capabilities.restore_thread);
+        assert!(
+            !external.capabilities.restore_thread,
+            "{external_id} should not advertise live restore/reconnect support"
+        );
+        assert!(
+            external.capabilities.restore_snapshot,
+            "{external_id} should advertise read-only persisted snapshot restore support"
+        );
         assert!(external.capabilities.event_stream);
         assert!(!external.capabilities.compact);
         assert!(!external.capabilities.workflow);

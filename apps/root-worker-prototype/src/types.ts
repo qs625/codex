@@ -581,6 +581,7 @@ export type ThreadProviderDescriptor = {
     closeThread: boolean;
     listChildren: boolean;
     restoreThread: boolean;
+    restoreSnapshot: boolean;
     eventStream: boolean;
     spawnChild: boolean;
     compact: boolean;
