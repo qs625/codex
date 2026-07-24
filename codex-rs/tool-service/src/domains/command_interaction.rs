@@ -4,7 +4,6 @@ use std::time::UNIX_EPOCH;
 
 use crate::planning::ToolSpec;
 use crate::planning::create_write_stdin_tool;
-use command_service_api::CommandServiceApi;
 use command_service_api::SessionCommandInteractionCaller;
 use command_service_api::WriteStdinRequest;
 use protocol::models::FunctionCallOutputContentItem;
@@ -54,7 +53,6 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 }
 
 pub(crate) async fn dispatch(
-    _command_service_api: Arc<dyn CommandServiceApi>,
     session_interaction: Arc<dyn SessionCommandInteractionCaller>,
     session: Arc<dyn ThreadSessionCapability>,
     turn: Arc<dyn ThreadRuntimeCapability>,
