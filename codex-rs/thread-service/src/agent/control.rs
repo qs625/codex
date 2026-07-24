@@ -389,6 +389,11 @@ impl AgentControl {
                 &agent_metadata,
             )
             .await?;
+        live_thread.persist().await.map_err(|err| {
+            CodexErr::Fatal(format!(
+                "failed to persist external root thread {thread_id}: {err}"
+            ))
+        })?;
         let rollout_path = live_thread.local_rollout_path().await.map_err(|err| {
             CodexErr::Fatal(format!("failed to load external rollout path: {err}"))
         })?;

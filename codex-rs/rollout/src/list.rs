@@ -26,6 +26,7 @@ use protocol::protocol::RolloutItem;
 use protocol::protocol::RolloutLine;
 use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadSource;
 use protocol::protocol::USER_MESSAGE_BEGIN;
 
 /// Returned page of thread (thread) summaries.
@@ -62,6 +63,8 @@ pub struct ThreadItem {
     pub git_origin_url: Option<String>,
     /// Session source from session metadata.
     pub source: Option<SessionSource>,
+    /// Thread source classification from session metadata.
+    pub thread_source: Option<ThreadSource>,
     /// Random unique nickname from session metadata for AgentControl-spawned sub-agents.
     pub agent_nickname: Option<String>,
     /// Role (agent_role) from session metadata for AgentControl-spawned sub-agents.
@@ -97,6 +100,7 @@ struct HeadTailSummary {
     git_sha: Option<String>,
     git_origin_url: Option<String>,
     source: Option<SessionSource>,
+    thread_source: Option<ThreadSource>,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
     agent_path: Option<String>,
@@ -781,6 +785,7 @@ async fn build_thread_item(
             git_sha,
             git_origin_url,
             source,
+            thread_source,
             agent_nickname,
             agent_role,
             agent_path,
@@ -803,6 +808,7 @@ async fn build_thread_item(
             git_sha,
             git_origin_url,
             source,
+            thread_source,
             agent_nickname,
             agent_role,
             agent_path,
@@ -1106,6 +1112,7 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
             RolloutItem::SessionMeta(session_meta_line) => {
                 if !summary.saw_session_meta {
                     summary.source = Some(session_meta_line.meta.source.clone());
+                    summary.thread_source = session_meta_line.meta.thread_source;
                     summary.agent_nickname = session_meta_line.meta.agent_nickname.clone();
                     summary.agent_role = session_meta_line.meta.agent_role.clone();
                     summary.agent_path = session_meta_line.meta.agent_path.clone();

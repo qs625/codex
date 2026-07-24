@@ -37,6 +37,7 @@ use protocol::protocol::RolloutLine;
 use protocol::protocol::SessionMeta;
 use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadSource;
 use protocol::protocol::ThreadGoal;
 use protocol::protocol::ThreadGoalStatus;
 use protocol::protocol::ThreadGoalUpdatedEvent;
@@ -407,6 +408,26 @@ fn write_session_file_with_provider(
     source: Option<SessionSource>,
     model_provider: Option<&str>,
 ) -> std::io::Result<(OffsetDateTime, Uuid)> {
+    write_session_file_with_provider_and_thread_source(
+        root,
+        ts_str,
+        uuid,
+        num_records,
+        source,
+        model_provider,
+        None,
+    )
+}
+
+fn write_session_file_with_provider_and_thread_source(
+    root: &Path,
+    ts_str: &str,
+    uuid: Uuid,
+    num_records: usize,
+    source: Option<SessionSource>,
+    model_provider: Option<&str>,
+    thread_source: Option<ThreadSource>,
+) -> std::io::Result<(OffsetDateTime, Uuid)> {
     let format: &[FormatItem] =
         format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
     let dt = PrimitiveDateTime::parse(ts_str, format)
@@ -437,6 +458,9 @@ fn write_session_file_with_provider(
     }
     if let Some(provider) = model_provider {
         payload["model_provider"] = serde_json::Value::String(provider.to_string());
+    }
+    if let Some(thread_source) = thread_source {
+        payload["thread_source"] = serde_json::to_value(thread_source).unwrap();
     }
 
     let meta = serde_json::json!({
@@ -733,6 +757,7 @@ async fn test_list_conversations_latest_first() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,
@@ -751,6 +776,7 @@ async fn test_list_conversations_latest_first() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,
@@ -769,6 +795,7 @@ async fn test_list_conversations_latest_first() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,
@@ -784,6 +811,40 @@ async fn test_list_conversations_latest_first() {
     };
 
     assert_eq!(page, expected);
+}
+
+#[tokio::test]
+async fn test_list_threads_preserves_thread_source_from_session_meta() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let uuid = Uuid::from_u128(30);
+    write_session_file_with_provider_and_thread_source(
+        home,
+        "2025-01-03T12-00-00",
+        uuid,
+        /*num_records*/ 3,
+        Some(SessionSource::VSCode),
+        Some(TEST_PROVIDER),
+        Some(ThreadSource::User),
+    )
+    .unwrap();
+
+    let provider_filter = provider_vec(&[TEST_PROVIDER]);
+    let page = get_threads(
+        home,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        INTERACTIVE_SESSION_SOURCES.as_slice(),
+        Some(provider_filter.as_slice()),
+        /*cwd_filters*/ None,
+        TEST_PROVIDER,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].thread_source, Some(ThreadSource::User));
 }
 
 #[tokio::test]
@@ -880,6 +941,7 @@ async fn test_pagination_cursor() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,
@@ -898,6 +960,7 @@ async fn test_pagination_cursor() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,
@@ -952,6 +1015,7 @@ async fn test_pagination_cursor() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,
@@ -970,6 +1034,7 @@ async fn test_pagination_cursor() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,
@@ -1016,6 +1081,7 @@ async fn test_pagination_cursor() {
             git_sha: None,
             git_origin_url: None,
             source: Some(SessionSource::VSCode),
+                thread_source: None,
             agent_nickname: None,
             agent_role: None,
             agent_path: None,
@@ -1187,6 +1253,7 @@ async fn test_get_thread_contents() {
             git_sha: None,
             git_origin_url: None,
             source: Some(SessionSource::VSCode),
+                thread_source: None,
             agent_nickname: None,
             agent_role: None,
             agent_path: None,
@@ -1539,6 +1606,7 @@ async fn test_timestamp_only_cursor_skips_same_second_filesystem_ties() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,
@@ -1557,6 +1625,7 @@ async fn test_timestamp_only_cursor_skips_same_second_filesystem_ties() {
                 git_sha: None,
                 git_origin_url: None,
                 source: Some(SessionSource::VSCode),
+                thread_source: None,
                 agent_nickname: None,
                 agent_role: None,
                 agent_path: None,

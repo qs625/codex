@@ -493,6 +493,17 @@ fn is_external_cli_thread_provider_id(id: &str) -> bool {
         .any(|provider| provider.id == id)
 }
 
+fn default_thread_list_model_providers(current_provider: &str) -> Vec<String> {
+    let mut providers = Vec::with_capacity(1 + EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS.len());
+    providers.push(current_provider.to_string());
+    for provider in EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS {
+        if !providers.iter().any(|existing| existing == provider.id) {
+            providers.push(provider.id.to_string());
+        }
+    }
+    providers
+}
+
 fn external_cli_thread_provider(id: &str) -> Option<codex_agent_runtime::SpawnAgentProvider> {
     match id {
         "claude_cli" => Some(codex_agent_runtime::SpawnAgentProvider::ClaudeCli),

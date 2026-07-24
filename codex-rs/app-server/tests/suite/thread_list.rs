@@ -8,6 +8,7 @@ use app_server_protocol::SortDirection;
 use app_server_protocol::ThreadListCwdFilter;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadSortKey;
+use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadSourceKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
@@ -20,6 +21,7 @@ use app_test_support::create_fake_rollout;
 use app_test_support::create_fake_rollout_with_source;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
+use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::rollout_path;
 use app_test_support::test_absolute_path;
 use app_test_support::to_response;
@@ -323,6 +325,141 @@ stream_max_retries = 0
 "#
         ),
     )
+}
+
+fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_claude = bin_dir.join("claude");
+    std::fs::write(
+        &fake_claude,
+        "#!/bin/sh\n# Test double for hidden external root thread/list visibility.\nsleep 30\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_claude)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_claude, permissions)?;
+    }
+    Ok(())
+}
+
+fn prepend_path_env(path: &Path) -> Result<String> {
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let paths = std::iter::once(path.to_path_buf()).chain(std::env::split_paths(&original_path));
+    Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
+}
+
+async fn start_hidden_external_root_thread(
+    mcp: &mut McpProcess,
+    cwd: &Path,
+) -> Result<String> {
+    let thread_req = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("claude_cli".to_string()),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.thread_source, Some(ThreadSource::User));
+    assert_eq!(thread.agent_path, None);
+    assert_eq!(thread.agent_role, None);
+    Ok(thread.id)
+}
+
+#[tokio::test]
+async fn thread_list_default_includes_hidden_external_root_and_keeps_explicit_provider_filters()
+-> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let codex_home = TempDir::new()?;
+    create_runtime_config(codex_home.path(), &server.uri())?;
+    let fake_bin = TempDir::new()?;
+    write_fake_claude_cli(fake_bin.path())?;
+    let test_path = prepend_path_env(fake_bin.path())?;
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("PATH", Some(test_path.as_str()))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let external_thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
+
+    let default_list = list_threads(
+        &mut mcp,
+        /*cursor*/ None,
+        Some(10),
+        /*providers*/ None,
+        /*source_kinds*/ None,
+        /*archived*/ None,
+    )
+    .await?;
+    let listed = default_list
+        .data
+        .iter()
+        .find(|thread| thread.id == external_thread_id)
+        .expect("default thread/list should include hidden external root threads");
+    assert_eq!(listed.model_provider, "claude_cli");
+    assert_eq!(listed.thread_source, Some(ThreadSource::User));
+    assert_eq!(listed.agent_path, None);
+    assert_eq!(listed.agent_role, None);
+
+    let native_only = list_threads(
+        &mut mcp,
+        /*cursor*/ None,
+        Some(10),
+        Some(vec!["mock_provider".to_string()]),
+        /*source_kinds*/ None,
+        /*archived*/ None,
+    )
+    .await?;
+    assert!(
+        native_only
+            .data
+            .iter()
+            .all(|thread| thread.id != external_thread_id),
+        "explicit native provider filter should hide external root threads"
+    );
+
+    let claude_only = list_threads(
+        &mut mcp,
+        /*cursor*/ None,
+        Some(10),
+        Some(vec!["claude_cli".to_string()]),
+        /*source_kinds*/ None,
+        /*archived*/ None,
+    )
+    .await?;
+    assert!(
+        claude_only
+            .data
+            .iter()
+            .any(|thread| thread.id == external_thread_id),
+        "explicit claude_cli provider filter should include matching external root thread"
+    );
+
+    let all_providers = list_threads(
+        &mut mcp,
+        /*cursor*/ None,
+        Some(10),
+        Some(Vec::new()),
+        /*source_kinds*/ None,
+        /*archived*/ None,
+    )
+    .await?;
+    assert!(
+        all_providers
+            .data
+            .iter()
+            .any(|thread| thread.id == external_thread_id),
+        "empty provider filter should keep all-providers semantics"
+    );
+
+    Ok(())
 }
 
 #[tokio::test]

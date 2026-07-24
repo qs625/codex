@@ -16,6 +16,7 @@ use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionMeta;
 use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource;
+use protocol::protocol::ThreadSource;
 use protocol::protocol::TurnContextItem;
 use protocol::protocol::UserMessageEvent;
 use std::fs;
@@ -1015,6 +1016,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         git_sha: Some("filesystem-sha".to_string()),
         git_origin_url: Some("https://example.com/filesystem.git".to_string()),
         source: None,
+        thread_source: None,
         agent_nickname: None,
         agent_role: None,
         agent_path: None,
@@ -1033,6 +1035,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         git_sha: Some("state-sha".to_string()),
         git_origin_url: Some("https://example.com/state.git".to_string()),
         source: Some(SessionSource::Exec),
+        thread_source: Some(ThreadSource::User),
         agent_nickname: Some("state-agent".to_string()),
         agent_role: Some("state-role".to_string()),
         agent_path: Some("/root/state-agent".to_string()),
@@ -1059,6 +1062,7 @@ fn fill_missing_thread_item_metadata_preserves_identity_and_prefers_state_git_fi
         Some("https://example.com/state.git")
     );
     assert_eq!(item.source, Some(SessionSource::Exec));
+    assert_eq!(item.thread_source, Some(ThreadSource::User));
     assert_eq!(item.agent_nickname.as_deref(), Some("state-agent"));
     assert_eq!(item.agent_role.as_deref(), Some("state-role"));
     assert_eq!(item.agent_path.as_deref(), Some("/root/state-agent"));

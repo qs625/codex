@@ -800,7 +800,9 @@ impl ThreadRequestProcessor {
                     Some(providers)
                 }
             }
-            None => Some(vec![self.config.model_provider_id.clone()]),
+            None => Some(default_thread_list_model_providers(
+                &self.config.model_provider_id,
+            )),
         };
         let (allowed_sources_vec, source_kind_filter) = compute_source_filters(source_kinds);
         let allowed_sources = allowed_sources_vec.as_slice();
