@@ -44,6 +44,7 @@ use codex_workflow_api::WorkflowRuntimeRequest;
 use codex_workflow_api::WorkflowStartArgs;
 use codex_workflow_api::WorkflowStatusArgs;
 use codex_workflow_api::workflow_followup_task_tool_call;
+use codex_workflow_api::workflow_poll_event_tool_call;
 use codex_workflow_api::workflow_spawn_agent_tool_call;
 use codex_workflow_api::workflow_tool_call_id;
 use codex_workflow_api::workflow_wait_agent_tool_call;
@@ -399,18 +400,11 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
                 }
                 "agent.wait" => {
                     let _tool_call = workflow_wait_agent_tool_call(&request)?;
-                    let result = thread_runtime
-                        .poll_event(
-                            Arc::clone(&turn),
-                            ThreadPollEventRequest {
-                                initial_timeout_ms: None,
-                                hard_cap_timeout_ms: None,
-                            },
-                        )
-                        .await
-                        .map_err(runtime_error_from_tool_error)?;
-                    serde_json::to_value(result)
-                        .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
+                    poll_workflow_event(&thread_runtime, Arc::clone(&turn)).await
+                }
+                "event.poll" => {
+                    let _tool_call = workflow_poll_event_tool_call(&request)?;
+                    poll_workflow_event(&thread_runtime, Arc::clone(&turn)).await
                 }
                 "shell.exec" => Err(WorkflowRuntimeError::unsupported(
                     "wf.shell is not connected to exec_command in this phase; use an agent to request shell work",
@@ -421,6 +415,24 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
             }
         })
     }
+}
+
+async fn poll_workflow_event(
+    thread_runtime: &Arc<dyn WorkflowThreadRuntime>,
+    turn: Arc<dyn ThreadTurnCapability>,
+) -> Result<Value, WorkflowRuntimeError> {
+    let result = thread_runtime
+        .poll_event(
+            turn,
+            ThreadPollEventRequest {
+                initial_timeout_ms: None,
+                hard_cap_timeout_ms: None,
+            },
+        )
+        .await
+        .map_err(runtime_error_from_tool_error)?;
+    serde_json::to_value(result)
+        .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
 }
 
 struct ThreadWorkflowProgressSink {

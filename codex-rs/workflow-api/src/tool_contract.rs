@@ -87,6 +87,11 @@ pub struct WorkflowWaitAgentToolCall {
     pub arguments: Value,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowPollEventToolCall {
+    pub arguments: Value,
+}
+
 pub fn workflow_spawn_agent_tool_call(
     request: &WorkflowRuntimeRequest,
 ) -> Result<WorkflowSpawnAgentToolCall, WorkflowRuntimeError> {
@@ -159,6 +164,16 @@ pub fn workflow_wait_agent_tool_call(
     Ok(WorkflowWaitAgentToolCall { target, arguments })
 }
 
+pub fn workflow_poll_event_tool_call(
+    request: &WorkflowRuntimeRequest,
+) -> Result<WorkflowPollEventToolCall, WorkflowRuntimeError> {
+    reject_runtime_field(&request.params, "id")?;
+    reject_runtime_field(&request.params, "target")?;
+    Ok(WorkflowPollEventToolCall {
+        arguments: json!({}),
+    })
+}
+
 pub fn workflow_tool_call_id(request: &WorkflowRuntimeRequest, tool_name: &str) -> String {
     format!("workflow:{}:{}:{tool_name}", request.run_id, request.rpc_id)
 }
@@ -192,6 +207,16 @@ fn required_runtime_string(value: &Value, field: &str) -> Result<String, Workflo
         .map(str::to_string)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| WorkflowRuntimeError::invalid_request(format!("missing `{field}`")))
+}
+
+fn reject_runtime_field(value: &Value, field: &str) -> Result<(), WorkflowRuntimeError> {
+    if value.get(field).is_some() {
+        Err(WorkflowRuntimeError::invalid_request(format!(
+            "`{field}` is not supported for event.poll"
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 fn copy_option_string(target: &mut Value, target_field: &str, source: &Value, fields: &[&str]) {
@@ -342,5 +367,49 @@ mod tests {
                 .arguments,
             json!({ "target": "/root/agent" })
         );
+    }
+
+    #[test]
+    fn workflow_poll_event_tool_call_has_no_target() {
+        let request = WorkflowRuntimeRequest {
+            run_id: "wf_1".to_string(),
+            workflow_id: "feature-dev".to_string(),
+            rpc_id: 9,
+            method: "event.poll".to_string(),
+            params: json!({}),
+        };
+
+        assert_eq!(
+            workflow_poll_event_tool_call(&request)
+                .expect("poll event should map")
+                .arguments,
+            json!({})
+        );
+    }
+
+    #[test]
+    fn workflow_poll_event_tool_call_rejects_agent_target() {
+        let request = WorkflowRuntimeRequest {
+            run_id: "wf_1".to_string(),
+            workflow_id: "feature-dev".to_string(),
+            rpc_id: 9,
+            method: "event.poll".to_string(),
+            params: json!({ "target": "/root/agent" }),
+        };
+
+        assert!(workflow_poll_event_tool_call(&request).is_err());
+    }
+
+    #[test]
+    fn workflow_poll_event_tool_call_rejects_agent_id() {
+        let request = WorkflowRuntimeRequest {
+            run_id: "wf_1".to_string(),
+            workflow_id: "feature-dev".to_string(),
+            rpc_id: 9,
+            method: "event.poll".to_string(),
+            params: json!({ "id": "owner" }),
+        };
+
+        assert!(workflow_poll_event_tool_call(&request).is_err());
     }
 }

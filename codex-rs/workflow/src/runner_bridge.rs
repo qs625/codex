@@ -170,7 +170,7 @@ async fn handle_runner_rpc(
             params["target"] = Value::String(binding.agent_path);
             call_bridge(rpc_id, method, params, state, bridge).await
         }
-        "shell.exec" => call_bridge(rpc_id, method, params, state, bridge).await,
+        "event.poll" | "shell.exec" => call_bridge(rpc_id, method, params, state, bridge).await,
         _ => Err(WorkflowRuntimeError::unsupported(format!(
             "unsupported workflow runtime method `{method}`"
         ))),
@@ -341,6 +341,9 @@ const wf = {
     runtimeEvents.push(event);
     sendFrame({ type: "event", event });
   },
+  async pollEvent() {
+    return await rpc("event.poll", {});
+  },
   async Agent(id, options) {
     const binding = await rpc("agent.spawn", { id, options: options ?? {} });
     const agent = {
@@ -390,6 +393,7 @@ export interface WorkflowRuntime {
   mode: "start" | "resume";
   revision: number;
   emit(event: unknown): void;
+  pollEvent(): Promise<unknown>;
   Agent(id: string, options: WorkflowAgentOptions): Promise<WorkflowAgent>;
   shell(command: unknown): Promise<WorkflowShellResult>;
 }
@@ -454,5 +458,27 @@ mod tests {
         assert_eq!(binding.workflow_id, None);
         assert_eq!(binding.run_id, None);
         assert_eq!(binding.stage_id, None);
+    }
+
+    #[tokio::test]
+    async fn legacy_agent_wait_requires_bound_agent() {
+        let state = Arc::new(Mutex::new(RunnerProcessState::new(
+            "wf_run".to_string(),
+            "feature-dev".to_string(),
+            BTreeMap::new(),
+        )));
+
+        let err = handle_runner_rpc(
+            1,
+            "agent.wait".to_string(),
+            serde_json::json!({ "id": "owner" }),
+            &state,
+            None,
+        )
+        .await
+        .expect_err("unbound agent.wait should fail before bridge call");
+
+        assert_eq!(err.code, "invalid_request");
+        assert!(err.message.contains("workflow agent `owner` is not bound"));
     }
 }
