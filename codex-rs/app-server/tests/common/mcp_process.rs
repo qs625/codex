@@ -69,6 +69,7 @@ use app_server_protocol::SendAddCreditsNudgeEmailParams;
 use app_server_protocol::ServerRequest;
 use app_server_protocol::SkillsListParams;
 use app_server_protocol::ThreadArchiveParams;
+use app_server_protocol::ThreadApproveGuardianDeniedActionParams;
 use app_server_protocol::ThreadBackgroundTerminalsCleanParams;
 use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadForkParams;
@@ -457,6 +458,16 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("thread/backgroundTerminals/clean", params)
+            .await
+    }
+
+    /// Send a `thread/approveGuardianDeniedAction` JSON-RPC request.
+    pub async fn send_thread_approve_guardian_denied_action_request(
+        &mut self,
+        params: ThreadApproveGuardianDeniedActionParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("thread/approveGuardianDeniedAction", params)
             .await
     }
 

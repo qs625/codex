@@ -23,6 +23,7 @@ use app_server_protocol::RequestId;
 use app_server_protocol::ServerRequest;
 use app_server_protocol::ServerRequestResolvedNotification;
 use app_server_protocol::TextElement;
+use app_server_protocol::ThreadApproveGuardianDeniedActionParams;
 use app_server_protocol::ThreadBackgroundTerminalsCleanParams;
 use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadItem;
