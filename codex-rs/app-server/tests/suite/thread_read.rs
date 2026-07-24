@@ -69,6 +69,9 @@ use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::AgentMessageEvent;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::EventMsg;
+use protocol::protocol::ExternalProviderSessionIdentity;
+use protocol::protocol::ExternalReconnectDescriptor;
+use protocol::protocol::ExternalReconnectTransport;
 use protocol::protocol::ExternalTerminalStatus;
 use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::RolloutItem;
@@ -1665,10 +1668,25 @@ fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
         let server =
             create_mock_responses_server_repeating_assistant("native should not run").await;
         create_config_toml_with_claude_cli_model_provider(codex_home.path(), &server.uri())?;
-        let thread_id = create_external_root_rollout_with_subscription(
+        let no_descriptor_thread_id = create_external_root_rollout_with_subscription(
             codex_home.path(),
             "2025-01-06T12-00-00",
             "2025-01-06T12:00:00Z",
+            "claude_cli",
+            None,
+        )?;
+        let descriptor_thread_id = create_external_root_rollout_with_subscription(
+            codex_home.path(),
+            "2025-01-06T12-01-00",
+            "2025-01-06T12:01:00Z",
+            "opencode",
+            Some(ExternalReconnectDescriptor {
+                provider: "opencode".to_string(),
+                transport: ExternalReconnectTransport::OpencodeHttp,
+                session_identity: ExternalProviderSessionIdentity {
+                    session_id: "opencode-session-123".to_string(),
+                },
+            }),
         )?;
 
         let loader_overrides = LoaderOverrides::without_managed_config_for_tests();
@@ -1727,20 +1745,25 @@ fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
             .await?
             .expect("thread/list should succeed");
         let ThreadListResponse { data, .. } = serde_json::from_value(list_result)?;
-        let listed = data
-            .iter()
-            .find(|thread| thread.id == thread_id)
-            .expect("thread/list should include persisted external root");
-        assert_eq!(listed.model_provider, "claude_cli");
-        assert_eq!(listed.thread_source, Some(ThreadSource::User));
-        assert_eq!(listed.agent_path, None);
-        assert_eq!(listed.agent_role, None);
-        assert_eq!(
-            listed.lifecycle_status,
-            ThreadLifecycleStatus::Final {
-                result: ThreadLifecycleFinalStatus::Interrupted,
-            }
-        );
+        for (thread_id, provider) in [
+            (&no_descriptor_thread_id, "claude_cli"),
+            (&descriptor_thread_id, "opencode"),
+        ] {
+            let listed = data
+                .iter()
+                .find(|thread| thread.id == *thread_id)
+                .expect("thread/list should include persisted external root");
+            assert_eq!(listed.model_provider, provider);
+            assert_eq!(listed.thread_source, Some(ThreadSource::User));
+            assert_eq!(listed.agent_path, None);
+            assert_eq!(listed.agent_role, None);
+            assert_eq!(
+                listed.lifecycle_status,
+                ThreadLifecycleStatus::Final {
+                    result: ThreadLifecycleFinalStatus::Interrupted,
+                }
+            );
+        }
 
         let loaded_result = client
             .request(ClientRequest::ThreadLoadedList {
@@ -1753,25 +1776,33 @@ fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
         assert_eq!(data, Vec::<String>::new());
         assert_eq!(next_cursor, None);
 
-        let read_result = client
-            .request(ClientRequest::ThreadRead {
-                request_id: RequestId::Integer(3),
-                params: ThreadReadParams {
-                    thread_id: thread_id.clone(),
-                    include_turns: true,
-                },
-            })
-            .await?
-            .expect("thread/read should return persisted external root snapshot");
-        let ThreadReadResponse { thread, .. } = serde_json::from_value(read_result)?;
-        assert_eq!(thread.model_provider, "claude_cli");
-        assert_eq!(
-            thread.lifecycle_status,
-            ThreadLifecycleStatus::Final {
-                result: ThreadLifecycleFinalStatus::Interrupted,
-            }
-        );
-        assert_eq!(turn_user_texts(&thread.turns), vec!["history from store"]);
+        for (index, (thread_id, provider)) in [
+            (&no_descriptor_thread_id, "claude_cli"),
+            (&descriptor_thread_id, "opencode"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let read_result = client
+                .request(ClientRequest::ThreadRead {
+                    request_id: RequestId::Integer(3 + index as i64),
+                    params: ThreadReadParams {
+                        thread_id: thread_id.clone(),
+                        include_turns: true,
+                    },
+                })
+                .await?
+                .expect("thread/read should return persisted external root snapshot");
+            let ThreadReadResponse { thread, .. } = serde_json::from_value(read_result)?;
+            assert_eq!(thread.model_provider, provider);
+            assert_eq!(
+                thread.lifecycle_status,
+                ThreadLifecycleStatus::Final {
+                    result: ThreadLifecycleFinalStatus::Interrupted,
+                }
+            );
+            assert_eq!(turn_user_texts(&thread.turns), vec!["history from store"]);
+        }
 
         client.shutdown().await?;
         Ok(())
@@ -2897,6 +2928,8 @@ fn create_external_root_rollout_with_subscription(
     codex_home: &Path,
     filename_ts: &str,
     meta_rfc3339: &str,
+    model_provider: &str,
+    external_reconnect: Option<ExternalReconnectDescriptor>,
 ) -> Result<String> {
     let uuid = Uuid::new_v4();
     let thread_id = protocol::ThreadId::from_string(&uuid.to_string())?;
@@ -2918,7 +2951,7 @@ fn create_external_root_rollout_with_subscription(
         agent_nickname: None,
         agent_role: None,
         agent_path: None,
-        model_provider: Some("claude_cli".to_string()),
+        model_provider: Some(model_provider.to_string()),
         base_instructions: None,
         dynamic_tools: None,
         memory_mode: None,
@@ -2928,7 +2961,7 @@ fn create_external_root_rollout_with_subscription(
             cwd: None,
             label: Some("subscription".to_string()),
         }]),
-        external_reconnect: None,
+        external_reconnect,
     };
     let meta_payload = serde_json::to_value(SessionMetaLine { meta, git: None })?;
     let user_payload = serde_json::to_value(EventMsg::UserMessage(UserMessageEvent {
