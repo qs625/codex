@@ -9,7 +9,9 @@ use skill_service_api::SkillError;
 use skill_service_api::SkillMetadata;
 use skill_service_api::SkillsLoadInput;
 
-pub(crate) trait CatalogRuntime: ModelCatalogRuntime + Send + Sync {
+pub(crate) trait CatalogRuntime:
+    ModelCatalogRuntime + thread_service_api::ThreadProviderCatalogRuntime + Send + Sync
+{
     fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask>;
 }
 
@@ -146,6 +148,36 @@ fn native_agent_types(config: &Config) -> Vec<AgentType> {
     });
 
     items
+}
+
+fn provider_kind_to_api(kind: thread_service_api::ThreadProviderRuntimeKind) -> ThreadProviderKind {
+    match kind {
+        thread_service_api::ThreadProviderRuntimeKind::Native => ThreadProviderKind::Native,
+        thread_service_api::ThreadProviderRuntimeKind::ExternalCli => {
+            ThreadProviderKind::ExternalCli
+        }
+    }
+}
+
+fn provider_capabilities_to_api(
+    capabilities: thread_service_api::ThreadProviderRuntimeCapabilities,
+) -> ThreadProviderCapabilities {
+    ThreadProviderCapabilities {
+        start_thread: capabilities.start_thread,
+        send_input: capabilities.send_input,
+        close_thread: capabilities.close_thread,
+        list_children: capabilities.list_children,
+        restore_thread: capabilities.restore_thread,
+        restore_snapshot: capabilities.restore_snapshot,
+        event_stream: capabilities.event_stream,
+        spawn_child: capabilities.spawn_child,
+        compact: capabilities.compact,
+        workflow: capabilities.workflow,
+        poll_event: capabilities.poll_event,
+        command_session: capabilities.command_session,
+        permissions: capabilities.permissions,
+        dynamic_tools: capabilities.dynamic_tools,
+    }
 }
 
 impl CatalogRequestProcessor {
@@ -389,54 +421,40 @@ impl CatalogRequestProcessor {
         model_providers.sort();
         model_providers.dedup();
 
-        let native = ThreadProviderDescriptor {
-            id: "native".to_string(),
-            display_name: "Morpheus".to_string(),
-            kind: ThreadProviderKind::Native,
-            description: "Native Morpheus runtime with agent roles, model catalog, tools, compact, workflow, and unified EventMsg replay.".to_string(),
-            agent_types: native_agent_types(&config),
-            model_selection: ThreadProviderModelSelection {
-                mode: ThreadProviderModelSelectionMode::Catalog,
-                model_providers,
-            },
-            capabilities: ThreadProviderCapabilities {
-                start_thread: true,
-                send_input: true,
-                close_thread: true,
-                list_children: true,
-                restore_thread: true,
-                restore_snapshot: true,
-                event_stream: true,
-                spawn_child: true,
-                compact: true,
-                workflow: true,
-                poll_event: true,
-                command_session: true,
-                permissions: true,
-                dynamic_tools: true,
-            },
-        };
-
         let external_model_selection = ThreadProviderModelSelection {
             mode: ThreadProviderModelSelectionMode::ProviderDefault,
             model_providers: Vec::new(),
         };
-        let external = EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS
-            .iter()
-            .map(|provider| ThreadProviderDescriptor {
-                id: provider.id.to_string(),
-                display_name: provider.display_name.to_string(),
-                kind: ThreadProviderKind::ExternalCli,
-                description: provider.description.to_string(),
-                agent_types: Vec::new(),
-                model_selection: external_model_selection.clone(),
-                capabilities: external_cli_thread_provider_api_capabilities(provider.id)
-                    .expect("external CLI descriptor must have capabilities"),
-            });
-
-        let mut data = Vec::with_capacity(4);
-        data.push(native);
-        data.extend(external);
+        let native_agent_types = native_agent_types(&config);
+        let data = self
+            .catalog_runtime
+            .list_thread_providers()
+            .into_iter()
+            .map(|provider| {
+                let is_native =
+                    provider.kind == thread_service_api::ThreadProviderRuntimeKind::Native;
+                ThreadProviderDescriptor {
+                    id: provider.id,
+                    display_name: provider.display_name,
+                    kind: provider_kind_to_api(provider.kind),
+                    description: provider.description,
+                    agent_types: if is_native {
+                        native_agent_types.clone()
+                    } else {
+                        Vec::new()
+                    },
+                    model_selection: if is_native {
+                        ThreadProviderModelSelection {
+                            mode: ThreadProviderModelSelectionMode::Catalog,
+                            model_providers: model_providers.clone(),
+                        }
+                    } else {
+                        external_model_selection.clone()
+                    },
+                    capabilities: provider_capabilities_to_api(provider.capabilities),
+                }
+            })
+            .collect();
         Ok(ThreadProviderListResponse { data })
     }
 

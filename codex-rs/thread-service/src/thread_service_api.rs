@@ -16,6 +16,8 @@ use thread_service_api::ExternalRootThreadStartRequest;
 use thread_service_api::ExternalRootThreadStartResult;
 use thread_service_api::ExternalRootThreadStartupConfig;
 use thread_service_api::NativeAgentRuntime;
+use thread_service_api::RootThreadProviderResolutionError;
+use thread_service_api::RootThreadProviderRoute;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
 use thread_service_api::ThreadCreatedEvent;
@@ -26,6 +28,11 @@ use thread_service_api::ThreadListedAgent;
 use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadPollEventTimeoutMetadata;
+use thread_service_api::ThreadProviderCatalogRuntime;
+use thread_service_api::ThreadProviderRootCapability;
+use thread_service_api::ThreadProviderRuntimeCapabilities;
+use thread_service_api::ThreadProviderRuntimeDescriptor;
+use thread_service_api::ThreadProviderRuntimeKind;
 use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadShutdownReport;
 use thread_service_api::ThreadSpawnAgentForkMode;
@@ -99,6 +106,119 @@ fn to_runtime_external_root_provider(provider: ExternalRootThreadProvider) -> Sp
         ExternalRootThreadProvider::CodexCli => SpawnAgentProvider::CodexCli,
         ExternalRootThreadProvider::ClaudeCli => SpawnAgentProvider::ClaudeCli,
         ExternalRootThreadProvider::Opencode => SpawnAgentProvider::Opencode,
+    }
+}
+
+const NATIVE_THREAD_PROVIDER_CAPABILITIES: ThreadProviderRuntimeCapabilities =
+    ThreadProviderRuntimeCapabilities {
+        start_thread: true,
+        send_input: true,
+        close_thread: true,
+        list_children: true,
+        restore_thread: true,
+        restore_snapshot: true,
+        event_stream: true,
+        spawn_child: true,
+        compact: true,
+        workflow: true,
+        poll_event: true,
+        command_session: true,
+        permissions: true,
+        dynamic_tools: true,
+        fork_thread: true,
+    };
+
+const EXTERNAL_CLI_THREAD_PROVIDER_CAPABILITIES: ThreadProviderRuntimeCapabilities =
+    ThreadProviderRuntimeCapabilities {
+        start_thread: true,
+        send_input: true,
+        close_thread: true,
+        list_children: true,
+        restore_thread: false,
+        restore_snapshot: true,
+        event_stream: true,
+        spawn_child: true,
+        compact: false,
+        workflow: false,
+        poll_event: true,
+        command_session: false,
+        permissions: false,
+        dynamic_tools: false,
+        fork_thread: false,
+    };
+
+fn external_thread_provider_descriptor(
+    provider: ExternalRootThreadProvider,
+    display_name: &'static str,
+    description: &'static str,
+) -> ThreadProviderRuntimeDescriptor {
+    ThreadProviderRuntimeDescriptor {
+        id: provider.provider_id().to_string(),
+        display_name: display_name.to_string(),
+        description: description.to_string(),
+        kind: ThreadProviderRuntimeKind::ExternalCli,
+        external_root_provider: Some(provider),
+        capabilities: EXTERNAL_CLI_THREAD_PROVIDER_CAPABILITIES,
+    }
+}
+
+fn runtime_thread_provider_descriptors() -> Vec<ThreadProviderRuntimeDescriptor> {
+    vec![
+        ThreadProviderRuntimeDescriptor {
+            id: "native".to_string(),
+            display_name: "Morpheus".to_string(),
+            description: "Native Morpheus runtime with agent roles, model catalog, tools, compact, workflow, and unified EventMsg replay.".to_string(),
+            kind: ThreadProviderRuntimeKind::Native,
+            external_root_provider: None,
+            capabilities: NATIVE_THREAD_PROVIDER_CAPABILITIES,
+        },
+        external_thread_provider_descriptor(
+            ExternalRootThreadProvider::ClaudeCli,
+            "Claude Code",
+            "External Claude CLI session normalized by the external-agent adapter.",
+        ),
+        external_thread_provider_descriptor(
+            ExternalRootThreadProvider::Opencode,
+            "OpenCode",
+            "External OpenCode session normalized by the external-agent adapter.",
+        ),
+        external_thread_provider_descriptor(
+            ExternalRootThreadProvider::CodexCli,
+            "Codex CLI",
+            "External official Codex CLI app-server session normalized by the external-agent adapter.",
+        ),
+    ]
+}
+
+fn resolve_runtime_root_thread_provider(
+    provider_id: Option<&str>,
+    capability: ThreadProviderRootCapability,
+) -> Result<RootThreadProviderRoute, RootThreadProviderResolutionError> {
+    let Some(provider_id) = provider_id else {
+        return Ok(RootThreadProviderRoute::Native);
+    };
+    let Some(descriptor) = runtime_thread_provider_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.id == provider_id)
+    else {
+        return Err(RootThreadProviderResolutionError::UnknownProvider {
+            provider_id: provider_id.to_string(),
+            capability,
+        });
+    };
+    if !descriptor.capabilities.supports_root_capability(capability) {
+        return Err(RootThreadProviderResolutionError::UnsupportedCapability {
+            provider_id: descriptor.id,
+            capability,
+        });
+    }
+    match descriptor.kind {
+        ThreadProviderRuntimeKind::Native => Ok(RootThreadProviderRoute::Native),
+        ThreadProviderRuntimeKind::ExternalCli => Ok(RootThreadProviderRoute::External(
+            descriptor
+                .external_root_provider
+                .expect("external CLI descriptor must include root provider"),
+        )),
     }
 }
 
@@ -383,6 +503,20 @@ impl ThreadCollaborationRuntime for ThreadService {
     }
 }
 
+impl ThreadProviderCatalogRuntime for ThreadService {
+    fn list_thread_providers(&self) -> Vec<ThreadProviderRuntimeDescriptor> {
+        runtime_thread_provider_descriptors()
+    }
+
+    fn resolve_root_thread_provider(
+        &self,
+        provider_id: Option<&str>,
+        capability: ThreadProviderRootCapability,
+    ) -> Result<RootThreadProviderRoute, RootThreadProviderResolutionError> {
+        resolve_runtime_root_thread_provider(provider_id, capability)
+    }
+}
+
 impl ExternalRootThreadRuntime for ThreadService {
     fn start_external_root_thread<'a>(
         &'a self,
@@ -507,6 +641,7 @@ mod tests {
         T: ThreadLifecycleRuntime
             + NativeAgentRuntime
             + ThreadCollaborationRuntime
+            + ThreadProviderCatalogRuntime
             + ExternalRootThreadRuntime
             + ThreadEventRuntime,
     {
@@ -515,5 +650,67 @@ mod tests {
     #[test]
     fn thread_service_implements_split_runtime_traits() {
         assert_thread_service_api_split::<ThreadService>();
+    }
+
+    #[test]
+    fn runtime_thread_provider_catalog_exposes_root_capabilities() {
+        let providers = runtime_thread_provider_descriptors();
+        assert_eq!(
+            providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["native", "claude_cli", "opencode", "codex_cli"]
+        );
+
+        let native = providers
+            .iter()
+            .find(|provider| provider.id == "native")
+            .expect("native provider");
+        assert_eq!(native.kind, ThreadProviderRuntimeKind::Native);
+        assert!(native.capabilities.restore_thread);
+        assert!(native.capabilities.fork_thread);
+
+        for id in ["claude_cli", "opencode", "codex_cli"] {
+            let provider = providers
+                .iter()
+                .find(|provider| provider.id == id)
+                .unwrap_or_else(|| panic!("{id} provider"));
+            assert_eq!(provider.kind, ThreadProviderRuntimeKind::ExternalCli);
+            assert!(provider.capabilities.start_thread);
+            assert!(!provider.capabilities.restore_thread);
+            assert!(!provider.capabilities.fork_thread);
+        }
+
+        assert_eq!(
+            resolve_runtime_root_thread_provider(
+                Some("opencode"),
+                ThreadProviderRootCapability::StartThread,
+            )
+            .unwrap(),
+            RootThreadProviderRoute::External(ExternalRootThreadProvider::Opencode)
+        );
+        assert_eq!(
+            resolve_runtime_root_thread_provider(
+                Some("opencode"),
+                ThreadProviderRootCapability::RestoreThread,
+            )
+            .unwrap_err(),
+            RootThreadProviderResolutionError::UnsupportedCapability {
+                provider_id: "opencode".to_string(),
+                capability: ThreadProviderRootCapability::RestoreThread,
+            }
+        );
+        assert_eq!(
+            resolve_runtime_root_thread_provider(
+                Some("unknown"),
+                ThreadProviderRootCapability::StartThread,
+            )
+            .unwrap_err(),
+            RootThreadProviderResolutionError::UnknownProvider {
+                provider_id: "unknown".to_string(),
+                capability: ThreadProviderRootCapability::StartThread,
+            }
+        );
     }
 }
