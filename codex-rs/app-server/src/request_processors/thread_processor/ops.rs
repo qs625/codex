@@ -454,16 +454,11 @@ impl ThreadRequestProcessor {
             .live_thread_snapshot(thread_id)
             .await
             .map_err(|err| internal_error(format!("failed to inspect live thread: {err}")))?;
-        let config = &snapshot.config_snapshot;
-        if is_external_cli_thread_provider_id(config.model_provider_id.as_str())
-            && !config.session_source.is_non_root_agent()
-            && config.thread_source == Some(protocol::protocol::ThreadSource::User)
-            && config.root_agent_path.is_none()
-            && config.root_agent_role.is_none()
-        {
-            return Ok(Some(config.model_provider_id.clone()));
-        }
-        Ok(None)
+        Ok(snapshot
+            .config_snapshot
+            .root_execution_provider_id()
+            .filter(|provider| is_external_cli_thread_provider_id(provider))
+            .map(ToString::to_string))
     }
 
     async fn persisted_external_root_provider(
@@ -488,10 +483,8 @@ impl ThreadRequestProcessor {
             }
             Err(err) => return Err(err),
         };
-        if super::start::is_persisted_external_root_thread(&stored_thread) {
-            return Ok(Some(stored_thread.model_provider));
-        }
-        Ok(None)
+        Ok(thread_store_api::persisted_external_root_provider_id(&stored_thread)
+            .map(ToString::to_string))
     }
 
     #[allow(clippy::too_many_arguments)]

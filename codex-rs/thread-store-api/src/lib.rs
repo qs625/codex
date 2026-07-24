@@ -47,3 +47,4 @@ pub use types::UpdateThreadMetadataParams;
 pub use types::external_live_restore_eligibility;
 pub use types::is_persisted_external_thread;
 pub use types::latest_external_reconnect_descriptor;
+pub use types::persisted_external_root_provider_id;
