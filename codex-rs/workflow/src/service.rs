@@ -9,7 +9,11 @@ use protocol::models::WorkflowRunProgressEvent;
 use protocol::models::WorkflowRunProgressKind;
 use serde::Deserialize;
 use serde_json::Value;
-use thread_service_api::ThreadServiceApi;
+use thread_service_api::NativeAgentRuntime;
+use thread_service_api::ThreadEventRuntime;
+use thread_service_api::ThreadPollEventRequest;
+use thread_service_api::ThreadPollEventResult;
+use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadSpawnAgentForkMode;
 use thread_service_api::ThreadSpawnAgentRequest;
 use thread_service_api::ThreadSpawnAgentResult;
@@ -46,42 +50,111 @@ use codex_workflow_api::workflow_wait_agent_tool_call;
 
 pub struct WorkflowService {
     workflow_runs: Arc<dyn WorkflowRunController>,
-    thread_service_api: Weak<dyn ThreadServiceApi>,
+    thread_runtime: Weak<dyn WorkflowThreadRuntime>,
+}
+
+pub trait WorkflowThreadRuntime: Send + Sync + 'static {
+    fn spawn_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>>;
+
+    fn followup_task<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
+
+    fn poll_event<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>>;
+
+    fn record_model_items_and_emit_display_events<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        items: Vec<ResponseItem>,
+    ) -> ThreadServiceFuture<'a, Result<(), String>>;
+}
+
+impl<T> WorkflowThreadRuntime for T
+where
+    T: NativeAgentRuntime + ThreadEventRuntime,
+{
+    fn spawn_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>> {
+        NativeAgentRuntime::spawn_agent(self, turn, call_id, request)
+    }
+
+    fn followup_task<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
+        NativeAgentRuntime::followup_task(self, turn, call_id, target, message)
+    }
+
+    fn poll_event<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>> {
+        ThreadEventRuntime::poll_event(self, turn, request)
+    }
+
+    fn record_model_items_and_emit_display_events<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        items: Vec<ResponseItem>,
+    ) -> ThreadServiceFuture<'a, Result<(), String>> {
+        ThreadEventRuntime::record_model_items_and_emit_display_events(self, turn, items)
+    }
 }
 
 impl WorkflowService {
     pub fn new(
         codex_home: impl Into<PathBuf>,
-        thread_service_api: Weak<dyn ThreadServiceApi>,
+        thread_runtime: Weak<dyn WorkflowThreadRuntime>,
     ) -> Self {
         Self {
             workflow_runs: Arc::new(WorkflowRunManager::new(codex_home)),
-            thread_service_api,
+            thread_runtime,
         }
     }
 
     pub fn with_run_manager(
         workflow_runs: Arc<WorkflowRunManager>,
-        thread_service_api: Weak<dyn ThreadServiceApi>,
+        thread_runtime: Weak<dyn WorkflowThreadRuntime>,
     ) -> Self {
         Self {
             workflow_runs,
-            thread_service_api,
+            thread_runtime,
         }
     }
 
     pub fn with_run_controller(
         workflow_runs: Arc<dyn WorkflowRunController>,
-        thread_service_api: Weak<dyn ThreadServiceApi>,
+        thread_runtime: Weak<dyn WorkflowThreadRuntime>,
     ) -> Self {
         Self {
             workflow_runs,
-            thread_service_api,
+            thread_runtime,
         }
     }
 
-    fn thread_service_api(&self) -> Result<Weak<dyn ThreadServiceApi>, String> {
-        Ok(self.thread_service_api.clone())
+    fn thread_runtime(&self) -> Result<Weak<dyn WorkflowThreadRuntime>, String> {
+        Ok(self.thread_runtime.clone())
     }
 }
 
@@ -117,9 +190,9 @@ impl WorkflowApi for WorkflowService {
             let workflow_id = args.workflow().map(str::to_string)?;
             let registry = load_registry(context.discovery());
             let updates = self.workflow_runs.subscribe();
-            let thread_service_api = self.thread_service_api()?;
+            let thread_runtime = self.thread_runtime()?;
             let bridge = Arc::new(ThreadWorkflowRuntimeBridge::new(
-                thread_service_api.clone(),
+                thread_runtime.clone(),
                 context.turn(),
             ));
             let run = self
@@ -131,7 +204,7 @@ impl WorkflowApi for WorkflowService {
                     bridge,
                 )
                 .await?;
-            let progress_sink = ThreadWorkflowProgressSink::new(thread_service_api, context.turn());
+            let progress_sink = ThreadWorkflowProgressSink::new(thread_runtime, context.turn());
             progress_sink
                 .record_workflow_progress(
                     &run.run_id,
@@ -163,16 +236,16 @@ impl WorkflowApi for WorkflowService {
         Box::pin(async move {
             let run_id = args.run_id().map(str::to_string)?;
             let updates = self.workflow_runs.subscribe();
-            let thread_service_api = self.thread_service_api()?;
+            let thread_runtime = self.thread_runtime()?;
             let bridge = Arc::new(ThreadWorkflowRuntimeBridge::new(
-                thread_service_api.clone(),
+                thread_runtime.clone(),
                 context.turn(),
             ));
             let run = self
                 .workflow_runs
                 .resume_with_bridge(&run_id, args.inputs, bridge)
                 .await?;
-            let progress_sink = ThreadWorkflowProgressSink::new(thread_service_api, context.turn());
+            let progress_sink = ThreadWorkflowProgressSink::new(thread_runtime, context.turn());
             progress_sink
                 .record_workflow_progress(
                     &run.run_id,
@@ -197,7 +270,7 @@ impl WorkflowApi for WorkflowService {
         Box::pin(async move {
             let run_id = args.run_id().map(str::to_string)?;
             let run = self.workflow_runs.abort(&run_id, args.reason).await?;
-            ThreadWorkflowProgressSink::new(self.thread_service_api()?, context.turn())
+            ThreadWorkflowProgressSink::new(self.thread_runtime()?, context.turn())
                 .record_workflow_progress(
                     &run.run_id,
                     &run.workflow.id,
@@ -250,17 +323,17 @@ fn record_terminal_workflow_progress(
 }
 
 struct ThreadWorkflowRuntimeBridge {
-    thread_service_api: Weak<dyn ThreadServiceApi>,
+    thread_runtime: Weak<dyn WorkflowThreadRuntime>,
     turn: Option<Arc<dyn ThreadTurnCapability>>,
 }
 
 impl ThreadWorkflowRuntimeBridge {
     fn new(
-        thread_service_api: Weak<dyn ThreadServiceApi>,
+        thread_runtime: Weak<dyn WorkflowThreadRuntime>,
         turn: Option<Arc<dyn ThreadTurnCapability>>,
     ) -> Self {
         Self {
-            thread_service_api,
+            thread_runtime,
             turn,
         }
     }
@@ -272,7 +345,7 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
         request: WorkflowRuntimeRequest,
     ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>> {
         Box::pin(async move {
-            let Some(thread_service_api) = self.thread_service_api.upgrade() else {
+            let Some(thread_runtime) = self.thread_runtime.upgrade() else {
                 return Err(WorkflowRuntimeError::unsupported(
                     "workflow thread service api is unavailable",
                 ));
@@ -287,7 +360,7 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
                     let tool_call = workflow_spawn_agent_tool_call(&request)?;
                     let spawn_request = workflow_spawn_agent_request(tool_call.arguments.clone())
                         .map_err(runtime_error_from_tool_error)?;
-                    let result = thread_service_api
+                    let result = thread_runtime
                         .spawn_agent(
                             Arc::clone(&turn),
                             workflow_tool_call_id(&request, "spawn_agent"),
@@ -313,7 +386,7 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
                 }
                 "agent.followup" => {
                     let tool_call = workflow_followup_task_tool_call(&request)?;
-                    thread_service_api
+                    thread_runtime
                         .followup_task(
                             Arc::clone(&turn),
                             workflow_tool_call_id(&request, "followup_task"),
@@ -326,10 +399,10 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
                 }
                 "agent.wait" => {
                     let _tool_call = workflow_wait_agent_tool_call(&request)?;
-                    let result = thread_service_api
+                    let result = thread_runtime
                         .poll_event(
                             Arc::clone(&turn),
-                            thread_service_api::ThreadPollEventRequest {
+                            ThreadPollEventRequest {
                                 initial_timeout_ms: None,
                                 hard_cap_timeout_ms: None,
                             },
@@ -351,17 +424,17 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
 }
 
 struct ThreadWorkflowProgressSink {
-    thread_service_api: Weak<dyn ThreadServiceApi>,
+    thread_runtime: Weak<dyn WorkflowThreadRuntime>,
     turn: Option<Arc<dyn ThreadTurnCapability>>,
 }
 
 impl ThreadWorkflowProgressSink {
     fn new(
-        thread_service_api: Weak<dyn ThreadServiceApi>,
+        thread_runtime: Weak<dyn WorkflowThreadRuntime>,
         turn: Option<Arc<dyn ThreadTurnCapability>>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            thread_service_api,
+            thread_runtime,
             turn,
         })
     }
@@ -379,7 +452,7 @@ impl WorkflowProgressSink for ThreadWorkflowProgressSink {
         updated_at: i64,
     ) -> WorkflowProgressFuture<'a> {
         Box::pin(async move {
-            let Some(thread_service_api) = self.thread_service_api.upgrade() else {
+            let Some(thread_runtime) = self.thread_runtime.upgrade() else {
                 return;
             };
             let Some(turn) = self.turn.clone() else {
@@ -397,7 +470,7 @@ impl WorkflowProgressSink for ThreadWorkflowProgressSink {
                     updated_at,
                 },
             };
-            let _ = thread_service_api
+            let _ = thread_runtime
                 .record_model_items_and_emit_display_events(turn, vec![item])
                 .await;
         })

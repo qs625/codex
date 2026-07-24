@@ -371,9 +371,11 @@ impl MessageProcessor {
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
                 let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
                     thread_service.clone();
+                let workflow_thread_runtime: Weak<dyn codex_workflow::WorkflowThreadRuntime> =
+                    thread_service.clone();
                 let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
                     config.codex_home.clone(),
-                    thread_service_api.clone(),
+                    workflow_thread_runtime,
                 ));
                 workflow_service_slot
                     .set(Arc::clone(&workflow_service))

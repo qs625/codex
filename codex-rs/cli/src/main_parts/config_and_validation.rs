@@ -207,11 +207,11 @@ async fn run_debug_prompt_input_command(
         auth_manager.clone(),
         codex_login::model_provider_auth_manager(Some(auth_manager)),
     );
-    let missing_thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+    let missing_thread_runtime: Weak<dyn codex_workflow::WorkflowThreadRuntime> =
         Weak::<thread_service::ThreadService>::new();
     let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
         config.codex_home.clone(),
-        missing_thread_service_api.clone(),
+        missing_thread_runtime,
     ));
     let prompt_input = thread_service::build_prompt_input(
         config,

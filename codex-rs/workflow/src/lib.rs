@@ -18,5 +18,6 @@ pub use codex_workflow_api::WorkflowSummary;
 pub use codex_workflow_api::load_workflow_registry_from_roots;
 pub use codex_workflow_api::render_available_workflows_body;
 pub use service::WorkflowService;
+pub use service::WorkflowThreadRuntime;
 pub use service::load_registry;
 pub use workflow_runs::WorkflowRunManager;
