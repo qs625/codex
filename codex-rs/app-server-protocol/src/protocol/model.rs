@@ -157,7 +157,10 @@ pub struct ThreadProviderCapabilities {
     pub send_input: bool,
     pub close_thread: bool,
     pub list_children: bool,
+    /// Supports restoring a persisted thread into a live, interactive runtime.
     pub restore_thread: bool,
+    /// Supports opening persisted thread history as a read-only snapshot.
+    pub restore_snapshot: bool,
     pub event_stream: bool,
     pub spawn_child: bool,
     pub compact: bool,

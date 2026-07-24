@@ -492,6 +492,7 @@ test("new thread provider controls gate external model and role fields", () => {
         closeThread: true,
         listChildren: true,
         restoreThread: false,
+        restoreSnapshot: true,
         eventStream: true,
         spawnChild: true,
         compact: false,
