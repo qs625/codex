@@ -71,6 +71,7 @@ pub(crate) struct ExternalSpawnConfig {
     pub(crate) active_permission_profile: Option<protocol::models::ActivePermissionProfile>,
     pub(crate) reasoning_effort: Option<protocol::openai_models::ReasoningEffort>,
     pub(crate) personality: Option<protocol::config_types::Personality>,
+    pub(crate) features: codex_features::Features,
     pub(crate) generate_memories: bool,
 }
 
@@ -90,6 +91,7 @@ impl ExternalSpawnConfig {
             active_permission_profile: config.permissions.active_permission_profile(),
             reasoning_effort: config.model_reasoning_effort,
             personality: config.personality,
+            features: config.features.get().clone(),
             generate_memories: config.memories.generate_memories,
         }
     }

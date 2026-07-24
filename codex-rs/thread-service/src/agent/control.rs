@@ -424,7 +424,12 @@ impl AgentControl {
             &agent_metadata,
         );
         self.upgrade()?
-            .register_external_live_thread_snapshot(thread_id, snapshot, AgentStatus::Running)
+            .register_external_live_thread_snapshot_with_features(
+                thread_id,
+                snapshot,
+                config.features.clone(),
+                AgentStatus::Running,
+            )
             .await;
 
         let run = ExternalAgentRun {
@@ -593,7 +598,7 @@ impl AgentControl {
                 .await;
             control
                 .upgrade()?
-                .register_external_live_thread_snapshot(
+                .register_external_live_thread_snapshot_with_features(
                     thread_id,
                     external_live_thread_snapshot(
                         &config,
@@ -601,6 +606,7 @@ impl AgentControl {
                         session_source.clone(),
                         &agent_metadata,
                     ),
+                    config.features.clone(),
                     AgentStatus::Running,
                 )
                 .await;

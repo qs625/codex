@@ -12,6 +12,7 @@ use core_test_support::PathExt;
 use core_test_support::responses::mount_models_once;
 use model_service_api::ModelCatalogRefresh;
 use pretty_assertions::assert_eq;
+use protocol::SessionId;
 use protocol::models::ContentItem;
 use protocol::models::ReasoningItemReasoningSummary;
 use protocol::AgentPath;
@@ -90,6 +91,128 @@ fn test_thread_service_manager(
         Arc::new(mcp_service::DefaultMcpAuthRuntime),
         Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),
     )
+}
+
+fn live_thread_snapshot_for_config(
+    config: &Config,
+    thread_id: ThreadId,
+) -> thread_service_api::LiveThreadSnapshot {
+    thread_service_api::LiveThreadSnapshot {
+        info: thread_service_api::LiveThreadInfo {
+            session_id: SessionId::from(thread_id),
+            rollout_path: None,
+        },
+        config_snapshot: thread_service_api::ThreadConfigSnapshot {
+            model: config.model.clone().unwrap_or_default(),
+            model_provider_id: config.model_provider_id.clone(),
+            service_tier: config.service_tier.clone(),
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: config.approvals_reviewer,
+            permission_profile: config.permissions.effective_permission_profile(),
+            active_permission_profile: config.permissions.active_permission_profile(),
+            cwd: config.cwd.clone(),
+            workspace_roots: config.workspace_roots.clone(),
+            profile_workspace_roots: Vec::new(),
+            ephemeral: config.ephemeral,
+            reasoning_effort: config.model_reasoning_effort,
+            personality: config.personality,
+            session_source: SessionSource::Exec,
+            root_agent_path: None,
+            root_agent_role: None,
+            thread_source: Some(ThreadSource::User),
+        },
+    }
+}
+
+#[tokio::test]
+async fn external_live_thread_feature_enabled_reads_registered_features() -> anyhow::Result<()> {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    config
+        .features
+        .enable(Feature::Apps)
+        .expect("apps should be enableable in tests");
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let auth_manager =
+        AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let state_db = init_state_db(&config).await;
+    let manager = test_thread_service_manager(
+        &config,
+        auth_manager,
+        thread_store_from_config(&config, state_db.clone()),
+        state_db,
+        TEST_INSTALLATION_ID.to_string(),
+    );
+
+    let native_thread = manager.start_thread(config.clone()).await?;
+    assert!(
+        thread_service_api::LiveThreadInspectionRuntime::live_thread_feature_enabled(
+            manager.state.as_ref(),
+            native_thread.thread_id,
+            Feature::Apps,
+        )
+        .await?
+    );
+    native_thread.thread.shutdown_and_wait().await?;
+
+    let enabled_thread_id = ThreadId::new();
+    let mut enabled_features = codex_features::Features::with_defaults();
+    enabled_features.enable(Feature::Apps);
+    manager
+        .state
+        .register_external_live_thread_snapshot_with_features(
+            enabled_thread_id,
+            live_thread_snapshot_for_config(&config, enabled_thread_id),
+            enabled_features,
+            AgentStatus::Running,
+        )
+        .await;
+
+    assert!(
+        thread_service_api::LiveThreadInspectionRuntime::live_thread_feature_enabled(
+            manager.state.as_ref(),
+            enabled_thread_id,
+            Feature::Apps,
+        )
+        .await?
+    );
+
+    let disabled_thread_id = ThreadId::new();
+    let mut disabled_features = codex_features::Features::with_defaults();
+    disabled_features.disable(Feature::Apps);
+    manager
+        .state
+        .register_external_live_thread_snapshot_with_features(
+            disabled_thread_id,
+            live_thread_snapshot_for_config(&config, disabled_thread_id),
+            disabled_features,
+            AgentStatus::Running,
+        )
+        .await;
+
+    assert!(
+        !thread_service_api::LiveThreadInspectionRuntime::live_thread_feature_enabled(
+            manager.state.as_ref(),
+            disabled_thread_id,
+            Feature::Apps,
+        )
+        .await?
+    );
+
+    let missing_thread_id = ThreadId::new();
+    let err = thread_service_api::LiveThreadInspectionRuntime::live_thread_feature_enabled(
+        manager.state.as_ref(),
+        missing_thread_id,
+        Feature::Apps,
+    )
+    .await
+    .expect_err("unknown thread should still fail");
+    assert!(matches!(err, CodexErr::ThreadNotFound(id) if id == missing_thread_id));
+
+    Ok(())
 }
 
 fn user_msg(text: &str) -> ResponseItem {

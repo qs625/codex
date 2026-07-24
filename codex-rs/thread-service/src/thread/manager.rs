@@ -158,6 +158,7 @@ type SharedCapturedOps = Arc<std::sync::Mutex<CapturedOps>>;
 #[derive(Clone, Debug)]
 struct ExternalLiveThreadRecord {
     snapshot: LiveThreadSnapshot,
+    features: codex_features::Features,
     status: AgentStatus,
     status_tx: tokio::sync::watch::Sender<AgentStatus>,
 }
@@ -1608,10 +1609,27 @@ impl ThreadServiceState {
             })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn register_external_live_thread_snapshot(
         &self,
         thread_id: ThreadId,
         snapshot: LiveThreadSnapshot,
+        status: AgentStatus,
+    ) {
+        self.register_external_live_thread_snapshot_with_features(
+            thread_id,
+            snapshot,
+            codex_features::Features::with_defaults(),
+            status,
+        )
+        .await;
+    }
+
+    pub(crate) async fn register_external_live_thread_snapshot_with_features(
+        &self,
+        thread_id: ThreadId,
+        snapshot: LiveThreadSnapshot,
+        features: codex_features::Features,
         status: AgentStatus,
     ) {
         let (status_tx, _status_rx) = tokio::sync::watch::channel(status.clone());
@@ -1619,6 +1637,7 @@ impl ThreadServiceState {
             thread_id,
             ExternalLiveThreadRecord {
                 snapshot,
+                features,
                 status,
                 status_tx,
             },
@@ -2552,6 +2571,9 @@ impl thread_service_api::LiveThreadInspectionRuntime for ThreadServiceState {
         feature: Feature,
     ) -> impl std::future::Future<Output = CodexResult<bool>> + Send + '_ {
         async move {
+            if let Some(record) = self.external_live_threads.read().await.get(&thread_id) {
+                return Ok(record.features.enabled(feature));
+            }
             let thread = self.get_thread(thread_id).await?;
             Ok(thread.enabled(feature))
         }
