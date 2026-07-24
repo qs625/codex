@@ -416,21 +416,6 @@ impl CatalogRequestProcessor {
             },
         };
 
-        let external_capabilities = ThreadProviderCapabilities {
-            start_thread: false,
-            send_input: true,
-            close_thread: true,
-            list_children: true,
-            restore_thread: false,
-            event_stream: true,
-            spawn_child: true,
-            compact: false,
-            workflow: false,
-            poll_event: false,
-            command_session: false,
-            permissions: false,
-            dynamic_tools: false,
-        };
         let external_model_selection = ThreadProviderModelSelection {
             mode: ThreadProviderModelSelectionMode::ProviderDefault,
             model_providers: Vec::new(),
@@ -444,7 +429,21 @@ impl CatalogRequestProcessor {
                 description: provider.description.to_string(),
                 agent_types: Vec::new(),
                 model_selection: external_model_selection.clone(),
-                capabilities: external_capabilities.clone(),
+                capabilities: ThreadProviderCapabilities {
+                    start_thread: external_cli_thread_provider_supports_root_start(provider.id),
+                    send_input: true,
+                    close_thread: true,
+                    list_children: true,
+                    restore_thread: false,
+                    event_stream: true,
+                    spawn_child: true,
+                    compact: false,
+                    workflow: false,
+                    poll_event: false,
+                    command_session: false,
+                    permissions: false,
+                    dynamic_tools: false,
+                },
             });
 
         let mut data = Vec::with_capacity(4);

@@ -78,7 +78,10 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
             ThreadProviderModelSelectionMode::ProviderDefault
         );
         assert!(external.model_selection.model_providers.is_empty());
-        assert!(!external.capabilities.start_thread);
+        assert!(
+            external.capabilities.start_thread,
+            "{external_id} should advertise root thread/start because the provider has a backend session transport"
+        );
         assert!(!external.capabilities.restore_thread);
         assert!(external.capabilities.event_stream);
         assert!(!external.capabilities.compact);

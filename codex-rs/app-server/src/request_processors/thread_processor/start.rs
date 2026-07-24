@@ -32,9 +32,17 @@ fn resolve_root_thread_provider(
     match thread_provider {
         None | Some("native") => Ok(RootThreadProviderRoute::Native),
         Some(provider) if is_external_cli_thread_provider_id(provider) => match capability {
-            RootThreadProviderCapability::StartThread => Ok(RootThreadProviderRoute::External(
-                external_cli_thread_provider(provider).expect("known external CLI provider"),
-            )),
+            RootThreadProviderCapability::StartThread
+                if external_cli_thread_provider_supports_root_start(provider) =>
+            {
+                Ok(RootThreadProviderRoute::External(
+                    external_cli_thread_provider(provider).expect("known external CLI provider"),
+                ))
+            }
+            RootThreadProviderCapability::StartThread => Err(invalid_request(format!(
+                "thread provider '{provider}' is advertised but does not support {} yet",
+                capability.method()
+            ))),
             RootThreadProviderCapability::RestoreThread
             | RootThreadProviderCapability::ForkThread => Err(invalid_request(format!(
                 "thread provider '{provider}' is advertised but does not support {} yet",
@@ -153,6 +161,10 @@ mod root_thread_provider_route_tests {
                 ),
             ),
         ] {
+            assert!(
+                external_cli_thread_provider_supports_root_start(provider),
+                "{provider} should advertise root thread/start because route accepts it"
+            );
             let route = resolve_root_thread_provider(
                 Some(provider),
                 RootThreadProviderCapability::StartThread,

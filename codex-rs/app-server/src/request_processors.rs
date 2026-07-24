@@ -513,6 +513,21 @@ fn external_cli_thread_provider(id: &str) -> Option<codex_agent_runtime::SpawnAg
     }
 }
 
+fn external_cli_thread_provider_supports_root_start(id: &str) -> bool {
+    external_cli_thread_provider(id).is_some_and(external_spawn_provider_supports_root_start)
+}
+
+fn external_spawn_provider_supports_root_start(
+    provider: codex_agent_runtime::SpawnAgentProvider,
+) -> bool {
+    matches!(
+        provider,
+        codex_agent_runtime::SpawnAgentProvider::ClaudeCli
+            | codex_agent_runtime::SpawnAgentProvider::Opencode
+            | codex_agent_runtime::SpawnAgentProvider::CodexCli
+    )
+}
+
 pub(crate) use account_processor::AccountRequestProcessor;
 pub(crate) use apps_processor::AppsRequestProcessor;
 pub(crate) use catalog_processor::CatalogRequestProcessor;
