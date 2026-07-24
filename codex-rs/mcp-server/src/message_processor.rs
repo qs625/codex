@@ -89,7 +89,7 @@ impl MessageProcessor {
             model_provider_auth_manager(Some(auth_manager)),
         );
         let thread_service = Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
-            let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+            let agent_tool_runtime: Weak<dyn codex_tool_service::AgentToolRuntime> =
                 thread_service.clone();
             let workflow_thread_runtime: Weak<dyn codex_workflow::WorkflowThreadRuntime> =
                 thread_service.clone();
@@ -107,7 +107,7 @@ impl MessageProcessor {
                 mcp_service.clone(),
                 Arc::new(permissions_service::PermissionsService),
                 workflow_service,
-                thread_service_api,
+                agent_tool_runtime,
             ));
             ThreadService::new_with_openai_file_uploader(
                 config.as_ref(),

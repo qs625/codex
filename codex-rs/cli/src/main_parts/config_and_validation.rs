@@ -209,12 +209,12 @@ async fn run_debug_prompt_input_command(
     );
     let missing_thread_runtime: Weak<dyn codex_workflow::WorkflowThreadRuntime> =
         Weak::<thread_service::ThreadService>::new();
+    let missing_agent_runtime: Weak<dyn codex_tool_service::AgentToolRuntime> =
+        Weak::<thread_service::ThreadService>::new();
     let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
         config.codex_home.clone(),
         missing_thread_runtime,
     ));
-    let missing_thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
-        Weak::<thread_service::ThreadService>::new();
     let prompt_input = thread_service::build_prompt_input(
         config,
         input,
@@ -234,7 +234,7 @@ async fn run_debug_prompt_input_command(
             ))),
             Arc::new(permissions_service::PermissionsService),
             workflow_service,
-            missing_thread_service_api,
+            missing_agent_runtime,
         )),
         Arc::new(mcp_service::DefaultMcpAuthRuntime),
         Arc::new(mcp_service::DefaultMcpConnectionRuntimeFactory),

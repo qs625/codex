@@ -14,7 +14,6 @@ use command_service_api::CommandServiceApi;
 use goal_service_api::GoalServiceApi;
 use mcp_service_api::McpServiceApi;
 use permissions_service_api::PermissionsServiceApi;
-use thread_service_api::ThreadServiceApi;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -26,6 +25,7 @@ use tool_service_api::ToolServiceFuture;
 use tool_service_api::ToolSpecRequest;
 
 use context::TypedToolSpecRequest;
+pub use domains::agent::AgentToolRuntime;
 pub(crate) use planning::*;
 
 pub struct ToolService {
@@ -35,7 +35,7 @@ pub struct ToolService {
     mcp_service_api: Arc<dyn McpServiceApi>,
     permissions_api: Arc<dyn PermissionsServiceApi>,
     workflow_api: Arc<dyn WorkflowApi>,
-    thread_service_api: Weak<dyn ThreadServiceApi>,
+    agent_runtime: Weak<dyn AgentToolRuntime>,
 }
 
 impl ToolService {
@@ -46,7 +46,7 @@ impl ToolService {
         mcp_service_api: Arc<dyn McpServiceApi>,
         permissions_api: Arc<dyn PermissionsServiceApi>,
         workflow_api: Arc<dyn WorkflowApi>,
-        thread_service_api: Weak<dyn ThreadServiceApi>,
+        agent_runtime: Weak<dyn AgentToolRuntime>,
     ) -> Self {
         Self {
             approval_api,
@@ -55,12 +55,12 @@ impl ToolService {
             mcp_service_api,
             permissions_api,
             workflow_api,
-            thread_service_api,
+            agent_runtime,
         }
     }
 
-    fn thread_service_api(&self) -> Result<Arc<dyn ThreadServiceApi>, FunctionCallError> {
-        self.thread_service_api.upgrade().ok_or_else(|| {
+    fn agent_runtime(&self) -> Result<Arc<dyn AgentToolRuntime>, FunctionCallError> {
+        self.agent_runtime.upgrade().ok_or_else(|| {
             FunctionCallError::Fatal("tool service thread service api is unavailable".to_string())
         })
     }
@@ -154,7 +154,7 @@ impl ToolServiceApi for ToolService {
                         Arc::clone(&session)
                             as Arc<dyn thread_service_api::ThreadSessionCapability>,
                         Arc::clone(&tool_request.session_agent_jobs),
-                        self.thread_service_api()?,
+                        self.agent_runtime()?,
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         call,
                     )

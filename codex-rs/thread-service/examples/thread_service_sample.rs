@@ -151,7 +151,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 auth_manager.clone(),
                 model_provider_auth_manager(Some(auth_manager.clone())),
             );
-            let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+            let agent_tool_runtime: Weak<dyn codex_tool_service::AgentToolRuntime> =
                 thread_service.clone();
             let workflow_thread_runtime: Weak<dyn codex_workflow::WorkflowThreadRuntime> =
                 thread_service.clone();
@@ -170,7 +170,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 mcp_service.clone(),
                 Arc::new(permissions_service::PermissionsService),
                 workflow_service,
-                thread_service_api,
+                agent_tool_runtime,
             ));
             ThreadService::new(
                 &config,

@@ -273,7 +273,7 @@ mod tests {
         let thread_watch_manager = crate::thread_status::ThreadWatchManager::new();
         let thread_service: Arc<ThreadService> =
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
-                let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+                let agent_tool_runtime: Weak<dyn codex_tool_service::AgentToolRuntime> =
                     thread_service.clone();
                 let workflow_thread_runtime: Weak<dyn codex_workflow::WorkflowThreadRuntime> =
                     thread_service.clone();
@@ -290,7 +290,7 @@ mod tests {
                     mcp_service.clone(),
                     Arc::new(permissions_service::PermissionsService),
                     workflow_service,
-                    thread_service_api,
+                    agent_tool_runtime,
                 ));
                 let auth_runtimes = thread_service::ThreadAuthRuntimes::from_auth_runtime(
                     auth_manager.clone(),

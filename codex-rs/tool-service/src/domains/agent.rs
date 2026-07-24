@@ -30,10 +30,22 @@ use protocol::protocol::EventMsg;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
+use thread_service_api::NativeAgentRuntime;
 use thread_service_api::SessionAgentJobCaller;
+use thread_service_api::ThreadCloseAgentResult;
+use thread_service_api::ThreadCollaborationRuntime;
+use thread_service_api::ThreadEventRuntime;
+use thread_service_api::ThreadListAgentsResult;
+use thread_service_api::ThreadPollEventRequest;
+use thread_service_api::ThreadPollEventResult;
+use thread_service_api::ThreadPollEventTimeoutMetadata;
 use thread_service_api::ThreadRuntimeCapability;
-use thread_service_api::ThreadServiceApi;
+use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadSessionCapability;
+use thread_service_api::ThreadSpawnAgentRequest;
+use thread_service_api::ThreadSpawnAgentResult;
+use thread_service_api::ThreadSpawnExternalAgentRequest;
+use thread_service_api::ThreadTurnCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
 use tool_service_api::FunctionCallError;
@@ -56,6 +68,173 @@ const FOLLOWUP_EXTERNAL_TASK_TOOL_NAME: &str = "followup_external_task";
 const POLL_EXTERNAL_EVENT_TOOL_NAME: &str = "poll_external_event";
 const LIST_EXTERNAL_AGENTS_TOOL_NAME: &str = "list_external_agents";
 const CLOSE_EXTERNAL_AGENT_TOOL_NAME: &str = "close_external_agent";
+
+pub trait AgentToolRuntime: Send + Sync + 'static {
+    fn spawn_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>>;
+
+    fn followup_task<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
+
+    fn close_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
+
+    fn list_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+
+    fn spawn_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnExternalAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>>;
+
+    fn followup_external_task<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
+
+    fn close_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>>;
+
+    fn list_external_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+
+    fn poll_event<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>>;
+
+    fn poll_event_timeout_metadata<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventTimeoutMetadata, FunctionCallError>>;
+}
+
+impl<T> AgentToolRuntime for T
+where
+    T: ThreadCollaborationRuntime + ThreadEventRuntime,
+{
+    fn spawn_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>> {
+        NativeAgentRuntime::spawn_agent(self, turn, call_id, request)
+    }
+
+    fn followup_task<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
+        NativeAgentRuntime::followup_task(self, turn, call_id, target, message)
+    }
+
+    fn close_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
+        NativeAgentRuntime::close_agent(self, turn, call_id, target)
+    }
+
+    fn list_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
+        NativeAgentRuntime::list_agents(self, turn, call_id, path_prefix)
+    }
+
+    fn spawn_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        request: ThreadSpawnExternalAgentRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadSpawnAgentResult, FunctionCallError>> {
+        ThreadCollaborationRuntime::spawn_external_agent(self, turn, call_id, request)
+    }
+
+    fn followup_external_task<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+        message: String,
+    ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
+        ThreadCollaborationRuntime::followup_external_task(self, turn, call_id, target, message)
+    }
+
+    fn close_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadCloseAgentResult, FunctionCallError>> {
+        ThreadCollaborationRuntime::close_external_agent(self, turn, call_id, target)
+    }
+
+    fn list_external_agents<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        path_prefix: Option<String>,
+    ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
+        ThreadCollaborationRuntime::list_external_agents(self, turn, call_id, path_prefix)
+    }
+
+    fn poll_event<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>> {
+        ThreadEventRuntime::poll_event(self, turn, request)
+    }
+
+    fn poll_event_timeout_metadata<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        request: ThreadPollEventRequest,
+    ) -> ThreadServiceFuture<'a, Result<ThreadPollEventTimeoutMetadata, FunctionCallError>> {
+        ThreadEventRuntime::poll_event_timeout_metadata(self, turn, request)
+    }
+}
 
 pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
     vec![
@@ -114,7 +293,7 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 pub(crate) async fn dispatch(
     session_capability: Arc<dyn ThreadSessionCapability>,
     session: Arc<dyn SessionAgentJobCaller>,
-    thread_service_api: Arc<dyn ThreadServiceApi>,
+    agent_runtime: Arc<dyn AgentToolRuntime>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
@@ -122,7 +301,7 @@ pub(crate) async fn dispatch(
         SPAWN_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let request = spawn_agent_request_from_arguments(&arguments)?;
-            let result = thread_service_api
+            let result = agent_runtime
                 .spawn_agent(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
@@ -134,7 +313,7 @@ pub(crate) async fn dispatch(
         FOLLOWUP_TASK_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let (target, message) = followup_task_from_arguments(&arguments)?;
-            thread_service_api
+            agent_runtime
                 .followup_task(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
@@ -147,7 +326,7 @@ pub(crate) async fn dispatch(
         SPAWN_EXTERNAL_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: SpawnExternalAgentArgs = parse_arguments_with_base_path(&arguments, None)?;
-            let result = thread_service_api
+            let result = agent_runtime
                 .spawn_external_agent(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
@@ -164,7 +343,7 @@ pub(crate) async fn dispatch(
         FOLLOWUP_EXTERNAL_TASK_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let (target, message) = followup_task_from_arguments(&arguments)?;
-            thread_service_api
+            agent_runtime
                 .followup_external_task(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
@@ -182,7 +361,7 @@ pub(crate) async fn dispatch(
         LIST_EXTERNAL_AGENTS_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: ListAgentsArgs = parse_arguments(&arguments)?;
-            let result = thread_service_api
+            let result = agent_runtime
                 .list_external_agents(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
@@ -194,7 +373,7 @@ pub(crate) async fn dispatch(
         CLOSE_EXTERNAL_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: CloseAgentArgs = parse_arguments(&arguments)?;
-            let result = thread_service_api
+            let result = agent_runtime
                 .close_external_agent(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
@@ -206,7 +385,7 @@ pub(crate) async fn dispatch(
         POLL_EVENT_TOOL_NAME => {
             let item_id = format!("builtin-tool-{}", uuid::Uuid::new_v4());
             let arguments = json!({});
-            let timeout_metadata = thread_service_api
+            let timeout_metadata = agent_runtime
                 .poll_event_timeout_metadata(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     thread_service_api::ThreadPollEventRequest {
@@ -237,7 +416,7 @@ pub(crate) async fn dispatch(
                     }),
                 )
                 .await;
-            let result = thread_service_api
+            let result = agent_runtime
                 .poll_event(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     thread_service_api::ThreadPollEventRequest {
@@ -292,7 +471,7 @@ pub(crate) async fn dispatch(
         LIST_AGENTS_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: ListAgentsArgs = parse_arguments(&arguments)?;
-            let result = thread_service_api
+            let result = agent_runtime
                 .list_agents(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
@@ -304,7 +483,7 @@ pub(crate) async fn dispatch(
         CLOSE_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: CloseAgentArgs = parse_arguments(&arguments)?;
-            let result = thread_service_api
+            let result = agent_runtime
                 .close_agent(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
@@ -558,99 +737,10 @@ mod tests {
     use protocol::protocol::SessionSource;
     use protocol::protocol::SubAgentSource;
     use thread_service::test_support;
-    use thread_service_api::NativeAgentRuntime;
-    use thread_service_api::ThreadCloseAgentResult;
-    use thread_service_api::ThreadCollaborationRuntime;
-    use thread_service_api::ThreadEventRuntime;
-    use thread_service_api::ThreadLifecycleRuntime;
-    use thread_service_api::ThreadListAgentsResult;
-    use thread_service_api::ThreadPollEventRequest;
-    use thread_service_api::ThreadPollEventResult;
-    use thread_service_api::ThreadPollEventTimeoutMetadata;
-    use thread_service_api::ThreadServiceFuture;
-    use thread_service_api::ThreadSpawnAgentRequest;
-    use thread_service_api::ThreadSpawnAgentResult;
-    use thread_service_api::ThreadSpawnExternalAgentRequest;
 
-    struct StubThreadServiceApi;
+    struct StubAgentToolRuntime;
 
-    impl ThreadLifecycleRuntime for StubThreadServiceApi {
-        fn shutdown_all_threads_bounded<'a>(
-            &'a self,
-            _timeout: std::time::Duration,
-        ) -> ThreadServiceFuture<'a, thread_service_api::ThreadShutdownReport> {
-            Box::pin(async {
-                unreachable!("shutdown_all_threads_bounded should not be called in this test")
-            })
-        }
-
-        fn shutdown_live_thread<'a>(
-            &'a self,
-            _thread_id: ThreadId,
-        ) -> ThreadServiceFuture<'a, protocol::error::Result<String>> {
-            Box::pin(async {
-                unreachable!("shutdown_live_thread should not be called in this test")
-            })
-        }
-
-        fn remove_live_thread<'a>(
-            &'a self,
-            _thread_id: ThreadId,
-        ) -> ThreadServiceFuture<'a, bool> {
-            Box::pin(async {
-                unreachable!("remove_live_thread should not be called in this test")
-            })
-        }
-
-        fn subscribe_thread_created(
-            &self,
-        ) -> tokio::sync::broadcast::Receiver<thread_service_api::ThreadCreatedEvent> {
-            unreachable!("subscribe_thread_created should not be called in this test")
-        }
-
-        fn live_thread_agent_status<'a>(
-            &'a self,
-            _thread_id: ThreadId,
-        ) -> ThreadServiceFuture<'a, protocol::error::Result<protocol::protocol::AgentStatus>> {
-            Box::pin(async {
-                unreachable!("live_thread_agent_status should not be called in this test")
-            })
-        }
-
-        fn live_thread_runtime_status<'a>(
-            &'a self,
-            _thread_id: ThreadId,
-        ) -> ThreadServiceFuture<
-            'a,
-            protocol::error::Result<thread_service_api::ThreadRuntimeStatus>,
-        > {
-            Box::pin(async {
-                unreachable!("live_thread_runtime_status should not be called in this test")
-            })
-        }
-
-        fn subscribe_live_thread_status<'a>(
-            &'a self,
-            _thread_id: ThreadId,
-        ) -> ThreadServiceFuture<
-            'a,
-            protocol::error::Result<
-                tokio::sync::watch::Receiver<protocol::protocol::AgentStatus>,
-            >,
-        > {
-            Box::pin(async {
-                unreachable!("subscribe_live_thread_status should not be called in this test")
-            })
-        }
-
-        fn active_event_subscriptions(
-            &self,
-        ) -> Arc<thread_service_api::ActiveEventSubscriptionTracker> {
-            unreachable!("active_event_subscriptions should not be called in this test")
-        }
-    }
-
-    impl NativeAgentRuntime for StubThreadServiceApi {
+    impl AgentToolRuntime for StubAgentToolRuntime {
         fn spawn_agent<'a>(
             &'a self,
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
@@ -692,9 +782,7 @@ mod tests {
         ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
             Box::pin(async { unreachable!("list_agents should not be called in this test") })
         }
-    }
 
-    impl ThreadCollaborationRuntime for StubThreadServiceApi {
         fn spawn_external_agent<'a>(
             &'a self,
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
@@ -739,9 +827,7 @@ mod tests {
                 unreachable!("list_external_agents should not be called in this test")
             })
         }
-    }
 
-    impl ThreadEventRuntime for StubThreadServiceApi {
         fn poll_event<'a>(
             &'a self,
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
@@ -758,27 +844,6 @@ mod tests {
         {
             Box::pin(async {
                 unreachable!("poll_event_timeout_metadata should not be called in this test")
-            })
-        }
-
-        fn reset_thread_wait_backoff<'a>(
-            &'a self,
-            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
-        ) -> ThreadServiceFuture<'a, ()> {
-            Box::pin(async {
-                unreachable!("reset_thread_wait_backoff should not be called in this test")
-            })
-        }
-
-        fn record_model_items_and_emit_display_events<'a>(
-            &'a self,
-            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
-            _items: Vec<protocol::models::ResponseItem>,
-        ) -> ThreadServiceFuture<'a, Result<(), String>> {
-            Box::pin(async {
-                unreachable!(
-                    "record_model_items_and_emit_display_events should not be called in this test"
-                )
             })
         }
     }
@@ -802,7 +867,7 @@ mod tests {
         let response = dispatch(
             Arc::clone(&session) as Arc<dyn ThreadSessionCapability>,
             Arc::clone(&session) as Arc<dyn SessionAgentJobCaller>,
-            Arc::new(StubThreadServiceApi),
+            Arc::new(StubAgentToolRuntime),
             Arc::clone(&turn_context) as Arc<dyn ThreadRuntimeCapability>,
             ToolCall {
                 call_id: "spawn-depth-limit".to_string(),

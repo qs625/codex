@@ -474,7 +474,7 @@ impl TestCodexBuilder {
         let environment_provider: Arc<dyn exec_server_api::ExecEnvironmentProvider> =
             environment_manager.clone();
         let thread_service = Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
-            let thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+            let agent_tool_runtime: Weak<dyn codex_tool_service::AgentToolRuntime> =
                 thread_service.clone();
             let workflow_thread_runtime: Weak<dyn codex_workflow::WorkflowThreadRuntime> =
                 thread_service.clone();
@@ -493,7 +493,7 @@ impl TestCodexBuilder {
                 mcp_service.clone(),
                 permissions_service,
                 workflow_service,
-                thread_service_api,
+                agent_tool_runtime,
             ));
             ThreadService::new_with_openai_file_uploader(
                 &config,
