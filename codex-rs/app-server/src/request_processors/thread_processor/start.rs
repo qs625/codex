@@ -1476,10 +1476,12 @@ impl ThreadRequestProcessor {
         let source_thread = self
             .read_stored_thread_for_resume(&thread_id, path.as_ref(), /*include_history*/ true)
             .await?;
-        reject_unsupported_external_root_thread_provider(
-            source_thread.model_provider.as_str(),
-            RootThreadProviderCapability::ForkThread,
-        )?;
+        if !is_persisted_external_root_thread(&source_thread) {
+            reject_unsupported_external_root_thread_provider(
+                source_thread.model_provider.as_str(),
+                RootThreadProviderCapability::ForkThread,
+            )?;
+        }
         let source_thread_id = source_thread.thread_id;
         let history_items = source_thread
             .history
