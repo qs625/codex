@@ -73,6 +73,7 @@ use protocol::protocol::EventMsg;
 use protocol::protocol::ExternalProviderSessionIdentity;
 use protocol::protocol::ExternalReconnectDescriptor;
 use protocol::protocol::ExternalReconnectTransport;
+use protocol::protocol::ExternalRestorePlan;
 use protocol::protocol::ExternalTerminalStatus;
 use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::RolloutItem;
@@ -1687,6 +1688,7 @@ fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
                 session_identity: ExternalProviderSessionIdentity {
                     session_id: "opencode-session-123".to_string(),
                 },
+                restore_plan: Some(ExternalRestorePlan::opencode_restore_disabled(true)),
             }),
         )?;
 
