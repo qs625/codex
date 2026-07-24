@@ -1322,7 +1322,7 @@ fn thread_read_and_list_project_external_root_terminal_facts_without_live_runtim
 }
 
 #[test]
-fn external_root_resume_returns_readonly_snapshot_and_fork_stays_unsupported() -> Result<()> {
+fn external_root_resume_returns_readonly_snapshot_and_fork_creates_native_thread() -> Result<()> {
     run_current_thread_test_with_stack(async {
         let codex_home = TempDir::new()?;
         let completed_id =
@@ -1530,7 +1530,7 @@ fn external_root_resume_returns_readonly_snapshot_and_fork_stays_unsupported() -
             turn_start_error.message
         );
 
-        let fork_error = client
+        let completed_fork_result = client
             .request(ClientRequest::ThreadFork {
                 request_id: RequestId::Integer(6),
                 params: ThreadForkParams {
@@ -1539,12 +1539,119 @@ fn external_root_resume_returns_readonly_snapshot_and_fork_stays_unsupported() -
                 },
             })
             .await?
-            .expect_err("thread/fork should reject persisted external root threads");
-        assert_eq!(fork_error.code, INVALID_REQUEST_ERROR_CODE);
+            .expect("completed external root thread/fork should create a native thread");
+        let ThreadForkResponse {
+            thread: completed_fork,
+            model_provider,
+            ..
+        } = serde_json::from_value(completed_fork_result)?;
+        assert_ne!(completed_fork.id, completed_id.to_string());
+        assert_eq!(completed_fork.forked_from_id, Some(completed_id.to_string()));
+        assert_eq!(completed_fork.model_provider, "mock_provider");
+        assert_eq!(model_provider, "mock_provider");
         assert_eq!(
-            fork_error.message,
-            "thread provider 'claude_cli' is advertised but does not support thread/fork yet"
+            turn_user_texts(&completed_fork.turns),
+            vec!["history from store"]
         );
+
+        let errored_fork_result = client
+            .request(ClientRequest::ThreadFork {
+                request_id: RequestId::Integer(7),
+                params: ThreadForkParams {
+                    thread_id: errored_id.to_string(),
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect("errored external root thread/fork should create a native thread");
+        let ThreadForkResponse {
+            thread: errored_fork,
+            model_provider,
+            ..
+        } = serde_json::from_value(errored_fork_result)?;
+        assert_ne!(errored_fork.id, errored_id.to_string());
+        assert_eq!(errored_fork.forked_from_id, Some(errored_id.to_string()));
+        assert_eq!(errored_fork.model_provider, "mock_provider");
+        assert_eq!(model_provider, "mock_provider");
+        assert_eq!(
+            turn_user_texts(&errored_fork.turns),
+            vec!["history from store"]
+        );
+
+        let running_fork_result = client
+            .request(ClientRequest::ThreadFork {
+                request_id: RequestId::Integer(8),
+                params: ThreadForkParams {
+                    thread_id: running_id.to_string(),
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect("running external root thread/fork should create a native thread");
+        let ThreadForkResponse {
+            thread: running_fork,
+            model_provider,
+            ..
+        } = serde_json::from_value(running_fork_result)?;
+        assert_ne!(running_fork.id, running_id.to_string());
+        assert_eq!(running_fork.forked_from_id, Some(running_id.to_string()));
+        assert_eq!(running_fork.model_provider, "mock_provider");
+        assert_eq!(model_provider, "mock_provider");
+        assert_eq!(
+            turn_user_texts(&running_fork.turns),
+            vec!["history from store"]
+        );
+
+        let completed_resume_after_fork_result = client
+            .request(ClientRequest::ThreadResume {
+                request_id: RequestId::Integer(9),
+                params: ThreadResumeParams {
+                    thread_id: completed_id.to_string(),
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect("source external root should remain a read-only snapshot after fork");
+        let ThreadResumeResponse {
+            thread: completed_resume_after_fork,
+            ..
+        } = serde_json::from_value(completed_resume_after_fork_result)?;
+        assert_eq!(
+            completed_resume_after_fork.lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+        assert_eq!(completed_resume_after_fork.model_provider, "claude_cli");
+
+        let loaded_result = client
+            .request(ClientRequest::ThreadLoadedList {
+                request_id: RequestId::Integer(10),
+                params: ThreadLoadedListParams::default(),
+            })
+            .await?
+            .expect("thread/loaded/list should succeed after native forks");
+        let ThreadLoadedListResponse { data, next_cursor } =
+            serde_json::from_value(loaded_result)?;
+        assert_eq!(next_cursor, None);
+        for forked_id in [
+            completed_fork.id.as_str(),
+            errored_fork.id.as_str(),
+            running_fork.id.as_str(),
+        ] {
+            assert!(
+                data.iter().any(|loaded_id| loaded_id == forked_id),
+                "native fork {forked_id} should be loaded"
+            );
+        }
+        for source_id in [
+            completed_id.to_string(),
+            errored_id.to_string(),
+            running_id.to_string(),
+        ] {
+            assert!(
+                data.iter().all(|loaded_id| loaded_id != &source_id),
+                "source external root {source_id} should stay read-only and not be live restored"
+            );
+        }
 
         client.shutdown().await?;
         Ok(())
