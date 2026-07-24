@@ -23,6 +23,8 @@ use app_server_protocol::ThreadLifecycleFinalStatus;
 use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadLoadedListParams;
+use app_server_protocol::ThreadLoadedListResponse;
 use app_server_protocol::ThreadNameUpdatedNotification;
 use app_server_protocol::ThreadReadParams;
 use app_server_protocol::ThreadReadResponse;
@@ -71,6 +73,8 @@ use protocol::protocol::ExternalTerminalStatus;
 use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SandboxPolicy;
+use protocol::protocol::SessionMeta;
+use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource as ProtocolSessionSource;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::ThreadContextUsageCategoryBreakdown;
@@ -81,6 +85,7 @@ use protocol::protocol::ThreadContextUsageUpdatedEvent;
 use protocol::protocol::ThreadMemoryMode;
 use protocol::protocol::TurnCompleteEvent;
 use protocol::protocol::UserMessageEvent;
+use protocol::subscriptions::PersistedSubscription;
 use protocol::user_input::ByteRange;
 use protocol::user_input::TextElement;
 use rollout::ARCHIVED_SESSIONS_SUBDIR;
@@ -1546,6 +1551,126 @@ fn external_root_resume_returns_readonly_snapshot_and_fork_stays_unsupported() -
     })
 }
 
+#[test]
+fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
+    run_current_thread_test_with_stack(async {
+        let codex_home = TempDir::new()?;
+        let server =
+            create_mock_responses_server_repeating_assistant("native should not run").await;
+        create_config_toml_with_claude_cli_model_provider(codex_home.path(), &server.uri())?;
+        let thread_id = create_external_root_rollout_with_subscription(
+            codex_home.path(),
+            "2025-01-06T12-00-00",
+            "2025-01-06T12:00:00Z",
+        )?;
+
+        let loader_overrides = LoaderOverrides::without_managed_config_for_tests();
+        let config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .fallback_cwd(Some(codex_home.path().to_path_buf()))
+            .loader_overrides(loader_overrides.clone())
+            .build()
+            .await?;
+        let client = in_process::start(InProcessStartArgs {
+            arg0_paths: Arg0DispatchPaths::default(),
+            config: Arc::new(config),
+            cli_overrides: Vec::new(),
+            loader_overrides,
+            strict_config: false,
+            cloud_requirements: CloudRequirementsLoader::default(),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
+            feedback: CodexFeedback::new(),
+            log_db: None,
+            state_db: None,
+            environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+            config_warnings: Vec::new(),
+            session_source: SessionSource::Cli.into(),
+            enable_codex_api_key_env: false,
+            initialize: InitializeParams {
+                client_info: ClientInfo {
+                    name: "codex-app-server-tests".to_string(),
+                    title: None,
+                    version: "0.1.0".to_string(),
+                },
+                capabilities: Some(InitializeCapabilities {
+                    experimental_api: true,
+                    ..Default::default()
+                }),
+            },
+            channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        })
+        .await?;
+
+        let list_result = client
+            .request(ClientRequest::ThreadList {
+                request_id: RequestId::Integer(1),
+                params: ThreadListParams {
+                    cursor: None,
+                    limit: Some(10),
+                    sort_key: None,
+                    sort_direction: None,
+                    model_providers: Some(Vec::new()),
+                    source_kinds: None,
+                    archived: None,
+                    cwd: None,
+                    use_state_db_only: false,
+                    search_term: None,
+                },
+            })
+            .await?
+            .expect("thread/list should succeed");
+        let ThreadListResponse { data, .. } = serde_json::from_value(list_result)?;
+        let listed = data
+            .iter()
+            .find(|thread| thread.id == thread_id)
+            .expect("thread/list should include persisted external root");
+        assert_eq!(listed.model_provider, "claude_cli");
+        assert_eq!(listed.thread_source, Some(ThreadSource::User));
+        assert_eq!(listed.agent_path, None);
+        assert_eq!(listed.agent_role, None);
+        assert_eq!(
+            listed.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            }
+        );
+
+        let loaded_result = client
+            .request(ClientRequest::ThreadLoadedList {
+                request_id: RequestId::Integer(2),
+                params: ThreadLoadedListParams::default(),
+            })
+            .await?
+            .expect("thread/loaded/list should succeed");
+        let ThreadLoadedListResponse { data, next_cursor } = serde_json::from_value(loaded_result)?;
+        assert_eq!(data, Vec::<String>::new());
+        assert_eq!(next_cursor, None);
+
+        let read_result = client
+            .request(ClientRequest::ThreadRead {
+                request_id: RequestId::Integer(3),
+                params: ThreadReadParams {
+                    thread_id: thread_id.clone(),
+                    include_turns: true,
+                },
+            })
+            .await?
+            .expect("thread/read should return persisted external root snapshot");
+        let ThreadReadResponse { thread, .. } = serde_json::from_value(read_result)?;
+        assert_eq!(thread.model_provider, "claude_cli");
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            }
+        );
+        assert_eq!(turn_user_texts(&thread.turns), vec!["history from store"]);
+
+        client.shutdown().await?;
+        Ok(())
+    })
+}
+
 fn run_current_thread_test_with_stack<Fut>(future: Fut) -> Result<()>
 where
     Fut: Future<Output = Result<()>> + Send + 'static,
@@ -2661,6 +2786,68 @@ fn store_history_items() -> Vec<RolloutItem> {
     ))]
 }
 
+fn create_external_root_rollout_with_subscription(
+    codex_home: &Path,
+    filename_ts: &str,
+    meta_rfc3339: &str,
+) -> Result<String> {
+    let uuid = Uuid::new_v4();
+    let thread_id = protocol::ThreadId::from_string(&uuid.to_string())?;
+    let file_path = rollout_path(codex_home, filename_ts, &uuid.to_string());
+    let dir = file_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("missing rollout parent directory"))?;
+    std::fs::create_dir_all(dir)?;
+
+    let meta = SessionMeta {
+        id: thread_id,
+        forked_from_id: None,
+        timestamp: meta_rfc3339.to_string(),
+        cwd: codex_home.to_path_buf(),
+        originator: "codex".to_string(),
+        cli_version: "0.0.0".to_string(),
+        source: ProtocolSessionSource::VSCode,
+        thread_source: Some(protocol::protocol::ThreadSource::User),
+        agent_nickname: None,
+        agent_role: None,
+        agent_path: None,
+        model_provider: Some("claude_cli".to_string()),
+        base_instructions: None,
+        dynamic_tools: None,
+        memory_mode: None,
+        subscriptions: Some(vec![PersistedSubscription::EventCommand {
+            subscription_id: "sub-command".to_string(),
+            command: "printf subscription".to_string(),
+            cwd: None,
+            label: Some("subscription".to_string()),
+        }]),
+    };
+    let meta_payload = serde_json::to_value(SessionMetaLine { meta, git: None })?;
+    let user_payload = serde_json::to_value(EventMsg::UserMessage(UserMessageEvent {
+        message: "history from store".to_string(),
+        images: None,
+        local_images: Vec::new(),
+        skills: Vec::new(),
+        text_elements: Vec::new(),
+    }))?;
+    let lines = [
+        json!({
+            "timestamp": meta_rfc3339,
+            "type": "session_meta",
+            "payload": meta_payload,
+        })
+        .to_string(),
+        json!({
+            "timestamp": meta_rfc3339,
+            "type": "event_msg",
+            "payload": user_payload,
+        })
+        .to_string(),
+    ];
+    std::fs::write(file_path, lines.join("\n") + "\n")?;
+    Ok(uuid.to_string())
+}
+
 fn create_config_toml_with_thread_store(codex_home: &Path, store_id: &str) -> std::io::Result<()> {
     let config_toml = codex_home.join("config.toml");
     std::fs::write(
@@ -2677,6 +2864,32 @@ model_provider = "mock_provider"
 [model_providers.mock_provider]
 name = "Mock provider for test"
 base_url = "http://127.0.0.1:1/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+"#
+        ),
+    )
+}
+
+fn create_config_toml_with_claude_cli_model_provider(
+    codex_home: &Path,
+    server_uri: &str,
+) -> std::io::Result<()> {
+    let config_toml = codex_home.join("config.toml");
+    std::fs::write(
+        config_toml,
+        format!(
+            r#"
+model = "mock-model"
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+model_provider = "claude_cli"
+
+[model_providers.claude_cli]
+name = "Mock Claude CLI provider for startup restore test"
+base_url = "{server_uri}/v1"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
