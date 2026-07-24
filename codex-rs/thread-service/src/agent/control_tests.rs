@@ -1618,6 +1618,231 @@ async fn external_tool_call_lists_visible_agents() {
 }
 
 #[tokio::test]
+async fn external_tool_call_poll_external_event_wakes_for_inter_agent_input() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    harness.control.state.register_root_thread(root_thread_id);
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut run = ExternalAgentRun {
+        thread_id: external_thread_id,
+        parent_thread_id: root_thread_id,
+        agent_path: external_agent_path.clone(),
+        provider: SpawnAgentProvider::CodexCli,
+        depth: 1,
+        spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+        input_sink: Some(crate::agent::external::ExternalAgentInputSink::new(
+            input_tx,
+        )),
+        live_thread: None,
+        status: AgentStatus::Running,
+        active_turn_id: None,
+        last_task_message: Some("do work".to_string()),
+        abort_handle: None,
+    };
+    let spawn_config = run.spawn_config.as_mut().expect("spawn config");
+    spawn_config.default_wait_timeout_ms = 200;
+    spawn_config.max_wait_timeout_ms = 200;
+    harness.control.external_agents.insert_running(run);
+
+    let control = harness.control.clone();
+    let poll_task = tokio::spawn(async move {
+        control
+            .dispatch_external_tool_call(
+                external_thread_id,
+                ExternalToolCall {
+                    id: "poll_1".to_string(),
+                    tool: ExternalToolName::PollExternalEvent,
+                    arguments: serde_json::json!({}),
+                },
+            )
+            .await
+    });
+    sleep(Duration::from_millis(10)).await;
+
+    harness
+        .control
+        .send_inter_agent_communication(
+            external_thread_id,
+            InterAgentCommunication::new(
+                AgentPath::root(),
+                external_agent_path,
+                Vec::new(),
+                "please continue".to_string(),
+                InterAgentOperation::FollowupTask,
+            )
+            .with_thread_ids(root_thread_id, external_thread_id)
+            .with_trigger_turn(true),
+        )
+        .await
+        .expect("deliver external followup");
+
+    let queued = input_rx.recv().await.expect("external input");
+    assert_eq!(queued.content, "please continue");
+    let result = poll_task.await.expect("poll task");
+    assert!(result.ok, "poll failed: {:?}", result.error);
+    let result_json = result.result.expect("poll result");
+    assert_eq!(result_json["timedOut"], false);
+    assert_eq!(result_json["sourceHint"], "inter_agent");
+    assert_eq!(result_json["initialTimeoutMs"], 200);
+    assert_eq!(result_json["currentTimeoutMs"], 200);
+    assert_eq!(result_json["hardCapTimeoutMs"], 200);
+}
+
+#[tokio::test]
+async fn external_tool_call_poll_external_event_wakes_for_root_user_input() {
+    let harness = AgentControlHarness::new().await;
+    let external_thread_id = ThreadId::new();
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut run = external_root_run(
+        &harness.config,
+        external_thread_id,
+        SpawnAgentProvider::CodexCli,
+    );
+    run.input_sink = Some(crate::agent::external::ExternalAgentInputSink::new(
+        input_tx,
+    ));
+    let spawn_config = run.spawn_config.as_mut().expect("spawn config");
+    spawn_config.default_wait_timeout_ms = 200;
+    spawn_config.max_wait_timeout_ms = 200;
+    harness.control.external_agents.insert_running(run);
+
+    let control = harness.control.clone();
+    let poll_task = tokio::spawn(async move {
+        control
+            .dispatch_external_tool_call(
+                external_thread_id,
+                ExternalToolCall {
+                    id: "poll_1".to_string(),
+                    tool: ExternalToolName::PollExternalEvent,
+                    arguments: serde_json::json!({}),
+                },
+            )
+            .await
+    });
+    sleep(Duration::from_millis(10)).await;
+
+    let turn_id = harness
+        .control
+        .send_external_root_input(external_thread_id, "continue root".to_string())
+        .await
+        .expect("send external root input");
+
+    let queued = input_rx.recv().await.expect("external input");
+    assert_eq!(queued.turn_id.as_deref(), Some(turn_id.as_str()));
+    assert_eq!(queued.content, "continue root");
+    let result = poll_task.await.expect("poll task");
+    assert!(result.ok, "poll failed: {:?}", result.error);
+    let result_json = result.result.expect("poll result");
+    assert_eq!(result_json["timedOut"], false);
+    assert_eq!(result_json["sourceHint"], "user_input");
+}
+
+#[tokio::test]
+async fn external_tool_call_poll_external_event_wakes_for_child_completion() {
+    let harness = AgentControlHarness::new().await;
+    let parent_thread_id = ThreadId::new();
+    let child_thread_id = ThreadId::new();
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut parent_run = external_root_run(
+        &harness.config,
+        parent_thread_id,
+        SpawnAgentProvider::CodexCli,
+    );
+    parent_run.input_sink = Some(crate::agent::external::ExternalAgentInputSink::new(
+        input_tx,
+    ));
+    let spawn_config = parent_run.spawn_config.as_mut().expect("spawn config");
+    spawn_config.default_wait_timeout_ms = 200;
+    spawn_config.max_wait_timeout_ms = 200;
+    harness.control.external_agents.insert_running(parent_run);
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: child_thread_id,
+            parent_thread_id,
+            agent_path: AgentPath::try_from("/root/child").expect("agent path"),
+            provider: SpawnAgentProvider::CodexCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some("child work".to_string()),
+            abort_handle: None,
+        });
+
+    let control = harness.control.clone();
+    let poll_task = tokio::spawn(async move {
+        control
+            .dispatch_external_tool_call(
+                parent_thread_id,
+                ExternalToolCall {
+                    id: "poll_1".to_string(),
+                    tool: ExternalToolName::PollExternalEvent,
+                    arguments: serde_json::json!({}),
+                },
+            )
+            .await
+    });
+    sleep(Duration::from_millis(10)).await;
+
+    harness
+        .control
+        .complete_external_agent(
+            child_thread_id,
+            AgentStatus::Completed(Some("done".to_string())),
+        )
+        .await;
+
+    let queued = input_rx.recv().await.expect("external input");
+    assert!(queued.content.contains("/root/child"));
+    let result = poll_task.await.expect("poll task");
+    assert!(result.ok, "poll failed: {:?}", result.error);
+    let result_json = result.result.expect("poll result");
+    assert_eq!(result_json["timedOut"], false);
+    assert_eq!(result_json["sourceHint"], "child_completion");
+}
+
+#[tokio::test]
+async fn external_tool_call_poll_external_event_times_out_without_event() {
+    let harness = AgentControlHarness::new().await;
+    let external_thread_id = ThreadId::new();
+    let mut run = external_root_run(
+        &harness.config,
+        external_thread_id,
+        SpawnAgentProvider::CodexCli,
+    );
+    let spawn_config = run.spawn_config.as_mut().expect("spawn config");
+    spawn_config.default_wait_timeout_ms = 5;
+    spawn_config.max_wait_timeout_ms = 5;
+    harness.control.external_agents.insert_running(run);
+
+    let result = harness
+        .control
+        .dispatch_external_tool_call(
+            external_thread_id,
+            ExternalToolCall {
+                id: "poll_1".to_string(),
+                tool: ExternalToolName::PollExternalEvent,
+                arguments: serde_json::json!({}),
+            },
+        )
+        .await;
+
+    assert!(result.ok, "poll failed: {:?}", result.error);
+    let result_json = result.result.expect("poll result");
+    assert_eq!(result_json["timedOut"], true);
+    assert_eq!(result_json["sourceHint"], serde_json::Value::Null);
+    assert_eq!(result_json["initialTimeoutMs"], 5);
+    assert_eq!(result_json["currentTimeoutMs"], 5);
+    assert_eq!(result_json["hardCapTimeoutMs"], 5);
+}
+
+#[tokio::test]
 async fn external_tool_call_malformed_arguments_returns_bounded_error() {
     let harness = AgentControlHarness::new().await;
     let root_thread_id = ThreadId::new();

@@ -262,7 +262,7 @@ fn external_and_native_close_tools_share_parameter_shape() {
 }
 
 #[test]
-fn external_poll_keeps_empty_params_but_reports_unsupported_output() {
+fn external_poll_keeps_empty_params_and_matches_native_wake_metadata() {
     let native = function_tool(create_poll_event_tool(), "poll_event");
     let external = function_tool(create_poll_external_event_tool(), "poll_external_event");
 
@@ -270,21 +270,38 @@ fn external_poll_keeps_empty_params_but_reports_unsupported_output() {
     assert_object_params(&external);
     assert_eq!(property_shapes(&external), property_shapes(&native));
     assert_eq!(required_params(&external), required_params(&native));
-    assert_ne!(external.output_schema, native.output_schema);
-    assert_eq!(
-        external
-            .output_schema
-            .expect("poll_external_event output schema"),
-        json!({
-            "type": "object",
-            "properties": {
-                "supported": { "type": "boolean" },
-                "message": { "type": "string" }
-            },
-            "required": ["supported", "message"],
-            "additionalProperties": false
-        })
-    );
+    assert_eq!(external.output_schema, native.output_schema);
+}
+
+#[test]
+fn poll_event_output_schema_matches_thread_poll_event_result_json_keys() {
+    let tool = function_tool(create_poll_event_tool(), "poll_event");
+    let output_schema = tool.output_schema.expect("poll_event output schema");
+    let serialized = serde_json::to_value(thread_service_api::ThreadPollEventResult {
+        timed_out: false,
+        source_hint: Some("inter_agent".to_string()),
+        waited_ms: 1,
+        initial_timeout_ms: 10,
+        current_timeout_ms: 10,
+        hard_cap_timeout_ms: 20,
+    })
+    .expect("serialize poll event result");
+    let mut schema_keys = output_schema["required"]
+        .as_array()
+        .expect("required keys")
+        .iter()
+        .map(|key| key.as_str().expect("string key"))
+        .collect::<Vec<_>>();
+    let mut serialized_keys = serialized
+        .as_object()
+        .expect("serialized object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    schema_keys.sort_unstable();
+    serialized_keys.sort_unstable();
+
+    assert_eq!(schema_keys, serialized_keys);
 }
 
 #[test]
@@ -436,12 +453,12 @@ fn poll_event_tool_has_empty_object_params_and_wake_metadata() {
     assert_eq!(
         output_schema["required"],
         json!([
-            "timed_out",
-            "source_hint",
-            "waited_ms",
-            "initial_timeout_ms",
-            "current_timeout_ms",
-            "hard_cap_timeout_ms"
+            "timedOut",
+            "sourceHint",
+            "waitedMs",
+            "initialTimeoutMs",
+            "currentTimeoutMs",
+            "hardCapTimeoutMs"
         ])
     );
 }

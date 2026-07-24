@@ -86,7 +86,7 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
         assert!(external.capabilities.event_stream);
         assert!(!external.capabilities.compact);
         assert!(!external.capabilities.workflow);
-        assert!(!external.capabilities.poll_event);
+        assert!(external.capabilities.poll_event);
     }
 
     Ok(())

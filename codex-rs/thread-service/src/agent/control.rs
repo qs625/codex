@@ -23,6 +23,7 @@ use crate::agent::external::external_tool_result_input;
 use crate::agent::spawn_support::thread_spawn_source;
 use crate::runtime_shell_snapshot::ShellSnapshot;
 use crate::session::emit_subagent_session_started;
+use crate::session::session::ThreadWaitSource;
 use crate::thread::NewExternalRootThread;
 use crate::thread::NewThread;
 use crate::thread::ResumeThreadWithHistoryOptions;
@@ -178,6 +179,10 @@ struct ExternalListAgentsArgs {
 struct ExternalCloseAgentArgs {
     target: String,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalPollEventArgs {}
 
 struct ExternalToolContext {
     thread_id: ThreadId,
@@ -499,6 +504,8 @@ impl AgentControl {
                 self.external_agents.clear_active_turn(thread_id, &turn_id);
                 CodexErr::UnsupportedOperation(err)
             })?;
+        self.external_agents
+            .note_thread_wait_event(thread_id, ThreadWaitSource::UserInput);
         self.external_agents
             .update_last_task_message(thread_id, message);
         Ok(turn_id)
@@ -1636,11 +1643,18 @@ impl AgentControl {
                 )
             })?;
             let last_task_message = communication.content.clone();
+            let source = if communication.operation == InterAgentOperation::ChildCompletion {
+                ThreadWaitSource::ChildCompletion
+            } else {
+                ThreadWaitSource::InterAgent
+            };
             input_sink.send(communication.content).map_err(|err| {
                 CodexErr::UnsupportedOperation(format!(
                     "failed to deliver followup_task to external agent: {err}"
                 ))
             })?;
+            self.external_agents
+                .note_thread_wait_event(agent_id, source);
             self.external_agents
                 .update_last_task_message(agent_id, last_task_message);
             return Ok(agent_id.to_string());
@@ -1790,6 +1804,17 @@ impl AgentControl {
             return;
         };
         let parent_thread_id = run.parent_thread_id;
+        if self.external_agents.get(parent_thread_id).is_some() {
+            if let Err(err) = self
+                .send_inter_agent_communication(parent_thread_id, communication)
+                .await
+            {
+                warn!(
+                    "failed to notify external parent thread {parent_thread_id} of external agent completion: {err}"
+                );
+            }
+            return;
+        }
         if let Err(err) = state
             .submit_live_thread_op(
                 parent_thread_id,
@@ -1970,10 +1995,22 @@ impl AgentControl {
                     .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
                 Ok(json!({ "previous_status": previous_status }))
             }
-            ExternalToolName::PollExternalEvent => Err(FunctionCallError::RespondToModel(
-                "poll_external_event is not supported until external CLI sessions expose an interactive input channel"
-                    .to_string(),
-            )),
+            ExternalToolName::PollExternalEvent => {
+                let _args: ExternalPollEventArgs = parse_external_arguments(&call.arguments)?;
+                let result = self
+                    .external_agents
+                    .poll_event(
+                        sender.thread_id,
+                        thread_service_api::ThreadPollEventRequest {
+                            initial_timeout_ms: None,
+                            hard_cap_timeout_ms: None,
+                        },
+                    )
+                    .await
+                    .map_err(FunctionCallError::RespondToModel)?;
+                serde_json::to_value(result)
+                    .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))
+            }
         }
     }
 
