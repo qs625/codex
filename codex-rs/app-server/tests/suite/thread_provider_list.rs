@@ -91,6 +91,18 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
             "{external_id} should advertise root thread/start because the provider has a backend session transport"
         );
         assert!(
+            external.capabilities.send_input,
+            "{external_id} should accept text input for a live external root thread"
+        );
+        assert!(
+            external.capabilities.close_thread,
+            "{external_id} should support closing live external root threads"
+        );
+        assert!(
+            external.capabilities.list_children,
+            "{external_id} should list external collaboration children"
+        );
+        assert!(
             !external.capabilities.restore_thread,
             "{external_id} should not advertise live restore/reconnect support"
         );
@@ -102,6 +114,9 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
         assert!(!external.capabilities.compact);
         assert!(!external.capabilities.workflow);
         assert!(external.capabilities.poll_event);
+        assert!(!external.capabilities.command_session);
+        assert!(!external.capabilities.permissions);
+        assert!(!external.capabilities.dynamic_tools);
     }
 
     Ok(())

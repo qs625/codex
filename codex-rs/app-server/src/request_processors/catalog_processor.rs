@@ -430,22 +430,8 @@ impl CatalogRequestProcessor {
                 description: provider.description.to_string(),
                 agent_types: Vec::new(),
                 model_selection: external_model_selection.clone(),
-                capabilities: ThreadProviderCapabilities {
-                    start_thread: external_cli_thread_provider_supports_root_start(provider.id),
-                    send_input: true,
-                    close_thread: true,
-                    list_children: true,
-                    restore_thread: false,
-                    restore_snapshot: true,
-                    event_stream: true,
-                    spawn_child: true,
-                    compact: false,
-                    workflow: false,
-                    poll_event: true,
-                    command_session: false,
-                    permissions: false,
-                    dynamic_tools: false,
-                },
+                capabilities: external_cli_thread_provider_api_capabilities(provider.id)
+                    .expect("external CLI descriptor must have capabilities"),
             });
 
         let mut data = Vec::with_capacity(4);

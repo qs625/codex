@@ -170,6 +170,7 @@ use app_server_protocol::ThreadIncrementElicitationResponse;
 use app_server_protocol::ThreadInjectItemsParams;
 use app_server_protocol::ThreadInjectItemsResponse;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListCwdFilter;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
@@ -212,7 +213,6 @@ use app_server_protocol::ThreadSourceKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadTurnsItemsListParams;
 use app_server_protocol::ThreadTurnsListParams;
 use app_server_protocol::ThreadTurnsListResponse;
@@ -465,6 +465,82 @@ struct ExternalCliThreadProviderDescriptor {
     id: &'static str,
     display_name: &'static str,
     description: &'static str,
+    provider: codex_agent_runtime::SpawnAgentProvider,
+    capabilities: ExternalCliThreadProviderCapabilities,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExternalCliThreadProviderCapabilities {
+    start_thread: bool,
+    send_input: bool,
+    close_thread: bool,
+    list_children: bool,
+    restore_thread: bool,
+    restore_snapshot: bool,
+    event_stream: bool,
+    spawn_child: bool,
+    compact: bool,
+    workflow: bool,
+    poll_event: bool,
+    command_session: bool,
+    permissions: bool,
+    dynamic_tools: bool,
+    fork_thread: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternalCliRootThreadCapability {
+    StartThread,
+    RestoreThread,
+    ForkThread,
+}
+
+const EXTERNAL_CLI_THREAD_PROVIDER_CAPABILITIES: ExternalCliThreadProviderCapabilities =
+    ExternalCliThreadProviderCapabilities {
+        start_thread: true,
+        send_input: true,
+        close_thread: true,
+        list_children: true,
+        restore_thread: false,
+        restore_snapshot: true,
+        event_stream: true,
+        spawn_child: true,
+        compact: false,
+        workflow: false,
+        poll_event: true,
+        command_session: false,
+        permissions: false,
+        dynamic_tools: false,
+        fork_thread: false,
+    };
+
+impl ExternalCliThreadProviderCapabilities {
+    fn supports_root_capability(self, capability: ExternalCliRootThreadCapability) -> bool {
+        match capability {
+            ExternalCliRootThreadCapability::StartThread => self.start_thread,
+            ExternalCliRootThreadCapability::RestoreThread => self.restore_thread,
+            ExternalCliRootThreadCapability::ForkThread => self.fork_thread,
+        }
+    }
+
+    fn into_thread_provider_capabilities(self) -> ThreadProviderCapabilities {
+        ThreadProviderCapabilities {
+            start_thread: self.start_thread,
+            send_input: self.send_input,
+            close_thread: self.close_thread,
+            list_children: self.list_children,
+            restore_thread: self.restore_thread,
+            restore_snapshot: self.restore_snapshot,
+            event_stream: self.event_stream,
+            spawn_child: self.spawn_child,
+            compact: self.compact,
+            workflow: self.workflow,
+            poll_event: self.poll_event,
+            command_session: self.command_session,
+            permissions: self.permissions,
+            dynamic_tools: self.dynamic_tools,
+        }
+    }
 }
 
 const EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS: &[ExternalCliThreadProviderDescriptor] = &[
@@ -472,17 +548,22 @@ const EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS: &[ExternalCliThreadProviderDescr
         id: "claude_cli",
         display_name: "Claude Code",
         description: "External Claude CLI session normalized by the external-agent adapter.",
+        provider: codex_agent_runtime::SpawnAgentProvider::ClaudeCli,
+        capabilities: EXTERNAL_CLI_THREAD_PROVIDER_CAPABILITIES,
     },
     ExternalCliThreadProviderDescriptor {
         id: "opencode",
         display_name: "OpenCode",
         description: "External OpenCode session normalized by the external-agent adapter.",
+        provider: codex_agent_runtime::SpawnAgentProvider::Opencode,
+        capabilities: EXTERNAL_CLI_THREAD_PROVIDER_CAPABILITIES,
     },
     ExternalCliThreadProviderDescriptor {
         id: "codex_cli",
         display_name: "Codex CLI",
-        description:
-            "External official Codex CLI app-server session normalized by the external-agent adapter.",
+        description: "External official Codex CLI app-server session normalized by the external-agent adapter.",
+        provider: codex_agent_runtime::SpawnAgentProvider::CodexCli,
+        capabilities: EXTERNAL_CLI_THREAD_PROVIDER_CAPABILITIES,
     },
 ];
 
@@ -504,27 +585,32 @@ fn default_thread_list_model_providers(current_provider: &str) -> Vec<String> {
 }
 
 fn external_cli_thread_provider(id: &str) -> Option<codex_agent_runtime::SpawnAgentProvider> {
-    match id {
-        "claude_cli" => Some(codex_agent_runtime::SpawnAgentProvider::ClaudeCli),
-        "opencode" => Some(codex_agent_runtime::SpawnAgentProvider::Opencode),
-        "codex_cli" => Some(codex_agent_runtime::SpawnAgentProvider::CodexCli),
-        _ => None,
-    }
+    EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS
+        .iter()
+        .find(|provider| provider.id == id)
+        .map(|provider| provider.provider)
 }
 
-fn external_cli_thread_provider_supports_root_start(id: &str) -> bool {
-    external_cli_thread_provider(id).is_some_and(external_spawn_provider_supports_root_start)
+fn external_cli_thread_provider_capabilities(
+    id: &str,
+) -> Option<ExternalCliThreadProviderCapabilities> {
+    EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS
+        .iter()
+        .find(|provider| provider.id == id)
+        .map(|provider| provider.capabilities)
 }
 
-fn external_spawn_provider_supports_root_start(
-    provider: codex_agent_runtime::SpawnAgentProvider,
+fn external_cli_thread_provider_api_capabilities(id: &str) -> Option<ThreadProviderCapabilities> {
+    external_cli_thread_provider_capabilities(id)
+        .map(ExternalCliThreadProviderCapabilities::into_thread_provider_capabilities)
+}
+
+fn external_cli_thread_provider_supports_root_capability(
+    id: &str,
+    capability: ExternalCliRootThreadCapability,
 ) -> bool {
-    matches!(
-        provider,
-        codex_agent_runtime::SpawnAgentProvider::ClaudeCli
-            | codex_agent_runtime::SpawnAgentProvider::Opencode
-            | codex_agent_runtime::SpawnAgentProvider::CodexCli
-    )
+    external_cli_thread_provider_capabilities(id)
+        .is_some_and(|capabilities| capabilities.supports_root_capability(capability))
 }
 
 pub(crate) use account_processor::AccountRequestProcessor;
@@ -780,12 +866,14 @@ mod build_api_turns_from_rollout_items_tests {
         let turns = build_api_turns_from_rollout_items(&persisted);
 
         assert_eq!(turns.len(), 1);
-        let [ThreadItem::CommandExecution {
-            status,
-            aggregated_output,
-            exit_code,
-            ..
-        }] = turns[0].items.as_slice()
+        let [
+            ThreadItem::CommandExecution {
+                status,
+                aggregated_output,
+                exit_code,
+                ..
+            },
+        ] = turns[0].items.as_slice()
         else {
             panic!("expected one command execution item");
         };

@@ -25,30 +25,33 @@ impl RootThreadProviderCapability {
     }
 }
 
+impl From<RootThreadProviderCapability> for ExternalCliRootThreadCapability {
+    fn from(capability: RootThreadProviderCapability) -> Self {
+        match capability {
+            RootThreadProviderCapability::StartThread => Self::StartThread,
+            RootThreadProviderCapability::RestoreThread => Self::RestoreThread,
+            RootThreadProviderCapability::ForkThread => Self::ForkThread,
+        }
+    }
+}
+
 fn resolve_root_thread_provider(
     thread_provider: Option<&str>,
     capability: RootThreadProviderCapability,
 ) -> Result<RootThreadProviderRoute, JSONRPCErrorError> {
     match thread_provider {
         None | Some("native") => Ok(RootThreadProviderRoute::Native),
-        Some(provider) if is_external_cli_thread_provider_id(provider) => match capability {
-            RootThreadProviderCapability::StartThread
-                if external_cli_thread_provider_supports_root_start(provider) =>
-            {
-                Ok(RootThreadProviderRoute::External(
-                    external_cli_thread_provider(provider).expect("known external CLI provider"),
-                ))
+        Some(provider) if is_external_cli_thread_provider_id(provider) => {
+            if !external_cli_thread_provider_supports_root_capability(provider, capability.into()) {
+                return Err(invalid_request(format!(
+                    "thread provider '{provider}' is advertised but does not support {} yet",
+                    capability.method()
+                )));
             }
-            RootThreadProviderCapability::StartThread => Err(invalid_request(format!(
-                "thread provider '{provider}' is advertised but does not support {} yet",
-                capability.method()
-            ))),
-            RootThreadProviderCapability::RestoreThread
-            | RootThreadProviderCapability::ForkThread => Err(invalid_request(format!(
-                "thread provider '{provider}' is advertised but does not support {} yet",
-                capability.method()
-            ))),
-        },
+            Ok(RootThreadProviderRoute::External(
+                external_cli_thread_provider(provider).expect("known external CLI provider"),
+            ))
+        }
         Some(provider) => Err(invalid_request(format!(
             "unknown thread provider '{provider}' for {}",
             capability.method()
@@ -181,9 +184,18 @@ mod root_thread_provider_route_tests {
             ),
         ] {
             assert!(
-                external_cli_thread_provider_supports_root_start(provider),
+                external_cli_thread_provider_supports_root_capability(
+                    provider,
+                    ExternalCliRootThreadCapability::StartThread,
+                ),
                 "{provider} should advertise root thread/start because route accepts it"
             );
+            let capabilities = external_cli_thread_provider_capabilities(provider)
+                .unwrap_or_else(|| panic!("{provider} should have shared capabilities"));
+            assert!(capabilities.start_thread);
+            assert!(!capabilities.restore_thread);
+            assert!(capabilities.restore_snapshot);
+            assert!(!capabilities.fork_thread);
             let route = resolve_root_thread_provider(
                 Some(provider),
                 RootThreadProviderCapability::StartThread,
@@ -192,21 +204,23 @@ mod root_thread_provider_route_tests {
             assert_eq!(route, expected_route);
         }
 
-        let resume_error = resolve_root_thread_provider(
-            Some("claude_cli"),
-            RootThreadProviderCapability::RestoreThread,
-        )
-        .unwrap_err();
-        assert_eq!(resume_error.code, INVALID_REQUEST_ERROR_CODE);
-        assert!(resume_error.message.contains("thread/resume"));
+        for provider in ["claude_cli", "opencode", "codex_cli"] {
+            let resume_error = resolve_root_thread_provider(
+                Some(provider),
+                RootThreadProviderCapability::RestoreThread,
+            )
+            .unwrap_err();
+            assert_eq!(resume_error.code, INVALID_REQUEST_ERROR_CODE);
+            assert!(resume_error.message.contains("thread/resume"));
 
-        let fork_error = resolve_root_thread_provider(
-            Some("opencode"),
-            RootThreadProviderCapability::ForkThread,
-        )
-        .unwrap_err();
-        assert_eq!(fork_error.code, INVALID_REQUEST_ERROR_CODE);
-        assert!(fork_error.message.contains("thread/fork"));
+            let fork_error = resolve_root_thread_provider(
+                Some(provider),
+                RootThreadProviderCapability::ForkThread,
+            )
+            .unwrap_err();
+            assert_eq!(fork_error.code, INVALID_REQUEST_ERROR_CODE);
+            assert!(fork_error.message.contains("thread/fork"));
+        }
     }
 
     #[test]
