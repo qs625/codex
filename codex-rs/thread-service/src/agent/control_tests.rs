@@ -225,21 +225,40 @@ async fn persist_external_child_for_restart(
     agent_path: &str,
     status: AgentStatus,
 ) -> (ThreadId, AgentPath) {
+    persist_external_child_for_restart_with_provider(
+        harness,
+        root_thread_id,
+        agent_path,
+        SpawnAgentProvider::ClaudeCli,
+        status,
+    )
+    .await
+}
+
+async fn persist_external_child_for_restart_with_provider(
+    harness: &AgentControlHarness,
+    root_thread_id: ThreadId,
+    agent_path: &str,
+    provider: SpawnAgentProvider,
+    status: AgentStatus,
+) -> (ThreadId, AgentPath) {
     let external_thread_id = ThreadId::new();
     let external_agent_path = AgentPath::try_from(agent_path).expect("agent path");
+    let provider_id = provider_label(provider).to_string();
     let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
         parent_thread_id: root_thread_id,
         depth: 1,
         agent_path: Some(external_agent_path.clone()),
         agent_nickname: Some("worker".to_string()),
-        agent_role: Some("claude_cli".to_string()),
+        agent_role: Some(provider_id.clone()),
     });
-    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let mut external_config = ExternalSpawnConfig::from_config(&harness.config);
+    external_config.model_provider_id = provider_id.clone();
     let agent_metadata = AgentMetadata {
         agent_id: Some(external_thread_id),
         agent_path: Some(external_agent_path.clone()),
         agent_nickname: Some("worker".to_string()),
-        agent_role: Some("claude_cli".to_string()),
+        agent_role: Some(provider_id),
         last_task_message: Some("persist me".to_string()),
         counted: true,
         ..Default::default()
@@ -266,7 +285,7 @@ async fn persist_external_child_for_restart(
             thread_id: external_thread_id,
             parent_thread_id: root_thread_id,
             agent_path: external_agent_path.clone(),
-            provider: SpawnAgentProvider::ClaudeCli,
+            provider,
             depth: 1,
             spawn_config: Some(external_config),
             input_sink: None,
@@ -3369,6 +3388,143 @@ async fn external_running_agent_path_rejects_after_restart_without_live_process(
             .get_agent_metadata(external_thread_id)
             .is_none(),
         "non-reconnectable external agent should not be registered as live metadata",
+    );
+}
+
+#[tokio::test]
+async fn external_interrupted_agent_is_listed_as_interrupted_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let (external_thread_id, external_agent_path) = persist_external_child_for_restart(
+        &harness,
+        root_thread_id,
+        "/root/external_interrupted_reference",
+        AgentStatus::Interrupted,
+    )
+    .await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let agents = restarted_control
+        .list_agents(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some("external_interrupted_reference"),
+        )
+        .await
+        .expect("list persisted external agents");
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].agent_name, external_agent_path.to_string());
+    assert_eq!(
+        agents[0].lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: protocol::protocol::ThreadLifecycleFinalStatus::Interrupted,
+        }
+    );
+
+    assert!(
+        restarted_manager
+            .get_thread(external_thread_id)
+            .await
+            .is_err(),
+        "interrupted external path should stay read-only after restart",
+    );
+
+    let err = restarted_control
+        .resolve_agent_reference(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some(harness.config.clone()),
+            external_agent_path.as_str(),
+        )
+        .await
+        .expect_err("interrupted external agent should not resolve as terminal read-only");
+    let message = err.to_string();
+    assert!(
+        message.contains("interrupted") && message.contains("cannot reconnect"),
+        "unexpected error: {err}",
+    );
+    assert!(
+        restarted_manager
+            .get_thread(external_thread_id)
+            .await
+            .is_err(),
+        "failed interrupted path resolution should not create a native live thread",
+    );
+    assert!(
+        restarted_control
+            .get_agent_metadata(external_thread_id)
+            .is_none(),
+        "non-reconnectable interrupted external agent should not register metadata",
+    );
+}
+
+#[tokio::test]
+async fn external_running_agent_path_with_descriptor_rejects_as_restore_disabled_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let (external_thread_id, external_agent_path) =
+        persist_external_child_for_restart_with_provider(
+            &harness,
+            root_thread_id,
+            "/root/external_running_opencode_reference",
+            SpawnAgentProvider::Opencode,
+            AgentStatus::Running,
+        )
+        .await;
+    harness
+        .control
+        .persist_external_reconnect_descriptor(
+            external_thread_id,
+            opencode_reconnect_descriptor("opencode-session-456"),
+        )
+        .await
+        .expect("persist reconnect descriptor");
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let agents = restarted_control
+        .list_agents(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some("external_running_opencode_reference"),
+        )
+        .await
+        .expect("list persisted external agents");
+    assert_eq!(agents.len(), 1);
+    assert_eq!(
+        agents[0].lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: protocol::protocol::ThreadLifecycleFinalStatus::Interrupted,
+        }
+    );
+
+    let err = restarted_control
+        .resolve_agent_reference(
+            root_thread_id,
+            &SessionSource::Exec,
+            Some(harness.config.clone()),
+            external_agent_path.as_str(),
+        )
+        .await
+        .expect_err("descriptor-present external agent should still not reconnect");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("reconnect descriptor is present")
+            && message.contains("external live restore is disabled"),
+        "unexpected error: {err}",
+    );
+    assert!(
+        restarted_manager
+            .get_thread(external_thread_id)
+            .await
+            .is_err(),
+        "failed external path resolution should not create a native live thread",
+    );
+    assert!(
+        restarted_control
+            .get_agent_metadata(external_thread_id)
+            .is_none(),
+        "restore-disabled external agent should not be registered as live metadata",
     );
 }
 

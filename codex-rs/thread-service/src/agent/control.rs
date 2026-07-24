@@ -115,9 +115,11 @@ use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::ThreadLifecycleRuntime;
+use thread_store_api::ExternalLiveRestoreEligibility;
 use thread_store_api::ReadThreadParams;
 use thread_store_api::SharedLiveThread;
 use thread_store_api::ThreadMetadataPatch;
+use thread_store_api::external_live_restore_eligibility;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tool_service_api::FunctionCallError;
@@ -2364,26 +2366,32 @@ impl AgentControl {
                 include_history: true,
             })
             .await?;
-        if !is_persisted_external_agent(&stored_thread) {
+        let eligibility = external_live_restore_eligibility(&stored_thread);
+        if !eligibility.is_external() {
             return Ok(None);
         }
 
-        let terminal_status = stored_thread.history.as_ref().and_then(|history| {
-            history
-                .items
-                .iter()
-                .filter_map(|item| match item {
-                    RolloutItem::EventMsg(event) => agent_status_from_event(event),
-                    _ => None,
-                })
-                .next_back()
-                .filter(is_final)
-        });
-        if terminal_status.is_none() {
-            return Err(CodexErr::UnsupportedOperation(format!(
-                "external agent `{}` was interrupted after restart and cannot reconnect to its external provider session",
-                agent_path.as_str()
-            )));
+        match eligibility {
+            ExternalLiveRestoreEligibility::TerminalReadOnly => {}
+            ExternalLiveRestoreEligibility::RunningNoDescriptor => {
+                return Err(CodexErr::UnsupportedOperation(format!(
+                    "external agent `{}` was interrupted after restart and cannot reconnect to its external provider session because no reconnect descriptor was persisted",
+                    agent_path.as_str()
+                )));
+            }
+            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled => {
+                return Err(CodexErr::UnsupportedOperation(format!(
+                    "external agent `{}` was interrupted after restart; reconnect descriptor is present but external live restore is disabled",
+                    agent_path.as_str()
+                )));
+            }
+            ExternalLiveRestoreEligibility::RunningReconnectable => {
+                return Err(CodexErr::UnsupportedOperation(format!(
+                    "external agent `{}` has reconnect facts but external live restore is not implemented",
+                    agent_path.as_str()
+                )));
+            }
+            ExternalLiveRestoreEligibility::NotExternal => return Ok(None),
         }
 
         let Some(state_db_ctx) = state.thread_state_runtime() else {
@@ -2896,16 +2904,32 @@ impl AgentControl {
             })
             .await
             .ok()?;
-        let is_external_agent = is_persisted_external_agent(&stored_thread);
+        let eligibility = external_live_restore_eligibility(&stored_thread);
         let history = stored_thread.history?;
-        let mut status = history.items.iter().filter_map(|item| match item {
-            protocol::protocol::RolloutItem::EventMsg(event) => agent_status_from_event(event),
-            _ => None,
-        });
-        status
-            .next_back()
+        let latest_status = history
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                protocol::protocol::RolloutItem::EventMsg(event) => agent_status_from_event(event),
+                _ => None,
+            })
+            .next_back();
+        latest_status
+            .clone()
             .filter(is_final)
-            .or_else(|| is_external_agent.then_some(AgentStatus::Interrupted))
+            .or_else(|| {
+                matches!(latest_status, Some(AgentStatus::Interrupted))
+                    .then_some(AgentStatus::Interrupted)
+            })
+            .or_else(|| match eligibility {
+                ExternalLiveRestoreEligibility::RunningNoDescriptor
+                | ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled
+                | ExternalLiveRestoreEligibility::RunningReconnectable => {
+                    Some(AgentStatus::Interrupted)
+                }
+                ExternalLiveRestoreEligibility::NotExternal
+                | ExternalLiveRestoreEligibility::TerminalReadOnly => None,
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3222,18 +3246,6 @@ fn persisted_agent_metadata_from_state_metadata(
         agent_role: metadata.agent_role.clone(),
         ..Default::default()
     })
-}
-
-fn is_persisted_external_agent(thread: &thread_store_api::StoredThread) -> bool {
-    let is_external_label = |label: &str| matches!(label, "codex_cli" | "claude_cli" | "opencode");
-    matches!(
-        &thread.source,
-        SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. })
-    ) && thread
-        .agent_role
-        .as_deref()
-        .or(thread.agent_nickname.as_deref())
-        .is_some_and(is_external_label)
 }
 
 #[cfg(test)]

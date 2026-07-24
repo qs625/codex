@@ -1,4 +1,6 @@
 use super::*;
+use thread_store_api::ExternalLiveRestoreEligibility;
+use thread_store_api::external_live_restore_eligibility;
 
 impl ThreadRequestProcessor {
     pub(super) async fn thread_list_response_inner(
@@ -694,8 +696,26 @@ impl ThreadRequestProcessor {
             return;
         }
         if super::start::is_persisted_external_root_thread(&stored_thread) {
+            let eligibility = external_live_restore_eligibility(&stored_thread);
+            let skip_reason = match eligibility {
+                ExternalLiveRestoreEligibility::RunningNoDescriptor => {
+                    "no reconnect descriptor was persisted"
+                }
+                ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled => {
+                    "reconnect descriptor is present but external live restore is disabled"
+                }
+                ExternalLiveRestoreEligibility::TerminalReadOnly => {
+                    "external thread is already terminal and read-only"
+                }
+                ExternalLiveRestoreEligibility::RunningReconnectable => {
+                    "external live restore is not implemented"
+                }
+                ExternalLiveRestoreEligibility::NotExternal => {
+                    "provider reconnect is not supported"
+                }
+            };
             info!(
-                "skipping live startup restore for persisted external root thread {thread_id}; provider reconnect is not supported"
+                "skipping live startup restore for persisted external root thread {thread_id}; {skip_reason}"
             );
             return;
         }

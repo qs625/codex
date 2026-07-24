@@ -7,6 +7,7 @@ use protocol::dynamic_tools::DynamicToolSpec;
 use protocol::models::BaseInstructions;
 use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::AskForApproval;
+use protocol::protocol::EventMsg;
 use protocol::protocol::ExternalReconnectDescriptor;
 use protocol::protocol::GitInfo;
 use protocol::protocol::RolloutItem;
@@ -381,6 +382,107 @@ pub struct StoredThread {
     pub history: Option<StoredThreadHistory>,
 }
 
+/// Internal classification for persisted external threads that may have been running when the
+/// server restarted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExternalLiveRestoreEligibility {
+    /// The stored thread is not an external provider thread.
+    NotExternal,
+    /// The external thread has already reached a persisted terminal status and is read-only.
+    TerminalReadOnly,
+    /// The external thread has no persisted provider-owned reconnect identity.
+    RunningNoDescriptor,
+    /// A reconnect identity exists, but this build does not support live external restore yet.
+    RunningDescriptorPresentRestoreDisabled,
+    /// Reserved for the future provider reconnect path.
+    RunningReconnectable,
+}
+
+impl ExternalLiveRestoreEligibility {
+    pub fn diagnostic(self) -> &'static str {
+        match self {
+            Self::NotExternal => "not-external",
+            Self::TerminalReadOnly => "terminal-read-only",
+            Self::RunningNoDescriptor => "running-no-descriptor",
+            Self::RunningDescriptorPresentRestoreDisabled => {
+                "running-descriptor-present-restore-disabled"
+            }
+            Self::RunningReconnectable => "running-reconnectable",
+        }
+    }
+
+    pub fn is_external(self) -> bool {
+        !matches!(self, Self::NotExternal)
+    }
+}
+
+/// Classifies whether a persisted external thread has enough typed facts for future live restore.
+///
+/// This helper only reads store/protocol facts. It does not imply that reconnect is currently
+/// enabled; descriptor-present running threads still remain read-only until provider restore is
+/// implemented.
+pub fn external_live_restore_eligibility(thread: &StoredThread) -> ExternalLiveRestoreEligibility {
+    if !is_persisted_external_thread(thread) {
+        return ExternalLiveRestoreEligibility::NotExternal;
+    }
+
+    let Some(history) = thread.history.as_ref() else {
+        return ExternalLiveRestoreEligibility::RunningNoDescriptor;
+    };
+    if history.items.iter().any(is_external_terminal_item) {
+        return ExternalLiveRestoreEligibility::TerminalReadOnly;
+    }
+    if latest_external_reconnect_descriptor(&history.items).is_some() {
+        return ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled;
+    }
+
+    ExternalLiveRestoreEligibility::RunningNoDescriptor
+}
+
+pub fn is_persisted_external_thread(thread: &StoredThread) -> bool {
+    is_persisted_external_root_thread(thread) || is_persisted_external_subagent_thread(thread)
+}
+
+pub fn latest_external_reconnect_descriptor(
+    items: &[RolloutItem],
+) -> Option<&ExternalReconnectDescriptor> {
+    items.iter().rev().find_map(|item| match item {
+        RolloutItem::SessionMeta(meta_line) => meta_line.meta.external_reconnect.as_ref(),
+        _ => None,
+    })
+}
+
+fn is_persisted_external_root_thread(thread: &StoredThread) -> bool {
+    is_external_provider_id(thread.model_provider.as_str())
+        && !thread.source.is_non_root_agent()
+        && thread.thread_source == Some(ThreadSource::User)
+        && thread.agent_path.is_none()
+        && thread.agent_role.is_none()
+        && thread.agent_nickname.is_none()
+}
+
+fn is_persisted_external_subagent_thread(thread: &StoredThread) -> bool {
+    matches!(thread.source, SessionSource::SubAgent(_))
+        && thread
+            .agent_role
+            .as_deref()
+            .or(thread.agent_nickname.as_deref())
+            .is_some_and(is_external_provider_id)
+}
+
+fn is_external_provider_id(label: &str) -> bool {
+    matches!(label, "codex_cli" | "claude_cli" | "opencode")
+}
+
+fn is_external_terminal_item(item: &RolloutItem) -> bool {
+    matches!(
+        item,
+        RolloutItem::EventMsg(
+            EventMsg::TurnComplete(_) | EventMsg::ExternalTerminalStatus(_)
+        )
+    )
+}
+
 /// Optional field patch where omission leaves a value unchanged and `Some(None)` clears it.
 pub type ClearableField<T> = Option<Option<T>>;
 
@@ -653,7 +755,18 @@ pub struct ArchiveThreadParams {
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
     use pretty_assertions::assert_eq;
+    use protocol::protocol::ExternalProviderSessionIdentity;
+    use protocol::protocol::ExternalReconnectTransport;
+    use protocol::protocol::ExternalTerminalStatus;
+    use protocol::protocol::ExternalTerminalStatusEvent;
+    use protocol::protocol::SessionMeta;
+    use protocol::protocol::SessionMetaLine;
+    use protocol::protocol::SubAgentSource;
+    use protocol::protocol::TurnAbortReason;
+    use protocol::protocol::TurnAbortedEvent;
+    use protocol::protocol::TurnCompleteEvent;
     use protocol::subscriptions::PersistedSubscription;
     use serde_json::json;
 
@@ -795,5 +908,205 @@ mod tests {
                 label: Some("new".to_string()),
             }])
         );
+    }
+
+    #[test]
+    fn external_live_restore_eligibility_classifies_not_external() {
+        let thread = stored_thread(SessionSource::default(), "openai", None, None, None, vec![]);
+
+        assert_eq!(
+            external_live_restore_eligibility(&thread),
+            ExternalLiveRestoreEligibility::NotExternal
+        );
+    }
+
+    #[test]
+    fn external_live_restore_eligibility_classifies_terminal_read_only() {
+        let thread = stored_thread(
+            external_subagent_source(),
+            "openai",
+            Some("opencode"),
+            Some("/root/external"),
+            None,
+            vec![RolloutItem::EventMsg(EventMsg::TurnComplete(
+                TurnCompleteEvent {
+                    turn_id: "turn-1".to_string(),
+                    last_agent_message: Some("done".to_string()),
+                    completed_at: Some(1),
+                    duration_ms: None,
+                    time_to_first_token_ms: None,
+                },
+            ))],
+        );
+
+        assert_eq!(
+            external_live_restore_eligibility(&thread),
+            ExternalLiveRestoreEligibility::TerminalReadOnly
+        );
+    }
+
+    #[test]
+    fn external_live_restore_eligibility_classifies_external_terminal_status_read_only() {
+        let thread = stored_thread(
+            external_subagent_source(),
+            "openai",
+            Some("opencode"),
+            Some("/root/external"),
+            None,
+            vec![RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(
+                ExternalTerminalStatusEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".to_string(),
+                    status: ExternalTerminalStatus::Errored,
+                    message: Some("failed".to_string()),
+                    terminal_at_ms: 1,
+                },
+            ))],
+        );
+
+        assert_eq!(
+            external_live_restore_eligibility(&thread),
+            ExternalLiveRestoreEligibility::TerminalReadOnly
+        );
+    }
+
+    #[test]
+    fn external_live_restore_eligibility_classifies_running_no_descriptor() {
+        let thread = stored_thread(
+            external_subagent_source(),
+            "openai",
+            Some("claude_cli"),
+            Some("/root/external"),
+            None,
+            vec![],
+        );
+
+        assert_eq!(
+            external_live_restore_eligibility(&thread),
+            ExternalLiveRestoreEligibility::RunningNoDescriptor
+        );
+    }
+
+    #[test]
+    fn external_live_restore_eligibility_classifies_interrupted_as_non_reconnectable() {
+        let thread = stored_thread(
+            external_subagent_source(),
+            "openai",
+            Some("opencode"),
+            Some("/root/external"),
+            None,
+            vec![RolloutItem::EventMsg(EventMsg::TurnAborted(
+                TurnAbortedEvent {
+                    turn_id: Some("turn-1".to_string()),
+                    reason: TurnAbortReason::Interrupted,
+                    completed_at: Some(1),
+                    duration_ms: None,
+                },
+            ))],
+        );
+
+        assert_eq!(
+            external_live_restore_eligibility(&thread),
+            ExternalLiveRestoreEligibility::RunningNoDescriptor
+        );
+    }
+
+    #[test]
+    fn external_live_restore_eligibility_classifies_descriptor_present_restore_disabled() {
+        let thread = stored_thread(
+            external_subagent_source(),
+            "openai",
+            Some("opencode"),
+            Some("/root/external"),
+            None,
+            vec![session_meta_with_descriptor()],
+        );
+
+        assert_eq!(
+            external_live_restore_eligibility(&thread),
+            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled
+        );
+    }
+
+    #[test]
+    fn external_live_restore_eligibility_classifies_external_root_with_descriptor() {
+        let thread = stored_thread(
+            SessionSource::default(),
+            "opencode",
+            None,
+            None,
+            Some(ThreadSource::User),
+            vec![session_meta_with_descriptor()],
+        );
+
+        assert_eq!(
+            external_live_restore_eligibility(&thread),
+            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled
+        );
+    }
+
+    fn external_subagent_source() -> SessionSource {
+        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        })
+    }
+
+    fn session_meta_with_descriptor() -> RolloutItem {
+        RolloutItem::SessionMeta(SessionMetaLine {
+            meta: SessionMeta {
+                id: ThreadId::new(),
+                external_reconnect: Some(ExternalReconnectDescriptor {
+                    provider: "opencode".to_string(),
+                    transport: ExternalReconnectTransport::OpencodeHttp,
+                    session_identity: ExternalProviderSessionIdentity {
+                        session_id: "provider-session".to_string(),
+                    },
+                }),
+                ..SessionMeta::default()
+            },
+            git: None,
+        })
+    }
+
+    fn stored_thread(
+        source: SessionSource,
+        model_provider: &str,
+        agent_role: Option<&str>,
+        agent_path: Option<&str>,
+        thread_source: Option<ThreadSource>,
+        items: Vec<RolloutItem>,
+    ) -> StoredThread {
+        let thread_id = ThreadId::new();
+        StoredThread {
+            thread_id,
+            rollout_path: None,
+            forked_from_id: None,
+            preview: String::new(),
+            name: None,
+            model_provider: model_provider.to_string(),
+            model: None,
+            reasoning_effort: None,
+            created_at: Utc.timestamp_opt(0, 0).single().expect("valid timestamp"),
+            updated_at: Utc.timestamp_opt(0, 0).single().expect("valid timestamp"),
+            archived_at: None,
+            cwd: PathBuf::new(),
+            cli_version: "0.0.0".to_string(),
+            source,
+            thread_source,
+            agent_nickname: None,
+            agent_role: agent_role.map(ToOwned::to_owned),
+            agent_path: agent_path.map(ToOwned::to_owned),
+            git_info: None,
+            approval_mode: AskForApproval::default(),
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            token_usage: None,
+            first_user_message: None,
+            skills: Vec::new(),
+            history: Some(StoredThreadHistory { thread_id, items }),
+        }
     }
 }
