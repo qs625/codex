@@ -1058,7 +1058,8 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
         && matches!(
             thread.lifecycle_status,
             ThreadLifecycleStatus::Final {
-                result: app_server_protocol::ThreadLifecycleFinalStatus::Shutdown,
+                result: app_server_protocol::ThreadLifecycleFinalStatus::Shutdown
+                    | app_server_protocol::ThreadLifecycleFinalStatus::Interrupted,
             }
         )
     {

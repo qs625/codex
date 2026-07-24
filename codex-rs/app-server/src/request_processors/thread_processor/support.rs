@@ -194,24 +194,163 @@ pub(super) fn normalize_thread_turns_status(
     }
 }
 
-pub(super) fn apply_persisted_thread_lifecycle_status(
-    thread: &mut Thread,
-    items: &[RolloutItem],
-) {
-    if persisted_shutdown_agent_status_from_rollout_items(items).is_some() {
-        thread.lifecycle_status =
-            super::ops::thread_lifecycle_status_from_agent_status(&AgentStatus::Shutdown);
+pub(super) fn apply_persisted_thread_lifecycle_status(thread: &mut Thread, items: &[RolloutItem]) {
+    match persisted_terminal_agent_status_from_rollout_items(items) {
+        Some(AgentStatus::Shutdown) => {
+            thread.lifecycle_status =
+                super::ops::thread_lifecycle_status_from_agent_status(&AgentStatus::Shutdown);
+        }
+        Some(_) => {}
+        None if is_persisted_external_root_thread(thread) => {
+            thread.lifecycle_status =
+                super::ops::thread_lifecycle_status_from_agent_status(&AgentStatus::Interrupted);
+        }
+        None => {}
     }
 }
 
-fn persisted_shutdown_agent_status_from_rollout_items(
+fn persisted_terminal_agent_status_from_rollout_items(
     items: &[RolloutItem],
 ) -> Option<AgentStatus> {
     items.iter().rev().find_map(|item| match item {
         RolloutItem::EventMsg(event) => codex_agent_runtime::agent_status_from_event(event)
-            .filter(|status| matches!(status, AgentStatus::Shutdown)),
+            .filter(is_persisted_terminal_agent_status),
         _ => None,
     })
+}
+
+fn is_persisted_terminal_agent_status(status: &AgentStatus) -> bool {
+    matches!(
+        status,
+        AgentStatus::Completed(_)
+            | AgentStatus::Errored(_)
+            | AgentStatus::Interrupted
+            | AgentStatus::Shutdown
+    )
+}
+
+fn is_persisted_external_root_thread(thread: &Thread) -> bool {
+    external_cli_thread_provider(&thread.model_provider).is_some()
+        && thread.thread_source == Some(app_server_protocol::ThreadSource::User)
+        && thread.agent_path.is_none()
+        && thread.agent_role.is_none()
+        && thread.agent_nickname.is_none()
+}
+
+#[cfg(test)]
+mod persisted_lifecycle_status_tests {
+    use super::*;
+    use app_server_protocol::ThreadLifecycleFinalStatus;
+    use protocol::protocol::ExternalTerminalStatus;
+    use protocol::protocol::ExternalTerminalStatusEvent;
+    use protocol::protocol::TurnCompleteEvent;
+
+    fn external_root_thread() -> Thread {
+        let cwd = AbsolutePathBuf::try_from(PathBuf::from("/tmp")).expect("absolute cwd");
+        Thread {
+            id: "thread-id".to_string(),
+            session_id: "thread-id".to_string(),
+            forked_from_id: None,
+            preview: String::new(),
+            ephemeral: false,
+            model_provider: "claude_cli".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::NotLoaded,
+            path: None,
+            cwd,
+            cli_version: "0.0.0".to_string(),
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            source: protocol::protocol::SessionSource::VSCode.into(),
+            thread_source: Some(app_server_protocol::ThreadSource::User),
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            turns: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn external_root_without_terminal_fact_projects_interrupted() {
+        let mut thread = external_root_thread();
+
+        apply_persisted_thread_lifecycle_status(&mut thread, &[]);
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            }
+        );
+    }
+
+    #[test]
+    fn external_root_shutdown_terminal_fact_projects_shutdown() {
+        let mut thread = external_root_thread();
+        let thread_id = ThreadId::new();
+        let items = vec![RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::ExternalTerminalStatus(ExternalTerminalStatusEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                status: ExternalTerminalStatus::Shutdown,
+                message: None,
+                terminal_at_ms: 1,
+            }),
+        )];
+
+        apply_persisted_thread_lifecycle_status(&mut thread, &items);
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Shutdown,
+            }
+        );
+    }
+
+    #[test]
+    fn external_root_non_shutdown_terminal_fact_does_not_fallback_to_interrupted() {
+        let mut errored_thread = external_root_thread();
+        let thread_id = ThreadId::new();
+        let errored_items = vec![RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::ExternalTerminalStatus(ExternalTerminalStatusEvent {
+                thread_id,
+                turn_id: "turn-1".to_string(),
+                status: ExternalTerminalStatus::Errored,
+                message: Some("provider failed".to_string()),
+                terminal_at_ms: 1,
+            }),
+        )];
+
+        apply_persisted_thread_lifecycle_status(&mut errored_thread, &errored_items);
+
+        assert_eq!(
+            errored_thread.lifecycle_status,
+            ThreadLifecycleStatus::NotLoaded
+        );
+
+        let mut completed_thread = external_root_thread();
+        let completed_items = vec![RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
+                last_agent_message: Some("done".to_string()),
+                completed_at: Some(1),
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )];
+
+        apply_persisted_thread_lifecycle_status(&mut completed_thread, &completed_items);
+
+        assert_eq!(
+            completed_thread.lifecycle_status,
+            ThreadLifecycleStatus::NotLoaded
+        );
+    }
 }
 
 pub(super) enum ThreadReadViewError {

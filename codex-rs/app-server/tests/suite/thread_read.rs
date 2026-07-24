@@ -31,6 +31,7 @@ use app_server_protocol::ThreadSkill;
 use app_server_protocol::ThreadSkillKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadLifecycleFinalStatus;
 use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadTurnsItemsListParams;
@@ -185,6 +186,30 @@ async fn read_thread(
     Ok(thread)
 }
 
+async fn list_threads(mcp: &mut McpProcess) -> Result<Vec<app_server_protocol::Thread>> {
+    let list_id = mcp
+        .send_thread_list_request(ThreadListParams {
+            cursor: None,
+            limit: None,
+            sort_key: None,
+            sort_direction: None,
+            model_providers: Some(Vec::new()),
+            source_kinds: None,
+            archived: None,
+            cwd: None,
+            use_state_db_only: false,
+            search_term: None,
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadListResponse { data, .. } = to_response::<ThreadListResponse>(list_resp)?;
+    Ok(data)
+}
+
 async fn try_read_thread(
     mcp: &mut McpProcess,
     thread_id: &str,
@@ -232,7 +257,9 @@ fn assert_external_root_metadata(
     assert_eq!(thread.agent_path, None);
     assert_eq!(thread.agent_role, None);
     let expected_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
-    assert_eq!(thread.cwd, expected_cwd.try_into().expect("absolute cwd"));
+    let actual_cwd =
+        std::fs::canonicalize(thread.cwd.as_path()).unwrap_or_else(|_| thread.cwd.to_path_buf());
+    assert_eq!(actual_cwd, expected_cwd);
     assert!(!thread.ephemeral);
     assert!(thread.path.as_ref().expect("thread path").is_absolute());
 }
@@ -414,7 +441,9 @@ async fn thread_read_hidden_external_root_restores_text_turn_after_restart() -> 
     assert_eq!(reloaded_summary.turns, Vec::new());
     assert_eq!(
         reloaded_summary.lifecycle_status,
-        ThreadLifecycleStatus::NotLoaded
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        }
     );
 
     let reloaded_with_turns =
@@ -423,7 +452,22 @@ async fn thread_read_hidden_external_root_restores_text_turn_after_restart() -> 
     assert_single_user_message_turn(&reloaded_with_turns, input_text);
     assert_eq!(
         reloaded_with_turns.lifecycle_status,
-        ThreadLifecycleStatus::NotLoaded
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        }
+    );
+
+    let reloaded_listed = list_threads(&mut restarted).await?;
+    let listed = reloaded_listed
+        .iter()
+        .find(|thread| thread.id == thread_id)
+        .expect("thread/list should include restarted external root");
+    assert_external_root_metadata(listed, &thread_id, codex_home.path());
+    assert_eq!(
+        listed.lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Interrupted,
+        }
     );
 
     Ok(())
