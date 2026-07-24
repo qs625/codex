@@ -436,8 +436,7 @@ mod tests {
         T: ThreadLifecycleRuntime
             + NativeAgentRuntime
             + ThreadCollaborationRuntime
-            + ThreadEventRuntime
-            + thread_service_api::ThreadServiceApi,
+            + ThreadEventRuntime,
     {
     }
 

@@ -825,21 +825,6 @@ pub trait ThreadEventRuntime: Send + Sync + 'static {
     ) -> ThreadServiceFuture<'a, Result<(), String>>;
 }
 
-/// Backward-compatible thread domain service facade.
-///
-/// Existing call sites can keep depending on `ThreadServiceApi` while new code
-/// selects the narrower lifecycle, collaboration, native-agent, or event
-/// runtime traits directly.
-pub trait ThreadServiceApi:
-    ThreadLifecycleRuntime + ThreadCollaborationRuntime + ThreadEventRuntime
-{
-}
-
-impl<T> ThreadServiceApi for T where
-    T: ThreadLifecycleRuntime + ThreadCollaborationRuntime + ThreadEventRuntime
-{
-}
-
 pub trait ThreadSessionCapability: Send + Sync + 'static {
     /// Implementation-owned typed view for the session service that created
     /// this capability. External services should not downcast this value.
