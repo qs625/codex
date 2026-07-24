@@ -355,6 +355,7 @@ impl AgentControl {
             provider,
             message,
             session_source,
+            /*register_global_agent_metadata*/ true,
             options,
         )
         .await
@@ -533,6 +534,7 @@ impl AgentControl {
         provider: SpawnAgentProvider,
         message: String,
         session_source: SessionSource,
+        register_global_agent_metadata: bool,
         options: SpawnAgentOptions,
     ) -> BoxFuture<'static, CodexResult<LiveAgent>> {
         let control = self.clone();
@@ -554,8 +556,8 @@ impl AgentControl {
 
             let (session_source, agent_metadata, thread_id, agent_path) = {
                 let mut reservation = control.state.reserve_spawn_slot(config.agent_max_threads)?;
-                let (session_source, mut agent_metadata) = control
-                    .prepare_thread_spawn_with_roles(
+                let (session_source, mut agent_metadata) = if register_global_agent_metadata {
+                    control.prepare_thread_spawn_with_roles(
                         &mut reservation,
                         &config.agent_roles,
                         parent_thread_id,
@@ -564,7 +566,33 @@ impl AgentControl {
                         Some(provider_label(provider).to_string()),
                         options.agent_mode,
                         None,
-                    )?;
+                    )?
+                } else {
+                    let agent_path = agent_path.ok_or_else(|| {
+                        CodexErr::UnsupportedOperation(
+                            "external agent is missing agent path".to_string(),
+                        )
+                    })?;
+                    let provider_name = provider_label(provider).to_string();
+                    (
+                        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                            parent_thread_id,
+                            depth,
+                            agent_path: Some(agent_path.clone()),
+                            agent_nickname: Some(provider_name.clone()),
+                            agent_role: Some(provider_name.clone()),
+                        }),
+                        AgentMetadata {
+                            agent_id: None,
+                            agent_path: Some(agent_path),
+                            agent_nickname: Some(provider_name.clone()),
+                            agent_role: Some(provider_name),
+                            agent_mode: options.agent_mode,
+                            last_task_message: None,
+                            counted: true,
+                        },
+                    )
+                };
                 let thread_id = ThreadId::new();
                 let agent_path = agent_metadata.agent_path.clone().ok_or_else(|| {
                     CodexErr::UnsupportedOperation(
@@ -573,7 +601,20 @@ impl AgentControl {
                 })?;
                 agent_metadata.agent_id = Some(thread_id);
                 agent_metadata.last_task_message = Some(message.clone());
-                reservation.commit(agent_metadata.clone());
+                let registry_metadata = if register_global_agent_metadata {
+                    agent_metadata.clone()
+                } else {
+                    AgentMetadata {
+                        agent_id: Some(thread_id),
+                        agent_path: None,
+                        agent_nickname: None,
+                        agent_role: None,
+                        agent_mode: options.agent_mode,
+                        last_task_message: Some(message.clone()),
+                        counted: true,
+                    }
+                };
+                reservation.commit(registry_metadata);
                 (session_source, agent_metadata, thread_id, agent_path)
             };
             let (input_tx, input_rx) = mpsc::unbounded_channel();
@@ -1847,11 +1888,6 @@ impl AgentControl {
             }
             ExternalToolName::SpawnExternalAgent => {
                 let args: ExternalSpawnAgentArgs = parse_external_arguments(&call.arguments)?;
-                if sender.agent_path.is_root() {
-                    return Err(FunctionCallError::RespondToModel(
-                        "root external agents cannot spawn child agents yet".to_string(),
-                    ));
-                }
                 if matches!(args.provider, SpawnAgentProvider::Native) {
                     return Err(FunctionCallError::RespondToModel(
                         "spawn_external_agent requires an external provider".to_string(),
@@ -1877,12 +1913,29 @@ impl AgentControl {
                     Some(args.task_name),
                 )
                 .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                let scoped_to_external_root = self
+                    .external_agents
+                    .get(sender.parent_thread_id)
+                    .is_some_and(|run| run.agent_path.is_root());
+                if scoped_to_external_root
+                    && let Some(agent_path) = spawn_source.get_agent_path()
+                    && self.external_agents.list().into_iter().any(|run| {
+                        run.parent_thread_id == sender.parent_thread_id
+                            && run.agent_path == agent_path
+                            && !matches!(run.status, AgentStatus::Shutdown)
+                    })
+                {
+                    return Err(FunctionCallError::RespondToModel(format!(
+                        "agent path `{agent_path}` already exists in external root scope"
+                    )));
+                }
                 let spawned = self
                     .spawn_external_agent_with_metadata_sync(
                         config,
                         args.provider,
                         args.message,
                         spawn_source,
+                        /*register_global_agent_metadata*/ !scoped_to_external_root,
                         SpawnAgentOptions {
                             fork_parent_spawn_call_id: None,
                             fork_mode: None,
