@@ -6,6 +6,15 @@ use codex_agent_runtime::AgentMetadata;
 use protocol::AgentPath;
 use protocol::protocol::AgentStatus;
 
+fn unsupported_external_root_active_op(
+    method: &str,
+    provider: &str,
+) -> JSONRPCErrorError {
+    invalid_request(format!(
+        "thread provider '{provider}' does not support {method}; external root threads do not support this native-only operation yet"
+    ))
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ThreadStartAgent {
     pub(super) agent_path: Option<AgentPath>,
@@ -400,6 +409,7 @@ impl ThreadRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         thread_id: ThreadId,
+        method: &'static str,
         op: Op,
         failure_message: &str,
     ) -> Result<String, JSONRPCErrorError> {
@@ -408,7 +418,17 @@ impl ThreadRequestProcessor {
             .is_live_thread_loaded(thread_id)
             .await
         {
+            if let Some(provider) = self
+                .persisted_external_root_provider(thread_id)
+                .await
+                .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))?
+            {
+                return Err(unsupported_external_root_active_op(method, provider.as_str()));
+            }
             return Err(invalid_request(format!("thread not found: {thread_id}")));
+        }
+        if let Some(provider) = self.live_external_root_provider(thread_id).await? {
+            return Err(unsupported_external_root_active_op(method, provider.as_str()));
         }
         self.live_thread_command
             .submit_live_thread_op_with_trace(
@@ -423,6 +443,55 @@ impl ThreadRequestProcessor {
                 }
                 err => internal_error(format!("{failure_message}: {err}")),
             })
+    }
+
+    async fn live_external_root_provider(
+        &self,
+        thread_id: ThreadId,
+    ) -> Result<Option<String>, JSONRPCErrorError> {
+        let snapshot = self
+            .live_thread_inspection
+            .live_thread_snapshot(thread_id)
+            .await
+            .map_err(|err| internal_error(format!("failed to inspect live thread: {err}")))?;
+        let config = &snapshot.config_snapshot;
+        if is_external_cli_thread_provider_id(config.model_provider_id.as_str())
+            && !config.session_source.is_non_root_agent()
+            && config.thread_source == Some(protocol::protocol::ThreadSource::User)
+            && config.root_agent_path.is_none()
+            && config.root_agent_role.is_none()
+        {
+            return Ok(Some(config.model_provider_id.clone()));
+        }
+        Ok(None)
+    }
+
+    async fn persisted_external_root_provider(
+        &self,
+        thread_id: ThreadId,
+    ) -> Result<Option<String>, ThreadStoreError> {
+        let stored_thread = match self
+            .thread_store
+            .read_thread(thread_store::ReadThreadParams {
+                thread_id,
+                include_archived: true,
+                include_history: false,
+            })
+            .await
+        {
+            Ok(stored_thread) => stored_thread,
+            Err(ThreadStoreError::ThreadNotFound { .. }) => return Ok(None),
+            Err(ThreadStoreError::InvalidRequest { message })
+                if message == format!("no rollout found for thread id {thread_id}") =>
+            {
+                return Ok(None);
+            }
+            Err(err) => return Err(err),
+        };
+        if super::start::is_persisted_external_root_thread(&stored_thread) {
+            return Ok(Some(stored_thread.model_provider));
+        }
+        Ok(None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1388,6 +1457,7 @@ impl ThreadRequestProcessor {
             .submit_core_op(
                 request_id,
                 thread_id,
+                "thread/rollback",
                 Op::ThreadRollback { num_turns },
                 "failed to start rollback",
             )
@@ -1414,6 +1484,7 @@ impl ThreadRequestProcessor {
         self.submit_core_op(
             request_id,
             thread_id,
+            "thread/compact/start",
             Op::Compact,
             "failed to start compaction",
         )
@@ -1433,6 +1504,7 @@ impl ThreadRequestProcessor {
         self.submit_core_op(
             request_id,
             thread_id,
+            "thread/backgroundTerminals/clean",
             Op::CleanBackgroundTerminals,
             "failed to clean background terminals",
         )
@@ -1456,6 +1528,7 @@ impl ThreadRequestProcessor {
         self.submit_core_op(
             request_id,
             thread_id,
+            "thread/shellCommand",
             Op::RunUserShellCommand { command },
             "failed to start shell command",
         )
@@ -1477,6 +1550,7 @@ impl ThreadRequestProcessor {
         self.submit_core_op(
             request_id,
             thread_id,
+            "thread/approveGuardianDeniedAction",
             Op::ApproveGuardianDeniedAction { event },
             "failed to approve Guardian denial",
         )

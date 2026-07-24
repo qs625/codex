@@ -69,6 +69,7 @@ use app_server_protocol::SendAddCreditsNudgeEmailParams;
 use app_server_protocol::ServerRequest;
 use app_server_protocol::SkillsListParams;
 use app_server_protocol::ThreadArchiveParams;
+use app_server_protocol::ThreadBackgroundTerminalsCleanParams;
 use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadForkParams;
 use app_server_protocol::ThreadInjectItemsParams;
@@ -447,6 +448,16 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("thread/compact/start", params).await
+    }
+
+    /// Send a `thread/backgroundTerminals/clean` JSON-RPC request.
+    pub async fn send_thread_background_terminals_clean_request(
+        &mut self,
+        params: ThreadBackgroundTerminalsCleanParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("thread/backgroundTerminals/clean", params)
+            .await
     }
 
     /// Send a `thread/shellCommand` JSON-RPC request.

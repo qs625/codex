@@ -41,6 +41,34 @@ async fn start_external_root_mcp(codex_home: &TempDir, fake_bin: &TempDir) -> Re
     Ok(mcp)
 }
 
+async fn expect_external_root_native_only_error(
+    mcp: &mut McpProcess,
+    request_id: i64,
+    method: &str,
+) -> Result<()> {
+    let err: JSONRPCError = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    assert_eq!(err.error.code, INVALID_REQUEST_ERROR_CODE);
+    assert!(
+        err.error.message.contains("thread provider 'claude_cli'")
+            && err.error.message.contains(method)
+            && err.error.message.contains("does not support")
+            && err.error.message.contains("external root threads"),
+        "{}",
+        err.error.message
+    );
+    assert!(
+        !err.error.message.contains("thread not found"),
+        "{}",
+        err.error.message
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn external_root_turn_start_accepts_text_input() -> Result<()> {
     let codex_home = TempDir::new()?;
@@ -70,6 +98,60 @@ async fn external_root_turn_start_accepts_text_input() -> Result<()> {
     assert_eq!(turn.items, Vec::<ThreadItem>::new());
     assert_eq!(turn.items_view, TurnItemsView::NotLoaded);
     assert_eq!(turn.error, None);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn external_root_rejects_native_only_active_ops() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
+
+    let compact_req = mcp
+        .send_thread_compact_start_request(ThreadCompactStartParams {
+            thread_id: thread_id.clone(),
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, compact_req, "thread/compact/start").await?;
+
+    let shell_req = mcp
+        .send_thread_shell_command_request(ThreadShellCommandParams {
+            thread_id: thread_id.clone(),
+            command: "echo should-not-run".to_string(),
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, shell_req, "thread/shellCommand").await?;
+
+    let clean_req = mcp
+        .send_thread_background_terminals_clean_request(ThreadBackgroundTerminalsCleanParams {
+            thread_id: thread_id.clone(),
+        })
+        .await?;
+    expect_external_root_native_only_error(
+        &mut mcp,
+        clean_req,
+        "thread/backgroundTerminals/clean",
+    )
+    .await?;
+
+    let rollback_req = mcp
+        .send_thread_rollback_request(ThreadRollbackParams {
+            thread_id: thread_id.clone(),
+            num_turns: 1,
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, rollback_req, "thread/rollback").await?;
+
+    let second_rollback_req = mcp
+        .send_thread_rollback_request(ThreadRollbackParams {
+            thread_id,
+            num_turns: 1,
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, second_rollback_req, "thread/rollback")
+        .await?;
 
     Ok(())
 }

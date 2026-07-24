@@ -17,6 +17,7 @@ use app_server_protocol::SessionSource;
 use app_server_protocol::SortDirection;
 use app_server_protocol::ThreadForkParams;
 use app_server_protocol::ThreadForkResponse;
+use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadLifecycleFinalStatus;
@@ -1824,6 +1825,30 @@ fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
                 || turn_start_error.message.contains("not accepting input"),
             "unexpected turn/start error: {}",
             turn_start_error.message
+        );
+
+        let compact_error = client
+            .request(ClientRequest::ThreadCompactStart {
+                request_id: RequestId::Integer(6),
+                params: ThreadCompactStartParams {
+                    thread_id: descriptor_thread_id.clone(),
+                },
+            })
+            .await?
+            .expect_err("persisted external root should reject native-only compact");
+        assert_eq!(compact_error.code, INVALID_REQUEST_ERROR_CODE);
+        assert!(
+            compact_error.message.contains("thread provider 'opencode'")
+                && compact_error.message.contains("thread/compact/start")
+                && compact_error.message.contains("does not support")
+                && compact_error.message.contains("external root threads"),
+            "unexpected compact error: {}",
+            compact_error.message
+        );
+        assert!(
+            !compact_error.message.contains("thread not found"),
+            "unexpected compact error: {}",
+            compact_error.message
         );
 
         client.shutdown().await?;
