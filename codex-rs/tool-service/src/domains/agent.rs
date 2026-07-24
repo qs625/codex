@@ -143,7 +143,7 @@ pub trait AgentToolRuntime: Send + Sync + 'static {
 
 impl<T> AgentToolRuntime for T
 where
-    T: ThreadCollaborationRuntime + ThreadEventRuntime,
+    T: NativeAgentRuntime + ThreadCollaborationRuntime + ThreadEventRuntime,
 {
     fn spawn_agent<'a>(
         &'a self,

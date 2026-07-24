@@ -758,13 +758,11 @@ pub trait NativeAgentRuntime: Send + Sync + 'static {
     ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
 }
 
-/// Model-visible collaboration tool runtime.
+/// External collaboration tool runtime.
 ///
-/// This facade keeps native and external tool names separate while preventing
-/// callers from depending on concrete session/runtime types. Native-only
-/// methods are inherited from `NativeAgentRuntime`; external provider methods
-/// remain explicit until provider routing is fully unified.
-pub trait ThreadCollaborationRuntime: NativeAgentRuntime + Send + Sync + 'static {
+/// This boundary carries the model-visible external provider tool surface
+/// without requiring native role/type/model semantics.
+pub trait ThreadCollaborationRuntime: Send + Sync + 'static {
     fn spawn_external_agent<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
