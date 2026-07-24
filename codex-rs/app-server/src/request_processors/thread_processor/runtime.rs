@@ -25,26 +25,6 @@ impl ThreadProcessorMetadataRuntime for ThreadService {
     }
 }
 
-pub(crate) trait ExternalRootThreadStartRuntime: Send + Sync {
-    fn start_external_root_thread<'a>(
-        &'a self,
-        config: Config,
-        provider: codex_agent_runtime::SpawnAgentProvider,
-    ) -> futures::future::BoxFuture<'a, CodexResult<NewExternalRootThread>>;
-}
-
-impl ExternalRootThreadStartRuntime for ThreadService {
-    fn start_external_root_thread<'a>(
-        &'a self,
-        config: Config,
-        provider: codex_agent_runtime::SpawnAgentProvider,
-    ) -> futures::future::BoxFuture<'a, CodexResult<NewExternalRootThread>> {
-        Box::pin(ThreadService::start_external_root_thread(
-            self, config, provider,
-        ))
-    }
-}
-
 pub(crate) trait ThreadProcessorCreatedThread: Send + Sync {
     fn record_startup_phase(
         &self,

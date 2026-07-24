@@ -15,6 +15,7 @@ use thread_service::NativeDetachedReviewRuntime;
 use thread_service::NativeMemoryStartupConfigRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
 use thread_service_api::AppServerClientInfo;
+use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
 
 #[derive(Clone)]
@@ -34,7 +35,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
-    external_root_thread_input: Arc<dyn ExternalRootThreadInputRuntime>,
+    external_root_thread_runtime: Arc<dyn ExternalRootThreadRuntime>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
     model_service: SharedModelServiceApi,
     outgoing: Arc<OutgoingMessageSender>,
@@ -48,32 +49,6 @@ pub(crate) struct TurnRequestProcessor {
     thread_list_state_permit: Arc<Semaphore>,
     state_db: Option<StateDbHandle>,
     skills_watcher: Arc<SkillsWatcher>,
-}
-
-pub(crate) trait ExternalRootThreadInputRuntime: Send + Sync {
-    fn has_external_root_thread(&self, thread_id: ThreadId) -> bool;
-
-    fn submit_external_root_input<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        message: String,
-    ) -> futures::future::BoxFuture<'a, CodexResult<String>>;
-}
-
-impl ExternalRootThreadInputRuntime for ThreadService {
-    fn has_external_root_thread(&self, thread_id: ThreadId) -> bool {
-        ThreadService::has_external_root_thread(self, thread_id)
-    }
-
-    fn submit_external_root_input<'a>(
-        &'a self,
-        thread_id: ThreadId,
-        message: String,
-    ) -> futures::future::BoxFuture<'a, CodexResult<String>> {
-        Box::pin(ThreadService::submit_external_root_input(
-            self, thread_id, message,
-        ))
-    }
 }
 
 fn resolve_runtime_workspace_roots(
@@ -124,7 +99,7 @@ impl TurnRequestProcessor {
             live_thread_listener: thread_service.clone(),
             live_thread_usage: thread_service.clone(),
             live_thread_goal: thread_service.clone(),
-            external_root_thread_input: thread_service.clone(),
+            external_root_thread_runtime: thread_service.clone(),
             memory_startup_host: thread_service,
             model_service,
             outgoing,
@@ -540,7 +515,7 @@ impl TurnRequestProcessor {
         };
 
         let turn_id =
-            self.external_root_thread_input
+            self.external_root_thread_runtime
                 .submit_external_root_input(thread_id, message)
                 .await
                 .map_err(|err| {
@@ -585,7 +560,7 @@ impl TurnRequestProcessor {
                 self.track_error_response(&request_id, error, /*error_type*/ None);
             })?;
         if self
-            .external_root_thread_input
+            .external_root_thread_runtime
             .has_external_root_thread(thread_id)
         {
             return self

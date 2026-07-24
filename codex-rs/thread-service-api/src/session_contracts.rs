@@ -6,6 +6,7 @@
 //! internal state.
 
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::future::Future;
@@ -19,11 +20,13 @@ use crate::ActiveEventSubscriptionTracker;
 use crate::ThreadCreatedEvent;
 use crate::ThreadRuntimeStatus;
 use crate::ThreadShutdownReport;
+use codex_agent_roles::AgentRoleConfig;
 use codex_code_mode_api::ExecuteRequest;
 use codex_code_mode_api::RuntimeResponse;
 use codex_code_mode_api::WaitOutcome;
 use codex_code_mode_api::WaitRequest;
 use codex_connectors_api::AppInfo;
+use codex_features::Features;
 use codex_file_system::FileSystemSandboxContext;
 use codex_sandboxing_api::ResolvedApplyPatchEnvironment;
 use codex_sandboxing_api::ResolvedExecCommandEnvironment;
@@ -40,6 +43,7 @@ use mcp_types::SandboxState;
 use mcp_types::ToolInfo;
 use protocol::ThreadId;
 use protocol::config_types::ApprovalsReviewer;
+use protocol::config_types::Personality;
 use protocol::config_types::WindowsSandboxLevel;
 use protocol::error::Result as CodexResult;
 use protocol::mcp::CallToolResult;
@@ -51,6 +55,7 @@ use protocol::mcp::ReadResourceResult;
 use protocol::mcp::RequestId;
 use protocol::mcp::Resource;
 use protocol::mcp::ResourceTemplate;
+use protocol::models::ActivePermissionProfile;
 use protocol::models::PermissionProfile;
 use protocol::models::ResponseItem;
 use protocol::openai_models::ReasoningEffort;
@@ -60,6 +65,7 @@ use protocol::protocol::AskForApproval;
 use protocol::protocol::EventMsg;
 use protocol::protocol::McpServerRefreshConfig;
 use protocol::protocol::Op;
+use protocol::protocol::SessionConfiguredEvent;
 use protocol::protocol::Submission;
 use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::TokenUsage;
@@ -697,10 +703,7 @@ pub trait ThreadLifecycleRuntime: Send + Sync + 'static {
         thread_id: ThreadId,
     ) -> ThreadServiceFuture<'a, CodexResult<String>>;
 
-    fn remove_live_thread<'a>(
-        &'a self,
-        thread_id: ThreadId,
-    ) -> ThreadServiceFuture<'a, bool>;
+    fn remove_live_thread<'a>(&'a self, thread_id: ThreadId) -> ThreadServiceFuture<'a, bool>;
 
     fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadCreatedEvent>;
 
@@ -791,6 +794,68 @@ pub trait ThreadCollaborationRuntime: Send + Sync + 'static {
         call_id: String,
         path_prefix: Option<String>,
     ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalRootThreadProvider {
+    CodexCli,
+    ClaudeCli,
+    Opencode,
+}
+
+pub struct ExternalRootThreadStartResult {
+    pub thread_id: ThreadId,
+    pub session_configured: SessionConfiguredEvent,
+}
+
+/// Resolved startup configuration needed to seed an external root thread.
+///
+/// This is intentionally narrower than the native `Config`: it captures the
+/// already-resolved facts used by external provider startup and persistence,
+/// without native-only environment, dynamic tool, memory startup, or review
+/// runtime inputs.
+pub struct ExternalRootThreadStartupConfig {
+    pub cwd: AbsolutePathBuf,
+    pub workspace_roots: Vec<AbsolutePathBuf>,
+    pub agent_max_threads: Option<usize>,
+    pub agent_roles: BTreeMap<String, AgentRoleConfig>,
+    pub model: String,
+    pub model_provider_id: String,
+    pub service_tier: Option<String>,
+    pub approval_policy: AskForApproval,
+    pub approvals_reviewer: ApprovalsReviewer,
+    pub permission_profile: PermissionProfile,
+    pub active_permission_profile: Option<ActivePermissionProfile>,
+    pub reasoning_effort: Option<ReasoningEffort>,
+    pub personality: Option<Personality>,
+    pub features: Features,
+    pub generate_memories: bool,
+    pub default_wait_timeout_ms: i64,
+    pub max_wait_timeout_ms: i64,
+}
+
+pub struct ExternalRootThreadStartRequest {
+    pub startup_config: ExternalRootThreadStartupConfig,
+    pub provider: ExternalRootThreadProvider,
+}
+
+/// Provider-neutral external root thread runtime.
+///
+/// This boundary owns external root start and root input delivery. Model-visible
+/// external child collaboration remains on `ThreadCollaborationRuntime`.
+pub trait ExternalRootThreadRuntime: Send + Sync + 'static {
+    fn start_external_root_thread<'a>(
+        &'a self,
+        request: ExternalRootThreadStartRequest,
+    ) -> ThreadServiceFuture<'a, CodexResult<ExternalRootThreadStartResult>>;
+
+    fn has_external_root_thread(&self, thread_id: ThreadId) -> bool;
+
+    fn submit_external_root_input<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        message: String,
+    ) -> ThreadServiceFuture<'a, CodexResult<String>>;
 }
 
 /// Thread event kernel runtime.

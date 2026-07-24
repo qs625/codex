@@ -1,13 +1,20 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::agent::external::ExternalSpawnConfig;
 use crate::agent::multi_agent;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::thread::ThreadService;
 use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::SpawnAgentProvider;
+use protocol::error::Result as CodexResult;
 use protocol::models::ResponseItem;
+use thread_service_api::ExternalRootThreadProvider;
+use thread_service_api::ExternalRootThreadRuntime;
+use thread_service_api::ExternalRootThreadStartRequest;
+use thread_service_api::ExternalRootThreadStartResult;
+use thread_service_api::ExternalRootThreadStartupConfig;
 use thread_service_api::NativeAgentRuntime;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
@@ -84,6 +91,36 @@ fn to_runtime_spawn_external_request(
             thread_service_api::ThreadSpawnAgentProvider::Opencode => SpawnAgentProvider::Opencode,
         },
         cwd: request.cwd,
+    }
+}
+
+fn to_runtime_external_root_provider(provider: ExternalRootThreadProvider) -> SpawnAgentProvider {
+    match provider {
+        ExternalRootThreadProvider::CodexCli => SpawnAgentProvider::CodexCli,
+        ExternalRootThreadProvider::ClaudeCli => SpawnAgentProvider::ClaudeCli,
+        ExternalRootThreadProvider::Opencode => SpawnAgentProvider::Opencode,
+    }
+}
+
+fn to_external_spawn_config(config: ExternalRootThreadStartupConfig) -> ExternalSpawnConfig {
+    ExternalSpawnConfig {
+        cwd: config.cwd,
+        workspace_roots: config.workspace_roots,
+        agent_max_threads: config.agent_max_threads,
+        agent_roles: config.agent_roles,
+        model: config.model,
+        model_provider_id: config.model_provider_id,
+        service_tier: config.service_tier,
+        approval_policy: config.approval_policy,
+        approvals_reviewer: config.approvals_reviewer,
+        permission_profile: config.permission_profile,
+        active_permission_profile: config.active_permission_profile,
+        reasoning_effort: config.reasoning_effort,
+        personality: config.personality,
+        features: config.features,
+        generate_memories: config.generate_memories,
+        default_wait_timeout_ms: config.default_wait_timeout_ms,
+        max_wait_timeout_ms: config.max_wait_timeout_ms,
     }
 }
 
@@ -346,6 +383,40 @@ impl ThreadCollaborationRuntime for ThreadService {
     }
 }
 
+impl ExternalRootThreadRuntime for ThreadService {
+    fn start_external_root_thread<'a>(
+        &'a self,
+        request: ExternalRootThreadStartRequest,
+    ) -> ThreadServiceFuture<'a, CodexResult<ExternalRootThreadStartResult>> {
+        Box::pin(async move {
+            let new_thread = ThreadService::start_external_root_thread_with_spawn_config(
+                self,
+                to_external_spawn_config(request.startup_config),
+                to_runtime_external_root_provider(request.provider),
+            )
+            .await?;
+            Ok(ExternalRootThreadStartResult {
+                thread_id: new_thread.thread_id,
+                session_configured: new_thread.session_configured,
+            })
+        })
+    }
+
+    fn has_external_root_thread(&self, thread_id: protocol::ThreadId) -> bool {
+        ThreadService::has_external_root_thread(self, thread_id)
+    }
+
+    fn submit_external_root_input<'a>(
+        &'a self,
+        thread_id: protocol::ThreadId,
+        message: String,
+    ) -> ThreadServiceFuture<'a, CodexResult<String>> {
+        Box::pin(ThreadService::submit_external_root_input(
+            self, thread_id, message,
+        ))
+    }
+}
+
 impl ThreadEventRuntime for ThreadService {
     fn poll_event<'a>(
         &'a self,
@@ -436,6 +507,7 @@ mod tests {
         T: ThreadLifecycleRuntime
             + NativeAgentRuntime
             + ThreadCollaborationRuntime
+            + ExternalRootThreadRuntime
             + ThreadEventRuntime,
     {
     }

@@ -42,6 +42,53 @@ pub(super) fn parse_thread_start_agent(
     }))
 }
 
+fn external_root_thread_provider(
+    provider: codex_agent_runtime::SpawnAgentProvider,
+) -> thread_service_api::ExternalRootThreadProvider {
+    match provider {
+        codex_agent_runtime::SpawnAgentProvider::CodexCli => {
+            thread_service_api::ExternalRootThreadProvider::CodexCli
+        }
+        codex_agent_runtime::SpawnAgentProvider::ClaudeCli => {
+            thread_service_api::ExternalRootThreadProvider::ClaudeCli
+        }
+        codex_agent_runtime::SpawnAgentProvider::Opencode => {
+            thread_service_api::ExternalRootThreadProvider::Opencode
+        }
+        codex_agent_runtime::SpawnAgentProvider::Native => {
+            unreachable!("native provider cannot start an external root thread")
+        }
+    }
+}
+
+fn external_root_thread_start_request(
+    config: Config,
+    provider: codex_agent_runtime::SpawnAgentProvider,
+) -> thread_service_api::ExternalRootThreadStartRequest {
+    thread_service_api::ExternalRootThreadStartRequest {
+        startup_config: thread_service_api::ExternalRootThreadStartupConfig {
+            cwd: config.cwd,
+            workspace_roots: config.workspace_roots,
+            agent_max_threads: config.agent_max_threads,
+            agent_roles: config.agent_roles,
+            model: config.model.unwrap_or_default(),
+            model_provider_id: config.model_provider_id,
+            service_tier: config.service_tier,
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: config.approvals_reviewer,
+            permission_profile: config.permissions.effective_permission_profile(),
+            active_permission_profile: config.permissions.active_permission_profile(),
+            reasoning_effort: config.model_reasoning_effort,
+            personality: config.personality,
+            features: config.features.get().clone(),
+            generate_memories: config.memories.generate_memories,
+            default_wait_timeout_ms: config.multi_agent_v2.default_wait_timeout_ms,
+            max_wait_timeout_ms: config.multi_agent_v2.max_wait_timeout_ms,
+        },
+        provider: external_root_thread_provider(provider),
+    }
+}
+
 pub(super) fn thread_lifecycle_status_from_agent_status(
     status: &AgentStatus,
 ) -> ThreadLifecycleStatus {
@@ -383,7 +430,7 @@ impl ThreadRequestProcessor {
         listener_task_context: ListenerTaskContext,
         external_root_provider: Option<codex_agent_runtime::SpawnAgentProvider>,
         native_thread_creation: Arc<dyn NativeThreadCreationRuntime>,
-        external_root_thread_start: Arc<dyn ExternalRootThreadStartRuntime>,
+        external_root_thread_runtime: Arc<dyn thread_service_api::ExternalRootThreadRuntime>,
         environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
         live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
         thread_store: Arc<dyn ThreadStore>,
@@ -485,7 +532,7 @@ impl ThreadRequestProcessor {
         if let Some(provider) = external_root_provider {
             return Self::external_root_thread_start_task(
                 listener_task_context,
-                external_root_thread_start,
+                external_root_thread_runtime,
                 thread_store,
                 request_id,
                 instruction_sources,
@@ -703,22 +750,22 @@ impl ThreadRequestProcessor {
 
     async fn external_root_thread_start_task(
         listener_task_context: ListenerTaskContext,
-        external_root_thread_start: Arc<dyn ExternalRootThreadStartRuntime>,
+        external_root_thread_runtime: Arc<dyn thread_service_api::ExternalRootThreadRuntime>,
         thread_store: Arc<dyn ThreadStore>,
         request_id: ConnectionRequestId,
         instruction_sources: Vec<AbsolutePathBuf>,
         config: Config,
         provider: codex_agent_runtime::SpawnAgentProvider,
     ) -> Result<(), JSONRPCErrorError> {
-        let new_thread = external_root_thread_start
-            .start_external_root_thread(config, provider)
+        let new_thread = external_root_thread_runtime
+            .start_external_root_thread(external_root_thread_start_request(config, provider))
             .instrument(tracing::info_span!(
                 "app_server.thread_start.create_external_root_thread",
                 otel.name = "app_server.thread_start.create_external_root_thread",
             ))
             .await
             .map_err(thread_start_create_error)?;
-        let NewExternalRootThread {
+        let thread_service_api::ExternalRootThreadStartResult {
             thread_id,
             session_configured,
         } = new_thread;

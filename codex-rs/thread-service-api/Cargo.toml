@@ -19,6 +19,7 @@ codex-config-state = { workspace = true }
 codex-code-mode-api = { workspace = true }
 codex-apply-patch = { workspace = true }
 codex-analytics-api = { workspace = true }
+codex-agent-roles = { workspace = true }
 codex-auth-types = { workspace = true }
 codex-connectors-api = { workspace = true }
 permissions-service-api = { workspace = true }

@@ -368,7 +368,7 @@ impl AgentControl {
 
     pub(crate) async fn start_external_root_thread(
         &self,
-        config: config_service::Config,
+        config: ExternalSpawnConfig,
         provider: SpawnAgentProvider,
         session_source: SessionSource,
     ) -> CodexResult<NewExternalRootThread> {
@@ -378,7 +378,7 @@ impl AgentControl {
             ));
         }
 
-        let mut config = ExternalSpawnConfig::from_config(&config);
+        let mut config = config;
         config.model_provider_id = provider_label(provider).to_string();
         external_session_spec(provider, config.cwd.as_path())
             .map_err(CodexErr::UnsupportedOperation)?;

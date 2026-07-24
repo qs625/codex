@@ -550,7 +550,7 @@ impl ThreadRequestProcessor {
         let request_trace = request_context.request_trace();
         let config_manager = self.config_manager.clone();
         let native_thread_creation = Arc::clone(&self.native_thread_creation);
-        let external_root_thread_start = Arc::clone(&self.external_root_thread_start);
+        let external_root_thread_runtime = Arc::clone(&self.external_root_thread_runtime);
         let environment_runtime = Arc::clone(&self.environment_runtime);
         let live_thread_command = Arc::clone(&self.live_thread_command);
         let thread_store = Arc::clone(&self.thread_store);
@@ -565,7 +565,7 @@ impl ThreadRequestProcessor {
                 listener_task_context,
                 external_root_provider,
                 native_thread_creation,
-                external_root_thread_start,
+                external_root_thread_runtime,
                 environment_runtime,
                 live_thread_command,
                 thread_store,

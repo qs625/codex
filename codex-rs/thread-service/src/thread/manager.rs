@@ -1,5 +1,6 @@
 use crate::StateDbHandle;
 use crate::agent::AgentControl;
+use crate::agent::external::ExternalSpawnConfig;
 use crate::agent::external::SharedExternalAgentRegistry;
 use crate::environment_selection::default_thread_environment_selections;
 use crate::environment_selection::resolve_environment_selections;
@@ -1270,6 +1271,16 @@ impl ThreadService {
     pub async fn start_external_root_thread(
         &self,
         config: Config,
+        provider: SpawnAgentProvider,
+    ) -> CodexResult<NewExternalRootThread> {
+        let config = ExternalSpawnConfig::from_config(&config);
+        self.start_external_root_thread_with_spawn_config(config, provider)
+            .await
+    }
+
+    pub(crate) async fn start_external_root_thread_with_spawn_config(
+        &self,
+        config: ExternalSpawnConfig,
         provider: SpawnAgentProvider,
     ) -> CodexResult<NewExternalRootThread> {
         self.root_external_agent_control()

@@ -13532,6 +13532,7 @@ name = "thread-service-api"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "codex-agent-roles",
  "codex-analytics-api",
  "codex-apply-patch",
  "codex-auth-types",

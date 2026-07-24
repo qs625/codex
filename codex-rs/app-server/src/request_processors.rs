@@ -390,7 +390,6 @@ use thread_history::ThreadHistoryBuilder;
 use thread_service::ForkSnapshot;
 use thread_service::NativeThreadCreationRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
-use thread_service::NewExternalRootThread;
 use thread_service::NewThread;
 use thread_service::StartThreadOptions;
 use thread_service::SteerInputError;
