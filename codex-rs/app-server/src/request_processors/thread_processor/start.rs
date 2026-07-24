@@ -2,69 +2,38 @@ use super::context_usage_replay::ThreadUsageSource;
 use super::*;
 use crate::request_processors::thread_processor::ops::parse_thread_start_agent;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RootThreadProviderRoute {
-    Native,
-    External(codex_agent_runtime::SpawnAgentProvider),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RootThreadProviderCapability {
-    StartThread,
-    RestoreThread,
-    ForkThread,
-}
-
-impl RootThreadProviderCapability {
-    fn method(self) -> &'static str {
-        match self {
-            Self::StartThread => "thread/start",
-            Self::RestoreThread => "thread/resume",
-            Self::ForkThread => "thread/fork",
-        }
-    }
-}
-
-impl From<RootThreadProviderCapability> for ExternalCliRootThreadCapability {
-    fn from(capability: RootThreadProviderCapability) -> Self {
-        match capability {
-            RootThreadProviderCapability::StartThread => Self::StartThread,
-            RootThreadProviderCapability::RestoreThread => Self::RestoreThread,
-            RootThreadProviderCapability::ForkThread => Self::ForkThread,
-        }
-    }
-}
-
 fn resolve_root_thread_provider(
+    catalog_runtime: &dyn thread_service_api::ThreadProviderCatalogRuntime,
     thread_provider: Option<&str>,
-    capability: RootThreadProviderCapability,
-) -> Result<RootThreadProviderRoute, JSONRPCErrorError> {
-    match thread_provider {
-        None | Some("native") => Ok(RootThreadProviderRoute::Native),
-        Some(provider) if is_external_cli_thread_provider_id(provider) => {
-            if !external_cli_thread_provider_supports_root_capability(provider, capability.into()) {
-                return Err(invalid_request(format!(
-                    "thread provider '{provider}' is advertised but does not support {} yet",
-                    capability.method()
-                )));
-            }
-            Ok(RootThreadProviderRoute::External(
-                external_cli_thread_provider(provider).expect("known external CLI provider"),
-            ))
-        }
-        Some(provider) => Err(invalid_request(format!(
-            "unknown thread provider '{provider}' for {}",
-            capability.method()
-        ))),
-    }
+    capability: thread_service_api::ThreadProviderRootCapability,
+) -> Result<thread_service_api::RootThreadProviderRoute, JSONRPCErrorError> {
+    catalog_runtime
+        .resolve_root_thread_provider(thread_provider, capability)
+        .map_err(|error| match error {
+            thread_service_api::RootThreadProviderResolutionError::UnknownProvider {
+                provider_id,
+                capability,
+            } => invalid_request(format!(
+                "unknown thread provider '{provider_id}' for {}",
+                capability.method()
+            )),
+            thread_service_api::RootThreadProviderResolutionError::UnsupportedCapability {
+                provider_id,
+                capability,
+            } => invalid_request(format!(
+                "thread provider '{provider_id}' is advertised but does not support {} yet",
+                capability.method()
+            )),
+        })
 }
 
 fn reject_unsupported_external_root_thread_provider(
+    catalog_runtime: &dyn thread_service_api::ThreadProviderCatalogRuntime,
     thread_provider: &str,
-    capability: RootThreadProviderCapability,
+    capability: thread_service_api::ThreadProviderRootCapability,
 ) -> Result<(), JSONRPCErrorError> {
     if is_external_cli_thread_provider_id(thread_provider) {
-        resolve_root_thread_provider(Some(thread_provider), capability)?;
+        resolve_root_thread_provider(catalog_runtime, Some(thread_provider), capability)?;
     }
     Ok(())
 }
@@ -142,58 +111,182 @@ mod root_thread_provider_route_tests {
     use crate::error_code::INVALID_REQUEST_ERROR_CODE;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use serde_json::json;
+    use thread_service_api::ThreadProviderCatalogRuntime;
+
+    struct FakeThreadProviderCatalog;
+
+    impl thread_service_api::ThreadProviderCatalogRuntime for FakeThreadProviderCatalog {
+        fn list_thread_providers(
+            &self,
+        ) -> Vec<thread_service_api::ThreadProviderRuntimeDescriptor> {
+            vec![
+                thread_service_api::ThreadProviderRuntimeDescriptor {
+                    id: "native".to_string(),
+                    display_name: "Morpheus".to_string(),
+                    description: "Native runtime".to_string(),
+                    kind: thread_service_api::ThreadProviderRuntimeKind::Native,
+                    external_root_provider: None,
+                    capabilities: thread_service_api::ThreadProviderRuntimeCapabilities {
+                        start_thread: true,
+                        send_input: true,
+                        close_thread: true,
+                        list_children: true,
+                        restore_thread: true,
+                        restore_snapshot: true,
+                        event_stream: true,
+                        spawn_child: true,
+                        compact: true,
+                        workflow: true,
+                        poll_event: true,
+                        command_session: true,
+                        permissions: true,
+                        dynamic_tools: true,
+                        fork_thread: true,
+                    },
+                },
+                external_provider(
+                    thread_service_api::ExternalRootThreadProvider::ClaudeCli,
+                    "claude_cli",
+                ),
+                external_provider(
+                    thread_service_api::ExternalRootThreadProvider::Opencode,
+                    "opencode",
+                ),
+                external_provider(
+                    thread_service_api::ExternalRootThreadProvider::CodexCli,
+                    "codex_cli",
+                ),
+            ]
+        }
+
+        fn resolve_root_thread_provider(
+            &self,
+            provider_id: Option<&str>,
+            capability: thread_service_api::ThreadProviderRootCapability,
+        ) -> Result<
+            thread_service_api::RootThreadProviderRoute,
+            thread_service_api::RootThreadProviderResolutionError,
+        > {
+            let Some(provider_id) = provider_id else {
+                return Ok(thread_service_api::RootThreadProviderRoute::Native);
+            };
+            let Some(descriptor) = self
+                .list_thread_providers()
+                .into_iter()
+                .find(|descriptor| descriptor.id == provider_id)
+            else {
+                return Err(
+                    thread_service_api::RootThreadProviderResolutionError::UnknownProvider {
+                        provider_id: provider_id.to_string(),
+                        capability,
+                    },
+                );
+            };
+            if !descriptor.capabilities.supports_root_capability(capability) {
+                return Err(
+                    thread_service_api::RootThreadProviderResolutionError::UnsupportedCapability {
+                        provider_id: descriptor.id,
+                        capability,
+                    },
+                );
+            }
+            Ok(match descriptor.external_root_provider {
+                Some(provider) => thread_service_api::RootThreadProviderRoute::External(provider),
+                None => thread_service_api::RootThreadProviderRoute::Native,
+            })
+        }
+    }
+
+    fn external_provider(
+        provider: thread_service_api::ExternalRootThreadProvider,
+        id: &str,
+    ) -> thread_service_api::ThreadProviderRuntimeDescriptor {
+        thread_service_api::ThreadProviderRuntimeDescriptor {
+            id: id.to_string(),
+            display_name: id.to_string(),
+            description: "External test provider".to_string(),
+            kind: thread_service_api::ThreadProviderRuntimeKind::ExternalCli,
+            external_root_provider: Some(provider),
+            capabilities: thread_service_api::ThreadProviderRuntimeCapabilities {
+                start_thread: true,
+                send_input: true,
+                close_thread: true,
+                list_children: true,
+                restore_thread: false,
+                restore_snapshot: true,
+                event_stream: true,
+                spawn_child: true,
+                compact: false,
+                workflow: false,
+                poll_event: true,
+                command_session: false,
+                permissions: false,
+                dynamic_tools: false,
+                fork_thread: false,
+            },
+        }
+    }
 
     #[test]
     fn resolves_missing_and_native_provider_to_native_route() {
+        let catalog = FakeThreadProviderCatalog;
         assert_eq!(
-            resolve_root_thread_provider(None, RootThreadProviderCapability::StartThread).unwrap(),
-            RootThreadProviderRoute::Native
+            resolve_root_thread_provider(
+                &catalog,
+                None,
+                thread_service_api::ThreadProviderRootCapability::StartThread,
+            )
+            .unwrap(),
+            thread_service_api::RootThreadProviderRoute::Native
         );
         assert_eq!(
-            resolve_root_thread_provider(Some("native"), RootThreadProviderCapability::StartThread)
-                .unwrap(),
-            RootThreadProviderRoute::Native
+            resolve_root_thread_provider(
+                &catalog,
+                Some("native"),
+                thread_service_api::ThreadProviderRootCapability::StartThread,
+            )
+            .unwrap(),
+            thread_service_api::RootThreadProviderRoute::Native
         );
     }
 
     #[test]
     fn resolves_advertised_external_provider_for_start_only() {
+        let catalog = FakeThreadProviderCatalog;
         for (provider, expected_route) in [
             (
                 "claude_cli",
-                RootThreadProviderRoute::External(
-                    codex_agent_runtime::SpawnAgentProvider::ClaudeCli,
+                thread_service_api::RootThreadProviderRoute::External(
+                    thread_service_api::ExternalRootThreadProvider::ClaudeCli,
                 ),
             ),
             (
                 "opencode",
-                RootThreadProviderRoute::External(
-                    codex_agent_runtime::SpawnAgentProvider::Opencode,
+                thread_service_api::RootThreadProviderRoute::External(
+                    thread_service_api::ExternalRootThreadProvider::Opencode,
                 ),
             ),
             (
                 "codex_cli",
-                RootThreadProviderRoute::External(
-                    codex_agent_runtime::SpawnAgentProvider::CodexCli,
+                thread_service_api::RootThreadProviderRoute::External(
+                    thread_service_api::ExternalRootThreadProvider::CodexCli,
                 ),
             ),
         ] {
-            assert!(
-                external_cli_thread_provider_supports_root_capability(
-                    provider,
-                    ExternalCliRootThreadCapability::StartThread,
-                ),
-                "{provider} should advertise root thread/start because route accepts it"
-            );
-            let capabilities = external_cli_thread_provider_capabilities(provider)
-                .unwrap_or_else(|| panic!("{provider} should have shared capabilities"));
+            let capabilities = catalog
+                .list_thread_providers()
+                .into_iter()
+                .find(|descriptor| descriptor.id == provider)
+                .unwrap_or_else(|| panic!("{provider} should have shared capabilities"))
+                .capabilities;
             assert!(capabilities.start_thread);
             assert!(!capabilities.restore_thread);
             assert!(capabilities.restore_snapshot);
             assert!(!capabilities.fork_thread);
             let route = resolve_root_thread_provider(
+                &catalog,
                 Some(provider),
-                RootThreadProviderCapability::StartThread,
+                thread_service_api::ThreadProviderRootCapability::StartThread,
             )
             .unwrap();
             assert_eq!(route, expected_route);
@@ -201,16 +294,18 @@ mod root_thread_provider_route_tests {
 
         for provider in ["claude_cli", "opencode", "codex_cli"] {
             let resume_error = resolve_root_thread_provider(
+                &catalog,
                 Some(provider),
-                RootThreadProviderCapability::RestoreThread,
+                thread_service_api::ThreadProviderRootCapability::RestoreThread,
             )
             .unwrap_err();
             assert_eq!(resume_error.code, INVALID_REQUEST_ERROR_CODE);
             assert!(resume_error.message.contains("thread/resume"));
 
             let fork_error = resolve_root_thread_provider(
+                &catalog,
                 Some(provider),
-                RootThreadProviderCapability::ForkThread,
+                thread_service_api::ThreadProviderRootCapability::ForkThread,
             )
             .unwrap_err();
             assert_eq!(fork_error.code, INVALID_REQUEST_ERROR_CODE);
@@ -220,9 +315,11 @@ mod root_thread_provider_route_tests {
 
     #[test]
     fn rejects_unknown_root_provider() {
+        let catalog = FakeThreadProviderCatalog;
         let error = resolve_root_thread_provider(
+            &catalog,
             Some("unknown_provider"),
-            RootThreadProviderCapability::StartThread,
+            thread_service_api::ThreadProviderRootCapability::StartThread,
         )
         .unwrap_err();
 
@@ -483,12 +580,13 @@ impl ThreadRequestProcessor {
             persist_extended_history,
         } = params;
         let root_thread_provider_route = resolve_root_thread_provider(
+            self.thread_provider_catalog.as_ref(),
             thread_provider.as_deref(),
-            RootThreadProviderCapability::StartThread,
+            thread_service_api::ThreadProviderRootCapability::StartThread,
         )?;
         if matches!(
             root_thread_provider_route,
-            RootThreadProviderRoute::External(_)
+            thread_service_api::RootThreadProviderRoute::External(_)
         ) {
             validate_external_root_start_params(
                 &task_name,
@@ -566,8 +664,8 @@ impl ThreadRequestProcessor {
         let outgoing = Arc::clone(&listener_task_context.outgoing);
         let error_request_id = request_id.clone();
         let external_root_provider = match root_thread_provider_route {
-            RootThreadProviderRoute::Native => None,
-            RootThreadProviderRoute::External(provider) => Some(provider),
+            thread_service_api::RootThreadProviderRoute::Native => None,
+            thread_service_api::RootThreadProviderRoute::External(provider) => Some(provider),
         };
         let thread_start_task = async move {
             if let Err(error) = Self::thread_start_task(
@@ -609,9 +707,12 @@ impl ThreadRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
-        let route =
-            resolve_root_thread_provider(None, RootThreadProviderCapability::RestoreThread)?;
-        debug_assert_eq!(route, RootThreadProviderRoute::Native);
+        let route = resolve_root_thread_provider(
+            self.thread_provider_catalog.as_ref(),
+            None,
+            thread_service_api::ThreadProviderRootCapability::RestoreThread,
+        )?;
+        debug_assert_eq!(route, thread_service_api::RootThreadProviderRoute::Native);
         if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
             && self
                 .pending_thread_unloads
@@ -726,8 +827,9 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
             if let Err(error) = reject_unsupported_external_root_thread_provider(
+                self.thread_provider_catalog.as_ref(),
                 source_thread.model_provider.as_str(),
-                RootThreadProviderCapability::RestoreThread,
+                thread_service_api::ThreadProviderRootCapability::RestoreThread,
             ) {
                 self.outgoing.send_error(request_id, error).await;
                 return Ok(());
@@ -1449,8 +1551,12 @@ impl ThreadRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
-        let route = resolve_root_thread_provider(None, RootThreadProviderCapability::ForkThread)?;
-        debug_assert_eq!(route, RootThreadProviderRoute::Native);
+        let route = resolve_root_thread_provider(
+            self.thread_provider_catalog.as_ref(),
+            None,
+            thread_service_api::ThreadProviderRootCapability::ForkThread,
+        )?;
+        debug_assert_eq!(route, thread_service_api::RootThreadProviderRoute::Native);
         let ThreadForkParams {
             thread_id,
             path,
@@ -1487,8 +1593,9 @@ impl ThreadRequestProcessor {
             .await?;
         if !is_persisted_external_root_thread(&source_thread) {
             reject_unsupported_external_root_thread_provider(
+                self.thread_provider_catalog.as_ref(),
                 source_thread.model_provider.as_str(),
-                RootThreadProviderCapability::ForkThread,
+                thread_service_api::ThreadProviderRootCapability::ForkThread,
             )?;
         }
         let source_thread_id = source_thread.thread_id;

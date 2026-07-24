@@ -51,28 +51,9 @@ pub(super) fn parse_thread_start_agent(
     }))
 }
 
-fn external_root_thread_provider(
-    provider: codex_agent_runtime::SpawnAgentProvider,
-) -> thread_service_api::ExternalRootThreadProvider {
-    match provider {
-        codex_agent_runtime::SpawnAgentProvider::CodexCli => {
-            thread_service_api::ExternalRootThreadProvider::CodexCli
-        }
-        codex_agent_runtime::SpawnAgentProvider::ClaudeCli => {
-            thread_service_api::ExternalRootThreadProvider::ClaudeCli
-        }
-        codex_agent_runtime::SpawnAgentProvider::Opencode => {
-            thread_service_api::ExternalRootThreadProvider::Opencode
-        }
-        codex_agent_runtime::SpawnAgentProvider::Native => {
-            unreachable!("native provider cannot start an external root thread")
-        }
-    }
-}
-
 fn external_root_thread_start_request(
     config: Config,
-    provider: codex_agent_runtime::SpawnAgentProvider,
+    provider: thread_service_api::ExternalRootThreadProvider,
 ) -> thread_service_api::ExternalRootThreadStartRequest {
     thread_service_api::ExternalRootThreadStartRequest {
         startup_config: thread_service_api::ExternalRootThreadStartupConfig {
@@ -94,7 +75,7 @@ fn external_root_thread_start_request(
             default_wait_timeout_ms: config.multi_agent_v2.default_wait_timeout_ms,
             max_wait_timeout_ms: config.multi_agent_v2.max_wait_timeout_ms,
         },
-        provider: external_root_thread_provider(provider),
+        provider,
     }
 }
 
@@ -490,7 +471,7 @@ impl ThreadRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn thread_start_task(
         listener_task_context: ListenerTaskContext,
-        external_root_provider: Option<codex_agent_runtime::SpawnAgentProvider>,
+        external_root_provider: Option<thread_service_api::ExternalRootThreadProvider>,
         native_thread_creation: Arc<dyn NativeThreadCreationRuntime>,
         external_root_thread_runtime: Arc<dyn thread_service_api::ExternalRootThreadRuntime>,
         environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
@@ -817,7 +798,7 @@ impl ThreadRequestProcessor {
         request_id: ConnectionRequestId,
         instruction_sources: Vec<AbsolutePathBuf>,
         config: Config,
-        provider: codex_agent_runtime::SpawnAgentProvider,
+        provider: thread_service_api::ExternalRootThreadProvider,
     ) -> Result<(), JSONRPCErrorError> {
         let new_thread = external_root_thread_runtime
             .start_external_root_thread(external_root_thread_start_request(config, provider))

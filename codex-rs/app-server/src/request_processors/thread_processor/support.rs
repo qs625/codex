@@ -253,7 +253,7 @@ pub(in crate::request_processors) fn should_preserve_persisted_lifecycle_status_
 }
 
 pub(super) fn is_external_root_lifecycle_projection_thread(thread: &Thread) -> bool {
-    external_cli_thread_provider(&thread.model_provider).is_some()
+    is_external_cli_thread_provider_id(&thread.model_provider)
         && thread.thread_source == Some(app_server_protocol::ThreadSource::User)
         && thread.agent_path.is_none()
         && thread.agent_role.is_none()

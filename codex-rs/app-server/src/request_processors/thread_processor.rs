@@ -429,6 +429,7 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
 pub(crate) struct ThreadRequestProcessor {
     pub(super) native_thread_creation: Arc<dyn NativeThreadCreationRuntime>,
     pub(super) external_root_thread_runtime: Arc<dyn thread_service_api::ExternalRootThreadRuntime>,
+    pub(super) thread_provider_catalog: Arc<dyn thread_service_api::ThreadProviderCatalogRuntime>,
     pub(super) environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
     pub(super) live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
@@ -476,6 +477,7 @@ impl ThreadRequestProcessor {
         Self {
             native_thread_creation: thread_service.clone(),
             external_root_thread_runtime: thread_service.clone(),
+            thread_provider_catalog: thread_service.clone(),
             environment_runtime: thread_service.clone(),
             live_thread_listener: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),
@@ -502,6 +504,18 @@ impl ThreadRequestProcessor {
             skills_watcher,
             startup_active_threads_restored: Arc::new(OnceCell::new()),
         }
+    }
+
+    fn default_thread_list_model_providers(&self) -> Vec<String> {
+        let mut providers = vec![self.config.model_provider_id.clone()];
+        for provider in self.thread_provider_catalog.list_thread_providers() {
+            if provider.kind == thread_service_api::ThreadProviderRuntimeKind::ExternalCli
+                && !providers.iter().any(|existing| existing == &provider.id)
+            {
+                providers.push(provider.id);
+            }
+        }
+        providers
     }
 
     pub(crate) async fn thread_start(
@@ -801,9 +815,7 @@ impl ThreadRequestProcessor {
                     Some(providers)
                 }
             }
-            None => Some(default_thread_list_model_providers(
-                &self.config.model_provider_id,
-            )),
+            None => Some(self.default_thread_list_model_providers()),
         };
         let (allowed_sources_vec, source_kind_filter) = compute_source_filters(source_kinds);
         let allowed_sources = allowed_sources_vec.as_slice();

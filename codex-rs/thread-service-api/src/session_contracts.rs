@@ -816,6 +816,115 @@ pub enum ExternalRootThreadProvider {
     Opencode,
 }
 
+impl ExternalRootThreadProvider {
+    pub fn from_provider_id(provider_id: &str) -> Option<Self> {
+        match provider_id {
+            "codex_cli" => Some(Self::CodexCli),
+            "claude_cli" => Some(Self::ClaudeCli),
+            "opencode" => Some(Self::Opencode),
+            _ => None,
+        }
+    }
+
+    pub fn provider_id(self) -> &'static str {
+        match self {
+            Self::CodexCli => "codex_cli",
+            Self::ClaudeCli => "claude_cli",
+            Self::Opencode => "opencode",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadProviderRuntimeKind {
+    Native,
+    ExternalCli,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadProviderRootCapability {
+    StartThread,
+    RestoreThread,
+    ForkThread,
+}
+
+impl ThreadProviderRootCapability {
+    pub fn method(self) -> &'static str {
+        match self {
+            Self::StartThread => "thread/start",
+            Self::RestoreThread => "thread/resume",
+            Self::ForkThread => "thread/fork",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreadProviderRuntimeCapabilities {
+    pub start_thread: bool,
+    pub send_input: bool,
+    pub close_thread: bool,
+    pub list_children: bool,
+    pub restore_thread: bool,
+    pub restore_snapshot: bool,
+    pub event_stream: bool,
+    pub spawn_child: bool,
+    pub compact: bool,
+    pub workflow: bool,
+    pub poll_event: bool,
+    pub command_session: bool,
+    pub permissions: bool,
+    pub dynamic_tools: bool,
+    pub fork_thread: bool,
+}
+
+impl ThreadProviderRuntimeCapabilities {
+    pub fn supports_root_capability(self, capability: ThreadProviderRootCapability) -> bool {
+        match capability {
+            ThreadProviderRootCapability::StartThread => self.start_thread,
+            ThreadProviderRootCapability::RestoreThread => self.restore_thread,
+            ThreadProviderRootCapability::ForkThread => self.fork_thread,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadProviderRuntimeDescriptor {
+    pub id: String,
+    pub display_name: String,
+    pub description: String,
+    pub kind: ThreadProviderRuntimeKind,
+    pub external_root_provider: Option<ExternalRootThreadProvider>,
+    pub capabilities: ThreadProviderRuntimeCapabilities,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootThreadProviderRoute {
+    Native,
+    External(ExternalRootThreadProvider),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootThreadProviderResolutionError {
+    UnknownProvider {
+        provider_id: String,
+        capability: ThreadProviderRootCapability,
+    },
+    UnsupportedCapability {
+        provider_id: String,
+        capability: ThreadProviderRootCapability,
+    },
+}
+
+pub trait ThreadProviderCatalogRuntime: Send + Sync + 'static {
+    fn list_thread_providers(&self) -> Vec<ThreadProviderRuntimeDescriptor>;
+
+    fn resolve_root_thread_provider(
+        &self,
+        provider_id: Option<&str>,
+        capability: ThreadProviderRootCapability,
+    ) -> Result<RootThreadProviderRoute, RootThreadProviderResolutionError>;
+}
+
 pub struct ExternalRootThreadStartResult {
     pub thread_id: ThreadId,
     pub session_configured: SessionConfiguredEvent,
