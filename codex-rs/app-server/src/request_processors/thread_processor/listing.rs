@@ -693,6 +693,12 @@ impl ThreadRequestProcessor {
         if persisted_subscription_count == 0 {
             return;
         }
+        if super::start::is_persisted_external_root_thread(&stored_thread) {
+            info!(
+                "skipping live startup restore for persisted external root thread {thread_id}; provider reconnect is not supported"
+            );
+            return;
+        }
 
         let session_source = stored_thread_session_source_with_agent_metadata(&stored_thread);
         let agent_metadata = stored_thread_root_agent_metadata(&stored_thread);

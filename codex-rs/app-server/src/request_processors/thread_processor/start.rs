@@ -66,7 +66,7 @@ fn reject_unsupported_external_root_thread_provider(
     Ok(())
 }
 
-fn is_persisted_external_root_thread(thread: &StoredThread) -> bool {
+pub(super) fn is_persisted_external_root_thread(thread: &StoredThread) -> bool {
     is_external_cli_thread_provider_id(thread.model_provider.as_str())
         && !thread.source.is_non_root_agent()
         && thread.thread_source == Some(protocol::protocol::ThreadSource::User)
