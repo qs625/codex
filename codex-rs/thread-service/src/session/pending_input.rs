@@ -479,10 +479,62 @@ impl Session {
         }
     }
 
-    pub(crate) async fn pending_thread_input_source_hint(&self) -> Option<String> {
-        self.find_pending_input(|item| Some(thread_wait_source_hint_for_pending_input(item)))
+    pub(crate) async fn pending_thread_poll_event_snapshot(
+        &self,
+    ) -> Option<PendingThreadPollEventSnapshot> {
+        self.find_pending_input(pending_thread_poll_event_snapshot)
             .await
-            .flatten()
+    }
+
+    pub(crate) async fn pending_thread_poll_event_snapshots(
+        &self,
+    ) -> Vec<PendingThreadPollEventSnapshot> {
+        let mut snapshots = Vec::new();
+        let accepts_async_input_for_current_turn = {
+            let active = self.active_turn.lock().await;
+            if let Some(at) = active.as_ref() {
+                let ts = at.turn_state.lock().await;
+                snapshots.extend(
+                    ts.pending_input()
+                        .iter()
+                        .filter_map(pending_thread_poll_event_snapshot),
+                );
+                ts.accepts_async_input_for_current_turn()
+            } else {
+                true
+            }
+        };
+        {
+            let idle_pending_input = self.idle_pending_input.lock().await;
+            snapshots.extend(
+                idle_pending_input
+                    .iter()
+                    .filter_map(pending_thread_poll_event_snapshot),
+            );
+        }
+        if !accepts_async_input_for_current_turn {
+            return snapshots;
+        }
+        let _scheduler = self.scheduler.lock().await;
+        self.sync_mailbox_pending_buffer().await;
+        let mut mailbox_rx = self.mailbox_rx.lock().await;
+        snapshots.extend(
+            mailbox_rx
+                .pending()
+                .filter_map(pending_thread_poll_event_snapshot),
+        );
+        snapshots
+    }
+
+    pub(crate) async fn pending_thread_poll_event_snapshots_for_source(
+        &self,
+        source_hint: &str,
+    ) -> Vec<PendingThreadPollEventSnapshot> {
+        self.pending_thread_poll_event_snapshots()
+            .await
+            .into_iter()
+            .filter(|snapshot| snapshot.source_hint == source_hint)
+            .collect()
     }
 
     pub(crate) async fn poll_event(
@@ -498,11 +550,17 @@ impl Session {
         let started = Instant::now();
         let mut thread_wait_rx = self.subscribe_thread_wait_events();
         let wait_snapshot = *thread_wait_rx.borrow_and_update();
-        if let Some(source_hint) = self.pending_thread_input_source_hint().await {
+        if let Some(snapshot) = self.pending_thread_poll_event_snapshot().await {
+            let snapshots = self.pending_thread_poll_event_snapshots().await;
+            let source_events =
+                poll_events_for_source_from_snapshots(&snapshots, &snapshot.source_hint);
+            let events = poll_events_from_snapshots(&snapshots);
             self.reset_thread_wait_backoff().await;
             return Ok(thread_service_api::ThreadPollEventResult {
                 timed_out: false,
-                source_hint: Some(source_hint),
+                source_hint: Some(snapshot.source_hint),
+                event: source_events.first().cloned(),
+                events,
                 waited_ms: 0,
                 initial_timeout_ms,
                 current_timeout_ms,
@@ -525,10 +583,21 @@ impl Session {
 
         match source_hint {
             Ok(source_hint) => {
+                let events = match source_hint.as_deref() {
+                    Some(source_hint) => self
+                        .pending_thread_poll_event_snapshots_for_source(source_hint)
+                        .await
+                        .into_iter()
+                        .filter_map(|snapshot| snapshot.event)
+                        .collect(),
+                    None => Vec::new(),
+                };
                 self.reset_thread_wait_backoff().await;
                 Ok(thread_service_api::ThreadPollEventResult {
                     timed_out: false,
                     source_hint,
+                    event: events.first().cloned(),
+                    events,
                     waited_ms: started.elapsed().as_millis() as i64,
                     initial_timeout_ms,
                     current_timeout_ms,
@@ -541,6 +610,8 @@ impl Session {
                 Ok(thread_service_api::ThreadPollEventResult {
                     timed_out: true,
                     source_hint: None,
+                    event: None,
+                    events: Vec::new(),
                     waited_ms: started.elapsed().as_millis() as i64,
                     initial_timeout_ms,
                     current_timeout_ms,
@@ -650,4 +721,60 @@ fn thread_wait_source_hint_for_pending_input(item: &PendingInputItem) -> Option<
     Some(thread_wait_source_hint(
         thread_wait_source_for_pending_input_item(item),
     ))
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingThreadPollEventSnapshot {
+    source_hint: String,
+    event: Option<thread_service_api::ThreadPollEvent>,
+}
+
+fn pending_thread_poll_event_snapshot(
+    item: &PendingInputItem,
+) -> Option<PendingThreadPollEventSnapshot> {
+    Some(PendingThreadPollEventSnapshot {
+        source_hint: thread_wait_source_hint_for_pending_input(item)?,
+        event: thread_poll_event_for_pending_input(item),
+    })
+}
+
+fn poll_events_from_snapshots(
+    snapshots: &[PendingThreadPollEventSnapshot],
+) -> Vec<thread_service_api::ThreadPollEvent> {
+    snapshots
+        .iter()
+        .filter_map(|snapshot| snapshot.event.clone())
+        .collect()
+}
+
+fn poll_events_for_source_from_snapshots(
+    snapshots: &[PendingThreadPollEventSnapshot],
+    source_hint: &str,
+) -> Vec<thread_service_api::ThreadPollEvent> {
+    snapshots
+        .iter()
+        .filter(|snapshot| snapshot.source_hint == source_hint)
+        .filter_map(|snapshot| snapshot.event.clone())
+        .collect()
+}
+
+fn thread_poll_event_for_pending_input(
+    item: &PendingInputItem,
+) -> Option<thread_service_api::ThreadPollEvent> {
+    match item {
+        PendingInputItem::InterAgentCommunication(communication)
+        | PendingInputItem::ResponseItem(ResponseItem::InterAgentCommunication {
+            communication,
+            ..
+        })
+        | PendingInputItem::HookInspectable(ResponseItem::InterAgentCommunication {
+            communication,
+            ..
+        }) => Some(
+            thread_service_api::ThreadPollEvent::InterAgentCommunication {
+                communication: communication.clone(),
+            },
+        ),
+        PendingInputItem::ResponseItem(_) | PendingInputItem::HookInspectable(_) => None,
+    }
 }

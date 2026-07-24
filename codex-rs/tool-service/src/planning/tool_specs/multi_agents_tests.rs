@@ -280,6 +280,8 @@ fn poll_event_output_schema_matches_thread_poll_event_result_json_keys() {
     let serialized = serde_json::to_value(thread_service_api::ThreadPollEventResult {
         timed_out: false,
         source_hint: Some("inter_agent".to_string()),
+        event: None,
+        events: Vec::new(),
         waited_ms: 1,
         initial_timeout_ms: 10,
         current_timeout_ms: 10,
@@ -435,7 +437,7 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
 }
 
 #[test]
-fn poll_event_tool_has_empty_object_params_and_wake_metadata() {
+fn poll_event_tool_has_empty_object_params_and_optional_payload() {
     let ToolSpec::Function(ResponsesApiTool {
         parameters,
         output_schema,
@@ -460,6 +462,14 @@ fn poll_event_tool_has_empty_object_params_and_wake_metadata() {
             "currentTimeoutMs",
             "hardCapTimeoutMs"
         ])
+    );
+    assert!(
+        output_schema["properties"]["event"].is_object(),
+        "poll_event should document its optional typed payload"
+    );
+    assert!(
+        output_schema["properties"]["events"].is_object(),
+        "poll_event should document the visible typed payload list"
     );
 }
 

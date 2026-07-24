@@ -393,10 +393,27 @@ export interface WorkflowRuntime {
   mode: "start" | "resume";
   revision: number;
   emit(event: unknown): void;
-  pollEvent(): Promise<unknown>;
+  pollEvent(): Promise<WorkflowPollEventResult>;
   Agent(id: string, options: WorkflowAgentOptions): Promise<WorkflowAgent>;
   shell(command: unknown): Promise<WorkflowShellResult>;
 }
+
+export interface WorkflowPollEventResult {
+  timedOut?: boolean;
+  sourceHint?: string | null;
+  event?: WorkflowPollEvent | null;
+  events?: WorkflowPollEvent[];
+  waitedMs?: number;
+  initialTimeoutMs?: number;
+  currentTimeoutMs?: number;
+  hardCapTimeoutMs?: number;
+}
+
+export type WorkflowPollEvent =
+  | {
+      type: "inter_agent_communication";
+      communication: unknown;
+    };
 
 export interface WorkflowAgentOptions {
   parent?: string;
@@ -417,7 +434,7 @@ export interface WorkflowAgent {
   id: string;
   options: WorkflowAgentOptions;
   binding: WorkflowAgentBinding;
-  wait(): Promise<unknown>;
+  wait(): Promise<WorkflowPollEventResult>;
   followup(message: string): Promise<unknown>;
 }
 

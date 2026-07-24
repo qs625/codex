@@ -138,7 +138,7 @@ pub fn create_followup_external_task_tool() -> ToolSpec {
 pub fn create_poll_external_event_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "poll_external_event".to_string(),
-        description: "Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns only wake or timeout metadata plus a best-effort source hint, not the event payload.".to_string(),
+        description: "Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns wake or timeout metadata plus a best-effort source hint and typed event payload when one is available.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
@@ -194,7 +194,7 @@ pub fn create_followup_task_tool() -> ToolSpec {
 pub fn create_poll_event_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "poll_event".to_string(),
-        description: "Wait for the next new thread input that reaches the active turn runtime, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns only wake or timeout metadata plus a best-effort source hint, not the event payload.".to_string(),
+        description: "Wait for the next new thread input that reaches the active turn runtime, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns wake or timeout metadata plus a best-effort source hint and typed event payload when one is available.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
@@ -213,6 +213,46 @@ fn poll_event_output_schema() -> serde_json::Value {
             "sourceHint": {
                 "type": ["string", "null"],
                 "description": "Best-effort hint for the source that woke the wait, such as user_input, child_completion, inter_agent, command_output, command_exit, queued_input, or async_input."
+            },
+            "event": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["inter_agent_communication"]
+                            },
+                            "communication": {
+                                "type": "object",
+                                "description": "Typed inter-agent communication payload. Child completion events carry the child final status in communication.status and the completion text in communication.content."
+                            }
+                        },
+                        "required": ["type", "communication"],
+                        "additionalProperties": false
+                    },
+                    { "type": "null" }
+                ],
+                "description": "Typed payload for the pending event when available."
+            },
+            "events": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["inter_agent_communication"]
+                        },
+                        "communication": {
+                            "type": "object",
+                            "description": "Typed inter-agent communication payload."
+                        }
+                    },
+                    "required": ["type", "communication"],
+                    "additionalProperties": false
+                },
+                "description": "All typed pending event payloads currently visible to the active turn runtime."
             },
             "waitedMs": {
                 "type": "number",
