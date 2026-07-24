@@ -127,6 +127,7 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
             dynamic_tools: None,
             memory_mode: None,
             subscriptions: None,
+            external_reconnect: None,
         },
         git: None,
     };

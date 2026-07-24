@@ -695,6 +695,7 @@ impl RolloutRecorder {
                     },
                     memory_mode: (!config.generate_memories()).then_some("disabled".to_string()),
                     subscriptions: None,
+                    external_reconnect: None,
                 };
 
                 (None, Some(log_file_info), path, Some(session_meta))

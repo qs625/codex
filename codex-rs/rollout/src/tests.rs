@@ -1468,6 +1468,7 @@ async fn test_updated_at_uses_file_mtime() -> Result<()> {
                 dynamic_tools: None,
                 memory_mode: None,
                 subscriptions: None,
+                external_reconnect: None,
             },
             git: None,
         }),

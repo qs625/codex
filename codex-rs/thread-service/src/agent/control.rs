@@ -80,6 +80,7 @@ use protocol::error::Result as CodexResult;
 use protocol::models::ResponseItem;
 use protocol::protocol::AgentMessageEvent;
 use protocol::protocol::ErrorEvent;
+use protocol::protocol::ExternalReconnectDescriptor;
 use protocol::protocol::ExternalTerminalStatus;
 use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::ExternalToolCallDisplayEvent;
@@ -116,6 +117,7 @@ use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::ThreadLifecycleRuntime;
 use thread_store_api::ReadThreadParams;
 use thread_store_api::SharedLiveThread;
+use thread_store_api::ThreadMetadataPatch;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tool_service_api::FunctionCallError;
@@ -717,6 +719,13 @@ impl AgentControl {
                 return AgentStatus::Errored(message);
             }
         };
+        if let Some(descriptor) = stream.reconnect_descriptor()
+            && let Err(err) = self
+                .persist_external_reconnect_descriptor(thread_id, descriptor)
+                .await
+        {
+            warn!("failed to persist external reconnect descriptor for {thread_id}: {err}");
+        }
         self.run_external_agent_stream_loop(thread_id, initial_message, input_rx, &mut stream)
             .await
     }
@@ -954,6 +963,36 @@ impl AgentControl {
         self.external_agents
             .get(thread_id)
             .and_then(|run| run.live_thread)
+    }
+
+    async fn persist_external_reconnect_descriptor(
+        &self,
+        thread_id: ThreadId,
+        descriptor: ExternalReconnectDescriptor,
+    ) -> CodexResult<()> {
+        let Some(live_thread) = self.external_live_thread(thread_id).await else {
+            return Ok(());
+        };
+        live_thread.persist().await.map_err(|err| {
+            CodexErr::Fatal(format!(
+                "failed to persist external thread before reconnect descriptor for {thread_id}: {err}"
+            ))
+        })?;
+        live_thread
+            .update_metadata(
+                ThreadMetadataPatch {
+                    external_reconnect: Some(descriptor),
+                    ..Default::default()
+                },
+                /*include_archived*/ false,
+            )
+            .await
+            .map_err(|err| {
+                CodexErr::Fatal(format!(
+                    "failed to persist external reconnect descriptor for {thread_id}: {err}"
+                ))
+            })?;
+        Ok(())
     }
 
     async fn persist_external_items(&self, thread_id: ThreadId, items: Vec<RolloutItem>) {

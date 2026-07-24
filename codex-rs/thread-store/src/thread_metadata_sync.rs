@@ -253,6 +253,9 @@ impl ThreadMetadataSync {
                     if let Some(subscriptions) = meta_line.meta.subscriptions.clone() {
                         update.subscriptions = Some(subscriptions);
                     }
+                    if let Some(external_reconnect) = meta_line.meta.external_reconnect.clone() {
+                        update.external_reconnect = Some(external_reconnect);
+                    }
                 }
                 RolloutItem::TurnContext(turn_ctx) => {
                     if !self.cwd_seen && !turn_ctx.cwd.as_os_str().is_empty() {
@@ -393,6 +396,7 @@ fn update_has_metadata_facts(update: &ThreadMetadataPatch) -> bool {
         || update.memory_mode.is_some()
         || update.dynamic_tools.is_some()
         || update.subscriptions.is_some()
+        || update.external_reconnect.is_some()
 }
 
 fn git_info_patch_from_observation(git_info: GitInfo) -> GitInfoPatch {
