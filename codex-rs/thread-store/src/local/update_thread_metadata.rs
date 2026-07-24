@@ -65,6 +65,7 @@ pub(super) async fn update_thread_metadata(
     let name = patch.name;
     let git_info = patch.git_info;
     let subscriptions = patch.subscriptions;
+    let external_reconnect = patch.external_reconnect;
     if let Some(memory_mode) = patch.memory_mode {
         apply_thread_memory_mode(resolved_rollout_path.path.as_path(), thread_id, memory_mode)
             .await?;
@@ -74,6 +75,14 @@ pub(super) async fn update_thread_metadata(
             resolved_rollout_path.path.as_path(),
             thread_id,
             subscriptions.as_slice(),
+        )
+        .await?;
+    }
+    if let Some(external_reconnect) = external_reconnect {
+        apply_external_reconnect_to_rollout(
+            resolved_rollout_path.path.as_path(),
+            thread_id,
+            external_reconnect,
         )
         .await?;
     }
@@ -353,7 +362,11 @@ fn needs_rollout_compatibility_update(patch: &ThreadMetadataPatch) -> bool {
     if patch.name.is_some() {
         return true;
     }
-    if patch.memory_mode.is_none() && patch.git_info.is_none() && patch.subscriptions.is_none() {
+    if patch.memory_mode.is_none()
+        && patch.git_info.is_none()
+        && patch.subscriptions.is_none()
+        && patch.external_reconnect.is_none()
+    {
         return false;
     }
     !has_observed_metadata_facts(patch)
@@ -562,6 +575,34 @@ async fn apply_thread_subscriptions_to_rollout(
         .await
         .map_err(|err| ThreadStoreError::Internal {
             message: format!("failed to set thread subscriptions: {err}"),
+        })
+}
+
+async fn apply_external_reconnect_to_rollout(
+    rollout_path: &Path,
+    thread_id: ThreadId,
+    external_reconnect: protocol::protocol::ExternalReconnectDescriptor,
+) -> ThreadStoreResult<()> {
+    let mut session_meta =
+        read_session_meta_line(rollout_path)
+            .await
+            .map_err(|err| ThreadStoreError::Internal {
+                message: format!("failed to set external reconnect metadata: {err}"),
+            })?;
+    if session_meta.meta.id != thread_id {
+        return Err(ThreadStoreError::Internal {
+            message: format!(
+                "failed to set external reconnect metadata: rollout session metadata id mismatch: expected {thread_id}, found {}",
+                session_meta.meta.id
+            ),
+        });
+    }
+
+    session_meta.meta.external_reconnect = Some(external_reconnect);
+    append_rollout_item_to_path(rollout_path, &RolloutItem::SessionMeta(session_meta))
+        .await
+        .map_err(|err| ThreadStoreError::Internal {
+            message: format!("failed to set external reconnect metadata: {err}"),
         })
 }
 

@@ -6,6 +6,7 @@ use crate::ThreadService;
 use crate::TurnContext;
 use crate::agent::AgentMode;
 use crate::agent::agent_status_from_event;
+use crate::agent::external::opencode_reconnect_descriptor;
 use crate::config::AgentRoleConfig;
 use crate::config::Config;
 use crate::config::ConfigBuilder;
@@ -284,6 +285,72 @@ async fn persist_external_child_for_restart(
         .persist_external_terminal_status(external_thread_id, &status)
         .await;
     (external_thread_id, external_agent_path)
+}
+
+#[tokio::test]
+async fn opencode_reconnect_descriptor_persists_to_session_meta_history() {
+    let harness = AgentControlHarness::new().await;
+    let thread_id = ThreadId::new();
+    let mut external_config = ExternalSpawnConfig::from_config(&harness.config);
+    external_config.model_provider_id = provider_label(SpawnAgentProvider::Opencode).to_string();
+    let agent_metadata = AgentMetadata::default();
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &external_config,
+            thread_id,
+            SessionSource::Cli,
+            ThreadSource::User,
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external root");
+    live_thread.persist().await.expect("persist session meta");
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id,
+            parent_thread_id: thread_id,
+            agent_path: AgentPath::root(),
+            provider: SpawnAgentProvider::Opencode,
+            depth: 0,
+            spawn_config: Some(external_config),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: None,
+            abort_handle: None,
+        });
+
+    let descriptor = opencode_reconnect_descriptor("opencode-session-123");
+    harness
+        .control
+        .persist_external_reconnect_descriptor(thread_id, descriptor.clone())
+        .await
+        .expect("persist reconnect descriptor");
+
+    let stored = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read stored external thread");
+    let history = stored.history.expect("history");
+    let descriptors = history
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            RolloutItem::SessionMeta(meta_line) => meta_line.meta.external_reconnect.clone(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(descriptors, vec![descriptor]);
 }
 
 fn has_subagent_notification(history_items: &[ResponseItem]) -> bool {

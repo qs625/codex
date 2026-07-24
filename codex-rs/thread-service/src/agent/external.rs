@@ -21,6 +21,9 @@ use futures::future::BoxFuture;
 use protocol::AgentPath;
 use protocol::ThreadId;
 use protocol::protocol::AgentStatus;
+use protocol::protocol::ExternalProviderSessionIdentity;
+use protocol::protocol::ExternalReconnectDescriptor;
+use protocol::protocol::ExternalReconnectTransport;
 use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::InterAgentOperation;
 use serde::Deserialize;
@@ -45,6 +48,7 @@ use tokio::task::AbortHandle;
 
 const MAX_EXTERNAL_OUTPUT_CHARS: usize = 12_000;
 const MAX_EXTERNAL_ERROR_CHARS: usize = 4_000;
+const MAX_EXTERNAL_SESSION_ID_CHARS: usize = 512;
 const MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS: usize = 8_000;
 const MAX_EXTERNAL_TOOL_ARGUMENT_CHARS: usize = 8_000;
 const CODEX_APP_SERVER_ENV_REMOVALS: &[&str] = &["CODEX_HOME", "CODEX_THREAD_ID"];
@@ -547,7 +551,20 @@ impl ExternalAgentInputSink {
 
 pub(crate) trait ExternalProviderSession: Send {
     fn input_sink(&self) -> ExternalInputSink;
+    fn reconnect_descriptor(&self) -> Option<ExternalReconnectDescriptor> {
+        None
+    }
     fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<ExternalProcessEvent, String>>;
+}
+
+pub(crate) fn opencode_reconnect_descriptor(session_id: &str) -> ExternalReconnectDescriptor {
+    ExternalReconnectDescriptor {
+        provider: "opencode".to_string(),
+        transport: ExternalReconnectTransport::OpencodeHttp,
+        session_identity: ExternalProviderSessionIdentity {
+            session_id: truncate_chars(session_id, MAX_EXTERNAL_SESSION_ID_CHARS),
+        },
+    }
 }
 
 pub(crate) fn external_session_spec(
@@ -643,6 +660,15 @@ impl ExternalProviderSession for ExternalStreamingSession {
             ExternalStreamingSession::Cli(session) => session.input_sink.clone(),
             ExternalStreamingSession::CodexAppServer(session) => session.input_sink.clone(),
             ExternalStreamingSession::OpencodeHttp(session) => session.input_sink.clone(),
+        }
+    }
+
+    fn reconnect_descriptor(&self) -> Option<ExternalReconnectDescriptor> {
+        match self {
+            ExternalStreamingSession::OpencodeHttp(session) => {
+                Some(session.reconnect_descriptor.clone())
+            }
+            ExternalStreamingSession::Cli(_) | ExternalStreamingSession::CodexAppServer(_) => None,
         }
     }
 
@@ -974,6 +1000,7 @@ pub(crate) struct OpencodeHttpSession {
     child: Child,
     input_sink: ExternalInputSink,
     events: mpsc::UnboundedReceiver<Result<ExternalProcessEvent, String>>,
+    reconnect_descriptor: ExternalReconnectDescriptor,
 }
 
 impl OpencodeHttpSession {
@@ -1004,6 +1031,7 @@ impl OpencodeHttpSession {
 
         let client = reqwest::Client::new();
         let session_id = create_opencode_session(&client, &base_url, &cwd).await?;
+        let reconnect_descriptor = opencode_reconnect_descriptor(&session_id);
         let (input_tx, input_rx) = mpsc::unbounded_channel();
         let (event_tx, events) = mpsc::unbounded_channel();
         let (subscription_tx, mut subscription_rx) = watch::channel(None);
@@ -1029,6 +1057,7 @@ impl OpencodeHttpSession {
             child,
             input_sink: ExternalInputSink::new(input_tx),
             events,
+            reconnect_descriptor,
         })
     }
 
@@ -2495,6 +2524,39 @@ mod tests {
         assert!(spec.args.contains(&"serve".to_string()));
         assert!(spec.args.contains(&"--port".to_string()));
         assert!(spec.args.contains(&"0".to_string()));
+    }
+
+    #[test]
+    fn opencode_reconnect_descriptor_is_bounded_and_provider_scoped() {
+        let long_session_id = "s".repeat(MAX_EXTERNAL_SESSION_ID_CHARS + 10);
+        let descriptor = opencode_reconnect_descriptor(&long_session_id);
+
+        assert_eq!(descriptor.provider, "opencode");
+        assert_eq!(
+            descriptor.transport,
+            ExternalReconnectTransport::OpencodeHttp
+        );
+        assert_eq!(
+            descriptor.session_identity.session_id.chars().count(),
+            MAX_EXTERNAL_SESSION_ID_CHARS + 3
+        );
+        assert!(descriptor.session_identity.session_id.ends_with("..."));
+
+        struct NoDescriptorSession;
+        impl ExternalProviderSession for NoDescriptorSession {
+            fn input_sink(&self) -> ExternalInputSink {
+                let (tx, _rx) = mpsc::unbounded_channel();
+                ExternalInputSink::new(tx)
+            }
+
+            fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<ExternalProcessEvent, String>> {
+                Box::pin(async {
+                    std::future::pending::<Result<ExternalProcessEvent, String>>().await
+                })
+            }
+        }
+
+        assert!(NoDescriptorSession.reconnect_descriptor().is_none());
     }
 
     #[tokio::test]

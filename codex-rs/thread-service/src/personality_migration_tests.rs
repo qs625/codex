@@ -74,6 +74,7 @@ async fn write_rollout_with_user_event(dir: &Path, thread_id: ThreadId) -> io::R
             dynamic_tools: None,
             memory_mode: None,
             subscriptions: None,
+            external_reconnect: None,
         },
         git: None,
     };

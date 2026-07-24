@@ -510,6 +510,28 @@ impl fmt::Display for InternalSessionSource {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalReconnectDescriptor {
+    /// Stable external provider id, such as `opencode`.
+    pub provider: String,
+    pub transport: ExternalReconnectTransport,
+    pub session_identity: ExternalProviderSessionIdentity,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalReconnectTransport {
+    OpencodeHttp,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalProviderSessionIdentity {
+    /// Provider-owned session id used by the external transport.
+    pub session_id: String,
+}
+
 /// SessionMeta contains session-level data that doesn't correspond to a specific turn.
 ///
 /// NOTE: There used to be an `instructions` field here, which stored user_instructions, but we
@@ -549,6 +571,9 @@ pub struct SessionMeta {
     pub memory_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscriptions: Option<Vec<PersistedSubscription>>,
+    /// Optional provider-owned identity needed by future external live reconnect support.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_reconnect: Option<ExternalReconnectDescriptor>,
 }
 
 impl Default for SessionMeta {
@@ -570,6 +595,7 @@ impl Default for SessionMeta {
             dynamic_tools: None,
             memory_mode: None,
             subscriptions: None,
+            external_reconnect: None,
         }
     }
 }
@@ -580,4 +606,63 @@ pub struct SessionMetaLine {
     pub meta: SessionMeta,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<GitInfo>,
+}
+
+#[cfg(test)]
+mod session_meta_tests {
+    use super::*;
+
+    #[test]
+    fn session_meta_roundtrips_external_reconnect_descriptor() {
+        let meta = SessionMeta {
+            external_reconnect: Some(ExternalReconnectDescriptor {
+                provider: "opencode".to_string(),
+                transport: ExternalReconnectTransport::OpencodeHttp,
+                session_identity: ExternalProviderSessionIdentity {
+                    session_id: "ses_123".to_string(),
+                },
+            }),
+            ..SessionMeta::default()
+        };
+
+        let value = serde_json::to_value(&meta).expect("serialize session meta");
+        assert_eq!(
+            value["external_reconnect"],
+            serde_json::json!({
+                "provider": "opencode",
+                "transport": "opencodeHttp",
+                "sessionIdentity": {
+                    "sessionId": "ses_123",
+                },
+            })
+        );
+
+        let roundtrip: SessionMeta = serde_json::from_value(value).expect("deserialize meta");
+        assert_eq!(roundtrip.external_reconnect, meta.external_reconnect);
+    }
+
+    #[test]
+    fn session_meta_defaults_missing_external_reconnect_to_none() {
+        let value = serde_json::json!({
+            "id": ThreadId::default(),
+            "forked_from_id": null,
+            "timestamp": "",
+            "cwd": "",
+            "originator": "",
+            "cli_version": "",
+            "source": "unknown",
+            "thread_source": null,
+            "agent_nickname": null,
+            "agent_role": null,
+            "agent_path": null,
+            "model_provider": null,
+            "base_instructions": null,
+            "dynamic_tools": null,
+            "memory_mode": null,
+            "subscriptions": null,
+        });
+
+        let meta: SessionMeta = serde_json::from_value(value).expect("deserialize old meta");
+        assert_eq!(meta.external_reconnect, None);
+    }
 }

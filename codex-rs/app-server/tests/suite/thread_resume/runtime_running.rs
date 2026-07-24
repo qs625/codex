@@ -107,6 +107,7 @@ stream_max_retries = 0
         dynamic_tools: None,
         memory_mode: None,
         subscriptions: None,
+        external_reconnect: None,
     };
     std::fs::write(
         &rollout_path,

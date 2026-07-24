@@ -2928,6 +2928,7 @@ fn create_external_root_rollout_with_subscription(
             cwd: None,
             label: Some("subscription".to_string()),
         }]),
+        external_reconnect: None,
     };
     let meta_payload = serde_json::to_value(SessionMetaLine { meta, git: None })?;
     let user_payload = serde_json::to_value(EventMsg::UserMessage(UserMessageEvent {

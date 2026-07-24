@@ -41,6 +41,7 @@ fn write_rollout_with_metadata(path: &Path, thread_id: ThreadId) -> std::io::Res
                 dynamic_tools: None,
                 memory_mode: None,
                 subscriptions: None,
+                external_reconnect: None,
             },
             git: None,
         }),

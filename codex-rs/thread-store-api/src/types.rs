@@ -7,6 +7,7 @@ use protocol::dynamic_tools::DynamicToolSpec;
 use protocol::models::BaseInstructions;
 use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::AskForApproval;
+use protocol::protocol::ExternalReconnectDescriptor;
 use protocol::protocol::GitInfo;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SandboxPolicy;
@@ -509,6 +510,8 @@ pub struct ThreadMetadataPatch {
     pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
     /// Persisted event subscriptions to restore when the thread runtime resumes.
     pub subscriptions: Option<Vec<PersistedSubscription>>,
+    /// Optional provider-owned external reconnect descriptor.
+    pub external_reconnect: Option<ExternalReconnectDescriptor>,
 }
 
 impl ThreadMetadataPatch {
@@ -595,6 +598,9 @@ impl ThreadMetadataPatch {
         if next.subscriptions.is_some() {
             self.subscriptions = next.subscriptions;
         }
+        if next.external_reconnect.is_some() {
+            self.external_reconnect = next.external_reconnect;
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -623,6 +629,7 @@ impl ThreadMetadataPatch {
             && self.memory_mode.is_none()
             && self.dynamic_tools.is_none()
             && self.subscriptions.is_none()
+            && self.external_reconnect.is_none()
     }
 }
 
