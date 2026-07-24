@@ -439,7 +439,6 @@ Available external tools:
 - spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode" | "codex_cli", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json, opencode HTTP sessions, and codex_cli app-server stdio sessions.
 - followup_external_task: arguments {{ "target": string, "message": string }}
 - list_external_agents: arguments {{ "path_prefix"?: string }}
-- poll_external_event: currently unsupported for non-interactive CLI sessions; calling it returns an unsupported error.
 - close_external_agent: arguments {{ "target": string }}
 
 Emit one JSON object per line for tool calls:
@@ -1961,6 +1960,7 @@ mod tests {
     fn external_context_injects_schema_and_forbids_internal_tool_names() {
         let context = external_agent_context_prompt("review this patch");
         assert!(context.contains("spawn_external_agent"));
+        assert!(!context.contains("poll_external_event"));
         assert!(context.contains("external_tool_call"));
         assert!(context.contains("external_tool_result"));
         assert!(context.contains("Do not call internal Morpheus tools"));

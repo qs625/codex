@@ -135,25 +135,6 @@ pub fn create_followup_external_task_tool() -> ToolSpec {
     })
 }
 
-pub fn create_poll_external_event_tool() -> ToolSpec {
-    ToolSpec::Function(ResponsesApiTool {
-        name: "poll_external_event".to_string(),
-        description: "Wait for the next external-agent bus event. This first implementation reports a clear unsupported result for model-visible calls until external CLI sessions have an interactive input channel.".to_string(),
-        strict: false,
-        defer_loading: None,
-        parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
-        output_schema: Some(json!({
-            "type": "object",
-            "properties": {
-                "supported": { "type": "boolean" },
-                "message": { "type": "string" }
-            },
-            "required": ["supported", "message"],
-            "additionalProperties": false
-        })),
-    })
-}
-
 pub fn create_list_external_agents_tool() -> ToolSpec {
     let ToolSpec::Function(mut tool) = create_list_agents_tool() else {
         unreachable!("list_agents is a function tool");
