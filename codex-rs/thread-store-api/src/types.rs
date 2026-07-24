@@ -453,6 +453,13 @@ pub fn is_persisted_external_thread(thread: &StoredThread) -> bool {
     is_persisted_external_root_thread(thread) || is_persisted_external_subagent_thread(thread)
 }
 
+pub fn persisted_external_root_provider_id(thread: &StoredThread) -> Option<&str> {
+    if is_persisted_external_root_thread(thread) {
+        return Some(thread.model_provider.as_str());
+    }
+    None
+}
+
 pub fn latest_external_reconnect_descriptor(
     items: &[RolloutItem],
 ) -> Option<&ExternalReconnectDescriptor> {
@@ -1039,6 +1046,7 @@ mod tests {
                     && plan.durable_endpoint == ExternalRestoreFactState::Missing
                     && !plan.restore_enabled
         ));
+        assert_eq!(persisted_external_root_provider_id(&thread), None);
     }
 
     #[test]
@@ -1060,6 +1068,10 @@ mod tests {
                     && plan.wait_cursor == ExternalRestoreFactState::Missing
                     && !plan.restore_enabled
         ));
+        assert_eq!(
+            persisted_external_root_provider_id(&thread),
+            Some("opencode")
+        );
     }
 
     fn external_subagent_source() -> SessionSource {

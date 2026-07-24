@@ -70,12 +70,7 @@ fn reject_unsupported_external_root_thread_provider(
 }
 
 pub(super) fn is_persisted_external_root_thread(thread: &StoredThread) -> bool {
-    is_external_cli_thread_provider_id(thread.model_provider.as_str())
-        && !thread.source.is_non_root_agent()
-        && thread.thread_source == Some(protocol::protocol::ThreadSource::User)
-        && thread.agent_path.is_none()
-        && thread.agent_role.is_none()
-        && thread.agent_nickname.is_none()
+    thread_store_api::persisted_external_root_provider_id(thread).is_some()
 }
 
 #[allow(clippy::too_many_arguments)]

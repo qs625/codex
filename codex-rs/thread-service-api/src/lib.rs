@@ -81,6 +81,24 @@ pub struct ThreadConfigSnapshot {
     pub thread_source: Option<ThreadSource>,
 }
 
+impl ThreadConfigSnapshot {
+    /// Provider id for a user-facing root thread execution context.
+    ///
+    /// This is provider-neutral identity metadata: callers still decide whether
+    /// the provider id is native or external by consulting their provider
+    /// catalog/capabilities.
+    pub fn root_execution_provider_id(&self) -> Option<&str> {
+        if !self.session_source.is_non_root_agent()
+            && self.thread_source == Some(ThreadSource::User)
+            && self.root_agent_path.is_none()
+            && self.root_agent_role.is_none()
+        {
+            return Some(self.model_provider_id.as_str());
+        }
+        None
+    }
+}
+
 /// Copied live thread config context needed to refresh app-server-owned MCP config.
 ///
 /// This carries only the working directory and session config layers needed to
@@ -594,4 +612,54 @@ pub trait LiveThreadHandle: SessionCommandHandle + Send + Sync {
     fn decrement_out_of_band_elicitation_count(
         &self,
     ) -> impl Future<Output = CodexResult<u64>> + Send + '_;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn snapshot() -> ThreadConfigSnapshot {
+        ThreadConfigSnapshot {
+            model: "model".to_string(),
+            model_provider_id: "opencode".to_string(),
+            service_tier: None,
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: ApprovalsReviewer::default(),
+            permission_profile: PermissionProfile::default(),
+            active_permission_profile: None,
+            cwd: AbsolutePathBuf::try_from(PathBuf::from("/tmp")).expect("absolute cwd"),
+            workspace_roots: Vec::new(),
+            profile_workspace_roots: Vec::new(),
+            ephemeral: false,
+            reasoning_effort: None,
+            personality: None,
+            session_source: SessionSource::default(),
+            root_agent_path: None,
+            root_agent_role: None,
+            thread_source: Some(ThreadSource::User),
+        }
+    }
+
+    #[test]
+    fn root_execution_provider_id_returns_user_root_provider() {
+        assert_eq!(snapshot().root_execution_provider_id(), Some("opencode"));
+    }
+
+    #[test]
+    fn root_execution_provider_id_rejects_non_root_or_non_user_contexts() {
+        let mut subagent = snapshot();
+        subagent.session_source = SessionSource::SubAgent(protocol::protocol::SubAgentSource::Other(
+            "worker".to_string(),
+        ));
+        assert_eq!(subagent.root_execution_provider_id(), None);
+
+        let mut role_root = snapshot();
+        role_root.root_agent_role = Some("reviewer".to_string());
+        assert_eq!(role_root.root_execution_provider_id(), None);
+
+        let mut non_user = snapshot();
+        non_user.thread_source = None;
+        assert_eq!(non_user.root_execution_provider_id(), None);
+    }
 }
