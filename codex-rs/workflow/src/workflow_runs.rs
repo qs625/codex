@@ -698,6 +698,10 @@ mod tests {
                         "summary": "agent completed through fake bridge",
                         "blockingFindings": []
                     })),
+                    "event.poll" => Ok(serde_json::json!({
+                        "sourceHint": "child_completion",
+                        "timedOut": false
+                    })),
                     "shell.exec" => Err(WorkflowRuntimeError::unsupported("shell disabled")),
                     method => Err(WorkflowRuntimeError::unsupported(format!(
                         "unexpected method {method}"
@@ -738,6 +742,10 @@ mod tests {
                         .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
                     }
                     "agent.wait" => {
+                        self.wait_started.notify_waiters();
+                        std::future::pending::<Result<Value, WorkflowRuntimeError>>().await
+                    }
+                    "event.poll" => {
                         self.wait_started.notify_waiters();
                         std::future::pending::<Result<Value, WorkflowRuntimeError>>().await
                     }
@@ -880,6 +888,60 @@ export default defineWorkflow({
     }
 
     #[tokio::test]
+    async fn workflow_runner_bridge_polls_thread_events_without_agent_target() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflow_dir = temp.path().join("workflow");
+        write_entry(
+            &workflow_dir,
+            r#"import { defineWorkflow } from "@codex/workflow";
+export default defineWorkflow({
+  async run(wf) {
+    return await wf.pollEvent();
+  }
+});"#,
+        );
+        let registry = registry_for(&workflow_dir);
+        let manager = WorkflowRunManager::new(temp.path().join("home"));
+        let bridge = Arc::new(FakeBridge::default());
+
+        let started = manager
+            .start_with_bridge(
+                &registry,
+                "feature-dev",
+                serde_json::json!({}),
+                bridge.clone(),
+            )
+            .await
+            .expect("start workflow run");
+        let completed = wait_for_terminal(&manager, &started.run_id).await;
+
+        assert_eq!(completed.status, WorkflowRunStatus::Completed);
+        assert_eq!(
+            completed
+                .output
+                .as_ref()
+                .and_then(|output| output.pointer("/result/result/sourceHint")),
+            Some(&Value::String("child_completion".to_string()))
+        );
+        assert_eq!(
+            bridge
+                .methods
+                .lock()
+                .expect("fake bridge methods lock")
+                .clone(),
+            vec!["event.poll".to_string()]
+        );
+        assert_eq!(
+            bridge
+                .params
+                .lock()
+                .expect("fake bridge params lock")
+                .clone(),
+            vec![serde_json::json!({})]
+        );
+    }
+
+    #[tokio::test]
     async fn workflow_runner_reports_unbound_runtime_bridge_as_failure() {
         let temp = tempfile::tempdir().expect("tempdir");
         let workflow_dir = temp.path().join("workflow");
@@ -942,6 +1004,44 @@ export default defineWorkflow({
         tokio::time::timeout(std::time::Duration::from_secs(5), wait_started_future)
             .await
             .expect("agent.wait RPC should start");
+        let aborted = manager
+            .abort(&started.run_id, Some("stop".to_string()))
+            .await
+            .expect("abort workflow run");
+
+        assert_eq!(aborted.status, WorkflowRunStatus::Aborted);
+        wait_for_no_live_runner(&manager, &started.run_id).await;
+    }
+
+    #[tokio::test]
+    async fn workflow_abort_cancels_pending_poll_event_rpc() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflow_dir = temp.path().join("workflow");
+        write_entry(
+            &workflow_dir,
+            r#"import { defineWorkflow } from "@codex/workflow";
+export default defineWorkflow({
+  async run(wf) {
+    await wf.pollEvent();
+  }
+});"#,
+        );
+        let registry = registry_for(&workflow_dir);
+        let manager = WorkflowRunManager::new(temp.path().join("home"));
+        let wait_started = Arc::new(Notify::new());
+        let bridge = Arc::new(BlockingWaitBridge {
+            wait_started: Arc::clone(&wait_started),
+        });
+        let wait_started_future = wait_started.notified();
+        tokio::pin!(wait_started_future);
+
+        let started = manager
+            .start_with_bridge(&registry, "feature-dev", serde_json::json!({}), bridge)
+            .await
+            .expect("start workflow run");
+        tokio::time::timeout(std::time::Duration::from_secs(5), wait_started_future)
+            .await
+            .expect("event.poll RPC should start");
         let aborted = manager
             .abort(&started.run_id, Some("stop".to_string()))
             .await
