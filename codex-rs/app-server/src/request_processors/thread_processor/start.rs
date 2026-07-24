@@ -66,6 +66,15 @@ fn reject_unsupported_external_root_thread_provider(
     Ok(())
 }
 
+fn is_persisted_external_root_thread(thread: &StoredThread) -> bool {
+    is_external_cli_thread_provider_id(thread.model_provider.as_str())
+        && !thread.source.is_non_root_agent()
+        && thread.thread_source == Some(protocol::protocol::ThreadSource::User)
+        && thread.agent_path.is_none()
+        && thread.agent_role.is_none()
+        && thread.agent_nickname.is_none()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_external_root_start_params(
     task_name: &Option<String>,
@@ -674,19 +683,52 @@ impl ThreadRequestProcessor {
         } = params;
         let include_turns = !exclude_turns;
 
-        let (thread_history, resume_source_thread) = match if let Some(history) = history {
-            self.resume_thread_from_history(history.as_slice())
-                .await
-                .map(|thread_history| (thread_history, None))
+        let (thread_history, resume_source_thread) = if let Some(history) = history {
+            match self.resume_thread_from_history(history.as_slice()).await {
+                Ok(thread_history) => (thread_history, None),
+                Err(error) => {
+                    self.outgoing.send_error(request_id, error).await;
+                    return Ok(());
+                }
+            }
         } else {
-            self.resume_thread_from_rollout(&thread_id, path.as_ref())
+            let source_thread = match self
+                .read_stored_thread_for_resume(
+                    &thread_id,
+                    path.as_ref(),
+                    /*include_history*/ true,
+                )
                 .await
-                .map(|(thread_history, stored_thread)| (thread_history, Some(stored_thread)))
-        } {
-            Ok(value) => value,
-            Err(error) => {
+            {
+                Ok(stored_thread) => stored_thread,
+                Err(error) => {
+                    self.outgoing.send_error(request_id, error).await;
+                    return Ok(());
+                }
+            };
+            if is_persisted_external_root_thread(&source_thread) {
+                self.send_external_root_readonly_resume_response(
+                    request_id,
+                    source_thread.clone(),
+                    include_turns,
+                    redact_resume_payloads,
+                )
+                .await;
+                return Ok(());
+            }
+            if let Err(error) = reject_unsupported_external_root_thread_provider(
+                source_thread.model_provider.as_str(),
+                RootThreadProviderCapability::RestoreThread,
+            ) {
                 self.outgoing.send_error(request_id, error).await;
                 return Ok(());
+            }
+            match self.stored_thread_to_initial_history(&source_thread).await {
+                Ok(thread_history) => (thread_history, Some(source_thread)),
+                Err(error) => {
+                    self.outgoing.send_error(request_id, error).await;
+                    return Ok(());
+                }
             }
         };
         let resume_session_source = resume_source_thread
@@ -695,15 +737,6 @@ impl ThreadRequestProcessor {
         let resume_agent_metadata = resume_source_thread
             .as_ref()
             .and_then(stored_thread_root_agent_metadata);
-        if let Some(source_thread) = resume_source_thread.as_ref()
-            && let Err(error) = reject_unsupported_external_root_thread_provider(
-                source_thread.model_provider.as_str(),
-                RootThreadProviderCapability::RestoreThread,
-            )
-        {
-            self.outgoing.send_error(request_id, error).await;
-            return Ok(());
-        }
         let resume_agent_role = native_agent_role_for_resume(resume_session_source.as_ref());
 
         let history_cwd = thread_history.session_cwd();
@@ -1216,6 +1249,53 @@ impl ThreadRequestProcessor {
             );
         }
         thread
+    }
+
+    pub(super) async fn send_external_root_readonly_resume_response(
+        &self,
+        request_id: ConnectionRequestId,
+        stored_thread: StoredThread,
+        include_turns: bool,
+        redact_resume_payloads: bool,
+    ) {
+        let persisted_model = stored_thread.model.clone().unwrap_or_default();
+        let persisted_reasoning_effort = stored_thread.reasoning_effort;
+        let persisted_approval_mode = stored_thread.approval_mode;
+        let persisted_sandbox_policy = stored_thread.sandbox_policy.clone();
+        let fallback_provider = self.config.model_provider_id.as_str();
+        let mut thread =
+            self.stored_thread_to_api_thread(stored_thread, fallback_provider, include_turns);
+        set_thread_status_and_interrupt_stale_turns(
+            &mut thread,
+            ThreadLifecycleStatus::NotLoaded,
+            /*has_live_in_progress_turn*/ false,
+        );
+        let permission_profile =
+            protocol::models::PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                &persisted_sandbox_policy,
+                thread.cwd.as_path(),
+            );
+        let sandbox = thread_response_sandbox_policy(&permission_profile, thread.cwd.as_path());
+        let instruction_sources = Self::instruction_sources_from_config(&self.config).await;
+        if redact_resume_payloads {
+            redact_thread_resume_payloads(&mut thread);
+        }
+        let response = ThreadResumeResponse {
+            model: persisted_model,
+            model_provider: thread.model_provider.clone(),
+            service_tier: None,
+            cwd: thread.cwd.clone(),
+            runtime_workspace_roots: self.config.effective_workspace_roots(),
+            instruction_sources,
+            approval_policy: persisted_approval_mode.into(),
+            approvals_reviewer: self.config.approvals_reviewer.into(),
+            sandbox,
+            permission_profile: Some(permission_profile.into()),
+            active_permission_profile: None,
+            reasoning_effort: persisted_reasoning_effort,
+            thread,
+        };
+        self.outgoing.send_response(request_id, response).await;
     }
 
     pub(super) async fn read_stored_thread_for_new_fork(
