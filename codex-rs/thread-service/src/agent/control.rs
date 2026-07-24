@@ -2280,6 +2280,12 @@ impl AgentControl {
         };
 
         if self.state.agent_id_for_path(agent_path).is_none() {
+            if let Some(thread_id) = self
+                .resolve_persisted_external_agent_reference(&target, agent_path)
+                .await?
+            {
+                return Ok(Some(thread_id));
+            }
             let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
                 parent_thread_id: target.parent_thread_id,
                 depth: target.depth,
@@ -2304,6 +2310,60 @@ impl AgentControl {
                     agent_path.as_str()
                 ))
             })
+    }
+
+    async fn resolve_persisted_external_agent_reference(
+        &self,
+        target: &PersistedAgentTarget,
+        agent_path: &AgentPath,
+    ) -> CodexResult<Option<ThreadId>> {
+        let state = self.upgrade()?;
+        let stored_thread = state
+            .read_stored_thread(ReadThreadParams {
+                thread_id: target.thread_id,
+                include_archived: true,
+                include_history: true,
+            })
+            .await?;
+        if !is_persisted_external_agent(&stored_thread) {
+            return Ok(None);
+        }
+
+        let terminal_status = stored_thread.history.as_ref().and_then(|history| {
+            history
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    RolloutItem::EventMsg(event) => agent_status_from_event(event),
+                    _ => None,
+                })
+                .next_back()
+                .filter(is_final)
+        });
+        if terminal_status.is_none() {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "external agent `{}` was interrupted after restart and cannot reconnect to its external provider session",
+                agent_path.as_str()
+            )));
+        }
+
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "external agent `{}` is missing persisted agent metadata",
+                agent_path.as_str()
+            )));
+        };
+        let Some(agent_metadata) = self
+            .persisted_agent_metadata(target.thread_id, state_db_ctx.as_ref())
+            .await
+        else {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "external agent `{}` is missing persisted agent metadata",
+                agent_path.as_str()
+            )));
+        };
+        self.state.register_agent_metadata(agent_metadata);
+        Ok(Some(target.thread_id))
     }
 
     async fn persisted_agent_target_for_thread_id(
