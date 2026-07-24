@@ -165,9 +165,18 @@ impl ThreadRequestProcessor {
             if let Some(live_snapshot) = live_snapshot.as_ref() {
                 // Loaded thread with turns: keep the persisted turn projection available
                 // so richer init-context items survive live-history reconstruction.
-                let persisted_thread = self
+                let persisted_thread = match self
                     .load_persisted_thread_for_read(thread_id, /*include_turns*/ true)
-                    .await?;
+                    .await
+                {
+                    Ok(thread) => thread,
+                    Err(ThreadReadViewError::InvalidRequest(message))
+                        if Self::is_include_turns_unavailable_before_first_user_message(&message) =>
+                    {
+                        None
+                    }
+                    Err(err) => return Err(err),
+                };
                 self.load_live_thread_view(
                     thread_id,
                     include_turns,
@@ -229,6 +238,10 @@ impl ThreadRequestProcessor {
             has_live_in_progress_turn,
         );
         Ok(thread)
+    }
+
+    fn is_include_turns_unavailable_before_first_user_message(message: &str) -> bool {
+        message.contains("includeTurns is unavailable before first user message")
     }
 
     pub(super) async fn active_in_progress_turn_snapshot(
@@ -311,9 +324,19 @@ impl ThreadRequestProcessor {
         } else {
             fallback_thread
         };
-        let has_live_in_progress_turn = self
+        let has_live_in_progress_turn = match self
             .apply_thread_read_store_fields(thread_id, &mut thread, include_turns)
-            .await?;
+            .await
+        {
+            Ok(has_live_in_progress_turn) => has_live_in_progress_turn,
+            Err(ThreadReadViewError::InvalidRequest(message))
+                if include_turns
+                    && Self::is_include_turns_unavailable_before_first_user_message(&message) =>
+            {
+                false
+            }
+            Err(err) => return Err(err),
+        };
         if include_turns {
             restore_persisted_injected_context_turns(&mut thread, &persisted_turns);
         }

@@ -16,6 +16,7 @@ use state::ThreadMetadata;
 use super::LocalThreadStore;
 use super::helpers::distinct_thread_metadata_title;
 use super::helpers::git_info_from_parts;
+use super::helpers::matching_rollout_file_name;
 use super::helpers::rollout_path_is_archived;
 use super::helpers::set_thread_name_from_title;
 use super::helpers::stored_thread_from_rollout_item;
@@ -39,12 +40,8 @@ pub(super) async fn read_thread(
                     metadata.rollout_path.as_path(),
                 )))
         && (!params.include_history
-            || sqlite_rollout_path_can_load_history_for_thread(
-                store,
-                &metadata.rollout_path,
-                thread_id,
-            )
-            .await)
+            || sqlite_rollout_path_can_load_history_for_thread(&metadata.rollout_path, thread_id)
+                .await)
     {
         let mut thread = stored_thread_from_sqlite_metadata(store, metadata).await;
         if !params.include_history
@@ -84,7 +81,6 @@ pub(super) async fn read_thread(
 }
 
 async fn sqlite_rollout_path_can_load_history_for_thread(
-    store: &LocalThreadStore,
     path: &std::path::Path,
     thread_id: protocol::ThreadId,
 ) -> bool {
@@ -92,11 +88,14 @@ async fn sqlite_rollout_path_can_load_history_for_thread(
         return false;
     }
     // SQLite metadata can outlive a moved/recreated rollout path. When history is
-    // requested, verify the path still resolves to the requested thread before
-    // trusting it as the source replay.
-    read_thread_from_rollout_path(store, path.to_path_buf())
-        .await
-        .is_ok_and(|thread| thread.thread_id == thread_id)
+    // requested, verify the materialized file still belongs to the requested
+    // thread before trusting it as the source replay. SessionMeta-only external
+    // root rollouts are valid history sources before the first user message, so
+    // this check must not require preview-bearing replay.
+    matching_rollout_file_name(path, thread_id, path).is_ok()
+        && read_session_meta_line(path)
+            .await
+            .is_ok_and(|meta_line| meta_line.meta.id == thread_id)
 }
 
 pub(super) async fn read_thread_by_rollout_path(

@@ -372,6 +372,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_thread_with_history_accepts_session_meta_only_live_writer() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let runtime = state::StateRuntime::init(
+            config.sqlite_home.clone(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = Arc::new(LocalThreadStore::new(config.clone(), Some(runtime.clone())));
+        let uuid = uuid::Uuid::from_u128(407);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+
+        let live_thread = LiveThread::create(store.clone(), create_thread_params(thread_id))
+            .await
+            .expect("create live thread");
+        live_thread
+            .persist()
+            .await
+            .expect("persist session meta only live thread");
+        live_thread
+            .shutdown()
+            .await
+            .expect("shutdown live thread");
+        drop(live_thread);
+        drop(store);
+
+        let store = LocalThreadStore::new(config, Some(runtime));
+        let metadata = store
+            .state_db()
+            .await
+            .expect("state db")
+            .get_thread(thread_id)
+            .await
+            .expect("sqlite metadata read")
+            .expect("sqlite metadata should exist");
+        assert_eq!(metadata.id, thread_id);
+
+        let thread = store
+            .read_thread(ReadThreadParams {
+                thread_id,
+                include_archived: false,
+                include_history: true,
+            })
+            .await
+            .expect("read session meta only thread with history");
+
+        let history = thread.history.expect("history should load");
+        assert_eq!(history.thread_id, thread_id);
+        assert!(matches!(history.items.as_slice(), [RolloutItem::SessionMeta(_)]));
+    }
+
+    #[tokio::test]
     async fn raw_append_items_does_not_update_sqlite_metadata() {
         // This pins the ThreadStore contract: raw appends are history-only. Callers that need
         // metadata updates must use LiveThread or call update_thread_metadata explicitly.

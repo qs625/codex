@@ -8,6 +8,7 @@ use app_server_protocol::ItemStartedNotification;
 use app_server_protocol::InitializeCapabilities;
 use app_server_protocol::InitializeParams;
 use app_server_protocol::JSONRPCError;
+use app_server_protocol::JSONRPCMessage;
 use app_server_protocol::JSONRPCNotification;
 use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
@@ -31,6 +32,7 @@ use app_server_protocol::ThreadSkillKind;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadLifecycleStatus;
+use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadTurnsItemsListParams;
 use app_server_protocol::ThreadTurnsListParams;
 use app_server_protocol::ThreadTurnsListResponse;
@@ -44,6 +46,7 @@ use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout_with_text_elements;
 use app_test_support::create_fake_rollout_with_token_usage;
 use app_test_support::create_mock_responses_server_repeating_assistant;
+use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::rollout_path;
 use app_test_support::test_absolute_path;
 use app_test_support::to_response;
@@ -79,9 +82,12 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use tempfile::TempDir;
+use tokio::time::Instant;
+use tokio::time::sleep;
 use thread_service::config::ConfigBuilder;
 use thread_store::AppendThreadItemsParams;
 use thread_store::CreateThreadParams;
@@ -98,6 +104,203 @@ use uuid::Uuid;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 #[cfg(not(windows))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_claude = bin_dir.join("claude");
+    std::fs::write(
+        &fake_claude,
+        "#!/bin/sh\n# Test double for hidden external root thread/read coverage.\nsleep 30\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_claude)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_claude, permissions)?;
+    }
+    Ok(())
+}
+
+fn prepend_path_env(path: &Path) -> Result<String> {
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let paths = std::iter::once(path.to_path_buf()).chain(std::env::split_paths(&original_path));
+    Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
+}
+
+async fn start_external_root_read_mcp(codex_home: &Path, fake_bin: &Path) -> Result<McpProcess> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    create_config_toml(codex_home, &server.uri())?;
+    write_fake_claude_cli(fake_bin)?;
+    let test_path = prepend_path_env(fake_bin)?;
+    let mut mcp =
+        McpProcess::new_with_env(codex_home, &[("PATH", Some(test_path.as_str()))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+async fn start_hidden_external_root_thread(mcp: &mut McpProcess, cwd: &Path) -> Result<String> {
+    let thread_req = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("claude_cli".to_string()),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+
+    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.thread_source, Some(ThreadSource::User));
+    assert_eq!(thread.agent_path, None);
+    assert_eq!(thread.agent_role, None);
+    assert!(matches!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::Active { .. }
+    ));
+    Ok(thread.id)
+}
+
+async fn read_thread(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+    include_turns: bool,
+) -> Result<app_server_protocol::Thread> {
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread_id.to_string(),
+            include_turns,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
+    Ok(thread)
+}
+
+async fn try_read_thread(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+    include_turns: bool,
+) -> Result<Option<app_server_protocol::Thread>> {
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread_id.to_string(),
+            include_turns,
+        })
+        .await?;
+    let message = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_or_error_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    match message {
+        JSONRPCMessage::Response(response) => {
+            let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(response)?;
+            Ok(Some(thread))
+        }
+        JSONRPCMessage::Error(error)
+            if error
+                .error
+                .message
+                .contains("includeTurns is unavailable before first user message") =>
+        {
+            Ok(None)
+        }
+        JSONRPCMessage::Error(error) => anyhow::bail!("thread/read failed: {:?}", error.error),
+        JSONRPCMessage::Notification(_) | JSONRPCMessage::Request(_) => {
+            unreachable!("read_stream_until_response_or_error_message filters these variants")
+        }
+    }
+}
+
+fn assert_external_root_metadata(
+    thread: &app_server_protocol::Thread,
+    thread_id: &str,
+    cwd: &Path,
+) {
+    assert_eq!(thread.id, thread_id);
+    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.thread_source, Some(ThreadSource::User));
+    assert_eq!(thread.agent_path, None);
+    assert_eq!(thread.agent_role, None);
+    let expected_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
+    assert_eq!(thread.cwd, expected_cwd.try_into().expect("absolute cwd"));
+    assert!(!thread.ephemeral);
+    assert!(thread.path.as_ref().expect("thread path").is_absolute());
+}
+
+fn assert_single_user_message_turn(thread: &app_server_protocol::Thread, expected_text: &str) {
+    assert_eq!(thread.turns.len(), 1, "expected one restored turn");
+    let turn = &thread.turns[0];
+    assert_eq!(turn.items_view, TurnItemsView::Full);
+    let user_messages = turn
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ThreadItem::UserMessage { content, .. } => Some(content),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(user_messages.len(), 1, "expected one typed user message");
+    assert_eq!(
+        user_messages[0],
+        &vec![UserInput::Text {
+            text: expected_text.to_string(),
+            text_elements: Vec::new(),
+        }]
+    );
+}
+
+fn has_single_user_message_turn(thread: &app_server_protocol::Thread, expected_text: &str) -> bool {
+    if thread.turns.len() != 1 {
+        return false;
+    }
+    let turn = &thread.turns[0];
+    turn.items.iter().any(|item| match item {
+        ThreadItem::UserMessage { content, .. } => {
+            content
+                == &vec![UserInput::Text {
+                    text: expected_text.to_string(),
+                    text_elements: Vec::new(),
+                }]
+        }
+        _ => false,
+    })
+}
+
+async fn wait_for_thread_user_message(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+    expected_text: &str,
+) -> Result<app_server_protocol::Thread> {
+    let deadline = Instant::now() + DEFAULT_READ_TIMEOUT;
+    let mut last_thread = None;
+    loop {
+        let thread = try_read_thread(mcp, thread_id, /*include_turns*/ true).await?;
+        if let Some(thread) = thread {
+            if has_single_user_message_turn(&thread, expected_text) {
+                return Ok(thread);
+            }
+            last_thread = Some(thread);
+        }
+        if Instant::now() >= deadline {
+            if let Some(thread) = last_thread {
+                return Ok(thread);
+            }
+            let thread = read_thread(mcp, thread_id, /*include_turns*/ false).await?;
+            return Ok(thread);
+        }
+        sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
 
 #[tokio::test]
 async fn thread_read_returns_summary_without_turns() -> Result<()> {
@@ -150,6 +353,78 @@ async fn thread_read_returns_summary_without_turns() -> Result<()> {
     assert_eq!(thread.git_info, None);
     assert_eq!(thread.turns.len(), 0);
     assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_hidden_external_root_preserves_metadata_before_turns() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp = start_external_root_read_mcp(codex_home.path(), fake_bin.path()).await?;
+    let thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
+
+    let summary = read_thread(&mut mcp, &thread_id, /*include_turns*/ false).await?;
+    assert_external_root_metadata(&summary, &thread_id, codex_home.path());
+    assert_eq!(summary.turns, Vec::new());
+    assert_ne!(summary.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
+
+    let with_turns = read_thread(&mut mcp, &thread_id, /*include_turns*/ true).await?;
+    assert_external_root_metadata(&with_turns, &thread_id, codex_home.path());
+    assert_eq!(with_turns.turns, Vec::new());
+    assert_ne!(with_turns.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_hidden_external_root_restores_text_turn_after_restart() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp = start_external_root_read_mcp(codex_home.path(), fake_bin.path()).await?;
+    let thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
+    let input_text = "Hello persisted external root";
+
+    let turn_req = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread_id.clone(),
+            input: vec![UserInput::Text {
+                text: input_text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    let _: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+
+    let live_read = wait_for_thread_user_message(&mut mcp, &thread_id, input_text).await?;
+    assert_external_root_metadata(&live_read, &thread_id, codex_home.path());
+    assert_single_user_message_turn(&live_read, input_text);
+
+    drop(mcp);
+
+    let mut restarted = start_external_root_read_mcp(codex_home.path(), fake_bin.path()).await?;
+    let reloaded_summary = read_thread(&mut restarted, &thread_id, /*include_turns*/ false).await?;
+    assert_external_root_metadata(&reloaded_summary, &thread_id, codex_home.path());
+    assert_eq!(reloaded_summary.turns, Vec::new());
+    assert_eq!(
+        reloaded_summary.lifecycle_status,
+        ThreadLifecycleStatus::NotLoaded
+    );
+
+    let reloaded_with_turns =
+        read_thread(&mut restarted, &thread_id, /*include_turns*/ true).await?;
+    assert_external_root_metadata(&reloaded_with_turns, &thread_id, codex_home.path());
+    assert_single_user_message_turn(&reloaded_with_turns, input_text);
+    assert_eq!(
+        reloaded_with_turns.lifecycle_status,
+        ThreadLifecycleStatus::NotLoaded
+    );
 
     Ok(())
 }

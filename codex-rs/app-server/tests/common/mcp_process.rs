@@ -1272,6 +1272,22 @@ impl McpProcess {
         Ok(response)
     }
 
+    pub async fn read_stream_until_response_or_error_message(
+        &mut self,
+        request_id: RequestId,
+    ) -> anyhow::Result<JSONRPCMessage> {
+        let message = self
+            .read_stream_until_message(|message| {
+                Self::message_request_id(message) == Some(&request_id)
+            })
+            .await?;
+
+        match message {
+            JSONRPCMessage::Response(_) | JSONRPCMessage::Error(_) => Ok(message),
+            other => unreachable!("expected JSONRPCMessage::Response or Error, got {other:?}"),
+        }
+    }
+
     pub async fn read_stream_until_error_message(
         &mut self,
         request_id: RequestId,
