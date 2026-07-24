@@ -8,9 +8,19 @@ use crate::live_thread_runtime::AppServerLiveThreadListenerHandle;
 use crate::live_thread_runtime::AppServerLiveThreadListenerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadSkillWatchRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
+use protocol::SessionId;
 use thread_service_api::ThreadLifecycleRuntime;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
+const THREAD_UNLOADING_DELAY_MS_ENV: &str = "CODEX_APP_SERVER_THREAD_UNLOADING_DELAY_MS";
+
+fn thread_unloading_delay() -> Duration {
+    std::env::var(THREAD_UNLOADING_DELAY_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(THREAD_UNLOADING_DELAY)
+}
 
 #[derive(Clone)]
 pub(super) struct ListenerTaskContext {
@@ -235,7 +245,7 @@ pub(super) async fn ensure_listener_task_running(
     let Some(mut unloading_state) = UnloadingState::new(
         &listener_task_context,
         conversation_id,
-        THREAD_UNLOADING_DELAY,
+        thread_unloading_delay(),
     )
     .await
     else {
@@ -405,6 +415,7 @@ pub(super) async fn ensure_listener_task_running(
                         thread_state_manager.clone(),
                         thread_watch_manager.clone(),
                         conversation_id,
+                        /*notify_if_already_removed*/ false,
                     )
                     .await;
                     break;
@@ -418,6 +429,135 @@ pub(super) async fn ensure_listener_task_running(
         }
     });
     Ok(())
+}
+
+pub(super) async fn ensure_external_root_unload_watcher(
+    listener_task_context: ListenerTaskContext,
+    conversation_id: ThreadId,
+    connection_id: ConnectionId,
+) -> Result<EnsureConversationListenerResult, JSONRPCErrorError> {
+    let Some(thread_state) = listener_task_context
+        .thread_state_manager
+        .try_ensure_connection_subscribed(conversation_id, connection_id)
+        .await
+    else {
+        return Ok(EnsureConversationListenerResult::ConnectionClosed);
+    };
+
+    let session_id = SessionId::from(conversation_id);
+    {
+        let thread_state = thread_state.lock().await;
+        if thread_state.listener_matches(session_id) {
+            return Ok(EnsureConversationListenerResult::Attached);
+        }
+    }
+
+    let Some(mut has_subscribers_rx) = listener_task_context
+        .thread_state_manager
+        .subscribe_to_has_connections(conversation_id)
+        .await
+    else {
+        let _ = listener_task_context
+            .thread_state_manager
+            .unsubscribe_connection_from_thread(conversation_id, connection_id)
+            .await;
+        return Err(invalid_request(format!(
+            "thread {conversation_id} is closing; retry after the thread is closed"
+        )));
+    };
+
+    let (cancel_tx, mut cancel_rx) = oneshot::channel();
+    let listener_generation = {
+        let mut thread_state = thread_state.lock().await;
+        if thread_state.listener_matches(session_id) {
+            return Ok(EnsureConversationListenerResult::Attached);
+        }
+        let (_listener_command_rx, listener_generation) =
+            thread_state.set_listener(cancel_tx, session_id, Default::default());
+        listener_generation
+    };
+    let delay = thread_unloading_delay();
+    let mut has_subscribers = (*has_subscribers_rx.borrow(), Instant::now());
+
+    let ListenerTaskContext {
+        outgoing,
+        thread_lifecycle_runtime,
+        thread_state_manager,
+        pending_thread_unloads,
+        thread_watch_manager,
+        ..
+    } = listener_task_context;
+
+    tokio::spawn(async move {
+        loop {
+            let unload_at = (!has_subscribers.0).then_some(has_subscribers.1 + delay);
+            match unload_at {
+                Some(unload_at) => {
+                    tokio::select! {
+                        _ = &mut cancel_rx => {
+                            break;
+                        }
+                        changed = has_subscribers_rx.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                            let current = *has_subscribers_rx.borrow();
+                            if has_subscribers.0 != current {
+                                has_subscribers = (current, Instant::now());
+                            }
+                        }
+                        _ = tokio::time::sleep_until(unload_at.into()) => {
+                            if *has_subscribers_rx.borrow() {
+                                has_subscribers = (true, Instant::now());
+                                continue;
+                            }
+                            {
+                                let mut pending_thread_unloads = pending_thread_unloads.lock().await;
+                                if pending_thread_unloads.contains(&conversation_id) {
+                                    continue;
+                                }
+                                pending_thread_unloads.insert(conversation_id);
+                            }
+                            unload_thread_without_subscribers(
+                                thread_lifecycle_runtime.clone(),
+                                outgoing.clone(),
+                                pending_thread_unloads.clone(),
+                                thread_state_manager.clone(),
+                                thread_watch_manager.clone(),
+                                conversation_id,
+                                /*notify_if_already_removed*/ true,
+                            )
+                            .await;
+                            break;
+                        }
+                    }
+                }
+                None => {
+                    tokio::select! {
+                        _ = &mut cancel_rx => {
+                            break;
+                        }
+                        changed = has_subscribers_rx.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                            let current = *has_subscribers_rx.borrow();
+                            if has_subscribers.0 != current {
+                                has_subscribers = (current, Instant::now());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut thread_state = thread_state.lock().await;
+        if thread_state.listener_generation == listener_generation {
+            thread_state.clear_listener();
+        }
+    });
+
+    Ok(EnsureConversationListenerResult::Attached)
 }
 
 pub(super) async fn wait_for_thread_shutdown(
@@ -443,6 +583,7 @@ pub(super) async fn unload_thread_without_subscribers(
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_id: ThreadId,
+    notify_if_already_removed: bool,
 ) {
     info!("thread {thread_id} has no subscribers and is idle; shutting down");
 
@@ -458,22 +599,29 @@ pub(super) async fn unload_thread_without_subscribers(
             ThreadShutdownResult::Complete => {
                 if !thread_lifecycle_runtime.remove_live_thread(thread_id).await {
                     info!("thread {thread_id} was already removed before teardown finalized");
-                    thread_watch_manager
-                        .remove_thread(&thread_id.to_string())
+                    if notify_if_already_removed {
+                        send_thread_closed_after_unload(
+                            outgoing,
+                            pending_thread_unloads,
+                            thread_watch_manager,
+                            thread_id,
+                        )
                         .await;
-                    pending_thread_unloads.lock().await.remove(&thread_id);
+                    } else {
+                        thread_watch_manager
+                            .remove_thread(&thread_id.to_string())
+                            .await;
+                        pending_thread_unloads.lock().await.remove(&thread_id);
+                    }
                     return;
                 }
-                thread_watch_manager
-                    .remove_thread(&thread_id.to_string())
-                    .await;
-                let notification = ThreadClosedNotification {
-                    thread_id: thread_id.to_string(),
-                };
-                outgoing
-                    .send_server_notification(ServerNotification::ThreadClosed(notification))
-                    .await;
-                pending_thread_unloads.lock().await.remove(&thread_id);
+                send_thread_closed_after_unload(
+                    outgoing,
+                    pending_thread_unloads,
+                    thread_watch_manager,
+                    thread_id,
+                )
+                .await;
             }
             ThreadShutdownResult::SubmitFailed => {
                 pending_thread_unloads.lock().await.remove(&thread_id);
@@ -485,6 +633,24 @@ pub(super) async fn unload_thread_without_subscribers(
             }
         }
     });
+}
+
+async fn send_thread_closed_after_unload(
+    outgoing: Arc<OutgoingMessageSender>,
+    pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
+    thread_watch_manager: ThreadWatchManager,
+    thread_id: ThreadId,
+) {
+    thread_watch_manager
+        .remove_thread(&thread_id.to_string())
+        .await;
+    let notification = ThreadClosedNotification {
+        thread_id: thread_id.to_string(),
+    };
+    outgoing
+        .send_server_notification(ServerNotification::ThreadClosed(notification))
+        .await;
+    pending_thread_unloads.lock().await.remove(&thread_id);
 }
 
 #[allow(clippy::too_many_arguments)]

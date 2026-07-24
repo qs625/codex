@@ -770,6 +770,22 @@ impl ThreadRequestProcessor {
             ))
             .await;
 
+        log_listener_attach_result(
+            super::thread_lifecycle::ensure_external_root_unload_watcher(
+                listener_task_context.clone(),
+                thread_id,
+                request_id.connection_id,
+            )
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.attach_external_listener",
+                otel.name = "app_server.thread_start.attach_external_listener",
+            ))
+            .await,
+            thread_id,
+            request_id.connection_id,
+            "external root thread",
+        );
+
         let watch_status = listener_task_context
             .thread_watch_manager
             .loaded_status_for_thread(&thread.id)
