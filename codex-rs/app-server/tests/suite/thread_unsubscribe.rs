@@ -19,6 +19,7 @@ use app_server_protocol::ThreadResumeParams;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
+use app_server_protocol::ThreadLifecycleFinalStatus;
 use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStatusChangedNotification;
@@ -149,7 +150,9 @@ async fn thread_unsubscribe_hidden_external_root_closes_loaded_state_and_preserv
     assert_eq!(closed_summary.turns, Vec::new());
     assert_eq!(
         closed_summary.lifecycle_status,
-        ThreadLifecycleStatus::NotLoaded
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        }
     );
 
     let closed_with_turns = read_thread(&mut mcp, &thread_id, /*include_turns*/ true).await?;
@@ -157,7 +160,9 @@ async fn thread_unsubscribe_hidden_external_root_closes_loaded_state_and_preserv
     assert_single_user_message_turn(&closed_with_turns, input_text);
     assert_eq!(
         closed_with_turns.lifecycle_status,
-        ThreadLifecycleStatus::NotLoaded
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        }
     );
 
     let listed = list_threads(&mut mcp).await?;
@@ -169,6 +174,12 @@ async fn thread_unsubscribe_hidden_external_root_closes_loaded_state_and_preserv
         vec![thread_id.as_str()]
     );
     assert_external_root_metadata(&listed[0], &thread_id, codex_home.path());
+    assert_eq!(
+        listed[0].lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        }
+    );
 
     drop(mcp);
 
@@ -181,7 +192,9 @@ async fn thread_unsubscribe_hidden_external_root_closes_loaded_state_and_preserv
     assert_eq!(reloaded_summary.turns, Vec::new());
     assert_eq!(
         reloaded_summary.lifecycle_status,
-        ThreadLifecycleStatus::NotLoaded
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        }
     );
 
     let reloaded_with_turns =
@@ -190,7 +203,9 @@ async fn thread_unsubscribe_hidden_external_root_closes_loaded_state_and_preserv
     assert_single_user_message_turn(&reloaded_with_turns, input_text);
     assert_eq!(
         reloaded_with_turns.lifecycle_status,
-        ThreadLifecycleStatus::NotLoaded
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        }
     );
 
     let reloaded_listed = list_threads(&mut restarted).await?;
@@ -202,6 +217,12 @@ async fn thread_unsubscribe_hidden_external_root_closes_loaded_state_and_preserv
         vec![thread_id.as_str()]
     );
     assert_external_root_metadata(&reloaded_listed[0], &thread_id, codex_home.path());
+    assert_eq!(
+        reloaded_listed[0].lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        }
+    );
 
     Ok(())
 }

@@ -42,7 +42,9 @@ pub(super) fn parse_thread_start_agent(
     }))
 }
 
-fn thread_lifecycle_status_from_agent_status(status: &AgentStatus) -> ThreadLifecycleStatus {
+pub(super) fn thread_lifecycle_status_from_agent_status(
+    status: &AgentStatus,
+) -> ThreadLifecycleStatus {
     match status {
         AgentStatus::PendingInit => ThreadLifecycleStatus::Initializing,
         AgentStatus::Running => ThreadLifecycleStatus::Active {

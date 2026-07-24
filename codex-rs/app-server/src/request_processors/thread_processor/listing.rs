@@ -53,11 +53,18 @@ impl ThreadRequestProcessor {
         let fallback_provider = self.config.model_provider_id.clone();
 
         for stored_thread in stored_threads {
-            let (thread, _) = thread_from_stored_thread(
+            let thread_id = stored_thread.thread_id;
+            let (mut thread, history) = thread_from_stored_thread(
                 stored_thread,
                 fallback_provider.as_str(),
                 &self.config.cwd,
             );
+            if history.is_none()
+                && let Ok(history_items) =
+                    read_thread_history_items(self.thread_store.as_ref(), thread_id).await
+            {
+                apply_persisted_thread_lifecycle_status(&mut thread, &history_items);
+            }
             status_ids.push(thread.id.clone());
             threads.push(thread);
         }
@@ -71,7 +78,11 @@ impl ThreadRequestProcessor {
             .into_iter()
             .map(|mut thread| {
                 if let Some(status) = statuses.get(&thread.id) {
-                    thread.lifecycle_status = status.clone();
+                    set_thread_status_and_interrupt_stale_turns(
+                        &mut thread,
+                        status.clone(),
+                        /*has_live_in_progress_turn*/ false,
+                    );
                 }
                 thread
             })

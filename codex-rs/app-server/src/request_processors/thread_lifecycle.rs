@@ -1054,5 +1054,15 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
             }
         }
     }
+    if matches!(status, ThreadLifecycleStatus::NotLoaded)
+        && matches!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: app_server_protocol::ThreadLifecycleFinalStatus::Shutdown,
+            }
+        )
+    {
+        return;
+    }
     thread.lifecycle_status = status;
 }

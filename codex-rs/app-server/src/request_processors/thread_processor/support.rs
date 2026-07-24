@@ -194,6 +194,26 @@ pub(super) fn normalize_thread_turns_status(
     }
 }
 
+pub(super) fn apply_persisted_thread_lifecycle_status(
+    thread: &mut Thread,
+    items: &[RolloutItem],
+) {
+    if persisted_shutdown_agent_status_from_rollout_items(items).is_some() {
+        thread.lifecycle_status =
+            super::ops::thread_lifecycle_status_from_agent_status(&AgentStatus::Shutdown);
+    }
+}
+
+fn persisted_shutdown_agent_status_from_rollout_items(
+    items: &[RolloutItem],
+) -> Option<AgentStatus> {
+    items.iter().rev().find_map(|item| match item {
+        RolloutItem::EventMsg(event) => codex_agent_runtime::agent_status_from_event(event)
+            .filter(|status| matches!(status, AgentStatus::Shutdown)),
+        _ => None,
+    })
+}
+
 pub(super) enum ThreadReadViewError {
     InvalidRequest(String),
     Unsupported(&'static str),
@@ -410,6 +430,7 @@ pub(crate) fn thread_from_stored_thread(
     };
     if let Some(history) = history.as_ref() {
         apply_thread_usage_from_rollout_items(&mut thread, history.items.as_slice());
+        apply_persisted_thread_lifecycle_status(&mut thread, history.items.as_slice());
     }
     (thread, history)
 }
