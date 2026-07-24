@@ -57,7 +57,6 @@ pub(crate) async fn dispatch(
     _command_service_api: Arc<dyn CommandServiceApi>,
     session_interaction: Arc<dyn SessionCommandInteractionCaller>,
     session: Arc<dyn ThreadSessionCapability>,
-    _thread_service_api: Arc<dyn thread_service_api::ThreadServiceApi>,
     turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {

@@ -184,7 +184,6 @@ impl ToolServiceApi for ToolService {
                         Arc::clone(&command_service_api),
                         Arc::clone(&tool_request.session_command_interaction),
                         Arc::clone(&session),
-                        self.thread_service_api()?,
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         call,
                     )
