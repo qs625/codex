@@ -181,7 +181,6 @@ impl ToolServiceApi for ToolService {
                 }
                 domains::ToolDomain::CommandInteraction => {
                     domains::command_interaction::dispatch(
-                        Arc::clone(&command_service_api),
                         Arc::clone(&tool_request.session_command_interaction),
                         Arc::clone(&session),
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
