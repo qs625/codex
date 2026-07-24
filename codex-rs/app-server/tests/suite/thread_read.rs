@@ -64,6 +64,8 @@ use pretty_assertions::assert_eq;
 use protocol::models::BaseInstructions;
 use protocol::protocol::AgentMessageEvent;
 use protocol::protocol::EventMsg;
+use protocol::protocol::ExternalTerminalStatus;
+use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SessionSource as ProtocolSessionSource;
 use protocol::protocol::ThreadContextUsage;
@@ -73,6 +75,7 @@ use protocol::protocol::ThreadContextUsageToolBreakdown;
 use protocol::protocol::ThreadContextUsageToolBucket;
 use protocol::protocol::ThreadContextUsageUpdatedEvent;
 use protocol::protocol::ThreadMemoryMode;
+use protocol::protocol::TurnCompleteEvent;
 use protocol::protocol::UserMessageEvent;
 use protocol::user_input::ByteRange;
 use protocol::user_input::TextElement;
@@ -1115,6 +1118,193 @@ fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> {
         assert_eq!(thread.path, None);
         assert_eq!(thread.preview, "");
         assert_eq!(thread.name.as_deref(), Some("named pathless thread"));
+
+        client.shutdown().await?;
+        Ok(())
+    })
+}
+
+#[test]
+fn thread_read_and_list_project_external_root_terminal_facts_without_live_runtime() -> Result<()> {
+    run_current_thread_test_with_stack(async {
+        let codex_home = TempDir::new()?;
+        let completed_id =
+            protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000125")?;
+        let errored_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000126")?;
+        let store_id = Uuid::new_v4().to_string();
+        create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
+        let store = InMemoryThreadStore::for_id(store_id.clone());
+        let _in_memory_store = InMemoryThreadStoreId { store_id };
+        seed_external_root_store_thread(
+            &store,
+            completed_id,
+            codex_home.path(),
+            vec![RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-completed".to_string(),
+                last_agent_message: Some("done".to_string()),
+                completed_at: Some(1),
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }))],
+        )
+        .await?;
+        seed_external_root_store_thread(
+            &store,
+            errored_id,
+            codex_home.path(),
+            vec![RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(
+                ExternalTerminalStatusEvent {
+                    thread_id: errored_id,
+                    turn_id: "turn-errored".to_string(),
+                    status: ExternalTerminalStatus::Errored,
+                    message: Some("provider failed".to_string()),
+                    terminal_at_ms: 1,
+                },
+            ))],
+        )
+        .await?;
+
+        let loader_overrides = LoaderOverrides::without_managed_config_for_tests();
+        let config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .fallback_cwd(Some(codex_home.path().to_path_buf()))
+            .loader_overrides(loader_overrides.clone())
+            .build()
+            .await?;
+        let client = in_process::start(InProcessStartArgs {
+            arg0_paths: Arg0DispatchPaths::default(),
+            config: Arc::new(config),
+            cli_overrides: Vec::new(),
+            loader_overrides,
+            strict_config: false,
+            cloud_requirements: CloudRequirementsLoader::default(),
+            thread_config_loader: Arc::new(config_service::NoopThreadConfigLoader),
+            feedback: CodexFeedback::new(),
+            log_db: None,
+            state_db: None,
+            environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+            config_warnings: Vec::new(),
+            session_source: SessionSource::Cli.into(),
+            enable_codex_api_key_env: false,
+            initialize: InitializeParams {
+                client_info: ClientInfo {
+                    name: "codex-app-server-tests".to_string(),
+                    title: None,
+                    version: "0.1.0".to_string(),
+                },
+                capabilities: Some(InitializeCapabilities {
+                    experimental_api: true,
+                    ..Default::default()
+                }),
+            },
+            channel_capacity: in_process::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+        })
+        .await?;
+
+        let completed_status = ThreadLifecycleStatus::completed(Some("done".to_string()));
+        let errored_status = ThreadLifecycleStatus::errored(Some("provider failed".to_string()));
+
+        let completed_summary_result = client
+            .request(ClientRequest::ThreadRead {
+                request_id: RequestId::Integer(1),
+                params: ThreadReadParams {
+                    thread_id: completed_id.to_string(),
+                    include_turns: false,
+                },
+            })
+            .await?
+            .expect("completed thread/read summary should succeed");
+        let ThreadReadResponse {
+            thread: completed_summary,
+            ..
+        } = serde_json::from_value(completed_summary_result)?;
+        assert_eq!(completed_summary.lifecycle_status, completed_status);
+
+        let completed_with_turns_result = client
+            .request(ClientRequest::ThreadRead {
+                request_id: RequestId::Integer(2),
+                params: ThreadReadParams {
+                    thread_id: completed_id.to_string(),
+                    include_turns: true,
+                },
+            })
+            .await?
+            .expect("completed thread/read with turns should succeed");
+        let ThreadReadResponse {
+            thread: completed_with_turns,
+            ..
+        } = serde_json::from_value(completed_with_turns_result)?;
+        assert_eq!(completed_with_turns.lifecycle_status, completed_status);
+        assert_eq!(
+            turn_user_texts(&completed_with_turns.turns),
+            vec!["history from store"]
+        );
+
+        let errored_summary_result = client
+            .request(ClientRequest::ThreadRead {
+                request_id: RequestId::Integer(3),
+                params: ThreadReadParams {
+                    thread_id: errored_id.to_string(),
+                    include_turns: false,
+                },
+            })
+            .await?
+            .expect("errored thread/read summary should succeed");
+        let ThreadReadResponse {
+            thread: errored_summary,
+            ..
+        } = serde_json::from_value(errored_summary_result)?;
+        assert_eq!(errored_summary.lifecycle_status, errored_status);
+
+        let errored_with_turns_result = client
+            .request(ClientRequest::ThreadRead {
+                request_id: RequestId::Integer(4),
+                params: ThreadReadParams {
+                    thread_id: errored_id.to_string(),
+                    include_turns: true,
+                },
+            })
+            .await?
+            .expect("errored thread/read with turns should succeed");
+        let ThreadReadResponse {
+            thread: errored_with_turns,
+            ..
+        } = serde_json::from_value(errored_with_turns_result)?;
+        assert_eq!(errored_with_turns.lifecycle_status, errored_status);
+        assert_eq!(
+            turn_user_texts(&errored_with_turns.turns),
+            vec!["history from store"]
+        );
+
+        let list_result = client
+            .request(ClientRequest::ThreadList {
+                request_id: RequestId::Integer(5),
+                params: ThreadListParams {
+                    cursor: None,
+                    limit: Some(10),
+                    sort_key: None,
+                    sort_direction: None,
+                    model_providers: Some(Vec::new()),
+                    source_kinds: None,
+                    archived: None,
+                    cwd: None,
+                    use_state_db_only: false,
+                    search_term: None,
+                },
+            })
+            .await?
+            .expect("thread/list should succeed");
+        let ThreadListResponse { data, .. } = serde_json::from_value(list_result)?;
+        let listed_completed = data
+            .iter()
+            .find(|thread| thread.id == completed_id.to_string())
+            .expect("thread/list should include completed external root");
+        assert_eq!(listed_completed.lifecycle_status, completed_status);
+        let listed_errored = data
+            .iter()
+            .find(|thread| thread.id == errored_id.to_string())
+            .expect("thread/list should include errored external root");
+        assert_eq!(listed_errored.lifecycle_status, errored_status);
 
         client.shutdown().await?;
         Ok(())
@@ -2167,6 +2357,54 @@ async fn seed_pathless_store_thread(
                 ..Default::default()
             },
             include_archived: true,
+        })
+        .await?;
+    Ok(())
+}
+
+async fn seed_external_root_store_thread(
+    store: &InMemoryThreadStore,
+    thread_id: protocol::ThreadId,
+    cwd: &Path,
+    mut items: Vec<RolloutItem>,
+) -> Result<()> {
+    store
+        .create_thread(CreateThreadParams {
+            thread_id,
+            forked_from_id: None,
+            source: ProtocolSessionSource::VSCode,
+            thread_source: Some(protocol::protocol::ThreadSource::User),
+            base_instructions: BaseInstructions::default(),
+            dynamic_tools: Vec::new(),
+            metadata: ThreadPersistenceMetadata {
+                cwd: Some(cwd.to_path_buf()),
+                model_provider: "claude_cli".to_string(),
+                memory_mode: ThreadMemoryMode::Disabled,
+                root_agent_role: None,
+                root_agent_path: None,
+            },
+            event_persistence_mode: ThreadEventPersistenceMode::default(),
+        })
+        .await?;
+    store
+        .update_thread_metadata(UpdateThreadMetadataParams {
+            thread_id,
+            patch: ThreadMetadataPatch {
+                model_provider: Some("claude_cli".to_string()),
+                source: Some(ProtocolSessionSource::VSCode),
+                thread_source: Some(Some(protocol::protocol::ThreadSource::User)),
+                cwd: Some(cwd.to_path_buf()),
+                ..Default::default()
+            },
+            include_archived: true,
+        })
+        .await?;
+    let mut history = store_history_items();
+    history.append(&mut items);
+    store
+        .append_items(AppendThreadItemsParams {
+            thread_id,
+            items: history,
         })
         .await?;
     Ok(())

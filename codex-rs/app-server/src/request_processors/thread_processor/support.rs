@@ -196,9 +196,9 @@ pub(super) fn normalize_thread_turns_status(
 
 pub(super) fn apply_persisted_thread_lifecycle_status(thread: &mut Thread, items: &[RolloutItem]) {
     match persisted_terminal_agent_status_from_rollout_items(items) {
-        Some(AgentStatus::Shutdown) => {
+        Some(status) if should_project_persisted_terminal_agent_status(thread, &status) => {
             thread.lifecycle_status =
-                super::ops::thread_lifecycle_status_from_agent_status(&AgentStatus::Shutdown);
+                super::ops::thread_lifecycle_status_from_agent_status(&status);
         }
         Some(_) => {}
         None if is_persisted_external_root_thread(thread) => {
@@ -227,6 +227,10 @@ fn is_persisted_terminal_agent_status(status: &AgentStatus) -> bool {
             | AgentStatus::Interrupted
             | AgentStatus::Shutdown
     )
+}
+
+fn should_project_persisted_terminal_agent_status(thread: &Thread, status: &AgentStatus) -> bool {
+    is_persisted_external_root_thread(thread) || matches!(status, AgentStatus::Shutdown)
 }
 
 fn is_persisted_external_root_thread(thread: &Thread) -> bool {
@@ -313,7 +317,7 @@ mod persisted_lifecycle_status_tests {
     }
 
     #[test]
-    fn external_root_non_shutdown_terminal_fact_does_not_fallback_to_interrupted() {
+    fn external_root_terminal_facts_project_final_statuses() {
         let mut errored_thread = external_root_thread();
         let thread_id = ThreadId::new();
         let errored_items = vec![RolloutItem::EventMsg(
@@ -330,10 +334,32 @@ mod persisted_lifecycle_status_tests {
 
         assert_eq!(
             errored_thread.lifecycle_status,
-            ThreadLifecycleStatus::NotLoaded
+            ThreadLifecycleStatus::errored(Some("provider failed".to_string()))
         );
 
         let mut completed_thread = external_root_thread();
+        let completed_items = vec![RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
+                last_agent_message: Some("done".to_string()),
+                completed_at: Some(1),
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )];
+
+        apply_persisted_thread_lifecycle_status(&mut completed_thread, &completed_items);
+
+        assert_eq!(
+            completed_thread.lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+    }
+
+    #[test]
+    fn non_external_root_terminal_facts_only_project_shutdown() {
+        let mut completed_thread = external_root_thread();
+        completed_thread.model_provider = "mock_provider".to_string();
         let completed_items = vec![RolloutItem::EventMsg(
             protocol::protocol::EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-1".to_string(),
