@@ -95,6 +95,7 @@ fn body_contains(req: &wiremock::Request, text: &str) -> bool {
 mod approvals;
 mod basics;
 mod environments;
+mod external_root;
 mod overrides;
 mod tool_items;
 
@@ -169,4 +170,27 @@ fn write_test_skill(codex_home: &Path, name: &str) -> std::io::Result<()> {
         skill_dir.join("SKILL.md"),
         format!("---\nname: {name}\ndescription: {name} description\n---\n\n# Body\n"),
     )
+}
+
+fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_claude = bin_dir.join("claude");
+    std::fs::write(
+        &fake_claude,
+        "#!/bin/sh\n# Test double for hidden external root turn/start wiring.\nsleep 30\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_claude)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_claude, permissions)?;
+    }
+    Ok(())
+}
+
+fn prepend_path_env(path: &Path) -> Result<String> {
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let paths = std::iter::once(path.to_path_buf()).chain(std::env::split_paths(&original_path));
+    Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
 }

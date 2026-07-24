@@ -34,6 +34,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
+    external_root_thread_input: Arc<dyn ExternalRootThreadInputRuntime>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
     model_service: SharedModelServiceApi,
     outgoing: Arc<OutgoingMessageSender>,
@@ -47,6 +48,32 @@ pub(crate) struct TurnRequestProcessor {
     thread_list_state_permit: Arc<Semaphore>,
     state_db: Option<StateDbHandle>,
     skills_watcher: Arc<SkillsWatcher>,
+}
+
+pub(crate) trait ExternalRootThreadInputRuntime: Send + Sync {
+    fn has_external_root_thread(&self, thread_id: ThreadId) -> bool;
+
+    fn submit_external_root_input<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        message: String,
+    ) -> futures::future::BoxFuture<'a, CodexResult<String>>;
+}
+
+impl ExternalRootThreadInputRuntime for ThreadService {
+    fn has_external_root_thread(&self, thread_id: ThreadId) -> bool {
+        ThreadService::has_external_root_thread(self, thread_id)
+    }
+
+    fn submit_external_root_input<'a>(
+        &'a self,
+        thread_id: ThreadId,
+        message: String,
+    ) -> futures::future::BoxFuture<'a, CodexResult<String>> {
+        Box::pin(ThreadService::submit_external_root_input(
+            self, thread_id, message,
+        ))
+    }
 }
 
 fn resolve_runtime_workspace_roots(
@@ -97,6 +124,7 @@ impl TurnRequestProcessor {
             live_thread_listener: thread_service.clone(),
             live_thread_usage: thread_service.clone(),
             live_thread_goal: thread_service.clone(),
+            external_root_thread_input: thread_service.clone(),
             memory_startup_host: thread_service,
             model_service,
             outgoing,
@@ -350,6 +378,192 @@ impl TurnRequestProcessor {
         Ok(())
     }
 
+    fn validate_external_root_turn_start_params(
+        params: &TurnStartParams,
+    ) -> Result<(), JSONRPCErrorError> {
+        let mut unsupported_params = Vec::new();
+        if params.responsesapi_client_metadata.is_some() {
+            unsupported_params.push("responsesapiClientMetadata");
+        }
+        if params.environments.is_some() {
+            unsupported_params.push("environments");
+        }
+        if params.cwd.is_some() {
+            unsupported_params.push("cwd");
+        }
+        if params.runtime_workspace_roots.is_some() {
+            unsupported_params.push("runtimeWorkspaceRoots");
+        }
+        if params.approval_policy.is_some() {
+            unsupported_params.push("approvalPolicy");
+        }
+        if params.approvals_reviewer.is_some() {
+            unsupported_params.push("approvalsReviewer");
+        }
+        if params.sandbox_policy.is_some() {
+            unsupported_params.push("sandboxPolicy");
+        }
+        if params.permissions.is_some() {
+            unsupported_params.push("permissions");
+        }
+        if params.model.is_some() {
+            unsupported_params.push("model");
+        }
+        if params.model_provider.is_some() {
+            unsupported_params.push("modelProvider");
+        }
+        if params.service_tier.is_some() {
+            unsupported_params.push("serviceTier");
+        }
+        if params.effort.is_some() {
+            unsupported_params.push("effort");
+        }
+        if params.summary.is_some() {
+            unsupported_params.push("summary");
+        }
+        if params.personality.is_some() {
+            unsupported_params.push("personality");
+        }
+        if params.output_schema.is_some() {
+            unsupported_params.push("outputSchema");
+        }
+        if params.collaboration_mode.is_some() {
+            unsupported_params.push("collaborationMode");
+        }
+
+        if unsupported_params.is_empty() {
+            Ok(())
+        } else {
+            Err(invalid_request(format!(
+                "external root turn/start does not support {}",
+                unsupported_params.join(", ")
+            )))
+        }
+    }
+
+    fn external_root_turn_start_message(
+        input: Vec<V2UserInput>,
+    ) -> Result<String, JSONRPCErrorError> {
+        if input.is_empty() {
+            return Err(invalid_request(
+                "external root turn/start input must include text",
+            ));
+        }
+
+        let mut text_parts = Vec::new();
+        let mut actual_chars = 0usize;
+        let mut has_non_empty_text = false;
+        for item in input {
+            match item {
+                V2UserInput::Text {
+                    text,
+                    text_elements,
+                } => {
+                    if !text_elements.is_empty() {
+                        return Err(invalid_request(
+                            "external root turn/start only supports plain text input; text elements are not supported",
+                        ));
+                    }
+                    if !text_parts.is_empty() {
+                        actual_chars += 1;
+                    }
+                    actual_chars += text.chars().count();
+                    if actual_chars > MAX_USER_INPUT_TEXT_CHARS {
+                        return Err(Self::input_too_large_error(actual_chars));
+                    }
+                    if !text.is_empty() {
+                        has_non_empty_text = true;
+                    }
+                    text_parts.push(text)
+                }
+                V2UserInput::Image { .. } => {
+                    return Err(invalid_request(
+                        "external root turn/start only supports text input; image input is not supported",
+                    ));
+                }
+                V2UserInput::LocalImage { .. } => {
+                    return Err(invalid_request(
+                        "external root turn/start only supports text input; local image input is not supported",
+                    ));
+                }
+                V2UserInput::Skill { .. } => {
+                    return Err(invalid_request(
+                        "external root turn/start only supports text input; skill input is not supported",
+                    ));
+                }
+                V2UserInput::Mention { .. } => {
+                    return Err(invalid_request(
+                        "external root turn/start only supports text input; mention input is not supported",
+                    ));
+                }
+            }
+        }
+
+        if !has_non_empty_text {
+            return Err(invalid_request(
+                "external root turn/start input text must not be empty",
+            ));
+        }
+        let message = text_parts.join("\n");
+        Ok(message)
+    }
+
+    fn build_in_progress_turn(turn_id: String) -> Turn {
+        Turn {
+            id: turn_id,
+            items: vec![],
+            items_view: TurnItemsView::NotLoaded,
+            error: None,
+            status: TurnStatus::InProgress,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+        }
+    }
+
+    async fn external_root_turn_start_inner(
+        &self,
+        request_id: &ConnectionRequestId,
+        thread_id: ThreadId,
+        params: TurnStartParams,
+    ) -> Result<TurnStartResponse, JSONRPCErrorError> {
+        if let Err(error) = Self::validate_external_root_turn_start_params(&params) {
+            self.track_error_response(request_id, &error, /*error_type*/ None);
+            return Err(error);
+        }
+        let message = match Self::external_root_turn_start_message(params.input) {
+            Ok(message) => message,
+            Err(error) => {
+                self.track_error_response(request_id, &error, /*error_type*/ None);
+                return Err(error);
+            }
+        };
+
+        let turn_id =
+            self.external_root_thread_input
+                .submit_external_root_input(thread_id, message)
+                .await
+                .map_err(|err| {
+                    let error = match err {
+                        CodexErr::ThreadNotFound(thread_id) => {
+                            invalid_request(format!("thread not found: {thread_id}"))
+                        }
+                        CodexErr::InvalidRequest(message)
+                        | CodexErr::UnsupportedOperation(message) => invalid_request(message),
+                        err => internal_error(format!("failed to start external root turn: {err}")),
+                    };
+                    self.track_error_response(request_id, &error, /*error_type*/ None);
+                    error
+                })?;
+
+        self.outgoing
+            .record_request_turn_id(request_id, &turn_id)
+            .await;
+        Ok(TurnStartResponse {
+            turn: Self::build_in_progress_turn(turn_id),
+        })
+    }
+
     async fn turn_start_inner(
         &self,
         request_id: ConnectionRequestId,
@@ -370,6 +584,14 @@ impl TurnRequestProcessor {
             .inspect_err(|error| {
                 self.track_error_response(&request_id, error, /*error_type*/ None);
             })?;
+        if self
+            .external_root_thread_input
+            .has_external_root_thread(thread_id)
+        {
+            return self
+                .external_root_turn_start_inner(&request_id, thread_id, params)
+                .await;
+        }
         self.set_app_server_client_info(
             thread_id,
             app_server_client_name,
@@ -650,18 +872,9 @@ impl TurnRequestProcessor {
         self.outgoing
             .record_request_turn_id(&request_id, &turn_id)
             .await;
-        let turn = Turn {
-            id: turn_id,
-            items: vec![],
-            items_view: TurnItemsView::NotLoaded,
-            error: None,
-            status: TurnStatus::InProgress,
-            started_at: None,
-            completed_at: None,
-            duration_ms: None,
-        };
-
-        Ok(TurnStartResponse { turn })
+        Ok(TurnStartResponse {
+            turn: Self::build_in_progress_turn(turn_id),
+        })
     }
 
     async fn thread_inject_items_response_inner(
