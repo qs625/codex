@@ -439,7 +439,7 @@ impl CatalogRequestProcessor {
                     spawn_child: true,
                     compact: false,
                     workflow: false,
-                    poll_event: false,
+                    poll_event: true,
                     command_session: false,
                     permissions: false,
                     dynamic_tools: false,

@@ -138,19 +138,11 @@ pub fn create_followup_external_task_tool() -> ToolSpec {
 pub fn create_poll_external_event_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: "poll_external_event".to_string(),
-        description: "Wait for the next external-agent bus event. This first implementation reports a clear unsupported result for model-visible calls until external CLI sessions have an interactive input channel.".to_string(),
+        description: "Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. This returns only wake or timeout metadata plus a best-effort source hint, not the event payload.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
-        output_schema: Some(json!({
-            "type": "object",
-            "properties": {
-                "supported": { "type": "boolean" },
-                "message": { "type": "string" }
-            },
-            "required": ["supported", "message"],
-            "additionalProperties": false
-        })),
+        output_schema: Some(poll_event_output_schema()),
     })
 }
 
@@ -206,44 +198,48 @@ pub fn create_poll_event_tool() -> ToolSpec {
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
-        output_schema: Some(json!({
-            "type": "object",
-            "properties": {
-                "timed_out": {
-                    "type": "boolean",
-                    "description": "Whether the wait window elapsed without a new thread input."
-                },
-                "source_hint": {
-                    "type": ["string", "null"],
-                    "description": "Best-effort hint for the source that woke the wait, such as user_input, child_completion, inter_agent, command_output, command_exit, queued_input, or async_input."
-                },
-                "waited_ms": {
-                    "type": "number",
-                    "description": "Elapsed wall-clock wait time in milliseconds."
-                },
-                "initial_timeout_ms": {
-                    "type": "number",
-                    "description": "Configured initial wait window in milliseconds."
-                },
-                "current_timeout_ms": {
-                    "type": "number",
-                    "description": "Current backoff-adjusted wait window in milliseconds."
-                },
-                "hard_cap_timeout_ms": {
-                    "type": "number",
-                    "description": "Maximum backoff-adjusted wait window in milliseconds."
-                }
+        output_schema: Some(poll_event_output_schema()),
+    })
+}
+
+fn poll_event_output_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "timedOut": {
+                "type": "boolean",
+                "description": "Whether the wait window elapsed without a new thread input."
             },
-            "required": [
-                "timed_out",
-                "source_hint",
-                "waited_ms",
-                "initial_timeout_ms",
-                "current_timeout_ms",
-                "hard_cap_timeout_ms"
-            ],
-            "additionalProperties": false
-        })),
+            "sourceHint": {
+                "type": ["string", "null"],
+                "description": "Best-effort hint for the source that woke the wait, such as user_input, child_completion, inter_agent, command_output, command_exit, queued_input, or async_input."
+            },
+            "waitedMs": {
+                "type": "number",
+                "description": "Elapsed wall-clock wait time in milliseconds."
+            },
+            "initialTimeoutMs": {
+                "type": "number",
+                "description": "Configured initial wait window in milliseconds."
+            },
+            "currentTimeoutMs": {
+                "type": "number",
+                "description": "Current backoff-adjusted wait window in milliseconds."
+            },
+            "hardCapTimeoutMs": {
+                "type": "number",
+                "description": "Maximum backoff-adjusted wait window in milliseconds."
+            }
+        },
+        "required": [
+            "timedOut",
+            "sourceHint",
+            "waitedMs",
+            "initialTimeoutMs",
+            "currentTimeoutMs",
+            "hardCapTimeoutMs"
+        ],
+        "additionalProperties": false
     })
 }
 

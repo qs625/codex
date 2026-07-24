@@ -154,7 +154,10 @@ impl Session {
         let Some(turn_state) = turn_state else {
             return;
         };
-        turn_state.lock().await.accept_async_input_for_current_turn();
+        turn_state
+            .lock()
+            .await
+            .accept_async_input_for_current_turn();
     }
 
     async fn turn_state_for_sub_id(
@@ -598,16 +601,7 @@ fn matches_child_completion(item: &PendingInputItem, child_thread_id: ThreadId) 
 }
 
 fn thread_wait_source_hint(source: ThreadWaitSource) -> String {
-    match source {
-        ThreadWaitSource::UserInput => "user_input",
-        ThreadWaitSource::InterAgent => "inter_agent",
-        ThreadWaitSource::ChildCompletion => "child_completion",
-        ThreadWaitSource::QueuedInput => "queued_input",
-        ThreadWaitSource::AsyncInput => "async_input",
-        ThreadWaitSource::CommandOutput => "command_output",
-        ThreadWaitSource::CommandExit => "command_exit",
-    }
-    .to_string()
+    source.source_hint()
 }
 
 fn thread_wait_source_for_communication(

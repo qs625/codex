@@ -4,7 +4,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
 
+use crate::session::session::ThreadWaitBackoffState;
+use crate::session::session::ThreadWaitEventSnapshot;
+use crate::session::session::ThreadWaitSource;
 use codex_agent_roles::AgentRoleConfig;
 use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::LiveAgent;
@@ -21,6 +26,9 @@ use protocol::protocol::InterAgentOperation;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use thread_service_api::ThreadPollEventRequest;
+use thread_service_api::ThreadPollEventResult;
+use thread_service_api::ThreadPollEventTimeoutMetadata;
 use thread_store_api::SharedLiveThread;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
@@ -30,6 +38,7 @@ use tokio::process::ChildStderr;
 use tokio::process::ChildStdin;
 use tokio::process::ChildStdout;
 use tokio::process::Command;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
@@ -73,6 +82,8 @@ pub(crate) struct ExternalSpawnConfig {
     pub(crate) personality: Option<protocol::config_types::Personality>,
     pub(crate) features: codex_features::Features,
     pub(crate) generate_memories: bool,
+    pub(crate) default_wait_timeout_ms: i64,
+    pub(crate) max_wait_timeout_ms: i64,
 }
 
 impl ExternalSpawnConfig {
@@ -93,6 +104,8 @@ impl ExternalSpawnConfig {
             personality: config.personality,
             features: config.features.get().clone(),
             generate_memories: config.memories.generate_memories,
+            default_wait_timeout_ms: config.multi_agent_v2.default_wait_timeout_ms,
+            max_wait_timeout_ms: config.multi_agent_v2.max_wait_timeout_ms,
         }
     }
 }
@@ -100,10 +113,32 @@ impl ExternalSpawnConfig {
 #[derive(Default)]
 pub(crate) struct ExternalAgentRegistry {
     runs: Mutex<HashMap<ThreadId, ExternalAgentRun>>,
+    wait_states: Mutex<HashMap<ThreadId, ExternalThreadWaitState>>,
+}
+
+#[derive(Clone)]
+struct ExternalThreadWaitState {
+    events: watch::Sender<ThreadWaitEventSnapshot>,
+    backoff: Arc<AsyncMutex<ThreadWaitBackoffState>>,
+}
+
+impl Default for ExternalThreadWaitState {
+    fn default() -> Self {
+        let (events, _rx) = watch::channel(ThreadWaitEventSnapshot::default());
+        Self {
+            events,
+            backoff: Arc::new(AsyncMutex::new(ThreadWaitBackoffState::default())),
+        }
+    }
 }
 
 impl ExternalAgentRegistry {
     pub(crate) fn insert_running(&self, run: ExternalAgentRun) {
+        self.wait_states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(run.thread_id)
+            .or_default();
         self.runs
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -234,6 +269,134 @@ impl ExternalAgentRegistry {
                     && matches!(run.status, AgentStatus::PendingInit | AgentStatus::Running)
             })
     }
+
+    pub(crate) fn note_thread_wait_event(&self, thread_id: ThreadId, source: ThreadWaitSource) {
+        let Some(state) = self
+            .wait_states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&thread_id)
+            .cloned()
+        else {
+            return;
+        };
+        let current = *state.events.borrow();
+        state.events.send_replace(ThreadWaitEventSnapshot {
+            seq: current.seq + 1,
+            source: Some(source),
+        });
+    }
+
+    pub(crate) async fn poll_event(
+        &self,
+        thread_id: ThreadId,
+        request: ThreadPollEventRequest,
+    ) -> Result<ThreadPollEventResult, String> {
+        let metadata = self
+            .poll_event_timeout_metadata(thread_id, request)
+            .await
+            .ok_or_else(|| "external sender is not registered".to_string())?;
+        let initial_timeout_ms = metadata.initial_timeout_ms;
+        let current_timeout_ms = metadata.current_timeout_ms;
+        let hard_cap_timeout_ms = metadata.hard_cap_timeout_ms;
+        let current_timeout = Duration::from_millis(current_timeout_ms as u64);
+        let started = Instant::now();
+        let Some(wait_state) = self
+            .wait_states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&thread_id)
+            .cloned()
+        else {
+            return Err("external sender is not registered".to_string());
+        };
+        let mut thread_wait_rx = wait_state.events.subscribe();
+        let wait_snapshot = *thread_wait_rx.borrow_and_update();
+        let source_hint = tokio::time::timeout(current_timeout, async move {
+            loop {
+                if thread_wait_rx.changed().await.is_err() {
+                    return None;
+                }
+                let snapshot = *thread_wait_rx.borrow_and_update();
+                if snapshot.seq > wait_snapshot.seq {
+                    return snapshot.source.map(ThreadWaitSource::source_hint);
+                }
+            }
+        })
+        .await;
+
+        match source_hint {
+            Ok(source_hint) => {
+                wait_state.backoff.lock().await.reset_after_event();
+                Ok(ThreadPollEventResult {
+                    timed_out: false,
+                    source_hint,
+                    waited_ms: started.elapsed().as_millis() as i64,
+                    initial_timeout_ms,
+                    current_timeout_ms,
+                    hard_cap_timeout_ms,
+                })
+            }
+            Err(_) => {
+                wait_state.backoff.lock().await.advance_after_timeout(
+                    duration_from_config_ms(initial_timeout_ms),
+                    duration_from_config_ms(hard_cap_timeout_ms),
+                );
+                Ok(ThreadPollEventResult {
+                    timed_out: true,
+                    source_hint: None,
+                    waited_ms: started.elapsed().as_millis() as i64,
+                    initial_timeout_ms,
+                    current_timeout_ms,
+                    hard_cap_timeout_ms,
+                })
+            }
+        }
+    }
+
+    pub(crate) async fn poll_event_timeout_metadata(
+        &self,
+        thread_id: ThreadId,
+        request: ThreadPollEventRequest,
+    ) -> Option<ThreadPollEventTimeoutMetadata> {
+        let wait_state = self
+            .wait_states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&thread_id)
+            .cloned()?;
+        let run = self.get(thread_id)?;
+        let (default_initial_timeout_ms, default_hard_cap_timeout_ms) = run
+            .spawn_config
+            .as_ref()
+            .map_or((30_000, 120_000), |config| {
+                (config.default_wait_timeout_ms, config.max_wait_timeout_ms)
+            });
+        let initial_timeout_ms = request
+            .initial_timeout_ms
+            .unwrap_or(default_initial_timeout_ms);
+        let hard_cap_timeout_ms = request
+            .hard_cap_timeout_ms
+            .unwrap_or(default_hard_cap_timeout_ms);
+        let current_window = wait_state
+            .backoff
+            .lock()
+            .await
+            .current_window(
+                duration_from_config_ms(initial_timeout_ms),
+                duration_from_config_ms(hard_cap_timeout_ms),
+            )
+            .as_millis() as i64;
+        Some(ThreadPollEventTimeoutMetadata {
+            initial_timeout_ms,
+            current_timeout_ms: current_window,
+            hard_cap_timeout_ms,
+        })
+    }
+}
+
+fn duration_from_config_ms(value: i64) -> Duration {
+    Duration::from_millis(value.max(0) as u64)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -439,7 +602,7 @@ Available external tools:
 - spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode" | "codex_cli", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json, opencode HTTP sessions, and codex_cli app-server stdio sessions.
 - followup_external_task: arguments {{ "target": string, "message": string }}
 - list_external_agents: arguments {{ "path_prefix"?: string }}
-- poll_external_event: currently unsupported for non-interactive CLI sessions; calling it returns an unsupported error.
+- poll_external_event: arguments {{}}. Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. Returns wake or timeout metadata plus a best-effort source hint, not the event payload.
 - close_external_agent: arguments {{ "target": string }}
 
 Emit one JSON object per line for tool calls:
@@ -1961,9 +2124,11 @@ mod tests {
     fn external_context_injects_schema_and_forbids_internal_tool_names() {
         let context = external_agent_context_prompt("review this patch");
         assert!(context.contains("spawn_external_agent"));
+        assert!(context.contains("poll_external_event"));
         assert!(context.contains("external_tool_call"));
         assert!(context.contains("external_tool_result"));
         assert!(context.contains("Do not call internal Morpheus tools"));
+        assert!(!context.contains("unsupported"));
         assert!(context.contains("review this patch"));
     }
 

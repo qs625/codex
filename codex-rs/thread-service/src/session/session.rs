@@ -78,10 +78,8 @@ pub(crate) struct ThreadWaitBackoffState {
 
 #[cfg(test)]
 pub(crate) struct GoalContinuationBeforeLaunchHook {
-    pub(crate) started_tx:
-        Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    pub(crate) continue_rx:
-        Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    pub(crate) started_tx: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    pub(crate) continue_rx: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
 }
 
 const THREAD_WAIT_BACKOFF_MULTIPLIER: u32 = 2;
@@ -111,6 +109,21 @@ impl ThreadWaitBackoffState {
 
     pub(crate) fn reset_after_event(&mut self) {
         self.current_window = None;
+    }
+}
+
+impl ThreadWaitSource {
+    pub(crate) fn source_hint(self) -> String {
+        match self {
+            ThreadWaitSource::UserInput => "user_input",
+            ThreadWaitSource::InterAgent => "inter_agent",
+            ThreadWaitSource::ChildCompletion => "child_completion",
+            ThreadWaitSource::QueuedInput => "queued_input",
+            ThreadWaitSource::AsyncInput => "async_input",
+            ThreadWaitSource::CommandOutput => "command_output",
+            ThreadWaitSource::CommandExit => "command_exit",
+        }
+        .to_string()
     }
 }
 

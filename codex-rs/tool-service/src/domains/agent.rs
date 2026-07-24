@@ -354,9 +354,90 @@ pub(crate) async fn dispatch(
             FunctionToolOutput::from_text(String::new(), Some(true))
         }
         POLL_EXTERNAL_EVENT_TOOL_NAME => {
-            return Err(FunctionCallError::RespondToModel(
-                "poll_external_event is not supported until external CLI sessions expose an interactive input channel; external tool calls are handled by the backend bridge when they appear in provider output".to_string(),
-            ));
+            let item_id = format!("builtin-tool-{}", uuid::Uuid::new_v4());
+            let arguments = json!({});
+            let timeout_metadata = agent_runtime
+                .poll_event_timeout_metadata(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    thread_service_api::ThreadPollEventRequest {
+                        initial_timeout_ms: None,
+                        hard_cap_timeout_ms: None,
+                    },
+                )
+                .await;
+            let started_output = match timeout_metadata {
+                Ok(timeout_metadata) => Some(
+                    serde_json::to_value(&timeout_metadata)
+                        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?,
+                ),
+                Err(_) => None,
+            };
+            session_capability
+                .emit_event(
+                    turn.as_ref(),
+                    EventMsg::BuiltinToolCallStarted(BuiltinToolCallDisplayEvent {
+                        thread_id: session_capability.conversation_id(),
+                        turn_id: turn.runtime_turn_id_str().to_string(),
+                        id: item_id.clone(),
+                        tool: POLL_EXTERNAL_EVENT_TOOL_NAME.to_string(),
+                        arguments: arguments.clone(),
+                        status: BuiltinToolCallStatus::InProgress,
+                        output: started_output,
+                        lifecycle_at_ms: now_unix_timestamp_ms(),
+                    }),
+                )
+                .await;
+            let result = agent_runtime
+                .poll_event(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    thread_service_api::ThreadPollEventRequest {
+                        initial_timeout_ms: None,
+                        hard_cap_timeout_ms: None,
+                    },
+                )
+                .await;
+            match result {
+                Ok(result) => {
+                    let output = serde_json::to_value(&result)
+                        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                    session_capability
+                        .emit_event(
+                            turn.as_ref(),
+                            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                                thread_id: session_capability.conversation_id(),
+                                turn_id: turn.runtime_turn_id_str().to_string(),
+                                id: item_id,
+                                tool: POLL_EXTERNAL_EVENT_TOOL_NAME.to_string(),
+                                arguments,
+                                status: BuiltinToolCallStatus::Completed,
+                                output: Some(output),
+                                lifecycle_at_ms: now_unix_timestamp_ms(),
+                            }),
+                        )
+                        .await;
+                    function_tool_json_output(&result, POLL_EXTERNAL_EVENT_TOOL_NAME)?
+                }
+                Err(err) => {
+                    session_capability
+                        .emit_event(
+                            turn.as_ref(),
+                            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                                thread_id: session_capability.conversation_id(),
+                                turn_id: turn.runtime_turn_id_str().to_string(),
+                                id: item_id,
+                                tool: POLL_EXTERNAL_EVENT_TOOL_NAME.to_string(),
+                                arguments,
+                                status: BuiltinToolCallStatus::Failed,
+                                output: Some(json!({
+                                    "error": err.to_string(),
+                                })),
+                                lifecycle_at_ms: now_unix_timestamp_ms(),
+                            }),
+                        )
+                        .await;
+                    return Err(err);
+                }
+            }
         }
         LIST_EXTERNAL_AGENTS_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
