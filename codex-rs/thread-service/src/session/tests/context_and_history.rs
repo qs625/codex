@@ -2695,6 +2695,7 @@ async fn poll_event_returns_immediately_for_existing_pending_command_output() {
     assert!(!result.timed_out);
     assert_eq!(result.waited_ms, 0);
     assert_eq!(result.source_hint.as_deref(), Some("command_output"));
+    assert_eq!(result.event, None);
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
@@ -2733,7 +2734,10 @@ async fn poll_event_wakes_for_child_completion() {
             "wake".to_string(),
             protocol::protocol::InterAgentOperation::ChildCompletion,
         )
-        .with_trigger_turn(false),
+        .with_trigger_turn(false)
+        .with_status(protocol::protocol::AgentStatus::Completed(Some(
+            "worker final output".to_string(),
+        ))),
     )
     .await;
 
@@ -2743,6 +2747,92 @@ async fn poll_event_wakes_for_child_completion() {
         .expect("poll_event task");
     assert!(!result.timed_out);
     assert_eq!(result.source_hint.as_deref(), Some("child_completion"));
+    match result.event {
+        Some(thread_service_api::ThreadPollEvent::InterAgentCommunication { communication }) => {
+            assert_eq!(communication.content, "wake");
+            assert_eq!(
+                communication.status,
+                Some(protocol::protocol::AgentStatus::Completed(Some(
+                    "worker final output".to_string()
+                )))
+            );
+        }
+        other => panic!("expected child completion payload, got {other:?}"),
+    }
+    assert_eq!(result.events.len(), 1);
+
+    sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test]
+async fn poll_event_lists_later_child_completion_while_older_completion_is_pending() {
+    let (sess, tc, _rx_event) = make_session_and_context_with_rx().await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        NeverEndingTask {
+            kind: TaskKind::Regular,
+            listen_to_cancellation_token: true,
+        },
+    )
+    .await;
+
+    sess.enqueue_mailbox_communication(
+        InterAgentCommunication::new(
+            AgentPath::try_from("/root/explorer").expect("explorer path should parse"),
+            AgentPath::root(),
+            Vec::new(),
+            "explorer done".to_string(),
+            protocol::protocol::InterAgentOperation::ChildCompletion,
+        )
+        .with_trigger_turn(false)
+        .with_status(protocol::protocol::AgentStatus::Completed(Some(
+            "explorer done".to_string(),
+        ))),
+    )
+    .await;
+
+    let first = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("first poll_event should succeed");
+    assert_eq!(first.events.len(), 1);
+
+    sess.enqueue_mailbox_communication(
+        InterAgentCommunication::new(
+            AgentPath::try_from("/root/owner").expect("owner path should parse"),
+            AgentPath::root(),
+            Vec::new(),
+            "owner done".to_string(),
+            protocol::protocol::InterAgentOperation::ChildCompletion,
+        )
+        .with_trigger_turn(false)
+        .with_status(protocol::protocol::AgentStatus::Completed(Some(
+            "owner done".to_string(),
+        ))),
+    )
+    .await;
+
+    let second = sess
+        .poll_event(thread_service_api::ThreadPollEventRequest {
+            initial_timeout_ms: Some(100),
+            hard_cap_timeout_ms: Some(400),
+        })
+        .await
+        .expect("second poll_event should succeed");
+    let authors = second
+        .events
+        .iter()
+        .map(|event| match event {
+            thread_service_api::ThreadPollEvent::InterAgentCommunication { communication } => {
+                communication.author.as_str()
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(authors, vec!["/root/explorer", "/root/owner"]);
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
@@ -2996,6 +3086,7 @@ async fn poll_event_backoff_is_thread_scoped_and_resets_after_event() {
         .await
         .expect("first poll_event should succeed");
     assert!(first.timed_out);
+    assert_eq!(first.event, None);
     assert_eq!(first.current_timeout_ms, 20);
 
     let second = sess

@@ -695,12 +695,76 @@ mod tests {
                     }
                     "agent.followup" => Ok(serde_json::json!({ "ok": true })),
                     "agent.wait" => Ok(serde_json::json!({
-                        "summary": "agent completed through fake bridge",
-                        "blockingFindings": []
+                        "sourceHint": "child_completion",
+                        "timedOut": false,
+                        "event": {
+                            "type": "inter_agent_communication",
+                            "communication": {
+                                "author": "/root/owner",
+                                "recipient": "/root",
+                                "other_recipients": [],
+                                "content": "agent completed through fake bridge",
+                                "operation": "childCompletion",
+                                "trigger_turn": true,
+                                "sender_thread_id": null,
+                                "recipient_thread_id": null,
+                                "status": { "completed": "agent completed through fake bridge" },
+                                "agent_nickname": null,
+                                "agent_role": null
+                            }
+                        },
+                        "events": [{
+                            "type": "inter_agent_communication",
+                            "communication": {
+                                "author": "/root/owner",
+                                "recipient": "/root",
+                                "other_recipients": [],
+                                "content": "agent completed through fake bridge",
+                                "operation": "childCompletion",
+                                "trigger_turn": true,
+                                "sender_thread_id": null,
+                                "recipient_thread_id": null,
+                                "status": { "completed": "agent completed through fake bridge" },
+                                "agent_nickname": null,
+                                "agent_role": null
+                            }
+                        }]
                     })),
                     "event.poll" => Ok(serde_json::json!({
                         "sourceHint": "child_completion",
-                        "timedOut": false
+                        "timedOut": false,
+                        "event": {
+                            "type": "inter_agent_communication",
+                            "communication": {
+                                "author": "/root/owner",
+                                "recipient": "/root",
+                                "other_recipients": [],
+                                "content": "agent completed through fake bridge",
+                                "operation": "childCompletion",
+                                "trigger_turn": true,
+                                "sender_thread_id": null,
+                                "recipient_thread_id": null,
+                                "status": { "completed": "agent completed through fake bridge" },
+                                "agent_nickname": null,
+                                "agent_role": null
+                            }
+                        },
+                        "events": [{
+                            "type": "inter_agent_communication",
+                            "communication": {
+                                "author": "/root/owner",
+                                "recipient": "/root",
+                                "other_recipients": [],
+                                "content": "agent completed through fake bridge",
+                                "operation": "childCompletion",
+                                "trigger_turn": true,
+                                "sender_thread_id": null,
+                                "recipient_thread_id": null,
+                                "status": { "completed": "agent completed through fake bridge" },
+                                "agent_nickname": null,
+                                "agent_role": null
+                            }
+                        }]
                     })),
                     "shell.exec" => Err(WorkflowRuntimeError::unsupported("shell disabled")),
                     method => Err(WorkflowRuntimeError::unsupported(format!(
@@ -755,6 +819,156 @@ mod tests {
                 }
             })
         }
+    }
+
+    struct MultiCompletionBridge {
+        poll_count: TestMutex<usize>,
+    }
+
+    impl MultiCompletionBridge {
+        fn new() -> Self {
+            Self {
+                poll_count: TestMutex::new(0),
+            }
+        }
+    }
+
+    impl WorkflowRuntimeBridge for MultiCompletionBridge {
+        fn call(
+            &self,
+            request: WorkflowRuntimeRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>>
+        {
+            Box::pin(async move {
+                match request.method.as_str() {
+                    "agent.spawn" => {
+                        let agent_id = request
+                            .params
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .expect("agent id");
+                        serde_json::to_value(WorkflowAgentBinding {
+                            agent_id: agent_id.to_string(),
+                            agent_path: format!("/root/{agent_id}"),
+                            workflow_id: Some(request.workflow_id.clone()),
+                            run_id: Some(request.run_id.clone()),
+                            stage_id: Some(agent_id.to_string()),
+                            thread_id: Some(format!("thread-{agent_id}")),
+                            status: Some(serde_json::json!("running")),
+                            options: Value::Null,
+                        })
+                        .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
+                    }
+                    "event.poll" => {
+                        let poll_count = {
+                            let mut guard = self.poll_count.lock().expect("poll count lock");
+                            *guard += 1;
+                            *guard
+                        };
+                        let explorer = completion_event("/root/explorer", "explorer done");
+                        let events = if poll_count >= 3 {
+                            vec![explorer, completion_event("/root/owner", "owner done")]
+                        } else {
+                            vec![explorer]
+                        };
+                        Ok(serde_json::json!({
+                            "sourceHint": "child_completion",
+                            "timedOut": false,
+                            "event": events.first().cloned(),
+                            "events": events
+                        }))
+                    }
+                    method => Err(WorkflowRuntimeError::unsupported(format!(
+                        "unexpected method {method}"
+                    ))),
+                }
+            })
+        }
+    }
+
+    struct DuplicateCompletionBridge {
+        poll_count: TestMutex<usize>,
+    }
+
+    impl DuplicateCompletionBridge {
+        fn new() -> Self {
+            Self {
+                poll_count: TestMutex::new(0),
+            }
+        }
+    }
+
+    impl WorkflowRuntimeBridge for DuplicateCompletionBridge {
+        fn call(
+            &self,
+            request: WorkflowRuntimeRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<Value, WorkflowRuntimeError>> + Send + '_>>
+        {
+            Box::pin(async move {
+                match request.method.as_str() {
+                    "agent.spawn" => {
+                        let agent_id = request
+                            .params
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .expect("agent id");
+                        serde_json::to_value(WorkflowAgentBinding {
+                            agent_id: agent_id.to_string(),
+                            agent_path: format!("/root/{agent_id}"),
+                            workflow_id: Some(request.workflow_id.clone()),
+                            run_id: Some(request.run_id.clone()),
+                            stage_id: Some(agent_id.to_string()),
+                            thread_id: Some(format!("thread-{agent_id}")),
+                            status: Some(serde_json::json!("running")),
+                            options: Value::Null,
+                        })
+                        .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
+                    }
+                    "agent.followup" => Ok(serde_json::json!({ "ok": true })),
+                    "event.poll" => {
+                        let poll_count = {
+                            let mut guard = self.poll_count.lock().expect("poll count lock");
+                            *guard += 1;
+                            *guard
+                        };
+                        let first = completion_event("/root/owner", "same final text");
+                        let events = if poll_count >= 2 {
+                            vec![first, completion_event("/root/owner", "same final text")]
+                        } else {
+                            vec![first]
+                        };
+                        Ok(serde_json::json!({
+                            "sourceHint": "child_completion",
+                            "timedOut": false,
+                            "event": events.first().cloned(),
+                            "events": events
+                        }))
+                    }
+                    method => Err(WorkflowRuntimeError::unsupported(format!(
+                        "unexpected method {method}"
+                    ))),
+                }
+            })
+        }
+    }
+
+    fn completion_event(author: &str, text: &str) -> Value {
+        serde_json::json!({
+            "type": "inter_agent_communication",
+            "communication": {
+                "author": author,
+                "recipient": "/root",
+                "other_recipients": [],
+                "content": text,
+                "operation": "childCompletion",
+                "trigger_turn": true,
+                "sender_thread_id": null,
+                "recipient_thread_id": null,
+                "status": { "completed": text },
+                "agent_nickname": null,
+                "agent_role": null
+            }
+        })
     }
 
     #[tokio::test]
@@ -845,10 +1059,9 @@ export default defineWorkflow({
             Some("/root/owner")
         );
         assert_eq!(
-            completed
-                .output
-                .as_ref()
-                .and_then(|output| output.pointer("/result/result/summary")),
+            completed.output.as_ref().and_then(
+                |output| output.pointer("/result/result/event/communication/status/completed")
+            ),
             Some(&Value::String(
                 "agent completed through fake bridge".to_string()
             ))
@@ -924,6 +1137,14 @@ export default defineWorkflow({
             Some(&Value::String("child_completion".to_string()))
         );
         assert_eq!(
+            completed.output.as_ref().and_then(
+                |output| output.pointer("/result/result/event/communication/status/completed")
+            ),
+            Some(&Value::String(
+                "agent completed through fake bridge".to_string()
+            ))
+        );
+        assert_eq!(
             bridge
                 .methods
                 .lock()
@@ -939,6 +1160,205 @@ export default defineWorkflow({
                 .clone(),
             vec![serde_json::json!({})]
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_runner_can_wait_for_later_agent_when_old_completion_remains_pending() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflow_dir = temp.path().join("workflow");
+        write_entry(
+            &workflow_dir,
+            r#"import { defineWorkflow } from "@codex/workflow";
+
+function events(result) {
+  const events = Array.isArray(result?.events) ? [...result.events] : [];
+  if (result?.event && !events.includes(result.event)) {
+    events.unshift(result.event);
+  }
+  return events;
+}
+
+function key(event) {
+  return `${event?.communication?.author}:${event?.communication?.content}`;
+}
+
+async function sleep() {
+  await new Promise((resolve) => setTimeout(resolve, 1));
+}
+
+export default defineWorkflow({
+  async run(wf) {
+    const seen = new Set();
+    async function waitFor(agent) {
+      for (;;) {
+        const result = await wf.pollEvent();
+        let sawOnlySeenEvents = false;
+        for (const event of events(result)) {
+          if (event?.type !== "inter_agent_communication") {
+            continue;
+          }
+          const operation = event.communication?.operation;
+          if (operation !== "childCompletion" && operation !== "child_completion") {
+            continue;
+          }
+          const eventKey = key(event);
+          if (seen.has(eventKey)) {
+            sawOnlySeenEvents = true;
+            continue;
+          }
+          seen.add(eventKey);
+          if (event.communication?.author === agent.binding.agentPath) {
+            return event.communication.status.completed;
+          }
+        }
+        if (sawOnlySeenEvents) {
+          await sleep();
+        }
+      }
+    }
+    const explorer = await wf.Agent("explorer", { message: "research" });
+    const research = await waitFor(explorer);
+    const owner = await wf.Agent("owner", { message: research });
+    const implementation = await waitFor(owner);
+    return { research, implementation };
+  }
+});"#,
+        );
+        let registry = registry_for(&workflow_dir);
+        let manager = WorkflowRunManager::new(temp.path().join("home"));
+        let bridge = Arc::new(MultiCompletionBridge::new());
+
+        let started = manager
+            .start_with_bridge(
+                &registry,
+                "feature-dev",
+                serde_json::json!({}),
+                bridge.clone(),
+            )
+            .await
+            .expect("start workflow run");
+        let completed = wait_for_terminal(&manager, &started.run_id).await;
+
+        assert_eq!(completed.status, WorkflowRunStatus::Completed);
+        assert_eq!(
+            completed
+                .output
+                .as_ref()
+                .and_then(|output| output.pointer("/result/result/research")),
+            Some(&Value::String("explorer done".to_string()))
+        );
+        assert_eq!(
+            completed
+                .output
+                .as_ref()
+                .and_then(|output| output.pointer("/result/result/implementation")),
+            Some(&Value::String("owner done".to_string()))
+        );
+        assert_eq!(*bridge.poll_count.lock().expect("poll count lock"), 3);
+    }
+
+    #[tokio::test]
+    async fn workflow_runner_accepts_same_agent_duplicate_completion_text() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workflow_dir = temp.path().join("workflow");
+        write_entry(
+            &workflow_dir,
+            r#"import { defineWorkflow } from "@codex/workflow";
+
+function events(result) {
+  const events = Array.isArray(result?.events) ? [...result.events] : [];
+  const baseKey = (event) => JSON.stringify({
+    author: event?.communication?.author ?? null,
+    status: event?.communication?.status ?? null,
+    content: event?.communication?.content ?? null
+  });
+  if (result?.event && !events.some((event) => baseKey(event) === baseKey(result.event))) {
+    events.unshift(result.event);
+  }
+  return events;
+}
+
+function baseKey(event) {
+  return JSON.stringify({
+    author: event?.communication?.author ?? null,
+    status: event?.communication?.status ?? null,
+    content: event?.communication?.content ?? null
+  });
+}
+
+async function sleep() {
+  await new Promise((resolve) => setTimeout(resolve, 1));
+}
+
+export default defineWorkflow({
+  async run(wf) {
+    const seen = new Set();
+    async function waitFor(agent) {
+      for (;;) {
+        const occurrenceByBaseKey = new Map();
+        const result = await wf.pollEvent();
+        for (const event of events(result)) {
+          if (event?.type !== "inter_agent_communication") {
+            continue;
+          }
+          const operation = event.communication?.operation;
+          if (operation !== "childCompletion" && operation !== "child_completion") {
+            continue;
+          }
+          const base = baseKey(event);
+          const occurrence = occurrenceByBaseKey.get(base) ?? 0;
+          occurrenceByBaseKey.set(base, occurrence + 1);
+          const key = `${base}#${occurrence}`;
+          if (seen.has(key)) {
+            continue;
+          }
+          seen.add(key);
+          if (event.communication?.author === agent.binding.agentPath) {
+            return event.communication.status.completed;
+          }
+        }
+        await sleep();
+      }
+    }
+    const owner = await wf.Agent("owner", { message: "implement" });
+    const first = await waitFor(owner);
+    await owner.followup("verify");
+    const second = await waitFor(owner);
+    return { first, second };
+  }
+});"#,
+        );
+        let registry = registry_for(&workflow_dir);
+        let manager = WorkflowRunManager::new(temp.path().join("home"));
+        let bridge = Arc::new(DuplicateCompletionBridge::new());
+
+        let started = manager
+            .start_with_bridge(
+                &registry,
+                "feature-dev",
+                serde_json::json!({}),
+                bridge.clone(),
+            )
+            .await
+            .expect("start workflow run");
+        let completed = wait_for_terminal(&manager, &started.run_id).await;
+
+        assert_eq!(completed.status, WorkflowRunStatus::Completed);
+        assert_eq!(
+            completed
+                .output
+                .as_ref()
+                .and_then(|output| output.pointer("/result/result/first")),
+            Some(&Value::String("same final text".to_string()))
+        );
+        assert_eq!(
+            completed
+                .output
+                .as_ref()
+                .and_then(|output| output.pointer("/result/result/second")),
+            Some(&Value::String("same final text".to_string()))
+        );
+        assert_eq!(*bridge.poll_count.lock().expect("poll count lock"), 2);
     }
 
     #[tokio::test]

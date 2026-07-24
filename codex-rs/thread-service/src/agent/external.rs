@@ -336,6 +336,8 @@ impl ExternalAgentRegistry {
                 Ok(ThreadPollEventResult {
                     timed_out: false,
                     source_hint,
+                    event: None,
+                    events: Vec::new(),
                     waited_ms: started.elapsed().as_millis() as i64,
                     initial_timeout_ms,
                     current_timeout_ms,
@@ -350,6 +352,8 @@ impl ExternalAgentRegistry {
                 Ok(ThreadPollEventResult {
                     timed_out: true,
                     source_hint: None,
+                    event: None,
+                    events: Vec::new(),
                     waited_ms: started.elapsed().as_millis() as i64,
                     initial_timeout_ms,
                     current_timeout_ms,
@@ -651,7 +655,7 @@ Available external tools:
 - spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode" | "codex_cli", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json, opencode HTTP sessions, and codex_cli app-server stdio sessions.
 - followup_external_task: arguments {{ "target": string, "message": string }}
 - list_external_agents: arguments {{ "path_prefix"?: string }}
-- poll_external_event: arguments {{}}. Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. Returns wake or timeout metadata plus a best-effort source hint, not the event payload.
+- poll_external_event: arguments {{}}. Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. Returns wake or timeout metadata plus a best-effort source hint and typed event payload when available.
 - close_external_agent: arguments {{ "target": string }}
 
 Emit one JSON object per line for tool calls:

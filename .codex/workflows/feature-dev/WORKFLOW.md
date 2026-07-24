@@ -53,7 +53,7 @@ workflow 会在当前 workflow run 内创建并复用 agent session：
 
 注意：PM 的常规开发调度使用三个固定开发 checkout owner：`owner_dev`、`owner_dev_2`、`owner_dev_3`；主 checkout 的 `owner_main` 只承接 refactor/performance 全局独占任务。当前 workflow SDK 的 `Agent(id)` 绑定范围是单个 workflow run，因此 `feature-dev` 不适合作为 PM 固定 owner 池的派发入口；PM 不应为了普通开发任务启动 workflow 来绕过固定 owner 复用规则。只有用户明确要求测试或执行 dynamic workflow 时，才使用本 workflow。
 
-当前 Rust runner 已能执行该 TypeScript entry，并在通过 `workflow_start` / `workflow_resume` model tool 启动时把 `Agent`、`followup`、`wait` 请求桥接到真实 MultiAgent V2 runtime。`Agent(id)` 的 binding 会持久化到 workflow run snapshot，resume 后同 id 返回已有 session，不重复 spawn。`wf.shell` 尚未安全接入 unified exec，调用时会返回明确 unsupported error。
+当前 Rust runner 已能执行该 TypeScript entry，并在通过 `workflow_start` / `workflow_resume` model tool 启动时把 `Agent`、`followup`、`event.poll` 请求桥接到真实 MultiAgent V2 runtime。`Agent(id)` 的 binding 会持久化到 workflow run snapshot，resume 后同 id 返回已有 session，不重复 spawn。`wf.shell` 尚未安全接入 unified exec，调用时会返回明确 unsupported error。
 
 `feature-dev` 的四个 agent stage 都需要显式 agent type，因此脚本使用 `fork_turns: "none"` 创建独立上下文的 subagent。MultiAgent V2 默认 `fork_turns` 是 full history；full-history fork 必须继承父 thread 的 agent type、model 和 reasoning effort，不能同时传 `type` / `agent_type`、`model` 或 `reasoning_effort`。
 
@@ -91,4 +91,6 @@ Dynamic Workflow runner 已支持：
 - 持久化 `run.json`，支持 status/resume/abort 查询和恢复。
 - 通过 typed `WorkflowRunProgress` 展示 start/resume/abort 进度。
 
-已支持 `wf.Agent`、`agent.followup()` 和 `agent.wait()` 的真实 MultiAgent runtime callback；`agent.wait()` 复用 MultiAgent V2 的短窗口等待语义，一次返回可能只是 timeout 或 status update，不代表 agent 已完成。需要把一个阶段的结果交给下一阶段时，workflow 必须循环等待 child completion 或 final status，并从 final status 文本中提取阶段结果，不能读取不存在的 `summary`、`blockingFindings` 等临时字段。Verify 阶段由 owner 在所属 checkout 自行运行命令，workflow 不创建共享 tester。`wf.shell` 仍是明确 unsupported，后续接入前不得绕过 exec permission、hook 或 typed command lifecycle。
+已支持 `wf.Agent`、`agent.followup()` 和 `wf.pollEvent()` 的真实 MultiAgent runtime callback。`wf.pollEvent()` 是当前推荐等待入口，会桥接到 provider-neutral `event.poll`，参数始终是空对象；它不是 target-specific wait，也不接受 agent id、agent path 或 command id。一次 poll 可能只是 timeout、status update、command output、command exit 或其他 pending event，不代表某个 agent 已完成。需要把一个阶段的结果交给下一阶段时，workflow 必须循环调用 `wf.pollEvent()`，扫描 `events` 中 `type === "inter_agent_communication"` 且 `operation === "childCompletion"` 的 typed payload，并按 `communication.author` 与 agent binding 匹配目标 agent；`event` 只是与 `sourceHint` 同源的首个 payload 快捷字段。由于 pending input 在模型请求构造前不会被 poll 消费，脚本应记录已见 completion key，避免旧 completion 留队时重复处理。最终文本来自 `event.communication.status` 或 `event.communication.content`。workflow 不应读取不存在的 `summary`、`blockingFindings` 等临时字段。
+
+`agent.wait()` 仍作为 runtime 兼容 alias 保留，旧 workflow 可以继续运行；新 workflow 应直接使用 `wf.pollEvent()`，并在脚本层根据 payload 来源过滤所需 agent。文档和 brief 不应继续推荐旧的 target-specific wait surface；长命令由执行它的 owner 通过 `poll_event` 等待 command output / command exit 事件并在交付中报告。Verify 阶段由 owner 在所属 checkout 自行运行命令，workflow 不创建共享 tester。`wf.shell` 仍是明确 unsupported，后续接入前不得绕过 exec permission、hook 或 typed command lifecycle。
