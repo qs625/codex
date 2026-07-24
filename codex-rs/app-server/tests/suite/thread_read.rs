@@ -1804,6 +1804,28 @@ fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
             assert_eq!(turn_user_texts(&thread.turns), vec!["history from store"]);
         }
 
+        let turn_start_error = client
+            .request(ClientRequest::TurnStart {
+                request_id: RequestId::Integer(5),
+                params: TurnStartParams {
+                    thread_id: descriptor_thread_id.clone(),
+                    input: vec![UserInput::Text {
+                        text: "should still be read-only".to_string(),
+                        text_elements: Vec::new(),
+                    }],
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect_err("descriptor-present external root should remain read-only");
+        assert_eq!(turn_start_error.code, INVALID_REQUEST_ERROR_CODE);
+        assert!(
+            turn_start_error.message.contains("thread not found")
+                || turn_start_error.message.contains("not accepting input"),
+            "unexpected turn/start error: {}",
+            turn_start_error.message
+        );
+
         client.shutdown().await?;
         Ok(())
     })

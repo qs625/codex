@@ -3510,7 +3510,9 @@ async fn external_running_agent_path_with_descriptor_rejects_as_restore_disabled
     let message = err.to_string();
     assert!(
         message.contains("reconnect descriptor is present")
-            && message.contains("external live restore is disabled"),
+            && message.contains("external live restore is disabled")
+            && message.contains("transient opencode serve")
+            && message.contains("no durable endpoint"),
         "unexpected error: {err}",
     );
     assert!(

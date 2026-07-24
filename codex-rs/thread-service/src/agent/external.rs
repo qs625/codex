@@ -52,6 +52,7 @@ const MAX_EXTERNAL_SESSION_ID_CHARS: usize = 512;
 const MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS: usize = 8_000;
 const MAX_EXTERNAL_TOOL_ARGUMENT_CHARS: usize = 8_000;
 const CODEX_APP_SERVER_ENV_REMOVALS: &[&str] = &["CODEX_HOME", "CODEX_THREAD_ID"];
+const OPENCODE_RECONNECT_PROOF_BLOCK: &str = "opencode reconnect descriptor only stores the provider session id; the current adapter starts a transient opencode serve HTTP/SSE endpoint on port 0 and has no durable endpoint, input ownership, or wait state facts for cold reattach";
 
 #[derive(Clone)]
 pub(crate) struct ExternalAgentRun {
@@ -563,6 +564,37 @@ pub(crate) fn opencode_reconnect_descriptor(session_id: &str) -> ExternalReconne
         transport: ExternalReconnectTransport::OpencodeHttp,
         session_identity: ExternalProviderSessionIdentity {
             session_id: truncate_chars(session_id, MAX_EXTERNAL_SESSION_ID_CHARS),
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ExternalReconnectSupport {
+    diagnostic: &'static str,
+}
+
+impl ExternalReconnectSupport {
+    pub(crate) fn diagnostic(self) -> &'static str {
+        self.diagnostic
+    }
+}
+
+pub(crate) fn external_reconnect_support(
+    descriptor: &ExternalReconnectDescriptor,
+) -> ExternalReconnectSupport {
+    match (
+        descriptor.provider.as_str(),
+        &descriptor.transport,
+        descriptor.session_identity.session_id.is_empty(),
+    ) {
+        ("opencode", ExternalReconnectTransport::OpencodeHttp, false) => ExternalReconnectSupport {
+            diagnostic: OPENCODE_RECONNECT_PROOF_BLOCK,
+        },
+        ("opencode", ExternalReconnectTransport::OpencodeHttp, true) => ExternalReconnectSupport {
+            diagnostic: "opencode reconnect descriptor is missing a provider session id",
+        },
+        _ => ExternalReconnectSupport {
+            diagnostic: "external reconnect descriptor provider or transport is not supported",
         },
     }
 }
@@ -2557,6 +2589,34 @@ mod tests {
         }
 
         assert!(NoDescriptorSession.reconnect_descriptor().is_none());
+    }
+
+    #[test]
+    fn opencode_reconnect_descriptor_is_restore_disabled_without_durable_endpoint() {
+        let descriptor = opencode_reconnect_descriptor("opencode-session-123");
+
+        let support = external_reconnect_support(&descriptor);
+
+        assert!(support.diagnostic().contains("provider session id"));
+        assert!(support.diagnostic().contains("transient opencode serve"));
+        assert!(support.diagnostic().contains("no durable endpoint"));
+        assert!(support.diagnostic().contains("input ownership"));
+        assert!(support.diagnostic().contains("wait state"));
+    }
+
+    #[test]
+    fn opencode_reconnect_descriptor_without_session_id_is_restore_disabled() {
+        let descriptor = ExternalReconnectDescriptor {
+            provider: "opencode".to_string(),
+            transport: ExternalReconnectTransport::OpencodeHttp,
+            session_identity: ExternalProviderSessionIdentity {
+                session_id: String::new(),
+            },
+        };
+
+        let support = external_reconnect_support(&descriptor);
+
+        assert!(support.diagnostic().contains("missing a provider session id"));
     }
 
     #[tokio::test]
