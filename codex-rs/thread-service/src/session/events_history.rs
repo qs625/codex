@@ -36,6 +36,7 @@ impl Session {
     const EXTERNAL_AGENT_TOOL_NAMES: &'static [&'static str] = &[
         "spawn_external_agent",
         "followup_external_task",
+        "poll_external_event",
         "list_external_agents",
         "close_external_agent",
     ];

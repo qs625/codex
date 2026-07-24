@@ -262,6 +262,32 @@ fn external_and_native_close_tools_share_parameter_shape() {
 }
 
 #[test]
+fn external_poll_keeps_empty_params_but_reports_unsupported_output() {
+    let native = function_tool(create_poll_event_tool(), "poll_event");
+    let external = function_tool(create_poll_external_event_tool(), "poll_external_event");
+
+    assert_object_params(&native);
+    assert_object_params(&external);
+    assert_eq!(property_shapes(&external), property_shapes(&native));
+    assert_eq!(required_params(&external), required_params(&native));
+    assert_ne!(external.output_schema, native.output_schema);
+    assert_eq!(
+        external
+            .output_schema
+            .expect("poll_external_event output schema"),
+        json!({
+            "type": "object",
+            "properties": {
+                "supported": { "type": "boolean" },
+                "message": { "type": "string" }
+            },
+            "required": ["supported", "message"],
+            "additionalProperties": false
+        })
+    );
+}
+
+#[test]
 fn spawn_external_agent_shares_common_fields_but_excludes_native_only_options() {
     let native = function_tool(
         create_spawn_agent_tool_v2(SpawnAgentToolOptions {
