@@ -195,7 +195,140 @@ be presented as live restore of the persisted thread.
   startup restore, explicit resume, input delivery, status watch and close semantics all satisfy
   this section for at least one provider.
 
-### Provider-Specific Notes
+## External Fork Contract
+
+External-to-external fork is a future `ThreadProvider` capability, not the current
+native fork-from-external-history behavior. Fork and restore solve different problems:
+restore reconnects the same persisted provider conversation when a provider-owned
+resume handle exists; fork creates a new target conversation from a bounded source
+snapshot. Starting a fresh external provider process is therefore a fork only when the
+request explicitly asks for that target provider and the runtime records a new target
+thread/session. It is not live restore of the source thread.
+
+### Definitions
+
+- Source provider: the provider that owns the source thread history. It may be native
+  or external, live or persisted read-only.
+- Target provider: the provider that will own the new forked thread. It may be native
+  or external, but it must be selected explicitly by the request or capability layer.
+- Source snapshot: bounded typed facts materialized from persisted thread history,
+  not raw provider stdout, adapter JSON, marker text, or UI display strings.
+- Target session: a fresh provider-owned conversation/input sink for the new thread.
+  It must not reuse the source input owner, source wait state, or source terminal
+  causality.
+
+### Current Behavior
+
+Current external-source `thread/fork` materializes bounded persisted history and
+starts a native Morpheus target thread. That behavior is intentional compatibility:
+it is native fork-from-history with an external source, not external-to-external
+fork. Until protocol/API shape carries an explicit target provider choice and this
+contract is implemented, external target providers must not be selected implicitly
+from the source provider, global defaults, or provider catalog ordering.
+
+### Request And Capability Shape
+
+The eventual fork request must carry enough provider-neutral data to distinguish:
+
+- source thread id and source provider;
+- explicit target provider id;
+- target provider model selection or provider-default selection;
+- fork snapshot policy, such as bounded turns/items and model-context seed shape;
+- parent/child/fork edge metadata to persist before target input is accepted.
+
+Capability descriptors are promises. A provider may advertise external fork support
+only after route preflight, target provider session creation, bounded history
+materialization, event persistence/replay, reload/list/status/input/close behavior
+and abort/close ownership are all tested for that provider. `restoreThread=true` is
+not sufficient proof of fork support, and fork support is not proof of live restore.
+
+### History Materialization
+
+External fork seed history must come from normalized, bounded, replayable facts:
+
+- rollout/history entries actually consumed by reload/read paths, especially
+  `Limited` persisted facts when reload depends on that view;
+- typed `EventMsg` / thread-history / app-server-protocol replay output;
+- model-context-oriented seed items derived from those typed facts.
+
+The generic layer must not parse provider raw JSON, stdout, SSE frames, app-server
+JSON-RPC envelopes, adapter markers, or root-worker display strings to reconstruct
+history. Display/replay facts and model-visible seed history can be different
+projections, but both must derive from the same normalized persisted source facts
+with bounded payloads.
+
+### Metadata And Edges
+
+External-to-external fork creates a new thread identity owned by the target provider.
+Persisted metadata must make that identity unambiguous:
+
+- target thread id, provider id, model/provider selection and provider session id or
+  opaque target descriptor;
+- source thread id, source provider id, source snapshot boundary and fork timestamp;
+- fork edge or child/root relationship appropriate to the request surface;
+- target lifecycle state from the target provider, not copied from the source;
+- source attribution for audit/replay without letting source metadata own target
+  input or status.
+
+If the fork is created as a child, its parent-child edge must come from persisted
+thread metadata/spawn/fork edge facts. It must not be reconstructed by root-worker
+or by path heuristics after reload.
+
+### Runtime Lifecycle And Input Ownership
+
+A target external fork must allocate a fresh external live record and provider
+session before accepting input. The target record owns:
+
+- its own input sink and pending input queue;
+- status watch and event stream subscription;
+- close/cancel/archive ownership for the target session;
+- `poll_event` wakeups, completion delivery and terminal event idempotency for the
+  target thread.
+
+The source thread remains unchanged. Source live input sinks, pending waits,
+command/provider output waits, child completion bookkeeping and terminal causality
+must not be transferred into the fork. If target provider startup fails after
+metadata reservation, the target thread must receive a bounded failed/interrupted
+lifecycle fact rather than silently falling back to native or marking the source as
+modified.
+
+### Reload, List, Status And Replay
+
+After creation, the target external fork must behave like any other external thread:
+
+- reload/read returns a bounded typed snapshot from persisted target history;
+- list/status uses target provider metadata and lifecycle facts, not source status;
+- followup/root input requires a live target external record unless the provider has
+  satisfied the live restore contract for that target session;
+- close/cancel affects only the target provider session;
+- replay emits typed target thread items and fork/source attribution without parsing
+  raw provider transport output.
+
+If the target provider cannot reconnect after process loss, a running target external
+fork follows the same Interrupted / cannot reconnect rules as other external running
+threads. The source thread is not a reconnect fallback.
+
+### Flip Gates
+
+Before any external provider advertises external-to-external fork support, at least
+one provider-specific implementation must prove:
+
+1. route preflight rejects missing or unsupported target provider choice;
+2. source external history materializes only through bounded typed persisted facts;
+3. target external thread metadata, fork edge and provider session identity persist;
+4. target input reaches the fresh target provider session after fork;
+5. target status/list/read/reload project target facts without source-status leakage;
+6. close/cancel/archive shut down or hide only the target thread as specified;
+7. event replay restores assistant/tool/lifecycle display from typed target events;
+8. abort or startup failure produces bounded target lifecycle facts and no native
+   fallback;
+9. tests cover native->external, external->external and external->native routing
+   choices where the advertised capabilities allow them.
+
+Until those gates are met, external fork capability stays false and current
+external-source fork remains explicitly native-target behavior.
+
+## Provider-Specific Restore Notes
 
 Claude, OpenCode and Codex CLI differ only inside their transport adapters. The generic provider
 contract must not expose raw stream-json, SSE payloads, app-server JSON-RPC messages, terminal
@@ -213,7 +346,7 @@ Suggested implementation slices:
 4. Add root `turn/start` and child followup tests that prove input reaches the reconnected provider
    session.
 5. Only then flip that provider's `restoreThread` capability; keep other providers false until
-   they satisfy the same contract.
+   they satisfy the same live restore contract.
 
 ## Thread-Service API 与 Capability 拆分
 
