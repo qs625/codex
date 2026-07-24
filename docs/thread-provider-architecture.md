@@ -73,8 +73,9 @@ error。它们不改变 replay 或 display handling。
 1. `threadProvider/list` 按 cwd 返回 provider descriptor。
 2. 既有 `agentType/list` 和 `model/list` 继续服务 legacy client。
 3. `ThreadStartParams.threadProvider` 是可选字段。省略或传 `native` 时保持当前
-   行为。external id 可以被 advertised，但在 root start path 完成迁移前，
-   `thread/start` 会拒绝它们。
+   行为。advertised external id 可以进入 root `thread/start`，但只允许
+   external root startup 明确支持的参数集合；native-only role、dynamic tool、
+   environment、permission override 等输入仍在 route preflight 阶段拒绝。
 4. Root-worker New conversation 先选择 provider，再展示 provider scoped role
    和 model selection：
    provider -> agent role/type -> model provider/model -> reasoning/service
@@ -100,6 +101,119 @@ error。它们不改变 replay 或 display handling。
 - Root-worker tree 和 right-panel state 消费 normalized thread metadata 与 typed
   thread item。parent-child edge 必须来自 thread metadata/spawn edge，而不是
   client 里的 orphan promotion。
+
+## External Live Restore Contract
+
+External provider 是一等 `ThreadProvider`，但 read-only snapshot 和 live
+interactive restore 是两个不同 capability。`restoreSnapshot` 表示客户端可以读取
+persisted metadata、bounded history 和 normalized lifecycle projection；`restoreThread`
+表示后端已经重新接入同一个 provider session，后续 input、status、wait 和 close 都能继续
+落到正确 live runtime。external provider 当前保持 `restoreThread=false`、
+`restoreSnapshot=true`，直到下列 contract 有实现和测试证据后才允许翻转。
+
+### 当前语义
+
+- External root `thread/start` 可以创建新的 external live root thread，并把 provider
+  output 归一化为 typed `EventMsg`。
+- External root `thread/resume` 对 persisted external thread 只返回 read-only snapshot。
+  Completed / Errored / Shutdown 由 persisted terminal fact 投影；Open + running 但没有
+  live provider process 的 thread 投影为 Interrupted，不创建 live session。
+- External root `turn/start` 只接受已经存在的 live external root record。read-only
+  snapshot resume 不会让后续 `turn/start` 成功。
+- External root `thread/fork` 当前创建 native Morpheus thread from bounded persisted
+  history。它不是 external-to-external fork，也不继承 external provider session。
+- External child `list_agents` 会合并 live external records 与 Open persisted
+  descendants。terminal external child 可列出；Open + running/no-live child 以
+  Interrupted 展示；Closed + Shutdown child 默认不进入协作集合。
+- External child path reference 在 live miss 后可以通过 Open persisted edge 和 metadata
+  找到 terminal external child，并返回原 thread id；它只注册 metadata，不创建 native
+  `CodexThread`，也不注册 fake input sink。Open + running/no-live child 必须返回
+  explicit interrupted / cannot reconnect 错误。Closed edge 仍不可通过普通 path
+  reference 恢复。
+
+### Persisted State Matrix
+
+| Scope | Edge | Persisted lifecycle | Reconnect handle | Expected behavior |
+| --- | --- | --- | --- | --- |
+| Root | n/a | Completed / Errored / Shutdown | any | `thread/resume` returns read-only snapshot; no live input sink |
+| Root | n/a | Running / no terminal | absent | startup restore and `thread/resume` project Interrupted / read-only; `turn/start` rejects |
+| Root | n/a | Running / no terminal | present | future-only: register external live record, restore input sink and wait state, then `restoreThread` may be true |
+| Child | Open | Completed / Errored / Shutdown | any | list/status/reference can resolve persisted facts; no native resume and no fake live sink |
+| Child | Open | Running / no terminal | absent | list/status project Interrupted; path/followup reference rejects as non-reconnectable |
+| Child | Open | Running / no terminal | present | future-only: restore external live record before accepting followup input |
+| Child | Closed | Shutdown | any | hidden from default list/reference; history remains readable only through explicit thread history surfaces |
+
+“Terminal” means the persisted `Limited` history contains a durable final fact accepted by the
+agent lifecycle final-status contract: `TurnComplete` for Completed, or external terminal
+Errored / Shutdown. `TurnAborted` Interrupted is a durable non-reconnectable interruption fact,
+but it is not a terminal final status for path-reference live restore. For external list/status
+projection, no-terminal persisted external threads may also be displayed as Interrupted after
+restart. Neither form of Interrupted is a reconnect handle, and neither may be used to register a
+live input sink.
+
+### Facts Required Before Flipping `restoreThread`
+
+Turning on external live restore requires persisted facts that prove continuity with the same
+provider session. At minimum:
+
+- Provider session identity: a provider-owned session id or resume token that uniquely identifies
+  the original external conversation, not just our thread id.
+- Adapter reconnect descriptor: transport-specific data needed to reattach. Claude stream-json,
+  OpenCode HTTP/SSE and Codex CLI app-server may store different descriptors, but the generic
+  thread provider layer only sees a typed provider id plus an opaque, bounded descriptor.
+- Provider lifecycle fact: last known provider state, active turn id if any, and whether the
+  provider has already emitted a terminal event.
+- Input ownership: proof that exactly one restored live record owns the input sink for that
+  provider session, including how pending root `turn/start` or child followup input is delivered
+  after reconnect.
+- Wait/poll state: enough state to wake `poll_event`, child completion waits and command/provider
+  output waits without resurrecting stale waits or dropping late terminal events.
+- Idempotent terminal causality: reconnect must not duplicate Completed / Errored / Shutdown
+  events, deliver an old child completion envelope twice, or turn a terminal persisted thread back
+  into Active.
+
+If any of these facts are absent for a running external thread, the correct recovery is
+Interrupted / cannot reconnect. Starting a fresh provider process is a new conversation and cannot
+be presented as live restore of the persisted thread.
+
+### Boundary Rules
+
+- Startup restore may only recreate external live records for running external threads with a
+  valid reconnect descriptor. Otherwise it records/logs the skip and leaves the persisted thread
+  read-only.
+- Root `thread/resume` must keep the read-only path separate from live restore. A read-only
+  snapshot can include turns, metadata, lifecycle and bounded diagnostics, but it must not install
+  input sinks or mark the thread loaded.
+- Root `turn/start` and child followup routing must require a live external record. Persisted
+  metadata alone is enough to resolve terminal references, but not enough to accept new input.
+- `list_agents` and path reference may consume Open persisted spawn edges, agent metadata and
+  terminal facts. They must not parse raw provider stdout, adapter JSON envelopes, or UI strings.
+- `thread/fork` from external history stays native until the protocol has an explicit target
+  provider choice and an external fork contract. External-to-external fork cannot be hidden behind
+  the current native fork-from-history behavior.
+- Capability descriptors are promises, not wish lists. External `restoreThread` stays false until
+  startup restore, explicit resume, input delivery, status watch and close semantics all satisfy
+  this section for at least one provider.
+
+### Provider-Specific Notes
+
+Claude, OpenCode and Codex CLI differ only inside their transport adapters. The generic provider
+contract must not expose raw stream-json, SSE payloads, app-server JSON-RPC messages, terminal
+logs, or adapter markers to root-worker, replay, history builders, or app-server protocol clients.
+Adapters may persist bounded opaque reconnect descriptors, but their normalized public output
+remains `EventMsg`, `ThreadProviderDescriptor`, lifecycle status and typed unsupported-operation
+errors.
+
+Suggested implementation slices:
+
+1. Persist a provider-scoped reconnect descriptor and session identity for one external provider.
+2. Teach startup restore to distinguish reconnectable running from no-handle running.
+3. Restore external live record ownership, input sink and status watch for reconnectable running
+   threads.
+4. Add root `turn/start` and child followup tests that prove input reaches the reconnected provider
+   session.
+5. Only then flip that provider's `restoreThread` capability; keep other providers false until
+   they satisfy the same contract.
 
 ## Thread-Service API 与 Capability 拆分
 
@@ -284,7 +398,8 @@ handle。
 - `ThreadProviderDescriptor`、provider capability、scoped model selection 和
   `threadProvider/list` 的 protocol type。
 - 可选的 `ThreadStartParams.threadProvider`；当前 native `thread/start` 只接受
-  省略或 `native`。
+  省略或 `native`；external root `thread/start` 已通过 provider route 支持隐藏
+  external provider id，并在 preflight 中拒绝 native-only 参数。
 - App-server catalog descriptor source，覆盖 native Morpheus 以及 external
   `claude_cli`、`opencode`、`codex_cli` skeleton descriptor。
 - Root-worker New conversation provider selector，以及面向 agent type 和 model
