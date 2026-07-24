@@ -82,9 +82,8 @@ pub struct WorkflowFollowupTaskToolCall {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct WorkflowWaitAgentToolCall {
+pub struct WorkflowLegacyAgentWaitToolCall {
     pub target: String,
-    pub arguments: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -156,12 +155,11 @@ pub fn workflow_followup_task_tool_call(
     })
 }
 
-pub fn workflow_wait_agent_tool_call(
+pub fn workflow_legacy_agent_wait_tool_call(
     request: &WorkflowRuntimeRequest,
-) -> Result<WorkflowWaitAgentToolCall, WorkflowRuntimeError> {
+) -> Result<WorkflowLegacyAgentWaitToolCall, WorkflowRuntimeError> {
     let target = required_runtime_string(&request.params, "target")?;
-    let arguments = json!({ "target": target });
-    Ok(WorkflowWaitAgentToolCall { target, arguments })
+    Ok(WorkflowLegacyAgentWaitToolCall { target })
 }
 
 pub fn workflow_poll_event_tool_call(
@@ -335,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_followup_and_wait_tool_calls_preserve_target() {
+    fn workflow_followup_tool_call_preserves_target() {
         let followup = WorkflowRuntimeRequest {
             run_id: "wf_1".to_string(),
             workflow_id: "feature-dev".to_string(),
@@ -355,17 +353,22 @@ mod tests {
                 "message": "continue"
             })
         );
+    }
 
+    #[test]
+    fn workflow_legacy_agent_wait_tool_call_validates_target() {
         let wait = WorkflowRuntimeRequest {
+            run_id: "wf_1".to_string(),
+            workflow_id: "feature-dev".to_string(),
+            rpc_id: 8,
             method: "agent.wait".to_string(),
             params: json!({ "target": "/root/agent" }),
-            ..followup
         };
         assert_eq!(
-            workflow_wait_agent_tool_call(&wait)
-                .expect("wait should map")
-                .arguments,
-            json!({ "target": "/root/agent" })
+            workflow_legacy_agent_wait_tool_call(&wait)
+                .expect("legacy agent.wait should validate")
+                .target,
+            "/root/agent"
         );
     }
 

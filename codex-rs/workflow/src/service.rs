@@ -44,10 +44,10 @@ use codex_workflow_api::WorkflowRuntimeRequest;
 use codex_workflow_api::WorkflowStartArgs;
 use codex_workflow_api::WorkflowStatusArgs;
 use codex_workflow_api::workflow_followup_task_tool_call;
+use codex_workflow_api::workflow_legacy_agent_wait_tool_call;
 use codex_workflow_api::workflow_poll_event_tool_call;
 use codex_workflow_api::workflow_spawn_agent_tool_call;
 use codex_workflow_api::workflow_tool_call_id;
-use codex_workflow_api::workflow_wait_agent_tool_call;
 
 pub struct WorkflowService {
     workflow_runs: Arc<dyn WorkflowRunController>,
@@ -399,7 +399,7 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
                     Ok(serde_json::json!({ "ok": true }))
                 }
                 "agent.wait" => {
-                    let _tool_call = workflow_wait_agent_tool_call(&request)?;
+                    let _tool_call = workflow_legacy_agent_wait_tool_call(&request)?;
                     poll_workflow_event(&thread_runtime, Arc::clone(&turn)).await
                 }
                 "event.poll" => {
