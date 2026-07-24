@@ -24,6 +24,9 @@ use protocol::protocol::AgentStatus;
 use protocol::protocol::ExternalProviderSessionIdentity;
 use protocol::protocol::ExternalReconnectDescriptor;
 use protocol::protocol::ExternalReconnectTransport;
+use protocol::protocol::ExternalRestoreDisabledReason;
+use protocol::protocol::ExternalRestoreFactState;
+use protocol::protocol::ExternalRestorePlan;
 use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::InterAgentOperation;
 use serde::Deserialize;
@@ -563,44 +566,88 @@ pub(crate) trait ExternalProviderSession: Send {
 }
 
 pub(crate) fn opencode_reconnect_descriptor(session_id: &str) -> ExternalReconnectDescriptor {
+    let session_id = truncate_chars(session_id, MAX_EXTERNAL_SESSION_ID_CHARS);
+    let restore_plan = ExternalRestorePlan::opencode_restore_disabled(!session_id.is_empty());
     ExternalReconnectDescriptor {
         provider: "opencode".to_string(),
         transport: ExternalReconnectTransport::OpencodeHttp,
-        session_identity: ExternalProviderSessionIdentity {
-            session_id: truncate_chars(session_id, MAX_EXTERNAL_SESSION_ID_CHARS),
-        },
+        session_identity: ExternalProviderSessionIdentity { session_id },
+        restore_plan: Some(restore_plan),
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExternalReconnectSupport {
-    diagnostic: &'static str,
+    diagnostic: String,
 }
 
 impl ExternalReconnectSupport {
-    pub(crate) fn diagnostic(self) -> &'static str {
-        self.diagnostic
+    pub(crate) fn diagnostic(&self) -> &str {
+        &self.diagnostic
     }
 }
 
+#[cfg(test)]
 pub(crate) fn external_reconnect_support(
     descriptor: &ExternalReconnectDescriptor,
 ) -> ExternalReconnectSupport {
-    match (
-        descriptor.provider.as_str(),
-        &descriptor.transport,
-        descriptor.session_identity.session_id.is_empty(),
-    ) {
-        ("opencode", ExternalReconnectTransport::OpencodeHttp, false) => ExternalReconnectSupport {
-            diagnostic: OPENCODE_RECONNECT_PROOF_BLOCK,
-        },
-        ("opencode", ExternalReconnectTransport::OpencodeHttp, true) => ExternalReconnectSupport {
-            diagnostic: "opencode reconnect descriptor is missing a provider session id",
-        },
-        _ => ExternalReconnectSupport {
-            diagnostic: "external reconnect descriptor provider or transport is not supported",
-        },
+    external_restore_plan_support(&descriptor.provider, &descriptor.restore_plan())
+}
+
+pub(crate) fn external_restore_plan_support(
+    provider: &str,
+    plan: &ExternalRestorePlan,
+) -> ExternalReconnectSupport {
+    ExternalReconnectSupport {
+        diagnostic: external_restore_plan_diagnostic(provider, plan),
     }
+}
+
+fn external_restore_plan_diagnostic(provider: &str, plan: &ExternalRestorePlan) -> String {
+    let missing = external_restore_plan_missing_facts(plan);
+    match plan.disabled_reason {
+        ExternalRestoreDisabledReason::MissingProviderSessionIdentity => {
+            format!("{provider} reconnect descriptor is missing a provider session id")
+        }
+        ExternalRestoreDisabledReason::MissingDurableOwnershipFacts if provider == "opencode" => {
+            format!(
+                "{OPENCODE_RECONNECT_PROOF_BLOCK}; missing ownership facts: {}",
+                missing.join(", ")
+            )
+        }
+        ExternalRestoreDisabledReason::MissingDurableOwnershipFacts => {
+            format!(
+                "external reconnect descriptor is missing durable ownership facts: {}",
+                missing.join(", ")
+            )
+        }
+        ExternalRestoreDisabledReason::UnsupportedProviderTransport => {
+            "external reconnect descriptor provider or transport is not supported".to_string()
+        }
+    }
+}
+
+fn external_restore_plan_missing_facts(plan: &ExternalRestorePlan) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if plan.provider_session_identity == ExternalRestoreFactState::Missing {
+        missing.push("provider session identity");
+    }
+    if plan.durable_endpoint == ExternalRestoreFactState::Missing {
+        missing.push("durable endpoint");
+    }
+    if plan.input_ownership == ExternalRestoreFactState::Missing {
+        missing.push("input ownership");
+    }
+    if plan.status_watch == ExternalRestoreFactState::Missing {
+        missing.push("status/watch ownership");
+    }
+    if plan.wait_cursor == ExternalRestoreFactState::Missing {
+        missing.push("wait cursor");
+    }
+    if plan.terminal_idempotency == ExternalRestoreFactState::Missing {
+        missing.push("terminal idempotency proof");
+    }
+    missing
 }
 
 pub(crate) fn external_session_spec(
@@ -2577,6 +2624,26 @@ mod tests {
             MAX_EXTERNAL_SESSION_ID_CHARS + 3
         );
         assert!(descriptor.session_identity.session_id.ends_with("..."));
+        let restore_plan = descriptor.restore_plan.expect("opencode restore plan");
+        assert_eq!(
+            restore_plan.provider_session_identity,
+            ExternalRestoreFactState::Present
+        );
+        assert_eq!(
+            restore_plan.durable_endpoint,
+            ExternalRestoreFactState::Missing
+        );
+        assert_eq!(
+            restore_plan.input_ownership,
+            ExternalRestoreFactState::Missing
+        );
+        assert_eq!(restore_plan.status_watch, ExternalRestoreFactState::Missing);
+        assert_eq!(restore_plan.wait_cursor, ExternalRestoreFactState::Missing);
+        assert_eq!(
+            restore_plan.terminal_idempotency,
+            ExternalRestoreFactState::Missing
+        );
+        assert!(!restore_plan.restore_enabled);
 
         struct NoDescriptorSession;
         impl ExternalProviderSession for NoDescriptorSession {
@@ -2605,7 +2672,9 @@ mod tests {
         assert!(support.diagnostic().contains("transient opencode serve"));
         assert!(support.diagnostic().contains("no durable endpoint"));
         assert!(support.diagnostic().contains("input ownership"));
-        assert!(support.diagnostic().contains("wait state"));
+        assert!(support.diagnostic().contains("status/watch ownership"));
+        assert!(support.diagnostic().contains("wait cursor"));
+        assert!(support.diagnostic().contains("terminal idempotency proof"));
     }
 
     #[test]
@@ -2616,11 +2685,16 @@ mod tests {
             session_identity: ExternalProviderSessionIdentity {
                 session_id: String::new(),
             },
+            restore_plan: Some(ExternalRestorePlan::opencode_restore_disabled(false)),
         };
 
         let support = external_reconnect_support(&descriptor);
 
-        assert!(support.diagnostic().contains("missing a provider session id"));
+        assert!(
+            support
+                .diagnostic()
+                .contains("missing a provider session id")
+        );
     }
 
     #[tokio::test]

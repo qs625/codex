@@ -14,10 +14,10 @@ use crate::agent::external::bounded_external_output;
 use crate::agent::external::bounded_external_tool_arguments;
 use crate::agent::external::bounded_external_tool_result;
 use crate::agent::external::completion_communication;
-use crate::agent::external::external_reconnect_support;
 use crate::agent::external::external_agent_context_prompt;
 use crate::agent::external::external_live_agent;
 use crate::agent::external::external_metadata;
+use crate::agent::external::external_restore_plan_support;
 use crate::agent::external::external_session_spec;
 use crate::agent::external::external_tool_name;
 use crate::agent::external::external_tool_result_input;
@@ -121,7 +121,6 @@ use thread_store_api::ReadThreadParams;
 use thread_store_api::SharedLiveThread;
 use thread_store_api::ThreadMetadataPatch;
 use thread_store_api::external_live_restore_eligibility;
-use thread_store_api::latest_external_reconnect_descriptor;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tool_service_api::FunctionCallError;
@@ -2381,20 +2380,18 @@ impl AgentControl {
                     agent_path.as_str()
                 )));
             }
-            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled => {
-                let diagnostic = stored_thread
-                    .history
-                    .as_ref()
-                    .and_then(|history| latest_external_reconnect_descriptor(&history.items))
-                    .map(external_reconnect_support)
-                    .map(|support| support.diagnostic())
-                    .unwrap_or("reconnect descriptor is present but unavailable for diagnosis");
+            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled {
+                provider,
+                plan,
+            } => {
+                let support = external_restore_plan_support(&provider, &plan);
                 return Err(CodexErr::UnsupportedOperation(format!(
-                    "external agent `{}` was interrupted after restart; reconnect descriptor is present but external live restore is disabled: {diagnostic}",
+                    "external agent `{}` was interrupted after restart; reconnect descriptor is present but external live restore is disabled: {}",
                     agent_path.as_str(),
+                    support.diagnostic(),
                 )));
             }
-            ExternalLiveRestoreEligibility::RunningReconnectable => {
+            ExternalLiveRestoreEligibility::RunningReconnectable { .. } => {
                 return Err(CodexErr::UnsupportedOperation(format!(
                     "external agent `{}` has reconnect facts but external live restore is not implemented",
                     agent_path.as_str()
@@ -2932,8 +2929,10 @@ impl AgentControl {
             })
             .or_else(|| match eligibility {
                 ExternalLiveRestoreEligibility::RunningNoDescriptor
-                | ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled
-                | ExternalLiveRestoreEligibility::RunningReconnectable => {
+                | ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled {
+                    ..
+                }
+                | ExternalLiveRestoreEligibility::RunningReconnectable { .. } => {
                     Some(AgentStatus::Interrupted)
                 }
                 ExternalLiveRestoreEligibility::NotExternal

@@ -176,6 +176,12 @@ If any of these facts are absent for a running external thread, the correct reco
 Interrupted / cannot reconnect. Starting a fresh provider process is a new conversation and cannot
 be presented as live restore of the persisted thread.
 
+Current external reconnect descriptors may persist a bounded restore plan that records which of
+these ownership facts are present or missing. For OpenCode, the provider session identity is
+persisted, but the `opencode serve --port 0` HTTP/SSE endpoint is transient and durable endpoint,
+input ownership, status/watch ownership, wait cursor and terminal idempotency facts remain missing;
+therefore descriptor-present running OpenCode threads still stay restore-disabled.
+
 ### Boundary Rules
 
 - Startup restore may only recreate external live records for running external threads with a

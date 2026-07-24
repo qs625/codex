@@ -9,6 +9,7 @@ use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::EventMsg;
 use protocol::protocol::ExternalReconnectDescriptor;
+use protocol::protocol::ExternalRestorePlan;
 use protocol::protocol::GitInfo;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SandboxPolicy;
@@ -384,7 +385,7 @@ pub struct StoredThread {
 
 /// Internal classification for persisted external threads that may have been running when the
 /// server restarted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExternalLiveRestoreEligibility {
     /// The stored thread is not an external provider thread.
     NotExternal,
@@ -393,25 +394,31 @@ pub enum ExternalLiveRestoreEligibility {
     /// The external thread has no persisted provider-owned reconnect identity.
     RunningNoDescriptor,
     /// A reconnect identity exists, but this build does not support live external restore yet.
-    RunningDescriptorPresentRestoreDisabled,
+    RunningDescriptorPresentRestoreDisabled {
+        provider: String,
+        plan: ExternalRestorePlan,
+    },
     /// Reserved for the future provider reconnect path.
-    RunningReconnectable,
+    RunningReconnectable {
+        provider: String,
+        plan: ExternalRestorePlan,
+    },
 }
 
 impl ExternalLiveRestoreEligibility {
-    pub fn diagnostic(self) -> &'static str {
+    pub fn diagnostic(&self) -> &'static str {
         match self {
             Self::NotExternal => "not-external",
             Self::TerminalReadOnly => "terminal-read-only",
             Self::RunningNoDescriptor => "running-no-descriptor",
-            Self::RunningDescriptorPresentRestoreDisabled => {
+            Self::RunningDescriptorPresentRestoreDisabled { .. } => {
                 "running-descriptor-present-restore-disabled"
             }
-            Self::RunningReconnectable => "running-reconnectable",
+            Self::RunningReconnectable { .. } => "running-reconnectable",
         }
     }
 
-    pub fn is_external(self) -> bool {
+    pub fn is_external(&self) -> bool {
         !matches!(self, Self::NotExternal)
     }
 }
@@ -432,8 +439,11 @@ pub fn external_live_restore_eligibility(thread: &StoredThread) -> ExternalLiveR
     if history.items.iter().any(is_external_terminal_item) {
         return ExternalLiveRestoreEligibility::TerminalReadOnly;
     }
-    if latest_external_reconnect_descriptor(&history.items).is_some() {
-        return ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled;
+    if let Some(descriptor) = latest_external_reconnect_descriptor(&history.items) {
+        return ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled {
+            provider: descriptor.provider.clone(),
+            plan: descriptor.restore_plan(),
+        };
     }
 
     ExternalLiveRestoreEligibility::RunningNoDescriptor
@@ -477,9 +487,7 @@ fn is_external_provider_id(label: &str) -> bool {
 fn is_external_terminal_item(item: &RolloutItem) -> bool {
     matches!(
         item,
-        RolloutItem::EventMsg(
-            EventMsg::TurnComplete(_) | EventMsg::ExternalTerminalStatus(_)
-        )
+        RolloutItem::EventMsg(EventMsg::TurnComplete(_) | EventMsg::ExternalTerminalStatus(_))
     )
 }
 
@@ -759,6 +767,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use protocol::protocol::ExternalProviderSessionIdentity;
     use protocol::protocol::ExternalReconnectTransport;
+    use protocol::protocol::ExternalRestoreFactState;
     use protocol::protocol::ExternalTerminalStatus;
     use protocol::protocol::ExternalTerminalStatusEvent;
     use protocol::protocol::SessionMeta;
@@ -1022,10 +1031,14 @@ mod tests {
             vec![session_meta_with_descriptor()],
         );
 
-        assert_eq!(
+        assert!(matches!(
             external_live_restore_eligibility(&thread),
-            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled
-        );
+            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled { provider, plan }
+                if provider == "opencode"
+                    && plan.provider_session_identity == ExternalRestoreFactState::Present
+                    && plan.durable_endpoint == ExternalRestoreFactState::Missing
+                    && !plan.restore_enabled
+        ));
     }
 
     #[test]
@@ -1039,10 +1052,14 @@ mod tests {
             vec![session_meta_with_descriptor()],
         );
 
-        assert_eq!(
+        assert!(matches!(
             external_live_restore_eligibility(&thread),
-            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled
-        );
+            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled { provider, plan }
+                if provider == "opencode"
+                    && plan.provider_session_identity == ExternalRestoreFactState::Present
+                    && plan.wait_cursor == ExternalRestoreFactState::Missing
+                    && !plan.restore_enabled
+        ));
     }
 
     fn external_subagent_source() -> SessionSource {
@@ -1065,6 +1082,7 @@ mod tests {
                     session_identity: ExternalProviderSessionIdentity {
                         session_id: "provider-session".to_string(),
                     },
+                    restore_plan: Some(ExternalRestorePlan::opencode_restore_disabled(true)),
                 }),
                 ..SessionMeta::default()
             },

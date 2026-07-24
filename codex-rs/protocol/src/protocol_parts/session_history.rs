@@ -517,6 +517,9 @@ pub struct ExternalReconnectDescriptor {
     pub provider: String,
     pub transport: ExternalReconnectTransport,
     pub session_identity: ExternalProviderSessionIdentity,
+    /// Bounded persisted facts describing why cold live restore is or is not possible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_plan: Option<ExternalRestorePlan>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
@@ -530,6 +533,89 @@ pub enum ExternalReconnectTransport {
 pub struct ExternalProviderSessionIdentity {
     /// Provider-owned session id used by the external transport.
     pub session_id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalRestorePlan {
+    pub provider_session_identity: ExternalRestoreFactState,
+    pub durable_endpoint: ExternalRestoreFactState,
+    pub input_ownership: ExternalRestoreFactState,
+    pub status_watch: ExternalRestoreFactState,
+    pub wait_cursor: ExternalRestoreFactState,
+    pub terminal_idempotency: ExternalRestoreFactState,
+    pub restore_enabled: bool,
+    pub disabled_reason: ExternalRestoreDisabledReason,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalRestoreFactState {
+    Present,
+    Missing,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalRestoreDisabledReason {
+    MissingProviderSessionIdentity,
+    MissingDurableOwnershipFacts,
+    UnsupportedProviderTransport,
+}
+
+impl ExternalReconnectDescriptor {
+    pub fn restore_plan(&self) -> ExternalRestorePlan {
+        self.restore_plan
+            .clone()
+            .unwrap_or_else(|| ExternalRestorePlan::from_descriptor_defaults(self))
+    }
+}
+
+impl ExternalRestorePlan {
+    pub fn opencode_restore_disabled(provider_session_identity_present: bool) -> Self {
+        Self {
+            provider_session_identity: fact_state(provider_session_identity_present),
+            durable_endpoint: ExternalRestoreFactState::Missing,
+            input_ownership: ExternalRestoreFactState::Missing,
+            status_watch: ExternalRestoreFactState::Missing,
+            wait_cursor: ExternalRestoreFactState::Missing,
+            terminal_idempotency: ExternalRestoreFactState::Missing,
+            restore_enabled: false,
+            disabled_reason: if provider_session_identity_present {
+                ExternalRestoreDisabledReason::MissingDurableOwnershipFacts
+            } else {
+                ExternalRestoreDisabledReason::MissingProviderSessionIdentity
+            },
+        }
+    }
+
+    fn from_descriptor_defaults(descriptor: &ExternalReconnectDescriptor) -> Self {
+        match (&descriptor.provider[..], &descriptor.transport) {
+            ("opencode", ExternalReconnectTransport::OpencodeHttp) => {
+                Self::opencode_restore_disabled(!descriptor.session_identity.session_id.is_empty())
+            }
+            _ => Self {
+                provider_session_identity: fact_state(
+                    !descriptor.session_identity.session_id.is_empty(),
+                ),
+                durable_endpoint: ExternalRestoreFactState::Missing,
+                input_ownership: ExternalRestoreFactState::Missing,
+                status_watch: ExternalRestoreFactState::Missing,
+                wait_cursor: ExternalRestoreFactState::Missing,
+                terminal_idempotency: ExternalRestoreFactState::Missing,
+                restore_enabled: false,
+                disabled_reason: ExternalRestoreDisabledReason::UnsupportedProviderTransport,
+            },
+        }
+    }
+}
+
+fn fact_state(present: bool) -> ExternalRestoreFactState {
+    if present {
+        ExternalRestoreFactState::Present
+    } else {
+        ExternalRestoreFactState::Missing
+    }
 }
 
 /// SessionMeta contains session-level data that doesn't correspond to a specific turn.
@@ -621,6 +707,7 @@ mod session_meta_tests {
                 session_identity: ExternalProviderSessionIdentity {
                     session_id: "ses_123".to_string(),
                 },
+                restore_plan: Some(ExternalRestorePlan::opencode_restore_disabled(true)),
             }),
             ..SessionMeta::default()
         };
@@ -634,11 +721,40 @@ mod session_meta_tests {
                 "sessionIdentity": {
                     "sessionId": "ses_123",
                 },
+                "restorePlan": {
+                    "providerSessionIdentity": "present",
+                    "durableEndpoint": "missing",
+                    "inputOwnership": "missing",
+                    "statusWatch": "missing",
+                    "waitCursor": "missing",
+                    "terminalIdempotency": "missing",
+                    "restoreEnabled": false,
+                    "disabledReason": "missingDurableOwnershipFacts",
+                },
             })
         );
 
         let roundtrip: SessionMeta = serde_json::from_value(value).expect("deserialize meta");
         assert_eq!(roundtrip.external_reconnect, meta.external_reconnect);
+    }
+
+    #[test]
+    fn session_meta_defaults_missing_external_restore_plan_to_conservative_facts() {
+        let value = serde_json::json!({
+            "provider": "opencode",
+            "transport": "opencodeHttp",
+            "sessionIdentity": {
+                "sessionId": "ses_123",
+            },
+        });
+
+        let descriptor: ExternalReconnectDescriptor =
+            serde_json::from_value(value).expect("deserialize old descriptor");
+        assert_eq!(descriptor.restore_plan, None);
+        assert_eq!(
+            descriptor.restore_plan(),
+            ExternalRestorePlan::opencode_restore_disabled(true)
+        );
     }
 
     #[test]

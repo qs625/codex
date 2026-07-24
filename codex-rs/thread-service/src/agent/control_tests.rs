@@ -3512,7 +3512,9 @@ async fn external_running_agent_path_with_descriptor_rejects_as_restore_disabled
         message.contains("reconnect descriptor is present")
             && message.contains("external live restore is disabled")
             && message.contains("transient opencode serve")
-            && message.contains("no durable endpoint"),
+            && message.contains("no durable endpoint")
+            && message.contains("status/watch ownership")
+            && message.contains("wait cursor"),
         "unexpected error: {err}",
     );
     assert!(

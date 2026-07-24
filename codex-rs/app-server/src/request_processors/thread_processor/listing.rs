@@ -701,13 +701,13 @@ impl ThreadRequestProcessor {
                 ExternalLiveRestoreEligibility::RunningNoDescriptor => {
                     "no reconnect descriptor was persisted"
                 }
-                ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled => {
+                ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled { .. } => {
                     "reconnect descriptor is present but external live restore is disabled"
                 }
                 ExternalLiveRestoreEligibility::TerminalReadOnly => {
                     "external thread is already terminal and read-only"
                 }
-                ExternalLiveRestoreEligibility::RunningReconnectable => {
+                ExternalLiveRestoreEligibility::RunningReconnectable { .. } => {
                     "external live restore is not implemented"
                 }
                 ExternalLiveRestoreEligibility::NotExternal => {
