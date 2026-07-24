@@ -427,6 +427,7 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
 #[derive(Clone)]
 pub(crate) struct ThreadRequestProcessor {
     pub(super) native_thread_creation: Arc<dyn NativeThreadCreationRuntime>,
+    pub(super) external_root_thread_start: Arc<dyn ExternalRootThreadStartRuntime>,
     pub(super) environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
     pub(super) live_thread_listener: Arc<dyn AppServerLiveThreadListenerRuntime>,
     pub(super) live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime>,
@@ -473,6 +474,7 @@ impl ThreadRequestProcessor {
     ) -> Self {
         Self {
             native_thread_creation: thread_service.clone(),
+            external_root_thread_start: thread_service.clone(),
             environment_runtime: thread_service.clone(),
             live_thread_listener: thread_service.clone(),
             live_thread_inspection: thread_service.clone(),

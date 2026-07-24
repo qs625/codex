@@ -1,10 +1,11 @@
-use super::*;
 use super::context_usage_replay::ThreadUsageSource;
+use super::*;
 use crate::request_processors::thread_processor::ops::parse_thread_start_agent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RootThreadProviderRoute {
     Native,
+    External(codex_agent_runtime::SpawnAgentProvider),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,12 +31,16 @@ fn resolve_root_thread_provider(
 ) -> Result<RootThreadProviderRoute, JSONRPCErrorError> {
     match thread_provider {
         None | Some("native") => Ok(RootThreadProviderRoute::Native),
-        Some(provider) if is_external_cli_thread_provider_id(provider) => {
-            Err(invalid_request(format!(
+        Some(provider) if is_external_cli_thread_provider_id(provider) => match capability {
+            RootThreadProviderCapability::StartThread => Ok(RootThreadProviderRoute::External(
+                external_cli_thread_provider(provider).expect("known external CLI provider"),
+            )),
+            RootThreadProviderCapability::RestoreThread
+            | RootThreadProviderCapability::ForkThread => Err(invalid_request(format!(
                 "thread provider '{provider}' is advertised but does not support {} yet",
                 capability.method()
-            )))
-        }
+            ))),
+        },
         Some(provider) => Err(invalid_request(format!(
             "unknown thread provider '{provider}' for {}",
             capability.method()
@@ -43,10 +48,75 @@ fn resolve_root_thread_provider(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn validate_external_root_start_params(
+    task_name: &Option<String>,
+    agent_type: &Option<String>,
+    approval_policy: &Option<app_server_protocol::AskForApproval>,
+    approvals_reviewer: &Option<app_server_protocol::ApprovalsReviewer>,
+    sandbox: &Option<SandboxMode>,
+    permissions: &Option<PermissionProfileSelectionParams>,
+    dynamic_tools: &Option<Vec<ApiDynamicToolSpec>>,
+    session_start_source: &Option<app_server_protocol::ThreadStartSource>,
+    thread_source: &Option<app_server_protocol::ThreadSource>,
+    environments: &Option<Vec<app_server_protocol::TurnEnvironmentParams>>,
+    service_name: &Option<String>,
+) -> Result<(), JSONRPCErrorError> {
+    if task_name.is_some() || agent_type.is_some() {
+        return Err(invalid_request(
+            "external root thread/start does not support taskName or agentType yet",
+        ));
+    }
+    if approval_policy.is_some() || approvals_reviewer.is_some() {
+        return Err(invalid_request(
+            "external root thread/start does not support approval overrides yet",
+        ));
+    }
+    if sandbox.is_some() || permissions.is_some() {
+        return Err(invalid_request(
+            "external root thread/start does not support permission overrides yet",
+        ));
+    }
+    if dynamic_tools
+        .as_ref()
+        .is_some_and(|dynamic_tools| !dynamic_tools.is_empty())
+    {
+        return Err(invalid_request(
+            "external root thread/start does not support dynamic tools yet",
+        ));
+    }
+    if matches!(
+        session_start_source,
+        Some(app_server_protocol::ThreadStartSource::Clear)
+    ) {
+        return Err(invalid_request(
+            "external root thread/start does not support clear history start yet",
+        ));
+    }
+    if thread_source.is_some() {
+        return Err(invalid_request(
+            "external root thread/start does not support client threadSource overrides yet",
+        ));
+    }
+    if environments.is_some() {
+        return Err(invalid_request(
+            "external root thread/start does not support environments yet",
+        ));
+    }
+    if service_name.is_some() {
+        return Err(invalid_request(
+            "external root thread/start does not support serviceName metrics override yet",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod root_thread_provider_route_tests {
     use super::*;
     use crate::error_code::INVALID_REQUEST_ERROR_CODE;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+    use serde_json::json;
 
     #[test]
     fn resolves_missing_and_native_provider_to_native_route() {
@@ -62,21 +132,33 @@ mod root_thread_provider_route_tests {
     }
 
     #[test]
-    fn rejects_advertised_external_root_provider_by_capability() {
-        for provider in ["claude_cli", "opencode", "codex_cli"] {
-            let error = resolve_root_thread_provider(
+    fn resolves_advertised_external_provider_for_start_only() {
+        for (provider, expected_route) in [
+            (
+                "claude_cli",
+                RootThreadProviderRoute::External(
+                    codex_agent_runtime::SpawnAgentProvider::ClaudeCli,
+                ),
+            ),
+            (
+                "opencode",
+                RootThreadProviderRoute::External(
+                    codex_agent_runtime::SpawnAgentProvider::Opencode,
+                ),
+            ),
+            (
+                "codex_cli",
+                RootThreadProviderRoute::External(
+                    codex_agent_runtime::SpawnAgentProvider::CodexCli,
+                ),
+            ),
+        ] {
+            let route = resolve_root_thread_provider(
                 Some(provider),
                 RootThreadProviderCapability::StartThread,
             )
-            .unwrap_err();
-
-            assert_eq!(error.code, INVALID_REQUEST_ERROR_CODE);
-            assert_eq!(
-                error.message,
-                format!(
-                    "thread provider '{provider}' is advertised but does not support thread/start yet"
-                )
-            );
+            .unwrap();
+            assert_eq!(route, expected_route);
         }
 
         let resume_error = resolve_root_thread_provider(
@@ -109,6 +191,218 @@ mod root_thread_provider_route_tests {
             error.message,
             "unknown thread provider 'unknown_provider' for thread/start"
         );
+    }
+
+    #[test]
+    fn rejects_external_root_start_unsupported_native_params() {
+        let dynamic_tool = ApiDynamicToolSpec {
+            namespace: None,
+            name: "demo_tool".to_string(),
+            description: "Demo tool".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            defer_loading: false,
+        };
+        let environment = app_server_protocol::TurnEnvironmentParams {
+            environment_id: "env".to_string(),
+            cwd: codex_utils_absolute_path::test_support::test_path_buf("/tmp").abs(),
+        };
+
+        let cases = [
+            (
+                Some("worker".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "taskName or agentType",
+            ),
+            (
+                None,
+                Some("default".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "taskName or agentType",
+            ),
+            (
+                None,
+                None,
+                Some(app_server_protocol::AskForApproval::Never),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "approval overrides",
+            ),
+            (
+                None,
+                None,
+                None,
+                Some(app_server_protocol::ApprovalsReviewer::AutoReview),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "approval overrides",
+            ),
+            (
+                None,
+                None,
+                None,
+                None,
+                Some(SandboxMode::WorkspaceWrite),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "permission overrides",
+            ),
+            (
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(PermissionProfileSelectionParams::new("read-only")),
+                None,
+                None,
+                None,
+                None,
+                None,
+                "permission overrides",
+            ),
+            (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(vec![dynamic_tool]),
+                None,
+                None,
+                None,
+                None,
+                "dynamic tools",
+            ),
+            (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(app_server_protocol::ThreadStartSource::Clear),
+                None,
+                None,
+                None,
+                "clear history",
+            ),
+            (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(app_server_protocol::ThreadSource::User),
+                None,
+                None,
+                "threadSource",
+            ),
+            (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(vec![environment]),
+                None,
+                "environments",
+            ),
+            (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("metrics".to_string()),
+                "serviceName",
+            ),
+        ];
+
+        for (
+            task_name,
+            agent_type,
+            approval_policy,
+            approvals_reviewer,
+            sandbox,
+            permissions,
+            dynamic_tools,
+            session_start_source,
+            thread_source,
+            environments,
+            service_name,
+            expected_message,
+        ) in cases
+        {
+            let error = validate_external_root_start_params(
+                &task_name,
+                &agent_type,
+                &approval_policy,
+                &approvals_reviewer,
+                &sandbox,
+                &permissions,
+                &dynamic_tools,
+                &session_start_source,
+                &thread_source,
+                &environments,
+                &service_name,
+            )
+            .unwrap_err();
+            assert!(
+                error.message.contains(expected_message),
+                "expected `{expected_message}` in `{}`",
+                error.message
+            );
+        }
     }
 }
 
@@ -148,10 +442,28 @@ impl ThreadRequestProcessor {
             environments,
             persist_extended_history,
         } = params;
-        let RootThreadProviderRoute::Native = resolve_root_thread_provider(
+        let root_thread_provider_route = resolve_root_thread_provider(
             thread_provider.as_deref(),
             RootThreadProviderCapability::StartThread,
         )?;
+        if matches!(
+            root_thread_provider_route,
+            RootThreadProviderRoute::External(_)
+        ) {
+            validate_external_root_start_params(
+                &task_name,
+                &agent_type,
+                &approval_policy,
+                &approvals_reviewer,
+                &sandbox,
+                &permissions,
+                &dynamic_tools,
+                &session_start_source,
+                &thread_source,
+                &environments,
+                &service_name,
+            )?;
+        }
         if sandbox.is_some() && permissions.is_some() {
             return Err(invalid_request(
                 "`permissions` cannot be combined with `sandbox`",
@@ -207,15 +519,22 @@ impl ThreadRequestProcessor {
         let request_trace = request_context.request_trace();
         let config_manager = self.config_manager.clone();
         let native_thread_creation = Arc::clone(&self.native_thread_creation);
+        let external_root_thread_start = Arc::clone(&self.external_root_thread_start);
         let environment_runtime = Arc::clone(&self.environment_runtime);
         let live_thread_command = Arc::clone(&self.live_thread_command);
         let thread_store = Arc::clone(&self.thread_store);
         let outgoing = Arc::clone(&listener_task_context.outgoing);
         let error_request_id = request_id.clone();
+        let external_root_provider = match root_thread_provider_route {
+            RootThreadProviderRoute::Native => None,
+            RootThreadProviderRoute::External(provider) => Some(provider),
+        };
         let thread_start_task = async move {
             if let Err(error) = Self::thread_start_task(
                 listener_task_context,
+                external_root_provider,
                 native_thread_creation,
+                external_root_thread_start,
                 environment_runtime,
                 live_thread_command,
                 thread_store,
@@ -250,8 +569,9 @@ impl ThreadRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
-        let RootThreadProviderRoute::Native =
+        let route =
             resolve_root_thread_provider(None, RootThreadProviderCapability::RestoreThread)?;
+        debug_assert_eq!(route, RootThreadProviderRoute::Native);
         if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
             && self
                 .pending_thread_unloads
@@ -482,9 +802,7 @@ impl ThreadRequestProcessor {
                     .live_thread_config_snapshot(thread_id)
                     .await
                     .map_err(|err| internal_error(format!("error resuming thread: {err}")))?;
-                thread.thread_source = config_snapshot
-                    .thread_source
-                    .map(Into::into);
+                thread.thread_source = config_snapshot.thread_source.map(Into::into);
 
                 self.thread_watch_manager
                     .upsert_thread(thread.clone())
@@ -1011,8 +1329,8 @@ impl ThreadRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
-        let RootThreadProviderRoute::Native =
-            resolve_root_thread_provider(None, RootThreadProviderCapability::ForkThread)?;
+        let route = resolve_root_thread_provider(None, RootThreadProviderCapability::ForkThread)?;
+        debug_assert_eq!(route, RootThreadProviderRoute::Native);
         let ThreadForkParams {
             thread_id,
             path,
@@ -1191,9 +1509,7 @@ impl ThreadRequestProcessor {
             .live_thread_config_snapshot(thread_id)
             .await
             .map_err(|err| internal_error(format!("error forking thread: {err}")))?;
-        thread.thread_source = config_snapshot
-            .thread_source
-            .map(Into::into);
+        thread.thread_source = config_snapshot.thread_source.map(Into::into);
         let usage_source = super::context_usage_replay::RuntimeThreadUsageSource::new(
             self.live_thread_usage.as_ref(),
             thread_id,

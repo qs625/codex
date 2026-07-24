@@ -390,6 +390,7 @@ use thread_history::ThreadHistoryBuilder;
 use thread_service::ForkSnapshot;
 use thread_service::NativeThreadCreationRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
+use thread_service::NewExternalRootThread;
 use thread_service::NewThread;
 use thread_service::StartThreadOptions;
 use thread_service::SteerInputError;
@@ -490,6 +491,15 @@ fn is_external_cli_thread_provider_id(id: &str) -> bool {
     EXTERNAL_CLI_THREAD_PROVIDER_DESCRIPTORS
         .iter()
         .any(|provider| provider.id == id)
+}
+
+fn external_cli_thread_provider(id: &str) -> Option<codex_agent_runtime::SpawnAgentProvider> {
+    match id {
+        "claude_cli" => Some(codex_agent_runtime::SpawnAgentProvider::ClaudeCli),
+        "opencode" => Some(codex_agent_runtime::SpawnAgentProvider::Opencode),
+        "codex_cli" => Some(codex_agent_runtime::SpawnAgentProvider::CodexCli),
+        _ => None,
+    }
 }
 
 pub(crate) use account_processor::AccountRequestProcessor;

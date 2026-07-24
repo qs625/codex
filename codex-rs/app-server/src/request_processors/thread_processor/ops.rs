@@ -379,7 +379,9 @@ impl ThreadRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn thread_start_task(
         listener_task_context: ListenerTaskContext,
+        external_root_provider: Option<codex_agent_runtime::SpawnAgentProvider>,
         native_thread_creation: Arc<dyn NativeThreadCreationRuntime>,
+        external_root_thread_start: Arc<dyn ExternalRootThreadStartRuntime>,
         environment_runtime: Arc<dyn NativeThreadEnvironmentRuntime>,
         live_thread_command: Arc<dyn AppServerLiveThreadCommandRuntime>,
         thread_store: Arc<dyn ThreadStore>,
@@ -478,6 +480,18 @@ impl ThreadRequestProcessor {
         }
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
+        if let Some(provider) = external_root_provider {
+            return Self::external_root_thread_start_task(
+                listener_task_context,
+                external_root_thread_start,
+                thread_store,
+                request_id,
+                instruction_sources,
+                config,
+                provider,
+            )
+            .await;
+        }
         let environments = environments
             .unwrap_or_else(|| environment_runtime.default_environment_selections(&config.cwd));
         let dynamic_tools = dynamic_tools.unwrap_or_default();
@@ -682,6 +696,157 @@ impl ThreadRequestProcessor {
             thread_start_started_at.elapsed(),
             Some("ready"),
         );
+        Ok(())
+    }
+
+    async fn external_root_thread_start_task(
+        listener_task_context: ListenerTaskContext,
+        external_root_thread_start: Arc<dyn ExternalRootThreadStartRuntime>,
+        thread_store: Arc<dyn ThreadStore>,
+        request_id: ConnectionRequestId,
+        instruction_sources: Vec<AbsolutePathBuf>,
+        config: Config,
+        provider: codex_agent_runtime::SpawnAgentProvider,
+    ) -> Result<(), JSONRPCErrorError> {
+        let new_thread = external_root_thread_start
+            .start_external_root_thread(config, provider)
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.create_external_root_thread",
+                otel.name = "app_server.thread_start.create_external_root_thread",
+            ))
+            .await
+            .map_err(thread_start_create_error)?;
+        let NewExternalRootThread {
+            thread_id,
+            session_configured,
+        } = new_thread;
+        let result = Self::send_external_root_thread_start_response(
+            listener_task_context.clone(),
+            thread_store,
+            request_id,
+            instruction_sources,
+            thread_id,
+            session_configured,
+        )
+        .await;
+        if result.is_err() {
+            let _ = listener_task_context
+                .thread_lifecycle_runtime
+                .shutdown_live_thread(thread_id)
+                .await;
+        }
+        result
+    }
+
+    async fn send_external_root_thread_start_response(
+        listener_task_context: ListenerTaskContext,
+        thread_store: Arc<dyn ThreadStore>,
+        request_id: ConnectionRequestId,
+        instruction_sources: Vec<AbsolutePathBuf>,
+        thread_id: ThreadId,
+        session_configured: SessionConfiguredEvent,
+    ) -> Result<(), JSONRPCErrorError> {
+        let config_snapshot = listener_task_context
+            .live_thread_inspection
+            .live_thread_config_snapshot(thread_id)
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.external_config_snapshot",
+                otel.name = "app_server.thread_start.external_config_snapshot",
+            ))
+            .await
+            .map_err(thread_start_create_error)?;
+        let mut thread = build_thread_from_snapshot(
+            thread_id,
+            session_configured.session_id.to_string(),
+            &config_snapshot,
+            session_configured.rollout_path.clone(),
+        );
+        listener_task_context
+            .thread_watch_manager
+            .upsert_thread_silently(thread.clone())
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.upsert_external_thread",
+                otel.name = "app_server.thread_start.upsert_external_thread",
+            ))
+            .await;
+
+        let watch_status = listener_task_context
+            .thread_watch_manager
+            .loaded_status_for_thread(&thread.id)
+            .await;
+        let agent_status = listener_task_context
+            .thread_lifecycle_runtime
+            .live_thread_agent_status(thread_id)
+            .await
+            .ok();
+        thread.lifecycle_status = agent_status
+            .as_ref()
+            .map(thread_lifecycle_status_from_agent_status)
+            .unwrap_or_else(|| {
+                resolve_thread_status(watch_status, /*has_in_progress_turn*/ false)
+            });
+        if !config_snapshot.ephemeral {
+            let history_items = match read_thread_history_items(thread_store.as_ref(), thread_id)
+                .instrument(tracing::info_span!(
+                    "app_server.thread_start.read_external_initial_history",
+                    otel.name = "app_server.thread_start.read_external_initial_history",
+                ))
+                .await
+            {
+                Ok(history_items) => history_items,
+                Err(ThreadStoreError::ThreadNotFound { .. }) => Vec::new(),
+                Err(ThreadStoreError::InvalidRequest { message })
+                    if message.contains("no rollout found for thread id") =>
+                {
+                    Vec::new()
+                }
+                Err(err) => {
+                    return Err(internal_error(format!(
+                        "failed to read initial thread history for thread id {thread_id}: {err}"
+                    )));
+                }
+            };
+            thread.turns = build_api_turns_from_rollout_items(&history_items);
+        }
+
+        let sandbox = thread_response_sandbox_policy(
+            &config_snapshot.permission_profile,
+            config_snapshot.cwd.as_path(),
+        );
+        let active_permission_profile =
+            thread_response_active_permission_profile(config_snapshot.active_permission_profile);
+        let response = ThreadStartResponse {
+            thread: thread.clone(),
+            model: config_snapshot.model,
+            model_provider: config_snapshot.model_provider_id,
+            service_tier: config_snapshot.service_tier,
+            cwd: config_snapshot.cwd,
+            runtime_workspace_roots: config_snapshot.workspace_roots,
+            instruction_sources,
+            approval_policy: config_snapshot.approval_policy.into(),
+            approvals_reviewer: config_snapshot.approvals_reviewer.into(),
+            sandbox,
+            permission_profile: Some(config_snapshot.permission_profile.into()),
+            active_permission_profile,
+            reasoning_effort: config_snapshot.reasoning_effort,
+        };
+        let notif = thread_started_notification_with_turns(thread);
+        listener_task_context
+            .outgoing
+            .send_response(request_id, response)
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.send_external_response",
+                otel.name = "app_server.thread_start.send_external_response",
+            ))
+            .await;
+        listener_task_context
+            .outgoing
+            .send_server_notification(ServerNotification::ThreadStarted(notif))
+            .instrument(tracing::info_span!(
+                "app_server.thread_start.notify_external_started",
+                otel.name = "app_server.thread_start.notify_external_started",
+            ))
+            .await;
         Ok(())
     }
 

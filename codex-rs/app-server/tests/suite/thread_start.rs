@@ -86,6 +86,29 @@ Use this workflow when feature work needs a structured process.
     Ok(())
 }
 
+fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_claude = bin_dir.join("claude");
+    std::fs::write(
+        &fake_claude,
+        "#!/bin/sh\n# Test double for hidden external root start wiring.\nsleep 30\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_claude)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_claude, permissions)?;
+    }
+    Ok(())
+}
+
+fn prepend_path_env(path: &Path) -> Result<String> {
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let paths = std::iter::once(path.to_path_buf()).chain(std::env::split_paths(&original_path));
+    Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
+}
+
 async fn assert_no_startup_injected_context_replay(
     mcp: &mut McpProcess,
     thread_id: &str,
@@ -219,7 +242,7 @@ async fn thread_start_deprecates_persist_extended_history_true() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_start_accepts_native_thread_provider_and_rejects_external_provider() -> Result<()> {
+async fn thread_start_accepts_native_thread_provider_and_rejects_unknown_provider() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
@@ -240,27 +263,6 @@ async fn thread_start_accepts_native_thread_provider_and_rejects_external_provid
     .await??;
     let _native_started: ThreadStartResponse = to_response(native_response)?;
 
-    for external_provider in ["claude_cli", "opencode", "codex_cli"] {
-        let external_req_id = mcp
-            .send_thread_start_request(ThreadStartParams {
-                thread_provider: Some(external_provider.to_string()),
-                ..Default::default()
-            })
-            .await?;
-        let external_error = timeout(
-            DEFAULT_READ_TIMEOUT,
-            mcp.read_stream_until_error_message(RequestId::Integer(external_req_id)),
-        )
-        .await??;
-        assert_eq!(external_error.error.code, INVALID_REQUEST_ERROR_CODE);
-        assert!(
-            external_error
-                .error
-                .message
-                .contains("does not support thread/start yet")
-        );
-    }
-
     let unknown_req_id = mcp
         .send_thread_start_request(ThreadStartParams {
             thread_provider: Some("unknown_provider".to_string()),
@@ -279,6 +281,74 @@ async fn thread_start_accepts_native_thread_provider_and_rejects_external_provid
             .message
             .contains("unknown thread provider 'unknown_provider' for thread/start")
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_accepts_hidden_external_root_provider_and_emits_started() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+    let fake_bin = TempDir::new()?;
+    write_fake_claude_cli(fake_bin.path())?;
+    let test_path = prepend_path_env(fake_bin.path())?;
+
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("PATH", Some(test_path.as_str()))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("claude_cli".to_string()),
+            cwd: Some(codex_home.path().to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(req_id)),
+    )
+    .await??;
+    let ThreadStartResponse {
+        thread,
+        model_provider,
+        cwd,
+        ..
+    } = to_response::<ThreadStartResponse>(response)?;
+    assert!(!thread.id.is_empty(), "thread id should not be empty");
+    assert!(
+        !thread.session_id.is_empty(),
+        "session id should not be empty"
+    );
+    assert_eq!(model_provider, "claude_cli");
+    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.thread_source, Some(ThreadSource::User));
+    assert_eq!(thread.agent_path, None);
+    assert_eq!(thread.agent_role, None);
+    assert_eq!(cwd.as_path(), codex_home.path());
+    assert_eq!(thread.cwd.as_path(), codex_home.path());
+    assert!(matches!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::Active { .. }
+    ));
+
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/started"),
+    )
+    .await??;
+    let started: ThreadStartedNotification = serde_json::from_value(
+        notification
+            .params
+            .expect("thread/started params should be present"),
+    )?;
+    assert_eq!(started.thread.id, thread.id);
+    assert_eq!(started.thread.session_id, thread.session_id);
+    assert_eq!(started.thread.model_provider, "claude_cli");
+    assert_eq!(started.thread.thread_source, Some(ThreadSource::User));
+    assert_eq!(started.thread.agent_path, None);
+    assert_eq!(started.thread.agent_role, None);
 
     Ok(())
 }
