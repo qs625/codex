@@ -2053,7 +2053,6 @@ fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
     let mut specs = vec![spawn_external_agent];
     for tool_name in [
         "followup_external_task",
-        "poll_external_event",
         "list_external_agents",
         "close_external_agent",
     ] {
@@ -2072,6 +2071,20 @@ fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
             },
         ));
     }
+    specs.push(tool_service_api::ToolSpec::Function(
+        tool_service_api::ResponsesApiTool {
+            name: "poll_external_event".to_string(),
+            description: "Legacy unsupported external code-agent tool.".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: tool_service_api::JsonSchema::object(
+                std::collections::BTreeMap::new(),
+                /*required*/ None,
+                /*additional_properties*/ None,
+            ),
+            output_schema: None,
+        },
+    ));
     for tool_name in ["exec_command", "apply_patch", "spawn_agent", "followup_task"] {
         specs.push(tool_service_api::ToolSpec::Function(
             tool_service_api::ResponsesApiTool {
@@ -2095,7 +2108,6 @@ fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
     for tool_name in [
         "spawn_external_agent",
         "followup_external_task",
-        "poll_external_event",
         "list_external_agents",
         "close_external_agent",
     ] {
@@ -2104,6 +2116,10 @@ fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
             "expected external tool spec for {tool_name}, got {tool_specs_section}"
         );
     }
+    assert!(
+        !tool_specs_section.contains("poll_external_event"),
+        "did not expect unsupported poll_external_event in external section, got {tool_specs_section}"
+    );
     for tool_name in ["exec_command", "apply_patch", "spawn_agent", "followup_task"] {
         assert!(
             !tool_specs_section.contains(&format!("\"name\": \"{tool_name}\"")),

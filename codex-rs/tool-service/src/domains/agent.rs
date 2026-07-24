@@ -13,7 +13,6 @@ use crate::planning::create_followup_task_tool;
 use crate::planning::create_list_agents_tool;
 use crate::planning::create_list_external_agents_tool;
 use crate::planning::create_poll_event_tool;
-use crate::planning::create_poll_external_event_tool;
 use crate::planning::create_report_agent_job_result_tool;
 use crate::planning::create_spawn_agent_tool_v2;
 use crate::planning::create_spawn_agents_on_csv_tool;
@@ -237,7 +236,7 @@ where
 }
 
 pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
-    vec![
+    let mut specs = vec![
         create_spawn_agent_tool_v2(SpawnAgentToolOptions {
             available_models: request.config.available_models.clone(),
             agent_type_description: request.params.default_agent_type_description.to_string(),
@@ -250,33 +249,43 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
         create_poll_event_tool(),
         create_list_agents_tool(),
         create_close_agent_tool_v2(),
-        create_spawn_external_agent_tool(),
-        create_followup_external_task_tool(),
-        create_poll_external_event_tool(),
-        create_list_external_agents_tool(),
-        create_close_external_agent_tool(),
+    ];
+    specs.extend(external_agent_model_visible_tool_specs());
+    specs.extend([
         create_spawn_agents_on_csv_tool(),
         create_report_agent_job_result_tool(),
+    ]);
+    specs
+}
+
+fn external_agent_model_visible_tool_specs() -> Vec<ToolSpec> {
+    vec![
+        create_spawn_external_agent_tool(),
+        create_followup_external_task_tool(),
+        create_list_external_agents_tool(),
+        create_close_external_agent_tool(),
     ]
 }
 
 pub(crate) fn owns_tool_name(_request: &TypedToolSpecRequest<'_>, tool_name: &ToolName) -> bool {
-    tool_name.namespace.is_none()
-        && matches!(
-            tool_name.name.as_str(),
-            SPAWN_AGENT_TOOL_NAME
-                | FOLLOWUP_TASK_TOOL_NAME
-                | POLL_EVENT_TOOL_NAME
-                | LIST_AGENTS_TOOL_NAME
-                | CLOSE_AGENT_TOOL_NAME
-                | SPAWN_EXTERNAL_AGENT_TOOL_NAME
-                | FOLLOWUP_EXTERNAL_TASK_TOOL_NAME
-                | POLL_EXTERNAL_EVENT_TOOL_NAME
-                | LIST_EXTERNAL_AGENTS_TOOL_NAME
-                | CLOSE_EXTERNAL_AGENT_TOOL_NAME
-                | SPAWN_AGENTS_ON_CSV_TOOL_NAME
-                | REPORT_AGENT_JOB_RESULT_TOOL_NAME
-        )
+    tool_name.namespace.is_none() && owns_plain_agent_tool_name(tool_name.name.as_str())
+}
+
+fn owns_plain_agent_tool_name(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        SPAWN_AGENT_TOOL_NAME
+            | FOLLOWUP_TASK_TOOL_NAME
+            | POLL_EVENT_TOOL_NAME
+            | LIST_AGENTS_TOOL_NAME
+            | CLOSE_AGENT_TOOL_NAME
+            | SPAWN_EXTERNAL_AGENT_TOOL_NAME
+            | FOLLOWUP_EXTERNAL_TASK_TOOL_NAME
+            | LIST_EXTERNAL_AGENTS_TOOL_NAME
+            | CLOSE_EXTERNAL_AGENT_TOOL_NAME
+            | SPAWN_AGENTS_ON_CSV_TOOL_NAME
+            | REPORT_AGENT_JOB_RESULT_TOOL_NAME
+    )
 }
 
 pub(crate) fn create_diff_consumer(
@@ -846,6 +855,35 @@ mod tests {
                 unreachable!("poll_event_timeout_metadata should not be called in this test")
             })
         }
+    }
+
+    #[test]
+    fn external_agent_model_visible_specs_hide_unsupported_poll_event() {
+        let tool_names: Vec<_> = external_agent_model_visible_tool_specs()
+            .into_iter()
+            .filter_map(|spec| match spec {
+                ToolSpec::Function(tool) => Some(tool.name),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            tool_names,
+            vec![
+                "spawn_external_agent",
+                "followup_external_task",
+                "list_external_agents",
+                "close_external_agent",
+            ]
+        );
+        assert!(!tool_names.contains(&POLL_EXTERNAL_EVENT_TOOL_NAME.to_string()));
+    }
+
+    #[test]
+    fn agent_domain_does_not_own_hidden_poll_external_event() {
+        assert!(!owns_plain_agent_tool_name(POLL_EXTERNAL_EVENT_TOOL_NAME));
+        assert!(owns_plain_agent_tool_name(POLL_EVENT_TOOL_NAME));
+        assert!(owns_plain_agent_tool_name(SPAWN_EXTERNAL_AGENT_TOOL_NAME));
     }
 
     #[tokio::test]

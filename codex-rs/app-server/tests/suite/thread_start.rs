@@ -175,7 +175,6 @@ fn assert_single_completed_init_context_turn(turns: &[Turn], context: &str) {
         "模型 API tool config",
         "spawn_external_agent",
         "followup_external_task",
-        "poll_external_event",
         "list_external_agents",
         "close_external_agent",
         "\"parameters\"",
@@ -188,6 +187,7 @@ fn assert_single_completed_init_context_turn(turns: &[Turn], context: &str) {
     }
     for unexpected in [
         "<model_visible_tools>",
+        "poll_external_event",
         "\"name\": \"exec_command\"",
         "\"name\": \"apply_patch\"",
         "\"name\": \"spawn_agent\"",

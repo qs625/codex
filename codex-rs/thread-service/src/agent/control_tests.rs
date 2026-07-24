@@ -1664,6 +1664,52 @@ async fn external_tool_call_malformed_arguments_returns_bounded_error() {
 }
 
 #[tokio::test]
+async fn external_tool_call_poll_external_event_returns_unsupported_error() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let external_thread_id = ThreadId::new();
+    harness.control.state.register_root_thread(root_thread_id);
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: AgentPath::try_from("/root/external").expect("agent path"),
+            provider: SpawnAgentProvider::CodexCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some("do work".to_string()),
+            abort_handle: None,
+        });
+
+    let result = harness
+        .control
+        .dispatch_external_tool_call(
+            external_thread_id,
+            ExternalToolCall {
+                id: "call_1".to_string(),
+                tool: ExternalToolName::PollExternalEvent,
+                arguments: serde_json::json!({}),
+            },
+        )
+        .await;
+
+    assert!(!result.ok);
+    let error = result.error.expect("tool error");
+    assert_eq!(error.code, "tool_error");
+    assert!(
+        error
+            .message
+            .contains("poll_external_event is not supported")
+    );
+}
+
+#[tokio::test]
 async fn external_tool_call_followup_to_native_uses_agent_bus() {
     let harness = AgentControlHarness::new().await;
     let root_thread_id = ThreadId::new();
