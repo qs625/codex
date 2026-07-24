@@ -249,6 +249,7 @@ impl ChatWidget {
             ThreadItem::EventCommandCall { .. } => {}
             ThreadItem::EventCommandEvent { .. } => {}
             ThreadItem::DynamicToolCall { .. } => {}
+            ThreadItem::BuiltinToolCall { .. } => {}
         }
 
         if matches!(replay_kind, Some(ReplayKind::ThreadSnapshot)) && turn_id.is_empty() {

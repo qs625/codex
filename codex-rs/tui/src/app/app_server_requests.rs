@@ -140,20 +140,6 @@ impl PendingAppServerRequests {
                     message: "Attestation generation is not available in TUI.".to_string(),
                 })
             }
-            ServerRequest::ApplyPatchApproval { request_id, .. } => {
-                Some(UnsupportedAppServerRequest {
-                    request_id: request_id.clone(),
-                    message: "Legacy patch approval requests are not available in TUI yet."
-                        .to_string(),
-                })
-            }
-            ServerRequest::ExecCommandApproval { request_id, .. } => {
-                Some(UnsupportedAppServerRequest {
-                    request_id: request_id.clone(),
-                    message: "Legacy command approval requests are not available in TUI yet."
-                        .to_string(),
-                })
-            }
         }
     }
 
@@ -338,9 +324,7 @@ impl PendingAppServerRequests {
                 .any(|pending_request_id| pending_request_id == request_id),
             ServerRequest::DynamicToolCall { .. }
             | ServerRequest::ChatgptAuthTokensRefresh { .. }
-            | ServerRequest::AttestationGenerate { .. }
-            | ServerRequest::ApplyPatchApproval { .. }
-            | ServerRequest::ExecCommandApproval { .. } => true,
+            | ServerRequest::AttestationGenerate { .. } => true,
         }
     }
 

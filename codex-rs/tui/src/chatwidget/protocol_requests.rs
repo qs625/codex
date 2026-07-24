@@ -37,9 +37,7 @@ impl ChatWidget {
             }
             ServerRequest::DynamicToolCall { .. }
             | ServerRequest::AttestationGenerate { .. }
-            | ServerRequest::ChatgptAuthTokensRefresh { .. }
-            | ServerRequest::ApplyPatchApproval { .. }
-            | ServerRequest::ExecCommandApproval { .. } => {
+            | ServerRequest::ChatgptAuthTokensRefresh { .. } => {
                 if replay_kind.is_none() {
                     self.add_error_message(TUI_STUB_MESSAGE.to_string());
                 }

@@ -245,6 +245,9 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
                 .unwrap_or_else(|| tool.clone());
             vec![format!("tool: {name} · {status:?}").dim().into()]
         }
+        ThreadItem::BuiltinToolCall { tool, status, .. } => {
+            vec![format!("built-in tool: {tool} · {status:?}").dim().into()]
+        }
         ThreadItem::EventDrivenToolCall { tool, status, .. } => {
             vec![
                 format!("event-driven tool call: {tool} · {status:?}")
@@ -337,8 +340,8 @@ fn fallback_transcript_cell(item: &ThreadItem) -> Option<PlainHistoryCell> {
                 "agent status: {} · {:?}",
                 recipient_path, lifecycle_status.lifecycle_status
             )
-                .dim()
-                .into(),
+            .dim()
+            .into(),
         ],
         ThreadItem::WorkflowRunProgress { event, .. } => vec![
             format!(

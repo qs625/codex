@@ -213,6 +213,8 @@ async fn run_debug_prompt_input_command(
         config.codex_home.clone(),
         missing_thread_runtime,
     ));
+    let missing_thread_service_api: Weak<dyn thread_service_api::ThreadServiceApi> =
+        Weak::<thread_service::ThreadService>::new();
     let prompt_input = thread_service::build_prompt_input(
         config,
         input,

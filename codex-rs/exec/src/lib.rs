@@ -1649,30 +1649,6 @@ async fn handle_server_request(
             )
             .await
         }
-        ServerRequest::ApplyPatchApproval { request_id, params } => {
-            reject_server_request(
-                client,
-                request_id,
-                &method,
-                format!(
-                    "apply_patch approval is not supported in exec mode for thread `{}`",
-                    params.conversation_id
-                ),
-            )
-            .await
-        }
-        ServerRequest::ExecCommandApproval { request_id, params } => {
-            reject_server_request(
-                client,
-                request_id,
-                &method,
-                format!(
-                    "exec command approval is not supported in exec mode for thread `{}`",
-                    params.conversation_id
-                ),
-            )
-            .await
-        }
         ServerRequest::PermissionsRequestApproval { request_id, params } => {
             reject_server_request(
                 client,

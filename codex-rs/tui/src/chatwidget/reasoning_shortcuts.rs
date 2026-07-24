@@ -168,6 +168,8 @@ fn effort_rank(effort: ReasoningEffortConfig) -> i32 {
         ReasoningEffortConfig::Medium => 3,
         ReasoningEffortConfig::High => 4,
         ReasoningEffortConfig::XHigh => 5,
+        ReasoningEffortConfig::Max => 6,
+        ReasoningEffortConfig::Ultra => 7,
     }
 }
 
