@@ -3,21 +3,24 @@ use app_server::in_process;
 use app_server::in_process::InProcessStartArgs;
 use app_server_protocol::ClientInfo;
 use app_server_protocol::ClientRequest;
-use app_server_protocol::ItemCompletedNotification;
-use app_server_protocol::ItemStartedNotification;
 use app_server_protocol::InitializeCapabilities;
 use app_server_protocol::InitializeParams;
+use app_server_protocol::ItemCompletedNotification;
+use app_server_protocol::ItemStartedNotification;
 use app_server_protocol::JSONRPCError;
 use app_server_protocol::JSONRPCMessage;
 use app_server_protocol::JSONRPCNotification;
 use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
+use app_server_protocol::SandboxPolicy as ApiSandboxPolicy;
 use app_server_protocol::SessionSource;
 use app_server_protocol::SortDirection;
-use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadForkParams;
 use app_server_protocol::ThreadForkResponse;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleActiveFlag;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadNameUpdatedNotification;
@@ -29,16 +32,14 @@ use app_server_protocol::ThreadSetNameParams;
 use app_server_protocol::ThreadSetNameResponse;
 use app_server_protocol::ThreadSkill;
 use app_server_protocol::ThreadSkillKind;
+use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadLifecycleFinalStatus;
-use app_server_protocol::ThreadLifecycleStatus;
-use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadTurnsItemsListParams;
 use app_server_protocol::ThreadTurnsListParams;
 use app_server_protocol::ThreadTurnsListResponse;
-use app_server_protocol::TurnItemsView;
 use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnItemsView;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
 use app_server_protocol::TurnStatus;
@@ -53,20 +54,23 @@ use app_test_support::test_absolute_path;
 use app_test_support::to_response;
 use app_test_support::write_mock_responses_config_toml;
 use codex_arg0::Arg0DispatchPaths;
-use config_service::CloudRequirementsLoader;
-use config_service::LoaderOverrides;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
+use config_service::CloudRequirementsLoader;
+use config_service::LoaderOverrides;
 use core_test_support::responses;
 use core_test_support::streaming_sse::StreamingSseChunk;
 use core_test_support::streaming_sse::start_streaming_sse_server;
 use pretty_assertions::assert_eq;
 use protocol::models::BaseInstructions;
+use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::AskForApproval;
 use protocol::protocol::EventMsg;
 use protocol::protocol::ExternalTerminalStatus;
 use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::RolloutItem;
+use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionSource as ProtocolSessionSource;
 use protocol::protocol::ThreadContextUsage;
 use protocol::protocol::ThreadContextUsageCategoryBreakdown;
@@ -90,8 +94,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use tempfile::TempDir;
-use tokio::time::Instant;
-use tokio::time::sleep;
 use thread_service::config::ConfigBuilder;
 use thread_store::AppendThreadItemsParams;
 use thread_store::CreateThreadParams;
@@ -101,6 +103,8 @@ use thread_store::ThreadMetadataPatch;
 use thread_store::ThreadPersistenceMetadata;
 use thread_store::ThreadStore;
 use thread_store::UpdateThreadMetadataParams;
+use tokio::time::Instant;
+use tokio::time::sleep;
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -1313,16 +1317,50 @@ fn thread_read_and_list_project_external_root_terminal_facts_without_live_runtim
 }
 
 #[test]
-fn external_root_resume_and_fork_are_rejected_before_native_creation() -> Result<()> {
+fn external_root_resume_returns_readonly_snapshot_and_fork_stays_unsupported() -> Result<()> {
     run_current_thread_test_with_stack(async {
         let codex_home = TempDir::new()?;
-        let thread_id =
+        let completed_id =
             protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000127")?;
+        let errored_id =
+            protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000128")?;
+        let running_id =
+            protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000129")?;
         let store_id = Uuid::new_v4().to_string();
         create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
         let store = InMemoryThreadStore::for_id(store_id.clone());
         let _in_memory_store = InMemoryThreadStoreId { store_id };
-        seed_external_root_store_thread(&store, thread_id, codex_home.path(), Vec::new()).await?;
+        seed_external_root_store_thread(
+            &store,
+            completed_id,
+            codex_home.path(),
+            vec![RolloutItem::EventMsg(EventMsg::TurnComplete(
+                TurnCompleteEvent {
+                    turn_id: "turn-completed".to_string(),
+                    last_agent_message: Some("done".to_string()),
+                    completed_at: Some(1),
+                    duration_ms: None,
+                    time_to_first_token_ms: None,
+                },
+            ))],
+        )
+        .await?;
+        seed_external_root_store_thread(
+            &store,
+            errored_id,
+            codex_home.path(),
+            vec![RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(
+                ExternalTerminalStatusEvent {
+                    thread_id: errored_id,
+                    turn_id: "turn-errored".to_string(),
+                    status: ExternalTerminalStatus::Errored,
+                    message: Some("provider failed".to_string()),
+                    terminal_at_ms: 1,
+                },
+            ))],
+        )
+        .await?;
+        seed_external_root_store_thread(&store, running_id, codex_home.path(), Vec::new()).await?;
 
         let loader_overrides = LoaderOverrides::without_managed_config_for_tests();
         let config = ConfigBuilder::default()
@@ -1361,27 +1399,137 @@ fn external_root_resume_and_fork_are_rejected_before_native_creation() -> Result
         })
         .await?;
 
-        let resume_error = client
+        let completed_resume_result = client
             .request(ClientRequest::ThreadResume {
                 request_id: RequestId::Integer(1),
                 params: ThreadResumeParams {
-                    thread_id: thread_id.to_string(),
+                    thread_id: completed_id.to_string(),
                     ..Default::default()
                 },
             })
             .await?
-            .expect_err("thread/resume should reject persisted external root threads");
-        assert_eq!(resume_error.code, INVALID_REQUEST_ERROR_CODE);
+            .expect("completed external root thread/resume should return read-only snapshot");
+        let ThreadResumeResponse {
+            thread: completed_resume,
+            model,
+            service_tier,
+            approval_policy,
+            sandbox,
+            reasoning_effort,
+            ..
+        } = serde_json::from_value(completed_resume_result)?;
+        assert_eq!(completed_resume.id, completed_id.to_string());
+        assert_eq!(completed_resume.model_provider, "claude_cli");
+        assert_eq!(model, "stored-external-model");
+        assert_eq!(service_tier, None);
+        assert_eq!(approval_policy, app_server_protocol::AskForApproval::Never);
+        assert_eq!(sandbox, ApiSandboxPolicy::DangerFullAccess);
+        assert_eq!(reasoning_effort, Some(ReasoningEffort::High));
         assert_eq!(
-            resume_error.message,
-            "thread provider 'claude_cli' is advertised but does not support thread/resume yet"
+            completed_resume.lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+        assert_eq!(
+            turn_user_texts(&completed_resume.turns),
+            vec!["history from store"]
+        );
+
+        let completed_exclude_turns_result = client
+            .request(ClientRequest::ThreadResume {
+                request_id: RequestId::Integer(2),
+                params: ThreadResumeParams {
+                    thread_id: completed_id.to_string(),
+                    exclude_turns: true,
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect("excludeTurns external root thread/resume should return metadata snapshot");
+        let ThreadResumeResponse {
+            thread: completed_exclude_turns,
+            ..
+        } = serde_json::from_value(completed_exclude_turns_result)?;
+        assert_eq!(
+            completed_exclude_turns.lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+        assert_eq!(completed_exclude_turns.turns, Vec::new());
+
+        let errored_resume_result = client
+            .request(ClientRequest::ThreadResume {
+                request_id: RequestId::Integer(3),
+                params: ThreadResumeParams {
+                    thread_id: errored_id.to_string(),
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect("errored external root thread/resume should return read-only snapshot");
+        let ThreadResumeResponse {
+            thread: errored_resume,
+            ..
+        } = serde_json::from_value(errored_resume_result)?;
+        assert_eq!(
+            errored_resume.lifecycle_status,
+            ThreadLifecycleStatus::errored(Some("provider failed".to_string()))
+        );
+        assert_eq!(
+            turn_user_texts(&errored_resume.turns),
+            vec!["history from store"]
+        );
+
+        let running_resume_result = client
+            .request(ClientRequest::ThreadResume {
+                request_id: RequestId::Integer(4),
+                params: ThreadResumeParams {
+                    thread_id: running_id.to_string(),
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect("running external root without live runtime should return read-only snapshot");
+        let ThreadResumeResponse {
+            thread: running_resume,
+            ..
+        } = serde_json::from_value(running_resume_result)?;
+        assert_eq!(
+            running_resume.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            }
+        );
+        assert_eq!(
+            turn_user_texts(&running_resume.turns),
+            vec!["history from store"]
+        );
+
+        let turn_start_error = client
+            .request(ClientRequest::TurnStart {
+                request_id: RequestId::Integer(5),
+                params: TurnStartParams {
+                    thread_id: completed_id.to_string(),
+                    input: vec![UserInput::Text {
+                        text: "should not continue".to_string(),
+                        text_elements: Vec::new(),
+                    }],
+                    ..Default::default()
+                },
+            })
+            .await?
+            .expect_err("read-only external root thread/resume should not create a live session");
+        assert_eq!(turn_start_error.code, INVALID_REQUEST_ERROR_CODE);
+        assert!(
+            turn_start_error.message.contains("thread not found")
+                || turn_start_error.message.contains("not accepting input"),
+            "unexpected turn/start error: {}",
+            turn_start_error.message
         );
 
         let fork_error = client
             .request(ClientRequest::ThreadFork {
-                request_id: RequestId::Integer(2),
+                request_id: RequestId::Integer(6),
                 params: ThreadForkParams {
-                    thread_id: thread_id.to_string(),
+                    thread_id: completed_id.to_string(),
                     ..Default::default()
                 },
             })
@@ -2478,9 +2626,13 @@ async fn seed_external_root_store_thread(
             thread_id,
             patch: ThreadMetadataPatch {
                 model_provider: Some("claude_cli".to_string()),
+                model: Some("stored-external-model".to_string()),
+                reasoning_effort: Some(ReasoningEffort::High),
                 source: Some(ProtocolSessionSource::VSCode),
                 thread_source: Some(Some(protocol::protocol::ThreadSource::User)),
                 cwd: Some(cwd.to_path_buf()),
+                approval_mode: Some(AskForApproval::Never),
+                sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
                 ..Default::default()
             },
             include_archived: true,
