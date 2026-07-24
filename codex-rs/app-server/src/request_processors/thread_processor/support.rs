@@ -196,12 +196,12 @@ pub(super) fn normalize_thread_turns_status(
 
 pub(super) fn apply_persisted_thread_lifecycle_status(thread: &mut Thread, items: &[RolloutItem]) {
     match persisted_terminal_agent_status_from_rollout_items(items) {
-        Some(status) if should_project_persisted_terminal_agent_status(thread, &status) => {
+        Some(status) if should_project_persisted_terminal_lifecycle_status(thread, &status) => {
             thread.lifecycle_status =
                 super::ops::thread_lifecycle_status_from_agent_status(&status);
         }
         Some(_) => {}
-        None if is_persisted_external_root_thread(thread) => {
+        None if is_external_root_lifecycle_projection_thread(thread) => {
             thread.lifecycle_status =
                 super::ops::thread_lifecycle_status_from_agent_status(&AgentStatus::Interrupted);
         }
@@ -229,11 +229,30 @@ fn is_persisted_terminal_agent_status(status: &AgentStatus) -> bool {
     )
 }
 
-fn should_project_persisted_terminal_agent_status(thread: &Thread, status: &AgentStatus) -> bool {
-    is_persisted_external_root_thread(thread) || matches!(status, AgentStatus::Shutdown)
+pub(super) fn should_project_persisted_terminal_lifecycle_status(
+    thread: &Thread,
+    status: &AgentStatus,
+) -> bool {
+    is_external_root_lifecycle_projection_thread(thread) || matches!(status, AgentStatus::Shutdown)
 }
 
-fn is_persisted_external_root_thread(thread: &Thread) -> bool {
+pub(in crate::request_processors) fn should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(
+    thread: &Thread,
+) -> bool {
+    match &thread.lifecycle_status {
+        ThreadLifecycleStatus::Final {
+            result: app_server_protocol::ThreadLifecycleFinalStatus::Shutdown
+                | app_server_protocol::ThreadLifecycleFinalStatus::Interrupted,
+        } => true,
+        ThreadLifecycleStatus::Final {
+            result: app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. }
+                | app_server_protocol::ThreadLifecycleFinalStatus::Errored { .. },
+        } => is_external_root_lifecycle_projection_thread(thread),
+        _ => false,
+    }
+}
+
+pub(super) fn is_external_root_lifecycle_projection_thread(thread: &Thread) -> bool {
     external_cli_thread_provider(&thread.model_provider).is_some()
         && thread.thread_source == Some(app_server_protocol::ThreadSource::User)
         && thread.agent_path.is_none()

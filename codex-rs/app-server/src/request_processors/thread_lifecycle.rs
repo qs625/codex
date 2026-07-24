@@ -1,5 +1,6 @@
 use super::*;
 use super::context_usage_replay::ThreadUsageSource;
+use super::thread_processor::should_preserve_persisted_lifecycle_status_for_not_loaded_overlay;
 use crate::live_thread_runtime::AppServerLiveThreadCommandRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadGoalRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadHistoryRuntime;
@@ -1055,31 +1056,9 @@ pub(super) fn set_thread_status_and_interrupt_stale_turns(
         }
     }
     if matches!(status, ThreadLifecycleStatus::NotLoaded)
-        && should_preserve_not_loaded_overlay_status(thread)
+        && should_preserve_persisted_lifecycle_status_for_not_loaded_overlay(thread)
     {
         return;
     }
     thread.lifecycle_status = status;
-}
-
-fn should_preserve_not_loaded_overlay_status(thread: &Thread) -> bool {
-    match &thread.lifecycle_status {
-        ThreadLifecycleStatus::Final {
-            result: app_server_protocol::ThreadLifecycleFinalStatus::Shutdown
-                | app_server_protocol::ThreadLifecycleFinalStatus::Interrupted,
-        } => true,
-        ThreadLifecycleStatus::Final {
-            result: app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. }
-                | app_server_protocol::ThreadLifecycleFinalStatus::Errored { .. },
-        } => is_external_root_lifecycle_projection(thread),
-        _ => false,
-    }
-}
-
-fn is_external_root_lifecycle_projection(thread: &Thread) -> bool {
-    external_cli_thread_provider(&thread.model_provider).is_some()
-        && thread.thread_source == Some(app_server_protocol::ThreadSource::User)
-        && thread.agent_path.is_none()
-        && thread.agent_role.is_none()
-        && thread.agent_nickname.is_none()
 }
