@@ -19,10 +19,18 @@ use protocol::AgentPath;
 use protocol::models::ResponseItem;
 use protocol::openai_models::ModelsResponse;
 use protocol::protocol::AgentMessageEvent;
+use protocol::protocol::ExternalProviderSessionIdentity;
+use protocol::protocol::ExternalReconnectDescriptor;
+use protocol::protocol::ExternalReconnectTransport;
+use protocol::protocol::ExternalRestorePlan;
+use protocol::protocol::ExternalTerminalStatus;
+use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::InitialHistory;
 use protocol::protocol::InternalSessionSource;
 use protocol::protocol::ResumedHistory;
 use protocol::protocol::RolloutItem;
+use protocol::protocol::SessionMeta;
+use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadSource;
 use protocol::protocol::TurnAbortReason;
@@ -40,6 +48,10 @@ use rollout_api::snapshot_turn_state;
 use rollout_api::truncate_before_nth_user_message;
 use std::time::Duration;
 use tempfile::tempdir;
+use thread_service_api::PersistedThreadProviderFactsSelector;
+use thread_store_api::AppendThreadItemsParams;
+use thread_store_api::ExternalLiveRestoreEligibility;
+use thread_store_api::ResumeThreadParams;
 use wiremock::MockServer;
 
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -1290,6 +1302,228 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
         .shutdown_and_wait()
         .await
         .expect("shutdown forked thread");
+}
+
+#[tokio::test]
+async fn persisted_external_root_thread_facts_classifies_stored_threads() {
+    let temp_dir = tempdir().expect("tempdir");
+    let mut config = test_config().await;
+    config.codex_home = temp_dir.path().join("codex-home").abs();
+    config.cwd = config.codex_home.abs();
+    let store_id = format!("thread-provider-facts-{}", uuid::Uuid::new_v4());
+    config.experimental_thread_store =
+        crate::config::ThreadStoreConfig::InMemory { id: store_id.clone() };
+    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
+
+    let auth_manager =
+        AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let state_db = init_state_db(&config).await;
+    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let manager = test_thread_service_manager(
+        &config,
+        auth_manager,
+        thread_store.clone(),
+        state_db,
+        TEST_INSTALLATION_ID.to_string(),
+    );
+
+    let native_id =
+        ThreadId::from_string("00000000-0000-4000-8000-000000000701").expect("native id");
+    let terminal_external_id =
+        ThreadId::from_string("00000000-0000-4000-8000-000000000702").expect("terminal id");
+    let running_external_id =
+        ThreadId::from_string("00000000-0000-4000-8000-000000000703").expect("running id");
+    let descriptor_external_id =
+        ThreadId::from_string("00000000-0000-4000-8000-000000000704").expect("descriptor id");
+    let missing_id =
+        ThreadId::from_string("00000000-0000-4000-8000-000000000705").expect("missing id");
+
+    seed_provider_facts_thread(
+        thread_store.as_ref(),
+        native_id,
+        "mock_provider",
+        Vec::new(),
+        &config.cwd,
+    )
+    .await;
+    seed_provider_facts_thread(
+        thread_store.as_ref(),
+        terminal_external_id,
+        "claude_cli",
+        vec![RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(
+            ExternalTerminalStatusEvent {
+                thread_id: terminal_external_id,
+                turn_id: "terminal-turn".to_string(),
+                status: ExternalTerminalStatus::Errored,
+                message: Some("provider failed".to_string()),
+                terminal_at_ms: 1,
+            },
+        ))],
+        &config.cwd,
+    )
+    .await;
+    seed_provider_facts_thread(
+        thread_store.as_ref(),
+        running_external_id,
+        "claude_cli",
+        Vec::new(),
+        &config.cwd,
+    )
+    .await;
+    seed_provider_facts_thread(
+        thread_store.as_ref(),
+        descriptor_external_id,
+        "opencode",
+        vec![RolloutItem::SessionMeta(SessionMetaLine {
+            meta: SessionMeta {
+                id: descriptor_external_id,
+                cwd: config.cwd.to_path_buf(),
+                source: SessionSource::VSCode,
+                thread_source: Some(ThreadSource::User),
+                model_provider: Some("opencode".to_string()),
+                external_reconnect: Some(ExternalReconnectDescriptor {
+                    provider: "opencode".to_string(),
+                    transport: ExternalReconnectTransport::OpencodeHttp,
+                    session_identity: ExternalProviderSessionIdentity {
+                        session_id: "opencode-session".to_string(),
+                    },
+                    restore_plan: Some(ExternalRestorePlan::opencode_restore_disabled(true)),
+                }),
+                ..Default::default()
+            },
+            git: None,
+        })],
+        &config.cwd,
+    )
+    .await;
+    let descriptor_rollout_path = config.codex_home.join("descriptor-rollout.jsonl");
+    thread_store
+        .resume_thread(ResumeThreadParams {
+            thread_id: descriptor_external_id,
+            rollout_path: Some(descriptor_rollout_path.to_path_buf()),
+            history: None,
+            include_archived: true,
+            metadata: provider_facts_metadata("opencode", &config.cwd),
+            event_persistence_mode: ThreadEventPersistenceMode::default(),
+        })
+        .await
+        .expect("register descriptor rollout path");
+
+    assert_eq!(
+        manager
+            .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::ThreadId(
+                native_id,
+            ))
+            .await
+            .expect("native facts should load"),
+        None
+    );
+
+    let terminal_facts = manager
+        .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::ThreadId(
+            terminal_external_id,
+        ))
+        .await
+        .expect("terminal external facts should load")
+        .expect("terminal external root facts");
+    assert_eq!(terminal_facts.provider_id, "claude_cli");
+    assert_eq!(
+        terminal_facts.restore_eligibility,
+        ExternalLiveRestoreEligibility::TerminalReadOnly
+    );
+
+    let running_facts = manager
+        .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::ThreadId(
+            running_external_id,
+        ))
+        .await
+        .expect("running external facts should load")
+        .expect("running external root facts");
+    assert_eq!(
+        running_facts.restore_eligibility,
+        ExternalLiveRestoreEligibility::RunningNoDescriptor
+    );
+
+    let descriptor_facts = manager
+        .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::RolloutPath(
+            descriptor_rollout_path.to_path_buf(),
+        ))
+        .await
+        .expect("descriptor external facts should load by path")
+        .expect("descriptor external root facts");
+    assert_eq!(descriptor_facts.thread_id, descriptor_external_id);
+    assert_eq!(descriptor_facts.provider_id, "opencode");
+    assert!(matches!(
+        descriptor_facts.restore_eligibility,
+        ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled { .. }
+    ));
+
+    assert_eq!(
+        manager
+            .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::ThreadId(
+                missing_id,
+            ))
+            .await
+            .expect("missing thread facts should load"),
+        None
+    );
+
+    let _ = thread_store::InMemoryThreadStore::remove_id(&store_id);
+}
+
+async fn seed_provider_facts_thread(
+    thread_store: &dyn ThreadStore,
+    thread_id: ThreadId,
+    model_provider: &str,
+    items: Vec<RolloutItem>,
+    cwd: &AbsolutePathBuf,
+) {
+    thread_store
+        .create_thread(CreateThreadParams {
+            thread_id,
+            forked_from_id: None,
+            source: SessionSource::VSCode,
+            thread_source: Some(ThreadSource::User),
+            base_instructions: BaseInstructions::default(),
+            dynamic_tools: Vec::new(),
+            metadata: provider_facts_metadata(model_provider, cwd),
+            event_persistence_mode: ThreadEventPersistenceMode::default(),
+        })
+        .await
+        .expect("create provider facts thread");
+    thread_store
+        .update_thread_metadata(UpdateThreadMetadataParams {
+            thread_id,
+            patch: ThreadMetadataPatch {
+                model_provider: Some(model_provider.to_string()),
+                source: Some(SessionSource::VSCode),
+                thread_source: Some(Some(ThreadSource::User)),
+                cwd: Some(cwd.to_path_buf()),
+                ..Default::default()
+            },
+            include_archived: true,
+        })
+        .await
+        .expect("update provider facts metadata");
+    if !items.is_empty() {
+        thread_store
+            .append_items(AppendThreadItemsParams { thread_id, items })
+            .await
+            .expect("append provider facts items");
+    }
+}
+
+fn provider_facts_metadata(
+    model_provider: &str,
+    cwd: &AbsolutePathBuf,
+) -> ThreadPersistenceMetadata {
+    ThreadPersistenceMetadata {
+        cwd: Some(cwd.to_path_buf()),
+        model_provider: model_provider.to_string(),
+        memory_mode: ThreadMemoryMode::Disabled,
+        root_agent_role: None,
+        root_agent_path: None,
+    }
 }
 
 #[tokio::test]

@@ -896,6 +896,26 @@ pub trait ThreadAgentDirectoryRuntime: Send + Sync + 'static {
     ) -> ThreadServiceFuture<'a, CodexResult<Vec<ThreadId>>>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PersistedThreadProviderFactsSelector {
+    ThreadId(ThreadId),
+    RolloutPath(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedExternalRootThreadFacts {
+    pub thread_id: ThreadId,
+    pub provider_id: String,
+    pub restore_eligibility: thread_store_api::ExternalLiveRestoreEligibility,
+}
+
+pub trait PersistedThreadProviderFactsRuntime: Send + Sync + 'static {
+    fn persisted_external_root_thread_facts<'a>(
+        &'a self,
+        selector: PersistedThreadProviderFactsSelector,
+    ) -> ThreadServiceFuture<'a, CodexResult<Option<PersistedExternalRootThreadFacts>>>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExternalRootThreadProvider {
     CodexCli,

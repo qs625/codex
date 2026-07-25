@@ -38,10 +38,6 @@ fn reject_unsupported_external_root_thread_provider(
     Ok(())
 }
 
-pub(super) fn is_persisted_external_root_thread(thread: &StoredThread) -> bool {
-    thread_store_api::persisted_external_root_provider_id(thread).is_some()
-}
-
 #[allow(clippy::too_many_arguments)]
 fn validate_external_root_start_params(
     task_name: &Option<String>,
@@ -833,10 +829,20 @@ impl ThreadRequestProcessor {
                     return Ok(());
                 }
             };
-            if is_persisted_external_root_thread(&source_thread) {
+            let external_root_facts = match self
+                .persisted_external_root_thread_facts_for_source(&source_thread, path.as_ref())
+                .await
+            {
+                Ok(facts) => facts,
+                Err(error) => {
+                    self.outgoing.send_error(request_id, error).await;
+                    return Ok(());
+                }
+            };
+            if let Some(facts) = external_root_facts {
                 if let Err(error) = resolve_root_thread_provider(
                     self.thread_provider_catalog.as_ref(),
-                    Some(source_thread.model_provider.as_str()),
+                    Some(facts.provider_id.as_str()),
                     thread_service_api::ThreadProviderRootCapability::RestoreSnapshot,
                 ) {
                     self.outgoing.send_error(request_id, error).await;
@@ -1348,6 +1354,26 @@ impl ThreadRequestProcessor {
         result.map_err(thread_store_resume_read_error)
     }
 
+    pub(super) async fn persisted_external_root_thread_facts_for_source(
+        &self,
+        stored_thread: &StoredThread,
+        path: Option<&PathBuf>,
+    ) -> Result<Option<thread_service_api::PersistedExternalRootThreadFacts>, JSONRPCErrorError>
+    {
+        let selector = match path {
+            Some(path) => {
+                thread_service_api::PersistedThreadProviderFactsSelector::RolloutPath(path.clone())
+            }
+            None => thread_service_api::PersistedThreadProviderFactsSelector::ThreadId(
+                stored_thread.thread_id,
+            ),
+        };
+        self.persisted_thread_provider_facts_runtime
+            .persisted_external_root_thread_facts(selector)
+            .await
+            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
+    }
+
     pub(super) async fn stored_thread_to_initial_history(
         &self,
         stored_thread: &StoredThread,
@@ -1616,7 +1642,11 @@ impl ThreadRequestProcessor {
         let source_thread = self
             .read_stored_thread_for_resume(&thread_id, path.as_ref(), /*include_history*/ true)
             .await?;
-        if !is_persisted_external_root_thread(&source_thread) {
+        if self
+            .persisted_external_root_thread_facts_for_source(&source_thread, path.as_ref())
+            .await?
+            .is_none()
+        {
             reject_unsupported_external_root_thread_provider(
                 self.thread_provider_catalog.as_ref(),
                 source_thread.model_provider.as_str(),

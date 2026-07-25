@@ -401,8 +401,7 @@ impl ThreadRequestProcessor {
         {
             if let Some(provider) = self
                 .persisted_external_root_provider(thread_id)
-                .await
-                .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))?
+                .await?
             {
                 return Err(unsupported_external_root_active_op(method, provider.as_str()));
             }
@@ -445,27 +444,14 @@ impl ThreadRequestProcessor {
     async fn persisted_external_root_provider(
         &self,
         thread_id: ThreadId,
-    ) -> Result<Option<String>, ThreadStoreError> {
-        let stored_thread = match self
-            .thread_store
-            .read_thread(thread_store::ReadThreadParams {
-                thread_id,
-                include_archived: true,
-                include_history: false,
-            })
+    ) -> Result<Option<String>, JSONRPCErrorError> {
+        self.persisted_thread_provider_facts_runtime
+            .persisted_external_root_thread_facts(
+                thread_service_api::PersistedThreadProviderFactsSelector::ThreadId(thread_id),
+            )
             .await
-        {
-            Ok(stored_thread) => stored_thread,
-            Err(ThreadStoreError::ThreadNotFound { .. }) => return Ok(None),
-            Err(ThreadStoreError::InvalidRequest { message })
-                if message == format!("no rollout found for thread id {thread_id}") =>
-            {
-                return Ok(None);
-            }
-            Err(err) => return Err(err),
-        };
-        Ok(thread_store_api::persisted_external_root_provider_id(&stored_thread)
-            .map(ToString::to_string))
+            .map(|facts| facts.map(|facts| facts.provider_id))
+            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
     }
 
     #[allow(clippy::too_many_arguments)]

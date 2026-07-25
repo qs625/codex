@@ -1,6 +1,25 @@
 use super::*;
 use thread_store_api::ExternalLiveRestoreEligibility;
-use thread_store_api::external_live_restore_eligibility;
+
+fn external_root_startup_restore_skip_reason(
+    eligibility: ExternalLiveRestoreEligibility,
+) -> &'static str {
+    match eligibility {
+        ExternalLiveRestoreEligibility::RunningNoDescriptor => {
+            "no reconnect descriptor was persisted"
+        }
+        ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled { .. } => {
+            "reconnect descriptor is present but external live restore is disabled"
+        }
+        ExternalLiveRestoreEligibility::TerminalReadOnly => {
+            "external thread is already terminal and read-only"
+        }
+        ExternalLiveRestoreEligibility::RunningReconnectable { .. } => {
+            "external live restore is not implemented"
+        }
+        ExternalLiveRestoreEligibility::NotExternal => "provider reconnect is not supported",
+    }
+}
 
 impl ThreadRequestProcessor {
     pub(super) async fn thread_list_response_inner(
@@ -695,29 +714,26 @@ impl ThreadRequestProcessor {
         if persisted_subscription_count == 0 {
             return;
         }
-        if super::start::is_persisted_external_root_thread(&stored_thread) {
-            let eligibility = external_live_restore_eligibility(&stored_thread);
-            let skip_reason = match eligibility {
-                ExternalLiveRestoreEligibility::RunningNoDescriptor => {
-                    "no reconnect descriptor was persisted"
-                }
-                ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled { .. } => {
-                    "reconnect descriptor is present but external live restore is disabled"
-                }
-                ExternalLiveRestoreEligibility::TerminalReadOnly => {
-                    "external thread is already terminal and read-only"
-                }
-                ExternalLiveRestoreEligibility::RunningReconnectable { .. } => {
-                    "external live restore is not implemented"
-                }
-                ExternalLiveRestoreEligibility::NotExternal => {
-                    "provider reconnect is not supported"
-                }
-            };
-            info!(
-                "skipping live startup restore for persisted external root thread {thread_id}; {skip_reason}"
-            );
-            return;
+        match self
+            .persisted_thread_provider_facts_runtime
+            .persisted_external_root_thread_facts(
+                thread_service_api::PersistedThreadProviderFactsSelector::ThreadId(thread_id),
+            )
+            .await
+        {
+            Ok(Some(facts)) => {
+                let skip_reason =
+                    external_root_startup_restore_skip_reason(facts.restore_eligibility);
+                info!(
+                    "skipping live startup restore for persisted external root thread {thread_id}; {skip_reason}"
+                );
+                return;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                warn!("failed to inspect persisted provider facts for active thread {thread_id}: {err}");
+                return;
+            }
         }
 
         let session_source = stored_thread_session_source_with_agent_metadata(&stored_thread);

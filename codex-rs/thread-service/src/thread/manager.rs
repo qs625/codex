@@ -120,6 +120,8 @@ use std::time::Duration;
 use thread_service_api::ActiveEventSubscriptionTracker;
 use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::LiveThreadSnapshot;
+use thread_service_api::PersistedExternalRootThreadFacts;
+use thread_service_api::PersistedThreadProviderFactsSelector;
 use thread_service_api::ThreadCreatedEvent;
 use thread_service_api::ThreadShutdownReport;
 #[cfg(any(test, feature = "test-support"))]
@@ -140,6 +142,8 @@ use thread_store_api::ThreadStore;
 use thread_store_api::ThreadStoreError;
 use thread_store_api::ThreadStoreResult;
 use thread_store_api::UpdateThreadMetadataParams;
+use thread_store_api::external_live_restore_eligibility;
+use thread_store_api::persisted_external_root_provider_id;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use tracing::warn;
@@ -883,6 +887,15 @@ impl ThreadService {
         self.state.read_stored_thread(params).await
     }
 
+    pub async fn persisted_external_root_thread_facts(
+        &self,
+        selector: PersistedThreadProviderFactsSelector,
+    ) -> CodexResult<Option<PersistedExternalRootThreadFacts>> {
+        self.state
+            .persisted_external_root_thread_facts(selector)
+            .await
+    }
+
     /// Updates metadata for loaded and cold threads through one entrypoint.
     ///
     /// Loaded threads route through `CodexThread`/`LiveThread`, so metadata changes stay ordered
@@ -1601,6 +1614,54 @@ impl ThreadServiceState {
                 }
                 err => CodexErr::Fatal(format!("failed to read stored thread {thread_id}: {err}")),
             })
+    }
+
+    pub(crate) async fn persisted_external_root_thread_facts(
+        &self,
+        selector: PersistedThreadProviderFactsSelector,
+    ) -> CodexResult<Option<PersistedExternalRootThreadFacts>> {
+        let stored_thread = match selector {
+            PersistedThreadProviderFactsSelector::ThreadId(thread_id) => match self
+                .thread_store
+                .read_thread(ReadThreadParams {
+                    thread_id,
+                    include_archived: true,
+                    include_history: true,
+                })
+                .await
+            {
+                Ok(stored_thread) => stored_thread,
+                Err(ThreadStoreError::ThreadNotFound { .. }) => return Ok(None),
+                Err(ThreadStoreError::InvalidRequest { message })
+                    if message == format!("no rollout found for thread id {thread_id}") =>
+                {
+                    return Ok(None);
+                }
+                Err(err) => return Err(persisted_provider_facts_read_error(thread_id, err)),
+            },
+            PersistedThreadProviderFactsSelector::RolloutPath(rollout_path) => match self
+                .thread_store
+                .read_thread_by_rollout_path(ReadThreadByRolloutPathParams {
+                    rollout_path,
+                    include_archived: true,
+                    include_history: true,
+                })
+                .await
+            {
+                Ok(stored_thread) => stored_thread,
+                Err(ThreadStoreError::ThreadNotFound { .. }) => return Ok(None),
+                Err(err) => return Err(persisted_provider_facts_rollout_read_error(err)),
+            },
+        };
+
+        let Some(provider_id) = persisted_external_root_provider_id(&stored_thread) else {
+            return Ok(None);
+        };
+        Ok(Some(PersistedExternalRootThreadFacts {
+            thread_id: stored_thread.thread_id,
+            provider_id: provider_id.to_string(),
+            restore_eligibility: external_live_restore_eligibility(&stored_thread),
+        }))
     }
 
     pub(crate) async fn create_external_thread_persistence(
@@ -3180,6 +3241,31 @@ fn thread_store_rollout_read_error(err: ThreadStoreError) -> CodexErr {
         ThreadStoreError::ThreadNotFound { thread_id } => CodexErr::ThreadNotFound(thread_id),
         ThreadStoreError::InvalidRequest { message } => CodexErr::InvalidRequest(message),
         err => CodexErr::Fatal(format!("failed to read thread by rollout path: {err}")),
+    }
+}
+
+fn persisted_provider_facts_read_error(thread_id: ThreadId, err: ThreadStoreError) -> CodexErr {
+    match err {
+        ThreadStoreError::ThreadNotFound { thread_id } => CodexErr::ThreadNotFound(thread_id),
+        ThreadStoreError::InvalidRequest { message }
+            if message == format!("no rollout found for thread id {thread_id}") =>
+        {
+            CodexErr::ThreadNotFound(thread_id)
+        }
+        ThreadStoreError::InvalidRequest { message } => CodexErr::InvalidRequest(message),
+        err => CodexErr::Fatal(format!(
+            "failed to read persisted provider facts for thread {thread_id}: {err}"
+        )),
+    }
+}
+
+fn persisted_provider_facts_rollout_read_error(err: ThreadStoreError) -> CodexErr {
+    match err {
+        ThreadStoreError::ThreadNotFound { thread_id } => CodexErr::ThreadNotFound(thread_id),
+        ThreadStoreError::InvalidRequest { message } => CodexErr::InvalidRequest(message),
+        err => CodexErr::Fatal(format!(
+            "failed to read persisted provider facts by rollout path: {err}"
+        )),
     }
 }
 

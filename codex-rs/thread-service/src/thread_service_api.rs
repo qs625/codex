@@ -22,6 +22,9 @@ use thread_service_api::ExternalRootThreadStartupConfig;
 use thread_service_api::NativeAgentRuntime;
 use thread_service_api::RootThreadProviderResolutionError;
 use thread_service_api::RootThreadProviderRoute;
+use thread_service_api::PersistedExternalRootThreadFacts;
+use thread_service_api::PersistedThreadProviderFactsRuntime;
+use thread_service_api::PersistedThreadProviderFactsSelector;
 use thread_service_api::ThreadAgentDirectoryRuntime;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
@@ -549,6 +552,17 @@ impl ThreadAgentDirectoryRuntime for ThreadService {
             self.agent_control()
                 .list_agent_subtree_thread_ids(thread_id)
                 .await
+        })
+    }
+}
+
+impl PersistedThreadProviderFactsRuntime for ThreadService {
+    fn persisted_external_root_thread_facts<'a>(
+        &'a self,
+        selector: PersistedThreadProviderFactsSelector,
+    ) -> ThreadServiceFuture<'a, CodexResult<Option<PersistedExternalRootThreadFacts>>> {
+        Box::pin(async move {
+            ThreadService::persisted_external_root_thread_facts(self, selector).await
         })
     }
 }

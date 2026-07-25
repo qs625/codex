@@ -17,6 +17,8 @@ use thread_service::NativeMemoryStartupConfigRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
 use thread_service_api::AppServerClientInfo;
 use thread_service_api::ExternalRootThreadRuntime;
+use thread_service_api::PersistedThreadProviderFactsRuntime;
+use thread_service_api::PersistedThreadProviderFactsSelector;
 use thread_service_api::ThreadLifecycleRuntime;
 
 #[derive(Clone)]
@@ -37,6 +39,7 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
     external_root_thread_runtime: Arc<dyn ExternalRootThreadRuntime>,
+    persisted_thread_provider_facts_runtime: Arc<dyn PersistedThreadProviderFactsRuntime>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
     model_service: SharedModelServiceApi,
     outgoing: Arc<OutgoingMessageSender>,
@@ -44,7 +47,6 @@ pub(crate) struct TurnRequestProcessor {
     arg0_paths: Arg0DispatchPaths,
     config: Arc<Config>,
     config_manager: ConfigManager,
-    thread_store: Arc<dyn ThreadStore>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
@@ -78,7 +80,7 @@ impl TurnRequestProcessor {
         arg0_paths: Arg0DispatchPaths,
         config: Arc<Config>,
         config_manager: ConfigManager,
-        thread_store: Arc<dyn ThreadStore>,
+        _thread_store: Arc<dyn ThreadStore>,
         pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
         thread_state_manager: ThreadStateManager,
         thread_watch_manager: ThreadWatchManager,
@@ -103,6 +105,7 @@ impl TurnRequestProcessor {
             live_thread_usage: thread_service.clone(),
             live_thread_goal: thread_service.clone(),
             external_root_thread_runtime: thread_service.clone(),
+            persisted_thread_provider_facts_runtime: thread_service.clone(),
             memory_startup_host: thread_service,
             model_service,
             outgoing,
@@ -110,7 +113,6 @@ impl TurnRequestProcessor {
             arg0_paths,
             config,
             config_manager,
-            thread_store,
             pending_thread_unloads,
             thread_state_manager,
             thread_watch_manager,
@@ -546,29 +548,14 @@ impl TurnRequestProcessor {
     async fn persisted_external_root_provider(
         &self,
         thread_id: ThreadId,
-    ) -> Result<Option<String>, ThreadStoreError> {
-        let stored_thread = match self
-            .thread_store
-            .read_thread(thread_store::ReadThreadParams {
-                thread_id,
-                include_archived: true,
-                include_history: false,
-            })
+    ) -> Result<Option<String>, JSONRPCErrorError> {
+        self.persisted_thread_provider_facts_runtime
+            .persisted_external_root_thread_facts(
+                PersistedThreadProviderFactsSelector::ThreadId(thread_id),
+            )
             .await
-        {
-            Ok(stored_thread) => stored_thread,
-            Err(ThreadStoreError::ThreadNotFound { .. }) => return Ok(None),
-            Err(ThreadStoreError::InvalidRequest { message })
-                if message == format!("no rollout found for thread id {thread_id}") =>
-            {
-                return Ok(None);
-            }
-            Err(err) => return Err(err),
-        };
-        Ok(
-            thread_store_api::persisted_external_root_provider_id(&stored_thread)
-                .map(ToString::to_string),
-        )
+            .map(|facts| facts.map(|facts| facts.provider_id))
+            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
     }
 
     async fn live_external_root_provider(
@@ -601,11 +588,7 @@ impl TurnRequestProcessor {
         let provider = if let Some(provider) = self.live_external_root_provider(thread_id).await? {
             Some(provider)
         } else {
-            self.persisted_external_root_provider(thread_id)
-                .await
-                .map_err(|err| {
-                    internal_error(format!("failed to inspect thread provider: {err}"))
-                })?
+            self.persisted_external_root_provider(thread_id).await?
         };
         if let Some(provider) = provider {
             let error = unsupported_external_root_active_op(method, provider.as_str());
@@ -648,7 +631,6 @@ impl TurnRequestProcessor {
         if let Some(provider) = self
             .persisted_external_root_provider(thread_id)
             .await
-            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
             .inspect_err(|error| {
                 self.track_error_response(&request_id, error, /*error_type*/ None);
             })?
