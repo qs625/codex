@@ -1529,8 +1529,15 @@ fn external_root_resume_returns_readonly_snapshot_and_fork_creates_native_thread
             .expect_err("read-only external root thread/resume should not create a live session");
         assert_eq!(turn_start_error.code, INVALID_REQUEST_ERROR_CODE);
         assert!(
-            turn_start_error.message.contains("thread not found")
-                || turn_start_error.message.contains("not accepting input"),
+            turn_start_error.message.contains("thread provider 'claude_cli'")
+                && turn_start_error.message.contains("turn/start")
+                && turn_start_error.message.contains("does not support")
+                && turn_start_error.message.contains("external root threads"),
+            "unexpected turn/start error: {}",
+            turn_start_error.message
+        );
+        assert!(
+            !turn_start_error.message.contains("thread not found"),
             "unexpected turn/start error: {}",
             turn_start_error.message
         );
@@ -1823,8 +1830,15 @@ fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
             .expect_err("descriptor-present external root should remain read-only");
         assert_eq!(turn_start_error.code, INVALID_REQUEST_ERROR_CODE);
         assert!(
-            turn_start_error.message.contains("thread not found")
-                || turn_start_error.message.contains("not accepting input"),
+            turn_start_error.message.contains("thread provider 'opencode'")
+                && turn_start_error.message.contains("turn/start")
+                && turn_start_error.message.contains("does not support")
+                && turn_start_error.message.contains("external root threads"),
+            "unexpected turn/start error: {}",
+            turn_start_error.message
+        );
+        assert!(
+            !turn_start_error.message.contains("thread not found"),
             "unexpected turn/start error: {}",
             turn_start_error.message
         );

@@ -6,7 +6,7 @@ use codex_agent_runtime::AgentMetadata;
 use protocol::AgentPath;
 use protocol::protocol::AgentStatus;
 
-fn unsupported_external_root_active_op(
+pub(in crate::request_processors) fn unsupported_external_root_active_op(
     method: &str,
     provider: &str,
 ) -> JSONRPCErrorError {

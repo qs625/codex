@@ -10,6 +10,7 @@ use crate::live_thread_runtime::AppServerLiveThreadSteerRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadTurnRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::memory_service_wiring::MemoryServiceHost;
+use crate::request_processors::thread_processor::unsupported_external_root_active_op;
 use model_service_api::SharedModelServiceApi;
 use thread_service::NativeDetachedReviewRuntime;
 use thread_service::NativeMemoryStartupConfigRuntime;
@@ -43,6 +44,7 @@ pub(crate) struct TurnRequestProcessor {
     arg0_paths: Arg0DispatchPaths,
     config: Arc<Config>,
     config_manager: ConfigManager,
+    thread_store: Arc<dyn ThreadStore>,
     pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
@@ -76,6 +78,7 @@ impl TurnRequestProcessor {
         arg0_paths: Arg0DispatchPaths,
         config: Arc<Config>,
         config_manager: ConfigManager,
+        thread_store: Arc<dyn ThreadStore>,
         pending_thread_unloads: Arc<Mutex<HashSet<ThreadId>>>,
         thread_state_manager: ThreadStateManager,
         thread_watch_manager: ThreadWatchManager,
@@ -107,6 +110,7 @@ impl TurnRequestProcessor {
             arg0_paths,
             config,
             config_manager,
+            thread_store,
             pending_thread_unloads,
             thread_state_manager,
             thread_watch_manager,
@@ -539,6 +543,32 @@ impl TurnRequestProcessor {
         })
     }
 
+    async fn persisted_external_root_provider(
+        &self,
+        thread_id: ThreadId,
+    ) -> Result<Option<String>, ThreadStoreError> {
+        let stored_thread = match self
+            .thread_store
+            .read_thread(thread_store::ReadThreadParams {
+                thread_id,
+                include_archived: true,
+                include_history: false,
+            })
+            .await
+        {
+            Ok(stored_thread) => stored_thread,
+            Err(ThreadStoreError::ThreadNotFound { .. }) => return Ok(None),
+            Err(ThreadStoreError::InvalidRequest { message })
+                if message == format!("no rollout found for thread id {thread_id}") =>
+            {
+                return Ok(None);
+            }
+            Err(err) => return Err(err),
+        };
+        Ok(thread_store_api::persisted_external_root_provider_id(&stored_thread)
+            .map(ToString::to_string))
+    }
+
     async fn turn_start_inner(
         &self,
         request_id: ConnectionRequestId,
@@ -567,15 +597,27 @@ impl TurnRequestProcessor {
                 .external_root_turn_start_inner(&request_id, thread_id, params)
                 .await;
         }
+        if let Some(provider) = self
+            .persisted_external_root_provider(thread_id)
+            .await
+            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
+            .inspect_err(|error| {
+                self.track_error_response(&request_id, error, /*error_type*/ None);
+            })?
+        {
+            let error = unsupported_external_root_active_op("turn/start", provider.as_str());
+            self.track_error_response(&request_id, &error, /*error_type*/ None);
+            return Err(error);
+        }
         self.set_app_server_client_info(
             thread_id,
             app_server_client_name,
             app_server_client_version,
         )
-        .await
-        .inspect_err(|error| {
-            self.track_error_response(&request_id, error, /*error_type*/ None);
-        })?;
+            .await
+            .inspect_err(|error| {
+                self.track_error_response(&request_id, error, /*error_type*/ None);
+            })?;
 
         let collaboration_mode = params
             .collaboration_mode
