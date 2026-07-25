@@ -305,6 +305,13 @@ impl ThreadLifecycleRuntime for ThreadService {
         Box::pin(ThreadService::shutdown_all_threads_bounded(self, timeout))
     }
 
+    fn shutdown_all_threads_for_runtime_teardown_bounded<'a>(
+        &'a self,
+        timeout: Duration,
+    ) -> ThreadServiceFuture<'a, ThreadShutdownReport> {
+        Box::pin(ThreadService::shutdown_all_threads_for_runtime_teardown_bounded(self, timeout))
+    }
+
     fn shutdown_live_thread<'a>(
         &'a self,
         thread_id: protocol::ThreadId,

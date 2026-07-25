@@ -648,6 +648,65 @@ impl AgentControl {
         report
     }
 
+    pub(crate) async fn shutdown_all_live_external_threads_for_runtime_teardown_bounded(
+        &self,
+        timeout: Duration,
+    ) -> ThreadShutdownReport {
+        let mut shutdowns = self
+            .external_agents
+            .live_thread_ids()
+            .into_iter()
+            .map(|thread_id| {
+                let control = self.clone();
+                async move {
+                    let outcome = tokio::time::timeout(
+                        timeout,
+                        control.shutdown_live_external_for_runtime_teardown(thread_id),
+                    )
+                    .await;
+                    (thread_id, outcome)
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+        let mut report = ThreadShutdownReport::default();
+
+        while let Some((thread_id, outcome)) = shutdowns.next().await {
+            match outcome {
+                Ok(Ok(_)) => report.completed.push(thread_id),
+                Ok(Err(_)) => report.submit_failed.push(thread_id),
+                Err(_) => report.timed_out.push(thread_id),
+            }
+        }
+
+        sort_thread_shutdown_report(&mut report);
+        report
+    }
+
+    async fn shutdown_live_external_for_runtime_teardown(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<String> {
+        let Some(shutdown_run) = self.external_agents.shutdown_and_remove(thread_id) else {
+            return Err(CodexErr::ThreadNotFound(thread_id));
+        };
+        if let Ok(state) = self.upgrade() {
+            state
+                .update_external_live_thread_status(thread_id, AgentStatus::Interrupted)
+                .await;
+            state.notify_thread_status_changed_with_status(
+                thread_id,
+                Some(AgentStatus::Interrupted),
+            );
+            let _ = ThreadLifecycleRuntime::remove_live_thread(state.as_ref(), thread_id).await;
+        }
+        if let Some(live_thread) = shutdown_run.live_thread
+            && let Err(err) = live_thread.shutdown().await
+        {
+            warn!("failed to shutdown external thread persistence for {thread_id}: {err}");
+        }
+        Ok(thread_id.to_string())
+    }
+
     fn spawn_external_agent_with_metadata_sync(
         &self,
         config: ExternalSpawnConfig,

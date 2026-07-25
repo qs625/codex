@@ -712,6 +712,11 @@ pub trait ThreadLifecycleRuntime: Send + Sync + 'static {
         timeout: Duration,
     ) -> ThreadServiceFuture<'a, ThreadShutdownReport>;
 
+    fn shutdown_all_threads_for_runtime_teardown_bounded<'a>(
+        &'a self,
+        timeout: Duration,
+    ) -> ThreadServiceFuture<'a, ThreadShutdownReport>;
+
     fn shutdown_live_thread<'a>(
         &'a self,
         thread_id: ThreadId,

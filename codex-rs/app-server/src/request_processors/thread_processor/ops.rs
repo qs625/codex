@@ -280,10 +280,10 @@ impl ThreadRequestProcessor {
     pub(crate) async fn shutdown_threads(&self) {
         let report = self
             .thread_lifecycle_runtime
-            .shutdown_all_threads_bounded(Duration::from_secs(10))
+            .shutdown_all_threads_for_runtime_teardown_bounded(Duration::from_secs(10))
             .await;
         for thread_id in report.submit_failed {
-            warn!("failed to submit Shutdown to thread {thread_id}");
+            warn!("failed to shut down thread {thread_id}");
         }
         for thread_id in report.timed_out {
             warn!("timed out waiting for thread {thread_id} to shut down");
