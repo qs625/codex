@@ -932,6 +932,7 @@ pub enum ThreadProviderRuntimeKind {
 pub enum ThreadProviderRootCapability {
     StartThread,
     RestoreThread,
+    RestoreSnapshot,
     ForkThread,
 }
 
@@ -940,6 +941,7 @@ impl ThreadProviderRootCapability {
         match self {
             Self::StartThread => "thread/start",
             Self::RestoreThread => "thread/resume",
+            Self::RestoreSnapshot => "thread/resume",
             Self::ForkThread => "thread/fork",
         }
     }
@@ -969,6 +971,7 @@ impl ThreadProviderRuntimeCapabilities {
         match capability {
             ThreadProviderRootCapability::StartThread => self.start_thread,
             ThreadProviderRootCapability::RestoreThread => self.restore_thread,
+            ThreadProviderRootCapability::RestoreSnapshot => self.restore_snapshot,
             ThreadProviderRootCapability::ForkThread => self.fork_thread,
         }
     }

@@ -248,10 +248,19 @@ mod root_thread_provider_route_tests {
             .unwrap(),
             thread_service_api::RootThreadProviderRoute::Native
         );
+        assert_eq!(
+            resolve_root_thread_provider(
+                &catalog,
+                Some("native"),
+                thread_service_api::ThreadProviderRootCapability::RestoreSnapshot,
+            )
+            .unwrap(),
+            thread_service_api::RootThreadProviderRoute::Native
+        );
     }
 
     #[test]
-    fn resolves_advertised_external_provider_for_start_only() {
+    fn resolves_advertised_external_provider_for_start_and_snapshot_restore_only() {
         let catalog = FakeThreadProviderCatalog;
         for (provider, expected_route) in [
             (
@@ -283,13 +292,21 @@ mod root_thread_provider_route_tests {
             assert!(!capabilities.restore_thread);
             assert!(capabilities.restore_snapshot);
             assert!(!capabilities.fork_thread);
-            let route = resolve_root_thread_provider(
+            let start_route = resolve_root_thread_provider(
                 &catalog,
                 Some(provider),
                 thread_service_api::ThreadProviderRootCapability::StartThread,
             )
             .unwrap();
-            assert_eq!(route, expected_route);
+            assert_eq!(start_route, expected_route);
+
+            let snapshot_route = resolve_root_thread_provider(
+                &catalog,
+                Some(provider),
+                thread_service_api::ThreadProviderRootCapability::RestoreSnapshot,
+            )
+            .unwrap();
+            assert_eq!(snapshot_route, expected_route);
         }
 
         for provider in ["claude_cli", "opencode", "codex_cli"] {
@@ -817,6 +834,14 @@ impl ThreadRequestProcessor {
                 }
             };
             if is_persisted_external_root_thread(&source_thread) {
+                if let Err(error) = resolve_root_thread_provider(
+                    self.thread_provider_catalog.as_ref(),
+                    Some(source_thread.model_provider.as_str()),
+                    thread_service_api::ThreadProviderRootCapability::RestoreSnapshot,
+                ) {
+                    self.outgoing.send_error(request_id, error).await;
+                    return Ok(());
+                }
                 self.send_external_root_readonly_resume_response(
                     request_id,
                     source_thread.clone(),

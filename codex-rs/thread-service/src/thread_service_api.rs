@@ -713,6 +713,7 @@ mod tests {
             .expect("native provider");
         assert_eq!(native.kind, ThreadProviderRuntimeKind::Native);
         assert!(native.capabilities.restore_thread);
+        assert!(native.capabilities.restore_snapshot);
         assert!(native.capabilities.fork_thread);
 
         for id in ["claude_cli", "opencode", "codex_cli"] {
@@ -723,6 +724,7 @@ mod tests {
             assert_eq!(provider.kind, ThreadProviderRuntimeKind::ExternalCli);
             assert!(provider.capabilities.start_thread);
             assert!(!provider.capabilities.restore_thread);
+            assert!(provider.capabilities.restore_snapshot);
             assert!(!provider.capabilities.fork_thread);
         }
 
@@ -733,6 +735,22 @@ mod tests {
             )
             .unwrap(),
             RootThreadProviderRoute::External(ExternalRootThreadProvider::Opencode)
+        );
+        assert_eq!(
+            resolve_runtime_root_thread_provider(
+                Some("opencode"),
+                ThreadProviderRootCapability::RestoreSnapshot,
+            )
+            .unwrap(),
+            RootThreadProviderRoute::External(ExternalRootThreadProvider::Opencode)
+        );
+        assert_eq!(
+            resolve_runtime_root_thread_provider(
+                Some("native"),
+                ThreadProviderRootCapability::RestoreSnapshot,
+            )
+            .unwrap(),
+            RootThreadProviderRoute::Native
         );
         assert_eq!(
             resolve_runtime_root_thread_provider(
