@@ -399,16 +399,19 @@ impl ThreadRequestProcessor {
             .is_live_thread_loaded(thread_id)
             .await
         {
-            if let Some(provider) = self
-                .persisted_external_root_provider(thread_id)
-                .await?
-            {
-                return Err(unsupported_external_root_active_op(method, provider.as_str()));
+            if let Some(provider) = self.persisted_external_root_provider(thread_id).await? {
+                return Err(unsupported_external_root_active_op(
+                    method,
+                    provider.as_str(),
+                ));
             }
             return Err(invalid_request(format!("thread not found: {thread_id}")));
         }
         if let Some(provider) = self.live_external_root_provider(thread_id).await? {
-            return Err(unsupported_external_root_active_op(method, provider.as_str()));
+            return Err(unsupported_external_root_active_op(
+                method,
+                provider.as_str(),
+            ));
         }
         self.live_thread_command
             .submit_live_thread_op_with_trace(
@@ -429,16 +432,10 @@ impl ThreadRequestProcessor {
         &self,
         thread_id: ThreadId,
     ) -> Result<Option<String>, JSONRPCErrorError> {
-        let snapshot = self
-            .live_thread_inspection
-            .live_thread_snapshot(thread_id)
-            .await
-            .map_err(|err| internal_error(format!("failed to inspect live thread: {err}")))?;
-        Ok(snapshot
-            .config_snapshot
-            .root_execution_provider_id()
-            .filter(|provider| is_external_cli_thread_provider_id(provider))
-            .map(ToString::to_string))
+        Ok(self
+            .external_root_thread_runtime
+            .live_external_root_thread_facts(thread_id)
+            .map(|facts| facts.provider.provider_id().to_string()))
     }
 
     async fn persisted_external_root_provider(

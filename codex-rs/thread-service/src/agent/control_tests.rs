@@ -2040,7 +2040,10 @@ async fn external_tool_call_poll_external_event_wakes_for_child_completion() {
     let communication = &result_json["event"]["communication"];
     assert_eq!(communication["content"], queued.content);
     assert_eq!(communication["operation"], "childCompletion");
-    assert_eq!(communication["sender_thread_id"], child_thread_id.to_string());
+    assert_eq!(
+        communication["sender_thread_id"],
+        child_thread_id.to_string()
+    );
     assert_eq!(
         communication["recipient_thread_id"],
         parent_thread_id.to_string()
@@ -2111,12 +2114,10 @@ async fn external_root_runtime_close_removes_live_root_and_persists_shutdown() {
             .await
     );
 
-    let closed = ExternalRootThreadRuntime::close_external_root_thread(
-        &harness.manager,
-        external_thread_id,
-    )
-    .await
-    .expect("external root close should succeed");
+    let closed =
+        ExternalRootThreadRuntime::close_external_root_thread(&harness.manager, external_thread_id)
+            .await
+            .expect("external root close should succeed");
     assert_eq!(closed, "");
     assert!(!harness.manager.has_external_root_thread(external_thread_id));
     assert_eq!(
@@ -2158,6 +2159,60 @@ async fn external_root_runtime_close_removes_live_root_and_persists_shutdown() {
             .expect_err("native thread is not an external root");
     assert!(
         matches!(missing_err, CodexErr::ThreadNotFound(thread_id) if thread_id == native_thread_id)
+    );
+}
+
+#[tokio::test]
+async fn live_external_root_thread_facts_classifies_root_provider() {
+    let harness = AgentControlHarness::new().await;
+    let (native_thread_id, _) = harness.start_thread().await;
+    let external_root_thread_id = ThreadId::new();
+    let external_child_thread_id = ThreadId::new();
+    let root_external_control = harness.manager.root_external_agent_control_for_tests();
+
+    root_external_control
+        .external_agents
+        .insert_running(external_root_run(
+            &harness.config,
+            external_root_thread_id,
+            SpawnAgentProvider::Opencode,
+        ));
+
+    let mut child_run = external_root_run(
+        &harness.config,
+        external_child_thread_id,
+        SpawnAgentProvider::ClaudeCli,
+    );
+    child_run.parent_thread_id = native_thread_id;
+    child_run.agent_path = AgentPath::derive(None, "worker").expect("agent path");
+    child_run.depth = 1;
+    root_external_control
+        .external_agents
+        .insert_running(child_run);
+
+    assert_eq!(
+        ExternalRootThreadRuntime::live_external_root_thread_facts(
+            &harness.manager,
+            external_root_thread_id
+        ),
+        Some(thread_service_api::LiveExternalRootThreadFacts {
+            thread_id: external_root_thread_id,
+            provider: thread_service_api::ExternalRootThreadProvider::Opencode,
+        })
+    );
+    assert_eq!(
+        ExternalRootThreadRuntime::live_external_root_thread_facts(
+            &harness.manager,
+            external_child_thread_id
+        ),
+        None
+    );
+    assert_eq!(
+        ExternalRootThreadRuntime::live_external_root_thread_facts(
+            &harness.manager,
+            native_thread_id
+        ),
+        None
     );
 }
 
@@ -2291,13 +2346,17 @@ async fn shutdown_all_threads_bounded_closes_native_and_external_roots() {
     assert!(report.submit_failed.is_empty());
     assert!(report.timed_out.is_empty());
     assert!(harness.manager.list_thread_ids().await.is_empty());
-    assert!(!harness
-        .manager
-        .has_external_root_thread(external_root_thread_id));
-    assert!(child_agent_control
-        .external_agents
-        .get(external_child_thread_id)
-        .is_none());
+    assert!(
+        !harness
+            .manager
+            .has_external_root_thread(external_root_thread_id)
+    );
+    assert!(
+        child_agent_control
+            .external_agents
+            .get(external_child_thread_id)
+            .is_none()
+    );
     assert_eq!(
         harness.control.get_status(external_root_thread_id).await,
         AgentStatus::NotFound
@@ -8620,12 +8679,7 @@ async fn external_close_parent_removes_live_external_descendants() {
     let grandchild_thread_id = ThreadId::new();
 
     for (thread_id, parent_id, depth, path) in [
-        (
-            parent_thread_id,
-            root_thread_id,
-            1,
-            "/root/external_parent",
-        ),
+        (parent_thread_id, root_thread_id, 1, "/root/external_parent"),
         (
             child_thread_id,
             parent_thread_id,

@@ -71,9 +71,9 @@ use codex_agent_runtime::thread_spawn_parent_thread_id;
 #[cfg(any(test, feature = "test-support"))]
 use codex_features::Feature;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use futures::StreamExt;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
-use futures::StreamExt;
 use protocol::AgentPath;
 use protocol::SessionId;
 use protocol::ThreadId;
@@ -118,6 +118,8 @@ use thread_service_api::AgentDirectoryListRequest;
 use thread_service_api::AgentDirectoryListResult;
 use thread_service_api::AgentReferenceResolution;
 use thread_service_api::AgentReferenceResolutionRequest;
+use thread_service_api::ExternalRootThreadProvider;
+use thread_service_api::LiveExternalRootThreadFacts;
 use thread_service_api::LiveThreadActivitySource;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadInfo;
@@ -320,6 +322,17 @@ fn provider_label(provider: SpawnAgentProvider) -> &'static str {
         SpawnAgentProvider::CodexCli => "codex_cli",
         SpawnAgentProvider::ClaudeCli => "claude_cli",
         SpawnAgentProvider::Opencode => "opencode",
+    }
+}
+
+fn external_root_thread_provider(
+    provider: SpawnAgentProvider,
+) -> Option<ExternalRootThreadProvider> {
+    match provider {
+        SpawnAgentProvider::Native => None,
+        SpawnAgentProvider::CodexCli => Some(ExternalRootThreadProvider::CodexCli),
+        SpawnAgentProvider::ClaudeCli => Some(ExternalRootThreadProvider::ClaudeCli),
+        SpawnAgentProvider::Opencode => Some(ExternalRootThreadProvider::Opencode),
     }
 }
 
@@ -531,6 +544,20 @@ impl AgentControl {
             .is_some_and(|run| run.agent_path.is_root())
     }
 
+    pub(crate) fn live_external_root_thread_facts(
+        &self,
+        thread_id: ThreadId,
+    ) -> Option<LiveExternalRootThreadFacts> {
+        let run = self.external_agents.get(thread_id)?;
+        if !run.agent_path.is_root() {
+            return None;
+        }
+        Some(LiveExternalRootThreadFacts {
+            thread_id: run.thread_id,
+            provider: external_root_thread_provider(run.provider)?,
+        })
+    }
+
     pub(crate) async fn send_external_root_input(
         &self,
         thread_id: ThreadId,
@@ -572,7 +599,9 @@ impl AgentControl {
             .as_ref()
             .map(|run| run.status.clone())
             .unwrap_or(AgentStatus::Shutdown);
-        let live_thread = shutdown_run.as_ref().and_then(|run| run.live_thread.clone());
+        let live_thread = shutdown_run
+            .as_ref()
+            .and_then(|run| run.live_thread.clone());
         self.persist_external_terminal_status_to_live_thread(thread_id, None, &status, live_thread)
             .await;
         if let Ok(state) = self.upgrade() {
@@ -596,9 +625,11 @@ impl AgentControl {
             .map(|thread_id| {
                 let control = self.clone();
                 async move {
-                    let outcome =
-                        tokio::time::timeout(timeout, control.shutdown_live_agent_record(thread_id))
-                            .await;
+                    let outcome = tokio::time::timeout(
+                        timeout,
+                        control.shutdown_live_agent_record(thread_id),
+                    )
+                    .await;
                     (thread_id, outcome)
                 }
             })
@@ -1160,7 +1191,7 @@ impl AgentControl {
             status,
             live_thread,
         )
-            .await;
+        .await;
     }
 
     async fn persist_external_terminal_status_to_live_thread(
@@ -1928,7 +1959,9 @@ impl AgentControl {
                     .await;
                 state.notify_thread_status_changed_with_status(agent_id, Some(agent_status));
             }
-            let live_thread = shutdown_run.as_ref().and_then(|run| run.live_thread.clone());
+            let live_thread = shutdown_run
+                .as_ref()
+                .and_then(|run| run.live_thread.clone());
             self.persist_external_terminal_status_to_live_thread(
                 agent_id,
                 None,

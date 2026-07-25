@@ -1333,6 +1333,14 @@ impl ThreadService {
             .has_external_root_thread(thread_id)
     }
 
+    pub fn live_external_root_thread_facts(
+        &self,
+        thread_id: ThreadId,
+    ) -> Option<thread_service_api::LiveExternalRootThreadFacts> {
+        self.root_external_agent_control()
+            .live_external_root_thread_facts(thread_id)
+    }
+
     pub async fn close_external_root_thread(&self, thread_id: ThreadId) -> CodexResult<String> {
         self.root_external_agent_control()
             .close_external_root_thread(thread_id)
@@ -1810,8 +1818,7 @@ impl ThreadServiceState {
             .into_iter()
             .map(|(thread_id, thread)| async move {
                 let agent_control = thread.codex.session.services.agent_control.clone();
-                let native_shutdown =
-                    tokio::time::timeout(timeout, thread.shutdown_and_wait());
+                let native_shutdown = tokio::time::timeout(timeout, thread.shutdown_and_wait());
                 let external_shutdown =
                     agent_control.shutdown_all_live_external_threads_bounded(timeout);
                 let (native_shutdown, external_report) =
@@ -2439,7 +2446,6 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadServiceState {
                 })
         }
     }
-
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -2908,7 +2914,6 @@ impl thread_service_api::LiveThreadCommandRuntime for ThreadService {
             info,
         )
     }
-
 }
 
 #[allow(clippy::manual_async_fn)]

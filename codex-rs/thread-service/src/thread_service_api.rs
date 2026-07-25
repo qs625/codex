@@ -19,17 +19,18 @@ use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::ExternalRootThreadStartRequest;
 use thread_service_api::ExternalRootThreadStartResult;
 use thread_service_api::ExternalRootThreadStartupConfig;
+use thread_service_api::LiveExternalRootThreadFacts;
 use thread_service_api::NativeAgentRuntime;
-use thread_service_api::RootThreadProviderResolutionError;
-use thread_service_api::RootThreadProviderRoute;
+use thread_service_api::NativeTurnEventRuntime;
 use thread_service_api::PersistedExternalRootThreadFacts;
 use thread_service_api::PersistedThreadProviderFactsRuntime;
 use thread_service_api::PersistedThreadProviderFactsSelector;
+use thread_service_api::RootThreadProviderResolutionError;
+use thread_service_api::RootThreadProviderRoute;
 use thread_service_api::ThreadAgentDirectoryRuntime;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
 use thread_service_api::ThreadCreatedEvent;
-use thread_service_api::NativeTurnEventRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
 use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadListedAgent;
@@ -588,6 +589,13 @@ impl ExternalRootThreadRuntime for ThreadService {
 
     fn has_external_root_thread(&self, thread_id: protocol::ThreadId) -> bool {
         ThreadService::has_external_root_thread(self, thread_id)
+    }
+
+    fn live_external_root_thread_facts(
+        &self,
+        thread_id: protocol::ThreadId,
+    ) -> Option<LiveExternalRootThreadFacts> {
+        ThreadService::live_external_root_thread_facts(self, thread_id)
     }
 
     fn submit_external_root_input<'a>(

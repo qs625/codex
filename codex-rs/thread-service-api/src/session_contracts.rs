@@ -968,6 +968,12 @@ impl ThreadProviderRootCapability {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiveExternalRootThreadFacts {
+    pub thread_id: ThreadId,
+    pub provider: ExternalRootThreadProvider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadProviderRuntimeCapabilities {
     pub start_thread: bool,
     pub send_input: bool,
@@ -1082,6 +1088,11 @@ pub trait ExternalRootThreadRuntime: Send + Sync + 'static {
     ) -> ThreadServiceFuture<'a, CodexResult<ExternalRootThreadStartResult>>;
 
     fn has_external_root_thread(&self, thread_id: ThreadId) -> bool;
+
+    fn live_external_root_thread_facts(
+        &self,
+        thread_id: ThreadId,
+    ) -> Option<LiveExternalRootThreadFacts>;
 
     fn submit_external_root_input<'a>(
         &'a self,

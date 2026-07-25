@@ -550,9 +550,9 @@ impl TurnRequestProcessor {
         thread_id: ThreadId,
     ) -> Result<Option<String>, JSONRPCErrorError> {
         self.persisted_thread_provider_facts_runtime
-            .persisted_external_root_thread_facts(
-                PersistedThreadProviderFactsSelector::ThreadId(thread_id),
-            )
+            .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::ThreadId(
+                thread_id,
+            ))
             .await
             .map(|facts| facts.map(|facts| facts.provider_id))
             .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
@@ -562,21 +562,10 @@ impl TurnRequestProcessor {
         &self,
         thread_id: ThreadId,
     ) -> Result<Option<String>, JSONRPCErrorError> {
-        if !self
+        Ok(self
             .external_root_thread_runtime
-            .has_external_root_thread(thread_id)
-        {
-            return Ok(None);
-        }
-        let snapshot = self
-            .live_thread_inspection
-            .live_thread_snapshot(thread_id)
-            .await
-            .map_err(|err| internal_error(format!("failed to inspect live thread: {err}")))?;
-        Ok(snapshot
-            .config_snapshot
-            .root_execution_provider_id()
-            .map(ToString::to_string))
+            .live_external_root_thread_facts(thread_id)
+            .map(|facts| facts.provider.provider_id().to_string()))
     }
 
     async fn reject_external_root_native_only_op(
@@ -622,7 +611,8 @@ impl TurnRequestProcessor {
             })?;
         if self
             .external_root_thread_runtime
-            .has_external_root_thread(thread_id)
+            .live_external_root_thread_facts(thread_id)
+            .is_some()
         {
             return self
                 .external_root_turn_start_inner(&request_id, thread_id, params)
