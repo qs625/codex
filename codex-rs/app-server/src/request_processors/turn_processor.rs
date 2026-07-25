@@ -16,9 +16,8 @@ use thread_service::NativeDetachedReviewRuntime;
 use thread_service::NativeMemoryStartupConfigRuntime;
 use thread_service::NativeThreadEnvironmentRuntime;
 use thread_service_api::AppServerClientInfo;
+use thread_service_api::ExternalRootThreadInputRoute;
 use thread_service_api::ExternalRootThreadRuntime;
-use thread_service_api::PersistedThreadProviderFactsRuntime;
-use thread_service_api::PersistedThreadProviderFactsSelector;
 use thread_service_api::ThreadLifecycleRuntime;
 
 #[derive(Clone)]
@@ -39,7 +38,6 @@ pub(crate) struct TurnRequestProcessor {
     live_thread_usage: Arc<dyn AppServerLiveThreadUsageRuntime>,
     live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
     external_root_thread_runtime: Arc<dyn ExternalRootThreadRuntime>,
-    persisted_thread_provider_facts_runtime: Arc<dyn PersistedThreadProviderFactsRuntime>,
     memory_startup_host: Arc<dyn MemoryServiceHost>,
     model_service: SharedModelServiceApi,
     outgoing: Arc<OutgoingMessageSender>,
@@ -105,7 +103,6 @@ impl TurnRequestProcessor {
             live_thread_usage: thread_service.clone(),
             live_thread_goal: thread_service.clone(),
             external_root_thread_runtime: thread_service.clone(),
-            persisted_thread_provider_facts_runtime: thread_service.clone(),
             memory_startup_host: thread_service,
             model_service,
             outgoing,
@@ -545,39 +542,25 @@ impl TurnRequestProcessor {
         })
     }
 
-    async fn persisted_external_root_provider(
-        &self,
-        thread_id: ThreadId,
-    ) -> Result<Option<String>, JSONRPCErrorError> {
-        self.persisted_thread_provider_facts_runtime
-            .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::ThreadId(
-                thread_id,
-            ))
-            .await
-            .map(|facts| facts.map(|facts| facts.provider_id))
-            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
-    }
-
-    async fn live_external_root_provider(
-        &self,
-        thread_id: ThreadId,
-    ) -> Result<Option<String>, JSONRPCErrorError> {
-        Ok(self
-            .external_root_thread_runtime
-            .live_external_root_thread_facts(thread_id)
-            .map(|facts| facts.provider.provider_id().to_string()))
-    }
-
     async fn reject_external_root_native_only_op(
         &self,
         request_id: Option<&ConnectionRequestId>,
         thread_id: ThreadId,
         method: &'static str,
     ) -> Result<(), JSONRPCErrorError> {
-        let provider = if let Some(provider) = self.live_external_root_provider(thread_id).await? {
-            Some(provider)
-        } else {
-            self.persisted_external_root_provider(thread_id).await?
+        let route = self
+            .external_root_thread_runtime
+            .external_root_thread_input_route(thread_id)
+            .await
+            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))?;
+        let provider = match route {
+            ExternalRootThreadInputRoute::LiveExternalRoot { provider, .. } => {
+                Some(provider.provider_id().to_string())
+            }
+            ExternalRootThreadInputRoute::UnsupportedPersistedExternalRoot {
+                provider_id, ..
+            } => Some(provider_id),
+            ExternalRootThreadInputRoute::NativeRequired => None,
         };
         if let Some(provider) = provider {
             let error = unsupported_external_root_active_op(method, provider.as_str());
@@ -609,26 +592,30 @@ impl TurnRequestProcessor {
             .inspect_err(|error| {
                 self.track_error_response(&request_id, error, /*error_type*/ None);
             })?;
-        if self
+
+        match self
             .external_root_thread_runtime
-            .live_external_root_thread_facts(thread_id)
-            .is_some()
-        {
-            return self
-                .external_root_turn_start_inner(&request_id, thread_id, params)
-                .await;
-        }
-        if let Some(provider) = self
-            .persisted_external_root_provider(thread_id)
+            .external_root_thread_input_route(thread_id)
             .await
+            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
             .inspect_err(|error| {
                 self.track_error_response(&request_id, error, /*error_type*/ None);
-            })?
-        {
-            let error = unsupported_external_root_active_op("turn/start", provider.as_str());
-            self.track_error_response(&request_id, &error, /*error_type*/ None);
-            return Err(error);
+            })? {
+            ExternalRootThreadInputRoute::LiveExternalRoot { .. } => {
+                return self
+                    .external_root_turn_start_inner(&request_id, thread_id, params)
+                    .await;
+            }
+            ExternalRootThreadInputRoute::UnsupportedPersistedExternalRoot {
+                provider_id, ..
+            } => {
+                let error = unsupported_external_root_active_op("turn/start", provider_id.as_str());
+                self.track_error_response(&request_id, &error, /*error_type*/ None);
+                return Err(error);
+            }
+            ExternalRootThreadInputRoute::NativeRequired => {}
         }
+
         self.set_app_server_client_info(
             thread_id,
             app_server_client_name,

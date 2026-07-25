@@ -973,6 +973,19 @@ pub struct LiveExternalRootThreadFacts {
     pub provider: ExternalRootThreadProvider,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExternalRootThreadInputRoute {
+    LiveExternalRoot {
+        thread_id: ThreadId,
+        provider: ExternalRootThreadProvider,
+    },
+    UnsupportedPersistedExternalRoot {
+        thread_id: ThreadId,
+        provider_id: String,
+    },
+    NativeRequired,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadProviderRuntimeCapabilities {
     pub start_thread: bool,
@@ -1093,6 +1106,11 @@ pub trait ExternalRootThreadRuntime: Send + Sync + 'static {
         &self,
         thread_id: ThreadId,
     ) -> Option<LiveExternalRootThreadFacts>;
+
+    fn external_root_thread_input_route<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<ExternalRootThreadInputRoute>>;
 
     fn submit_external_root_input<'a>(
         &'a self,

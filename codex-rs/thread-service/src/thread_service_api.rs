@@ -14,6 +14,7 @@ use thread_service_api::AgentDirectoryListRequest;
 use thread_service_api::AgentDirectoryListResult;
 use thread_service_api::AgentReferenceResolution;
 use thread_service_api::AgentReferenceResolutionRequest;
+use thread_service_api::ExternalRootThreadInputRoute;
 use thread_service_api::ExternalRootThreadProvider;
 use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::ExternalRootThreadStartRequest;
@@ -596,6 +597,15 @@ impl ExternalRootThreadRuntime for ThreadService {
         thread_id: protocol::ThreadId,
     ) -> Option<LiveExternalRootThreadFacts> {
         ThreadService::live_external_root_thread_facts(self, thread_id)
+    }
+
+    fn external_root_thread_input_route<'a>(
+        &'a self,
+        thread_id: protocol::ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<ExternalRootThreadInputRoute>> {
+        Box::pin(
+            async move { ThreadService::external_root_thread_input_route(self, thread_id).await },
+        )
     }
 
     fn submit_external_root_input<'a>(

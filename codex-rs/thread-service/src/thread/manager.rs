@@ -118,6 +118,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use thread_service_api::ActiveEventSubscriptionTracker;
+use thread_service_api::ExternalRootThreadInputRoute;
 use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::PersistedExternalRootThreadFacts;
@@ -1339,6 +1340,37 @@ impl ThreadService {
     ) -> Option<thread_service_api::LiveExternalRootThreadFacts> {
         self.root_external_agent_control()
             .live_external_root_thread_facts(thread_id)
+    }
+
+    pub async fn external_root_thread_input_route(
+        &self,
+        thread_id: ThreadId,
+    ) -> CodexResult<ExternalRootThreadInputRoute> {
+        if let Some(facts) = self.live_external_root_thread_facts(thread_id) {
+            return Ok(ExternalRootThreadInputRoute::LiveExternalRoot {
+                thread_id: facts.thread_id,
+                provider: facts.provider,
+            });
+        }
+        if thread_service_api::LiveThreadInspectionRuntime::is_live_thread_loaded(self, thread_id)
+            .await
+        {
+            return Ok(ExternalRootThreadInputRoute::NativeRequired);
+        }
+        if let Some(facts) = self
+            .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::ThreadId(
+                thread_id,
+            ))
+            .await?
+        {
+            return Ok(
+                ExternalRootThreadInputRoute::UnsupportedPersistedExternalRoot {
+                    thread_id: facts.thread_id,
+                    provider_id: facts.provider_id,
+                },
+            );
+        }
+        Ok(ExternalRootThreadInputRoute::NativeRequired)
     }
 
     pub async fn close_external_root_thread(&self, thread_id: ThreadId) -> CodexResult<String> {

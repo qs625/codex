@@ -12,10 +12,10 @@ use core_test_support::PathExt;
 use core_test_support::responses::mount_models_once;
 use model_service_api::ModelCatalogRefresh;
 use pretty_assertions::assert_eq;
+use protocol::AgentPath;
 use protocol::SessionId;
 use protocol::models::ContentItem;
 use protocol::models::ReasoningItemReasoningSummary;
-use protocol::AgentPath;
 use protocol::models::ResponseItem;
 use protocol::openai_models::ModelsResponse;
 use protocol::protocol::AgentMessageEvent;
@@ -1311,14 +1311,16 @@ async fn persisted_external_root_thread_facts_classifies_stored_threads() {
     config.codex_home = temp_dir.path().join("codex-home").abs();
     config.cwd = config.codex_home.abs();
     let store_id = format!("thread-provider-facts-{}", uuid::Uuid::new_v4());
-    config.experimental_thread_store =
-        crate::config::ThreadStoreConfig::InMemory { id: store_id.clone() };
+    config.experimental_thread_store = crate::config::ThreadStoreConfig::InMemory {
+        id: store_id.clone(),
+    };
     std::fs::create_dir_all(&config.codex_home).expect("create codex home");
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let state_db = init_state_db(&config).await;
     let thread_store = thread_store_from_config(&config, state_db.clone());
+    let in_memory_store = thread_store::InMemoryThreadStore::for_id(&store_id);
     let manager = test_thread_service_manager(
         &config,
         auth_manager,
@@ -1337,6 +1339,10 @@ async fn persisted_external_root_thread_facts_classifies_stored_threads() {
         ThreadId::from_string("00000000-0000-4000-8000-000000000704").expect("descriptor id");
     let missing_id =
         ThreadId::from_string("00000000-0000-4000-8000-000000000705").expect("missing id");
+    let live_native_thread = manager
+        .start_thread(config.clone())
+        .await
+        .expect("start live native thread");
 
     seed_provider_facts_thread(
         thread_store.as_ref(),
@@ -1431,6 +1437,16 @@ async fn persisted_external_root_thread_facts_classifies_stored_threads() {
         terminal_facts.restore_eligibility,
         ExternalLiveRestoreEligibility::TerminalReadOnly
     );
+    assert_eq!(
+        manager
+            .external_root_thread_input_route(terminal_external_id)
+            .await
+            .expect("terminal external input route should load"),
+        thread_service_api::ExternalRootThreadInputRoute::UnsupportedPersistedExternalRoot {
+            thread_id: terminal_external_id,
+            provider_id: "claude_cli".to_string(),
+        }
+    );
 
     let running_facts = manager
         .persisted_external_root_thread_facts(PersistedThreadProviderFactsSelector::ThreadId(
@@ -1467,7 +1483,39 @@ async fn persisted_external_root_thread_facts_classifies_stored_threads() {
             .expect("missing thread facts should load"),
         None
     );
+    assert_eq!(
+        manager
+            .external_root_thread_input_route(native_id)
+            .await
+            .expect("native input route should load"),
+        thread_service_api::ExternalRootThreadInputRoute::NativeRequired
+    );
+    let calls_before_live_native_route = in_memory_store.calls().await;
+    assert_eq!(
+        manager
+            .external_root_thread_input_route(live_native_thread.thread_id)
+            .await
+            .expect("live native input route should load"),
+        thread_service_api::ExternalRootThreadInputRoute::NativeRequired
+    );
+    let calls_after_live_native_route = in_memory_store.calls().await;
+    assert_eq!(
+        calls_after_live_native_route.read_thread, calls_before_live_native_route.read_thread,
+        "live native input route should not read persisted thread facts"
+    );
+    assert_eq!(
+        manager
+            .external_root_thread_input_route(missing_id)
+            .await
+            .expect("missing input route should load"),
+        thread_service_api::ExternalRootThreadInputRoute::NativeRequired
+    );
 
+    live_native_thread
+        .thread
+        .shutdown_and_wait()
+        .await
+        .expect("shutdown live native thread");
     let _ = thread_store::InMemoryThreadStore::remove_id(&store_id);
 }
 

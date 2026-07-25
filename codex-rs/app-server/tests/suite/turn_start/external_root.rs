@@ -314,6 +314,33 @@ async fn persisted_external_root_rejects_turn_processor_native_only_ops() -> Res
 }
 
 #[tokio::test]
+async fn persisted_external_root_turn_start_rejects_without_restore() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
+    drop(mcp);
+
+    let mut restarted = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    expect_no_loaded_threads(&mut restarted).await?;
+
+    let turn_req = restarted
+        .send_turn_start_request(TurnStartParams {
+            thread_id,
+            input: vec![V2UserInput::Text {
+                text: "resume external root".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut restarted, turn_req, "turn/start").await?;
+    expect_no_loaded_threads(&mut restarted).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn external_root_turn_start_rejects_non_text_input() -> Result<()> {
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;

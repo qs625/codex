@@ -2214,6 +2214,33 @@ async fn live_external_root_thread_facts_classifies_root_provider() {
         ),
         None
     );
+    assert_eq!(
+        harness
+            .manager
+            .external_root_thread_input_route(external_root_thread_id)
+            .await
+            .expect("live external root route should load"),
+        thread_service_api::ExternalRootThreadInputRoute::LiveExternalRoot {
+            thread_id: external_root_thread_id,
+            provider: thread_service_api::ExternalRootThreadProvider::Opencode,
+        }
+    );
+    assert_eq!(
+        harness
+            .manager
+            .external_root_thread_input_route(external_child_thread_id)
+            .await
+            .expect("external child route should load"),
+        thread_service_api::ExternalRootThreadInputRoute::NativeRequired
+    );
+    assert_eq!(
+        harness
+            .manager
+            .external_root_thread_input_route(native_thread_id)
+            .await
+            .expect("native route should load"),
+        thread_service_api::ExternalRootThreadInputRoute::NativeRequired
+    );
 }
 
 #[tokio::test]
