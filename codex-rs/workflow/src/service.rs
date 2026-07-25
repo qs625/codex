@@ -10,7 +10,7 @@ use protocol::models::WorkflowRunProgressKind;
 use serde::Deserialize;
 use serde_json::Value;
 use thread_service_api::NativeAgentRuntime;
-use thread_service_api::ThreadEventRuntime;
+use thread_service_api::NativeTurnEventRuntime;
 use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadServiceFuture;
@@ -54,7 +54,12 @@ pub struct WorkflowService {
     thread_runtime: Weak<dyn WorkflowThreadRuntime>,
 }
 
-pub trait WorkflowThreadRuntime: Send + Sync + 'static {
+/// Native agent operations used by workflow runner scripts.
+///
+/// Workflow execution is currently exposed only for the native provider, so
+/// these methods intentionally keep native `spawn_agent` / `followup_task`
+/// semantics rather than pretending to be provider-neutral child spawning.
+pub trait WorkflowNativeAgentRuntime: Send + Sync + 'static {
     fn spawn_agent<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -69,7 +74,14 @@ pub trait WorkflowThreadRuntime: Send + Sync + 'static {
         target: String,
         message: String,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
+}
 
+/// Native turn-bound poll/progress adapter used by workflow runner scripts.
+///
+/// `event.poll` and workflow progress still execute against the native turn
+/// capability. External provider `poll_external_event` uses a separate
+/// thread-id scoped path and does not implement this workflow adapter.
+pub trait WorkflowNativeTurnEventRuntime: Send + Sync + 'static {
     fn poll_event<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -83,9 +95,19 @@ pub trait WorkflowThreadRuntime: Send + Sync + 'static {
     ) -> ThreadServiceFuture<'a, Result<(), String>>;
 }
 
-impl<T> WorkflowThreadRuntime for T
+pub trait WorkflowThreadRuntime:
+    WorkflowNativeAgentRuntime + WorkflowNativeTurnEventRuntime + Send + Sync + 'static
+{
+}
+
+impl<T> WorkflowThreadRuntime for T where
+    T: WorkflowNativeAgentRuntime + WorkflowNativeTurnEventRuntime + Send + Sync + 'static
+{
+}
+
+impl<T> WorkflowNativeAgentRuntime for T
 where
-    T: NativeAgentRuntime + ThreadEventRuntime,
+    T: NativeAgentRuntime,
 {
     fn spawn_agent<'a>(
         &'a self,
@@ -105,13 +127,18 @@ where
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
         NativeAgentRuntime::followup_task(self, turn, call_id, target, message)
     }
+}
 
+impl<T> WorkflowNativeTurnEventRuntime for T
+where
+    T: NativeTurnEventRuntime,
+{
     fn poll_event<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
         request: ThreadPollEventRequest,
     ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>> {
-        ThreadEventRuntime::poll_event(self, turn, request)
+        NativeTurnEventRuntime::poll_event(self, turn, request)
     }
 
     fn record_model_items_and_emit_display_events<'a>(
@@ -119,7 +146,7 @@ where
         turn: Arc<dyn ThreadTurnCapability>,
         items: Vec<ResponseItem>,
     ) -> ThreadServiceFuture<'a, Result<(), String>> {
-        ThreadEventRuntime::record_model_items_and_emit_display_events(self, turn, items)
+        NativeTurnEventRuntime::record_model_items_and_emit_display_events(self, turn, items)
     }
 }
 

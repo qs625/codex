@@ -26,7 +26,7 @@ use thread_service_api::ThreadAgentDirectoryRuntime;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
 use thread_service_api::ThreadCreatedEvent;
-use thread_service_api::ThreadEventRuntime;
+use thread_service_api::NativeTurnEventRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
 use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadListedAgent;
@@ -594,7 +594,7 @@ impl ExternalRootThreadRuntime for ThreadService {
     }
 }
 
-impl ThreadEventRuntime for ThreadService {
+impl NativeTurnEventRuntime for ThreadService {
     fn poll_event<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -687,7 +687,7 @@ mod tests {
             + ThreadProviderCatalogRuntime
             + ThreadAgentDirectoryRuntime
             + ExternalRootThreadRuntime
-            + ThreadEventRuntime,
+            + NativeTurnEventRuntime,
     {
     }
 

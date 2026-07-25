@@ -34,7 +34,7 @@ use thread_service_api::NativeAgentRuntime;
 use thread_service_api::SessionAgentJobCaller;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
-use thread_service_api::ThreadEventRuntime;
+use thread_service_api::NativeTurnEventRuntime;
 use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
@@ -143,7 +143,7 @@ pub trait AgentToolRuntime: Send + Sync + 'static {
 
 impl<T> AgentToolRuntime for T
 where
-    T: NativeAgentRuntime + ThreadCollaborationRuntime + ThreadEventRuntime,
+    T: NativeAgentRuntime + ThreadCollaborationRuntime + NativeTurnEventRuntime,
 {
     fn spawn_agent<'a>(
         &'a self,
@@ -224,7 +224,7 @@ where
         turn: Arc<dyn ThreadTurnCapability>,
         request: ThreadPollEventRequest,
     ) -> ThreadServiceFuture<'a, Result<ThreadPollEventResult, FunctionCallError>> {
-        ThreadEventRuntime::poll_event(self, turn, request)
+        NativeTurnEventRuntime::poll_event(self, turn, request)
     }
 
     fn poll_event_timeout_metadata<'a>(
@@ -232,7 +232,7 @@ where
         turn: Arc<dyn ThreadTurnCapability>,
         request: ThreadPollEventRequest,
     ) -> ThreadServiceFuture<'a, Result<ThreadPollEventTimeoutMetadata, FunctionCallError>> {
-        ThreadEventRuntime::poll_event_timeout_metadata(self, turn, request)
+        NativeTurnEventRuntime::poll_event_timeout_metadata(self, turn, request)
     }
 }
 

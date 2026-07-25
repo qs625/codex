@@ -1072,12 +1072,13 @@ pub trait ExternalRootThreadRuntime: Send + Sync + 'static {
     ) -> ThreadServiceFuture<'a, CodexResult<String>>;
 }
 
-/// Thread event kernel runtime.
+/// Native turn-bound event and workflow progress adapter.
 ///
-/// These methods own event wakeup/backoff and thread-owned display item
-/// emission. Providers and collaboration tools should emit facts through this
-/// boundary instead of owning replay/display branching.
-pub trait ThreadEventRuntime: Send + Sync + 'static {
+/// These methods still require a native `ThreadTurnCapability`; they adapt the
+/// native session's poll-event and display emission semantics for native tools
+/// and workflow runs. External provider poll paths are thread-id scoped and do
+/// not implement this turn-bound adapter.
+pub trait NativeTurnEventRuntime: Send + Sync + 'static {
     fn poll_event<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,

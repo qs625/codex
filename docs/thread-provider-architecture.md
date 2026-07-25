@@ -386,9 +386,9 @@ Suggested implementation slices:
   `followup_task`、`close_agent`、`list_agents` 等 tool surface，但内部先解析目标
   provider，再路由到 native/external provider。这里可以继续保留 native/external
   tool 名称分离，但实现不应复制两套 registry。
-- `ThreadEventRuntime`：`emit_event`、display event emission、rollout persistence、
-  status notification、`poll_event` wakeup 等 event kernel 能力。provider 只调用它
-  发 fact，不拥有 replay/display 分叉逻辑。
+- `NativeTurnEventRuntime`：当前 native turn-bound 的 `poll_event`、wait backoff
+  和 display event emission adapter。它仍依赖 native `ThreadTurnCapability`；
+  external `poll_external_event` 是 thread-id scoped path，不通过该 adapter。
 - `NativeAgentRuntime`：Morpheus-only extension trait，只由 native provider 和
   internal agent control 使用；external provider 不实现，也不通过空实现假装支持。
 
@@ -406,12 +406,11 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
   `ProviderExecutionContext`，其中包含 provider id、thread handle、cwd、bounded
   event sink、input receiver、shutdown token 和必要的 persisted metadata writer。
 
-第一步可以保持现有 public trait 兼容，在 thread-service 内部新增窄接口并让
-`ThreadService` 同时实现旧接口和新接口。随后把调用点从旧的宽 `ThreadServiceApi`
-迁到窄接口，最后再删除旧接口里的 native/external 重复方法。这个顺序能避免一次性
-重写所有 tool crate。
+这一迁移已完成旧宽 `ThreadServiceApi` facade 的移除：调用方直接依赖
+thread-service 内部实现的窄 runtime trait，而不是通过一个继续增长的 all-in-one
+接口访问 native/external 能力。
 
-当前过渡实现已将 `thread_service_api::ThreadServiceApi` 拆成四个窄边界：
+当前过渡实现保留四个窄边界：
 
 - `ThreadLifecycleRuntime`：provider-neutral lifecycle 边界；当前已承载
   `shutdown_all_threads_bounded`、per-thread live shutdown/removal、
@@ -435,21 +434,22 @@ active turn/tool dispatch 的 capability，不是 provider capability。它们�
   `NativeThreadCreationRuntime` / `NativeThreadEnvironmentRuntime`。
 - `NativeAgentRuntime`：承载 native Morpheus `spawn_agent`、`followup_task`、
   `close_agent` 和 `list_agents`。
-- `ThreadCollaborationRuntime`：承载 external collaboration tool surface，并继承
-  `NativeAgentRuntime` 以保持现有 model-visible collaboration facade 兼容。
-- `ThreadEventRuntime`：承载 `poll_event`、wait backoff 和
-  `record_model_items_and_emit_display_events`。
+- `ThreadCollaborationRuntime`：承载 external collaboration tool surface；native
+  agent tools 继续由 `NativeAgentRuntime` 承载，model-visible tool facade 在
+  tool-service 侧组合这些窄 runtime trait。
+- `NativeTurnEventRuntime`：承载 native turn-bound `poll_event`、wait backoff 和
+  `record_model_items_and_emit_display_events`；external poll 仍走 thread-id scoped
+  external registry path，不实现该 adapter。
 
-旧 `ThreadServiceApi` 现在只是
-`ThreadLifecycleRuntime + ThreadCollaborationRuntime + ThreadEventRuntime` 的兼容
-facade，并通过 blanket impl 自动为实现窄 trait 的 runtime 提供旧 API。app-server
-thread processor 的 shutdown、thread-created 订阅和 active event subscription
-tracker 已改到 `ThreadLifecycleRuntime`；root start/resume/fork 的具体创建调用点
-已从 app-server-local `ThreadProcessorThreadRuntime` 迁到 thread-service native
-creation/environment runtime。app-server 只把 `NewThread` 投影成 response assembly
-需要的 `thread_id`、telemetry-only created-thread handle 和
-`SessionConfiguredEvent`。这仍不是 external provider root start support；后续阶段
-需要把 provider-neutral request DTO 和 routing 从这些 native-only DTO 中继续拆出。
+`ThreadService` 分别实现这些 runtime trait。app-server thread processor 的
+shutdown、thread-created 订阅和 active event subscription tracker 已改到
+`ThreadLifecycleRuntime`；root
+start/resume/fork 的具体创建调用点已从 app-server-local
+`ThreadProcessorThreadRuntime` 迁到 thread-service native creation/environment
+runtime。app-server 只把 `NewThread` 投影成 response assembly 需要的 `thread_id`、
+telemetry-only created-thread handle 和 `SessionConfiguredEvent`。这仍不是 external
+provider root start support；后续阶段需要把 provider-neutral request DTO 和 routing
+从这些 native-only DTO 中继续拆出。
 
 live thread runtime 的 command/inspection 能力也已开始迁移到 provider-neutral
 surfaces，status、app-server archive 与 listener idle-unload 的 per-thread shutdown
