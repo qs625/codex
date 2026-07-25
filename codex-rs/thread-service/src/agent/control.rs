@@ -247,6 +247,19 @@ fn external_session_source_for(
     })
 }
 
+fn external_tool_directory_session_source(sender: &ExternalToolContext) -> SessionSource {
+    if sender.agent_path.is_root() {
+        SessionSource::Unknown
+    } else {
+        external_session_source_for(
+            sender.parent_thread_id,
+            sender.depth,
+            sender.agent_path.clone(),
+            sender.provider,
+        )
+    }
+}
+
 fn external_live_thread_snapshot(
     config: &ExternalSpawnConfig,
     thread_id: ThreadId,
@@ -537,7 +550,7 @@ impl AgentControl {
         if !self.has_external_root_thread(thread_id) {
             return Err(CodexErr::ThreadNotFound(thread_id));
         }
-        let shutdown_run = self.external_agents.shutdown(thread_id);
+        let shutdown_run = self.external_agents.shutdown_and_remove(thread_id);
         let status = shutdown_run
             .as_ref()
             .map(|run| run.status.clone())
@@ -1771,7 +1784,6 @@ impl AgentControl {
     /// agent and any live descendants reached from the in-memory tree.
     pub(crate) async fn close_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         if self.external_agents.get(agent_id).is_some() {
-            let shutdown_run = self.external_agents.shutdown(agent_id);
             let state = self.upgrade().ok();
             if let Some(state) = state.as_ref() {
                 if let Some(state_db_ctx) = state.thread_state_runtime()
@@ -1786,6 +1798,39 @@ impl AgentControl {
                         "failed to persist external thread-spawn edge status for {agent_id}: {err}"
                     );
                 }
+            }
+            return Box::pin(self.shutdown_agent_tree(agent_id)).await;
+        }
+        let state = self.upgrade()?;
+        if let Some(state_db_ctx) = state.thread_state_runtime()
+            && let Err(err) = state_db_ctx
+                .set_thread_spawn_edge_status(agent_id, DirectionalThreadSpawnEdgeStatus::Closed)
+                .await
+        {
+            warn!("failed to persist thread-spawn edge status for {agent_id}: {err}");
+        }
+        Box::pin(self.shutdown_agent_tree(agent_id)).await
+    }
+
+    /// Shut down `agent_id` and any live descendants reachable from the in-memory spawn tree.
+    async fn shutdown_agent_tree(&self, agent_id: ThreadId) -> CodexResult<String> {
+        let descendant_ids = self.live_thread_spawn_descendants(agent_id).await?;
+        let result = self.shutdown_live_agent_record(agent_id).await;
+        for descendant_id in descendant_ids {
+            match self.shutdown_live_agent_record(descendant_id).await {
+                Ok(_) => {}
+                Err(err) if should_ignore_descendant_shutdown_error(&err) => {}
+                Err(err) => return Err(err),
+            }
+        }
+        result
+    }
+
+    async fn shutdown_live_agent_record(&self, agent_id: ThreadId) -> CodexResult<String> {
+        if self.external_agents.get(agent_id).is_some() {
+            let shutdown_run = self.external_agents.shutdown_and_remove(agent_id);
+            let state = self.upgrade().ok();
+            if let Some(state) = state.as_ref() {
                 let agent_status = shutdown_run
                     .as_ref()
                     .map(|run| run.status.clone())
@@ -1803,29 +1848,8 @@ impl AgentControl {
             self.state.release_spawned_thread(agent_id);
             return Ok(agent_id.to_string());
         }
-        let state = self.upgrade()?;
-        if let Some(state_db_ctx) = state.thread_state_runtime()
-            && let Err(err) = state_db_ctx
-                .set_thread_spawn_edge_status(agent_id, DirectionalThreadSpawnEdgeStatus::Closed)
-                .await
-        {
-            warn!("failed to persist thread-spawn edge status for {agent_id}: {err}");
-        }
-        Box::pin(self.shutdown_agent_tree(agent_id)).await
-    }
 
-    /// Shut down `agent_id` and any live descendants reachable from the in-memory spawn tree.
-    async fn shutdown_agent_tree(&self, agent_id: ThreadId) -> CodexResult<String> {
-        let descendant_ids = self.live_thread_spawn_descendants(agent_id).await?;
-        let result = self.shutdown_live_agent(agent_id).await;
-        for descendant_id in descendant_ids {
-            match self.shutdown_live_agent(descendant_id).await {
-                Ok(_) => {}
-                Err(err) if should_ignore_descendant_shutdown_error(&err) => {}
-                Err(err) => return Err(err),
-            }
-        }
-        result
+        self.shutdown_live_agent(agent_id).await
     }
 
     /// Fetch the last known status for `agent_id`, returning `NotFound` when unavailable.
@@ -1932,8 +1956,9 @@ impl AgentControl {
             }
             ExternalToolName::FollowupExternalTask => {
                 let args: ExternalFollowupTaskArgs = parse_external_arguments(&call.arguments)?;
-                let receiver_thread_id =
-                    self.resolve_external_target(&sender, &args.target).await?;
+                let receiver_thread_id = self
+                    .resolve_external_live_target(&sender, &args.target, "follow up to")
+                    .await?;
                 if sender.agent_path.is_root() && receiver_thread_id == sender.thread_id {
                     return Err(FunctionCallError::RespondToModel(
                         "root external agents cannot follow up to themselves".to_string(),
@@ -2038,7 +2063,9 @@ impl AgentControl {
             }
             ExternalToolName::CloseExternalAgent => {
                 let args: ExternalCloseAgentArgs = parse_external_arguments(&call.arguments)?;
-                let target = self.resolve_external_target(&sender, &args.target).await?;
+                let target = self
+                    .resolve_external_live_target(&sender, &args.target, "close")
+                    .await?;
                 if sender.agent_path.is_root() && target == sender.thread_id {
                     return Err(FunctionCallError::RespondToModel(
                         "root external agents cannot close themselves with close_external_agent"
@@ -2070,10 +2097,11 @@ impl AgentControl {
         }
     }
 
-    async fn resolve_external_target(
+    async fn resolve_external_live_target(
         &self,
         sender: &ExternalToolContext,
         target: &str,
+        action: &str,
     ) -> Result<ThreadId, FunctionCallError> {
         let agent_path = resolve_agent_reference_path(&sender.agent_path, target)
             .map_err(FunctionCallError::RespondToModel)?;
@@ -2081,43 +2109,36 @@ impl AgentControl {
             return Ok(sender.thread_id);
         }
 
-        let root_thread_id = if sender.agent_path.is_root() {
-            sender.thread_id
-        } else {
-            self.persisted_thread_spawn_root(sender.thread_id)
-                .await
-                .or_else(|| self.state.agent_id_for_path(&AgentPath::root()))
-                .ok_or_else(|| {
-                    FunctionCallError::RespondToModel(
-                        "unable to resolve external agent root scope".to_string(),
-                    )
-                })?
-        };
-        let scoped_thread_ids = self.external_agent_scope_thread_ids(root_thread_id).await;
-
-        if let Some(thread_id) = self.state.agent_id_for_path(&agent_path)
-            && scoped_thread_ids.contains(&thread_id)
-        {
-            return Ok(thread_id);
+        let current_session_source = external_tool_directory_session_source(sender);
+        let resolution = self
+            .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
+                current_thread_id: sender.thread_id,
+                current_session_source,
+                agent_reference: target.to_string(),
+            })
+            .await
+            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+        match resolution {
+            AgentReferenceResolution::Live { thread_id } => Ok(thread_id),
+            AgentReferenceResolution::PersistedExternalReadOnly { agent_path, .. } => {
+                Err(FunctionCallError::RespondToModel(format!(
+                    "external agent `{agent_path}` is persisted and read-only; cannot {action} it"
+                )))
+            }
+            AgentReferenceResolution::PersistedNative { agent_path, .. } => {
+                Err(FunctionCallError::RespondToModel(format!(
+                    "agent `{agent_path}` is persisted and cannot be restored through external tools"
+                )))
+            }
+            AgentReferenceResolution::Unsupported { message, .. } => {
+                Err(FunctionCallError::RespondToModel(message))
+            }
+            AgentReferenceResolution::NotFound { agent_path } => {
+                Err(FunctionCallError::RespondToModel(format!(
+                    "unknown external agent target `{agent_path}`"
+                )))
+            }
         }
-        if let Some(run) = self.external_agents.list().into_iter().find(|run| {
-            run.agent_path == agent_path
-                && (scoped_thread_ids.contains(&run.thread_id)
-                    || scoped_thread_ids.contains(&run.parent_thread_id))
-        }) {
-            return Ok(run.thread_id);
-        }
-        Err(FunctionCallError::RespondToModel(format!(
-            "unknown external agent target `{target}`"
-        )))
-    }
-
-    async fn external_agent_scope_thread_ids(&self, root_thread_id: ThreadId) -> HashSet<ThreadId> {
-        let mut scoped_thread_ids = HashSet::from([root_thread_id]);
-        if let Ok(descendant_ids) = self.live_thread_spawn_descendants(root_thread_id).await {
-            scoped_thread_ids.extend(descendant_ids);
-        }
-        scoped_thread_ids
     }
 
     /// Returns whether the live agent thread has `feature` enabled.
@@ -2357,6 +2378,16 @@ impl AgentControl {
                 return Ok(AgentReferenceResolution::Live { thread_id });
             }
         }
+        if let Some(thread_id) = self
+            .live_directory_thread_id_for_path(
+                request.current_thread_id,
+                &request.current_session_source,
+                &agent_path,
+            )
+            .await?
+        {
+            return Ok(AgentReferenceResolution::Live { thread_id });
+        }
         let Some(root_thread_id) = self
             .root_thread_id_for_persisted_agent_lookup(
                 request.current_thread_id,
@@ -2378,6 +2409,32 @@ impl AgentControl {
         };
         self.persisted_agent_reference_resolution(&target, &agent_path)
             .await
+    }
+
+    async fn live_directory_thread_id_for_path(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+        agent_path: &AgentPath,
+    ) -> CodexResult<Option<ThreadId>> {
+        let directory = self
+            .list_agent_directory(AgentDirectoryListRequest {
+                current_thread_id,
+                current_session_source: current_session_source.clone(),
+                path_prefix: Some(agent_path.to_string()),
+            })
+            .await?;
+        Ok(directory.entries.into_iter().find_map(|entry| {
+            let is_live = matches!(
+                entry.source,
+                AgentDirectoryEntrySource::NativeLive | AgentDirectoryEntrySource::ExternalLive
+            );
+            if is_live && entry.agent_path.as_deref() == Some(agent_path.as_str()) {
+                Some(entry.thread_id)
+            } else {
+                None
+            }
+        }))
     }
 
     pub(crate) async fn resolve_agent_thread_id(

@@ -829,6 +829,58 @@ async fn root_external_followup_resolves_target_within_sender_scope() {
 }
 
 #[tokio::test]
+async fn root_external_close_resolves_live_target_through_directory() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let worker_thread_id = ThreadId::new();
+
+    for (thread_id, parent_thread_id, path) in [
+        (root_thread_id, root_thread_id, "/root"),
+        (worker_thread_id, root_thread_id, "/root/worker"),
+    ] {
+        harness
+            .control
+            .external_agents
+            .insert_running(ExternalAgentRun {
+                thread_id,
+                parent_thread_id,
+                agent_path: AgentPath::try_from(path).expect("agent path"),
+                provider: SpawnAgentProvider::ClaudeCli,
+                depth: if thread_id == parent_thread_id { 0 } else { 1 },
+                spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+                input_sink: None,
+                live_thread: None,
+                status: AgentStatus::Running,
+                active_turn_id: None,
+                last_task_message: None,
+                abort_handle: None,
+            });
+    }
+
+    let result = harness
+        .control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "close_worker".to_string(),
+                tool: ExternalToolName::CloseExternalAgent,
+                arguments: serde_json::json!({ "target": "worker" }),
+            },
+        )
+        .await;
+
+    assert!(result.ok, "close failed: {:?}", result.error);
+    assert!(
+        harness
+            .control
+            .external_agents
+            .get(worker_thread_id)
+            .is_none(),
+        "closed external live target should be removed from live registry",
+    );
+}
+
+#[tokio::test]
 async fn root_external_tools_spawn_child_and_reject_invalid_targets() {
     let harness = AgentControlHarness::new().await;
     let root_thread_id = ThreadId::new();
@@ -3386,6 +3438,69 @@ async fn external_completed_agent_path_resolves_from_persisted_thread_after_rest
 }
 
 #[tokio::test]
+async fn external_tool_followup_and_close_reject_persisted_completed_external_as_read_only() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let (external_thread_id, external_agent_path) = persist_external_child_for_restart(
+        &harness,
+        root_thread_id,
+        "/root/external_completed_tool_reference",
+        AgentStatus::Completed(Some("persisted done".to_string())),
+    )
+    .await;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    restarted_control
+        .external_agents
+        .insert_running(external_root_run(
+            &harness.config,
+            root_thread_id,
+            SpawnAgentProvider::ClaudeCli,
+        ));
+
+    for (call_id, tool, arguments) in [
+        (
+            "follow_persisted_completed",
+            ExternalToolName::FollowupExternalTask,
+            serde_json::json!({
+                "target": external_agent_path.to_string(),
+                "message": "should not deliver"
+            }),
+        ),
+        (
+            "close_persisted_completed",
+            ExternalToolName::CloseExternalAgent,
+            serde_json::json!({ "target": external_agent_path.to_string() }),
+        ),
+    ] {
+        let result = restarted_control
+            .dispatch_external_tool_call(
+                root_thread_id,
+                ExternalToolCall {
+                    id: call_id.to_string(),
+                    tool,
+                    arguments,
+                },
+            )
+            .await;
+        assert!(!result.ok, "persisted target should reject {call_id}");
+        assert!(result.error.as_ref().is_some_and(|error| {
+            error.code == "tool_error"
+                && error.message.contains("persisted and read-only")
+                && error.message.contains(external_agent_path.as_str())
+        }));
+    }
+
+    assert!(
+        restarted_manager
+            .get_thread(external_thread_id)
+            .await
+            .is_err(),
+        "external tool target resolution should not create a native live thread",
+    );
+}
+
+#[tokio::test]
 async fn external_running_agent_path_rejects_after_restart_without_live_process() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
@@ -3566,6 +3681,73 @@ async fn external_running_agent_path_with_descriptor_rejects_as_restore_disabled
             .get_agent_metadata(external_thread_id)
             .is_none(),
         "restore-disabled external agent should not be registered as live metadata",
+    );
+}
+
+#[tokio::test]
+async fn external_tool_followup_rejects_restore_disabled_external_after_restart() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    let (external_thread_id, external_agent_path) =
+        persist_external_child_for_restart_with_provider(
+            &harness,
+            root_thread_id,
+            "/root/external_restore_disabled_tool_reference",
+            SpawnAgentProvider::Opencode,
+            AgentStatus::Running,
+        )
+        .await;
+    harness
+        .control
+        .persist_external_reconnect_descriptor(
+            external_thread_id,
+            opencode_reconnect_descriptor("opencode-session-tool"),
+        )
+        .await
+        .expect("persist reconnect descriptor");
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    restarted_control
+        .external_agents
+        .insert_running(external_root_run(
+            &harness.config,
+            root_thread_id,
+            SpawnAgentProvider::ClaudeCli,
+        ));
+
+    let result = restarted_control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "follow_restore_disabled".to_string(),
+                tool: ExternalToolName::FollowupExternalTask,
+                arguments: serde_json::json!({
+                    "target": external_agent_path.to_string(),
+                    "message": "should not reconnect"
+                }),
+            },
+        )
+        .await;
+
+    assert!(!result.ok);
+    assert!(result.error.as_ref().is_some_and(|error| {
+        error.code == "tool_error"
+            && error.message.contains("reconnect descriptor is present")
+            && error.message.contains("external live restore is disabled")
+            && error.message.contains("transient opencode serve")
+    }));
+    assert!(
+        restarted_manager
+            .get_thread(external_thread_id)
+            .await
+            .is_err(),
+        "restore-disabled external tool resolution should not create a native live thread",
+    );
+    assert!(
+        restarted_control
+            .get_agent_metadata(external_thread_id)
+            .is_none(),
+        "restore-disabled external tool target should not register live metadata",
     );
 }
 
@@ -8029,6 +8211,113 @@ async fn shutdown_agent_tree_closes_live_descendants() {
     let mut shutdown_ids = shutdown_ids;
     shutdown_ids.sort_by_key(std::string::ToString::to_string);
     assert_eq!(shutdown_ids, expected_shutdown_ids);
+}
+
+#[tokio::test]
+async fn external_close_parent_removes_live_external_descendants() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let parent_thread_id = ThreadId::new();
+    let child_thread_id = ThreadId::new();
+    let grandchild_thread_id = ThreadId::new();
+
+    for (thread_id, parent_id, depth, path) in [
+        (
+            parent_thread_id,
+            root_thread_id,
+            1,
+            "/root/external_parent",
+        ),
+        (
+            child_thread_id,
+            parent_thread_id,
+            2,
+            "/root/external_parent/child",
+        ),
+        (
+            grandchild_thread_id,
+            child_thread_id,
+            3,
+            "/root/external_parent/child/grandchild",
+        ),
+    ] {
+        let agent_path = AgentPath::try_from(path).expect("agent path");
+        let session_source = external_session_source_for(
+            parent_id,
+            depth,
+            agent_path.clone(),
+            SpawnAgentProvider::ClaudeCli,
+        );
+        let external_config = ExternalSpawnConfig::from_config(&harness.config);
+        let agent_metadata = AgentMetadata {
+            agent_id: Some(thread_id),
+            agent_path: Some(agent_path.clone()),
+            agent_nickname: Some("claude_cli".to_string()),
+            agent_role: Some("claude_cli".to_string()),
+            counted: true,
+            ..Default::default()
+        };
+        harness
+            .control
+            .upgrade()
+            .expect("manager should be available")
+            .register_external_live_thread_snapshot(
+                thread_id,
+                external_live_thread_snapshot(
+                    &external_config,
+                    thread_id,
+                    session_source.clone(),
+                    &agent_metadata,
+                ),
+                AgentStatus::Running,
+            )
+            .await;
+        harness
+            .control
+            .persist_thread_spawn_edge_for_source(thread_id, Some(&session_source))
+            .await;
+        harness
+            .control
+            .external_agents
+            .insert_running(ExternalAgentRun {
+                thread_id,
+                parent_thread_id: parent_id,
+                agent_path,
+                provider: SpawnAgentProvider::ClaudeCli,
+                depth,
+                spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+                input_sink: None,
+                live_thread: None,
+                status: AgentStatus::Running,
+                active_turn_id: None,
+                last_task_message: None,
+                abort_handle: None,
+            });
+    }
+
+    wait_for_live_thread_spawn_children(&harness.control, root_thread_id, &[parent_thread_id])
+        .await;
+    wait_for_live_thread_spawn_children(&harness.control, parent_thread_id, &[child_thread_id])
+        .await;
+    wait_for_live_thread_spawn_children(&harness.control, child_thread_id, &[grandchild_thread_id])
+        .await;
+
+    let _ = harness
+        .control
+        .close_agent(parent_thread_id)
+        .await
+        .expect("external parent close should succeed");
+
+    for thread_id in [parent_thread_id, child_thread_id, grandchild_thread_id] {
+        assert!(
+            harness.control.external_agents.get(thread_id).is_none(),
+            "external live run should be removed for {thread_id}",
+        );
+        assert_eq!(
+            harness.control.get_status(thread_id).await,
+            AgentStatus::NotFound
+        );
+    }
 }
 
 #[tokio::test]

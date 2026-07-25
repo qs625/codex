@@ -222,6 +222,7 @@ impl ExternalAgentRegistry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn shutdown(&self, thread_id: ThreadId) -> Option<ExternalAgentRun> {
         let mut runs = self
             .runs
@@ -234,6 +235,24 @@ impl ExternalAgentRegistry {
             abort_handle.abort();
         }
         Some(run.clone())
+    }
+
+    pub(crate) fn shutdown_and_remove(&self, thread_id: ThreadId) -> Option<ExternalAgentRun> {
+        let mut run = self
+            .runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&thread_id)?;
+        run.status = AgentStatus::Shutdown;
+        run.active_turn_id = None;
+        if let Some(abort_handle) = run.abort_handle.take() {
+            abort_handle.abort();
+        }
+        self.wait_states
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&thread_id);
+        Some(run)
     }
 
     pub(crate) fn set_terminal_status_if_active(
