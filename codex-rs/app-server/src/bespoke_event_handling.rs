@@ -611,6 +611,8 @@ pub(crate) async fn apply_bespoke_event_handling(
         | EventMsg::CommandExecutionNotificationCompleted(_)
         | EventMsg::BuiltinToolCallStarted(_)
         | EventMsg::BuiltinToolCallCompleted(_)
+        | EventMsg::ExternalToolCallStarted(_)
+        | EventMsg::ExternalToolCallCompleted(_)
         | EventMsg::WorkflowRunProgressCompleted(_)
         | EventMsg::EventCommandEventCompleted(_)
         | EventMsg::EventDrivenToolCompleted(_)
