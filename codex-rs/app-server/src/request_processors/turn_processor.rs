@@ -565,8 +565,56 @@ impl TurnRequestProcessor {
             }
             Err(err) => return Err(err),
         };
-        Ok(thread_store_api::persisted_external_root_provider_id(&stored_thread)
+        Ok(
+            thread_store_api::persisted_external_root_provider_id(&stored_thread)
+                .map(ToString::to_string),
+        )
+    }
+
+    async fn live_external_root_provider(
+        &self,
+        thread_id: ThreadId,
+    ) -> Result<Option<String>, JSONRPCErrorError> {
+        if !self
+            .external_root_thread_runtime
+            .has_external_root_thread(thread_id)
+        {
+            return Ok(None);
+        }
+        let snapshot = self
+            .live_thread_inspection
+            .live_thread_snapshot(thread_id)
+            .await
+            .map_err(|err| internal_error(format!("failed to inspect live thread: {err}")))?;
+        Ok(snapshot
+            .config_snapshot
+            .root_execution_provider_id()
             .map(ToString::to_string))
+    }
+
+    async fn reject_external_root_native_only_op(
+        &self,
+        request_id: Option<&ConnectionRequestId>,
+        thread_id: ThreadId,
+        method: &'static str,
+    ) -> Result<(), JSONRPCErrorError> {
+        let provider = if let Some(provider) = self.live_external_root_provider(thread_id).await? {
+            Some(provider)
+        } else {
+            self.persisted_external_root_provider(thread_id)
+                .await
+                .map_err(|err| {
+                    internal_error(format!("failed to inspect thread provider: {err}"))
+                })?
+        };
+        if let Some(provider) = provider {
+            let error = unsupported_external_root_active_op(method, provider.as_str());
+            if let Some(request_id) = request_id {
+                self.track_error_response(request_id, &error, /*error_type*/ None);
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     async fn turn_start_inner(
@@ -614,10 +662,10 @@ impl TurnRequestProcessor {
             app_server_client_name,
             app_server_client_version,
         )
-            .await
-            .inspect_err(|error| {
-                self.track_error_response(&request_id, error, /*error_type*/ None);
-            })?;
+        .await
+        .inspect_err(|error| {
+            self.track_error_response(&request_id, error, /*error_type*/ None);
+        })?;
 
         let collaboration_mode = params
             .collaboration_mode
@@ -912,6 +960,9 @@ impl TurnRequestProcessor {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(invalid_request)?;
 
+        self.reject_external_root_native_only_op(None, thread_id, "thread/inject_items")
+            .await?;
+
         self.live_thread_injection
             .inject_live_thread_conversation_items(thread_id, items)
             .await
@@ -978,6 +1029,8 @@ impl TurnRequestProcessor {
             );
             return Err(error);
         }
+        self.reject_external_root_native_only_op(Some(request_id), thread_id, "turn/steer")
+            .await?;
 
         let mapped_items: Vec<CoreInputItem> = params
             .input
@@ -1265,6 +1318,12 @@ impl TurnRequestProcessor {
         review_request: ReviewRequest,
         display_text: &str,
     ) -> std::result::Result<(), JSONRPCErrorError> {
+        self.reject_external_root_native_only_op(
+            Some(request_id),
+            parent_thread_id,
+            "review/start",
+        )
+        .await?;
         let turn_id = self
             .live_thread_command
             .submit_live_thread_op_with_trace(
@@ -1292,6 +1351,12 @@ impl TurnRequestProcessor {
         review_request: ReviewRequest,
         display_text: &str,
     ) -> std::result::Result<(), JSONRPCErrorError> {
+        self.reject_external_root_native_only_op(
+            Some(request_id),
+            parent_thread_id,
+            "review/start",
+        )
+        .await?;
         let mut config = self.config.as_ref().clone();
         if let Some(review_model) = &config.review_model {
             config.model = Some(review_model.clone());
@@ -1334,9 +1399,7 @@ impl TurnRequestProcessor {
                     .live_thread_info(thread_id)
                     .await
                     .map_err(|err| {
-                        invalid_request(format!(
-                            "failed to read review thread live info: {err}"
-                        ))
+                        invalid_request(format!("failed to read review thread live info: {err}"))
                     })?
                     .session_id
                     .to_string();
@@ -1426,6 +1489,8 @@ impl TurnRequestProcessor {
 
         let thread_uuid = ThreadId::from_string(&thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        self.reject_external_root_native_only_op(Some(request_id), thread_uuid, "turn/interrupt")
+            .await?;
 
         // Record turn interrupts so we can reply when TurnAborted arrives. Startup
         // interrupts do not have a turn and are acknowledged after submission.

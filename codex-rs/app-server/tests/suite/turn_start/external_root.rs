@@ -69,6 +69,33 @@ async fn expect_external_root_native_only_error(
     Ok(())
 }
 
+async fn expect_no_loaded_threads(mcp: &mut McpProcess) -> Result<()> {
+    let loaded_req = mcp
+        .send_thread_loaded_list_request(ThreadLoadedListParams::default())
+        .await?;
+    let loaded_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(loaded_req)),
+    )
+    .await??;
+    let ThreadLoadedListResponse { data, .. } =
+        to_response::<ThreadLoadedListResponse>(loaded_resp)?;
+    assert_eq!(data, Vec::<String>::new());
+    Ok(())
+}
+
+fn injected_assistant_item(text: &str) -> Result<serde_json::Value> {
+    let item = ResponseItem::Message {
+        id: None,
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+    };
+    Ok(serde_json::to_value(item)?)
+}
+
 #[tokio::test]
 async fn external_root_turn_start_accepts_text_input() -> Result<()> {
     let codex_home = TempDir::new()?;
@@ -129,12 +156,8 @@ async fn external_root_rejects_native_only_active_ops() -> Result<()> {
             thread_id: thread_id.clone(),
         })
         .await?;
-    expect_external_root_native_only_error(
-        &mut mcp,
-        clean_req,
-        "thread/backgroundTerminals/clean",
-    )
-    .await?;
+    expect_external_root_native_only_error(&mut mcp, clean_req, "thread/backgroundTerminals/clean")
+        .await?;
 
     let guardian_req = mcp
         .send_thread_approve_guardian_denied_action_request(
@@ -178,12 +201,114 @@ async fn external_root_rejects_native_only_active_ops() -> Result<()> {
 
     let second_rollback_req = mcp
         .send_thread_rollback_request(ThreadRollbackParams {
-            thread_id,
+            thread_id: thread_id.clone(),
             num_turns: 1,
         })
         .await?;
     expect_external_root_native_only_error(&mut mcp, second_rollback_req, "thread/rollback")
         .await?;
+
+    let steer_req = mcp
+        .send_turn_steer_request(TurnSteerParams {
+            thread_id: thread_id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "steer external root".to_string(),
+                text_elements: Vec::new(),
+            }],
+            responsesapi_client_metadata: None,
+            expected_turn_id: "turn-1".to_string(),
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, steer_req, "turn/steer").await?;
+
+    let inline_review_req = mcp
+        .send_review_start_request(ReviewStartParams {
+            thread_id: thread_id.clone(),
+            delivery: Some(ReviewDelivery::Inline),
+            target: ReviewTarget::UncommittedChanges,
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, inline_review_req, "review/start").await?;
+
+    let detached_review_req = mcp
+        .send_review_start_request(ReviewStartParams {
+            thread_id: thread_id.clone(),
+            delivery: Some(ReviewDelivery::Detached),
+            target: ReviewTarget::UncommittedChanges,
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, detached_review_req, "review/start").await?;
+
+    let inject_req = mcp
+        .send_thread_inject_items_request(ThreadInjectItemsParams {
+            thread_id: thread_id.clone(),
+            items: vec![injected_assistant_item("should not inject")?],
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, inject_req, "thread/inject_items").await?;
+
+    let interrupt_req = mcp
+        .send_turn_interrupt_request(TurnInterruptParams {
+            thread_id,
+            turn_id: String::new(),
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut mcp, interrupt_req, "turn/interrupt").await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn persisted_external_root_rejects_turn_processor_native_only_ops() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
+    drop(mcp);
+
+    let mut restarted = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    expect_no_loaded_threads(&mut restarted).await?;
+
+    let steer_req = restarted
+        .send_turn_steer_request(TurnSteerParams {
+            thread_id: thread_id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "steer persisted external root".to_string(),
+                text_elements: Vec::new(),
+            }],
+            responsesapi_client_metadata: None,
+            expected_turn_id: "turn-1".to_string(),
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut restarted, steer_req, "turn/steer").await?;
+
+    let review_req = restarted
+        .send_review_start_request(ReviewStartParams {
+            thread_id: thread_id.clone(),
+            delivery: Some(ReviewDelivery::Inline),
+            target: ReviewTarget::UncommittedChanges,
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut restarted, review_req, "review/start").await?;
+
+    let inject_req = restarted
+        .send_thread_inject_items_request(ThreadInjectItemsParams {
+            thread_id: thread_id.clone(),
+            items: vec![injected_assistant_item("should not inject after restart")?],
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut restarted, inject_req, "thread/inject_items")
+        .await?;
+
+    let interrupt_req = restarted
+        .send_turn_interrupt_request(TurnInterruptParams {
+            thread_id,
+            turn_id: String::new(),
+        })
+        .await?;
+    expect_external_root_native_only_error(&mut restarted, interrupt_req, "turn/interrupt").await?;
+
+    expect_no_loaded_threads(&mut restarted).await?;
 
     Ok(())
 }
