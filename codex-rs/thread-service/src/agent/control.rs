@@ -72,6 +72,8 @@ use codex_agent_runtime::thread_spawn_parent_thread_id;
 use codex_features::Feature;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use protocol::AgentPath;
 use protocol::SessionId;
 use protocol::ThreadId;
@@ -109,6 +111,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::time::Duration;
 use thread_service_api::AgentDirectoryEntry;
 use thread_service_api::AgentDirectoryEntrySource;
 use thread_service_api::AgentDirectoryListRequest;
@@ -123,6 +126,7 @@ use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::ThreadLifecycleRuntime;
 use thread_service_api::ThreadPollEvent;
+use thread_service_api::ThreadShutdownReport;
 use thread_store_api::ExternalLiveRestoreEligibility;
 use thread_store_api::ReadThreadParams;
 use thread_store_api::SharedLiveThread;
@@ -317,6 +321,18 @@ fn provider_label(provider: SpawnAgentProvider) -> &'static str {
         SpawnAgentProvider::ClaudeCli => "claude_cli",
         SpawnAgentProvider::Opencode => "opencode",
     }
+}
+
+fn sort_thread_shutdown_report(report: &mut ThreadShutdownReport) {
+    report
+        .completed
+        .sort_by_key(std::string::ToString::to_string);
+    report
+        .submit_failed
+        .sort_by_key(std::string::ToString::to_string);
+    report
+        .timed_out
+        .sort_by_key(std::string::ToString::to_string);
 }
 
 impl AgentControl {
@@ -567,6 +583,38 @@ impl AgentControl {
             let _ = ThreadLifecycleRuntime::remove_live_thread(state.as_ref(), thread_id).await;
         }
         Ok(String::new())
+    }
+
+    pub(crate) async fn shutdown_all_live_external_threads_bounded(
+        &self,
+        timeout: Duration,
+    ) -> ThreadShutdownReport {
+        let mut shutdowns = self
+            .external_agents
+            .live_thread_ids()
+            .into_iter()
+            .map(|thread_id| {
+                let control = self.clone();
+                async move {
+                    let outcome =
+                        tokio::time::timeout(timeout, control.shutdown_live_agent_record(thread_id))
+                            .await;
+                    (thread_id, outcome)
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+        let mut report = ThreadShutdownReport::default();
+
+        while let Some((thread_id, outcome)) = shutdowns.next().await {
+            match outcome {
+                Ok(Ok(_)) => report.completed.push(thread_id),
+                Ok(Err(_)) => report.submit_failed.push(thread_id),
+                Err(_) => report.timed_out.push(thread_id),
+            }
+        }
+
+        sort_thread_shutdown_report(&mut report);
+        report
     }
 
     fn spawn_external_agent_with_metadata_sync(

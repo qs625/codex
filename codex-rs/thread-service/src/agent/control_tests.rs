@@ -2162,6 +2162,218 @@ async fn external_root_runtime_close_removes_live_root_and_persists_shutdown() {
 }
 
 #[tokio::test]
+async fn shutdown_all_threads_bounded_closes_native_and_external_roots() {
+    let harness = AgentControlHarness::new().await;
+    let (native_thread_id, native_thread) = harness.start_thread().await;
+    let external_root_thread_id = ThreadId::new();
+    let external_child_thread_id = ThreadId::new();
+    let root_external_control = harness.manager.root_external_agent_control_for_tests();
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let root_agent_metadata = AgentMetadata {
+        agent_id: Some(external_root_thread_id),
+        agent_path: Some(AgentPath::root()),
+        agent_nickname: Some("claude_cli".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    let live_thread = root_external_control
+        .create_external_thread_persistence(
+            &external_config,
+            external_root_thread_id,
+            SessionSource::Cli,
+            ThreadSource::User,
+            &root_agent_metadata,
+        )
+        .await
+        .expect("create persisted external root");
+    root_external_control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            external_root_thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                external_root_thread_id,
+                SessionSource::Cli,
+                &root_agent_metadata,
+            ),
+            AgentStatus::Running,
+        )
+        .await;
+    root_external_control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_root_thread_id,
+            parent_thread_id: external_root_thread_id,
+            agent_path: AgentPath::root(),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 0,
+            spawn_config: Some(external_config.clone()),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some("root work".to_string()),
+            abort_handle: None,
+        });
+    let child_agent_control = native_thread.codex.session.services.agent_control.clone();
+    let child_agent_path = AgentPath::try_from("/root/external_child").expect("agent path");
+    let child_session_source = external_session_source_for(
+        native_thread_id,
+        1,
+        child_agent_path.clone(),
+        SpawnAgentProvider::ClaudeCli,
+    );
+    let child_agent_metadata = AgentMetadata {
+        agent_id: Some(external_child_thread_id),
+        agent_path: Some(child_agent_path.clone()),
+        agent_nickname: Some("claude_cli".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let child_live_thread = child_agent_control
+        .create_external_thread_persistence(
+            &external_config,
+            external_child_thread_id,
+            child_session_source.clone(),
+            ThreadSource::Subagent,
+            &child_agent_metadata,
+        )
+        .await
+        .expect("create persisted external child");
+    child_agent_control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            external_child_thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                external_child_thread_id,
+                child_session_source.clone(),
+                &child_agent_metadata,
+            ),
+            AgentStatus::Running,
+        )
+        .await;
+    child_agent_control
+        .persist_thread_spawn_edge_for_source(external_child_thread_id, Some(&child_session_source))
+        .await;
+    child_agent_control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_child_thread_id,
+            parent_thread_id: native_thread_id,
+            agent_path: child_agent_path,
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(external_config),
+            input_sink: None,
+            live_thread: Some(child_live_thread),
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some("child work".to_string()),
+            abort_handle: None,
+        });
+
+    let report = harness
+        .manager
+        .shutdown_all_threads_bounded(Duration::from_secs(10))
+        .await;
+    let mut expected_completed = vec![
+        native_thread_id,
+        external_child_thread_id,
+        external_root_thread_id,
+    ];
+    expected_completed.sort_by_key(std::string::ToString::to_string);
+    assert_eq!(report.completed, expected_completed);
+    assert!(report.submit_failed.is_empty());
+    assert!(report.timed_out.is_empty());
+    assert!(harness.manager.list_thread_ids().await.is_empty());
+    assert!(!harness
+        .manager
+        .has_external_root_thread(external_root_thread_id));
+    assert!(child_agent_control
+        .external_agents
+        .get(external_child_thread_id)
+        .is_none());
+    assert_eq!(
+        harness.control.get_status(external_root_thread_id).await,
+        AgentStatus::NotFound
+    );
+    assert_eq!(
+        harness.control.get_status(external_child_thread_id).await,
+        AgentStatus::NotFound
+    );
+    assert!(
+        !harness
+            .manager
+            .is_live_thread_loaded(external_root_thread_id)
+            .await
+    );
+    assert!(
+        !harness
+            .manager
+            .is_live_thread_loaded(external_child_thread_id)
+            .await
+    );
+    let state_db = harness.state_db.as_ref().expect("state db");
+    let open_descendants = state_db
+        .list_thread_spawn_descendants_with_status(
+            native_thread_id,
+            DirectionalThreadSpawnEdgeStatus::Open,
+        )
+        .await
+        .expect("list open descendants");
+    assert!(
+        open_descendants.contains(&external_child_thread_id),
+        "shutdown-all should not convert external child edge to explicit Closed",
+    );
+    let closed_descendants = state_db
+        .list_thread_spawn_descendants_with_status(
+            native_thread_id,
+            DirectionalThreadSpawnEdgeStatus::Closed,
+        )
+        .await
+        .expect("list closed descendants");
+    assert!(!closed_descendants.contains(&external_child_thread_id));
+
+    let stored = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_root_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external root");
+    let items = stored.history.expect("history").items;
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(event))
+            if event.thread_id == external_root_thread_id
+                && event.status == protocol::protocol::ExternalTerminalStatus::Shutdown
+    )));
+    let stored_child = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_child_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external child");
+    let child_items = stored_child.history.expect("history").items;
+    assert!(child_items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(event))
+            if event.thread_id == external_child_thread_id
+                && event.status == protocol::protocol::ExternalTerminalStatus::Shutdown
+    )));
+}
+
+#[tokio::test]
 async fn external_tool_call_poll_external_event_times_out_without_event() {
     let harness = AgentControlHarness::new().await;
     let external_thread_id = ThreadId::new();

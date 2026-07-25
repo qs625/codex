@@ -218,6 +218,27 @@ enum ShutdownOutcome {
     TimedOut,
 }
 
+fn merge_thread_shutdown_report(
+    report: &mut ThreadShutdownReport,
+    mut other: ThreadShutdownReport,
+) {
+    report.completed.append(&mut other.completed);
+    report.submit_failed.append(&mut other.submit_failed);
+    report.timed_out.append(&mut other.timed_out);
+}
+
+fn sort_thread_shutdown_report(report: &mut ThreadShutdownReport) {
+    report
+        .completed
+        .sort_by_key(std::string::ToString::to_string);
+    report
+        .submit_failed
+        .sort_by_key(std::string::ToString::to_string);
+    report
+        .timed_out
+        .sort_by_key(std::string::ToString::to_string);
+}
+
 /// [`ThreadService`] is responsible for creating threads and maintaining
 /// them in memory.
 pub struct ThreadService {
@@ -1328,7 +1349,14 @@ impl ThreadService {
     /// Threads that complete shutdown are removed from the manager; incomplete shutdowns
     /// remain tracked so callers can retry or inspect them later.
     pub async fn shutdown_all_threads_bounded(&self, timeout: Duration) -> ThreadShutdownReport {
-        self.state.shutdown_all_threads_bounded(timeout).await
+        let mut report = self.state.shutdown_native_threads_bounded(timeout).await;
+        let external_report = self
+            .root_external_agent_control()
+            .shutdown_all_live_external_threads_bounded(timeout)
+            .await;
+        merge_thread_shutdown_report(&mut report, external_report);
+        sort_thread_shutdown_report(&mut report);
+        report
     }
 
     /// Fork an existing thread by snapshotting rollout history according to
@@ -1711,7 +1739,7 @@ impl ThreadServiceState {
         native_removed || external_removed
     }
 
-    pub(crate) async fn shutdown_all_threads_bounded(
+    pub(crate) async fn shutdown_native_threads_bounded(
         &self,
         timeout: Duration,
     ) -> ThreadShutdownReport {
@@ -1726,18 +1754,25 @@ impl ThreadServiceState {
         let mut shutdowns = threads
             .into_iter()
             .map(|(thread_id, thread)| async move {
-                let outcome = match tokio::time::timeout(timeout, thread.shutdown_and_wait()).await
-                {
+                let agent_control = thread.codex.session.services.agent_control.clone();
+                let native_shutdown =
+                    tokio::time::timeout(timeout, thread.shutdown_and_wait());
+                let external_shutdown =
+                    agent_control.shutdown_all_live_external_threads_bounded(timeout);
+                let (native_shutdown, external_report) =
+                    tokio::join!(native_shutdown, external_shutdown);
+                let outcome = match native_shutdown {
                     Ok(Ok(())) => ShutdownOutcome::Complete,
                     Ok(Err(_)) => ShutdownOutcome::SubmitFailed,
                     Err(_) => ShutdownOutcome::TimedOut,
                 };
-                (thread_id, outcome)
+                (thread_id, outcome, external_report)
             })
             .collect::<FuturesUnordered<_>>();
         let mut report = ThreadShutdownReport::default();
 
-        while let Some((thread_id, outcome)) = shutdowns.next().await {
+        while let Some((thread_id, outcome, external_report)) = shutdowns.next().await {
+            merge_thread_shutdown_report(&mut report, external_report);
             match outcome {
                 ShutdownOutcome::Complete => report.completed.push(thread_id),
                 ShutdownOutcome::SubmitFailed => report.submit_failed.push(thread_id),
@@ -1753,15 +1788,7 @@ impl ThreadServiceState {
             }
         }
 
-        report
-            .completed
-            .sort_by_key(std::string::ToString::to_string);
-        report
-            .submit_failed
-            .sort_by_key(std::string::ToString::to_string);
-        report
-            .timed_out
-            .sort_by_key(std::string::ToString::to_string);
+        sort_thread_shutdown_report(&mut report);
         report
     }
 
@@ -2253,7 +2280,7 @@ impl thread_service_api::ThreadLifecycleRuntime for ThreadServiceState {
         &'a self,
         timeout: Duration,
     ) -> thread_service_api::ThreadServiceFuture<'a, ThreadShutdownReport> {
-        Box::pin(ThreadServiceState::shutdown_all_threads_bounded(
+        Box::pin(ThreadServiceState::shutdown_native_threads_bounded(
             self, timeout,
         ))
     }

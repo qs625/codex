@@ -145,6 +145,15 @@ impl ExternalAgentRegistry {
             .cloned()
     }
 
+    pub(crate) fn live_thread_ids(&self) -> Vec<ThreadId> {
+        self.runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .copied()
+            .collect()
+    }
+
     pub(crate) fn attach_abort_handle(&self, thread_id: ThreadId, abort_handle: AbortHandle) {
         let mut runs = self
             .runs
