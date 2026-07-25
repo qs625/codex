@@ -54,10 +54,11 @@ use tokio::sync::Semaphore;
 /// Context for an initialized model agent
 ///
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ThreadWaitEventSnapshot {
     pub(crate) seq: u64,
     pub(crate) source: Option<ThreadWaitSource>,
+    pub(crate) events: Vec<thread_service_api::ThreadPollEvent>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

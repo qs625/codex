@@ -122,6 +122,7 @@ use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadStateRuntimeSource;
 use thread_service_api::ThreadLifecycleRuntime;
+use thread_service_api::ThreadPollEvent;
 use thread_store_api::ExternalLiveRestoreEligibility;
 use thread_store_api::ReadThreadParams;
 use thread_store_api::SharedLiveThread;
@@ -1750,13 +1751,19 @@ impl AgentControl {
             } else {
                 ThreadWaitSource::InterAgent
             };
+            let poll_event = ThreadPollEvent::InterAgentCommunication {
+                communication: communication.clone(),
+            };
             input_sink.send(communication.content).map_err(|err| {
                 CodexErr::UnsupportedOperation(format!(
                     "failed to deliver followup_task to external agent: {err}"
                 ))
             })?;
-            self.external_agents
-                .note_thread_wait_event(agent_id, source);
+            self.external_agents.note_thread_wait_event_with_events(
+                agent_id,
+                source,
+                vec![poll_event],
+            );
             self.external_agents
                 .update_last_task_message(agent_id, last_task_message);
             return Ok(agent_id.to_string());
