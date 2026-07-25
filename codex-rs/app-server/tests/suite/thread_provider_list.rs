@@ -64,6 +64,7 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
     assert!(native.capabilities.compact);
     assert!(native.capabilities.workflow);
     assert!(native.capabilities.poll_event);
+    assert!(native.capabilities.fork_thread);
     assert!(
         native.capabilities.restore_thread,
         "native should advertise live restore support"
@@ -117,6 +118,10 @@ async fn thread_provider_list_scopes_native_roles_and_external_capabilities() ->
         assert!(!external.capabilities.command_session);
         assert!(!external.capabilities.permissions);
         assert!(!external.capabilities.dynamic_tools);
+        assert!(
+            !external.capabilities.fork_thread,
+            "{external_id} should not advertise fork support"
+        );
     }
 
     Ok(())

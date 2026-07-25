@@ -177,6 +177,7 @@ fn provider_capabilities_to_api(
         command_session: capabilities.command_session,
         permissions: capabilities.permissions,
         dynamic_tools: capabilities.dynamic_tools,
+        fork_thread: capabilities.fork_thread,
     }
 }
 
