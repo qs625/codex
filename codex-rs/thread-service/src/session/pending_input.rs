@@ -178,11 +178,12 @@ impl Session {
     }
 
     pub(crate) fn note_thread_wait_event(&self, source: ThreadWaitSource) {
-        let current = *self.thread_wait_events.borrow();
+        let current = self.thread_wait_events.borrow().clone();
         self.thread_wait_events
             .send_replace(ThreadWaitEventSnapshot {
                 seq: current.seq + 1,
                 source: Some(source),
+                events: Vec::new(),
             });
     }
 
@@ -549,7 +550,7 @@ impl Session {
         let current_timeout = Duration::from_millis(current_timeout_ms as u64);
         let started = Instant::now();
         let mut thread_wait_rx = self.subscribe_thread_wait_events();
-        let wait_snapshot = *thread_wait_rx.borrow_and_update();
+        let wait_snapshot = thread_wait_rx.borrow_and_update().clone();
         if let Some(snapshot) = self.pending_thread_poll_event_snapshot().await {
             let snapshots = self.pending_thread_poll_event_snapshots().await;
             let source_events =
@@ -573,7 +574,7 @@ impl Session {
                 if thread_wait_rx.changed().await.is_err() {
                     return None;
                 }
-                let snapshot = *thread_wait_rx.borrow_and_update();
+                let snapshot = thread_wait_rx.borrow_and_update().clone();
                 if snapshot.seq > wait_snapshot.seq {
                     return snapshot.source.map(thread_wait_source_hint);
                 }

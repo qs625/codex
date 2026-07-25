@@ -35,6 +35,7 @@ use serde_json::Value as JsonValue;
 use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadPollEventTimeoutMetadata;
+use thread_service_api::ThreadPollEvent;
 use thread_store_api::SharedLiveThread;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
@@ -298,6 +299,15 @@ impl ExternalAgentRegistry {
     }
 
     pub(crate) fn note_thread_wait_event(&self, thread_id: ThreadId, source: ThreadWaitSource) {
+        self.note_thread_wait_event_with_events(thread_id, source, Vec::new());
+    }
+
+    pub(crate) fn note_thread_wait_event_with_events(
+        &self,
+        thread_id: ThreadId,
+        source: ThreadWaitSource,
+        events: Vec<ThreadPollEvent>,
+    ) {
         let Some(state) = self
             .wait_states
             .lock()
@@ -307,10 +317,11 @@ impl ExternalAgentRegistry {
         else {
             return;
         };
-        let current = *state.events.borrow();
+        let current = state.events.borrow().clone();
         state.events.send_replace(ThreadWaitEventSnapshot {
             seq: current.seq + 1,
             source: Some(source),
+            events,
         });
     }
 
@@ -338,35 +349,36 @@ impl ExternalAgentRegistry {
             return Err("external sender is not registered".to_string());
         };
         let mut thread_wait_rx = wait_state.events.subscribe();
-        let wait_snapshot = *thread_wait_rx.borrow_and_update();
-        let source_hint = tokio::time::timeout(current_timeout, async move {
+        let wait_snapshot = thread_wait_rx.borrow_and_update().clone();
+        let wake_snapshot = tokio::time::timeout(current_timeout, async move {
             loop {
                 if thread_wait_rx.changed().await.is_err() {
                     return None;
                 }
-                let snapshot = *thread_wait_rx.borrow_and_update();
+                let snapshot = thread_wait_rx.borrow_and_update().clone();
                 if snapshot.seq > wait_snapshot.seq {
-                    return snapshot.source.map(ThreadWaitSource::source_hint);
+                    return Some(snapshot);
                 }
             }
         })
         .await;
 
-        match source_hint {
-            Ok(source_hint) => {
+        match wake_snapshot {
+            Ok(Some(snapshot)) => {
                 wait_state.backoff.lock().await.reset_after_event();
+                let events = snapshot.events;
                 Ok(ThreadPollEventResult {
                     timed_out: false,
-                    source_hint,
-                    event: None,
-                    events: Vec::new(),
+                    source_hint: snapshot.source.map(ThreadWaitSource::source_hint),
+                    event: events.first().cloned(),
+                    events,
                     waited_ms: started.elapsed().as_millis() as i64,
                     initial_timeout_ms,
                     current_timeout_ms,
                     hard_cap_timeout_ms,
                 })
             }
-            Err(_) => {
+            Ok(None) | Err(_) => {
                 wait_state.backoff.lock().await.advance_after_timeout(
                     duration_from_config_ms(initial_timeout_ms),
                     duration_from_config_ms(hard_cap_timeout_ms),
