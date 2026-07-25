@@ -169,6 +169,7 @@ pub struct ThreadProviderCapabilities {
     pub command_session: bool,
     pub permissions: bool,
     pub dynamic_tools: bool,
+    pub fork_thread: bool,
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]

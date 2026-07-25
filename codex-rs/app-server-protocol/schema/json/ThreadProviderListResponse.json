@@ -39,6 +39,9 @@
         "eventStream": {
           "type": "boolean"
         },
+        "forkThread": {
+          "type": "boolean"
+        },
         "listChildren": {
           "type": "boolean"
         },
@@ -75,6 +78,7 @@
         "compact",
         "dynamicTools",
         "eventStream",
+        "forkThread",
         "listChildren",
         "permissions",
         "pollEvent",

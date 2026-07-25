@@ -130,6 +130,31 @@ fn thread_turns_items_list_round_trips() {
 }
 
 #[test]
+fn thread_provider_capabilities_serializes_fork_thread_as_camel_case() {
+    let capabilities = ThreadProviderCapabilities {
+        start_thread: true,
+        send_input: true,
+        close_thread: true,
+        list_children: true,
+        restore_thread: true,
+        restore_snapshot: true,
+        event_stream: true,
+        spawn_child: true,
+        compact: true,
+        workflow: true,
+        poll_event: true,
+        command_session: true,
+        permissions: true,
+        dynamic_tools: true,
+        fork_thread: true,
+    };
+
+    let value = serde_json::to_value(capabilities).expect("serialize capabilities");
+    assert_eq!(value["forkThread"], true);
+    assert_eq!(value.get("fork_thread"), None);
+}
+
+#[test]
 fn context_compaction_serializes_replacement_history() {
     let item = ThreadItem::ContextCompaction {
         id: "item_3".to_string(),

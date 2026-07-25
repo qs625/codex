@@ -10,4 +10,4 @@ restoreThread: boolean,
 /**
  * Supports opening persisted thread history as a read-only snapshot.
  */
-restoreSnapshot: boolean, eventStream: boolean, spawnChild: boolean, compact: boolean, workflow: boolean, pollEvent: boolean, commandSession: boolean, permissions: boolean, dynamicTools: boolean, };
+restoreSnapshot: boolean, eventStream: boolean, spawnChild: boolean, compact: boolean, workflow: boolean, pollEvent: boolean, commandSession: boolean, permissions: boolean, dynamicTools: boolean, forkThread: boolean, };
