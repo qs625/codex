@@ -555,7 +555,8 @@ impl AgentControl {
             .as_ref()
             .map(|run| run.status.clone())
             .unwrap_or(AgentStatus::Shutdown);
-        self.persist_external_terminal_status(thread_id, &status)
+        let live_thread = shutdown_run.as_ref().and_then(|run| run.live_thread.clone());
+        self.persist_external_terminal_status_to_live_thread(thread_id, None, &status, live_thread)
             .await;
         if let Ok(state) = self.upgrade() {
             state
@@ -1026,7 +1027,18 @@ impl AgentControl {
     }
 
     async fn persist_external_items(&self, thread_id: ThreadId, items: Vec<RolloutItem>) {
-        let Some(live_thread) = self.external_live_thread(thread_id).await else {
+        let live_thread = self.external_live_thread(thread_id).await;
+        self.persist_external_items_to_live_thread(thread_id, live_thread, items)
+            .await;
+    }
+
+    async fn persist_external_items_to_live_thread(
+        &self,
+        thread_id: ThreadId,
+        live_thread: Option<SharedLiveThread>,
+        items: Vec<RolloutItem>,
+    ) {
+        let Some(live_thread) = live_thread else {
             return;
         };
         if let Err(err) = live_thread.append_items(&items).await {
@@ -1092,6 +1104,23 @@ impl AgentControl {
         turn_id: Option<&str>,
         status: &AgentStatus,
     ) {
+        let live_thread = self.external_live_thread(thread_id).await;
+        self.persist_external_terminal_status_to_live_thread(
+            thread_id,
+            turn_id,
+            status,
+            live_thread,
+        )
+            .await;
+    }
+
+    async fn persist_external_terminal_status_to_live_thread(
+        &self,
+        thread_id: ThreadId,
+        turn_id: Option<&str>,
+        status: &AgentStatus,
+        live_thread: Option<SharedLiveThread>,
+    ) {
         let turn_id = || {
             turn_id
                 .map(ToOwned::to_owned)
@@ -1142,10 +1171,14 @@ impl AgentControl {
                 })
             }
         };
-        self.persist_external_items(thread_id, vec![RolloutItem::EventMsg(event)])
-            .await;
+        self.persist_external_items_to_live_thread(
+            thread_id,
+            live_thread.clone(),
+            vec![RolloutItem::EventMsg(event)],
+        )
+        .await;
         if is_final(status)
-            && let Some(live_thread) = self.external_live_thread(thread_id).await
+            && let Some(live_thread) = live_thread
             && let Err(err) = live_thread.shutdown().await
         {
             warn!("failed to shutdown external thread persistence for {thread_id}: {err}");
@@ -1840,8 +1873,14 @@ impl AgentControl {
                     .await;
                 state.notify_thread_status_changed_with_status(agent_id, Some(agent_status));
             }
-            self.persist_external_terminal_status(agent_id, &AgentStatus::Shutdown)
-                .await;
+            let live_thread = shutdown_run.as_ref().and_then(|run| run.live_thread.clone());
+            self.persist_external_terminal_status_to_live_thread(
+                agent_id,
+                None,
+                &AgentStatus::Shutdown,
+                live_thread,
+            )
+            .await;
             if let Some(state) = state.as_ref() {
                 let _ = ThreadLifecycleRuntime::remove_live_thread(state.as_ref(), agent_id).await;
             }

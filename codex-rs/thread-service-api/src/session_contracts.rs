@@ -1065,6 +1065,11 @@ pub trait ExternalRootThreadRuntime: Send + Sync + 'static {
         thread_id: ThreadId,
         message: String,
     ) -> ThreadServiceFuture<'a, CodexResult<String>>;
+
+    fn close_external_root_thread<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<String>>;
 }
 
 /// Thread event kernel runtime.

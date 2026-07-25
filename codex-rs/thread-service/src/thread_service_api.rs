@@ -585,6 +585,13 @@ impl ExternalRootThreadRuntime for ThreadService {
             self, thread_id, message,
         ))
     }
+
+    fn close_external_root_thread<'a>(
+        &'a self,
+        thread_id: protocol::ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<String>> {
+        Box::pin(ThreadService::close_external_root_thread(self, thread_id))
+    }
 }
 
 impl ThreadEventRuntime for ThreadService {
