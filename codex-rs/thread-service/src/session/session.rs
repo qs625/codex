@@ -43,89 +43,22 @@ use protocol::ThreadId;
 use protocol::protocol::ThreadSkill;
 use protocol::protocol::ThreadSource;
 use protocol::protocol::TurnEnvironmentSelection;
+pub(crate) use super::thread_wait::ThreadWaitSource;
+use super::thread_wait::ThreadWaitState;
 use session_telemetry_api::SessionTelemetryCreateParams;
 use session_telemetry_api::SharedSessionTelemetryFactory;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::Weak;
-use std::time::Duration;
 use tokio::sync::Semaphore;
 
 /// Context for an initialized model agent
 ///
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ThreadWaitEventSnapshot {
-    pub(crate) seq: u64,
-    pub(crate) source: Option<ThreadWaitSource>,
-    pub(crate) events: Vec<thread_service_api::ThreadPollEvent>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ThreadWaitSource {
-    UserInput,
-    InterAgent,
-    ChildCompletion,
-    QueuedInput,
-    AsyncInput,
-    CommandOutput,
-    CommandExit,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct ThreadWaitBackoffState {
-    current_window: Option<Duration>,
-}
-
 #[cfg(test)]
 pub(crate) struct GoalContinuationBeforeLaunchHook {
     pub(crate) started_tx: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     pub(crate) continue_rx: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
-}
-
-const THREAD_WAIT_BACKOFF_MULTIPLIER: u32 = 2;
-
-impl ThreadWaitBackoffState {
-    pub(crate) fn current_window(
-        &mut self,
-        initial_window: Duration,
-        max_window: Duration,
-    ) -> Duration {
-        let current_window = self
-            .current_window
-            .unwrap_or(initial_window)
-            .clamp(initial_window, max_window);
-        self.current_window = Some(current_window);
-        current_window
-    }
-
-    pub(crate) fn advance_after_timeout(&mut self, initial_window: Duration, max_window: Duration) {
-        let current_window = self.current_window(initial_window, max_window);
-        self.current_window = Some(
-            current_window
-                .saturating_mul(THREAD_WAIT_BACKOFF_MULTIPLIER)
-                .min(max_window),
-        );
-    }
-
-    pub(crate) fn reset_after_event(&mut self) {
-        self.current_window = None;
-    }
-}
-
-impl ThreadWaitSource {
-    pub(crate) fn source_hint(self) -> String {
-        match self {
-            ThreadWaitSource::UserInput => "user_input",
-            ThreadWaitSource::InterAgent => "inter_agent",
-            ThreadWaitSource::ChildCompletion => "child_completion",
-            ThreadWaitSource::QueuedInput => "queued_input",
-            ThreadWaitSource::AsyncInput => "async_input",
-            ThreadWaitSource::CommandOutput => "command_output",
-            ThreadWaitSource::CommandExit => "command_exit",
-        }
-        .to_string()
-    }
 }
 
 pub struct Session {
@@ -157,8 +90,7 @@ pub struct Session {
     pub(crate) guardian_review_session: approval_review_session_impl::GuardianReviewSessionManager,
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
-    pub(super) thread_wait_events: watch::Sender<ThreadWaitEventSnapshot>,
-    pub(super) thread_wait_backoff: Mutex<ThreadWaitBackoffState>,
+    pub(super) thread_wait: ThreadWaitState,
 }
 
 #[derive(Clone)]

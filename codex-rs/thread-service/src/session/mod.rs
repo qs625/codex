@@ -224,6 +224,7 @@ mod multi_agents;
 mod pending_input;
 mod review;
 mod rollout_reconstruction;
+pub(crate) mod thread_wait;
 #[allow(clippy::module_inception)]
 pub(crate) mod session;
 pub(crate) mod turn;
@@ -237,7 +238,6 @@ pub(crate) use self::codex_runtime::INITIAL_SUBMIT_ID;
 use self::codex_runtime::LiveThreadInitGuard;
 pub(crate) use self::codex_runtime::SUBMISSION_CHANNEL_CAPACITY;
 use self::codex_runtime::SessionLoopTermination;
-use self::codex_runtime::duration_from_config_ms;
 use self::config_lock::export_config_lock_if_configured;
 use self::config_lock::validate_config_lock_if_configured;
 #[cfg(test)]

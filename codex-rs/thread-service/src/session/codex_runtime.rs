@@ -84,10 +84,6 @@ pub(crate) const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
 pub(crate) const CYBER_SAFETY_URL: &str =
     "https://developers.openai.com/codex/concepts/cyber-safety";
 
-pub(crate) fn duration_from_config_ms(ms: i64) -> Duration {
-    Duration::from_millis(ms.max(0) as u64)
-}
-
 fn initial_agent_status_from_history(initial_history: &InitialHistory) -> AgentStatus {
     let InitialHistory::Resumed(resumed) = initial_history else {
         return AgentStatus::PendingInit;

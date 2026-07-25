@@ -1,7 +1,8 @@
-use super::session::ThreadWaitEventSnapshot;
 use super::session::ThreadWaitSource;
+use super::thread_wait::ThreadWaitOutcome;
+use super::thread_wait::poll_event_result;
+use super::thread_wait::poll_event_timeout_result;
 use super::*;
-use tokio::time::{Duration, Instant};
 
 impl Session {
     pub(crate) async fn sync_mailbox_pending_buffer(&self) {
@@ -173,18 +174,8 @@ impl Session {
         })
     }
 
-    pub(crate) fn subscribe_thread_wait_events(&self) -> watch::Receiver<ThreadWaitEventSnapshot> {
-        self.thread_wait_events.subscribe()
-    }
-
     pub(crate) fn note_thread_wait_event(&self, source: ThreadWaitSource) {
-        let current = self.thread_wait_events.borrow().clone();
-        self.thread_wait_events
-            .send_replace(ThreadWaitEventSnapshot {
-                seq: current.seq + 1,
-                source: Some(source),
-                events: Vec::new(),
-            });
+        self.thread_wait.note_event(source);
     }
 
     #[expect(
@@ -219,29 +210,13 @@ impl Session {
         initial_timeout_ms: i64,
         hard_cap_timeout_ms: i64,
     ) -> Duration {
-        let initial_window = duration_from_config_ms(initial_timeout_ms);
-        let max_window = duration_from_config_ms(hard_cap_timeout_ms);
-        self.thread_wait_backoff
-            .lock()
+        self.thread_wait
+            .current_window(initial_timeout_ms, hard_cap_timeout_ms)
             .await
-            .current_window(initial_window, max_window)
-    }
-
-    pub(crate) async fn advance_thread_wait_backoff(
-        &self,
-        initial_timeout_ms: i64,
-        hard_cap_timeout_ms: i64,
-    ) {
-        let initial_window = duration_from_config_ms(initial_timeout_ms);
-        let max_window = duration_from_config_ms(hard_cap_timeout_ms);
-        self.thread_wait_backoff
-            .lock()
-            .await
-            .advance_after_timeout(initial_window, max_window);
     }
 
     pub(crate) async fn reset_thread_wait_backoff(&self) {
-        self.thread_wait_backoff.lock().await.reset_after_event();
+        self.thread_wait.reset_after_event().await;
     }
 
     pub(crate) async fn enqueue_mailbox_communication(
@@ -544,46 +519,29 @@ impl Session {
     ) -> Result<thread_service_api::ThreadPollEventResult, tool_service_api::FunctionCallError>
     {
         let metadata = self.poll_event_timeout_metadata(request).await?;
-        let initial_timeout_ms = metadata.initial_timeout_ms;
-        let current_timeout_ms = metadata.current_timeout_ms;
-        let hard_cap_timeout_ms = metadata.hard_cap_timeout_ms;
-        let current_timeout = Duration::from_millis(current_timeout_ms as u64);
-        let started = Instant::now();
-        let mut thread_wait_rx = self.subscribe_thread_wait_events();
-        let wait_snapshot = thread_wait_rx.borrow_and_update().clone();
+        let thread_wait = self.thread_wait.clone();
+        let watcher = thread_wait.begin_wait();
         if let Some(snapshot) = self.pending_thread_poll_event_snapshot().await {
             let snapshots = self.pending_thread_poll_event_snapshots().await;
             let source_events =
                 poll_events_for_source_from_snapshots(&snapshots, &snapshot.source_hint);
             let events = poll_events_from_snapshots(&snapshots);
-            self.reset_thread_wait_backoff().await;
-            return Ok(thread_service_api::ThreadPollEventResult {
-                timed_out: false,
-                source_hint: Some(snapshot.source_hint),
-                event: source_events.first().cloned(),
+            thread_wait.reset_after_event().await;
+            return Ok(poll_event_result(
+                Some(snapshot.source_hint),
+                source_events.first().cloned(),
                 events,
-                waited_ms: 0,
-                initial_timeout_ms,
-                current_timeout_ms,
-                hard_cap_timeout_ms,
-            });
+                0,
+                metadata,
+            ));
         }
 
-        let source_hint = tokio::time::timeout(current_timeout, async move {
-            loop {
-                if thread_wait_rx.changed().await.is_err() {
-                    return None;
-                }
-                let snapshot = thread_wait_rx.borrow_and_update().clone();
-                if snapshot.seq > wait_snapshot.seq {
-                    return snapshot.source.map(thread_wait_source_hint);
-                }
-            }
-        })
-        .await;
-
-        match source_hint {
-            Ok(source_hint) => {
+        match thread_wait.wait(watcher, &metadata).await {
+            ThreadWaitOutcome::Event {
+                snapshot,
+                waited_ms,
+            } => {
+                let source_hint = snapshot.source.map(thread_wait_source_hint);
                 let events = match source_hint.as_deref() {
                     Some(source_hint) => self
                         .pending_thread_poll_event_snapshots_for_source(source_hint)
@@ -593,31 +551,16 @@ impl Session {
                         .collect(),
                     None => Vec::new(),
                 };
-                self.reset_thread_wait_backoff().await;
-                Ok(thread_service_api::ThreadPollEventResult {
-                    timed_out: false,
+                Ok(poll_event_result(
                     source_hint,
-                    event: events.first().cloned(),
+                    events.first().cloned(),
                     events,
-                    waited_ms: started.elapsed().as_millis() as i64,
-                    initial_timeout_ms,
-                    current_timeout_ms,
-                    hard_cap_timeout_ms,
-                })
+                    waited_ms,
+                    metadata,
+                ))
             }
-            Err(_) => {
-                self.advance_thread_wait_backoff(initial_timeout_ms, hard_cap_timeout_ms)
-                    .await;
-                Ok(thread_service_api::ThreadPollEventResult {
-                    timed_out: true,
-                    source_hint: None,
-                    event: None,
-                    events: Vec::new(),
-                    waited_ms: started.elapsed().as_millis() as i64,
-                    initial_timeout_ms,
-                    current_timeout_ms,
-                    hard_cap_timeout_ms,
-                })
+            ThreadWaitOutcome::Timeout { waited_ms } => {
+                Ok(poll_event_timeout_result(waited_ms, metadata))
             }
         }
     }

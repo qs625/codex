@@ -2339,8 +2339,6 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
     );
 
     let (mailbox, mailbox_rx) = crate::Mailbox::new();
-    let (thread_wait_events, _thread_wait_events_rx) =
-        watch::channel(crate::session::session::ThreadWaitEventSnapshot::default());
     let session = Session {
         self_weak: std::sync::OnceLock::new(),
         conversation_id: thread_id,
@@ -2364,8 +2362,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         guardian_review_session: crate::session::session::approval_review_session_impl::GuardianReviewSessionManager::default(),
         services,
         next_internal_sub_id: AtomicU64::new(0),
-        thread_wait_events,
-        thread_wait_backoff: Mutex::new(crate::session::session::ThreadWaitBackoffState::default()),
+        thread_wait: crate::session::thread_wait::ThreadWaitState::default(),
     };
 
     (session, turn_context)

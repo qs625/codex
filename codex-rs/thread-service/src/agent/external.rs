@@ -4,12 +4,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration;
-use std::time::Instant;
 
-use crate::session::session::ThreadWaitBackoffState;
-use crate::session::session::ThreadWaitEventSnapshot;
 use crate::session::session::ThreadWaitSource;
+use crate::session::thread_wait::ThreadWaitOutcome;
+use crate::session::thread_wait::ThreadWaitState;
+use crate::session::thread_wait::poll_event_result;
+use crate::session::thread_wait::poll_event_timeout_result;
 use codex_agent_roles::AgentRoleConfig;
 use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::LiveAgent;
@@ -33,8 +33,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use thread_service_api::ThreadPollEventRequest;
-use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadPollEventTimeoutMetadata;
+use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadPollEvent;
 use thread_store_api::SharedLiveThread;
 use tokio::io::AsyncBufReadExt;
@@ -45,7 +45,6 @@ use tokio::process::ChildStderr;
 use tokio::process::ChildStdin;
 use tokio::process::ChildStdout;
 use tokio::process::Command;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::task::AbortHandle;
@@ -122,23 +121,7 @@ impl ExternalSpawnConfig {
 #[derive(Default)]
 pub(crate) struct ExternalAgentRegistry {
     runs: Mutex<HashMap<ThreadId, ExternalAgentRun>>,
-    wait_states: Mutex<HashMap<ThreadId, ExternalThreadWaitState>>,
-}
-
-#[derive(Clone)]
-struct ExternalThreadWaitState {
-    events: watch::Sender<ThreadWaitEventSnapshot>,
-    backoff: Arc<AsyncMutex<ThreadWaitBackoffState>>,
-}
-
-impl Default for ExternalThreadWaitState {
-    fn default() -> Self {
-        let (events, _rx) = watch::channel(ThreadWaitEventSnapshot::default());
-        Self {
-            events,
-            backoff: Arc::new(AsyncMutex::new(ThreadWaitBackoffState::default())),
-        }
-    }
+    wait_states: Mutex<HashMap<ThreadId, ThreadWaitState>>,
 }
 
 impl ExternalAgentRegistry {
@@ -317,12 +300,7 @@ impl ExternalAgentRegistry {
         else {
             return;
         };
-        let current = state.events.borrow().clone();
-        state.events.send_replace(ThreadWaitEventSnapshot {
-            seq: current.seq + 1,
-            source: Some(source),
-            events,
-        });
+        state.note_event_with_events(source, events);
     }
 
     pub(crate) async fn poll_event(
@@ -334,11 +312,6 @@ impl ExternalAgentRegistry {
             .poll_event_timeout_metadata(thread_id, request)
             .await
             .ok_or_else(|| "external sender is not registered".to_string())?;
-        let initial_timeout_ms = metadata.initial_timeout_ms;
-        let current_timeout_ms = metadata.current_timeout_ms;
-        let hard_cap_timeout_ms = metadata.hard_cap_timeout_ms;
-        let current_timeout = Duration::from_millis(current_timeout_ms as u64);
-        let started = Instant::now();
         let Some(wait_state) = self
             .wait_states
             .lock()
@@ -348,51 +321,24 @@ impl ExternalAgentRegistry {
         else {
             return Err("external sender is not registered".to_string());
         };
-        let mut thread_wait_rx = wait_state.events.subscribe();
-        let wait_snapshot = thread_wait_rx.borrow_and_update().clone();
-        let wake_snapshot = tokio::time::timeout(current_timeout, async move {
-            loop {
-                if thread_wait_rx.changed().await.is_err() {
-                    return None;
-                }
-                let snapshot = thread_wait_rx.borrow_and_update().clone();
-                if snapshot.seq > wait_snapshot.seq {
-                    return Some(snapshot);
-                }
-            }
-        })
-        .await;
+        let watcher = wait_state.begin_wait();
 
-        match wake_snapshot {
-            Ok(Some(snapshot)) => {
-                wait_state.backoff.lock().await.reset_after_event();
+        match wait_state.wait(watcher, &metadata).await {
+            ThreadWaitOutcome::Event {
+                snapshot,
+                waited_ms,
+            } => {
                 let events = snapshot.events;
-                Ok(ThreadPollEventResult {
-                    timed_out: false,
-                    source_hint: snapshot.source.map(ThreadWaitSource::source_hint),
-                    event: events.first().cloned(),
+                Ok(poll_event_result(
+                    snapshot.source.map(ThreadWaitSource::source_hint),
+                    events.first().cloned(),
                     events,
-                    waited_ms: started.elapsed().as_millis() as i64,
-                    initial_timeout_ms,
-                    current_timeout_ms,
-                    hard_cap_timeout_ms,
-                })
+                    waited_ms,
+                    metadata,
+                ))
             }
-            Ok(None) | Err(_) => {
-                wait_state.backoff.lock().await.advance_after_timeout(
-                    duration_from_config_ms(initial_timeout_ms),
-                    duration_from_config_ms(hard_cap_timeout_ms),
-                );
-                Ok(ThreadPollEventResult {
-                    timed_out: true,
-                    source_hint: None,
-                    event: None,
-                    events: Vec::new(),
-                    waited_ms: started.elapsed().as_millis() as i64,
-                    initial_timeout_ms,
-                    current_timeout_ms,
-                    hard_cap_timeout_ms,
-                })
+            ThreadWaitOutcome::Timeout { waited_ms } => {
+                Ok(poll_event_timeout_result(waited_ms, metadata))
             }
         }
     }
@@ -421,25 +367,12 @@ impl ExternalAgentRegistry {
         let hard_cap_timeout_ms = request
             .hard_cap_timeout_ms
             .unwrap_or(default_hard_cap_timeout_ms);
-        let current_window = wait_state
-            .backoff
-            .lock()
-            .await
-            .current_window(
-                duration_from_config_ms(initial_timeout_ms),
-                duration_from_config_ms(hard_cap_timeout_ms),
-            )
-            .as_millis() as i64;
-        Some(ThreadPollEventTimeoutMetadata {
-            initial_timeout_ms,
-            current_timeout_ms: current_window,
-            hard_cap_timeout_ms,
-        })
+        Some(
+            wait_state
+                .timeout_metadata(initial_timeout_ms, hard_cap_timeout_ms)
+                .await,
+        )
     }
-}
-
-fn duration_from_config_ms(value: i64) -> Duration {
-    Duration::from_millis(value.max(0) as u64)
 }
 
 #[derive(Clone, Debug, PartialEq)]

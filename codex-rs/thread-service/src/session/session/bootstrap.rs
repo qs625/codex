@@ -566,8 +566,6 @@ impl Session {
                 watch::channel(false);
 
             let (mailbox, mailbox_rx) = Mailbox::new();
-            let (thread_wait_events, _thread_wait_events_rx) =
-                watch::channel(ThreadWaitEventSnapshot::default());
             let sess = Arc::new(Session {
                 self_weak: OnceLock::new(),
                 conversation_id: init.thread_id,
@@ -592,8 +590,7 @@ impl Session {
                 guardian_review_session: GuardianReviewSessionManager::default(),
                 services,
                 next_internal_sub_id: AtomicU64::new(0),
-                thread_wait_events,
-                thread_wait_backoff: Mutex::new(ThreadWaitBackoffState::default()),
+                thread_wait: ThreadWaitState::default(),
             });
             let _ = sess.self_weak.set(Arc::downgrade(&sess));
             if let Some(network_policy_decider_session) = network_policy_decider_session {
