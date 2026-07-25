@@ -1,6 +1,7 @@
 use super::*;
 use crate::live_thread_runtime::AppServerLiveThreadFeedbackRuntime;
 use crate::live_thread_runtime::AppServerLiveThreadInspectionRuntime;
+use thread_service_api::ThreadAgentDirectoryRuntime;
 
 #[derive(Clone)]
 pub(crate) struct FeedbackRequestProcessor {
@@ -23,7 +24,10 @@ impl FeedbackRequestProcessor {
         state_db: Option<StateDbHandle>,
     ) -> Self
     where
-        R: AppServerLiveThreadFeedbackRuntime + AppServerLiveThreadInspectionRuntime + 'static,
+        R: AppServerLiveThreadFeedbackRuntime
+            + AppServerLiveThreadInspectionRuntime
+            + ThreadAgentDirectoryRuntime
+            + 'static,
     {
         let live_thread_inspection: Arc<dyn AppServerLiveThreadInspectionRuntime> =
             thread_runtime.clone();
@@ -108,27 +112,7 @@ impl FeedbackRequestProcessor {
                         warn!(
                             "failed to list feedback subtree for thread_id={conversation_id}: {err}"
                         );
-                        let mut thread_ids = vec![conversation_id];
-                        if let Some(state_db_ctx) = state_db_ctx.as_ref() {
-                            for status in [
-                                state::DirectionalThreadSpawnEdgeStatus::Open,
-                                state::DirectionalThreadSpawnEdgeStatus::Closed,
-                            ] {
-                                match state_db_ctx
-                                    .list_thread_spawn_descendants_with_status(
-                                        conversation_id,
-                                        status,
-                                    )
-                                    .await
-                                {
-                                    Ok(descendant_ids) => thread_ids.extend(descendant_ids),
-                                    Err(err) => warn!(
-                                        "failed to list persisted feedback subtree for thread_id={conversation_id}: {err}"
-                                    ),
-                                }
-                            }
-                        }
-                        thread_ids
+                        vec![conversation_id]
                     }
                 },
                 None => Vec::new(),

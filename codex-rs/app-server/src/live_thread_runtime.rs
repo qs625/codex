@@ -36,6 +36,7 @@ use thread_service_api::LiveThreadSkillWatchRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::LiveThreadTurnRuntime;
 use thread_service_api::LiveThreadUsageRuntime;
+use thread_service_api::ThreadAgentDirectoryRuntime;
 use thread_service_api::ThreadConfigSnapshot;
 use thread_store_api::StoredThread;
 use thread_store_api::StoredThreadHistory;
@@ -320,13 +321,13 @@ pub(crate) trait AppServerLiveThreadFeedbackRuntime: Send + Sync {
 
 impl<T> AppServerLiveThreadFeedbackRuntime for T
 where
-    T: LiveThreadFeedbackRuntime + Send + Sync,
+    T: LiveThreadFeedbackRuntime + ThreadAgentDirectoryRuntime + Send + Sync,
 {
     fn list_agent_subtree_thread_ids(
         &self,
         thread_id: ThreadId,
     ) -> BoxFuture<'_, CodexResult<Vec<ThreadId>>> {
-        Box::pin(LiveThreadFeedbackRuntime::list_agent_subtree_thread_ids(
+        Box::pin(ThreadAgentDirectoryRuntime::list_agent_subtree_thread_ids(
             self, thread_id,
         ))
     }
