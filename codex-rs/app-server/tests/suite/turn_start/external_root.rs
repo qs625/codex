@@ -314,6 +314,27 @@ async fn persisted_external_root_rejects_turn_processor_native_only_ops() -> Res
 }
 
 #[tokio::test]
+async fn persisted_external_root_rejects_thread_processor_core_ops_without_restore() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
+    drop(mcp);
+
+    let mut restarted = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    expect_no_loaded_threads(&mut restarted).await?;
+
+    let compact_req = restarted
+        .send_thread_compact_start_request(ThreadCompactStartParams { thread_id })
+        .await?;
+    expect_external_root_native_only_error(&mut restarted, compact_req, "thread/compact/start")
+        .await?;
+    expect_no_loaded_threads(&mut restarted).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn persisted_external_root_turn_start_rejects_without_restore() -> Result<()> {
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;

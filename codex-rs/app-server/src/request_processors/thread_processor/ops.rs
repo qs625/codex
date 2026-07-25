@@ -5,6 +5,7 @@ use app_server_protocol::ThreadStatusChangedNotification;
 use codex_agent_runtime::AgentMetadata;
 use protocol::AgentPath;
 use protocol::protocol::AgentStatus;
+use thread_service_api::ExternalRootThreadInputRoute;
 
 pub(in crate::request_processors) fn unsupported_external_root_active_op(
     method: &str,
@@ -394,24 +395,35 @@ impl ThreadRequestProcessor {
         op: Op,
         failure_message: &str,
     ) -> Result<String, JSONRPCErrorError> {
+        match self
+            .external_root_thread_runtime
+            .external_root_thread_input_route(thread_id)
+            .await
+            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))?
+        {
+            ExternalRootThreadInputRoute::LiveExternalRoot { provider, .. } => {
+                return Err(unsupported_external_root_active_op(
+                    method,
+                    provider.provider_id(),
+                ));
+            }
+            ExternalRootThreadInputRoute::UnsupportedPersistedExternalRoot {
+                provider_id, ..
+            } => {
+                return Err(unsupported_external_root_active_op(
+                    method,
+                    provider_id.as_str(),
+                ));
+            }
+            ExternalRootThreadInputRoute::NativeRequired => {}
+        }
+
         if !self
             .live_thread_inspection
             .is_live_thread_loaded(thread_id)
             .await
         {
-            if let Some(provider) = self.persisted_external_root_provider(thread_id).await? {
-                return Err(unsupported_external_root_active_op(
-                    method,
-                    provider.as_str(),
-                ));
-            }
             return Err(invalid_request(format!("thread not found: {thread_id}")));
-        }
-        if let Some(provider) = self.live_external_root_provider(thread_id).await? {
-            return Err(unsupported_external_root_active_op(
-                method,
-                provider.as_str(),
-            ));
         }
         self.live_thread_command
             .submit_live_thread_op_with_trace(
@@ -426,29 +438,6 @@ impl ThreadRequestProcessor {
                 }
                 err => internal_error(format!("{failure_message}: {err}")),
             })
-    }
-
-    async fn live_external_root_provider(
-        &self,
-        thread_id: ThreadId,
-    ) -> Result<Option<String>, JSONRPCErrorError> {
-        Ok(self
-            .external_root_thread_runtime
-            .live_external_root_thread_facts(thread_id)
-            .map(|facts| facts.provider.provider_id().to_string()))
-    }
-
-    async fn persisted_external_root_provider(
-        &self,
-        thread_id: ThreadId,
-    ) -> Result<Option<String>, JSONRPCErrorError> {
-        self.persisted_thread_provider_facts_runtime
-            .persisted_external_root_thread_facts(
-                thread_service_api::PersistedThreadProviderFactsSelector::ThreadId(thread_id),
-            )
-            .await
-            .map(|facts| facts.map(|facts| facts.provider_id))
-            .map_err(|err| internal_error(format!("failed to inspect thread provider: {err}")))
     }
 
     #[allow(clippy::too_many_arguments)]
