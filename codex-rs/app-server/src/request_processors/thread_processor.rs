@@ -441,6 +441,8 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) live_thread_goal: Arc<dyn AppServerLiveThreadGoalRuntime>,
     pub(super) live_thread_elicitation: Arc<dyn AppServerLiveThreadElicitationRuntime>,
     pub(super) thread_metadata_runtime: Arc<dyn ThreadProcessorMetadataRuntime>,
+    pub(super) thread_agent_directory_runtime:
+        Arc<dyn thread_service_api::ThreadAgentDirectoryRuntime>,
     pub(super) thread_lifecycle_runtime: Arc<dyn thread_service_api::ThreadLifecycleRuntime>,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
     pub(super) arg0_paths: Arg0DispatchPaths,
@@ -489,6 +491,7 @@ impl ThreadRequestProcessor {
             live_thread_goal: thread_service.clone(),
             live_thread_elicitation: thread_service.clone(),
             thread_metadata_runtime: thread_service.clone(),
+            thread_agent_directory_runtime: thread_service.clone(),
             thread_lifecycle_runtime: thread_service,
             outgoing,
             arg0_paths,

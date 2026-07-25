@@ -108,7 +108,6 @@ use skill_service_api::DisabledSkillService;
 use skill_service_api::SharedSkillServiceApi;
 use skill_service_api::SkillWatchPath;
 use skill_service_api::SkillsLoadInput;
-use state_api::DirectionalThreadSpawnEdgeStatus;
 use state_api::ExternalGoalSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -1550,20 +1549,15 @@ impl ThreadServiceState {
         seen_thread_ids.insert(thread_id);
 
         if let Some(state_db_ctx) = thread.state_db() {
-            for status in [
-                DirectionalThreadSpawnEdgeStatus::Open,
-                DirectionalThreadSpawnEdgeStatus::Closed,
-            ] {
-                for descendant_id in state_db_ctx
-                    .list_thread_spawn_descendants_with_status(thread_id, status)
-                    .await
-                    .map_err(|err| {
-                        CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
-                    })?
-                {
-                    if seen_thread_ids.insert(descendant_id) {
-                        subtree_thread_ids.push(descendant_id);
-                    }
+            for descendant_id in state_db_ctx
+                .list_thread_spawn_descendants(thread_id)
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
+                })?
+            {
+                if seen_thread_ids.insert(descendant_id) {
+                    subtree_thread_ids.push(descendant_id);
                 }
             }
         }

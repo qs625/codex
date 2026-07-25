@@ -1031,21 +1031,20 @@ impl ThreadRequestProcessor {
         let thread_id = ThreadId::from_string(&params.thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
+        let subtree_thread_ids = self
+            .thread_agent_directory_runtime
+            .list_agent_subtree_thread_ids(thread_id)
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to list agent subtree for thread id {thread_id}: {err}"
+                ))
+            })?;
         let mut thread_ids = vec![thread_id];
-        if let Some(state_db_ctx) = self.state_db.as_ref() {
-            let descendants = state_db_ctx
-                .list_thread_spawn_descendants(thread_id)
-                .await
-                .map_err(|err| {
-                    internal_error(format!(
-                        "failed to list spawned descendants for thread id {thread_id}: {err}"
-                    ))
-                })?;
-            let mut seen = HashSet::from([thread_id]);
-            for descendant_id in descendants {
-                if seen.insert(descendant_id) {
-                    thread_ids.push(descendant_id);
-                }
+        let mut seen = HashSet::from([thread_id]);
+        for subtree_thread_id in subtree_thread_ids {
+            if seen.insert(subtree_thread_id) {
+                thread_ids.push(subtree_thread_id);
             }
         }
 

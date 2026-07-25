@@ -2342,20 +2342,15 @@ impl AgentControl {
         let mut seen_thread_ids = HashSet::from([agent_id]);
 
         if let Some(state_db_ctx) = state.thread_state_runtime() {
-            for status in [
-                DirectionalThreadSpawnEdgeStatus::Open,
-                DirectionalThreadSpawnEdgeStatus::Closed,
-            ] {
-                for descendant_id in state_db_ctx
-                    .list_thread_spawn_descendants_with_status(agent_id, status)
-                    .await
-                    .map_err(|err| {
-                        CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
-                    })?
-                {
-                    if seen_thread_ids.insert(descendant_id) {
-                        subtree_thread_ids.push(descendant_id);
-                    }
+            for descendant_id in state_db_ctx
+                .list_thread_spawn_descendants(agent_id)
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
+                })?
+            {
+                if seen_thread_ids.insert(descendant_id) {
+                    subtree_thread_ids.push(descendant_id);
                 }
             }
         }

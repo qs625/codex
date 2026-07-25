@@ -8169,6 +8169,46 @@ async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants
 }
 
 #[tokio::test]
+async fn list_agent_subtree_thread_ids_traverses_mixed_persisted_edge_statuses() {
+    let harness = AgentControlHarness::new().await;
+    let state_db = harness.state_db.as_ref().expect("state db");
+    let parent_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000801").expect("parent thread id");
+    let child_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000802").expect("child thread id");
+    let grandchild_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000803")
+        .expect("grandchild thread id");
+
+    state_db
+        .upsert_thread_spawn_edge(
+            parent_thread_id,
+            child_thread_id,
+            DirectionalThreadSpawnEdgeStatus::Closed,
+        )
+        .await
+        .expect("closed child edge should persist");
+    state_db
+        .upsert_thread_spawn_edge(
+            child_thread_id,
+            grandchild_thread_id,
+            DirectionalThreadSpawnEdgeStatus::Open,
+        )
+        .await
+        .expect("open grandchild edge should persist");
+
+    let subtree_thread_ids = harness
+        .manager
+        .list_agent_subtree_thread_ids(parent_thread_id)
+        .await
+        .expect("subtree thread ids should load");
+
+    assert_eq!(
+        subtree_thread_ids,
+        vec![parent_thread_id, child_thread_id, grandchild_thread_id]
+    );
+}
+
+#[tokio::test]
 async fn list_agent_directory_includes_source_parent_and_depth_facts() {
     let mut harness = AgentControlHarness::new().await;
     harness.config.agent_max_threads = Some(4);
