@@ -119,6 +119,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use thread_service_api::ActiveEventSubscriptionTracker;
+use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::LiveThreadSnapshot;
 use thread_service_api::ThreadCreatedEvent;
 use thread_service_api::ThreadShutdownReport;
@@ -1258,14 +1259,8 @@ impl ThreadService {
     }
 
     pub async fn shutdown_live_thread(&self, thread_id: ThreadId) -> CodexResult<String> {
-        if self
-            .root_external_agent_control()
-            .has_external_root_thread(thread_id)
-        {
-            return self
-                .root_external_agent_control()
-                .close_external_root_thread(thread_id)
-                .await;
+        if self.has_external_root_thread(thread_id) {
+            return ExternalRootThreadRuntime::close_external_root_thread(self, thread_id).await;
         }
         self.state.shutdown_live_thread(thread_id).await
     }
@@ -1303,6 +1298,12 @@ impl ThreadService {
     pub fn has_external_root_thread(&self, thread_id: ThreadId) -> bool {
         self.root_external_agent_control()
             .has_external_root_thread(thread_id)
+    }
+
+    pub async fn close_external_root_thread(&self, thread_id: ThreadId) -> CodexResult<String> {
+        self.root_external_agent_control()
+            .close_external_root_thread(thread_id)
+            .await
     }
 
     pub async fn live_thread_agent_status(&self, thread_id: ThreadId) -> CodexResult<AgentStatus> {
@@ -1444,6 +1445,11 @@ impl ThreadService {
             Arc::clone(&self.state.root_agent_registry),
             self.state.external_root_agents.clone(),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn root_external_agent_control_for_tests(&self) -> AgentControl {
+        self.root_external_agent_control()
     }
 
     #[cfg(test)]

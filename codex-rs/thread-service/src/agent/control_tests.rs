@@ -48,6 +48,7 @@ use thread_service_api::AgentDirectoryEntrySource;
 use thread_service_api::AgentDirectoryListRequest;
 use thread_service_api::AgentReferenceResolution;
 use thread_service_api::AgentReferenceResolutionRequest;
+use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
 use thread_service_api::ThreadRuntimeStatus;
@@ -2015,6 +2016,118 @@ async fn external_tool_call_poll_external_event_wakes_for_child_completion() {
     let result_json = result.result.expect("poll result");
     assert_eq!(result_json["timedOut"], false);
     assert_eq!(result_json["sourceHint"], "child_completion");
+}
+
+#[tokio::test]
+async fn external_root_runtime_close_removes_live_root_and_persists_shutdown() {
+    let harness = AgentControlHarness::new().await;
+    let (native_thread_id, _native_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let root_external_control = harness.manager.root_external_agent_control_for_tests();
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(AgentPath::root()),
+        agent_nickname: Some("claude_cli".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    let live_thread = root_external_control
+        .create_external_thread_persistence(
+            &external_config,
+            external_thread_id,
+            SessionSource::Cli,
+            ThreadSource::User,
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external root");
+    root_external_control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            external_thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                external_thread_id,
+                SessionSource::Cli,
+                &agent_metadata,
+            ),
+            AgentStatus::Running,
+        )
+        .await;
+    root_external_control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: external_thread_id,
+            agent_path: AgentPath::root(),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 0,
+            spawn_config: Some(external_config),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some("root work".to_string()),
+            abort_handle: None,
+        });
+    assert!(
+        harness
+            .manager
+            .is_live_thread_loaded(external_thread_id)
+            .await
+    );
+
+    let closed = ExternalRootThreadRuntime::close_external_root_thread(
+        &harness.manager,
+        external_thread_id,
+    )
+    .await
+    .expect("external root close should succeed");
+    assert_eq!(closed, "");
+    assert!(!harness.manager.has_external_root_thread(external_thread_id));
+    assert_eq!(
+        harness.control.get_status(external_thread_id).await,
+        AgentStatus::NotFound
+    );
+    assert!(
+        !harness
+            .manager
+            .is_live_thread_loaded(external_thread_id)
+            .await
+    );
+    assert_ne!(
+        harness.control.get_status(native_thread_id).await,
+        AgentStatus::NotFound,
+        "external root runtime close should not close native threads",
+    );
+
+    let stored = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external root");
+    let items = stored.history.expect("history").items;
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::ExternalTerminalStatus(event))
+            if event.thread_id == external_thread_id
+                && event.status == protocol::protocol::ExternalTerminalStatus::Shutdown
+    )));
+
+    let missing_err =
+        ExternalRootThreadRuntime::close_external_root_thread(&harness.manager, native_thread_id)
+            .await
+            .expect_err("native thread is not an external root");
+    assert!(
+        matches!(missing_err, CodexErr::ThreadNotFound(thread_id) if thread_id == native_thread_id)
+    );
 }
 
 #[tokio::test]
