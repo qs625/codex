@@ -67,6 +67,7 @@ use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::McpServerRefreshConfig;
 use protocol::protocol::Op;
 use protocol::protocol::SessionConfiguredEvent;
+use protocol::protocol::SessionSource;
 use protocol::protocol::Submission;
 use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::TokenUsage;
@@ -807,6 +808,92 @@ pub trait ThreadCollaborationRuntime: Send + Sync + 'static {
         call_id: String,
         path_prefix: Option<String>,
     ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentDirectoryEntrySource {
+    NativeLive,
+    ExternalLive,
+    Persisted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentDirectoryEntry {
+    pub thread_id: ThreadId,
+    pub parent_thread_id: Option<ThreadId>,
+    pub depth: Option<i32>,
+    pub agent_path: Option<String>,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
+    pub last_task_message: Option<String>,
+    pub lifecycle_status: ThreadLifecycleStatus,
+    pub source: AgentDirectoryEntrySource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentDirectoryListRequest {
+    pub current_thread_id: ThreadId,
+    pub current_session_source: SessionSource,
+    pub path_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentDirectoryListResult {
+    pub entries: Vec<AgentDirectoryEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentReferenceResolutionRequest {
+    pub current_thread_id: ThreadId,
+    pub current_session_source: SessionSource,
+    pub agent_reference: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentReferenceResolution {
+    Live {
+        thread_id: ThreadId,
+    },
+    PersistedNative {
+        thread_id: ThreadId,
+        parent_thread_id: ThreadId,
+        depth: i32,
+        agent_path: String,
+    },
+    PersistedExternalReadOnly {
+        thread_id: ThreadId,
+        agent_path: String,
+    },
+    Unsupported {
+        agent_path: String,
+        message: String,
+    },
+    NotFound {
+        agent_path: String,
+    },
+}
+
+/// Provider-neutral agent directory and reference lookup boundary.
+///
+/// Implementations return copied facts about live and persisted agent trees.
+/// This surface must not expose native session handles, external input sinks,
+/// provider transports, or app-server protocol DTOs; callers decide which side
+/// effects, if any, are allowed after inspecting the returned facts.
+pub trait ThreadAgentDirectoryRuntime: Send + Sync + 'static {
+    fn list_agent_directory<'a>(
+        &'a self,
+        request: AgentDirectoryListRequest,
+    ) -> ThreadServiceFuture<'a, CodexResult<AgentDirectoryListResult>>;
+
+    fn resolve_agent_reference_in_directory<'a>(
+        &'a self,
+        request: AgentReferenceResolutionRequest,
+    ) -> ThreadServiceFuture<'a, CodexResult<AgentReferenceResolution>>;
+
+    fn list_agent_subtree_thread_ids<'a>(
+        &'a self,
+        thread_id: ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<Vec<ThreadId>>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

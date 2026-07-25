@@ -905,7 +905,9 @@ impl ThreadService {
         &self,
         thread_id: ThreadId,
     ) -> CodexResult<Vec<ThreadId>> {
-        self.state.list_agent_subtree_thread_ids(thread_id).await
+        self.agent_control()
+            .list_agent_subtree_thread_ids(thread_id)
+            .await
     }
 
     pub async fn start_thread(&self, config: Config) -> CodexResult<NewThread> {
@@ -2992,10 +2994,11 @@ impl thread_service_api::LiveThreadFeedbackRuntime for ThreadService {
         &self,
         thread_id: ThreadId,
     ) -> impl std::future::Future<Output = CodexResult<Vec<ThreadId>>> + Send + '_ {
-        thread_service_api::LiveThreadFeedbackRuntime::list_agent_subtree_thread_ids(
-            self.state.as_ref(),
-            thread_id,
-        )
+        async move {
+            self.agent_control()
+                .list_agent_subtree_thread_ids(thread_id)
+                .await
+        }
     }
 
     fn thread_guardian_trunk_rollout_path(

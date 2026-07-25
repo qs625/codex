@@ -109,6 +109,12 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Weak;
+use thread_service_api::AgentDirectoryEntry;
+use thread_service_api::AgentDirectoryEntrySource;
+use thread_service_api::AgentDirectoryListRequest;
+use thread_service_api::AgentDirectoryListResult;
+use thread_service_api::AgentReferenceResolution;
+use thread_service_api::AgentReferenceResolutionRequest;
 use thread_service_api::LiveThreadActivitySource;
 use thread_service_api::LiveThreadCommandRuntime;
 use thread_service_api::LiveThreadInfo;
@@ -149,6 +155,14 @@ struct PersistedAgentTarget {
     thread_id: ThreadId,
     parent_thread_id: ThreadId,
     depth: i32,
+}
+
+#[derive(Clone)]
+struct AgentDirectoryMetadata {
+    metadata: AgentMetadata,
+    source: AgentDirectoryEntrySource,
+    parent_thread_id: Option<ThreadId>,
+    depth: Option<i32>,
 }
 
 struct PersistedAgentPathCandidate {
@@ -2204,6 +2218,44 @@ impl AgentControl {
         ))
     }
 
+    pub(crate) async fn list_agent_subtree_thread_ids(
+        &self,
+        agent_id: ThreadId,
+    ) -> CodexResult<Vec<ThreadId>> {
+        let state = self.upgrade()?;
+        let mut subtree_thread_ids = vec![agent_id];
+        let mut seen_thread_ids = HashSet::from([agent_id]);
+
+        if let Some(state_db_ctx) = state.thread_state_runtime() {
+            for status in [
+                DirectionalThreadSpawnEdgeStatus::Open,
+                DirectionalThreadSpawnEdgeStatus::Closed,
+            ] {
+                for descendant_id in state_db_ctx
+                    .list_thread_spawn_descendants_with_status(agent_id, status)
+                    .await
+                    .map_err(|err| {
+                        CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
+                    })?
+                {
+                    if seen_thread_ids.insert(descendant_id) {
+                        subtree_thread_ids.push(descendant_id);
+                    }
+                }
+            }
+        }
+
+        if let Ok(descendant_ids) = self.live_thread_spawn_descendants(agent_id).await {
+            for descendant_id in descendant_ids {
+                if seen_thread_ids.insert(descendant_id) {
+                    subtree_thread_ids.push(descendant_id);
+                }
+            }
+        }
+
+        Ok(subtree_thread_ids)
+    }
+
     pub(crate) async fn get_agent_config_snapshot(
         &self,
         agent_id: ThreadId,
@@ -2234,28 +2286,98 @@ impl AgentControl {
         config: Option<config_service::Config>,
         agent_reference: &str,
     ) -> CodexResult<ThreadId> {
-        let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
-        let agent_path = resolve_agent_reference_path(&current_agent_path, agent_reference)
-            .map_err(CodexErr::UnsupportedOperation)?;
+        let resolution = self
+            .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
+                current_thread_id,
+                current_session_source: current_session_source.clone(),
+                agent_reference: agent_reference.to_string(),
+            })
+            .await?;
+        match resolution {
+            AgentReferenceResolution::Live { thread_id } => Ok(thread_id),
+            AgentReferenceResolution::PersistedExternalReadOnly {
+                thread_id,
+                agent_path,
+            } => {
+                self.register_persisted_external_agent_metadata(thread_id, agent_path.as_str())
+                    .await?;
+                Ok(thread_id)
+            }
+            AgentReferenceResolution::PersistedNative {
+                thread_id,
+                parent_thread_id,
+                depth,
+                agent_path,
+            } => {
+                let Some(config) = config else {
+                    return Err(CodexErr::UnsupportedOperation(format!(
+                        "agent path `{agent_path}` not found"
+                    )));
+                };
+                let agent_path = AgentPath::try_from(agent_path.as_str()).map_err(|err| {
+                    CodexErr::UnsupportedOperation(format!(
+                        "agent path `{agent_path}` could not be restored: {err}"
+                    ))
+                })?;
+                let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth,
+                    agent_path: Some(agent_path.clone()),
+                    agent_nickname: None,
+                    agent_role: None,
+                });
+                Box::pin(self.resume_single_agent_from_rollout(config, thread_id, session_source))
+                    .await?;
+                self.state.agent_id_for_path(&agent_path).ok_or_else(|| {
+                    CodexErr::UnsupportedOperation(format!(
+                        "agent path `{agent_path}` could not be restored"
+                    ))
+                })
+            }
+            AgentReferenceResolution::Unsupported { message, .. } => {
+                Err(CodexErr::UnsupportedOperation(message))
+            }
+            AgentReferenceResolution::NotFound { agent_path } => Err(
+                CodexErr::UnsupportedOperation(format!("agent path `{agent_path}` not found")),
+            ),
+        }
+    }
+
+    pub(crate) async fn resolve_agent_reference_in_directory(
+        &self,
+        request: AgentReferenceResolutionRequest,
+    ) -> CodexResult<AgentReferenceResolution> {
+        let current_agent_path =
+            self.current_agent_path(request.current_thread_id, &request.current_session_source);
+        let agent_path =
+            resolve_agent_reference_path(&current_agent_path, &request.agent_reference)
+                .map_err(CodexErr::UnsupportedOperation)?;
         if let Some(thread_id) = self.state.agent_id_for_path(&agent_path) {
-            return Ok(thread_id);
+            if self.agent_thread_is_live(thread_id).await {
+                return Ok(AgentReferenceResolution::Live { thread_id });
+            }
         }
-        if let Some(config) = config
-            && let Some(thread_id) = self
-                .resolve_persisted_agent_reference(
-                    current_thread_id,
-                    current_session_source,
-                    config,
-                    &agent_path,
-                )
-                .await?
-        {
-            return Ok(thread_id);
-        }
-        Err(CodexErr::UnsupportedOperation(format!(
-            "agent path `{}` not found",
-            agent_path.as_str()
-        )))
+        let Some(root_thread_id) = self
+            .root_thread_id_for_persisted_agent_lookup(
+                request.current_thread_id,
+                &request.current_session_source,
+            )
+            .await
+        else {
+            return Ok(AgentReferenceResolution::NotFound {
+                agent_path: agent_path.to_string(),
+            });
+        };
+        let Some(target) = self
+            .persisted_agent_target_for_path(root_thread_id, &agent_path)
+            .await?
+        else {
+            return Ok(AgentReferenceResolution::NotFound {
+                agent_path: agent_path.to_string(),
+            });
+        };
+        self.persisted_agent_reference_resolution(&target, &agent_path)
+            .await
     }
 
     pub(crate) async fn resolve_agent_thread_id(
@@ -2301,64 +2423,11 @@ impl AgentControl {
         Ok(target_thread_id)
     }
 
-    async fn resolve_persisted_agent_reference(
-        &self,
-        current_thread_id: ThreadId,
-        current_session_source: &SessionSource,
-        config: config_service::Config,
-        agent_path: &AgentPath,
-    ) -> CodexResult<Option<ThreadId>> {
-        let Some(root_thread_id) = self
-            .root_thread_id_for_persisted_agent_lookup(current_thread_id, current_session_source)
-            .await
-        else {
-            return Ok(None);
-        };
-        let Some(target) = self
-            .persisted_agent_target_for_path(root_thread_id, agent_path)
-            .await?
-        else {
-            return Ok(None);
-        };
-
-        if self.state.agent_id_for_path(agent_path).is_none() {
-            if let Some(thread_id) = self
-                .resolve_persisted_external_agent_reference(&target, agent_path)
-                .await?
-            {
-                return Ok(Some(thread_id));
-            }
-            let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                parent_thread_id: target.parent_thread_id,
-                depth: target.depth,
-                agent_path: Some(agent_path.clone()),
-                agent_nickname: None,
-                agent_role: None,
-            });
-            Box::pin(self.resume_single_agent_from_rollout(
-                config,
-                target.thread_id,
-                session_source,
-            ))
-            .await?;
-        }
-
-        self.state
-            .agent_id_for_path(agent_path)
-            .map(Some)
-            .ok_or_else(|| {
-                CodexErr::UnsupportedOperation(format!(
-                    "agent path `{}` could not be restored",
-                    agent_path.as_str()
-                ))
-            })
-    }
-
-    async fn resolve_persisted_external_agent_reference(
+    async fn persisted_agent_reference_resolution(
         &self,
         target: &PersistedAgentTarget,
         agent_path: &AgentPath,
-    ) -> CodexResult<Option<ThreadId>> {
+    ) -> CodexResult<AgentReferenceResolution> {
         let state = self.upgrade()?;
         let stored_thread = state
             .read_stored_thread(ReadThreadParams {
@@ -2369,54 +2438,85 @@ impl AgentControl {
             .await?;
         let eligibility = external_live_restore_eligibility(&stored_thread);
         if !eligibility.is_external() {
-            return Ok(None);
+            return Ok(AgentReferenceResolution::PersistedNative {
+                thread_id: target.thread_id,
+                parent_thread_id: target.parent_thread_id,
+                depth: target.depth,
+                agent_path: agent_path.to_string(),
+            });
         }
 
         match eligibility {
             ExternalLiveRestoreEligibility::TerminalReadOnly => {}
             ExternalLiveRestoreEligibility::RunningNoDescriptor => {
-                return Err(CodexErr::UnsupportedOperation(format!(
-                    "external agent `{}` was interrupted after restart and cannot reconnect to its external provider session because no reconnect descriptor was persisted",
-                    agent_path.as_str()
-                )));
+                return Ok(AgentReferenceResolution::Unsupported {
+                    agent_path: agent_path.to_string(),
+                    message: format!(
+                        "external agent `{}` was interrupted after restart and cannot reconnect to its external provider session because no reconnect descriptor was persisted",
+                        agent_path.as_str()
+                    ),
+                });
             }
             ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled {
                 provider,
                 plan,
             } => {
                 let support = external_restore_plan_support(&provider, &plan);
-                return Err(CodexErr::UnsupportedOperation(format!(
-                    "external agent `{}` was interrupted after restart; reconnect descriptor is present but external live restore is disabled: {}",
-                    agent_path.as_str(),
-                    support.diagnostic(),
-                )));
+                return Ok(AgentReferenceResolution::Unsupported {
+                    agent_path: agent_path.to_string(),
+                    message: format!(
+                        "external agent `{}` was interrupted after restart; reconnect descriptor is present but external live restore is disabled: {}",
+                        agent_path.as_str(),
+                        support.diagnostic(),
+                    ),
+                });
             }
             ExternalLiveRestoreEligibility::RunningReconnectable { .. } => {
-                return Err(CodexErr::UnsupportedOperation(format!(
-                    "external agent `{}` has reconnect facts but external live restore is not implemented",
-                    agent_path.as_str()
-                )));
+                return Ok(AgentReferenceResolution::Unsupported {
+                    agent_path: agent_path.to_string(),
+                    message: format!(
+                        "external agent `{}` has reconnect facts but external live restore is not implemented",
+                        agent_path.as_str()
+                    ),
+                });
             }
-            ExternalLiveRestoreEligibility::NotExternal => return Ok(None),
+            ExternalLiveRestoreEligibility::NotExternal => {
+                return Ok(AgentReferenceResolution::PersistedNative {
+                    thread_id: target.thread_id,
+                    parent_thread_id: target.parent_thread_id,
+                    depth: target.depth,
+                    agent_path: agent_path.to_string(),
+                });
+            }
         }
 
+        Ok(AgentReferenceResolution::PersistedExternalReadOnly {
+            thread_id: target.thread_id,
+            agent_path: agent_path.to_string(),
+        })
+    }
+
+    async fn register_persisted_external_agent_metadata(
+        &self,
+        thread_id: ThreadId,
+        agent_path: &str,
+    ) -> CodexResult<()> {
+        let state = self.upgrade()?;
         let Some(state_db_ctx) = state.thread_state_runtime() else {
             return Err(CodexErr::UnsupportedOperation(format!(
-                "external agent `{}` is missing persisted agent metadata",
-                agent_path.as_str()
+                "external agent `{agent_path}` is missing persisted agent metadata"
             )));
         };
         let Some(agent_metadata) = self
-            .persisted_agent_metadata(target.thread_id, state_db_ctx.as_ref())
+            .persisted_agent_metadata(thread_id, state_db_ctx.as_ref())
             .await
         else {
             return Err(CodexErr::UnsupportedOperation(format!(
-                "external agent `{}` is missing persisted agent metadata",
-                agent_path.as_str()
+                "external agent `{agent_path}` is missing persisted agent metadata"
             )));
         };
         self.state.register_agent_metadata(agent_metadata);
-        Ok(Some(target.thread_id))
+        Ok(())
     }
 
     async fn persisted_agent_target_for_thread_id(
@@ -2670,66 +2770,101 @@ impl AgentControl {
         current_session_source: &SessionSource,
         path_prefix: Option<&str>,
     ) -> CodexResult<Vec<ListedAgent>> {
+        let directory = self
+            .list_agent_directory(AgentDirectoryListRequest {
+                current_thread_id,
+                current_session_source: current_session_source.clone(),
+                path_prefix: path_prefix.map(ToString::to_string),
+            })
+            .await?;
+
+        Ok(directory
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                Some(ListedAgent {
+                    agent_name: entry.agent_path?,
+                    agent_nickname: entry.agent_nickname,
+                    agent_role: entry.agent_role,
+                    lifecycle_status: entry.lifecycle_status,
+                    last_task_message: entry.last_task_message,
+                })
+            })
+            .collect())
+    }
+
+    pub(crate) async fn list_agent_directory(
+        &self,
+        request: AgentDirectoryListRequest,
+    ) -> CodexResult<AgentDirectoryListResult> {
         let _state = self.upgrade()?;
         let current_agent_path = self
-            .current_agent_path_with_persisted_metadata(current_thread_id, current_session_source)
+            .current_agent_path_with_persisted_metadata(
+                request.current_thread_id,
+                &request.current_session_source,
+            )
             .await;
-        let root_thread_id = if thread_spawn_parent_thread_id(current_session_source).is_none() {
-            Some(current_thread_id)
-        } else {
-            self.persisted_thread_spawn_root(current_thread_id)
-                .await
-                .or_else(|| self.state.agent_id_for_path(&AgentPath::root()))
-        };
-        let mut registered_agents = self
-            .registered_agents_with_persisted_descendants(root_thread_id)
+        let root_thread_id =
+            if thread_spawn_parent_thread_id(&request.current_session_source).is_none() {
+                Some(request.current_thread_id)
+            } else {
+                self.persisted_thread_spawn_root(request.current_thread_id)
+                    .await
+                    .or_else(|| self.state.agent_id_for_path(&AgentPath::root()))
+            };
+        let directory_metadata = self
+            .registered_agent_directory_metadata(root_thread_id)
             .await;
-        let mut registered_thread_ids = registered_agents
+        let source_by_thread_id = directory_metadata
             .iter()
-            .filter_map(|metadata| metadata.agent_id)
-            .collect::<HashSet<_>>();
-        let mut registered_agent_paths = registered_agents
+            .filter_map(|entry| {
+                entry
+                    .metadata
+                    .agent_id
+                    .map(|thread_id| (thread_id, entry.source))
+            })
+            .collect::<HashMap<_, _>>();
+        let tree_facts_by_thread_id = directory_metadata
             .iter()
-            .filter_map(|metadata| metadata.agent_path.as_ref().map(ToString::to_string))
-            .collect::<HashSet<_>>();
-        let scoped_thread_ids = if let Some(root_thread_id) = root_thread_id {
-            let mut scoped_thread_ids = HashSet::from([root_thread_id]);
-            if let Ok(descendant_ids) = self.live_thread_spawn_descendants(root_thread_id).await {
-                scoped_thread_ids.extend(descendant_ids);
-            }
-            Some(scoped_thread_ids)
-        } else {
-            None
-        };
-        for run in self.external_agents.list().into_iter().filter(|run| {
-            scoped_thread_ids
-                .as_ref()
-                .is_none_or(|thread_ids| thread_ids.contains(&run.parent_thread_id))
-        }) {
-            let metadata = external_metadata(&run);
-            if let Some(existing) = registered_agents
-                .iter_mut()
-                .find(|candidate| candidate.agent_id == Some(run.thread_id))
-            {
-                *existing = metadata;
-                continue;
-            }
-            if registered_thread_ids.insert(run.thread_id)
-                && registered_agent_paths.insert(run.agent_path.to_string())
-            {
-                registered_agents.push(metadata);
-            }
-        }
-        let plan = list_agents_plan(&current_agent_path, path_prefix, registered_agents)
-            .map_err(CodexErr::UnsupportedOperation)?;
+            .filter_map(|entry| {
+                entry
+                    .metadata
+                    .agent_id
+                    .map(|thread_id| (thread_id, (entry.parent_thread_id, entry.depth)))
+            })
+            .collect::<HashMap<_, _>>();
+        let metadata = directory_metadata
+            .into_iter()
+            .map(|entry| entry.metadata)
+            .collect::<Vec<_>>();
+        let plan = list_agents_plan(
+            &current_agent_path,
+            request.path_prefix.as_deref(),
+            metadata,
+        )
+        .map_err(CodexErr::UnsupportedOperation)?;
 
-        let mut agents = Vec::with_capacity(plan.candidates.len().saturating_add(1));
+        let mut entries = Vec::with_capacity(plan.candidates.len().saturating_add(1));
         let root_path = AgentPath::root();
         if plan.include_root
             && let Some(root_thread_id) = self.state.agent_id_for_path(&root_path)
             && let Some(lifecycle_status) = self.listed_thread_lifecycle(root_thread_id).await
         {
-            agents.push(root_listed_agent(lifecycle_status));
+            let root_agent = root_listed_agent(lifecycle_status.clone());
+            entries.push(AgentDirectoryEntry {
+                thread_id: root_thread_id,
+                parent_thread_id: None,
+                depth: Some(0),
+                agent_path: Some(root_agent.agent_name),
+                agent_nickname: root_agent.agent_nickname,
+                agent_role: root_agent.agent_role,
+                last_task_message: root_agent.last_task_message,
+                lifecycle_status,
+                source: source_by_thread_id
+                    .get(&root_thread_id)
+                    .copied()
+                    .unwrap_or(AgentDirectoryEntrySource::NativeLive),
+            });
         }
 
         for candidate in plan.candidates {
@@ -2737,16 +2872,27 @@ impl AgentControl {
             let Some(lifecycle_status) = lifecycle_status else {
                 continue;
             };
-            agents.push(ListedAgent {
-                agent_name: candidate.agent_name,
+            entries.push(AgentDirectoryEntry {
+                thread_id: candidate.thread_id,
+                parent_thread_id: tree_facts_by_thread_id
+                    .get(&candidate.thread_id)
+                    .and_then(|(parent_thread_id, _)| *parent_thread_id),
+                depth: tree_facts_by_thread_id
+                    .get(&candidate.thread_id)
+                    .and_then(|(_, depth)| *depth),
+                agent_path: Some(candidate.agent_name),
                 agent_nickname: candidate.agent_nickname,
                 agent_role: candidate.agent_role,
-                lifecycle_status,
                 last_task_message: candidate.last_task_message,
-            });
+                lifecycle_status,
+                source: source_by_thread_id
+                    .get(&candidate.thread_id)
+                    .copied()
+                    .unwrap_or(AgentDirectoryEntrySource::Persisted),
+            })
         }
 
-        Ok(agents)
+        Ok(AgentDirectoryListResult { entries })
     }
 
     async fn listed_thread_lifecycle(&self, thread_id: ThreadId) -> Option<ThreadLifecycleStatus> {
@@ -2784,11 +2930,77 @@ impl AgentControl {
         })
     }
 
-    async fn registered_agents_with_persisted_descendants(
+    async fn agent_thread_is_live(&self, thread_id: ThreadId) -> bool {
+        if self.external_agents.get(thread_id).is_some() {
+            return true;
+        }
+        let Ok(state) = self.upgrade() else {
+            return false;
+        };
+        state
+            .live_thread_activity_snapshot(thread_id)
+            .await
+            .thread_found
+    }
+
+    async fn registered_agent_directory_source(
+        &self,
+        thread_id: Option<ThreadId>,
+    ) -> AgentDirectoryEntrySource {
+        let Some(thread_id) = thread_id else {
+            return AgentDirectoryEntrySource::NativeLive;
+        };
+        if self.external_agents.get(thread_id).is_some() {
+            return AgentDirectoryEntrySource::ExternalLive;
+        }
+        if self.agent_thread_is_live(thread_id).await {
+            AgentDirectoryEntrySource::NativeLive
+        } else {
+            AgentDirectoryEntrySource::Persisted
+        }
+    }
+
+    async fn live_agent_directory_tree_facts(
+        &self,
+        thread_id: ThreadId,
+    ) -> (Option<ThreadId>, Option<i32>) {
+        let Ok(state) = self.upgrade() else {
+            return (None, None);
+        };
+        let Ok(thread) = state.get_thread(thread_id).await else {
+            return (None, None);
+        };
+        let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id,
+            depth,
+            ..
+        }) = &thread.session_source
+        else {
+            return (None, None);
+        };
+        (Some(*parent_thread_id), Some(*depth))
+    }
+
+    async fn registered_agent_directory_metadata(
         &self,
         root_thread_id: Option<ThreadId>,
-    ) -> Vec<AgentMetadata> {
-        let mut registered_agents = self.state.registered_agents();
+    ) -> Vec<AgentDirectoryMetadata> {
+        let mut registered_agents = Vec::new();
+        for metadata in self.state.registered_agents() {
+            let source = self
+                .registered_agent_directory_source(metadata.agent_id)
+                .await;
+            let (parent_thread_id, depth) = match metadata.agent_id {
+                Some(thread_id) => self.live_agent_directory_tree_facts(thread_id).await,
+                None => (None, None),
+            };
+            registered_agents.push(AgentDirectoryMetadata {
+                metadata,
+                source,
+                parent_thread_id,
+                depth,
+            });
+        }
         let Some(root_thread_id) = root_thread_id else {
             return registered_agents;
         };
@@ -2798,60 +3010,127 @@ impl AgentControl {
         }
         registered_agents.retain(|metadata| {
             metadata
+                .metadata
                 .agent_id
                 .is_some_and(|thread_id| scoped_thread_ids.contains(&thread_id))
         });
+        let mut registered_thread_ids = registered_agents
+            .iter()
+            .filter_map(|metadata| metadata.metadata.agent_id)
+            .collect::<HashSet<_>>();
+        let mut registered_agent_paths = registered_agents
+            .iter()
+            .filter_map(|metadata| {
+                metadata
+                    .metadata
+                    .agent_path
+                    .as_ref()
+                    .map(ToString::to_string)
+            })
+            .collect::<HashSet<_>>();
+        for run in self.external_agents.list().into_iter().filter(|run| {
+            scoped_thread_ids.contains(&run.parent_thread_id)
+                || scoped_thread_ids.contains(&run.thread_id)
+        }) {
+            let metadata = external_metadata(&run);
+            if let Some(existing) = registered_agents
+                .iter_mut()
+                .find(|candidate| candidate.metadata.agent_id == Some(run.thread_id))
+            {
+                *existing = AgentDirectoryMetadata {
+                    metadata,
+                    source: AgentDirectoryEntrySource::ExternalLive,
+                    parent_thread_id: Some(run.parent_thread_id),
+                    depth: Some(run.depth),
+                };
+                continue;
+            }
+            if registered_thread_ids.insert(run.thread_id)
+                && registered_agent_paths.insert(run.agent_path.to_string())
+            {
+                registered_agents.push(AgentDirectoryMetadata {
+                    metadata,
+                    source: AgentDirectoryEntrySource::ExternalLive,
+                    parent_thread_id: Some(run.parent_thread_id),
+                    depth: Some(run.depth),
+                });
+            }
+        }
         let Ok(state) = self.upgrade() else {
             return registered_agents;
         };
         let Some(state_db_ctx) = state.thread_state_runtime() else {
             return registered_agents;
         };
-        let Ok(descendant_ids) = state_db_ctx
-            .list_thread_spawn_descendants_with_status(
-                root_thread_id,
-                DirectionalThreadSpawnEdgeStatus::Open,
-            )
-            .await
-        else {
-            return registered_agents;
-        };
-
-        let mut known_thread_ids = registered_agents
-            .iter()
-            .filter_map(|metadata| metadata.agent_id)
-            .collect::<std::collections::HashSet<_>>();
-        let mut known_agent_paths = registered_agents
-            .iter()
-            .filter_map(|metadata| metadata.agent_path.as_ref().map(ToString::to_string))
-            .collect::<std::collections::HashSet<_>>();
-
-        for descendant_id in descendant_ids {
-            if known_thread_ids.contains(&descendant_id) {
-                continue;
-            }
-            let Some(agent_metadata) = self
-                .persisted_agent_metadata(descendant_id, state_db_ctx.as_ref())
+        let mut queue = VecDeque::from([(root_thread_id, 0)]);
+        let mut seen = HashSet::from([root_thread_id]);
+        while let Some((parent_thread_id, parent_depth)) = queue.pop_front() {
+            let Ok(child_ids) = state_db_ctx
+                .list_thread_spawn_children_with_status(
+                    parent_thread_id,
+                    DirectionalThreadSpawnEdgeStatus::Open,
+                )
                 .await
             else {
-                continue;
+                return registered_agents;
             };
-            if agent_metadata
-                .agent_path
-                .as_ref()
-                .is_some_and(AgentPath::is_root)
-            {
-                continue;
-            }
-            let Some(agent_path) = agent_metadata.agent_path.as_ref() else {
-                continue;
-            };
-            if !known_agent_paths.insert(agent_path.to_string()) {
-                continue;
-            }
+            for child_thread_id in child_ids {
+                if !seen.insert(child_thread_id) {
+                    continue;
+                }
+                let depth = parent_depth + 1;
+                let Some(metadata) = state_db_ctx
+                    .get_thread(child_thread_id)
+                    .await
+                    .ok()
+                    .flatten()
+                else {
+                    continue;
+                };
+                if metadata.archived_at.is_some() {
+                    continue;
+                }
+                if let Some(existing) = registered_agents
+                    .iter_mut()
+                    .find(|candidate| candidate.metadata.agent_id == Some(child_thread_id))
+                {
+                    existing.parent_thread_id.get_or_insert(parent_thread_id);
+                    existing.depth.get_or_insert(depth);
+                    queue.push_back((child_thread_id, depth));
+                    continue;
+                }
+                let Some(agent_metadata) =
+                    persisted_agent_metadata_from_state_metadata(child_thread_id, &metadata)
+                else {
+                    queue.push_back((child_thread_id, depth));
+                    continue;
+                };
+                if agent_metadata
+                    .agent_path
+                    .as_ref()
+                    .is_some_and(AgentPath::is_root)
+                {
+                    queue.push_back((child_thread_id, depth));
+                    continue;
+                }
+                let Some(agent_path) = agent_metadata.agent_path.as_ref() else {
+                    queue.push_back((child_thread_id, depth));
+                    continue;
+                };
+                if !registered_agent_paths.insert(agent_path.to_string()) {
+                    queue.push_back((child_thread_id, depth));
+                    continue;
+                }
 
-            registered_agents.push(agent_metadata);
-            known_thread_ids.insert(descendant_id);
+                registered_agents.push(AgentDirectoryMetadata {
+                    metadata: agent_metadata,
+                    source: AgentDirectoryEntrySource::Persisted,
+                    parent_thread_id: Some(parent_thread_id),
+                    depth: Some(depth),
+                });
+                registered_thread_ids.insert(child_thread_id);
+                queue.push_back((child_thread_id, depth));
+            }
         }
 
         registered_agents

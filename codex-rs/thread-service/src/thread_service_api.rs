@@ -10,6 +10,10 @@ use codex_agent_runtime::SpawnAgentForkMode;
 use codex_agent_runtime::SpawnAgentProvider;
 use protocol::error::Result as CodexResult;
 use protocol::models::ResponseItem;
+use thread_service_api::AgentDirectoryListRequest;
+use thread_service_api::AgentDirectoryListResult;
+use thread_service_api::AgentReferenceResolution;
+use thread_service_api::AgentReferenceResolutionRequest;
 use thread_service_api::ExternalRootThreadProvider;
 use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::ExternalRootThreadStartRequest;
@@ -18,6 +22,7 @@ use thread_service_api::ExternalRootThreadStartupConfig;
 use thread_service_api::NativeAgentRuntime;
 use thread_service_api::RootThreadProviderResolutionError;
 use thread_service_api::RootThreadProviderRoute;
+use thread_service_api::ThreadAgentDirectoryRuntime;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
 use thread_service_api::ThreadCreatedEvent;
@@ -517,6 +522,37 @@ impl ThreadProviderCatalogRuntime for ThreadService {
     }
 }
 
+impl ThreadAgentDirectoryRuntime for ThreadService {
+    fn list_agent_directory<'a>(
+        &'a self,
+        request: AgentDirectoryListRequest,
+    ) -> ThreadServiceFuture<'a, CodexResult<AgentDirectoryListResult>> {
+        Box::pin(async move { self.agent_control().list_agent_directory(request).await })
+    }
+
+    fn resolve_agent_reference_in_directory<'a>(
+        &'a self,
+        request: AgentReferenceResolutionRequest,
+    ) -> ThreadServiceFuture<'a, CodexResult<AgentReferenceResolution>> {
+        Box::pin(async move {
+            self.agent_control()
+                .resolve_agent_reference_in_directory(request)
+                .await
+        })
+    }
+
+    fn list_agent_subtree_thread_ids<'a>(
+        &'a self,
+        thread_id: protocol::ThreadId,
+    ) -> ThreadServiceFuture<'a, CodexResult<Vec<protocol::ThreadId>>> {
+        Box::pin(async move {
+            self.agent_control()
+                .list_agent_subtree_thread_ids(thread_id)
+                .await
+        })
+    }
+}
+
 impl ExternalRootThreadRuntime for ThreadService {
     fn start_external_root_thread<'a>(
         &'a self,
@@ -642,6 +678,7 @@ mod tests {
             + NativeAgentRuntime
             + ThreadCollaborationRuntime
             + ThreadProviderCatalogRuntime
+            + ThreadAgentDirectoryRuntime
             + ExternalRootThreadRuntime
             + ThreadEventRuntime,
     {

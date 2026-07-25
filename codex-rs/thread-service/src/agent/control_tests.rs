@@ -44,6 +44,10 @@ use protocol::user_input::UserInput;
 use state_api::DirectionalThreadSpawnEdgeStatus;
 use state_api::ThreadGoalStatus as StateThreadGoalStatus;
 use tempfile::TempDir;
+use thread_service_api::AgentDirectoryEntrySource;
+use thread_service_api::AgentDirectoryListRequest;
+use thread_service_api::AgentReferenceResolution;
+use thread_service_api::AgentReferenceResolutionRequest;
 use thread_service_api::LiveThreadInspectionRuntime;
 use thread_service_api::ThreadLifecycleRuntime;
 use thread_service_api::ThreadRuntimeStatus;
@@ -3024,6 +3028,23 @@ async fn external_completed_agent_is_listed_from_persisted_thread_after_restart(
         ThreadLifecycleStatus::completed(Some("persisted done".to_string()))
     );
 
+    let directory = restarted_control
+        .list_agent_directory(AgentDirectoryListRequest {
+            current_thread_id: root_thread_id,
+            current_session_source: SessionSource::Exec,
+            path_prefix: Some("external".to_string()),
+        })
+        .await
+        .expect("list persisted external directory");
+    assert_eq!(directory.entries.len(), 1);
+    assert_eq!(directory.entries[0].thread_id, external_thread_id);
+    assert_eq!(directory.entries[0].parent_thread_id, Some(root_thread_id));
+    assert_eq!(directory.entries[0].depth, Some(1));
+    assert_eq!(
+        directory.entries[0].source,
+        AgentDirectoryEntrySource::Persisted
+    );
+
     let stored = restarted_manager
         .read_thread(ReadThreadParams {
             thread_id: external_thread_id,
@@ -3343,8 +3364,24 @@ async fn external_completed_agent_path_resolves_from_persisted_thread_after_rest
         restarted_control
             .get_agent_metadata(external_thread_id)
             .and_then(|metadata| metadata.agent_path),
-        Some(external_agent_path),
+        Some(external_agent_path.clone()),
         "external path resolution should register persisted metadata for later references",
+    );
+
+    let resolution = restarted_control
+        .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
+            current_thread_id: root_thread_id,
+            current_session_source: SessionSource::Exec,
+            agent_reference: external_agent_path.to_string(),
+        })
+        .await
+        .expect("directory resolution should load persisted external facts");
+    assert_matches!(
+        resolution,
+        AgentReferenceResolution::PersistedExternalReadOnly {
+            thread_id,
+            agent_path,
+        } if thread_id == external_thread_id && agent_path == external_agent_path.to_string()
     );
 }
 
@@ -7589,6 +7626,85 @@ async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants
         no_path_child_subtree_thread_ids,
         expected_no_path_child_subtree_thread_ids
     );
+}
+
+#[tokio::test]
+async fn list_agent_directory_includes_source_parent_and_depth_facts() {
+    let mut harness = AgentControlHarness::new().await;
+    harness.config.agent_max_threads = Some(4);
+    let (parent_thread_id, _parent_thread) = harness.start_thread().await;
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_child_path = worker_path.join("child").expect("worker child path");
+
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_child_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello worker child"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: worker_thread_id,
+                depth: 2,
+                agent_path: Some(worker_child_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("worker".to_string()),
+            })),
+        )
+        .await
+        .expect("worker child spawn should succeed");
+
+    wait_for_live_thread_spawn_children(&harness.control, parent_thread_id, &[worker_thread_id])
+        .await;
+    wait_for_live_thread_spawn_children(
+        &harness.control,
+        worker_thread_id,
+        &[worker_child_thread_id],
+    )
+    .await;
+
+    let directory = harness
+        .control
+        .list_agent_directory(AgentDirectoryListRequest {
+            current_thread_id: parent_thread_id,
+            current_session_source: SessionSource::Exec,
+            path_prefix: None,
+        })
+        .await
+        .expect("directory should list live tree facts");
+
+    let worker = directory
+        .entries
+        .iter()
+        .find(|entry| entry.agent_path.as_deref() == Some(worker_path.as_str()))
+        .expect("worker directory entry should exist");
+    assert_eq!(worker.thread_id, worker_thread_id);
+    assert_eq!(worker.parent_thread_id, Some(parent_thread_id));
+    assert_eq!(worker.depth, Some(1));
+    assert_eq!(worker.source, AgentDirectoryEntrySource::NativeLive);
+
+    let worker_child = directory
+        .entries
+        .iter()
+        .find(|entry| entry.agent_path.as_deref() == Some(worker_child_path.as_str()))
+        .expect("worker child directory entry should exist");
+    assert_eq!(worker_child.thread_id, worker_child_thread_id);
+    assert_eq!(worker_child.parent_thread_id, Some(worker_thread_id));
+    assert_eq!(worker_child.depth, Some(2));
+    assert_eq!(worker_child.source, AgentDirectoryEntrySource::NativeLive);
 }
 
 #[tokio::test]
