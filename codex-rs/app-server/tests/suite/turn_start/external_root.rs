@@ -130,6 +130,42 @@ async fn external_root_turn_start_accepts_text_input() -> Result<()> {
 }
 
 #[tokio::test]
+async fn external_root_turn_start_ignores_common_model_fields() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
+
+    let turn_req = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id,
+            input: vec![V2UserInput::Text {
+                text: "Hello external root with UI model fields".to_string(),
+                text_elements: Vec::new(),
+            }],
+            model: Some("mock-model-override".to_string()),
+            model_provider: Some("mock-provider-override".to_string()),
+            effort: Some(ReasoningEffort::High),
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+
+    assert!(!turn.id.is_empty(), "turn id should not be empty");
+    assert_eq!(turn.status, TurnStatus::InProgress);
+    assert_eq!(turn.items, Vec::<ThreadItem>::new());
+    assert_eq!(turn.items_view, TurnItemsView::NotLoaded);
+    assert_eq!(turn.error, None);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn external_root_rejects_native_only_active_ops() -> Result<()> {
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;
@@ -527,7 +563,7 @@ async fn external_root_turn_start_rejects_native_only_params() -> Result<()> {
                 text: "Hello external root".to_string(),
                 text_elements: Vec::new(),
             }],
-            model: Some("mock-model-override".to_string()),
+            cwd: Some(codex_home.path().join("native-only-cwd")),
             ..Default::default()
         })
         .await?;
@@ -541,7 +577,7 @@ async fn external_root_turn_start_rejects_native_only_params() -> Result<()> {
     assert!(
         err.error
             .message
-            .contains("external root turn/start does not support model"),
+            .contains("external root turn/start does not support cwd"),
         "{}",
         err.error.message
     );
