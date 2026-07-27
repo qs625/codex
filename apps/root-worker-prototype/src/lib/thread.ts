@@ -473,7 +473,7 @@ export function updateThreadTurn(thread: Thread, turn: Turn) {
         ? mergeTurn(existing, normalizedTurn)
         : existing,
     );
-    return { ...thread, turns };
+    return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
   }
 
   const turnMatcher = createTurnItemMatcher(
@@ -485,7 +485,7 @@ export function updateThreadTurn(thread: Thread, turn: Turn) {
     ),
     normalizedTurn,
   ];
-  return { ...thread, turns };
+  return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
 }
 
 export function updateThreadTurnLifecycle(thread: Thread, turn: Turn) {
@@ -499,13 +499,20 @@ export function updateThreadTurnLifecycle(thread: Thread, turn: Turn) {
         ? mergeTurnLifecycle(existing, normalizedTurn)
         : existing,
     );
-    return { ...thread, turns };
+    return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
   }
 
-  return {
+  if (
+    threadHasCompactItem(thread) &&
+    !isTurnSnapshotAfterLatestCompact(thread, normalizedTurn)
+  ) {
+    return thread;
+  }
+
+  return pruneThreadSnapshotToLatestCompact({
     ...thread,
     turns: [...thread.turns, { ...normalizedTurn, items: [] }],
-  };
+  });
 }
 
 function mergeTurnLifecycle(existing: Turn, next: Turn): Turn {
@@ -550,6 +557,14 @@ export function updateThreadItem(
       return turn;
     }
     foundTurn = true;
+    if (
+      !hasMatchingThreadItem(turn.items, nextItem) &&
+      turnHasCompactItem(turn) &&
+      nextItem.type !== "contextCompaction" &&
+      !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
+    ) {
+      return turn;
+    }
     const items = [...completedCollabSyntheticItems, nextItem].reduce(
       appendOrMergeThreadItem,
       turn.items,
@@ -578,10 +593,10 @@ export function updateThreadItem(
     return { ...turn, items };
   }).filter((turn): turn is Turn => turn !== null);
   if (foundTurn) {
-    return {
+    return pruneThreadSnapshotToLatestCompact({
       ...thread,
       turns: updatedTurns,
-    };
+    });
   }
 
   if (initContextItemKey(nextItem) !== null) {
@@ -594,12 +609,15 @@ export function updateThreadItem(
           ? { ...turn, items: appendOrMergeThreadItem(turn.items, nextItem) }
           : turn,
       );
-      return { ...thread, turns };
+      return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
     }
   }
 
   const activeTurn = isCollabCompletionNotificationItem(nextItem)
-    ? [...thread.turns].reverse().find(isTurnInFlight)
+    ? threadHasCompactItem(thread) &&
+      !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
+      ? undefined
+      : [...thread.turns].reverse().find(isTurnInFlight)
     : undefined;
   if (activeTurn) {
     const turns = thread.turns.map((turn) =>
@@ -607,16 +625,30 @@ export function updateThreadItem(
         ? { ...turn, items: appendOrMergeThreadItem(turn.items, nextItem) }
         : turn,
     );
-    return {
+    return pruneThreadSnapshotToLatestCompact({
       ...thread,
       turns,
-    };
+    });
   }
 
-  return {
+  if (
+    threadHasCompactItem(thread) &&
+    !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
+  ) {
+    return thread;
+  }
+
+  return pruneThreadSnapshotToLatestCompact({
     ...thread,
     turns: [...thread.turns, createSyntheticTurn(turnId, nextItem, timestamps)],
-  };
+  });
+}
+
+function hasMatchingThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
+  return items.some(
+    (item) =>
+      item.id === nextItem.id || isEquivalentInitContextItem(item, nextItem),
+  );
 }
 
 function appendOrMergeThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
@@ -723,6 +755,9 @@ export function appendAgentDelta(
           return turn;
         }
         const hasItem = turn.items.some((item) => item.id === itemId);
+        if (!hasItem && turnHasCompactItem(turn)) {
+          return turn;
+        }
         const items = hasItem
           ? turn.items.flatMap((item) => {
               if (item.id !== itemId || item.type !== "agentMessage") {
@@ -742,7 +777,9 @@ export function appendAgentDelta(
             ];
         return { ...turn, items };
       })
-    : [
+    : threadHasCompactItem(thread)
+      ? thread.turns
+      : [
         ...thread.turns,
         {
           id: turnId,
@@ -763,7 +800,55 @@ export function appendAgentDelta(
           durationMs: null,
         } satisfies Turn,
       ];
-  return { ...thread, turns };
+  return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
+}
+
+function threadHasCompactItem(thread: Thread) {
+  return thread.turns.some(turnHasCompactItem);
+}
+
+function turnHasCompactItem(turn: Turn) {
+  return turn.items.some((item) => item.type === "contextCompaction");
+}
+
+function isTurnSnapshotAfterLatestCompact(thread: Thread, turn: Turn) {
+  return isTimestampAfterLatestCompact(
+    thread,
+    timestampMsFromSeconds(turn.startedAt) ??
+      timestampMsFromSeconds(turn.completedAt),
+  );
+}
+
+function isItemNotificationAfterLatestCompact(
+  thread: Thread,
+  item: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
+) {
+  return isTimestampAfterLatestCompact(
+    thread,
+    timestamps?.startedAtMs ??
+      timestamps?.completedAtMs ??
+      item.startedAtMs ??
+      item.completedAtMs,
+  );
+}
+
+function isTimestampAfterLatestCompact(thread: Thread, timestampMs?: number | null) {
+  if (!Number.isFinite(timestampMs)) {
+    return false;
+  }
+  const latestCompact = findLatestCompactItemPosition(thread.turns);
+  if (!latestCompact || !Number.isFinite(latestCompact.timestampMs)) {
+    return false;
+  }
+  return timestampMs! > latestCompact.timestampMs!;
+}
+
+function timestampMsFromSeconds(timestampSeconds?: number | null) {
+  return Number.isFinite(timestampSeconds) ? timestampSeconds! * 1000 : null;
 }
 
 export function appendCommandExecutionDelta(
@@ -793,7 +878,7 @@ export function appendCommandExecutionDelta(
         };
       })
     : thread.turns;
-  return { ...thread, turns };
+  return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
 }
 
 export function mergeTurn(existing: Turn, next: Turn): Turn {
@@ -887,14 +972,14 @@ export function mergeThreadSnapshot(
         contextUsage,
       });
 
-  return {
+  return pruneThreadSnapshotToLatestCompact({
     ...existing,
     ...normalizedNext,
     threadUsage,
     tokenUsage,
     contextUsage,
     turns,
-  };
+  });
 }
 
 export function normalizeThreadSnapshot(thread: Thread): Thread {
@@ -933,10 +1018,63 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
     ];
   }, []);
 
-  return turns.length === thread.turns.length &&
+  const normalizedThread =
+    turns.length === thread.turns.length &&
     turns.every((turn, index) => turn === thread.turns[index])
-    ? thread
-    : { ...thread, turns };
+      ? thread
+      : { ...thread, turns };
+  return pruneThreadSnapshotToLatestCompact(normalizedThread);
+}
+
+export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
+  const latestCompact = findLatestCompactItemPosition(thread.turns);
+  if (!latestCompact) {
+    return thread;
+  }
+
+  const turns = thread.turns
+    .slice(latestCompact.turnIndex)
+    .map((turn, index) => {
+      if (index !== 0) {
+        return turn;
+      }
+      const items = turn.items.slice(latestCompact.itemIndex);
+      return items.length === turn.items.length ? turn : { ...turn, items };
+    })
+    .filter((turn) => turn.items.length > 0 || isTurnInFlight(turn));
+
+  if (
+    turns.length === thread.turns.length &&
+    turns.every((turn, index) => turn === thread.turns[index])
+  ) {
+    return thread;
+  }
+
+  return { ...thread, turns };
+}
+
+function findLatestCompactItemPosition(turns: Turn[]) {
+  for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const turn = turns[turnIndex];
+    if (!turn) {
+      continue;
+    }
+    for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+      const item = turn.items[itemIndex];
+      if (item?.type === "contextCompaction") {
+        return {
+          turnIndex,
+          itemIndex,
+          timestampMs:
+            item.completedAtMs ??
+            item.startedAtMs ??
+            timestampMsFromSeconds(turn.completedAt) ??
+            timestampMsFromSeconds(turn.startedAt),
+        };
+      }
+    }
+  }
+  return null;
 }
 
 function normalizeTurnSnapshot(turn: Turn): Turn {

@@ -9,7 +9,7 @@ import {
   buildConversationCells,
   extractCompactConversationDetails,
 } from "./conversationCompact";
-import { formatClockTime } from "./thread";
+import { formatClockTime, normalizeThreadSnapshot } from "./thread";
 import type { Thread } from "../types";
 
 function makeThread(items: Thread["turns"][number]["items"]): Thread {
@@ -1599,6 +1599,78 @@ test("extracts compact history details with init context replacement cell", () =
       ["tool", "Init Context", "Fresh initial context"],
       ["message", "root", "compact final output"],
     ],
+  );
+});
+
+test("pruned compact rows omit archived cells until lazy-loaded details are read", () => {
+  const fullThread = makeThreadWithTurns([
+    {
+      id: "turn-1",
+      items: [
+        {
+          type: "userMessage",
+          id: "old-user",
+          content: [{ type: "text", text: "old request" }],
+        },
+      ],
+      itemsView: "full",
+      status: "completed",
+      error: null,
+      startedAt: 1,
+      completedAt: 1,
+      durationMs: 0,
+    },
+    {
+      id: "turn-2",
+      items: [
+        {
+          type: "contextCompaction",
+          id: "compact-1",
+          replacementHistory: [
+            {
+              type: "agentMessage",
+              id: "compact-seed",
+              text: "compact final output",
+              phase: null,
+              memoryCitation: null,
+            },
+          ],
+        },
+        {
+          type: "agentMessage",
+          id: "after-compact",
+          text: "continued",
+          phase: null,
+          memoryCitation: null,
+        },
+      ],
+      itemsView: "full",
+      status: "completed",
+      error: null,
+      startedAt: 2,
+      completedAt: 2,
+      durationMs: 0,
+    },
+  ]);
+
+  const prunedState = buildConversationState(normalizeThreadSnapshot(fullThread));
+  const compactEntry = prunedState.cells[0]?.entries[0];
+
+  assert.equal(compactEntry?.kind, "compact");
+  assert.equal(compactEntry.archivedCells, undefined);
+  assert.equal(compactEntry.archivedEntryCount, undefined);
+
+  const details = extractCompactConversationDetails(
+    buildConversationEntries(fullThread),
+    "compact-1",
+  );
+
+  assert.equal(details?.archivedEntryCount, 1);
+  assert.deepEqual(
+    details?.archivedCells.flatMap((cell) =>
+      cell.entries.map((entry) => entry.text),
+    ),
+    ["old request"],
   );
 });
 

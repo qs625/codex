@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildConversationEntries } from "./conversation";
+import { buildConversationEntries, buildConversationState } from "./conversation";
+import { buildThreadAnalysis } from "./threadAnalysis";
 import {
   appendAgentDelta,
   applyInitializedThreadUpdate,
@@ -135,6 +136,65 @@ function makeThread(): Thread {
         skills: [],
       },
     },
+  };
+}
+
+function makeTurn(id: string, items: ThreadItem[]): Turn {
+  return {
+    id,
+    items,
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 10,
+    completedAt: 12,
+    durationMs: 2000,
+  };
+}
+
+function makeUserMessage(id: string, text: string): ThreadItem {
+  return {
+    type: "userMessage",
+    id,
+    content: [{ type: "text", text }],
+  };
+}
+
+function makeAgentMessage(id: string, text: string): ThreadItem {
+  return {
+    type: "agentMessage",
+    id,
+    text,
+    phase: null,
+    memoryCitation: null,
+  };
+}
+
+function makeCompactItem(id: string): ThreadItem {
+  return {
+    type: "contextCompaction",
+    id,
+    replacementHistory: [
+      {
+        type: "agentMessage",
+        id: `${id}-seed`,
+        text: "compact seed",
+        phase: null,
+        memoryCitation: null,
+      },
+    ],
+  };
+}
+
+function makeCollabStatusItem(id: string): ThreadItem {
+  return {
+    type: "collabAgentStatusUpdate",
+    id,
+    senderThreadId: "child-thread",
+    senderPath: "/root/child",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    lifecycleStatus: collabAgentLifecycleState("completed"),
   };
 }
 
@@ -1231,7 +1291,46 @@ test("mergeThreadSnapshot preserves restored event-driven tool calls with distin
   assert.deepEqual(merged.turns, [readTurn, liveTurn]);
 });
 
-test("mergeThreadSnapshot preserves duplicate context compaction markers in one snapshot", () => {
+test("upsertThread prunes items before the latest compact boundary", () => {
+  const thread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [
+        makeUserMessage("old-user", "old request"),
+        makeAgentMessage("old-agent", "old answer"),
+      ]),
+      makeTurn("turn-compact", [
+        makeCompactItem("compact-1"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+    ],
+  })[0]!;
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "after-compact"],
+  );
+});
+
+test("upsertThread prunes compact-turn items before the compact marker", () => {
+  const thread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-compact", [
+        makeAgentMessage("compact-summary", "summarizing old context"),
+        makeCompactItem("compact-1"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+    ],
+  })[0]!;
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "after-compact"],
+  );
+});
+
+test("mergeThreadSnapshot keeps only the latest compact boundary", () => {
   const firstTurn = {
     id: "first-turn",
     items: [
@@ -1263,7 +1362,291 @@ test("mergeThreadSnapshot preserves duplicate context compaction markers in one 
     turns: [firstTurn, secondTurn],
   });
 
-  assert.deepEqual(merged.turns, [firstTurn, secondTurn]);
+  assert.deepEqual(merged.turns, [secondTurn]);
+});
+
+test("updateThreadItem prunes live state when a compact notification arrives", () => {
+  const thread = updateThreadItem(
+    {
+      ...makeThread(),
+      turns: [
+        makeTurn("turn-old", [
+          makeUserMessage("old-user", "old request"),
+          makeAgentMessage("old-agent", "old answer"),
+        ]),
+        makeTurn("turn-compact", [
+          makeAgentMessage("compact-summary", "summarizing old context"),
+        ]),
+      ],
+    },
+    "turn-compact",
+    makeCompactItem("compact-1"),
+  );
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1"],
+  );
+});
+
+test("late same-turn item notifications cannot re-add compact-pruned items", () => {
+  const compactedThread = updateThreadItem(
+    {
+      ...makeThread(),
+      turns: [
+        makeTurn("turn-compact", [
+          makeAgentMessage("compact-summary", "summarizing old context"),
+        ]),
+      ],
+    },
+    "turn-compact",
+    makeCompactItem("compact-1"),
+  );
+
+  const lateItemThread = updateThreadItem(
+    compactedThread,
+    "turn-compact",
+    makeAgentMessage("compact-summary", "late summary completion"),
+  );
+  const lateDeltaThread = appendAgentDelta(
+    compactedThread,
+    "turn-compact",
+    "compact-summary",
+    " late delta",
+  );
+
+  assert.deepEqual(
+    lateItemThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1"],
+  );
+  assert.deepEqual(
+    lateDeltaThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1"],
+  );
+});
+
+test("same-turn pruned items with the compact boundary timestamp do not reappear", () => {
+  const compactedThread = updateThreadItem(
+    {
+      ...makeThread(),
+      turns: [
+        makeTurn("turn-compact", [
+          makeAgentMessage("compact-summary", "summarizing old context"),
+        ]),
+      ],
+    },
+    "turn-compact",
+    {
+      ...makeCompactItem("compact-1"),
+      completedAtMs: 12_000,
+    },
+  );
+
+  const equalBoundaryThread = updateThreadItem(
+    compactedThread,
+    "turn-compact",
+    makeAgentMessage("compact-summary", "late summary completion"),
+    { completedAtMs: 12_000 },
+  );
+  const afterBoundaryThread = updateThreadItem(
+    compactedThread,
+    "turn-compact",
+    makeAgentMessage("after-compact", "new item after compact"),
+    { startedAtMs: 12_001 },
+  );
+
+  assert.deepEqual(
+    equalBoundaryThread.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
+    ["compact-1"],
+  );
+  assert.deepEqual(
+    afterBoundaryThread.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
+    ["compact-1", "after-compact"],
+  );
+});
+
+test("compact-pruned threads do not create synthetic turns for old missing notifications", () => {
+  const compactedThread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [makeAgentMessage("old-agent", "old answer")]),
+      makeTurn("turn-compact", [
+        makeCompactItem("compact-1"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+    ],
+  })[0]!;
+
+  const lateOldTurnThread = updateThreadItem(
+    compactedThread,
+    "turn-old",
+    makeAgentMessage("old-agent", "late old completion"),
+  );
+
+  assert.deepEqual(
+    lateOldTurnThread.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
+    ["compact-1", "after-compact"],
+  );
+});
+
+test("late old turn lifecycle cannot reopen compact-pruned turns", () => {
+  const compactedThread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [makeAgentMessage("old-agent", "old answer")]),
+      makeTurn("turn-compact", [makeCompactItem("compact-1")]),
+    ],
+  })[0]!;
+
+  const lifecycleThread = updateThreadTurnLifecycle(compactedThread, {
+    ...makeTurn("turn-old", []),
+    status: "running",
+    completedAt: null,
+    durationMs: null,
+  });
+  const lateOldItemThread = updateThreadItem(
+    lifecycleThread,
+    "turn-old",
+    makeAgentMessage("old-agent", "late old completion"),
+  );
+
+  assert.deepEqual(
+    lateOldItemThread.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
+    ["compact-1"],
+  );
+});
+
+test("compacted threads can still create later turns with timestamps after the compact boundary", () => {
+  const compactedThread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [makeAgentMessage("old-agent", "old answer")]),
+      makeTurn("turn-compact", [makeCompactItem("compact-1")]),
+    ],
+  })[0]!;
+
+  const lifecycleThread = updateThreadTurnLifecycle(compactedThread, {
+    ...makeTurn("turn-new", []),
+    status: "running",
+    startedAt: 20,
+    completedAt: null,
+    durationMs: null,
+  });
+  const withItemThread = updateThreadItem(
+    lifecycleThread,
+    "turn-new",
+    makeAgentMessage("new-agent", "new answer"),
+    { startedAtMs: 20_000 },
+  );
+
+  assert.deepEqual(
+    withItemThread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "new-agent"],
+  );
+});
+
+test("late old child completion does not attach to a later active turn after compact", () => {
+  const compactedThread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [makeAgentMessage("old-agent", "old answer")]),
+      makeTurn("turn-compact", [makeCompactItem("compact-1")]),
+    ],
+  })[0]!;
+  const activeThread = updateThreadTurnLifecycle(compactedThread, {
+    ...makeTurn("turn-new", []),
+    status: "running",
+    startedAt: 20,
+    completedAt: null,
+    durationMs: null,
+  });
+
+  const lateCompletionThread = updateThreadItem(
+    activeThread,
+    "turn-old",
+    makeCollabStatusItem("old-child-completion"),
+  );
+
+  assert.deepEqual(
+    lateCompletionThread.turns.flatMap((turn) =>
+      turn.items.map((item) => item.id),
+    ),
+    ["compact-1"],
+  );
+});
+
+test("compact-pruned threads still update items retained after the compact marker", () => {
+  const thread = updateThreadItem(
+    {
+      ...makeThread(),
+      turns: [
+        makeTurn("turn-compact", [
+          makeCompactItem("compact-1"),
+          makeAgentMessage("after-compact", "continued"),
+        ]),
+      ],
+    },
+    "turn-compact",
+    makeAgentMessage("after-compact", "continued with more detail"),
+  );
+  const afterCompact = thread.turns[0]?.items[1];
+
+  assert.equal(afterCompact?.type, "agentMessage");
+  assert.equal(
+    afterCompact?.type === "agentMessage" ? afterCompact.text : null,
+    "continued with more detail",
+  );
+});
+
+test("conversation and right-panel analysis only scan the pruned active segment", () => {
+  const archivedItems = Array.from({ length: 1_000 }, (_, index) =>
+    makeUserMessage(`old-user-${index}`, `old request ${index}`),
+  );
+  const thread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [
+        ...archivedItems,
+        {
+          type: "fileChange" as const,
+          id: "old-file",
+          changes: [{ path: "/tmp/archived.ts", kind: "modified" }],
+          status: "completed",
+        },
+      ]),
+      makeTurn("turn-compact", [makeCompactItem("compact-1")]),
+      makeTurn("turn-active", [
+        makeUserMessage("active-user", "active request"),
+        {
+          type: "fileChange" as const,
+          id: "active-file",
+          changes: [{ path: "/tmp/active.ts", kind: "modified" }],
+          status: "completed",
+        },
+      ]),
+    ],
+  })[0]!;
+
+  const conversation = buildConversationState(thread);
+  const analysis = buildThreadAnalysis(thread, 0);
+
+  assert.equal(conversation.flatItems.length, 3);
+  assert.deepEqual(
+    conversation.flatItems.map((item) => item.id),
+    ["compact-1", "active-user", "active-file"],
+  );
+  assert.deepEqual(
+    analysis.changedFiles.map((file) => file.path),
+    ["/tmp/active.ts"],
+  );
 });
 
 test("mergeThreadSnapshot preserves an in-flight turn missing from a stale snapshot", () => {
@@ -2209,7 +2592,7 @@ test("updateThreadItem preserves same-turn collab agent messages with different 
   ]);
 });
 
-test("updateThreadItem preserves separate context compaction markers", () => {
+test("updateThreadItem keeps only the latest separate context compaction marker", () => {
   const thread = updateThreadItem(makeThread(), "turn-1", {
     type: "contextCompaction",
     id: "first-item",
@@ -2221,10 +2604,6 @@ test("updateThreadItem preserves separate context compaction markers", () => {
   });
 
   assert.deepEqual(updated.turns[0]?.items, [
-    {
-      type: "contextCompaction",
-      id: "first-item",
-    },
     {
       type: "contextCompaction",
       id: "second-item",
