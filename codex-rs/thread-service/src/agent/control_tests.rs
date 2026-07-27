@@ -2267,6 +2267,40 @@ async fn external_root_runtime_close_removes_live_root_and_persists_shutdown() {
 }
 
 #[tokio::test]
+async fn named_live_external_root_accepts_root_input() {
+    let harness = AgentControlHarness::new().await;
+    let external_root_thread_id = ThreadId::new();
+    let root_external_control = harness.manager.root_external_agent_control_for_tests();
+    let (tx_input, mut rx_input) = tokio::sync::mpsc::unbounded_channel();
+    let mut run = named_external_root_run(
+        &harness.config,
+        external_root_thread_id,
+        SpawnAgentProvider::ClaudeCli,
+        "/foo_project",
+    );
+    run.input_sink = Some(ExternalAgentInputSink::new(tx_input));
+    root_external_control.external_agents.insert_running(run);
+
+    let turn_id = root_external_control
+        .send_external_root_input(external_root_thread_id, "continue work".to_string())
+        .await
+        .expect("named external root should accept root input");
+
+    let received = rx_input.recv().await.expect("input should be delivered");
+    assert_eq!(received.turn_id.as_deref(), Some(turn_id.as_str()));
+    assert_eq!(received.content, "continue work");
+    assert_eq!(
+        root_external_control
+            .external_agents
+            .get(external_root_thread_id)
+            .expect("run should remain registered")
+            .active_turn_id
+            .as_deref(),
+        Some(turn_id.as_str())
+    );
+}
+
+#[tokio::test]
 async fn live_external_root_thread_facts_classifies_root_provider() {
     let harness = AgentControlHarness::new().await;
     let (native_thread_id, _) = harness.start_thread().await;
