@@ -861,6 +861,23 @@ impl MessageProcessor {
             .await;
     }
 
+    pub(crate) async fn emit_thread_live_event_notification_to_connections(
+        &self,
+        thread_id: ThreadId,
+        turn_id: String,
+        event: protocol::protocol::EventMsg,
+        connection_ids: &[ConnectionId],
+    ) {
+        self.thread_processor
+            .emit_thread_live_event_notification_to_connections(
+                thread_id,
+                turn_id,
+                event,
+                connection_ids,
+            )
+            .await;
+    }
+
     pub(crate) async fn drain_background_tasks(&self) {
         self.thread_processor.drain_background_tasks().await;
     }

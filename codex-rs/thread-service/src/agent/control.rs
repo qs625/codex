@@ -946,7 +946,11 @@ impl AgentControl {
             .await;
             current_turn_id = Some(turn_id);
             let initial_input = external_agent_context_prompt(&message);
-            self.persist_external_user_message(thread_id, &message)
+            self.persist_external_user_message(
+                thread_id,
+                current_turn_id.as_deref(),
+                &initial_input,
+            )
                 .await;
             if let Err(err) = provider_input.send(initial_input) {
                 self.persist_external_error(thread_id, &err).await;
@@ -980,7 +984,11 @@ impl AgentControl {
                                 ).await;
                                 current_turn_id = Some(turn_id);
                             }
-                            self.persist_external_user_message(thread_id, &input.content).await;
+                            self.persist_external_user_message(
+                                thread_id,
+                                current_turn_id.as_deref(),
+                                &input.content,
+                            ).await;
                             if let Err(err) = provider_input.send(input.content) {
                                 self.persist_external_error(thread_id, &err).await;
                                 self.persist_external_terminal_status_with_turn_id(
@@ -1073,7 +1081,11 @@ impl AgentControl {
                             }
                             let output = bounded_external_output(&text);
                             let status = AgentStatus::Completed(Some(output.clone()));
-                            self.persist_external_agent_message(thread_id, &output).await;
+                            self.persist_external_agent_message(
+                                thread_id,
+                                current_turn_id.as_deref(),
+                                &output,
+                            ).await;
                             self.persist_external_terminal_status_with_turn_id(
                                 thread_id,
                                 current_turn_id.as_deref(),
@@ -1189,15 +1201,21 @@ impl AgentControl {
         Ok(())
     }
 
-    async fn persist_external_items(&self, thread_id: ThreadId, items: Vec<RolloutItem>) {
+    async fn persist_external_items(
+        &self,
+        thread_id: ThreadId,
+        turn_id: Option<&str>,
+        items: Vec<RolloutItem>,
+    ) {
         let live_thread = self.external_live_thread(thread_id).await;
-        self.persist_external_items_to_live_thread(thread_id, live_thread, items)
+        self.persist_external_items_to_live_thread(thread_id, turn_id, live_thread, items)
             .await;
     }
 
     async fn persist_external_items_to_live_thread(
         &self,
         thread_id: ThreadId,
+        turn_id: Option<&str>,
         live_thread: Option<SharedLiveThread>,
         items: Vec<RolloutItem>,
     ) {
@@ -1211,11 +1229,26 @@ impl AgentControl {
         if let Err(err) = live_thread.flush().await {
             warn!("failed to flush external thread items for {thread_id}: {err}");
         }
+        if let Some(turn_id) = turn_id {
+            for item in items {
+                if let RolloutItem::EventMsg(event) = item
+                    && let Ok(state) = self.upgrade()
+                {
+                    state.notify_thread_live_event(thread_id, turn_id.to_string(), event);
+                }
+            }
+        }
     }
 
-    async fn persist_external_user_message(&self, thread_id: ThreadId, message: &str) {
+    async fn persist_external_user_message(
+        &self,
+        thread_id: ThreadId,
+        turn_id: Option<&str>,
+        message: &str,
+    ) {
         self.persist_external_items(
             thread_id,
+            turn_id,
             vec![RolloutItem::EventMsg(
                 protocol::protocol::EventMsg::UserMessage(UserMessageEvent {
                     message: bounded_external_output(message),
@@ -1229,9 +1262,15 @@ impl AgentControl {
         .await;
     }
 
-    async fn persist_external_agent_message(&self, thread_id: ThreadId, message: &str) {
+    async fn persist_external_agent_message(
+        &self,
+        thread_id: ThreadId,
+        turn_id: Option<&str>,
+        message: &str,
+    ) {
         self.persist_external_items(
             thread_id,
+            turn_id,
             vec![RolloutItem::EventMsg(
                 protocol::protocol::EventMsg::AgentMessage(AgentMessageEvent {
                     message: bounded_external_output(message),
@@ -1246,6 +1285,7 @@ impl AgentControl {
     async fn persist_external_error(&self, thread_id: ThreadId, message: &str) {
         self.persist_external_items(
             thread_id,
+            None,
             vec![RolloutItem::EventMsg(protocol::protocol::EventMsg::Error(
                 ErrorEvent {
                     message: bounded_external_output(message),
@@ -1284,7 +1324,7 @@ impl AgentControl {
         status: &AgentStatus,
         live_thread: Option<SharedLiveThread>,
     ) {
-        let turn_id = || {
+        let event_turn_id = || {
             turn_id
                 .map(ToOwned::to_owned)
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
@@ -1292,7 +1332,7 @@ impl AgentControl {
         let event = match status {
             AgentStatus::Completed(last_agent_message) => {
                 protocol::protocol::EventMsg::TurnComplete(TurnCompleteEvent {
-                    turn_id: turn_id(),
+                    turn_id: event_turn_id(),
                     last_agent_message: last_agent_message.clone(),
                     completed_at: Some(Utc::now().timestamp()),
                     duration_ms: None,
@@ -1302,7 +1342,7 @@ impl AgentControl {
             AgentStatus::Errored(message) => {
                 protocol::protocol::EventMsg::ExternalTerminalStatus(ExternalTerminalStatusEvent {
                     thread_id,
-                    turn_id: turn_id(),
+                    turn_id: event_turn_id(),
                     status: ExternalTerminalStatus::Errored,
                     message: Some(bounded_external_output(message)),
                     terminal_at_ms: Utc::now().timestamp_millis(),
@@ -1311,7 +1351,7 @@ impl AgentControl {
             AgentStatus::Shutdown => {
                 protocol::protocol::EventMsg::ExternalTerminalStatus(ExternalTerminalStatusEvent {
                     thread_id,
-                    turn_id: turn_id(),
+                    turn_id: event_turn_id(),
                     status: ExternalTerminalStatus::Shutdown,
                     message: None,
                     terminal_at_ms: Utc::now().timestamp_millis(),
@@ -1319,7 +1359,7 @@ impl AgentControl {
             }
             AgentStatus::Interrupted => {
                 protocol::protocol::EventMsg::TurnAborted(protocol::protocol::TurnAbortedEvent {
-                    turn_id: Some(turn_id()),
+                    turn_id: Some(event_turn_id()),
                     reason: protocol::protocol::TurnAbortReason::Interrupted,
                     completed_at: Some(Utc::now().timestamp()),
                     duration_ms: None,
@@ -1327,7 +1367,7 @@ impl AgentControl {
             }
             AgentStatus::PendingInit | AgentStatus::Running | AgentStatus::NotFound => {
                 protocol::protocol::EventMsg::TurnStarted(TurnStartedEvent {
-                    turn_id: turn_id(),
+                    turn_id: event_turn_id(),
                     started_at: Some(Utc::now().timestamp()),
                     model_context_window: None,
                     collaboration_mode_kind: Default::default(),
@@ -1336,6 +1376,7 @@ impl AgentControl {
         };
         self.persist_external_items_to_live_thread(
             thread_id,
+            turn_id,
             live_thread.clone(),
             vec![RolloutItem::EventMsg(event)],
         )
@@ -1365,7 +1406,7 @@ impl AgentControl {
                 output: None,
                 lifecycle_at_ms: Utc::now().timestamp_millis(),
             });
-        self.persist_external_items(thread_id, vec![RolloutItem::EventMsg(event)])
+        self.persist_external_items(thread_id, Some(turn_id), vec![RolloutItem::EventMsg(event)])
             .await;
     }
 
@@ -1392,7 +1433,7 @@ impl AgentControl {
                 output: Some(bounded_external_tool_result(result)),
                 lifecycle_at_ms: Utc::now().timestamp_millis(),
             });
-        self.persist_external_items(thread_id, vec![RolloutItem::EventMsg(event)])
+        self.persist_external_items(thread_id, Some(turn_id), vec![RolloutItem::EventMsg(event)])
             .await;
     }
 

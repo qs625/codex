@@ -2306,6 +2306,19 @@ impl ThreadServiceState {
             .send(ThreadCreatedEvent::Resumed(thread_id));
     }
 
+    pub(crate) fn notify_thread_live_event(
+        &self,
+        thread_id: ThreadId,
+        turn_id: String,
+        event: protocol::protocol::EventMsg,
+    ) {
+        let _ = self.thread_created_tx.send(ThreadCreatedEvent::LiveEvent {
+            thread_id,
+            turn_id,
+            event,
+        });
+    }
+
     #[allow(dead_code)]
     pub(crate) fn notify_thread_status_changed(&self, thread_id: ThreadId) {
         self.notify_thread_status_changed_with_status(thread_id, None);

@@ -72,6 +72,25 @@ async fn start_external_root_mcp(codex_home: &TempDir, fake_bin: &TempDir) -> Re
     Ok(mcp)
 }
 
+async fn start_external_root_mcp_with_assistant_output(
+    codex_home: &TempDir,
+    fake_bin: &TempDir,
+) -> Result<McpProcess> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    create_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        "never",
+        &BTreeMap::default(),
+    )?;
+    write_fake_claude_cli_with_assistant_output(fake_bin.path())?;
+    let test_path = prepend_path_env(fake_bin.path())?;
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("PATH", Some(test_path.as_str()))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
 async fn expect_external_root_native_only_error(
     mcp: &mut McpProcess,
     request_id: i64,
@@ -127,16 +146,70 @@ fn injected_assistant_item(text: &str) -> Result<serde_json::Value> {
     Ok(serde_json::to_value(item)?)
 }
 
+async fn read_external_root_item_completed(
+    mcp: &mut McpProcess,
+    expected_thread_id: &str,
+) -> Result<ItemCompletedNotification> {
+    loop {
+        let notification: JSONRPCNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("item/completed"),
+        )
+        .await??;
+        let completed: ItemCompletedNotification =
+            serde_json::from_value(notification.params.unwrap_or_default())?;
+        if completed.thread_id == expected_thread_id {
+            return Ok(completed);
+        }
+    }
+}
+
+async fn read_external_root_turn_started(
+    mcp: &mut McpProcess,
+    expected_thread_id: &str,
+) -> Result<TurnStartedNotification> {
+    loop {
+        let notification: JSONRPCNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("turn/started"),
+        )
+        .await??;
+        let started: TurnStartedNotification =
+            serde_json::from_value(notification.params.unwrap_or_default())?;
+        if started.thread_id == expected_thread_id {
+            return Ok(started);
+        }
+    }
+}
+
+async fn read_external_root_turn_completed(
+    mcp: &mut McpProcess,
+    expected_thread_id: &str,
+) -> Result<TurnCompletedNotification> {
+    loop {
+        let notification: JSONRPCNotification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("turn/completed"),
+        )
+        .await??;
+        let completed: TurnCompletedNotification =
+            serde_json::from_value(notification.params.unwrap_or_default())?;
+        if completed.thread_id == expected_thread_id {
+            return Ok(completed);
+        }
+    }
+}
+
 #[tokio::test]
 async fn external_root_turn_start_accepts_text_input() -> Result<()> {
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;
-    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let mut mcp = start_external_root_mcp_with_assistant_output(&codex_home, &fake_bin).await?;
     let thread_id = start_hidden_external_root_thread(&mut mcp, codex_home.path()).await?;
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
-            thread_id,
+            thread_id: thread_id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Hello external root".to_string(),
                 text_elements: Vec::new(),
@@ -157,6 +230,38 @@ async fn external_root_turn_start_accepts_text_input() -> Result<()> {
     assert_eq!(turn.items_view, TurnItemsView::NotLoaded);
     assert_eq!(turn.error, None);
 
+    let started = read_external_root_turn_started(&mut mcp, &thread_id).await?;
+    assert_eq!(started.turn.id, turn.id);
+    assert_eq!(started.turn.status, TurnStatus::InProgress);
+
+    let user_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(user_item.turn_id, turn.id);
+    match user_item.item {
+        ThreadItem::UserMessage { content, .. } => {
+            assert_eq!(
+                content,
+                vec![V2UserInput::Text {
+                    text: "Hello external root".to_string(),
+                    text_elements: Vec::new(),
+                }]
+            );
+        }
+        other => panic!("expected external user message item, got {other:?}"),
+    }
+
+    let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(assistant_item.turn_id, turn.id);
+    match assistant_item.item {
+        ThreadItem::AgentMessage { text, .. } => {
+            assert_eq!(text, "External assistant done");
+        }
+        other => panic!("expected external assistant message item, got {other:?}"),
+    }
+
+    let completed = read_external_root_turn_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(completed.turn.id, turn.id);
+    assert_eq!(completed.turn.status, TurnStatus::Completed);
+
     Ok(())
 }
 
@@ -170,7 +275,7 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
-            thread_id,
+            thread_id: thread_id.clone(),
             input: vec![V2UserInput::Text {
                 text: "Hello named external root".to_string(),
                 text_elements: Vec::new(),
@@ -190,6 +295,21 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
     assert_eq!(turn.items, Vec::<ThreadItem>::new());
     assert_eq!(turn.items_view, TurnItemsView::NotLoaded);
     assert_eq!(turn.error, None);
+
+    let user_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(user_item.turn_id, turn.id);
+    match user_item.item {
+        ThreadItem::UserMessage { content, .. } => {
+            assert_eq!(
+                content,
+                vec![V2UserInput::Text {
+                    text: "Hello named external root".to_string(),
+                    text_elements: Vec::new(),
+                }]
+            );
+        }
+        other => panic!("expected named external user message item, got {other:?}"),
+    }
 
     Ok(())
 }

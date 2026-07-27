@@ -536,6 +536,20 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                                             )
                                             .await;
                                     }
+                                    ThreadCreatedEvent::LiveEvent {
+                                        thread_id,
+                                        turn_id,
+                                        event,
+                                    } => {
+                                        processor
+                                            .emit_thread_live_event_notification_to_connections(
+                                                thread_id,
+                                                turn_id,
+                                                event,
+                                                &connection_ids,
+                                            )
+                                            .await;
+                                    }
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
