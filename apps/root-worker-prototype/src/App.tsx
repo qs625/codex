@@ -82,6 +82,7 @@ import {
   isCompletedFinalLifecycleStatus,
   isRootThread,
   isSubagentThread,
+  mergeDefaultCollapsedProjectIds,
   normalizeProjectCwd,
   normalizeThreadSnapshot,
   pickInitialProjectThread,
@@ -263,6 +264,7 @@ function App() {
   const voiceFinalTranscriptWaitersRef = useRef(
     new Map<string, Set<() => void>>(),
   );
+  const touchedProjectCollapseIdsRef = useRef<Set<string>>(new Set());
   const resizeStateRef = useRef<{
     startX: number;
     startWidth: number;
@@ -780,6 +782,10 @@ function App() {
     () => buildProjectAgentSidebar(threads),
     [threads],
   );
+  const projectIds = useMemo(
+    () => projectSidebar.projects.map((project) => project.id),
+    [projectSidebar],
+  );
   const todoItems = useMemo(
     () =>
       buildCurrentThreadTodoItems(sessionThreads, selectedThreadId, "all"),
@@ -790,6 +796,16 @@ function App() {
     () => new Set(collapsedProjectIds),
     [collapsedProjectIds],
   );
+
+  useEffect(() => {
+    setCollapsedProjectIds((current) =>
+      mergeDefaultCollapsedProjectIds(
+        current,
+        projectIds,
+        touchedProjectCollapseIdsRef.current,
+      ),
+    );
+  }, [projectIds]);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -809,6 +825,12 @@ function App() {
         (await window.codexDesktop.bootstrap()) as BootstrapResponse;
       setWorkspace(payload.workspace);
       const normalizedThreads = payload.threads.map(normalizeThreadSnapshot);
+      touchedProjectCollapseIdsRef.current.clear();
+      setCollapsedProjectIds(
+        buildProjectAgentSidebar(normalizedThreads).projects.map(
+          (project) => project.id,
+        ),
+      );
       setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
       const preferredProjectThread = pickInitialProjectThread(normalizedThreads);
       if (preferredProjectThread) {
@@ -1332,9 +1354,7 @@ function App() {
       ? projectSidebar.projects.find((project) => project.cwd === projectCwd)
       : null;
     if (existingProject) {
-      setCollapsedProjectIds((current) =>
-        current.filter((projectId) => projectId !== existingProject.id),
-      );
+      expandProjectSection(existingProject.id);
       setSelectedThreadId(existingProject.tree.threadId);
       return;
     }
@@ -1356,9 +1376,7 @@ function App() {
     );
     if (existingProject) {
       setError(null);
-      setCollapsedProjectIds((current) =>
-        current.filter((projectId) => projectId !== existingProject.id),
-      );
+      expandProjectSection(existingProject.id);
       setSelectedThreadId(existingProject.tree.threadId);
       return;
     }
@@ -2010,10 +2028,18 @@ function App() {
   }
 
   function toggleProject(projectId: string) {
+    touchedProjectCollapseIdsRef.current.add(projectId);
     setCollapsedProjectIds((current) =>
       current.includes(projectId)
         ? current.filter((value) => value !== projectId)
         : [...current, projectId],
+    );
+  }
+
+  function expandProjectSection(projectId: string) {
+    touchedProjectCollapseIdsRef.current.add(projectId);
+    setCollapsedProjectIds((current) =>
+      current.filter((collapsedProjectId) => collapsedProjectId !== projectId),
     );
   }
 
@@ -2027,9 +2053,7 @@ function App() {
       getThreadSubtreeIds(threads, project.tree.threadId).has(threadId),
     );
     if (selectedProject) {
-      setCollapsedProjectIds((current) =>
-        current.filter((projectId) => projectId !== selectedProject.id),
-      );
+      expandProjectSection(selectedProject.id);
       return;
     }
 

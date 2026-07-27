@@ -22,6 +22,7 @@ import {
   getThreadSubtreeIdsChildrenFirst,
   shouldNotifyProjectThreadCompleted,
   isThreadThinking,
+  mergeDefaultCollapsedProjectIds,
   mergeThreadSnapshot,
   pickInitialProjectThread,
   queuePendingThreadUpdate,
@@ -315,6 +316,46 @@ test("buildProjectAgentSidebar groups parentless project chat roots by cwd", () 
   assert.equal(alpha?.tree.label, "Alpha chat");
   assert.equal(alpha?.tree.children[0]?.threadId, "owner-a");
   assert.equal(alpha?.descendantCount, 1);
+});
+
+test("mergeDefaultCollapsedProjectIds collapses untouched projects by default", () => {
+  const collapsedProjectIds = mergeDefaultCollapsedProjectIds(
+    [],
+    ["project:/work/alpha", "project:/work/beta"],
+    new Set(),
+  );
+
+  assert.deepEqual(collapsedProjectIds, [
+    "project:/work/alpha",
+    "project:/work/beta",
+  ]);
+});
+
+test("mergeDefaultCollapsedProjectIds preserves touched project state across updates", () => {
+  const touchedProjectIds = new Set(["project:/work/alpha"]);
+  const openedProjectIds = mergeDefaultCollapsedProjectIds(
+    [],
+    ["project:/work/alpha"],
+    touchedProjectIds,
+  );
+  const collapsedProjectIds = mergeDefaultCollapsedProjectIds(
+    ["project:/work/alpha"],
+    ["project:/work/alpha"],
+    touchedProjectIds,
+  );
+
+  assert.deepEqual(openedProjectIds, []);
+  assert.deepEqual(collapsedProjectIds, ["project:/work/alpha"]);
+});
+
+test("mergeDefaultCollapsedProjectIds collapses new untouched projects", () => {
+  const collapsedProjectIds = mergeDefaultCollapsedProjectIds(
+    [],
+    ["project:/work/alpha", "project:/work/beta"],
+    new Set(["project:/work/alpha"]),
+  );
+
+  assert.deepEqual(collapsedProjectIds, ["project:/work/beta"]);
 });
 
 test("buildProjectAgentSidebar places no-cwd parentless threads in Chat", () => {
