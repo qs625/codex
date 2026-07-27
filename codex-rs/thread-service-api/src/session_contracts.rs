@@ -42,6 +42,7 @@ use mcp_types::McpToolApprovalMetadata;
 use mcp_types::SandboxState;
 use mcp_types::ToolInfo;
 use protocol::ThreadId;
+use protocol::AgentPath;
 use protocol::config_types::ApprovalsReviewer;
 use protocol::config_types::Personality;
 use protocol::config_types::WindowsSandboxLevel;
@@ -1093,6 +1094,14 @@ pub struct ExternalRootThreadStartupConfig {
 pub struct ExternalRootThreadStartRequest {
     pub startup_config: ExternalRootThreadStartupConfig,
     pub provider: ExternalRootThreadProvider,
+    pub agent_metadata: Option<ExternalRootAgentMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalRootAgentMetadata {
+    pub agent_path: AgentPath,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
 }
 
 /// Provider-neutral external root thread runtime.

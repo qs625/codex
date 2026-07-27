@@ -224,6 +224,17 @@ fn external_root_run(
     }
 }
 
+fn named_external_root_run(
+    config: &Config,
+    thread_id: ThreadId,
+    provider: SpawnAgentProvider,
+    agent_path: &str,
+) -> ExternalAgentRun {
+    let mut run = external_root_run(config, thread_id, provider);
+    run.agent_path = AgentPath::try_from(agent_path).expect("valid root agent path");
+    run
+}
+
 async fn persist_external_child_for_restart(
     harness: &AgentControlHarness,
     root_thread_id: ThreadId,
@@ -1035,6 +1046,99 @@ async fn root_external_tools_spawn_child_and_reject_invalid_targets() {
                 id: "close_1".to_string(),
                 tool: ExternalToolName::CloseExternalAgent,
                 arguments: serde_json::json!({ "target": "/root" }),
+            },
+        )
+        .await;
+    assert!(!close_result.ok);
+    assert!(close_result.error.as_ref().is_some_and(
+        |error| error.code == "tool_error" && error.message.contains("cannot close themselves")
+    ));
+}
+
+#[tokio::test]
+async fn named_root_external_tools_keep_root_sender_semantics() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    harness
+        .control
+        .external_agents
+        .insert_running(named_external_root_run(
+            &harness.config,
+            root_thread_id,
+            SpawnAgentProvider::ClaudeCli,
+            "/foo_project",
+        ));
+
+    let spawn_result = harness
+        .control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "spawn_named_root_child".to_string(),
+                tool: ExternalToolName::SpawnExternalAgent,
+                arguments: serde_json::json!({
+                    "task_name": "worker",
+                    "provider": "claude_cli",
+                    "cwd": harness.config.cwd.display().to_string(),
+                    "message": "work"
+                }),
+            },
+        )
+        .await;
+    assert!(spawn_result.ok, "spawn failed: {:?}", spawn_result.error);
+    let spawn_json = spawn_result.result.expect("spawn tool result");
+    assert_eq!(spawn_json["task_name"], "/foo_project/worker");
+
+    let list_result = harness
+        .control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "list_named_root_child".to_string(),
+                tool: ExternalToolName::ListExternalAgents,
+                arguments: serde_json::json!({ "path_prefix": "/foo_project/worker" }),
+            },
+        )
+        .await;
+    assert!(list_result.ok, "list failed: {:?}", list_result.error);
+    let agents = list_result.result.expect("list result")["agents"]
+        .as_array()
+        .expect("agents array")
+        .clone();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0]["agent_name"], "/foo_project/worker");
+
+    let followup_result = harness
+        .control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "follow_named_root_self".to_string(),
+                tool: ExternalToolName::FollowupExternalTask,
+                arguments: serde_json::json!({
+                    "target": "/foo_project",
+                    "message": "again"
+                }),
+            },
+        )
+        .await;
+    assert!(!followup_result.ok);
+    assert!(
+        followup_result
+            .error
+            .as_ref()
+            .is_some_and(|error| error.code == "tool_error"
+                && error.message.contains("cannot follow up to themselves"))
+    );
+
+    let close_result = harness
+        .control
+        .dispatch_external_tool_call(
+            root_thread_id,
+            ExternalToolCall {
+                id: "close_named_root_self".to_string(),
+                tool: ExternalToolName::CloseExternalAgent,
+                arguments: serde_json::json!({ "target": "/foo_project" }),
             },
         )
         .await;

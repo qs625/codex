@@ -1305,7 +1305,7 @@ impl ThreadService {
         provider: SpawnAgentProvider,
     ) -> CodexResult<NewExternalRootThread> {
         let config = ExternalSpawnConfig::from_config(&config);
-        self.start_external_root_thread_with_spawn_config(config, provider)
+        self.start_external_root_thread_with_spawn_config(config, provider, None)
             .await
     }
 
@@ -1313,9 +1313,15 @@ impl ThreadService {
         &self,
         config: ExternalSpawnConfig,
         provider: SpawnAgentProvider,
+        agent_metadata: Option<AgentMetadata>,
     ) -> CodexResult<NewExternalRootThread> {
         self.root_external_agent_control()
-            .start_external_root_thread(config, provider, self.state.session_source.clone())
+            .start_external_root_thread(
+                config,
+                provider,
+                self.state.session_source.clone(),
+                agent_metadata,
+            )
             .await
     }
 

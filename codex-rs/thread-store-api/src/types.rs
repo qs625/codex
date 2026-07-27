@@ -473,9 +473,6 @@ fn is_persisted_external_root_thread(thread: &StoredThread) -> bool {
     is_external_provider_id(thread.model_provider.as_str())
         && !thread.source.is_non_root_agent()
         && thread.thread_source == Some(ThreadSource::User)
-        && thread.agent_path.is_none()
-        && thread.agent_role.is_none()
-        && thread.agent_nickname.is_none()
 }
 
 fn is_persisted_external_subagent_thread(thread: &StoredThread) -> bool {
@@ -1071,6 +1068,31 @@ mod tests {
         assert_eq!(
             persisted_external_root_provider_id(&thread),
             Some("opencode")
+        );
+    }
+
+    #[test]
+    fn external_live_restore_eligibility_keeps_root_with_agent_metadata_external() {
+        let mut thread = stored_thread(
+            SessionSource::default(),
+            "codex_cli",
+            Some("codex_cli"),
+            Some("/foo_project"),
+            Some(ThreadSource::User),
+            vec![session_meta_with_descriptor()],
+        );
+        thread.agent_nickname = Some("codex_cli".to_string());
+
+        assert!(matches!(
+            external_live_restore_eligibility(&thread),
+            ExternalLiveRestoreEligibility::RunningDescriptorPresentRestoreDisabled { provider, plan }
+                if provider == "opencode"
+                    && plan.provider_session_identity == ExternalRestoreFactState::Present
+                    && !plan.restore_enabled
+        ));
+        assert_eq!(
+            persisted_external_root_provider_id(&thread),
+            Some("codex_cli")
         );
     }
 

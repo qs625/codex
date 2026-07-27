@@ -119,6 +119,17 @@ fn to_runtime_external_root_provider(provider: ExternalRootThreadProvider) -> Sp
     }
 }
 
+fn to_runtime_external_root_agent_metadata(
+    metadata: thread_service_api::ExternalRootAgentMetadata,
+) -> codex_agent_runtime::AgentMetadata {
+    codex_agent_runtime::AgentMetadata {
+        agent_path: Some(metadata.agent_path),
+        agent_nickname: metadata.agent_nickname,
+        agent_role: metadata.agent_role,
+        ..Default::default()
+    }
+}
+
 const NATIVE_THREAD_PROVIDER_CAPABILITIES: ThreadProviderRuntimeCapabilities =
     ThreadProviderRuntimeCapabilities {
         start_thread: true,
@@ -586,6 +597,9 @@ impl ExternalRootThreadRuntime for ThreadService {
                 self,
                 to_external_spawn_config(request.startup_config),
                 to_runtime_external_root_provider(request.provider),
+                request
+                    .agent_metadata
+                    .map(to_runtime_external_root_agent_metadata),
             )
             .await?;
             Ok(ExternalRootThreadStartResult {
