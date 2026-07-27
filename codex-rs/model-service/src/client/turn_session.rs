@@ -1,4 +1,5 @@
 use super::*;
+use crate::responses_websocket_client::is_websocket_request_send_closed_error;
 
 impl Drop for ModelClientSession {
     fn drop(&mut self) {
@@ -226,6 +227,7 @@ impl ModelClientSession {
             .as_ref()
             .and_then(|auth_manager| auth_manager.unauthorized_recovery());
         let mut pending_retry = PendingUnauthorizedRetry::default();
+        let mut stale_reused_send_retry_used = false;
         loop {
             let client_setup = self.client.current_client_setup().await?;
             let request_auth_context = AuthRequestTelemetryContext::new(
@@ -311,10 +313,25 @@ impl ModelClientSession {
                         "websocket connection is unavailable".to_string(),
                     ))
                 })?;
+            let connection_reused = self.websocket_session.connection_reused();
             let stream_result = websocket_connection
-                .stream_request(ws_request, self.websocket_session.connection_reused())
-                .await
-                .map_err(|err| {
+                .stream_request(ws_request, connection_reused)
+                .await;
+            let stream_result = match stream_result {
+                Ok(stream) => stream,
+                Err(err)
+                    if connection_reused
+                        && !stale_reused_send_retry_used
+                        && is_websocket_request_send_closed_error(&err) =>
+                {
+                    stale_reused_send_retry_used = true;
+                    self.reset_websocket_session();
+                    debug!(
+                        "discarded stale reused responses websocket after request send close; reconnecting once"
+                    );
+                    continue;
+                }
+                Err(err) => {
                     let response_debug_context =
                         extract_response_debug_context_from_api_error(&err);
                     let err = map_api_error(err);
@@ -323,8 +340,9 @@ impl ModelClientSession {
                         response_debug_context.request_id.as_deref(),
                         /*output_items*/ &[],
                     );
-                    err
-                })?;
+                    return Err(err);
+                }
+            };
             let (stream, last_request_rx) = map_response_stream(
                 stream_result,
                 session_telemetry.clone(),
