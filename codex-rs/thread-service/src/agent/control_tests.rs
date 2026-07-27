@@ -3144,6 +3144,129 @@ async fn external_persistence_can_store_root_metadata_without_agent_path() {
 }
 
 #[tokio::test]
+async fn external_stream_loop_persists_and_broadcasts_initial_context_prompt() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+    });
+    let initial_task = "inspect the workspace";
+    let expected_context_prompt =
+        crate::agent::external::external_agent_context_prompt(initial_task);
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        last_task_message: Some(initial_task.to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            ThreadSource::Subagent,
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path,
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some(initial_task.to_string()),
+            abort_handle: None,
+        });
+    let mut thread_created_rx = harness.manager.subscribe_thread_created();
+    let mut stream =
+        FakeExternalStream::new(vec![crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("finished".to_string()),
+        )]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            Some(initial_task.to_string()),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+
+    assert_eq!(status, AgentStatus::Completed(Some("finished".to_string())));
+    let provider_input = stream.next_input().await;
+    assert_eq!(provider_input, expected_context_prompt);
+
+    let mut broadcast_user_message = None;
+    for _ in 0..6 {
+        let event = timeout(Duration::from_secs(1), thread_created_rx.recv())
+            .await
+            .expect("live event should arrive")
+            .expect("live event");
+        if let thread_service_api::ThreadCreatedEvent::LiveEvent {
+            thread_id,
+            event: EventMsg::UserMessage(user_message),
+            ..
+        } = event
+        {
+            if thread_id == external_thread_id {
+                broadcast_user_message = Some(user_message.message);
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        broadcast_user_message.as_deref(),
+        Some(expected_context_prompt.as_str())
+    );
+
+    let stored = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id: external_thread_id,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read persisted external thread");
+    let items = stored.history.expect("history").items;
+    assert!(items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::UserMessage(event))
+            if event.message == expected_context_prompt
+    )));
+    assert!(!items.iter().any(|item| matches!(
+        item,
+        RolloutItem::EventMsg(EventMsg::UserMessage(event))
+            if event.message == initial_task
+    )));
+}
+
+#[tokio::test]
 async fn external_stream_loop_persists_tool_calls_as_typed_events() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
@@ -3857,7 +3980,7 @@ async fn external_running_agent_without_live_process_is_interrupted_after_restar
         .await;
     harness
         .control
-        .persist_external_user_message(external_thread_id, "unfinished")
+        .persist_external_user_message(external_thread_id, None, "unfinished")
         .await;
 
     let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();

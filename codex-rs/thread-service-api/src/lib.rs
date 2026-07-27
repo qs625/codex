@@ -187,10 +187,15 @@ pub struct AppServerClientInfo {
     pub mcp_elicitations_auto_deny: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum ThreadCreatedEvent {
     Started(ThreadId),
     Resumed(ThreadId),
+    LiveEvent {
+        thread_id: ThreadId,
+        turn_id: String,
+        event: protocol::protocol::EventMsg,
+    },
     StatusChanged {
         thread_id: ThreadId,
         agent_status: Option<AgentStatus>,
@@ -201,6 +206,7 @@ impl ThreadCreatedEvent {
     pub fn thread_id(&self) -> ThreadId {
         match self {
             Self::Started(thread_id) | Self::Resumed(thread_id) => *thread_id,
+            Self::LiveEvent { thread_id, .. } => *thread_id,
             Self::StatusChanged { thread_id, .. } => *thread_id,
         }
     }

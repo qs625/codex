@@ -203,6 +203,23 @@ fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn write_fake_claude_cli_with_assistant_output(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_claude = bin_dir.join("claude");
+    std::fs::write(
+        &fake_claude,
+        "#!/bin/sh\n# Test double for external root live assistant display wiring.\nif read _line; then\n  echo 'External assistant done'\nfi\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_claude)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_claude, permissions)?;
+    }
+    Ok(())
+}
+
 fn prepend_path_env(path: &Path) -> Result<String> {
     let original_path = std::env::var_os("PATH").unwrap_or_default();
     let paths = std::iter::once(path.to_path_buf()).chain(std::env::split_paths(&original_path));

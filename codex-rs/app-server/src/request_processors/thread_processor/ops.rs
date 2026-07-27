@@ -1,10 +1,20 @@
 use super::*;
+use app_server_protocol::ItemCompletedNotification;
 use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadStatusChangedNotification;
+use app_server_protocol::Turn;
+use app_server_protocol::TurnCompletedNotification;
+use app_server_protocol::TurnItemsView;
+use app_server_protocol::TurnStartedNotification;
+use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput;
+use app_server_protocol::item_event_to_server_notification;
 use codex_agent_runtime::AgentMetadata;
 use protocol::AgentPath;
 use protocol::protocol::AgentStatus;
+use protocol::protocol::EventMsg;
 use thread_service_api::ExternalRootThreadInputRoute;
 
 pub(in crate::request_processors) fn unsupported_external_root_active_op(
@@ -366,6 +376,155 @@ impl ThreadRequestProcessor {
                 connection_ids,
                 ServerNotification::ThreadStarted(notif),
             )
+            .await;
+    }
+
+    pub(crate) async fn emit_thread_live_event_notification_to_connections(
+        &self,
+        thread_id: ThreadId,
+        turn_id: String,
+        event: EventMsg,
+        connection_ids: &[ConnectionId],
+    ) {
+        if connection_ids.is_empty() {
+            return;
+        }
+        let thread_id_string = thread_id.to_string();
+        let notification = match event {
+            EventMsg::TurnStarted(payload) => {
+                ServerNotification::TurnStarted(TurnStartedNotification {
+                    thread_id: thread_id_string,
+                    turn: Turn {
+                        id: payload.turn_id,
+                        items: Vec::new(),
+                        items_view: TurnItemsView::NotLoaded,
+                        status: TurnStatus::InProgress,
+                        error: None,
+                        started_at: payload.started_at,
+                        completed_at: None,
+                        duration_ms: None,
+                    },
+                })
+            }
+            EventMsg::TurnComplete(payload) => {
+                ServerNotification::TurnCompleted(TurnCompletedNotification {
+                    thread_id: thread_id_string,
+                    turn: Turn {
+                        id: payload.turn_id,
+                        items: Vec::new(),
+                        items_view: TurnItemsView::NotLoaded,
+                        status: TurnStatus::Completed,
+                        error: None,
+                        started_at: None,
+                        completed_at: payload.completed_at,
+                        duration_ms: payload.duration_ms,
+                    },
+                })
+            }
+            EventMsg::TurnAborted(payload) => {
+                let event_turn_id = payload.turn_id.unwrap_or(turn_id);
+                ServerNotification::TurnCompleted(TurnCompletedNotification {
+                    thread_id: thread_id_string,
+                    turn: Turn {
+                        id: event_turn_id,
+                        items: Vec::new(),
+                        items_view: TurnItemsView::NotLoaded,
+                        status: TurnStatus::Interrupted,
+                        error: None,
+                        started_at: None,
+                        completed_at: payload.completed_at,
+                        duration_ms: payload.duration_ms,
+                    },
+                })
+            }
+            EventMsg::ExternalTerminalStatus(payload) => {
+                let (status, error) = match payload.status {
+                    protocol::protocol::ExternalTerminalStatus::Errored => (
+                        TurnStatus::Failed,
+                        Some(TurnError {
+                            message: payload.message.unwrap_or_default(),
+                            codex_error_info: None,
+                            additional_details: None,
+                        }),
+                    ),
+                    protocol::protocol::ExternalTerminalStatus::Shutdown => {
+                        (TurnStatus::Completed, None)
+                    }
+                };
+                ServerNotification::TurnCompleted(TurnCompletedNotification {
+                    thread_id: thread_id_string,
+                    turn: Turn {
+                        id: payload.turn_id,
+                        items: Vec::new(),
+                        items_view: TurnItemsView::NotLoaded,
+                        status,
+                        error,
+                        started_at: None,
+                        completed_at: Some(payload.terminal_at_ms / 1000),
+                        duration_ms: None,
+                    },
+                })
+            }
+            EventMsg::UserMessage(payload) => {
+                let mut content = Vec::new();
+                for skill in payload.skills {
+                    content.push(UserInput::Skill {
+                        name: skill.name,
+                        path: skill.path,
+                    });
+                }
+                if !payload.message.trim().is_empty() {
+                    content.push(UserInput::Text {
+                        text: payload.message,
+                        text_elements: payload
+                            .text_elements
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
+                    });
+                }
+                if let Some(images) = payload.images {
+                    for image in images {
+                        content.push(UserInput::Image { url: image });
+                    }
+                }
+                for path in payload.local_images {
+                    content.push(UserInput::LocalImage { path });
+                }
+                ServerNotification::ItemCompleted(ItemCompletedNotification {
+                    thread_id: thread_id_string,
+                    turn_id,
+                    item: ThreadItem::UserMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        content,
+                    },
+                    completed_at_ms: chrono::Utc::now().timestamp_millis(),
+                })
+            }
+            EventMsg::AgentMessage(payload) => {
+                ServerNotification::ItemCompleted(ItemCompletedNotification {
+                    thread_id: thread_id_string,
+                    turn_id,
+                    item: ThreadItem::AgentMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        text: payload.message,
+                        phase: payload.phase,
+                        memory_citation: payload.memory_citation.map(Into::into),
+                    },
+                    completed_at_ms: chrono::Utc::now().timestamp_millis(),
+                })
+            }
+            other => {
+                let Some(notification) =
+                    item_event_to_server_notification(other, &thread_id_string, &turn_id)
+                else {
+                    return;
+                };
+                notification
+            }
+        };
+        self.outgoing
+            .send_server_notification_to_connections(connection_ids, notification)
             .await;
     }
 
