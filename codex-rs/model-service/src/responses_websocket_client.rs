@@ -256,14 +256,20 @@ impl ResponsesWebsocketConnection {
             ));
         };
 
-        send_websocket_request(
+        let result = send_websocket_request(
             ws_stream,
             request_body,
             self.idle_timeout,
             self.telemetry.as_ref(),
             /*connection_reused*/ true,
         )
-        .await
+        .await;
+        if result.is_err() {
+            let failed_stream = guard.take();
+            drop(guard);
+            drop(failed_stream);
+        }
+        result
     }
 
     #[instrument(
@@ -289,12 +295,29 @@ impl ResponsesWebsocketConnection {
             ApiError::Stream(format!("failed to encode websocket request: {err}"))
         })?;
 
+        let mut guard = stream.lock_owned().await;
+        let Some(ws_stream) = guard.as_mut() else {
+            return Err(ApiError::Stream(
+                "websocket connection is closed".to_string(),
+            ));
+        };
+        if let Err(err) = send_websocket_request(
+            ws_stream,
+            request_body,
+            idle_timeout,
+            telemetry.as_ref(),
+            connection_reused,
+        )
+        .await
+        {
+            let failed_stream = guard.take();
+            drop(guard);
+            drop(failed_stream);
+            return Err(err);
+        }
+
         let current_span = Span::current();
         tokio::spawn(
-            #[expect(
-                clippy::await_holding_invalid_type,
-                reason = "the guard serializes exclusive use of the websocket stream for the lifetime of the response stream"
-            )]
             async move {
                 if let Some(model) = server_model {
                     let _ = tx_event.send(Ok(ResponseEvent::ServerModel(model))).await;
@@ -307,7 +330,6 @@ impl ResponsesWebsocketConnection {
                         .send(Ok(ResponseEvent::ServerReasoningIncluded(true)))
                         .await;
                 }
-                let mut guard = stream.lock().await;
                 let result = {
                     let Some(ws_stream) = guard.as_mut() else {
                         let _ = tx_event
@@ -318,13 +340,11 @@ impl ResponsesWebsocketConnection {
                         return;
                     };
 
-                    run_websocket_response_stream(
+                    read_websocket_response_stream(
                         ws_stream,
                         tx_event.clone(),
-                        request_body,
                         idle_timeout,
                         telemetry,
-                        connection_reused,
                     )
                     .await
                 };
@@ -691,24 +711,13 @@ fn json_header_value(value: Value) -> Option<HeaderValue> {
     HeaderValue::from_str(&value).ok()
 }
 
-async fn run_websocket_response_stream(
+async fn read_websocket_response_stream(
     ws_stream: &mut WsStream,
     tx_event: mpsc::Sender<std::result::Result<ResponseEvent, ApiError>>,
-    request_body: Value,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
-    connection_reused: bool,
 ) -> Result<(), ApiError> {
     let mut last_server_model: Option<String> = None;
-    send_websocket_request(
-        ws_stream,
-        request_body,
-        idle_timeout,
-        telemetry.as_ref(),
-        connection_reused,
-    )
-    .await?;
-
     loop {
         let poll_start = Instant::now();
         let response = tokio::time::timeout(idle_timeout, ws_stream.next())
@@ -830,7 +839,7 @@ async fn send_websocket_request(
     .await
     .map_err(|_| ApiError::Stream("idle timeout sending websocket request".into()))
     .and_then(|result| {
-        result.map_err(|err| ApiError::Stream(format!("failed to send websocket request: {err}")))
+        result.map_err(map_websocket_send_error)
     });
 
     if let Some(t) = telemetry.as_ref() {
@@ -844,6 +853,23 @@ async fn send_websocket_request(
     result?;
 
     Ok(())
+}
+
+fn map_websocket_send_error(err: WsError) -> ApiError {
+    match err {
+        WsError::ConnectionClosed | WsError::AlreadyClosed => {
+            ApiError::Stream("failed to send websocket request: websocket closed".to_string())
+        }
+        err => ApiError::Stream(format!("failed to send websocket request: {err}")),
+    }
+}
+
+pub(crate) fn is_websocket_request_send_closed_error(err: &ApiError) -> bool {
+    matches!(
+        err,
+        ApiError::Stream(message)
+            if message == "failed to send websocket request: websocket closed"
+    )
 }
 
 #[cfg(test)]
@@ -992,6 +1018,24 @@ mod tests {
             .expect("expected websocket error payload to be parsed");
         let api_error = map_wrapped_websocket_error_event(wrapped_error, payload);
         assert!(api_error.is_none());
+    }
+
+    #[test]
+    fn websocket_send_closed_error_is_retry_marker() {
+        let err = map_websocket_send_error(WsError::ConnectionClosed);
+        assert!(is_websocket_request_send_closed_error(&err));
+
+        let err = map_websocket_send_error(WsError::AlreadyClosed);
+        assert!(is_websocket_request_send_closed_error(&err));
+    }
+
+    #[test]
+    fn websocket_mid_stream_close_is_not_request_send_retry_marker() {
+        let err = ApiError::Stream(
+            "websocket closed by server before response.completed".to_string(),
+        );
+
+        assert!(!is_websocket_request_send_closed_error(&err));
     }
 
     #[test]
