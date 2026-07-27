@@ -571,7 +571,11 @@ mod build_api_turns_from_rollout_items_tests {
     use protocol::protocol::ExecCommandNotifyOn;
     use protocol::protocol::ExecCommandSource as CoreExecCommandSource;
     use protocol::protocol::RolloutItem;
+    use protocol::protocol::SessionMeta;
+    use protocol::protocol::SessionMetaLine;
     use protocol::protocol::TurnStartedEvent;
+    use protocol::subscriptions::PersistedSubscription;
+    use protocol::subscriptions::ScheduleSpec;
     use rollout::EventPersistenceMode;
     use rollout::persisted_rollout_items;
     use std::time::Duration;
@@ -825,6 +829,48 @@ mod build_api_turns_from_rollout_items_tests {
                 arguments: serde_json::json!({}),
                 status: DynamicToolCallStatus::Completed,
                 output: Some(output),
+            }]
+        );
+    }
+
+    #[test]
+    fn limited_replay_projects_active_schedule_subscription_metadata() {
+        let persisted = persisted_rollout_items(
+            &[RolloutItem::SessionMeta(SessionMetaLine {
+                meta: SessionMeta {
+                    subscriptions: Some(vec![PersistedSubscription::Schedule {
+                        subscription_id: "sub-schedule".into(),
+                        schedule: ScheduleSpec::EveryInterval {
+                            interval_ms: 60_000,
+                        },
+                        label: Some("standup".into()),
+                    }]),
+                    ..Default::default()
+                },
+                git: None,
+            })],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "active-subscription:sub-schedule".into(),
+                tool: "schedule_subscribe".into(),
+                arguments: serde_json::json!({
+                    "schedule": {
+                        "kind": "every_interval",
+                        "interval_ms": 60000,
+                    },
+                    "label": "standup",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::json!({
+                    "subscription_id": "sub-schedule",
+                })),
             }]
         );
     }

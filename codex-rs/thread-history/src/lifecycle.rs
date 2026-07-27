@@ -230,6 +230,9 @@ impl ThreadHistoryBuilder {
     }
 
     pub(super) fn handle_compacted(&mut self, payload: &CompactedItem) {
+        self.latest_subscription_snapshot = None;
+        self.schedule_subscription_rollout_indexes.clear();
+        self.schedule_unsubscription_rollout_indexes.clear();
         let replacement_history = payload
             .replacement_history
             .as_ref()

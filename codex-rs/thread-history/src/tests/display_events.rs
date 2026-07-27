@@ -543,3 +543,245 @@ use super::*;
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
     }
+
+    #[test]
+    fn active_schedule_subscription_metadata_rebuilds_builtin_monitor_item() {
+        let items = vec![RolloutItem::SessionMeta(
+            session_meta_with_schedule_subscription("sub-schedule"),
+        )];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "active-subscription:sub-schedule".into(),
+                tool: "schedule_subscribe".into(),
+                arguments: serde_json::json!({
+                    "schedule": {
+                        "kind": "every_interval",
+                        "interval_ms": 60000,
+                    },
+                    "label": "standup",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::json!({
+                    "subscription_id": "sub-schedule",
+                })),
+            }]
+        );
+    }
+
+    #[test]
+    fn active_schedule_subscription_metadata_does_not_duplicate_history_item() {
+        let output = serde_json::json!({
+            "subscription_id": "sub-schedule",
+            "next_fire_at": "2026-07-27T10:00:00Z",
+            "schedule_summary": "Every 60 seconds",
+        });
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "builtin-1".into(),
+                    tool: "schedule_subscribe".into(),
+                    arguments: serde_json::json!({
+                        "schedule": {
+                            "kind": "every_interval",
+                            "interval_ms": 60000,
+                        },
+                        "label": "standup",
+                    }),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(output.clone()),
+                    lifecycle_at_ms: 123,
+                },
+            )),
+            RolloutItem::SessionMeta(session_meta_with_schedule_subscription("sub-schedule")),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "builtin-1".into(),
+                tool: "schedule_subscribe".into(),
+                arguments: serde_json::json!({
+                    "schedule": {
+                        "kind": "every_interval",
+                        "interval_ms": 60000,
+                    },
+                    "label": "standup",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(output),
+            }]
+        );
+    }
+
+    #[test]
+    fn active_schedule_subscription_metadata_before_compact_is_not_revived() {
+        let items = vec![
+            RolloutItem::SessionMeta(session_meta_with_schedule_subscription("sub-schedule")),
+            RolloutItem::Compacted(CompactedItem {
+                message: String::new(),
+                replacement_history: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert!(
+            turns[0]
+                .items
+                .iter()
+                .all(|item| {
+                    !matches!(
+                        item,
+                        ThreadItem::BuiltinToolCall { tool, .. } if tool == "schedule_subscribe"
+                    )
+                })
+        );
+    }
+
+    #[test]
+    fn latest_empty_subscription_metadata_deactivates_historical_schedule_item() {
+        let subscribe_output = serde_json::json!({
+            "subscription_id": "sub-schedule",
+            "next_fire_at": "2026-07-27T10:00:00Z",
+            "schedule_summary": "Every 60 seconds",
+        });
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "builtin-subscribe".into(),
+                    tool: "schedule_subscribe".into(),
+                    arguments: serde_json::json!({}),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(subscribe_output.clone()),
+                    lifecycle_at_ms: 123,
+                },
+            )),
+            RolloutItem::SessionMeta(session_meta_with_subscriptions(Vec::new())),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "builtin-subscribe".into(),
+                tool: "schedule_subscribe".into(),
+                arguments: serde_json::json!({}),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(subscribe_output),
+            }]
+        );
+        assert_eq!(
+            turns[1].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "active-subscription:sub-schedule:inactive".into(),
+                tool: "schedule_unsubscribe".into(),
+                arguments: serde_json::json!({
+                    "subscription_id": "sub-schedule",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::json!({
+                    "subscription_id": "sub-schedule",
+                    "unsubscribed": true,
+                })),
+            }]
+        );
+    }
+
+    #[test]
+    fn subscription_metadata_none_does_not_deactivate_historical_schedule_item() {
+        let subscribe_output = serde_json::json!({
+            "subscription_id": "sub-schedule",
+        });
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "builtin-subscribe".into(),
+                    tool: "schedule_subscribe".into(),
+                    arguments: serde_json::json!({}),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(subscribe_output.clone()),
+                    lifecycle_at_ms: 123,
+                },
+            )),
+            RolloutItem::SessionMeta(protocol::protocol::SessionMetaLine {
+                meta: protocol::protocol::SessionMeta {
+                    subscriptions: None,
+                    ..Default::default()
+                },
+                git: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "builtin-subscribe".into(),
+                tool: "schedule_subscribe".into(),
+                arguments: serde_json::json!({}),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(subscribe_output),
+            }]
+        );
+    }
+
+    fn session_meta_with_schedule_subscription(
+        subscription_id: &str,
+    ) -> protocol::protocol::SessionMetaLine {
+        session_meta_with_subscriptions(vec![protocol::subscriptions::PersistedSubscription::Schedule {
+            subscription_id: subscription_id.to_string(),
+            schedule: protocol::subscriptions::ScheduleSpec::EveryInterval {
+                interval_ms: 60_000,
+            },
+            label: Some("standup".to_string()),
+        }])
+    }
+
+    fn session_meta_with_subscriptions(
+        subscriptions: Vec<protocol::subscriptions::PersistedSubscription>,
+    ) -> protocol::protocol::SessionMetaLine {
+        protocol::protocol::SessionMetaLine {
+            meta: protocol::protocol::SessionMeta {
+                subscriptions: Some(subscriptions),
+                ..Default::default()
+            },
+            git: None,
+        }
+    }
