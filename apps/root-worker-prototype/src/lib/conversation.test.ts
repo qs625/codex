@@ -319,6 +319,16 @@ test("renders command notifications as standalone event entries", () => {
         exitCode: 0,
         createdAtMs: 2,
       },
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:exit:failure",
+        commandItemId: "cmd-1",
+        kind: "exit",
+        message: "Command exit notification received.",
+        output: "go test failure\n",
+        exitCode: 1,
+        createdAtMs: 3,
+      },
     ]),
   );
 
@@ -331,6 +341,10 @@ test("renders command notifications as standalone event entries", () => {
         "Command output notification received for npm test: changed",
       ],
       ["event", "Command exit notification received for npm test: exit 0."],
+      [
+        "event",
+        "Command exit notification received for npm test: exit 1.\ngo test failure",
+      ],
     ],
   );
 });

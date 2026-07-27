@@ -1437,7 +1437,9 @@ function summarizeCommandExecutionNotification(
       item.exitCode === null || item.exitCode === undefined
         ? "unknown exit"
         : `exit ${item.exitCode}`;
-    return `Command exit notification received for ${commandLabel}: ${exitCode}.`;
+    const summary = `Command exit notification received for ${commandLabel}: ${exitCode}.`;
+    const output = stringOrNull(item.output);
+    return output ? `${summary}\n${output}` : summary;
   }
 
   return item.message || `Command notification received for ${commandLabel}.`;
