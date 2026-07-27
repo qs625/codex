@@ -176,6 +176,21 @@ export function pickInitialProjectThread(threads: Thread[]) {
   return sidebar.projects[0]?.tree.thread ?? pickInitialThread(threads);
 }
 
+export function mergeDefaultCollapsedProjectIds(
+  currentCollapsedProjectIds: string[],
+  projectIds: readonly string[],
+  touchedProjectIds: ReadonlySet<string>,
+): string[] {
+  const currentCollapsedSet = new Set(currentCollapsedProjectIds);
+  const nextCollapsedProjectIds = projectIds.filter(
+    (projectId) =>
+      currentCollapsedSet.has(projectId) || !touchedProjectIds.has(projectId),
+  );
+  return areStringArraysEqual(currentCollapsedProjectIds, nextCollapsedProjectIds)
+    ? currentCollapsedProjectIds
+    : nextCollapsedProjectIds;
+}
+
 export function buildTodoItems(
   threads: Thread[],
   filter: TaskFilter,
@@ -198,6 +213,13 @@ export function buildCurrentThreadTodoItems(
       ),
     ),
     filter,
+  );
+}
+
+function areStringArraysEqual(left: readonly string[], right: readonly string[]) {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
   );
 }
 
