@@ -25,6 +25,37 @@ async fn start_hidden_external_root_thread(mcp: &mut McpProcess, cwd: &Path) -> 
     Ok(thread.id)
 }
 
+async fn start_named_external_root_thread(
+    mcp: &mut McpProcess,
+    cwd: &Path,
+    task_name: &str,
+) -> Result<String> {
+    let thread_req = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("claude_cli".to_string()),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            task_name: Some(task_name.to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.thread_source, Some(ThreadSource::User));
+    let expected_agent_path = format!("/{task_name}");
+    assert_eq!(thread.agent_path.as_deref(), Some(expected_agent_path.as_str()));
+    assert_eq!(thread.agent_role.as_deref(), Some("claude_cli"));
+    assert!(matches!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::Active { .. }
+    ));
+    Ok(thread.id)
+}
+
 async fn start_external_root_mcp(codex_home: &TempDir, fake_bin: &TempDir) -> Result<McpProcess> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     create_config_toml(
@@ -108,6 +139,40 @@ async fn external_root_turn_start_accepts_text_input() -> Result<()> {
             thread_id,
             input: vec![V2UserInput::Text {
                 text: "Hello external root".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+
+    assert!(!turn.id.is_empty(), "turn id should not be empty");
+    assert_eq!(turn.status, TurnStatus::InProgress);
+    assert_eq!(turn.items, Vec::<ThreadItem>::new());
+    assert_eq!(turn.items_view, TurnItemsView::NotLoaded);
+    assert_eq!(turn.error, None);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let thread_id =
+        start_named_external_root_thread(&mut mcp, codex_home.path(), "foo_project").await?;
+
+    let turn_req = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id,
+            input: vec![V2UserInput::Text {
+                text: "Hello named external root".to_string(),
                 text_elements: Vec::new(),
             }],
             ..Default::default()

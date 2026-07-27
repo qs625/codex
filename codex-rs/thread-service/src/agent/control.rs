@@ -240,7 +240,7 @@ fn external_tool_context(run: &ExternalAgentRun) -> ExternalToolContext {
 }
 
 fn is_external_root_run(run: &ExternalAgentRun) -> bool {
-    run.depth == 0 && run.parent_thread_id == run.thread_id
+    run.is_root_run()
 }
 
 fn is_external_root_sender(sender: &ExternalToolContext) -> bool {

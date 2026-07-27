@@ -73,6 +73,12 @@ pub(crate) struct ExternalAgentRun {
     pub(crate) abort_handle: Option<AbortHandle>,
 }
 
+impl ExternalAgentRun {
+    pub(crate) fn is_root_run(&self) -> bool {
+        self.depth == 0 && self.parent_thread_id == self.thread_id
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ExternalSpawnConfig {
     pub(crate) cwd: AbsolutePathBuf,
@@ -186,7 +192,7 @@ impl ExternalAgentRegistry {
         let run = runs
             .get_mut(&thread_id)
             .ok_or_else(|| "external root thread not found".to_string())?;
-        if !run.agent_path.is_root() {
+        if !run.is_root_run() {
             return Err("external thread is not a root thread".to_string());
         }
         if !matches!(run.status, AgentStatus::PendingInit | AgentStatus::Running) {
