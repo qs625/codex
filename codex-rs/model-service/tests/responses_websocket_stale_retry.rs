@@ -24,6 +24,7 @@ use model_service_api::RealtimeWebsocketClientRuntime;
 use model_service_api::ResponseEvent;
 use model_service_api::ResponseStream as ApiResponseStream;
 use model_service_api::ResponsesClientRuntime;
+use model_service_api::ResponsesStreamRuntimeRequest;
 use model_service_api::ResponsesWebsocketConnectRequest;
 use model_service_api::ResponsesWebsocketConnectionRuntime;
 use model_service_api::ResponsesWebsocketConnectorRuntime;
@@ -51,14 +52,15 @@ struct RecordedWebsocketRequest {
 #[derive(Debug, Default)]
 struct FakeWebsocketState {
     next_connection_id: AtomicUsize,
+    http_requests: AtomicUsize,
     requests: Mutex<Vec<RecordedWebsocketRequest>>,
-    stream_errors: Mutex<VecDeque<ApiError>>,
+    stream_responses: Mutex<VecDeque<Vec<Result<ResponseEvent, ApiError>>>>,
 }
 
 impl FakeWebsocketState {
-    fn new(stream_errors: Vec<ApiError>) -> Arc<Self> {
+    fn new(stream_responses: Vec<Vec<Result<ResponseEvent, ApiError>>>) -> Arc<Self> {
         Arc::new(Self {
-            stream_errors: Mutex::new(stream_errors.into()),
+            stream_responses: Mutex::new(stream_responses.into()),
             ..Default::default()
         })
     }
@@ -79,6 +81,14 @@ impl FakeWebsocketState {
 
     fn connect_count(&self) -> usize {
         self.next_connection_id.load(Ordering::SeqCst)
+    }
+
+    fn record_http_request(&self) {
+        self.http_requests.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn http_request_count(&self) -> usize {
+        self.http_requests.load(Ordering::SeqCst)
     }
 }
 
@@ -138,14 +148,32 @@ impl ApiRuntimeFactory for FakeApiRuntimeFactory {
 
     fn responses_client(
         &self,
-        provider: Provider,
-        auth: SharedAuthProvider,
+        _provider: Provider,
+        _auth: SharedAuthProvider,
     ) -> Box<dyn ResponsesClientRuntime> {
-        DisabledApiRuntimeFactory.responses_client(provider, auth)
+        Box::new(FakeResponsesClient {
+            state: Arc::clone(&self.websocket),
+        })
     }
 
     fn arc_monitor_client(&self) -> Box<dyn ArcMonitorClientRuntime> {
         DisabledApiRuntimeFactory.arc_monitor_client()
+    }
+}
+
+struct FakeResponsesClient {
+    state: Arc<FakeWebsocketState>,
+}
+
+impl ResponsesClientRuntime for FakeResponsesClient {
+    fn stream_request(
+        &self,
+        _request: ResponsesStreamRuntimeRequest,
+    ) -> model_service_api::ApiRuntimeFuture<'_, Result<ApiResponseStream, ApiError>> {
+        Box::pin(async move {
+            self.state.record_http_request();
+            Ok(completed_response_stream())
+        })
     }
 }
 
@@ -166,7 +194,8 @@ impl ResponsesWebsocketConnectorRuntime for FakeWebsocketConnector {
             Ok(Box::new(FakeWebsocketConnection {
                 state: Arc::clone(&self.state),
                 connection_id,
-            }) as Box<dyn ResponsesWebsocketConnectionRuntime>)
+            })
+                as Box<dyn ResponsesWebsocketConnectionRuntime>)
         })
     }
 }
@@ -201,27 +230,31 @@ impl ResponsesWebsocketConnectionRuntime for FakeWebsocketConnection {
                     "failed to send websocket request: websocket closed".to_string(),
                 ));
             }
-            let maybe_stream_error = self
+            let stream_items = self
                 .state
-                .stream_errors
+                .stream_responses
                 .lock()
-                .expect("stream errors mutex")
-                .pop_front();
-            Ok(response_stream(maybe_stream_error))
+                .expect("stream responses mutex")
+                .pop_front()
+                .unwrap_or_else(completed_response_items);
+            Ok(response_stream(stream_items))
         })
     }
 }
 
-fn response_stream(error: Option<ApiError>) -> ApiResponseStream {
-    let items = if let Some(error) = error {
-        vec![Err(error)]
-    } else {
-        vec![Ok(ResponseEvent::Completed {
-            response_id: "resp_1".to_string(),
-            token_usage: None,
-            end_turn: Some(true),
-        })]
-    };
+fn completed_response_items() -> Vec<Result<ResponseEvent, ApiError>> {
+    vec![Ok(ResponseEvent::Completed {
+        response_id: "resp_1".to_string(),
+        token_usage: None,
+        end_turn: Some(true),
+    })]
+}
+
+fn completed_response_stream() -> ApiResponseStream {
+    response_stream(completed_response_items())
+}
+
+fn response_stream(items: Vec<Result<ResponseEvent, ApiError>>) -> ApiResponseStream {
     ApiResponseStream::new(futures::stream::iter(items), None)
 }
 
@@ -356,6 +389,7 @@ async fn reused_websocket_send_closed_reconnects_and_resends_once() -> anyhow::R
     stream_once(&mut reused_session, &model_info, &telemetry).await?;
 
     assert_eq!(websocket.connect_count(), 2);
+    assert_eq!(websocket.http_request_count(), 0);
     assert_eq!(
         websocket.requests(),
         vec![
@@ -377,10 +411,40 @@ async fn reused_websocket_send_closed_reconnects_and_resends_once() -> anyhow::R
 }
 
 #[tokio::test]
-async fn mid_stream_websocket_close_still_propagates_without_reconnect() -> anyhow::Result<()> {
-    let websocket = FakeWebsocketState::new(vec![ApiError::Stream(
-        "websocket closed by server before response.completed".to_string(),
-    )]);
+async fn websocket_disconnect_before_first_event_falls_back_to_http() -> anyhow::Result<()> {
+    let websocket = FakeWebsocketState::new(vec![vec![
+        Ok(ResponseEvent::ServerModel("gpt-test-routed".to_string())),
+        Err(ApiError::Stream(
+            "WebSocket protocol error: Connection reset without closing handshake".to_string(),
+        )),
+    ]]);
+    let client = test_client(Arc::clone(&websocket));
+    let model_info = test_model_info();
+    let telemetry = test_telemetry();
+
+    let mut session = client.new_session();
+    stream_once(&mut session, &model_info, &telemetry).await?;
+
+    assert_eq!(websocket.connect_count(), 1);
+    assert_eq!(websocket.http_request_count(), 1);
+    assert_eq!(
+        websocket.requests(),
+        vec![RecordedWebsocketRequest {
+            connection_id: 0,
+            connection_reused: false,
+        }]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_disconnect_after_partial_event_does_not_replay_request() -> anyhow::Result<()> {
+    let websocket = FakeWebsocketState::new(vec![vec![
+        Ok(ResponseEvent::OutputTextDelta("hel".to_string())),
+        Err(ApiError::Stream(
+            "websocket closed by server before response.completed".to_string(),
+        )),
+    ]]);
     let client = test_client(Arc::clone(&websocket));
     let model_info = test_model_info();
     let telemetry = test_telemetry();
@@ -388,10 +452,39 @@ async fn mid_stream_websocket_close_still_propagates_without_reconnect() -> anyh
     let mut session = client.new_session();
     let err = stream_once(&mut session, &model_info, &telemetry)
         .await
-        .expect_err("mid-stream close should propagate");
+        .expect_err("post-output websocket close should propagate");
 
     assert!(err.to_string().contains("websocket closed by server"));
     assert_eq!(websocket.connect_count(), 1);
+    assert_eq!(websocket.http_request_count(), 0);
+    assert_eq!(
+        websocket.requests(),
+        vec![RecordedWebsocketRequest {
+            connection_id: 0,
+            connection_reused: false,
+        }]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_non_disconnect_error_after_metadata_does_not_fallback() -> anyhow::Result<()> {
+    let websocket = FakeWebsocketState::new(vec![vec![
+        Ok(ResponseEvent::ServerModel("gpt-test-routed".to_string())),
+        Err(ApiError::Stream("malformed websocket event".to_string())),
+    ]]);
+    let client = test_client(Arc::clone(&websocket));
+    let model_info = test_model_info();
+    let telemetry = test_telemetry();
+
+    let mut session = client.new_session();
+    let err = stream_once(&mut session, &model_info, &telemetry)
+        .await
+        .expect_err("non-disconnect stream errors should propagate");
+
+    assert!(err.to_string().contains("malformed websocket event"));
+    assert_eq!(websocket.connect_count(), 1);
+    assert_eq!(websocket.http_request_count(), 0);
     assert_eq!(
         websocket.requests(),
         vec![RecordedWebsocketRequest {

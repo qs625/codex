@@ -1,5 +1,6 @@
 use super::*;
 use crate::responses_websocket_client::is_websocket_request_send_closed_error;
+use crate::responses_websocket_client::is_websocket_stream_disconnect_error;
 
 impl Drop for ModelClientSession {
     fn drop(&mut self) {
@@ -343,6 +344,22 @@ impl ModelClientSession {
                     return Err(err);
                 }
             };
+            let stream_result = match preflight_websocket_stream(stream_result).await {
+                WebsocketPreflightOutcome::Stream(stream) => stream,
+                WebsocketPreflightOutcome::DisconnectedBeforeEvent(err) => {
+                    self.reset_websocket_session();
+                    let mapped = map_api_error(err);
+                    inference_trace_attempt.record_failed(
+                        &mapped,
+                        /*upstream_request_id*/ None,
+                        /*output_items*/ &[],
+                    );
+                    debug!(
+                        "discarded responses websocket after stream disconnected before first event; falling back to HTTP"
+                    );
+                    return Ok(WebsocketStreamOutcome::FallbackToHttp);
+                }
+            };
             let (stream, last_request_rx) = map_response_stream(
                 stream_result,
                 session_telemetry.clone(),
@@ -531,4 +548,47 @@ impl ModelClientSession {
         self.websocket_session = WebsocketSession::default();
         activated
     }
+}
+
+enum WebsocketPreflightOutcome {
+    Stream(ApiResponseStream),
+    DisconnectedBeforeEvent(ApiError),
+}
+
+async fn preflight_websocket_stream(mut stream: ApiResponseStream) -> WebsocketPreflightOutcome {
+    let upstream_request_id = stream.upstream_request_id().map(str::to_string);
+    let mut buffered_metadata = Vec::new();
+    loop {
+        match stream.next().await {
+            Some(Ok(event)) if websocket_preflight_event_is_metadata(&event) => {
+                buffered_metadata.push(Ok(event));
+            }
+            Some(Err(err)) if is_websocket_stream_disconnect_error(&err) => {
+                return WebsocketPreflightOutcome::DisconnectedBeforeEvent(err);
+            }
+            Some(first) => {
+                let stream = futures::stream::iter(buffered_metadata.into_iter().chain([first]))
+                    .chain(stream);
+                return WebsocketPreflightOutcome::Stream(ApiResponseStream::new(
+                    stream,
+                    upstream_request_id,
+                ));
+            }
+            None => {
+                return WebsocketPreflightOutcome::DisconnectedBeforeEvent(ApiError::Stream(
+                    "responses websocket stream ended before first event".to_string(),
+                ));
+            }
+        }
+    }
+}
+
+fn websocket_preflight_event_is_metadata(event: &ResponseEvent) -> bool {
+    matches!(
+        event,
+        ResponseEvent::ServerModel(_)
+            | ResponseEvent::ModelsEtag(_)
+            | ResponseEvent::ServerReasoningIncluded(_)
+            | ResponseEvent::RateLimits(_)
+    )
 }
