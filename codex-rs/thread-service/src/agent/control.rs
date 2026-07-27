@@ -239,6 +239,14 @@ fn external_tool_context(run: &ExternalAgentRun) -> ExternalToolContext {
     }
 }
 
+fn is_external_root_run(run: &ExternalAgentRun) -> bool {
+    run.depth == 0 && run.parent_thread_id == run.thread_id
+}
+
+fn is_external_root_sender(sender: &ExternalToolContext) -> bool {
+    sender.depth == 0 && sender.parent_thread_id == sender.thread_id
+}
+
 fn external_session_source_for(
     parent_thread_id: ThreadId,
     depth: i32,
@@ -255,7 +263,7 @@ fn external_session_source_for(
 }
 
 fn external_tool_directory_session_source(sender: &ExternalToolContext) -> SessionSource {
-    if sender.agent_path.is_root() {
+    if is_external_root_sender(sender) {
         SessionSource::Unknown
     } else {
         external_session_source_for(
@@ -433,6 +441,7 @@ impl AgentControl {
         config: ExternalSpawnConfig,
         provider: SpawnAgentProvider,
         session_source: SessionSource,
+        agent_metadata: Option<AgentMetadata>,
     ) -> CodexResult<NewExternalRootThread> {
         if provider == SpawnAgentProvider::Native {
             return Err(CodexErr::UnsupportedOperation(
@@ -446,7 +455,16 @@ impl AgentControl {
             .map_err(CodexErr::UnsupportedOperation)?;
 
         let thread_id = ThreadId::new();
-        let agent_metadata = AgentMetadata::default();
+        let mut agent_metadata = agent_metadata.unwrap_or_default();
+        let run_agent_path = agent_metadata
+            .agent_path
+            .clone()
+            .unwrap_or_else(AgentPath::root);
+        let mut agent_path_reservation = agent_metadata
+            .agent_path
+            .as_ref()
+            .map(|agent_path| self.reserve_root_scope_agent_path(agent_path))
+            .transpose()?;
         let (input_tx, input_rx) = mpsc::unbounded_channel();
         let live_thread = self
             .create_external_thread_persistence(
@@ -503,7 +521,7 @@ impl AgentControl {
         let run = ExternalAgentRun {
             thread_id,
             parent_thread_id: thread_id,
-            agent_path: AgentPath::root(),
+            agent_path: run_agent_path,
             provider,
             depth: 0,
             spawn_config: Some(config.clone()),
@@ -515,6 +533,12 @@ impl AgentControl {
             abort_handle: None,
         };
         self.external_agents.insert_running(run);
+        agent_metadata.agent_id = Some(thread_id);
+        if let Some(reservation) = agent_path_reservation.take() {
+            reservation.commit(agent_metadata);
+        } else if agent_metadata.agent_path.is_some() {
+            self.register_root_scope_agent_metadata(agent_metadata);
+        }
         if let Ok(state) = self.upgrade() {
             state.notify_thread_started(thread_id);
         }
@@ -541,7 +565,7 @@ impl AgentControl {
     pub(crate) fn has_external_root_thread(&self, thread_id: ThreadId) -> bool {
         self.external_agents
             .get(thread_id)
-            .is_some_and(|run| run.agent_path.is_root())
+            .is_some_and(|run| is_external_root_run(&run))
     }
 
     pub(crate) fn live_external_root_thread_facts(
@@ -549,7 +573,7 @@ impl AgentControl {
         thread_id: ThreadId,
     ) -> Option<LiveExternalRootThreadFacts> {
         let run = self.external_agents.get(thread_id)?;
-        if !run.agent_path.is_root() {
+        if !is_external_root_run(&run) {
             return None;
         }
         Some(LiveExternalRootThreadFacts {
@@ -566,7 +590,7 @@ impl AgentControl {
         let Some(run) = self.external_agents.get(thread_id) else {
             return Err(CodexErr::ThreadNotFound(thread_id));
         };
-        if !run.agent_path.is_root() {
+        if !is_external_root_run(&run) {
             return Err(CodexErr::ThreadNotFound(thread_id));
         }
         let turn_id = uuid::Uuid::new_v4().to_string();
@@ -2123,7 +2147,7 @@ impl AgentControl {
         match call.tool {
             ExternalToolName::ListExternalAgents => {
                 let args: ExternalListAgentsArgs = parse_external_arguments(&call.arguments)?;
-                let source = if sender.agent_path.is_root() {
+                let source = if is_external_root_sender(&sender) {
                     SessionSource::Unknown
                 } else {
                     external_session_source_for(
@@ -2145,7 +2169,7 @@ impl AgentControl {
                 let receiver_thread_id = self
                     .resolve_external_live_target(&sender, &args.target, "follow up to")
                     .await?;
-                if sender.agent_path.is_root() && receiver_thread_id == sender.thread_id {
+                if is_external_root_sender(&sender) && receiver_thread_id == sender.thread_id {
                     return Err(FunctionCallError::RespondToModel(
                         "root external agents cannot follow up to themselves".to_string(),
                     ));
@@ -2208,7 +2232,7 @@ impl AgentControl {
                 let scoped_to_external_root = self
                     .external_agents
                     .get(sender.parent_thread_id)
-                    .is_some_and(|run| run.agent_path.is_root());
+                    .is_some_and(|run| is_external_root_run(&run));
                 if scoped_to_external_root
                     && let Some(agent_path) = spawn_source.get_agent_path()
                     && self.external_agents.list().into_iter().any(|run| {
@@ -2252,7 +2276,7 @@ impl AgentControl {
                 let target = self
                     .resolve_external_live_target(&sender, &args.target, "close")
                     .await?;
-                if sender.agent_path.is_root() && target == sender.thread_id {
+                if is_external_root_sender(&sender) && target == sender.thread_id {
                     return Err(FunctionCallError::RespondToModel(
                         "root external agents cannot close themselves with close_external_agent"
                             .to_string(),
@@ -2291,7 +2315,7 @@ impl AgentControl {
     ) -> Result<ThreadId, FunctionCallError> {
         let agent_path = resolve_agent_reference_path(&sender.agent_path, target)
             .map_err(FunctionCallError::RespondToModel)?;
-        if sender.agent_path.is_root() && agent_path.is_root() {
+        if is_external_root_sender(sender) && agent_path == sender.agent_path {
             return Ok(sender.thread_id);
         }
 

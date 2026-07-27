@@ -21,8 +21,10 @@ use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::Turn;
+use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnEnvironmentParams;
 use app_server_protocol::TurnStatus;
+use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::PathBufExt;
@@ -99,6 +101,23 @@ fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
         let mut permissions = std::fs::metadata(&fake_claude)?.permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&fake_claude, permissions)?;
+    }
+    Ok(())
+}
+
+fn write_fake_codex_cli(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_codex = bin_dir.join("codex");
+    std::fs::write(
+        &fake_codex,
+        "#!/bin/sh\n# Test double for hidden external root codex_cli start wiring.\nsleep 30\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_codex)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, permissions)?;
     }
     Ok(())
 }
@@ -349,6 +368,208 @@ async fn thread_start_accepts_hidden_external_root_provider_and_emits_started() 
     assert_eq!(started.thread.thread_source, Some(ThreadSource::User));
     assert_eq!(started.thread.agent_path, None);
     assert_eq!(started.thread.agent_role, None);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_external_root_accepts_common_params_and_persists_agent_path() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+    let fake_bin = TempDir::new()?;
+    write_fake_codex_cli(fake_bin.path())?;
+    let test_path = prepend_path_env(fake_bin.path())?;
+
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("PATH", Some(test_path.as_str()))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("codex_cli".to_string()),
+            cwd: Some(codex_home.path().to_string_lossy().into_owned()),
+            task_name: Some("foo_project".to_string()),
+            agent_type: Some("feature-owner".to_string()),
+            approval_policy: Some(AskForApproval::Never),
+            sandbox: Some(SandboxMode::DangerFullAccess),
+            thread_source: Some(ThreadSource::User),
+            ..Default::default()
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(req_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(response)?;
+    assert_eq!(thread.model_provider, "codex_cli");
+    assert_eq!(thread.agent_path.as_deref(), Some("/foo_project"));
+    assert_eq!(thread.agent_role.as_deref(), Some("codex_cli"));
+
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/started"),
+    )
+    .await??;
+    let started: ThreadStartedNotification = serde_json::from_value(
+        notification
+            .params
+            .expect("thread/started params should be present"),
+    )?;
+    assert_eq!(started.thread.id, thread.id);
+    assert_eq!(started.thread.agent_path.as_deref(), Some("/foo_project"));
+    assert_eq!(started.thread.agent_role.as_deref(), Some("codex_cli"));
+
+    let list_req_id = mcp
+        .send_thread_list_request(ThreadListParams {
+            cursor: None,
+            limit: None,
+            sort_key: None,
+            sort_direction: None,
+            model_providers: None,
+            source_kinds: None,
+            archived: None,
+            cwd: None,
+            use_state_db_only: false,
+            search_term: None,
+        })
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_req_id)),
+    )
+    .await??;
+    let listed = to_response::<ThreadListResponse>(list_resp)?
+        .data
+        .into_iter()
+        .find(|listed| listed.id == thread.id)
+        .expect("created external root should appear in thread/list");
+    assert_eq!(listed.agent_path.as_deref(), Some("/foo_project"));
+    assert_eq!(listed.agent_role.as_deref(), Some("codex_cli"));
+
+    let duplicate_req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("codex_cli".to_string()),
+            cwd: Some(codex_home.path().to_string_lossy().into_owned()),
+            task_name: Some("foo_project".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let duplicate_error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(duplicate_req_id)),
+    )
+    .await??;
+    assert_eq!(duplicate_error.error.code, INVALID_REQUEST_ERROR_CODE);
+    assert!(
+        duplicate_error
+            .error
+            .message
+            .contains("agent path `/foo_project` already exists"),
+        "unexpected duplicate path error: {}",
+        duplicate_error.error.message
+    );
+    drop(mcp);
+
+    let mut restarted =
+        McpProcess::new_with_env(codex_home.path(), &[("PATH", Some(test_path.as_str()))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, restarted.initialize()).await??;
+
+    let resume_req_id = restarted
+        .send_thread_resume_request(ThreadResumeParams {
+            thread_id: thread.id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        restarted.read_stream_until_response_message(RequestId::Integer(resume_req_id)),
+    )
+    .await??;
+    let ThreadResumeResponse {
+        thread: resumed, ..
+    } = to_response::<ThreadResumeResponse>(resume_resp)?;
+    assert_eq!(resumed.model_provider, "codex_cli");
+    assert_eq!(resumed.agent_path.as_deref(), Some("/foo_project"));
+    assert_eq!(resumed.agent_role.as_deref(), Some("codex_cli"));
+
+    let turn_req = restarted
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id,
+            input: vec![V2UserInput::Text {
+                text: "persisted external root input".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        restarted.read_stream_until_error_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    assert_eq!(turn_error.error.code, INVALID_REQUEST_ERROR_CODE);
+    assert!(
+        turn_error.error.message.contains("turn/start")
+            && turn_error.error.message.contains("external root threads"),
+        "unexpected turn/start error: {}",
+        turn_error.error.message
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_external_root_rejects_invalid_task_name() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("codex_cli".to_string()),
+            task_name: Some("OwnerDev".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(req_id)),
+    )
+    .await??;
+    assert_eq!(error.error.code, INVALID_REQUEST_ERROR_CODE);
+    assert!(error.error.message.contains("invalid taskName"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_external_root_still_rejects_clear_history_start() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("codex_cli".to_string()),
+            session_start_source: Some(app_server_protocol::ThreadStartSource::Clear),
+            ..Default::default()
+        })
+        .await?;
+    let error = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(req_id)),
+    )
+    .await??;
+    assert_eq!(error.error.code, INVALID_REQUEST_ERROR_CODE);
+    assert!(error.error.message.contains("clear history"));
 
     Ok(())
 }

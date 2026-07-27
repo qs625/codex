@@ -255,9 +255,7 @@ pub(in crate::request_processors) fn should_preserve_persisted_lifecycle_status_
 pub(super) fn is_external_root_lifecycle_projection_thread(thread: &Thread) -> bool {
     is_external_cli_thread_provider_id(&thread.model_provider)
         && thread.thread_source == Some(app_server_protocol::ThreadSource::User)
-        && thread.agent_path.is_none()
-        && thread.agent_role.is_none()
-        && thread.agent_nickname.is_none()
+        && !protocol::protocol::SessionSource::from(thread.source.clone()).is_non_root_agent()
 }
 
 #[cfg(test)]
@@ -308,6 +306,50 @@ mod persisted_lifecycle_status_tests {
             ThreadLifecycleStatus::Final {
                 result: ThreadLifecycleFinalStatus::Interrupted,
             }
+        );
+    }
+
+    #[test]
+    fn external_root_with_agent_metadata_projects_interrupted() {
+        let mut thread = external_root_thread();
+        thread.agent_path = Some("/foo_project".to_string());
+        thread.agent_role = Some("codex_cli".to_string());
+        thread.agent_nickname = Some("codex_cli".to_string());
+        thread.model_provider = "codex_cli".to_string();
+
+        apply_persisted_thread_lifecycle_status(&mut thread, &[]);
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            }
+        );
+    }
+
+    #[test]
+    fn external_subagent_metadata_does_not_project_as_root() {
+        let mut thread = external_root_thread();
+        thread.agent_path = Some("/root/external".to_string());
+        thread.agent_role = Some("codex_cli".to_string());
+        thread.agent_nickname = Some("codex_cli".to_string());
+        thread.model_provider = "codex_cli".to_string();
+        thread.source = protocol::protocol::SessionSource::SubAgent(
+            protocol::protocol::SubAgentSource::ThreadSpawn {
+                parent_thread_id: ThreadId::new(),
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            },
+        )
+        .into();
+
+        apply_persisted_thread_lifecycle_status(&mut thread, &[]);
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::NotLoaded
         );
     }
 

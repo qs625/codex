@@ -40,31 +40,15 @@ fn reject_unsupported_external_root_thread_provider(
 
 #[allow(clippy::too_many_arguments)]
 fn validate_external_root_start_params(
-    task_name: &Option<String>,
-    agent_type: &Option<String>,
-    approval_policy: &Option<app_server_protocol::AskForApproval>,
     approvals_reviewer: &Option<app_server_protocol::ApprovalsReviewer>,
-    sandbox: &Option<SandboxMode>,
-    permissions: &Option<PermissionProfileSelectionParams>,
     dynamic_tools: &Option<Vec<ApiDynamicToolSpec>>,
     session_start_source: &Option<app_server_protocol::ThreadStartSource>,
-    thread_source: &Option<app_server_protocol::ThreadSource>,
     environments: &Option<Vec<app_server_protocol::TurnEnvironmentParams>>,
     service_name: &Option<String>,
 ) -> Result<(), JSONRPCErrorError> {
-    if task_name.is_some() || agent_type.is_some() {
+    if approvals_reviewer.is_some() {
         return Err(invalid_request(
-            "external root thread/start does not support taskName or agentType yet",
-        ));
-    }
-    if approval_policy.is_some() || approvals_reviewer.is_some() {
-        return Err(invalid_request(
-            "external root thread/start does not support approval overrides yet",
-        ));
-    }
-    if sandbox.is_some() || permissions.is_some() {
-        return Err(invalid_request(
-            "external root thread/start does not support permission overrides yet",
+            "external root thread/start does not support approval reviewer overrides yet",
         ));
     }
     if dynamic_tools
@@ -81,11 +65,6 @@ fn validate_external_root_start_params(
     ) {
         return Err(invalid_request(
             "external root thread/start does not support clear history start yet",
-        ));
-    }
-    if thread_source.is_some() {
-        return Err(invalid_request(
-            "external root thread/start does not support client threadSource overrides yet",
         ));
     }
     if environments.is_some() {
@@ -344,7 +323,13 @@ mod root_thread_provider_route_tests {
     }
 
     #[test]
-    fn rejects_external_root_start_unsupported_native_params() {
+    fn allows_external_root_start_common_unified_params() {
+        validate_external_root_start_params(&None, &None, &None, &None, &None)
+            .expect("external root should accept common unified thread/start params");
+    }
+
+    #[test]
+    fn rejects_external_root_start_truly_unsupported_params() {
         let dynamic_tool = ApiDynamicToolSpec {
             namespace: None,
             name: "demo_tool".to_string(),
@@ -363,152 +348,24 @@ mod root_thread_provider_route_tests {
 
         let cases = [
             (
-                Some("worker".to_string()),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                "taskName or agentType",
-            ),
-            (
-                None,
-                Some("default".to_string()),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                "taskName or agentType",
-            ),
-            (
-                None,
-                None,
-                Some(app_server_protocol::AskForApproval::Never),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                "approval overrides",
-            ),
-            (
-                None,
-                None,
-                None,
                 Some(app_server_protocol::ApprovalsReviewer::AutoReview),
                 None,
                 None,
                 None,
                 None,
-                None,
-                None,
-                None,
-                "approval overrides",
+                "approval reviewer",
             ),
+            (None, Some(vec![dynamic_tool]), None, None, None, "dynamic tools"),
             (
-                None,
-                None,
-                None,
-                None,
-                Some(SandboxMode::WorkspaceWrite),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                "permission overrides",
-            ),
-            (
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(PermissionProfileSelectionParams::new("read-only")),
-                None,
-                None,
-                None,
-                None,
-                None,
-                "permission overrides",
-            ),
-            (
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(vec![dynamic_tool]),
-                None,
-                None,
-                None,
-                None,
-                "dynamic tools",
-            ),
-            (
-                None,
-                None,
-                None,
-                None,
-                None,
                 None,
                 None,
                 Some(app_server_protocol::ThreadStartSource::Clear),
                 None,
                 None,
-                None,
                 "clear history",
             ),
+            (None, None, None, Some(vec![environment]), None, "environments"),
             (
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(app_server_protocol::ThreadSource::User),
-                None,
-                None,
-                "threadSource",
-            ),
-            (
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(vec![environment]),
-                None,
-                "environments",
-            ),
-            (
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
                 None,
                 None,
                 None,
@@ -519,30 +376,18 @@ mod root_thread_provider_route_tests {
         ];
 
         for (
-            task_name,
-            agent_type,
-            approval_policy,
             approvals_reviewer,
-            sandbox,
-            permissions,
             dynamic_tools,
             session_start_source,
-            thread_source,
             environments,
             service_name,
             expected_message,
         ) in cases
         {
             let error = validate_external_root_start_params(
-                &task_name,
-                &agent_type,
-                &approval_policy,
                 &approvals_reviewer,
-                &sandbox,
-                &permissions,
                 &dynamic_tools,
                 &session_start_source,
-                &thread_source,
                 &environments,
                 &service_name,
             )
@@ -572,13 +417,13 @@ impl ThreadRequestProcessor {
             reasoning_effort,
             service_tier,
             cwd,
-            task_name,
+            mut task_name,
             agent_type,
             runtime_workspace_roots,
-            approval_policy,
+            mut approval_policy,
             approvals_reviewer,
-            sandbox,
-            permissions,
+            mut sandbox,
+            mut permissions,
             config: mut request_overrides,
             service_name,
             base_instructions,
@@ -588,7 +433,7 @@ impl ThreadRequestProcessor {
             personality,
             ephemeral,
             session_start_source,
-            thread_source,
+            mut thread_source,
             environments,
             persist_extended_history,
         } = params;
@@ -597,23 +442,22 @@ impl ThreadRequestProcessor {
             thread_provider.as_deref(),
             thread_service_api::ThreadProviderRootCapability::StartThread,
         )?;
-        if matches!(
+        let is_external_root_start = matches!(
             root_thread_provider_route,
             thread_service_api::RootThreadProviderRoute::External(_)
-        ) {
+        );
+        if is_external_root_start {
             validate_external_root_start_params(
-                &task_name,
-                &agent_type,
-                &approval_policy,
                 &approvals_reviewer,
-                &sandbox,
-                &permissions,
                 &dynamic_tools,
                 &session_start_source,
-                &thread_source,
                 &environments,
                 &service_name,
             )?;
+            approval_policy = None;
+            sandbox = None;
+            permissions = None;
+            thread_source = None;
         }
         if sandbox.is_some() && permissions.is_some() {
             return Err(invalid_request(
@@ -625,7 +469,11 @@ impl ThreadRequestProcessor {
                 .await;
         }
         let environment_selections = self.parse_environment_selections(environments)?;
-        let thread_start_agent = parse_thread_start_agent(task_name, agent_type)?;
+        let thread_start_agent = if is_external_root_start {
+            parse_thread_start_agent(task_name.take(), None)?
+        } else {
+            parse_thread_start_agent(task_name, agent_type)?
+        };
         if let Some(reasoning_effort) = reasoning_effort {
             request_overrides
                 .get_or_insert_with(std::collections::HashMap::new)

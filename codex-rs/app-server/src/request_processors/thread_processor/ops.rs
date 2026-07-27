@@ -55,6 +55,7 @@ pub(super) fn parse_thread_start_agent(
 fn external_root_thread_start_request(
     config: Config,
     provider: thread_service_api::ExternalRootThreadProvider,
+    agent_metadata: Option<thread_service_api::ExternalRootAgentMetadata>,
 ) -> thread_service_api::ExternalRootThreadStartRequest {
     thread_service_api::ExternalRootThreadStartRequest {
         startup_config: thread_service_api::ExternalRootThreadStartupConfig {
@@ -77,7 +78,23 @@ fn external_root_thread_start_request(
             max_wait_timeout_ms: config.multi_agent_v2.max_wait_timeout_ms,
         },
         provider,
+        agent_metadata,
     }
+}
+
+fn external_root_agent_metadata(
+    thread_start_agent: Option<ThreadStartAgent>,
+    provider: thread_service_api::ExternalRootThreadProvider,
+) -> Option<thread_service_api::ExternalRootAgentMetadata> {
+    thread_start_agent.and_then(|agent| {
+        agent.agent_path.map(|agent_path| {
+            thread_service_api::ExternalRootAgentMetadata {
+                agent_path,
+                agent_nickname: Some(provider.provider_id().to_string()),
+                agent_role: Some(provider.provider_id().to_string()),
+            }
+        })
+    })
 }
 
 pub(super) fn thread_lifecycle_status_from_agent_status(
@@ -545,6 +562,7 @@ impl ThreadRequestProcessor {
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         if let Some(provider) = external_root_provider {
+            let agent_metadata = external_root_agent_metadata(thread_start_agent, provider);
             return Self::external_root_thread_start_task(
                 listener_task_context,
                 external_root_thread_runtime,
@@ -553,6 +571,7 @@ impl ThreadRequestProcessor {
                 instruction_sources,
                 config,
                 provider,
+                agent_metadata,
             )
             .await;
         }
@@ -771,9 +790,14 @@ impl ThreadRequestProcessor {
         instruction_sources: Vec<AbsolutePathBuf>,
         config: Config,
         provider: thread_service_api::ExternalRootThreadProvider,
+        agent_metadata: Option<thread_service_api::ExternalRootAgentMetadata>,
     ) -> Result<(), JSONRPCErrorError> {
         let new_thread = external_root_thread_runtime
-            .start_external_root_thread(external_root_thread_start_request(config, provider))
+            .start_external_root_thread(external_root_thread_start_request(
+                config,
+                provider,
+                agent_metadata,
+            ))
             .instrument(tracing::info_span!(
                 "app_server.thread_start.create_external_root_thread",
                 otel.name = "app_server.thread_start.create_external_root_thread",
