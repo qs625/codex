@@ -872,6 +872,18 @@ pub(crate) fn is_websocket_request_send_closed_error(err: &ApiError) -> bool {
     )
 }
 
+pub(crate) fn is_websocket_stream_disconnect_error(err: &ApiError) -> bool {
+    matches!(
+        err,
+        ApiError::Stream(message)
+            if message == "stream closed before response.completed"
+                || message == "websocket closed by server before response.completed"
+                || message == "idle timeout waiting for websocket"
+                || message.contains("Connection reset without closing handshake")
+                || message.contains("WebSocket protocol error")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
