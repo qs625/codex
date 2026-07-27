@@ -384,17 +384,8 @@ impl TurnRequestProcessor {
         if params.permissions.is_some() {
             unsupported_params.push("permissions");
         }
-        if params.model.is_some() {
-            unsupported_params.push("model");
-        }
-        if params.model_provider.is_some() {
-            unsupported_params.push("modelProvider");
-        }
         if params.service_tier.is_some() {
             unsupported_params.push("serviceTier");
-        }
-        if params.effort.is_some() {
-            unsupported_params.push("effort");
         }
         if params.summary.is_some() {
             unsupported_params.push("summary");
