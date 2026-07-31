@@ -152,9 +152,6 @@ impl ThreadHistoryBuilder {
             .map(|agent| {
                 let mut state = CollabAgentState::from(agent.lifecycle_status.clone());
                 state.path = Some(agent.agent_path.clone());
-                if state.message.is_none() {
-                    state.message = agent.last_task_message.clone();
-                }
                 (agent.agent_path.clone(), state)
             })
             .collect();

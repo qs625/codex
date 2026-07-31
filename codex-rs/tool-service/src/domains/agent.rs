@@ -14,6 +14,8 @@ use crate::planning::create_list_agents_tool;
 use crate::planning::create_list_external_agents_tool;
 use crate::planning::create_poll_event_tool;
 use crate::planning::create_poll_external_event_tool;
+use crate::planning::create_read_agent_tool;
+use crate::planning::create_read_external_agent_tool;
 use crate::planning::create_report_agent_job_result_tool;
 use crate::planning::create_spawn_agent_tool_v2;
 use crate::planning::create_spawn_agents_on_csv_tool;
@@ -39,6 +41,7 @@ use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadPollEventTimeoutMetadata;
+use thread_service_api::ThreadReadAgentResult;
 use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadSessionCapability;
@@ -60,6 +63,7 @@ const SPAWN_AGENT_TOOL_NAME: &str = "spawn_agent";
 const FOLLOWUP_TASK_TOOL_NAME: &str = "followup_task";
 const POLL_EVENT_TOOL_NAME: &str = "poll_event";
 const LIST_AGENTS_TOOL_NAME: &str = "list_agents";
+const READ_AGENT_TOOL_NAME: &str = "read_agent";
 const CLOSE_AGENT_TOOL_NAME: &str = "close_agent";
 const SPAWN_AGENTS_ON_CSV_TOOL_NAME: &str = "spawn_agents_on_csv";
 const REPORT_AGENT_JOB_RESULT_TOOL_NAME: &str = "report_agent_job_result";
@@ -67,6 +71,7 @@ const SPAWN_EXTERNAL_AGENT_TOOL_NAME: &str = "spawn_external_agent";
 const FOLLOWUP_EXTERNAL_TASK_TOOL_NAME: &str = "followup_external_task";
 const POLL_EXTERNAL_EVENT_TOOL_NAME: &str = "poll_external_event";
 const LIST_EXTERNAL_AGENTS_TOOL_NAME: &str = "list_external_agents";
+const READ_EXTERNAL_AGENT_TOOL_NAME: &str = "read_external_agent";
 const CLOSE_EXTERNAL_AGENT_TOOL_NAME: &str = "close_external_agent";
 
 pub trait AgentToolRuntime: Send + Sync + 'static {
@@ -99,6 +104,13 @@ pub trait AgentToolRuntime: Send + Sync + 'static {
         path_prefix: Option<String>,
     ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
 
+    fn read_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>>;
+
     fn spawn_external_agent<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -127,6 +139,13 @@ pub trait AgentToolRuntime: Send + Sync + 'static {
         call_id: String,
         path_prefix: Option<String>,
     ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+
+    fn read_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>>;
 
     fn poll_event<'a>(
         &'a self,
@@ -182,6 +201,15 @@ where
         NativeAgentRuntime::list_agents(self, turn, call_id, path_prefix)
     }
 
+    fn read_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>> {
+        NativeAgentRuntime::read_agent(self, turn, call_id, target)
+    }
+
     fn spawn_external_agent<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -219,6 +247,15 @@ where
         ThreadCollaborationRuntime::list_external_agents(self, turn, call_id, path_prefix)
     }
 
+    fn read_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>> {
+        ThreadCollaborationRuntime::read_external_agent(self, turn, call_id, target)
+    }
+
     fn poll_event<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -249,11 +286,13 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
         create_followup_task_tool(),
         create_poll_event_tool(),
         create_list_agents_tool(),
+        create_read_agent_tool(),
         create_close_agent_tool_v2(),
         create_spawn_external_agent_tool(),
         create_followup_external_task_tool(),
         create_poll_external_event_tool(),
         create_list_external_agents_tool(),
+        create_read_external_agent_tool(),
         create_close_external_agent_tool(),
         create_spawn_agents_on_csv_tool(),
         create_report_agent_job_result_tool(),
@@ -268,11 +307,13 @@ pub(crate) fn owns_tool_name(_request: &TypedToolSpecRequest<'_>, tool_name: &To
                 | FOLLOWUP_TASK_TOOL_NAME
                 | POLL_EVENT_TOOL_NAME
                 | LIST_AGENTS_TOOL_NAME
+                | READ_AGENT_TOOL_NAME
                 | CLOSE_AGENT_TOOL_NAME
                 | SPAWN_EXTERNAL_AGENT_TOOL_NAME
                 | FOLLOWUP_EXTERNAL_TASK_TOOL_NAME
                 | POLL_EXTERNAL_EVENT_TOOL_NAME
                 | LIST_EXTERNAL_AGENTS_TOOL_NAME
+                | READ_EXTERNAL_AGENT_TOOL_NAME
                 | CLOSE_EXTERNAL_AGENT_TOOL_NAME
                 | SPAWN_AGENTS_ON_CSV_TOOL_NAME
                 | REPORT_AGENT_JOB_RESULT_TOOL_NAME
@@ -451,6 +492,18 @@ pub(crate) async fn dispatch(
                 .await?;
             function_tool_json_output(&result, LIST_EXTERNAL_AGENTS_TOOL_NAME)?
         }
+        READ_EXTERNAL_AGENT_TOOL_NAME => {
+            let arguments = function_arguments(&call)?;
+            let args: ReadAgentArgs = parse_arguments(&arguments)?;
+            let result = agent_runtime
+                .read_external_agent(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    call.call_id.clone(),
+                    args.target,
+                )
+                .await?;
+            function_tool_json_output(&result, READ_EXTERNAL_AGENT_TOOL_NAME)?
+        }
         CLOSE_EXTERNAL_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: CloseAgentArgs = parse_arguments(&arguments)?;
@@ -560,6 +613,18 @@ pub(crate) async fn dispatch(
                 )
                 .await?;
             function_tool_json_output(&result, LIST_AGENTS_TOOL_NAME)?
+        }
+        READ_AGENT_TOOL_NAME => {
+            let arguments = function_arguments(&call)?;
+            let args: ReadAgentArgs = parse_arguments(&arguments)?;
+            let result = agent_runtime
+                .read_agent(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    call.call_id.clone(),
+                    args.target,
+                )
+                .await?;
+            function_tool_json_output(&result, READ_AGENT_TOOL_NAME)?
         }
         CLOSE_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
@@ -753,6 +818,12 @@ struct ListAgentsArgs {
     path_prefix: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadAgentArgs {
+    target: String,
+}
+
 fn function_arguments(call: &ToolCall) -> Result<String, FunctionCallError> {
     match &call.payload {
         ToolPayload::Function { arguments } => Ok(arguments.clone()),
@@ -864,6 +935,15 @@ mod tests {
             Box::pin(async { unreachable!("list_agents should not be called in this test") })
         }
 
+        fn read_agent<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _target: String,
+        ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>> {
+            Box::pin(async { unreachable!("read_agent should not be called in this test") })
+        }
+
         fn spawn_external_agent<'a>(
             &'a self,
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
@@ -906,6 +986,17 @@ mod tests {
         ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>> {
             Box::pin(async {
                 unreachable!("list_external_agents should not be called in this test")
+            })
+        }
+
+        fn read_external_agent<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _target: String,
+        ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>> {
+            Box::pin(async {
+                unreachable!("read_external_agent should not be called in this test")
             })
         }
 

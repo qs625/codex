@@ -2098,6 +2098,7 @@ dependencies = [
  "rand 0.9.3",
  "rollout-api",
  "serde",
+ "serde_json",
  "state-api",
  "tempfile",
  "tokio",

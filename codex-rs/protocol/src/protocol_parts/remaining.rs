@@ -52,9 +52,6 @@ pub struct CollabListedAgent {
     pub agent_role: Option<String>,
     /// Last known lifecycle of the listed agent.
     pub lifecycle_status: ThreadLifecycleStatus,
-    /// Last task message recorded for the listed agent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_task_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

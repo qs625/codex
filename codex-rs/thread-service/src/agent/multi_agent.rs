@@ -11,11 +11,13 @@ use crate::session::turn_context::TurnContext;
 use codex_agent_roles::DEFAULT_ROLE_NAME;
 use codex_agent_runtime::CloseAgentToolResult;
 use codex_agent_runtime::ListAgentsToolResult;
+use codex_agent_runtime::ReadAgentToolResult;
 use codex_agent_runtime::SpawnAgentToolRequest;
 use codex_agent_runtime::SpawnAgentToolResult;
 use codex_agent_runtime::SpawnExternalAgentToolRequest;
 use codex_agent_runtime::render_input_preview;
 use protocol::AgentPath;
+use protocol::ThreadId;
 use protocol::protocol::CollabAgentInteractionBeginEvent;
 use protocol::protocol::CollabAgentInteractionEndEvent;
 use protocol::protocol::CollabAgentSpawnBeginEvent;
@@ -114,6 +116,15 @@ pub(crate) async fn list_external_agents_tool(
     path_prefix: Option<String>,
 ) -> Result<ListAgentsToolResult, FunctionCallError> {
     list_agents_tool(session, turn, call_id, path_prefix).await
+}
+
+pub(crate) async fn read_external_agent_tool(
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    call_id: String,
+    target: String,
+) -> Result<ReadAgentToolResult, FunctionCallError> {
+    read_agent_tool(session, turn, call_id, target).await
 }
 
 pub(crate) async fn followup_task_tool(
@@ -284,7 +295,6 @@ pub(crate) async fn list_agents_tool(
                     agent_nickname: agent.agent_nickname.clone(),
                     agent_role: agent.agent_role.clone(),
                     lifecycle_status: agent.lifecycle_status.clone(),
-                    last_task_message: agent.last_task_message.clone(),
                 })
                 .collect()
         },
@@ -306,6 +316,34 @@ pub(crate) async fn list_agents_tool(
         .await;
 
     Ok(ListAgentsToolResult { agents: agents? })
+}
+
+pub(crate) async fn read_agent_tool(
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    _call_id: String,
+    target: String,
+) -> Result<ReadAgentToolResult, FunctionCallError> {
+    session.register_session_root_for_turn(turn.as_ref());
+    let agent_id = if let Ok(thread_id) = ThreadId::from_string(&target) {
+        thread_id
+    } else {
+        session
+            .resolve_agent_reference_for_read(turn.as_ref(), &target)
+            .await
+            .map_err(|err| match err {
+                protocol::error::CodexErr::UnsupportedOperation(message) => {
+                    FunctionCallError::RespondToModel(message)
+                }
+                other => FunctionCallError::RespondToModel(other.to_string()),
+            })?
+    };
+    let agent = session
+        .read_agent_for_turn(turn.as_ref(), agent_id)
+        .await
+        .map_err(collab_spawn_error)?;
+
+    Ok(ReadAgentToolResult { agent })
 }
 
 fn reject_root_agent(

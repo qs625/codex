@@ -36,7 +36,17 @@ pub struct LiveAgent {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ListedAgent {
+    pub agent_name: String,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
+    pub lifecycle_status: ThreadLifecycleStatus,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDetails {
     pub agent_name: String,
     pub agent_nickname: Option<String>,
     pub agent_role: Option<String>,
@@ -57,6 +67,19 @@ pub struct ListedAgentCandidate {
 pub struct ListAgentsPlan {
     pub include_root: bool,
     pub candidates: Vec<ListedAgentCandidate>,
+}
+
+pub fn lightweight_lifecycle_status(status: ThreadLifecycleStatus) -> ThreadLifecycleStatus {
+    match status {
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Completed { .. },
+        } => ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Completed {
+                last_agent_message: None,
+            },
+        },
+        other => other,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -298,9 +321,7 @@ pub fn normalized_thread_lifecycle_from_inputs(
         AgentStatus::Completed(_)
         | AgentStatus::Errored(_)
         | AgentStatus::Interrupted
-        | AgentStatus::Shutdown => {
-            thread_lifecycle_from_final_agent_status(agent_status)
-        }
+        | AgentStatus::Shutdown => thread_lifecycle_from_final_agent_status(agent_status),
     }
 }
 
@@ -363,8 +384,11 @@ pub fn root_listed_agent(lifecycle_status: ThreadLifecycleStatus) -> ListedAgent
         agent_nickname: None,
         agent_role: None,
         lifecycle_status,
-        last_task_message: Some(ROOT_LAST_TASK_MESSAGE.to_string()),
     }
+}
+
+pub fn root_last_task_message() -> String {
+    ROOT_LAST_TASK_MESSAGE.to_string()
 }
 
 pub fn list_agents_plan(
@@ -700,8 +724,8 @@ mod tests {
         );
 
         let legacy_root_child = AgentPath::try_from("/root/worker").expect("root worker path");
-        let legacy_plan = list_agents_plan(&legacy_root_child, None, Vec::new())
-            .expect("legacy root plan");
+        let legacy_plan =
+            list_agents_plan(&legacy_root_child, None, Vec::new()).expect("legacy root plan");
         assert!(legacy_plan.include_root);
     }
 
@@ -737,6 +761,49 @@ mod tests {
 
         assert!(plan.include_root);
         assert_eq!(plan.candidates, Vec::new());
+    }
+
+    #[test]
+    fn agent_tool_results_serialize_camel_case_detail_fields() {
+        let list_json = serde_json::to_value(crate::ListAgentsToolResult {
+            agents: vec![ListedAgent {
+                agent_name: "/root/worker".to_string(),
+                agent_nickname: Some("Worker".to_string()),
+                agent_role: Some("worker".to_string()),
+                lifecycle_status: lightweight_lifecycle_status(ThreadLifecycleStatus::completed(
+                    Some("long final answer".to_string()),
+                )),
+            }],
+        })
+        .expect("serialize list");
+
+        let listed = &list_json["agents"][0];
+        assert_eq!(listed["agentName"], "/root/worker");
+        assert_eq!(listed["agentNickname"], "Worker");
+        assert_eq!(listed["agentRole"], "worker");
+        assert!(listed["lastTaskMessage"].is_null());
+        assert!(listed["lifecycleStatus"]["result"]["last_agent_message"].is_null());
+
+        let read_json = serde_json::to_value(crate::ReadAgentToolResult {
+            agent: AgentDetails {
+                agent_name: "/root/worker".to_string(),
+                agent_nickname: Some("Worker".to_string()),
+                agent_role: Some("worker".to_string()),
+                lifecycle_status: ThreadLifecycleStatus::completed(Some(
+                    "long final answer".to_string(),
+                )),
+                last_task_message: Some("do work".to_string()),
+            },
+        })
+        .expect("serialize read");
+
+        let detail = &read_json["agent"];
+        assert_eq!(detail["agentName"], "/root/worker");
+        assert_eq!(detail["lastTaskMessage"], "do work");
+        assert_eq!(
+            detail["lifecycleStatus"]["result"]["last_agent_message"],
+            "long final answer"
+        );
     }
 
     #[test]

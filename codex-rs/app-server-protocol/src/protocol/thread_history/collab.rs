@@ -158,9 +158,6 @@ impl ThreadHistoryBuilder {
                 state.path = Some(agent.agent_path.clone());
                 state.agent_nickname = agent.agent_nickname.clone();
                 state.agent_role = agent.agent_role.clone();
-                if state.message.is_none() {
-                    state.message = agent.last_task_message.clone();
-                }
                 (agent.agent_path.clone(), state)
             })
             .collect();

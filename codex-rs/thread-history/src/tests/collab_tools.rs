@@ -92,8 +92,7 @@ use super::*;
                     agent_path: "/root/scout".into(),
                     agent_nickname: Some("codex_cli".into()),
                     agent_role: Some("codex_cli".into()),
-                    lifecycle_status: ThreadLifecycleStatus::completed(Some("done".into())),
-                    last_task_message: Some("last task".into()),
+                    lifecycle_status: ThreadLifecycleStatus::completed(None),
                 }],
             }),
         ];
@@ -127,7 +126,7 @@ use super::*;
                         agent_nickname: Some("codex_cli".into()),
                         agent_role: Some("codex_cli".into()),
                         lifecycle_status: ThreadLifecycleStatus::completed(None),
-                        message: Some("done".into()),
+                        message: None,
                     },
                 )]
                 .into_iter()
