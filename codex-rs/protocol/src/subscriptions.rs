@@ -68,6 +68,8 @@ pub enum PersistedSubscription {
         subscription_id: String,
         schedule: ScheduleSpec,
         label: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
     #[serde(skip_serializing)]
     ProcessExit {
@@ -117,6 +119,61 @@ mod tests {
                 session_id: 42,
                 label: Some("tests".to_string()),
             }
+        );
+    }
+
+    #[test]
+    fn deserializes_schedule_subscription_without_message() {
+        let subscription =
+            serde_json::from_value::<PersistedSubscription>(serde_json::json!({
+                "type": "schedule",
+                "subscription_id": "sub-schedule",
+                "schedule": {
+                    "kind": "every_interval",
+                    "interval_ms": 60000
+                },
+                "label": "standup"
+            }))
+            .unwrap();
+
+        assert_eq!(
+            subscription,
+            PersistedSubscription::Schedule {
+                subscription_id: "sub-schedule".to_string(),
+                schedule: super::ScheduleSpec::EveryInterval {
+                    interval_ms: 60_000,
+                },
+                label: Some("standup".to_string()),
+                message: None,
+            }
+        );
+    }
+
+    #[test]
+    fn serializes_schedule_subscription_message_when_present() {
+        let subscription = PersistedSubscription::Schedule {
+            subscription_id: "sub-schedule".to_string(),
+            schedule: super::ScheduleSpec::EveryInterval {
+                interval_ms: 60_000,
+            },
+            label: Some("standup".to_string()),
+            message: Some("Run the standup checklist".to_string()),
+        };
+
+        let value = serde_json::to_value(subscription).unwrap();
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "type": "schedule",
+                "subscription_id": "sub-schedule",
+                "schedule": {
+                    "kind": "every_interval",
+                    "interval_ms": 60000
+                },
+                "label": "standup",
+                "message": "Run the standup checklist"
+            })
         );
     }
 }

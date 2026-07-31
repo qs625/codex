@@ -786,6 +786,7 @@ mod tests {
                     interval_ms: 60_000,
                 },
                 label: Some("poll".to_string()),
+                message: None,
             },
         ];
 

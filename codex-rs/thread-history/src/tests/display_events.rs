@@ -574,6 +574,39 @@ use super::*;
     }
 
     #[test]
+    fn active_schedule_subscription_metadata_rebuilds_message_argument() {
+        let items = vec![RolloutItem::SessionMeta(
+            session_meta_with_schedule_subscription_message(
+                "sub-schedule",
+                "Clean checkout targets and report the result.",
+            ),
+        )];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "active-subscription:sub-schedule".into(),
+                tool: "schedule_subscribe".into(),
+                arguments: serde_json::json!({
+                    "schedule": {
+                        "kind": "every_interval",
+                        "interval_ms": 60000,
+                    },
+                    "label": "standup",
+                    "message": "Clean checkout targets and report the result.",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::json!({
+                    "subscription_id": "sub-schedule",
+                })),
+            }]
+        );
+    }
+
+    #[test]
     fn active_schedule_subscription_metadata_does_not_duplicate_history_item() {
         let output = serde_json::json!({
             "subscription_id": "sub-schedule",
@@ -765,12 +798,20 @@ use super::*;
     fn session_meta_with_schedule_subscription(
         subscription_id: &str,
     ) -> protocol::protocol::SessionMetaLine {
+        session_meta_with_schedule_subscription_message(subscription_id, "")
+    }
+
+    fn session_meta_with_schedule_subscription_message(
+        subscription_id: &str,
+        message: &str,
+    ) -> protocol::protocol::SessionMetaLine {
         session_meta_with_subscriptions(vec![protocol::subscriptions::PersistedSubscription::Schedule {
             subscription_id: subscription_id.to_string(),
             schedule: protocol::subscriptions::ScheduleSpec::EveryInterval {
                 interval_ms: 60_000,
             },
             label: Some("standup".to_string()),
+            message: (!message.is_empty()).then(|| message.to_string()),
         }])
     }
 
