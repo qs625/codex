@@ -269,7 +269,7 @@ async fn external_root_turn_start_accepts_text_input() -> Result<()> {
 async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;
-    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let mut mcp = start_external_root_mcp_with_assistant_output(&codex_home, &fake_bin).await?;
     let thread_id =
         start_named_external_root_thread(&mut mcp, codex_home.path(), "foo_project").await?;
 
@@ -310,6 +310,19 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
         }
         other => panic!("expected named external user message item, got {other:?}"),
     }
+
+    let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(assistant_item.turn_id, turn.id);
+    match assistant_item.item {
+        ThreadItem::AgentMessage { text, .. } => {
+            assert_eq!(text, "External assistant done");
+        }
+        other => panic!("expected named external assistant message item, got {other:?}"),
+    }
+
+    let completed = read_external_root_turn_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(completed.turn.id, turn.id);
+    assert_eq!(completed.turn.status, TurnStatus::Completed);
 
     Ok(())
 }

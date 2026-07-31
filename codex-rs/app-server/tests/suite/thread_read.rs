@@ -141,6 +141,23 @@ fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn write_fake_claude_cli_with_assistant_output(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_claude = bin_dir.join("claude");
+    std::fs::write(
+        &fake_claude,
+        "#!/bin/sh\n# Test double for external root thread/read assistant coverage.\nif read _line; then\n  echo 'External assistant done'\nfi\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_claude)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_claude, permissions)?;
+    }
+    Ok(())
+}
+
 fn prepend_path_env(path: &Path) -> Result<String> {
     let original_path = std::env::var_os("PATH").unwrap_or_default();
     let paths = std::iter::once(path.to_path_buf()).chain(std::env::split_paths(&original_path));
@@ -151,6 +168,20 @@ async fn start_external_root_read_mcp(codex_home: &Path, fake_bin: &Path) -> Res
     let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
     create_config_toml(codex_home, &server.uri())?;
     write_fake_claude_cli(fake_bin)?;
+    let test_path = prepend_path_env(fake_bin)?;
+    let mut mcp =
+        McpProcess::new_with_env(codex_home, &[("PATH", Some(test_path.as_str()))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+async fn start_external_root_read_mcp_with_assistant_output(
+    codex_home: &Path,
+    fake_bin: &Path,
+) -> Result<McpProcess> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    create_config_toml(codex_home, &server.uri())?;
+    write_fake_claude_cli_with_assistant_output(fake_bin)?;
     let test_path = prepend_path_env(fake_bin)?;
     let mut mcp =
         McpProcess::new_with_env(codex_home, &[("PATH", Some(test_path.as_str()))]).await?;
@@ -177,6 +208,38 @@ async fn start_hidden_external_root_thread(mcp: &mut McpProcess, cwd: &Path) -> 
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     assert_eq!(thread.agent_path, None);
     assert_eq!(thread.agent_role, None);
+    assert!(matches!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::Active { .. }
+    ));
+    Ok(thread.id)
+}
+
+async fn start_named_external_root_thread(
+    mcp: &mut McpProcess,
+    cwd: &Path,
+    task_name: &str,
+) -> Result<String> {
+    let thread_req = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("claude_cli".to_string()),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            task_name: Some(task_name.to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_req)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
+
+    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.thread_source, Some(ThreadSource::User));
+    let expected_agent_path = format!("/{task_name}");
+    assert_eq!(thread.agent_path.as_deref(), Some(expected_agent_path.as_str()));
+    assert_eq!(thread.agent_role.as_deref(), Some("claude_cli"));
     assert!(matches!(
         thread.lifecycle_status,
         ThreadLifecycleStatus::Active { .. }
@@ -282,6 +345,26 @@ fn assert_external_root_metadata(
     assert!(thread.path.as_ref().expect("thread path").is_absolute());
 }
 
+fn assert_named_external_root_metadata(
+    thread: &app_server_protocol::Thread,
+    thread_id: &str,
+    cwd: &Path,
+    task_name: &str,
+) {
+    assert_eq!(thread.id, thread_id);
+    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.thread_source, Some(ThreadSource::User));
+    let expected_agent_path = format!("/{task_name}");
+    assert_eq!(thread.agent_path.as_deref(), Some(expected_agent_path.as_str()));
+    assert_eq!(thread.agent_role.as_deref(), Some("claude_cli"));
+    let expected_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
+    let actual_cwd =
+        std::fs::canonicalize(thread.cwd.as_path()).unwrap_or_else(|_| thread.cwd.to_path_buf());
+    assert_eq!(actual_cwd, expected_cwd);
+    assert!(!thread.ephemeral);
+    assert!(thread.path.as_ref().expect("thread path").is_absolute());
+}
+
 fn assert_single_user_message_turn(thread: &app_server_protocol::Thread, expected_text: &str) {
     assert_eq!(thread.turns.len(), 1, "expected one restored turn");
     let turn = &thread.turns[0];
@@ -304,6 +387,44 @@ fn assert_single_user_message_turn(thread: &app_server_protocol::Thread, expecte
     );
 }
 
+fn assert_single_user_and_agent_message_turn(
+    thread: &app_server_protocol::Thread,
+    expected_user_text: &str,
+    expected_agent_text: &str,
+) {
+    assert_eq!(thread.turns.len(), 1, "expected one restored turn");
+    let turn = &thread.turns[0];
+    assert_eq!(turn.items_view, TurnItemsView::Full);
+    assert_eq!(turn.status, TurnStatus::Completed);
+    let user_messages = turn
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ThreadItem::UserMessage { content, .. } => Some(content),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(user_messages.len(), 1, "expected one typed user message");
+    assert_eq!(
+        user_messages[0],
+        &vec![UserInput::Text {
+            text: expected_user_text.to_string(),
+            text_elements: Vec::new(),
+        }]
+    );
+
+    let agent_messages = turn
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ThreadItem::AgentMessage { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(agent_messages.len(), 1, "expected one typed agent message");
+    assert_eq!(agent_messages[0], expected_agent_text);
+}
+
 fn has_single_user_message_turn(thread: &app_server_protocol::Thread, expected_text: &str) -> bool {
     if thread.turns.len() != 1 {
         return false;
@@ -321,6 +442,32 @@ fn has_single_user_message_turn(thread: &app_server_protocol::Thread, expected_t
     })
 }
 
+fn has_single_user_and_agent_message_turn(
+    thread: &app_server_protocol::Thread,
+    expected_user_text: &str,
+    expected_agent_text: &str,
+) -> bool {
+    if thread.turns.len() != 1 {
+        return false;
+    }
+    let turn = &thread.turns[0];
+    let has_user_message = turn.items.iter().any(|item| match item {
+        ThreadItem::UserMessage { content, .. } => {
+            content
+                == &vec![UserInput::Text {
+                    text: expected_user_text.to_string(),
+                    text_elements: Vec::new(),
+                }]
+        }
+        _ => false,
+    });
+    let has_agent_message = turn.items.iter().any(|item| match item {
+        ThreadItem::AgentMessage { text, .. } => text == expected_agent_text,
+        _ => false,
+    });
+    has_user_message && has_agent_message && turn.status == TurnStatus::Completed
+}
+
 async fn wait_for_thread_user_message(
     mcp: &mut McpProcess,
     thread_id: &str,
@@ -332,6 +479,37 @@ async fn wait_for_thread_user_message(
         let thread = try_read_thread(mcp, thread_id, /*include_turns*/ true).await?;
         if let Some(thread) = thread {
             if has_single_user_message_turn(&thread, expected_text) {
+                return Ok(thread);
+            }
+            last_thread = Some(thread);
+        }
+        if Instant::now() >= deadline {
+            if let Some(thread) = last_thread {
+                return Ok(thread);
+            }
+            let thread = read_thread(mcp, thread_id, /*include_turns*/ false).await?;
+            return Ok(thread);
+        }
+        sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+async fn wait_for_thread_user_and_agent_message(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+    expected_user_text: &str,
+    expected_agent_text: &str,
+) -> Result<app_server_protocol::Thread> {
+    let deadline = Instant::now() + DEFAULT_READ_TIMEOUT;
+    let mut last_thread = None;
+    loop {
+        let thread = try_read_thread(mcp, thread_id, /*include_turns*/ true).await?;
+        if let Some(thread) = thread {
+            if has_single_user_and_agent_message_turn(
+                &thread,
+                expected_user_text,
+                expected_agent_text,
+            ) {
                 return Ok(thread);
             }
             last_thread = Some(thread);
@@ -485,6 +663,97 @@ async fn thread_read_hidden_external_root_restores_text_turn_after_restart() -> 
         listed.lifecycle_status,
         ThreadLifecycleStatus::Final {
             result: ThreadLifecycleFinalStatus::Interrupted,
+        }
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_external_root_restores_assistant_response_after_restart() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp =
+        start_external_root_read_mcp_with_assistant_output(codex_home.path(), fake_bin.path())
+            .await?;
+    let task_name = "foo_project";
+    let thread_id = start_named_external_root_thread(&mut mcp, codex_home.path(), task_name).await?;
+    let input_text = "Hello persisted external assistant";
+    let output_text = "External assistant done";
+
+    let turn_req = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread_id.clone(),
+            input: vec![UserInput::Text {
+                text: input_text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    let _: TurnStartResponse = to_response::<TurnStartResponse>(turn_resp)?;
+
+    let live_read =
+        wait_for_thread_user_and_agent_message(&mut mcp, &thread_id, input_text, output_text)
+            .await?;
+    assert_named_external_root_metadata(&live_read, &thread_id, codex_home.path(), task_name);
+    assert_single_user_and_agent_message_turn(&live_read, input_text, output_text);
+    assert_eq!(
+        live_read.lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Completed,
+        }
+    );
+
+    drop(mcp);
+
+    let mut restarted = start_external_root_read_mcp(codex_home.path(), fake_bin.path()).await?;
+    let reloaded_summary = read_thread(&mut restarted, &thread_id, /*include_turns*/ false).await?;
+    assert_named_external_root_metadata(
+        &reloaded_summary,
+        &thread_id,
+        codex_home.path(),
+        task_name,
+    );
+    assert_eq!(reloaded_summary.turns, Vec::new());
+    assert_eq!(
+        reloaded_summary.lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Completed,
+        }
+    );
+
+    let reloaded_with_turns =
+        read_thread(&mut restarted, &thread_id, /*include_turns*/ true).await?;
+    assert_named_external_root_metadata(
+        &reloaded_with_turns,
+        &thread_id,
+        codex_home.path(),
+        task_name,
+    );
+    assert_single_user_and_agent_message_turn(&reloaded_with_turns, input_text, output_text);
+    assert_eq!(
+        reloaded_with_turns.lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Completed,
+        }
+    );
+
+    let reloaded_listed = list_threads(&mut restarted).await?;
+    let listed = reloaded_listed
+        .iter()
+        .find(|thread| thread.id == thread_id)
+        .expect("thread/list should include completed external root");
+    assert_named_external_root_metadata(listed, &thread_id, codex_home.path(), task_name);
+    assert_eq!(
+        listed.lifecycle_status,
+        ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Completed,
         }
     );
 
