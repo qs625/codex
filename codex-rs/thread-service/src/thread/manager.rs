@@ -1851,6 +1851,10 @@ impl ThreadServiceState {
             .await
             .remove(&thread_id)
             .is_some();
+        if external_removed {
+            self.root_agent_registry
+                .release_uncounted_thread_metadata(thread_id);
+        }
         native_removed || external_removed
     }
 
