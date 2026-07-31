@@ -757,6 +757,79 @@ test("command wait item notifications create visible conversation entries", () =
   );
 });
 
+test("project external root item notifications keep assistant messages visible", () => {
+  const externalProjectThread = makeSidebarThread({
+    id: "external-project",
+    sessionId: "session-external-project",
+    modelProvider: "claude_cli",
+    model: null,
+    cwd: "/work/project",
+    source: "appServer",
+    threadSource: "user",
+    agentPath: "/foo_project",
+    agentNickname: "foo_project",
+    agentRole: "claude_cli",
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
+  });
+  const turnId = "turn-external-project";
+  const userItem = makeUserMessage("user-1", "status?");
+  const agentItem = makeAgentMessage("agent-1", "External assistant done");
+
+  assert.deepEqual(
+    getThreadItemNotificationTargetThreadIds(
+      externalProjectThread.id,
+      agentItem,
+    ),
+    [externalProjectThread.id],
+  );
+
+  const withUser = updateThreadItem(externalProjectThread, turnId, userItem, {
+    completedAtMs: 2_000,
+    syntheticTurnStatus: getThreadItemNotificationSyntheticTurnStatus(
+      "item/completed",
+      userItem,
+    ),
+  });
+  const withAssistant = updateThreadItem(withUser, turnId, agentItem, {
+    completedAtMs: 3_000,
+    syntheticTurnStatus: getThreadItemNotificationSyntheticTurnStatus(
+      "item/completed",
+      agentItem,
+    ),
+  });
+  const completed = updateThreadTurnLifecycle(withAssistant, {
+    id: turnId,
+    items: [],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 2,
+    completedAt: 3,
+    durationMs: 1000,
+  });
+
+  assert.equal(completed.turns.length, 1);
+  assert.equal(completed.turns[0]?.status, "completed");
+  assert.deepEqual(
+    completed.turns[0]?.items.map((item) => item.type),
+    ["userMessage", "agentMessage"],
+  );
+
+  const entries = buildConversationEntries(completed);
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      role: entry.role,
+      text: entry.text,
+    })),
+    [
+      { id: "user-1", role: "user", text: "status?" },
+      { id: "agent-1", role: "agent", text: "External assistant done" },
+    ],
+  );
+});
+
 test("injected init context item notifications create visible conversation entries", () => {
   const updated = updateThreadItem(
     makeThread(),

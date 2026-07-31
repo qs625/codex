@@ -706,7 +706,9 @@ async fn thread_read_external_root_restores_assistant_response_after_restart() -
     assert_eq!(
         live_read.lifecycle_status,
         ThreadLifecycleStatus::Final {
-            result: ThreadLifecycleFinalStatus::Completed,
+            result: ThreadLifecycleFinalStatus::Completed {
+                last_agent_message: None,
+            },
         }
     );
 
@@ -724,7 +726,9 @@ async fn thread_read_external_root_restores_assistant_response_after_restart() -
     assert_eq!(
         reloaded_summary.lifecycle_status,
         ThreadLifecycleStatus::Final {
-            result: ThreadLifecycleFinalStatus::Completed,
+            result: ThreadLifecycleFinalStatus::Completed {
+                last_agent_message: Some(output_text.to_string()),
+            },
         }
     );
 
@@ -740,7 +744,9 @@ async fn thread_read_external_root_restores_assistant_response_after_restart() -
     assert_eq!(
         reloaded_with_turns.lifecycle_status,
         ThreadLifecycleStatus::Final {
-            result: ThreadLifecycleFinalStatus::Completed,
+            result: ThreadLifecycleFinalStatus::Completed {
+                last_agent_message: Some(output_text.to_string()),
+            },
         }
     );
 
@@ -753,7 +759,9 @@ async fn thread_read_external_root_restores_assistant_response_after_restart() -
     assert_eq!(
         listed.lifecycle_status,
         ThreadLifecycleStatus::Final {
-            result: ThreadLifecycleFinalStatus::Completed,
+            result: ThreadLifecycleFinalStatus::Completed {
+                last_agent_message: Some(output_text.to_string()),
+            },
         }
     );
 
