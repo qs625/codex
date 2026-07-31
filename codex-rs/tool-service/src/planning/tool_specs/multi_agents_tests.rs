@@ -500,9 +500,49 @@ fn list_agents_tool_includes_path_prefix_and_agent_fields() {
             "Optional task-path prefix (not ending with trailing slash). Accepts the same relative or absolute task-path syntax."
         )
     );
+    let schema = output_schema.expect("list_agents output schema");
     assert_eq!(
-        output_schema.expect("list_agents output schema")["properties"]["agents"]["items"]["required"],
-        json!(["agent_name", "lifecycle_status", "last_task_message"])
+        schema["properties"]["agents"]["items"]["required"],
+        json!(["agentName", "agentNickname", "agentRole", "lifecycleStatus"])
+    );
+    assert!(
+        schema["properties"]["agents"]["items"]["properties"]["lastTaskMessage"].is_null(),
+        "list_agents should not expose lastTaskMessage"
+    );
+    assert!(
+        schema["properties"]["agents"]["items"]["properties"]["lifecycleStatus"]["allOf"][0]
+            ["oneOf"][4]["properties"]["result"]["oneOf"][0]["properties"]["last_agent_message"]
+            .is_null(),
+        "list_agents completed lifecycle should not expose last_agent_message"
+    );
+}
+
+#[test]
+fn read_agent_tool_exposes_full_agent_details() {
+    let ToolSpec::Function(ResponsesApiTool {
+        parameters,
+        output_schema,
+        ..
+    }) = create_read_agent_tool()
+    else {
+        panic!("read_agent should be a function tool");
+    };
+    assert_eq!(parameters.required, Some(vec!["target".to_string()]));
+    let schema = output_schema.expect("read_agent output schema");
+    assert_eq!(
+        schema["properties"]["agent"]["required"],
+        json!([
+            "agentName",
+            "agentNickname",
+            "agentRole",
+            "lifecycleStatus",
+            "lastTaskMessage"
+        ])
+    );
+    assert_eq!(
+        schema["properties"]["agent"]["properties"]["lifecycleStatus"]["allOf"][0]["oneOf"][4]
+            ["properties"]["result"]["oneOf"][0]["properties"]["last_agent_message"]["type"],
+        json!(["string", "null"])
     );
 }
 
@@ -515,7 +555,7 @@ fn list_agents_tool_lifecycle_schema_includes_interrupted_final() {
 
     assert_eq!(
         output_schema.expect("list_agents output schema")["properties"]["agents"]["items"]["properties"]
-            ["lifecycle_status"]["allOf"][0]["oneOf"][4]["properties"]["result"]["oneOf"][2]["properties"]
+            ["lifecycleStatus"]["allOf"][0]["oneOf"][4]["properties"]["result"]["oneOf"][2]["properties"]
             ["type"]["enum"],
         json!(["interrupted"])
     );

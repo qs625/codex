@@ -405,6 +405,7 @@ pub(crate) enum ExternalToolName {
     SpawnExternalAgent,
     FollowupExternalTask,
     ListExternalAgents,
+    ReadExternalAgent,
     PollExternalEvent,
     CloseExternalAgent,
 }
@@ -681,6 +682,7 @@ Available external tools:
 - spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode" | "codex_cli", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json, opencode HTTP sessions, and codex_cli app-server stdio sessions.
 - followup_external_task: arguments {{ "target": string, "message": string }}
 - list_external_agents: arguments {{ "path_prefix"?: string }}
+- read_external_agent: arguments {{ "target": string }}. Use after list_external_agents to inspect last task and result details for one agent.
 - poll_external_event: arguments {{}}. Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. Returns wake or timeout metadata plus a best-effort source hint and typed event payload when available.
 - close_external_agent: arguments {{ "target": string }}
 

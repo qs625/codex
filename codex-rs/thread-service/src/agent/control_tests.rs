@@ -722,9 +722,18 @@ async fn list_agents_includes_external_runs_with_prefix_filter() {
     assert_eq!(agents[0].agent_role.as_deref(), Some("codex_cli"));
     assert_eq!(
         agents[0].lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
+    let details = harness
+        .control
+        .read_agent(root_thread_id, &SessionSource::Exec, external_thread_id)
+        .await
+        .expect("read agent");
+    assert_eq!(details.last_task_message.as_deref(), Some("do work"));
+    assert_eq!(
+        details.lifecycle_status,
         ThreadLifecycleStatus::completed(Some("done".to_string()))
     );
-    assert_eq!(agents[0].last_task_message.as_deref(), Some("do work"));
 }
 
 #[tokio::test]
@@ -767,7 +776,12 @@ async fn root_external_list_agents_is_scoped_to_sender_root() {
 
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].agent_name, "/root/worker");
-    assert_eq!(agents[0].last_task_message.as_deref(), Some("worker A"));
+    let details = harness
+        .control
+        .read_agent(root_a, &SessionSource::Unknown, worker_a)
+        .await
+        .expect("read root scoped agent");
+    assert_eq!(details.last_task_message.as_deref(), Some("worker A"));
 }
 
 #[tokio::test]
@@ -981,9 +995,9 @@ async fn root_external_tools_spawn_child_and_reject_invalid_targets() {
         .expect("agents array")
         .clone();
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0]["agent_name"], "/root/worker");
-    assert_eq!(agents[0]["agent_nickname"], "claude_cli");
-    assert_eq!(agents[0]["agent_role"], "claude_cli");
+    assert_eq!(agents[0]["agentName"], "/root/worker");
+    assert_eq!(agents[0]["agentNickname"], "claude_cli");
+    assert_eq!(agents[0]["agentRole"], "claude_cli");
 
     let duplicate_spawn_result = harness
         .control
@@ -1106,7 +1120,7 @@ async fn named_root_external_tools_keep_root_sender_semantics() {
         .expect("agents array")
         .clone();
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0]["agent_name"], "/foo_project/worker");
+    assert_eq!(agents[0]["agentName"], "/foo_project/worker");
 
     let followup_result = harness
         .control
@@ -1230,8 +1244,8 @@ async fn root_external_child_spawn_paths_are_scoped_per_root_thread() {
             .expect("agents array")
             .clone();
         assert_eq!(agents.len(), 1);
-        assert_eq!(agents[0]["agent_name"], "/root/worker");
-        assert_eq!(agents[0]["agent_nickname"], "claude_cli");
+        assert_eq!(agents[0]["agentName"], "/root/worker");
+        assert_eq!(agents[0]["agentNickname"], "claude_cli");
     }
 
     harness
@@ -1928,8 +1942,122 @@ async fn external_tool_call_lists_visible_agents() {
         .expect("agents array")
         .clone();
     assert_eq!(agents.len(), 1);
-    assert_eq!(agents[0]["agent_name"], "/root/external");
-    assert_eq!(agents[0]["agent_nickname"], "codex_cli");
+    assert_eq!(agents[0]["agentName"], "/root/external");
+    assert_eq!(agents[0]["agentNickname"], "codex_cli");
+
+    let read_result = harness
+        .control
+        .dispatch_external_tool_call(
+            external_thread_id,
+            ExternalToolCall {
+                id: "read_1".to_string(),
+                tool: ExternalToolName::ReadExternalAgent,
+                arguments: serde_json::json!({ "target": "/root/external" }),
+            },
+        )
+        .await;
+    assert!(read_result.ok, "read failed: {:?}", read_result.error);
+    let agent = &read_result.result.expect("read result")["agent"];
+    assert_eq!(agent["agentName"], "/root/external");
+    assert_eq!(agent["lastTaskMessage"], "do work");
+}
+
+#[tokio::test]
+async fn external_tool_call_reads_persisted_external_agent_details() {
+    let harness = AgentControlHarness::new().await;
+    let root_thread_id = ThreadId::new();
+    harness.control.state.register_root_thread(root_thread_id);
+    let persisted_thread_id = ThreadId::new();
+    let persisted_path = AgentPath::try_from("/root/external").expect("agent path");
+    let provider_id = provider_label(SpawnAgentProvider::CodexCli).to_string();
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(persisted_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some(provider_id.clone()),
+    });
+    let mut external_config = ExternalSpawnConfig::from_config(&harness.config);
+    external_config.model_provider_id = provider_id.clone();
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(persisted_thread_id),
+        agent_path: Some(persisted_path),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some(provider_id),
+        last_task_message: Some("persist me".to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &external_config,
+            persisted_thread_id,
+            session_source.clone(),
+            ThreadSource::Subagent,
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(persisted_thread_id, Some(&session_source))
+        .await;
+    live_thread
+        .persist()
+        .await
+        .expect("persist external thread metadata");
+    harness
+        .control
+        .persist_external_terminal_status_to_live_thread(
+            persisted_thread_id,
+            None,
+            &AgentStatus::Completed(Some("done".to_string())),
+            Some(live_thread),
+        )
+        .await;
+
+    let sender_thread_id = ThreadId::new();
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: sender_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: AgentPath::try_from("/root/sender").expect("agent path"),
+            provider: SpawnAgentProvider::CodexCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some("inspect persisted".to_string()),
+            abort_handle: None,
+        });
+
+    let result = harness
+        .control
+        .dispatch_external_tool_call(
+            sender_thread_id,
+            ExternalToolCall {
+                id: "read_1".to_string(),
+                tool: ExternalToolName::ReadExternalAgent,
+                arguments: serde_json::json!({ "target": "/root/external" }),
+            },
+        )
+        .await;
+
+    assert!(result.ok, "read failed: {:?}", result.error);
+    let agent = &result.result.expect("tool result")["agent"];
+    assert_eq!(agent["agentName"], "/root/external");
+    assert_eq!(agent["agentNickname"], "worker");
+    assert_eq!(agent["agentRole"], "codex_cli");
+    assert_eq!(agent["lastTaskMessage"], serde_json::Value::Null);
+    assert_eq!(
+        agent["lifecycleStatus"]["result"]["last_agent_message"],
+        "done"
+    );
 }
 
 #[tokio::test]

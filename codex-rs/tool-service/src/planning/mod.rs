@@ -81,6 +81,8 @@ pub(crate) use tool_specs::create_list_mcp_resource_templates_tool;
 pub(crate) use tool_specs::create_list_mcp_resources_tool;
 pub(crate) use tool_specs::create_poll_event_tool;
 pub(crate) use tool_specs::create_poll_external_event_tool;
+pub(crate) use tool_specs::create_read_agent_tool;
+pub(crate) use tool_specs::create_read_external_agent_tool;
 pub(crate) use tool_specs::create_read_mcp_resource_tool;
 pub(crate) use tool_specs::create_report_agent_job_result_tool;
 pub(crate) use tool_specs::create_request_permissions_tool;

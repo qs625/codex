@@ -255,9 +255,6 @@ pub fn item_event_to_server_notification(
                     state.path = Some(agent.agent_path.clone());
                     state.agent_nickname = agent.agent_nickname.clone();
                     state.agent_role = agent.agent_role.clone();
-                    if state.message.is_none() {
-                        state.message = agent.last_task_message;
-                    }
                     (agent.agent_path, state)
                 })
                 .collect();

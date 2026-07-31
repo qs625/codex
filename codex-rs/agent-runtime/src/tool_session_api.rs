@@ -86,8 +86,15 @@ pub struct CloseAgentToolResult {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListAgentsToolResult {
     pub agents: Vec<ListedAgent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadAgentToolResult {
+    pub agent: crate::AgentDetails,
 }
 
 pub trait MultiAgentToolSession<Turn>: Send + Sync + 'static {

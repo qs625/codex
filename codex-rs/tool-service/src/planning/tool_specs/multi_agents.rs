@@ -155,6 +155,15 @@ pub fn create_list_external_agents_tool() -> ToolSpec {
     ToolSpec::Function(tool)
 }
 
+pub fn create_read_external_agent_tool() -> ToolSpec {
+    let ToolSpec::Function(mut tool) = create_read_agent_tool() else {
+        unreachable!("read_agent is a function tool");
+    };
+    tool.name = "read_external_agent".to_string();
+    tool.description = "Read details for one agent visible to the external-agent collaboration surface, including last task and final result text when available.".to_string();
+    ToolSpec::Function(tool)
+}
+
 pub fn create_close_external_agent_tool() -> ToolSpec {
     let ToolSpec::Function(mut tool) = create_close_agent_tool_v2() else {
         unreachable!("close_agent is a function tool");
@@ -303,6 +312,26 @@ pub fn create_list_agents_tool() -> ToolSpec {
     })
 }
 
+pub fn create_read_agent_tool() -> ToolSpec {
+    let properties = BTreeMap::from([(
+        "target".to_string(),
+        JsonSchema::string(Some(
+            "Agent id or canonical task name/path to inspect, usually chosen from list_agents."
+                .to_string(),
+        )),
+    )]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "read_agent".to_string(),
+        description: "Read details for one agent visible in the current root thread tree, including its last task message and final result text when available. Use after list_agents when you need more than lightweight directory metadata."
+            .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
+        output_schema: Some(read_agent_output_schema()),
+    })
+}
+
 pub fn create_close_agent_tool_v2() -> ToolSpec {
     let properties = BTreeMap::from([(
         "target".to_string(),
@@ -353,6 +382,35 @@ fn agent_status_output_schema() -> Value {
 }
 
 fn lifecycle_status_output_schema() -> Value {
+    lifecycle_status_output_schema_with_completed_message(true)
+}
+
+fn lightweight_lifecycle_status_output_schema() -> Value {
+    lifecycle_status_output_schema_with_completed_message(false)
+}
+
+fn lifecycle_status_output_schema_with_completed_message(include_completed_message: bool) -> Value {
+    let completed_schema = if include_completed_message {
+        json!({
+            "type": "object",
+            "properties": {
+                "type": { "type": "string", "enum": ["completed"] },
+                "last_agent_message": { "type": ["string", "null"] }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+        })
+    } else {
+        json!({
+            "type": "object",
+            "properties": {
+                "type": { "type": "string", "enum": ["completed"] }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+        })
+    };
+
     json!({
         "oneOf": [
             {
@@ -404,15 +462,7 @@ fn lifecycle_status_output_schema() -> Value {
                     "type": { "type": "string", "enum": ["final"] },
                     "result": {
                         "oneOf": [
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["completed"] },
-                                    "lastAgentMessage": { "type": ["string", "null"] }
-                                },
-                                "required": ["type"],
-                                "additionalProperties": false
-                            },
+                            completed_schema,
                             {
                                 "type": "object",
                                 "properties": {
@@ -498,26 +548,67 @@ fn list_agents_output_schema() -> Value {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "agent_name": {
+                        "agentName": {
                             "type": "string",
                             "description": "Canonical task name for the agent when available, otherwise the agent id."
                         },
-                        "lifecycle_status": {
-                            "description": "Last known lifecycle status of the agent thread.",
-                            "allOf": [lifecycle_status_output_schema()]
-                        },
-                        "last_task_message": {
+                        "agentNickname": {
                             "type": ["string", "null"],
-                            "description": "Most recent user or inter-agent instruction received by the agent, when available."
+                            "description": "User-facing nickname for the agent when available."
+                        },
+                        "agentRole": {
+                            "type": ["string", "null"],
+                            "description": "Configured role/type for the agent when available."
+                        },
+                        "lifecycleStatus": {
+                            "description": "Last known lifecycle status of the agent thread.",
+                            "allOf": [lightweight_lifecycle_status_output_schema()]
                         }
                     },
-                    "required": ["agent_name", "lifecycle_status", "last_task_message"],
+                    "required": ["agentName", "agentNickname", "agentRole", "lifecycleStatus"],
                     "additionalProperties": false
                 },
                 "description": "Live agents visible in the current root thread tree."
             }
         },
         "required": ["agents"],
+        "additionalProperties": false
+    })
+}
+
+fn read_agent_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "agent": {
+                "type": "object",
+                "properties": {
+                    "agentName": {
+                        "type": "string",
+                        "description": "Canonical task name for the agent when available, otherwise the agent id."
+                    },
+                    "agentNickname": {
+                        "type": ["string", "null"],
+                        "description": "User-facing nickname for the agent when available."
+                    },
+                    "agentRole": {
+                        "type": ["string", "null"],
+                        "description": "Configured role/type for the agent when available."
+                    },
+                    "lifecycleStatus": {
+                        "description": "Full last known lifecycle status of the agent thread.",
+                        "allOf": [lifecycle_status_output_schema()]
+                    },
+                    "lastTaskMessage": {
+                        "type": ["string", "null"],
+                        "description": "Most recent user or inter-agent instruction received by the agent, when available."
+                    }
+                },
+                "required": ["agentName", "agentNickname", "agentRole", "lifecycleStatus", "lastTaskMessage"],
+                "additionalProperties": false
+            }
+        },
+        "required": ["agent"],
         "additionalProperties": false
     })
 }

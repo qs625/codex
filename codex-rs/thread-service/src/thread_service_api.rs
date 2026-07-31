@@ -43,6 +43,8 @@ use thread_service_api::ThreadProviderRootCapability;
 use thread_service_api::ThreadProviderRuntimeCapabilities;
 use thread_service_api::ThreadProviderRuntimeDescriptor;
 use thread_service_api::ThreadProviderRuntimeKind;
+use thread_service_api::ThreadAgentDetails;
+use thread_service_api::ThreadReadAgentResult;
 use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadShutdownReport;
 use thread_service_api::ThreadSpawnAgentForkMode;
@@ -302,9 +304,22 @@ fn from_runtime_list_result(
                 agent_nickname: agent.agent_nickname,
                 agent_role: agent.agent_role,
                 lifecycle_status: agent.lifecycle_status,
-                last_task_message: agent.last_task_message,
             })
             .collect(),
+    }
+}
+
+fn from_runtime_read_agent_result(
+    result: codex_agent_runtime::ReadAgentToolResult,
+) -> ThreadReadAgentResult {
+    ThreadReadAgentResult {
+        agent: ThreadAgentDetails {
+            agent_name: result.agent.agent_name,
+            agent_nickname: result.agent.agent_nickname,
+            agent_role: result.agent.agent_role,
+            lifecycle_status: result.agent.lifecycle_status,
+            last_task_message: result.agent.last_task_message,
+        },
     }
 }
 
@@ -450,6 +465,20 @@ impl NativeAgentRuntime for ThreadService {
             .map(from_runtime_list_result)
         })
     }
+
+    fn read_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>> {
+        Box::pin(async move {
+            let turn = turn_context(turn)?;
+            multi_agent::read_agent_tool(session(turn.as_ref()), Arc::clone(&turn), call_id, target)
+                .await
+                .map(from_runtime_read_agent_result)
+        })
+    }
 }
 
 impl ThreadCollaborationRuntime for ThreadService {
@@ -527,6 +556,25 @@ impl ThreadCollaborationRuntime for ThreadService {
             )
             .await
             .map(from_runtime_list_result)
+        })
+    }
+
+    fn read_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>> {
+        Box::pin(async move {
+            let turn = turn_context(turn)?;
+            multi_agent::read_external_agent_tool(
+                session(turn.as_ref()),
+                Arc::clone(&turn),
+                call_id,
+                target,
+            )
+            .await
+            .map(from_runtime_read_agent_result)
         })
     }
 }

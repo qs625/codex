@@ -310,13 +310,28 @@ pub struct ThreadListedAgent {
     pub agent_nickname: Option<String>,
     pub agent_role: Option<String>,
     pub lifecycle_status: ThreadLifecycleStatus,
-    pub last_task_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadListAgentsResult {
     pub agents: Vec<ThreadListedAgent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadAgentDetails {
+    pub agent_name: String,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
+    pub lifecycle_status: ThreadLifecycleStatus,
+    pub last_task_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadReadAgentResult {
+    pub agent: ThreadAgentDetails,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -779,6 +794,13 @@ pub trait NativeAgentRuntime: Send + Sync + 'static {
         call_id: String,
         path_prefix: Option<String>,
     ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+
+    fn read_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>>;
 }
 
 /// External collaboration tool runtime.
@@ -814,6 +836,13 @@ pub trait ThreadCollaborationRuntime: Send + Sync + 'static {
         call_id: String,
         path_prefix: Option<String>,
     ) -> ThreadServiceFuture<'a, Result<ThreadListAgentsResult, FunctionCallError>>;
+
+    fn read_external_agent<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        target: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

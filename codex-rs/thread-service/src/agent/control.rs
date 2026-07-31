@@ -36,6 +36,7 @@ use codex_agent_roles::AgentRoleConfig;
 use codex_agent_roles::DEFAULT_ROLE_NAME;
 use codex_agent_roles::resolve_role_config;
 use codex_agent_runtime::AgentMetadata;
+use codex_agent_runtime::AgentDetails;
 use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::AgentPathReservation;
 use codex_agent_runtime::AgentRegistry;
@@ -55,11 +56,13 @@ use codex_agent_runtime::current_agent_path_for_session;
 use codex_agent_runtime::direct_subagent_paths_from_children;
 use codex_agent_runtime::is_final;
 use codex_agent_runtime::list_agents_plan;
+use codex_agent_runtime::lightweight_lifecycle_status;
 use codex_agent_runtime::normalized_thread_lifecycle_from_inputs;
 use codex_agent_runtime::prepare_thread_spawn_plan;
 use codex_agent_runtime::render_input_preview;
 use codex_agent_runtime::resolve_agent_reference_path;
 use codex_agent_runtime::root_listed_agent;
+use codex_agent_runtime::root_last_task_message;
 use codex_agent_runtime::select_forked_rollout_items;
 use codex_agent_runtime::should_ignore_descendant_shutdown_error;
 use codex_agent_runtime::should_release_agent_after_thread_request_error;
@@ -198,6 +201,12 @@ struct ExternalFollowupTaskArgs {
 #[serde(deny_unknown_fields)]
 struct ExternalListAgentsArgs {
     path_prefix: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalReadAgentArgs {
+    target: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2205,6 +2214,28 @@ impl AgentControl {
                 serde_json::to_value(codex_agent_runtime::ListAgentsToolResult { agents })
                     .map_err(|err| FunctionCallError::Fatal(err.to_string()))
             }
+            ExternalToolName::ReadExternalAgent => {
+                let args: ExternalReadAgentArgs = parse_external_arguments(&call.arguments)?;
+                let source = if is_external_root_sender(&sender) {
+                    SessionSource::Unknown
+                } else {
+                    external_session_source_for(
+                        sender.parent_thread_id,
+                        sender.depth,
+                        sender.agent_path.clone(),
+                        sender.provider,
+                    )
+                };
+                let receiver_thread_id = self
+                    .resolve_external_read_target(&sender, &args.target)
+                    .await?;
+                let agent = self
+                    .read_agent(sender.thread_id, &source, receiver_thread_id)
+                    .await
+                    .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+                serde_json::to_value(codex_agent_runtime::ReadAgentToolResult { agent })
+                    .map_err(|err| FunctionCallError::Fatal(err.to_string()))
+            }
             ExternalToolName::FollowupExternalTask => {
                 let args: ExternalFollowupTaskArgs = parse_external_arguments(&call.arguments)?;
                 let receiver_thread_id = self
@@ -2381,6 +2412,41 @@ impl AgentControl {
                     "agent `{agent_path}` is persisted and cannot be restored through external tools"
                 )))
             }
+            AgentReferenceResolution::Unsupported { message, .. } => {
+                Err(FunctionCallError::RespondToModel(message))
+            }
+            AgentReferenceResolution::NotFound { agent_path } => {
+                Err(FunctionCallError::RespondToModel(format!(
+                    "unknown external agent target `{agent_path}`"
+                )))
+            }
+        }
+    }
+
+    async fn resolve_external_read_target(
+        &self,
+        sender: &ExternalToolContext,
+        target: &str,
+    ) -> Result<ThreadId, FunctionCallError> {
+        let agent_path = resolve_agent_reference_path(&sender.agent_path, target)
+            .map_err(FunctionCallError::RespondToModel)?;
+        if is_external_root_sender(sender) && agent_path == sender.agent_path {
+            return Ok(sender.thread_id);
+        }
+
+        let current_session_source = external_tool_directory_session_source(sender);
+        let resolution = self
+            .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
+                current_thread_id: sender.thread_id,
+                current_session_source,
+                agent_reference: target.to_string(),
+            })
+            .await
+            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+        match resolution {
+            AgentReferenceResolution::Live { thread_id }
+            | AgentReferenceResolution::PersistedExternalReadOnly { thread_id, .. }
+            | AgentReferenceResolution::PersistedNative { thread_id, .. } => Ok(thread_id),
             AgentReferenceResolution::Unsupported { message, .. } => {
                 Err(FunctionCallError::RespondToModel(message))
             }
@@ -3089,11 +3155,49 @@ impl AgentControl {
                     agent_name: entry.agent_path?,
                     agent_nickname: entry.agent_nickname,
                     agent_role: entry.agent_role,
-                    lifecycle_status: entry.lifecycle_status,
-                    last_task_message: entry.last_task_message,
+                    lifecycle_status: lightweight_lifecycle_status(entry.lifecycle_status),
                 })
             })
             .collect())
+    }
+
+    pub(crate) async fn read_agent(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+        agent_id: ThreadId,
+    ) -> CodexResult<AgentDetails> {
+        let directory = self
+            .list_agent_directory(AgentDirectoryListRequest {
+                current_thread_id,
+                current_session_source: current_session_source.clone(),
+                path_prefix: None,
+            })
+            .await?;
+
+        let Some(entry) = directory
+            .entries
+            .into_iter()
+            .find(|entry| entry.thread_id == agent_id)
+        else {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "agent `{agent_id}` is not visible from the current root thread"
+            )));
+        };
+
+        let Some(agent_name) = entry.agent_path else {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "agent `{agent_id}` is missing an agent_path"
+            )));
+        };
+
+        Ok(AgentDetails {
+            agent_name,
+            agent_nickname: entry.agent_nickname,
+            agent_role: entry.agent_role,
+            lifecycle_status: entry.lifecycle_status,
+            last_task_message: entry.last_task_message,
+        })
     }
 
     pub(crate) async fn list_agent_directory(
@@ -3161,7 +3265,7 @@ impl AgentControl {
                 agent_path: Some(root_agent.agent_name),
                 agent_nickname: root_agent.agent_nickname,
                 agent_role: root_agent.agent_role,
-                last_task_message: root_agent.last_task_message,
+                last_task_message: Some(root_last_task_message()),
                 lifecycle_status,
                 source: source_by_thread_id
                     .get(&root_thread_id)
@@ -3801,6 +3905,34 @@ impl AgentControl {
             .await
         {
             warn!("failed to persist thread-spawn edge: {err}");
+        }
+    }
+
+    pub(crate) async fn resolve_agent_reference_for_read(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+        agent_reference: &str,
+    ) -> CodexResult<ThreadId> {
+        let resolution = self
+            .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
+                current_thread_id,
+                current_session_source: current_session_source.clone(),
+                agent_reference: agent_reference.to_string(),
+            })
+            .await?;
+        match resolution {
+            AgentReferenceResolution::Live { thread_id }
+            | AgentReferenceResolution::PersistedExternalReadOnly { thread_id, .. }
+            | AgentReferenceResolution::PersistedNative { thread_id, .. } => Ok(thread_id),
+            AgentReferenceResolution::Unsupported { message, .. } => {
+                Err(CodexErr::UnsupportedOperation(message))
+            }
+            AgentReferenceResolution::NotFound { agent_path } => {
+                Err(CodexErr::UnsupportedOperation(format!(
+                    "unknown agent target `{agent_path}`"
+                )))
+            }
         }
     }
 

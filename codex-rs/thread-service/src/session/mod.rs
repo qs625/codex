@@ -553,6 +553,17 @@ impl Session {
             .await
     }
 
+    pub(crate) async fn resolve_agent_reference_for_read(
+        &self,
+        turn: &TurnContext,
+        target: &str,
+    ) -> CodexResult<ThreadId> {
+        self.services
+            .agent_control
+            .resolve_agent_reference_for_read(self.conversation_id, &turn.session_source(), target)
+            .await
+    }
+
     pub(crate) async fn resolve_agent_thread_id_for_turn(
         &self,
         turn: &TurnContext,
@@ -613,6 +624,17 @@ impl Session {
         self.services
             .agent_control
             .list_agents(self.conversation_id, &turn.session_source(), path_prefix)
+            .await
+    }
+
+    pub(crate) async fn read_agent_for_turn(
+        &self,
+        turn: &TurnContext,
+        thread_id: ThreadId,
+    ) -> CodexResult<codex_agent_runtime::AgentDetails> {
+        self.services
+            .agent_control
+            .read_agent(self.conversation_id, &turn.session_source(), thread_id)
             .await
     }
 
