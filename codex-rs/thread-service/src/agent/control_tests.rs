@@ -50,7 +50,6 @@ use thread_service_api::AgentReferenceResolution;
 use thread_service_api::AgentReferenceResolutionRequest;
 use thread_service_api::ExternalRootThreadRuntime;
 use thread_service_api::LiveThreadInspectionRuntime;
-use thread_service_api::ThreadLifecycleRuntime;
 use thread_service_api::ThreadRuntimeStatus;
 use thread_store::LocalThreadStore;
 use thread_store::LocalThreadStoreConfig;
@@ -2392,6 +2391,72 @@ async fn external_root_runtime_close_removes_live_root_and_persists_shutdown() {
     assert!(
         matches!(missing_err, CodexErr::ThreadNotFound(thread_id) if thread_id == native_thread_id)
     );
+}
+
+#[tokio::test]
+async fn external_root_path_can_be_reused_after_close_removes_live_thread() {
+    let harness = AgentControlHarness::new().await;
+    let root_external_control = harness.manager.root_external_agent_control_for_tests();
+    let external_config = ExternalSpawnConfig::from_config(&harness.config);
+    let agent_path = AgentPath::try_from("/prac").expect("agent path");
+    let other_agent_path = AgentPath::try_from("/other").expect("agent path");
+    let agent_metadata = |thread_id, agent_path: AgentPath| AgentMetadata {
+        agent_id: Some(thread_id),
+        agent_path: Some(agent_path),
+        agent_nickname: Some("prac".to_string()),
+        agent_role: Some("claude_cli".to_string()),
+        counted: false,
+        ..Default::default()
+    };
+    let first_thread_id = ThreadId::new();
+    let other_thread_id = ThreadId::new();
+
+    root_external_control
+        .reserve_root_scope_agent_path(&agent_path)
+        .expect("first external root path reservation")
+        .commit(agent_metadata(first_thread_id, agent_path.clone()));
+    root_external_control
+        .reserve_root_scope_agent_path(&other_agent_path)
+        .expect("other external root path reservation")
+        .commit(agent_metadata(other_thread_id, other_agent_path.clone()));
+    root_external_control
+        .upgrade()
+        .expect("manager should be available")
+        .register_external_live_thread_snapshot(
+            first_thread_id,
+            external_live_thread_snapshot(
+                &external_config,
+                first_thread_id,
+                SessionSource::Cli,
+                &agent_metadata(first_thread_id, agent_path.clone()),
+            ),
+            AgentStatus::Running,
+        )
+        .await;
+    root_external_control
+        .external_agents
+        .insert_running(named_external_root_run(
+            &harness.config,
+            first_thread_id,
+            SpawnAgentProvider::ClaudeCli,
+            "/prac",
+        ));
+
+    let duplicate = root_external_control.reserve_root_scope_agent_path(&agent_path);
+    assert!(duplicate.is_err());
+
+    ExternalRootThreadRuntime::close_external_root_thread(&harness.manager, first_thread_id)
+        .await
+        .expect("external root close should succeed");
+    assert!(!harness.manager.is_live_thread_loaded(first_thread_id).await);
+
+    root_external_control
+        .reserve_root_scope_agent_path(&agent_path)
+        .expect("external root path should be reusable after close")
+        .commit(agent_metadata(ThreadId::new(), agent_path));
+
+    let other_duplicate = root_external_control.reserve_root_scope_agent_path(&other_agent_path);
+    assert!(other_duplicate.is_err());
 }
 
 #[tokio::test]
