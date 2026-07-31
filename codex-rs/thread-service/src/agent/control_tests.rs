@@ -3968,6 +3968,106 @@ async fn external_stream_loop_returns_stdin_error() {
 }
 
 #[tokio::test]
+async fn external_stream_loop_broadcasts_stdin_error_as_turn_agent_message() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+    });
+    let initial_task = "inspect the workspace";
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        last_task_message: Some(initial_task.to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            ThreadSource::Subagent,
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness.control.external_agents.insert_running(ExternalAgentRun {
+        thread_id: external_thread_id,
+        parent_thread_id: root_thread_id,
+        agent_path: external_agent_path,
+        provider: SpawnAgentProvider::CodexCli,
+        depth: 1,
+        spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+        input_sink: None,
+        live_thread: Some(live_thread),
+        status: AgentStatus::Running,
+        active_turn_id: None,
+        last_task_message: Some(initial_task.to_string()),
+        abort_handle: None,
+    });
+    let mut thread_created_rx = harness.manager.subscribe_thread_created();
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::StdinError(
+            "codex_cli app-server turn completed with status failed".to_string(),
+        ),
+    ]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            Some(initial_task.to_string()),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+
+    assert_eq!(
+        status,
+        AgentStatus::Errored(
+            "codex_cli app-server turn completed with status failed".to_string()
+        )
+    );
+    let mut broadcast_agent_message = None;
+    for _ in 0..8 {
+        let event = timeout(Duration::from_secs(1), thread_created_rx.recv())
+            .await
+            .expect("live event should arrive")
+            .expect("live event");
+        if let thread_service_api::ThreadCreatedEvent::LiveEvent {
+            thread_id,
+            event: EventMsg::AgentMessage(agent_message),
+            ..
+        } = event
+        {
+            if thread_id == external_thread_id {
+                broadcast_agent_message = Some(agent_message.message);
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        broadcast_agent_message.as_deref(),
+        Some("codex_cli app-server turn completed with status failed")
+    );
+}
+
+#[tokio::test]
 async fn external_completed_agent_is_listed_from_persisted_thread_after_restart() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;

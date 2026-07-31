@@ -514,6 +514,9 @@ impl ThreadRequestProcessor {
                     completed_at_ms: chrono::Utc::now().timestamp_millis(),
                 })
             }
+            EventMsg::Error(_) => {
+                return;
+            }
             other => {
                 let Some(notification) =
                     item_event_to_server_notification(other, &thread_id_string, &turn_id)
