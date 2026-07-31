@@ -28,6 +28,7 @@ use crate::runtime::FileSubscriptionThreadRuntime;
 use crate::tools::schedule::CompiledSchedule;
 
 const MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
+const MAX_SCHEDULE_MESSAGE_CHARS: usize = 4_000;
 const EVENT_COMMAND_EXIT_STDOUT_DRAIN_TIMEOUT: Duration = Duration::from_millis(50);
 const EVENT_COMMAND_TERM_GRACE_PERIOD: Duration = Duration::from_millis(250);
 
@@ -372,6 +373,7 @@ impl FsSubscriptionRegistry {
         schedule_spec: protocol::subscriptions::ScheduleSpec,
         schedule: CompiledSchedule,
         label: Option<String>,
+        message: Option<String>,
         subscription_id: String,
     ) {
         self.subscribe_schedule_with_persistence(
@@ -379,6 +381,7 @@ impl FsSubscriptionRegistry {
             schedule_spec,
             schedule,
             label,
+            message,
             subscription_id,
             /*persist_after*/ true,
         )
@@ -391,9 +394,11 @@ impl FsSubscriptionRegistry {
         schedule_spec: protocol::subscriptions::ScheduleSpec,
         schedule: CompiledSchedule,
         label: Option<String>,
+        message: Option<String>,
         subscription_id: String,
         persist_after: bool,
     ) {
+        let message = normalize_schedule_message(message);
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let thread_runtime = Arc::clone(&self.thread_runtime);
         let state = Arc::clone(&self.state);
@@ -403,6 +408,7 @@ impl FsSubscriptionRegistry {
             subscription_id: subscription_id.clone(),
             schedule: schedule_spec,
             label: label.clone(),
+            message: message.clone(),
         };
 
         tokio::spawn(async move {
@@ -429,10 +435,8 @@ impl FsSubscriptionRegistry {
                     .as_deref()
                     .map(|value| format!(" ({value})"))
                     .unwrap_or_default();
-                let text = format!(
-                    "[Schedule subscription{label_part}] Trigger fired: {}",
-                    schedule.summary()
-                );
+                let text =
+                    schedule_trigger_text(&label_part, &schedule.summary(), message.as_deref());
                 let trigger = EventDrivenToolTrigger {
                     tool: "schedule_subscribe".to_string(),
                     title: "Schedule triggered".to_string(),
@@ -559,6 +563,7 @@ impl FsSubscriptionRegistry {
                     subscription_id,
                     schedule,
                     label,
+                    message,
                 } => match crate::tools::schedule::CompiledSchedule::compile(schedule.clone()) {
                     Ok(compiled) => {
                         self.subscribe_schedule_with_persistence(
@@ -566,6 +571,7 @@ impl FsSubscriptionRegistry {
                             schedule,
                             compiled,
                             label,
+                            message,
                             subscription_id,
                             /*persist_after*/ false,
                         )
@@ -629,6 +635,43 @@ fn subscription_id(subscription: &PersistedSubscription) -> &str {
             subscription_id, ..
         } => subscription_id.as_str(),
     }
+}
+
+fn schedule_trigger_text(
+    label_part: &str,
+    schedule_summary: &str,
+    message: Option<&str>,
+) -> String {
+    let base = format!("[Schedule subscription{label_part}] Trigger fired: {schedule_summary}");
+    let Some(message) = message else {
+        return base;
+    };
+    let message = bounded_schedule_message(message);
+    if message.is_empty() {
+        return base;
+    }
+    format!("{base}\n\nTask:\n{message}")
+}
+
+fn normalize_schedule_message(message: Option<String>) -> Option<String> {
+    message.and_then(|message| {
+        let message = bounded_schedule_message(&message);
+        (!message.is_empty()).then_some(message)
+    })
+}
+
+fn bounded_schedule_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.chars().count() <= MAX_SCHEDULE_MESSAGE_CHARS {
+        return trimmed.to_string();
+    }
+
+    let mut out = trimmed
+        .chars()
+        .take(MAX_SCHEDULE_MESSAGE_CHARS)
+        .collect::<String>();
+    out.push_str("\n... truncated ...");
+    out
 }
 
 async fn run_event_command(run: EventCommandRun) -> Result<(), String> {
@@ -975,6 +1018,9 @@ mod tests {
     use codex_file_watcher::FileWatcher;
     use pretty_assertions::assert_eq;
     use protocol::ThreadId;
+    use protocol::event_command::EventCommandEvent;
+    use protocol::event_driven_tool::EventDrivenToolTrigger;
+    use protocol::subscriptions::PersistedSubscription;
     use protocol::subscriptions::ScheduleSpec;
     use tokio::io::BufReader;
     use tokio::sync::mpsc;
@@ -984,17 +1030,67 @@ mod tests {
     use super::EventCommandOutputRead;
     use super::FsSubscriptionRegistry;
     use super::MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES;
+    use super::MAX_SCHEDULE_MESSAGE_CHARS;
     use super::read_event_command_chunk;
     use super::recv_event_command_output_after_exit;
+    use super::schedule_trigger_text;
     #[cfg(unix)]
     use super::shell_command;
     #[cfg(unix)]
     use super::spawn_event_command_stdout_task;
+    use super::subscription_id;
     #[cfg(unix)]
     use super::terminate_event_command_process_tree;
     use super::truncate_event_command_chunk;
+    use crate::runtime::FileSubscriptionThreadRuntime;
+    use crate::runtime::SubscriptionRuntimeFuture;
     use crate::runtime::UnavailableFileSubscriptionThreadRuntime;
     use crate::tools::schedule::CompiledSchedule;
+
+    struct StaticSubscriptionRuntime {
+        subscriptions: Vec<PersistedSubscription>,
+    }
+
+    impl FileSubscriptionThreadRuntime for StaticSubscriptionRuntime {
+        fn update_active_subscription_count<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _active_count: usize,
+        ) -> SubscriptionRuntimeFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn append_event_driven_tool<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _trigger: EventDrivenToolTrigger,
+        ) -> SubscriptionRuntimeFuture<'a, Result<(), String>> {
+            Box::pin(async { Err("thread manager unavailable".to_string()) })
+        }
+
+        fn append_event_command_event<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _event: EventCommandEvent,
+        ) -> SubscriptionRuntimeFuture<'a, Result<(), String>> {
+            Box::pin(async { Err("thread manager unavailable".to_string()) })
+        }
+
+        fn persist_subscriptions<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+            _subscriptions: Vec<PersistedSubscription>,
+        ) -> SubscriptionRuntimeFuture<'a, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn load_persisted_subscriptions<'a>(
+            &'a self,
+            _thread_id: ThreadId,
+        ) -> SubscriptionRuntimeFuture<'a, Result<Vec<PersistedSubscription>, String>> {
+            Box::pin(async { Ok(self.subscriptions.clone()) })
+        }
+    }
 
     fn unavailable_runtime() -> Arc<UnavailableFileSubscriptionThreadRuntime> {
         Arc::new(UnavailableFileSubscriptionThreadRuntime)
@@ -1100,6 +1196,7 @@ mod tests {
                 schedule_spec,
                 schedule,
                 None,
+                None,
                 subscription_id.clone(),
             )
             .await;
@@ -1110,6 +1207,80 @@ mod tests {
             .expect_err("expected non-event-command subscription to be rejected");
 
         assert_eq!(err, "subscription is not an event command: schedule-sub");
+    }
+
+    #[tokio::test]
+    async fn schedule_subscription_persists_bounded_message() {
+        let registry =
+            FsSubscriptionRegistry::new(Arc::new(FileWatcher::noop()), unavailable_runtime(), None);
+        let thread_id = ThreadId::new();
+        let subscription_id_value = "schedule-sub".to_string();
+        let schedule_spec = ScheduleSpec::EveryInterval {
+            interval_ms: 60_000,
+        };
+        let schedule = CompiledSchedule::compile(schedule_spec.clone()).unwrap();
+        let message = format!(
+            "  {}中b  ",
+            "a".repeat(MAX_SCHEDULE_MESSAGE_CHARS - 1)
+        );
+
+        registry
+            .subscribe_schedule(
+                thread_id,
+                schedule_spec,
+                schedule,
+                Some("daily".to_string()),
+                Some(message),
+                subscription_id_value.clone(),
+            )
+            .await;
+
+        let state = registry.state.lock().await;
+        let entry = state
+            .values()
+            .find(|entry| subscription_id(&entry.persisted) == subscription_id_value)
+            .expect("schedule subscription should be active");
+        let PersistedSubscription::Schedule { message, .. } = &entry.persisted else {
+            panic!("expected schedule subscription");
+        };
+        let message = message.as_deref().expect("message should be persisted");
+        assert!(message.ends_with("\n... truncated ..."));
+        assert!(message.contains('中'));
+        assert!(!message.starts_with(' '));
+        drop(state);
+        registry.cancel_all_for_thread(thread_id).await;
+    }
+
+    #[tokio::test]
+    async fn restore_thread_subscriptions_preserves_schedule_message() {
+        let thread_id = ThreadId::new();
+        let runtime = Arc::new(StaticSubscriptionRuntime {
+            subscriptions: vec![PersistedSubscription::Schedule {
+                subscription_id: "schedule-sub".to_string(),
+                schedule: ScheduleSpec::EveryInterval {
+                    interval_ms: 60_000,
+                },
+                label: Some("daily".to_string()),
+                message: Some("  Clean checkout targets and report the result.  ".to_string()),
+            }],
+        });
+        let registry = FsSubscriptionRegistry::new(Arc::new(FileWatcher::noop()), runtime, None);
+
+        registry.restore_thread_subscriptions(thread_id).await;
+
+        let active = registry.active_subscriptions(thread_id).await;
+        assert_eq!(
+            active,
+            vec![PersistedSubscription::Schedule {
+                subscription_id: "schedule-sub".to_string(),
+                schedule: ScheduleSpec::EveryInterval {
+                    interval_ms: 60_000,
+                },
+                label: Some("daily".to_string()),
+                message: Some("Clean checkout targets and report the result.".to_string()),
+            }]
+        );
+        registry.cancel_all_for_thread(thread_id).await;
     }
 
     #[test]
@@ -1127,6 +1298,43 @@ mod tests {
             truncated,
             "a".repeat(MAX_EVENT_COMMAND_OUTPUT_CHUNK_BYTES - "中".len() + 1)
         );
+    }
+
+    #[test]
+    fn schedule_trigger_text_without_message_matches_notification_only_format() {
+        let text = schedule_trigger_text(" (daily)", "Every day at 01:00", None);
+
+        assert_eq!(
+            text,
+            "[Schedule subscription (daily)] Trigger fired: Every day at 01:00"
+        );
+    }
+
+    #[test]
+    fn schedule_trigger_text_includes_bounded_message_task() {
+        let text = schedule_trigger_text(
+            " (daily)",
+            "Every day at 01:00",
+            Some("  Clean the worktrees and report what changed.  "),
+        );
+
+        assert_eq!(
+            text,
+            "[Schedule subscription (daily)] Trigger fired: Every day at 01:00\n\nTask:\nClean the worktrees and report what changed."
+        );
+    }
+
+    #[test]
+    fn schedule_trigger_text_truncates_long_message_on_char_boundary() {
+        let message = format!("{}中b", "a".repeat(MAX_SCHEDULE_MESSAGE_CHARS - 1));
+        let text = schedule_trigger_text("", "Every minute", Some(&message));
+
+        let task = text
+            .split_once("\n\nTask:\n")
+            .expect("task section should be present")
+            .1;
+        assert!(task.ends_with("\n... truncated ..."));
+        assert!(task.contains('中'));
     }
 
     #[tokio::test]

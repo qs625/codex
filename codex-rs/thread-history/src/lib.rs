@@ -352,6 +352,7 @@ impl ThreadHistoryBuilder {
             subscription_id,
             schedule,
             label,
+            message,
         } = subscription
         else {
             return None;
@@ -359,14 +360,18 @@ impl ThreadHistoryBuilder {
         if self.has_schedule_monitor_item(subscription_id) {
             return None;
         }
+        let mut arguments = serde_json::json!({
+            "schedule": schedule,
+            "label": label,
+        });
+        if let Some(message) = message {
+            arguments["message"] = serde_json::Value::String(message.clone());
+        }
 
         Some(ThreadItem::BuiltinToolCall {
             id: format!("active-subscription:{subscription_id}"),
             tool: "schedule_subscribe".to_string(),
-            arguments: serde_json::json!({
-                "schedule": schedule,
-                "label": label,
-            }),
+            arguments,
             status: DynamicToolCallStatus::Completed,
             output: Some(serde_json::json!({
                 "subscription_id": subscription_id,

@@ -73,11 +73,13 @@ fn render_subscription(subscription: &PersistedSubscription) -> String {
             subscription_id,
             schedule,
             label,
+            message,
         } => format!(
-            "\n    <subscription>\n      <subscription_id>{}</subscription_id>\n      <type>schedule</type>\n      <label>{}</label>\n      <schedule>{}</schedule>\n    </subscription>",
+            "\n    <subscription>\n      <subscription_id>{}</subscription_id>\n      <type>schedule</type>\n      <label>{}</label>\n      <schedule>{}</schedule>\n      <message>{}</message>\n    </subscription>",
             xml_escape(subscription_id),
             xml_escape(label.as_deref().unwrap_or("")),
             xml_escape(&format!("{schedule:?}")),
+            xml_escape(message.as_deref().unwrap_or("")),
         ),
         PersistedSubscription::Fs {
             subscription_id,

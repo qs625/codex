@@ -30,6 +30,8 @@ struct ScheduleSubscribeArgs {
     schedule: ScheduleSpec,
     /// Optional short label included in future schedule notifications.
     label: Option<String>,
+    /// Optional natural-language task instructions injected when the schedule fires.
+    message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -63,7 +65,10 @@ impl ToolExecutor<ToolCall> for ScheduleSubscribeTool {
              intervals, `every_day_at` for a daily wall-clock reminder, or `every_week_at` for \
              weekly reminders on one or more weekdays.\n\
              - `label`: optional name included in future notifications so you can distinguish \
-             multiple active schedules.\n\n\
+             multiple active schedules.\n\
+             - `message`: optional natural-language task instructions to inject for the model \
+             when the schedule fires. Use this for semantic recurring work; keep `label` as a \
+             short identifier rather than an instruction.\n\n\
              Use this when:\n\
              - The user asks for a reminder in a fixed amount of time, such as \"remind me in \
              two minutes\".\n\
@@ -102,6 +107,7 @@ impl ToolExecutor<ToolCall> for ScheduleSubscribeTool {
                     args.schedule,
                     compiled,
                     args.label,
+                    args.message,
                     subscription_id.clone(),
                 )
                 .await;

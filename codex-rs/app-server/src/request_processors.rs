@@ -844,6 +844,7 @@ mod build_api_turns_from_rollout_items_tests {
                             interval_ms: 60_000,
                         },
                         label: Some("standup".into()),
+                        message: None,
                     }]),
                     ..Default::default()
                 },
@@ -866,6 +867,50 @@ mod build_api_turns_from_rollout_items_tests {
                         "interval_ms": 60000,
                     },
                     "label": "standup",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::json!({
+                    "subscription_id": "sub-schedule",
+                })),
+            }]
+        );
+    }
+
+    #[test]
+    fn limited_replay_projects_active_schedule_subscription_message() {
+        let persisted = persisted_rollout_items(
+            &[RolloutItem::SessionMeta(SessionMetaLine {
+                meta: SessionMeta {
+                    subscriptions: Some(vec![PersistedSubscription::Schedule {
+                        subscription_id: "sub-schedule".into(),
+                        schedule: ScheduleSpec::EveryInterval {
+                            interval_ms: 60_000,
+                        },
+                        label: Some("standup".into()),
+                        message: Some("Clean checkout targets and report the result.".into()),
+                    }]),
+                    ..Default::default()
+                },
+                git: None,
+            })],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "active-subscription:sub-schedule".into(),
+                tool: "schedule_subscribe".into(),
+                arguments: serde_json::json!({
+                    "schedule": {
+                        "kind": "every_interval",
+                        "interval_ms": 60000,
+                    },
+                    "label": "standup",
+                    "message": "Clean checkout targets and report the result.",
                 }),
                 status: DynamicToolCallStatus::Completed,
                 output: Some(serde_json::json!({
