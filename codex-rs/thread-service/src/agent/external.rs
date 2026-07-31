@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -397,6 +398,24 @@ pub(crate) enum ExternalCliEvent {
     Completion(String),
     ToolCall(ExternalToolCall),
     ToolCallError(ExternalToolResult),
+    Display(ExternalProviderDisplayEvent),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ExternalProviderDisplayEvent {
+    ReasoningSummary(String),
+    ReasoningRawContent(String),
+    ToolCall(ExternalProviderToolDisplayEvent),
+    FallbackMessage(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ExternalProviderToolDisplayEvent {
+    pub(crate) id: String,
+    pub(crate) tool: String,
+    pub(crate) arguments: JsonValue,
+    pub(crate) status: protocol::protocol::ExternalToolCallStatus,
+    pub(crate) output: Option<JsonValue>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -850,6 +869,7 @@ pub(crate) struct CodexAppServerSession {
     writer_errors_open: bool,
     active_turn_id: Arc<Mutex<Option<String>>>,
     pending_completion_event: Arc<Mutex<Option<ExternalCliEvent>>>,
+    seen_reasoning_item_ids: Arc<Mutex<HashSet<String>>>,
 }
 
 impl CodexAppServerSession {
@@ -921,6 +941,7 @@ impl CodexAppServerSession {
 
         let active_turn_id = Arc::new(Mutex::new(None));
         let pending_completion_event = Arc::new(Mutex::new(None));
+        let seen_reasoning_item_ids = Arc::new(Mutex::new(HashSet::new()));
         let (input_tx, input_rx) = mpsc::unbounded_channel();
         let (writer_error_tx, writer_errors) = mpsc::unbounded_channel();
         tokio::spawn(write_codex_app_server_input(
@@ -942,6 +963,7 @@ impl CodexAppServerSession {
             writer_errors_open: true,
             active_turn_id,
             pending_completion_event,
+            seen_reasoning_item_ids,
         })
     }
 
@@ -962,10 +984,11 @@ impl CodexAppServerSession {
                 stdout = self.stdout.next_line(), if self.stdout_open => {
                     match stdout {
                         Ok(Some(line)) => {
-                            if let Some(event) = parse_codex_app_server_jsonrpc_line(
+                            if let Some(event) = parse_codex_app_server_jsonrpc_line_with_seen(
                                 &line,
                                 &self.active_turn_id,
                                 &self.pending_completion_event,
+                                &self.seen_reasoning_item_ids,
                             ) {
                                 return Ok(event);
                             }
@@ -1687,6 +1710,10 @@ pub(crate) fn bounded_external_output(message: &str) -> String {
     truncate_chars(message.trim(), MAX_EXTERNAL_OUTPUT_CHARS)
 }
 
+pub(crate) fn bounded_json_for_external_display_output(value: &JsonValue) -> JsonValue {
+    bounded_json_value(value, MAX_EXTERNAL_OUTPUT_CHARS)
+}
+
 pub(crate) fn external_metadata(run: &ExternalAgentRun) -> AgentMetadata {
     AgentMetadata {
         agent_id: Some(run.thread_id),
@@ -1793,10 +1820,26 @@ fn external_tool_call_from_text(text: &str) -> Option<ExternalCliEvent> {
     })
 }
 
+#[cfg(test)]
 fn parse_codex_app_server_jsonrpc_line(
     line: &str,
     active_turn_id: &Arc<Mutex<Option<String>>>,
     pending_completion_event: &Arc<Mutex<Option<ExternalCliEvent>>>,
+) -> Option<ExternalProcessEvent> {
+    let seen_reasoning_item_ids = Arc::new(Mutex::new(HashSet::new()));
+    parse_codex_app_server_jsonrpc_line_with_seen(
+        line,
+        active_turn_id,
+        pending_completion_event,
+        &seen_reasoning_item_ids,
+    )
+}
+
+fn parse_codex_app_server_jsonrpc_line_with_seen(
+    line: &str,
+    active_turn_id: &Arc<Mutex<Option<String>>>,
+    pending_completion_event: &Arc<Mutex<Option<ExternalCliEvent>>>,
+    seen_reasoning_item_ids: &Arc<Mutex<HashSet<String>>>,
 ) -> Option<ExternalProcessEvent> {
     let line = line.trim();
     if line.is_empty() {
@@ -1823,6 +1866,7 @@ fn parse_codex_app_server_jsonrpc_line(
                 set_active_turn_id(active_turn_id, Some(turn_id));
             }
             set_pending_codex_completion_event(pending_completion_event, None);
+            clear_seen_codex_reasoning_item_ids(seen_reasoning_item_ids);
             None
         }
         "turn/completed" => {
@@ -1830,6 +1874,7 @@ fn parse_codex_app_server_jsonrpc_line(
             let event = last_agent_message_text(params)
                 .map(codex_completion_event_from_text)
                 .or_else(|| take_pending_codex_completion_event(pending_completion_event));
+            clear_seen_codex_reasoning_item_ids(seen_reasoning_item_ids);
             if let Some(event) = event {
                 return Some(ExternalProcessEvent::Cli(event));
             }
@@ -1841,6 +1886,7 @@ fn parse_codex_app_server_jsonrpc_line(
         "turn/failed" | "turn/interrupted" => {
             set_active_turn_id(active_turn_id, None);
             set_pending_codex_completion_event(pending_completion_event, None);
+            clear_seen_codex_reasoning_item_ids(seen_reasoning_item_ids);
             Some(ExternalProcessEvent::StdinError(
                 codex_turn_failure_message(params),
             ))
@@ -1856,6 +1902,7 @@ fn parse_codex_app_server_jsonrpc_line(
             } else {
                 set_active_turn_id(active_turn_id, None);
                 set_pending_codex_completion_event(pending_completion_event, None);
+                clear_seen_codex_reasoning_item_ids(seen_reasoning_item_ids);
                 Some(ExternalProcessEvent::StdinError(message))
             }
         }
@@ -1866,13 +1913,323 @@ fn parse_codex_app_server_jsonrpc_line(
                     Some(codex_completion_event_from_text(text)),
                 );
             }
-            None
+            codex_provider_display_event_from_item_completed(params, seen_reasoning_item_ids)
+                .map(|event| ExternalProcessEvent::Cli(ExternalCliEvent::Display(event)))
         }
         "item/agentMessage/delta" => None,
+        "item/reasoning/summaryTextDelta" => {
+            let delta = delta_field(params)?;
+            note_seen_codex_reasoning_item_id(params, seen_reasoning_item_ids);
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningSummary(delta),
+            )))
+        }
+        "item/reasoning/textDelta" => {
+            let delta = delta_field(params)?;
+            note_seen_codex_reasoning_item_id(params, seen_reasoning_item_ids);
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningRawContent(delta),
+            )))
+        }
+        "item/reasoning/summaryPartAdded" => None,
         "warning" | "guardianWarning" | "configWarning" => {
             text_field(params).map(|text| ExternalProcessEvent::Cli(ExternalCliEvent::Status(text)))
         }
         _ => None,
+    }
+}
+
+fn codex_provider_display_event_from_item_completed(
+    params: &serde_json::Value,
+    seen_reasoning_item_ids: &Arc<Mutex<HashSet<String>>>,
+) -> Option<ExternalProviderDisplayEvent> {
+    let item = params.get("item")?.clone();
+    let item = serde_json::from_value::<app_server_protocol::ThreadItem>(item).ok()?;
+    codex_provider_display_event_from_thread_item(item, seen_reasoning_item_ids)
+}
+
+fn codex_provider_display_event_from_thread_item(
+    item: app_server_protocol::ThreadItem,
+    seen_reasoning_item_ids: &Arc<Mutex<HashSet<String>>>,
+) -> Option<ExternalProviderDisplayEvent> {
+    match item {
+        app_server_protocol::ThreadItem::UserMessage { .. } => None,
+        app_server_protocol::ThreadItem::AgentMessage { .. } => None,
+        app_server_protocol::ThreadItem::Reasoning {
+            id,
+            summary,
+            content,
+        } => {
+            if take_seen_codex_reasoning_item_id(&id, seen_reasoning_item_ids) {
+                return None;
+            }
+            let summary = summary.join("\n").trim().to_string();
+            if !summary.is_empty() {
+                return Some(ExternalProviderDisplayEvent::ReasoningSummary(
+                    bounded_external_output(&summary),
+                ));
+            }
+            let content = content.join("\n").trim().to_string();
+            if !content.is_empty() {
+                return Some(ExternalProviderDisplayEvent::ReasoningRawContent(
+                    bounded_external_output(&content),
+                ));
+            }
+            None
+        }
+        app_server_protocol::ThreadItem::EventDrivenToolCall {
+            id,
+            tool,
+            arguments,
+            status,
+            output,
+        }
+        | app_server_protocol::ThreadItem::BuiltinToolCall {
+            id,
+            tool,
+            arguments,
+            status,
+            output,
+        } => Some(ExternalProviderDisplayEvent::ToolCall(
+            ExternalProviderToolDisplayEvent {
+                id,
+                tool,
+                arguments: bounded_json_value(&arguments, MAX_EXTERNAL_TOOL_ARGUMENT_CHARS),
+                status: external_status_from_dynamic_status(status),
+                output: output.map(|value| bounded_json_value(&value, MAX_EXTERNAL_OUTPUT_CHARS)),
+            },
+        )),
+        app_server_protocol::ThreadItem::DynamicToolCall {
+            id,
+            namespace,
+            tool,
+            arguments,
+            status,
+            content_items,
+            success,
+            duration_ms,
+        } => {
+            let output = serde_json::json!({
+                "contentItems": content_items,
+                "success": success,
+                "durationMs": duration_ms,
+            });
+            Some(ExternalProviderDisplayEvent::ToolCall(
+                ExternalProviderToolDisplayEvent {
+                    id,
+                    tool: namespace
+                        .filter(|namespace| !namespace.trim().is_empty())
+                        .map(|namespace| format!("{namespace}.{tool}"))
+                        .unwrap_or(tool),
+                    arguments: bounded_json_value(&arguments, MAX_EXTERNAL_TOOL_ARGUMENT_CHARS),
+                    status: external_status_from_dynamic_status(status),
+                    output: Some(bounded_json_value(&output, MAX_EXTERNAL_OUTPUT_CHARS)),
+                },
+            ))
+        }
+        app_server_protocol::ThreadItem::McpToolCall {
+            id,
+            server,
+            tool,
+            status,
+            arguments,
+            result,
+            error,
+            duration_ms,
+            ..
+        } => {
+            let output = serde_json::json!({
+                "result": result,
+                "error": error,
+                "durationMs": duration_ms,
+            });
+            Some(ExternalProviderDisplayEvent::ToolCall(
+                ExternalProviderToolDisplayEvent {
+                    id,
+                    tool: format!("{server}.{tool}"),
+                    arguments: bounded_json_value(&arguments, MAX_EXTERNAL_TOOL_ARGUMENT_CHARS),
+                    status: external_status_from_mcp_status(status),
+                    output: Some(bounded_json_value(&output, MAX_EXTERNAL_OUTPUT_CHARS)),
+                },
+            ))
+        }
+        app_server_protocol::ThreadItem::CommandExecution {
+            id,
+            command,
+            cwd,
+            status,
+            aggregated_output,
+            exit_code,
+            duration_ms,
+            ..
+        } => {
+            let output = serde_json::json!({
+                "output": aggregated_output,
+                "exitCode": exit_code,
+                "durationMs": duration_ms,
+            });
+            Some(ExternalProviderDisplayEvent::ToolCall(
+                ExternalProviderToolDisplayEvent {
+                    id,
+                    tool: "command_execution".to_string(),
+                    arguments: bounded_json_value(
+                        &serde_json::json!({
+                            "command": command,
+                            "cwd": cwd,
+                        }),
+                        MAX_EXTERNAL_TOOL_ARGUMENT_CHARS,
+                    ),
+                    status: external_status_from_command_status(status),
+                    output: Some(bounded_json_value(&output, MAX_EXTERNAL_OUTPUT_CHARS)),
+                },
+            ))
+        }
+        app_server_protocol::ThreadItem::WebSearch { id, query, action } => {
+            Some(ExternalProviderDisplayEvent::ToolCall(
+                ExternalProviderToolDisplayEvent {
+                    id,
+                    tool: "web_search".to_string(),
+                    arguments: bounded_json_value(
+                        &serde_json::json!({
+                            "query": query,
+                            "action": action,
+                        }),
+                        MAX_EXTERNAL_TOOL_ARGUMENT_CHARS,
+                    ),
+                    status: protocol::protocol::ExternalToolCallStatus::Completed,
+                    output: None,
+                },
+            ))
+        }
+        other => Some(ExternalProviderDisplayEvent::FallbackMessage(
+            bounded_external_output(&format!(
+                "codex_cli emitted unsupported display item `{}`",
+                codex_thread_item_type_name(&other)
+            )),
+        )),
+    }
+}
+
+fn note_seen_codex_reasoning_item_id(
+    params: &serde_json::Value,
+    seen_reasoning_item_ids: &Arc<Mutex<HashSet<String>>>,
+) {
+    let Some(item_id) = params
+        .get("itemId")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+    else {
+        return;
+    };
+    seen_reasoning_item_ids
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(item_id);
+}
+
+fn take_seen_codex_reasoning_item_id(
+    item_id: &str,
+    seen_reasoning_item_ids: &Arc<Mutex<HashSet<String>>>,
+) -> bool {
+    seen_reasoning_item_ids
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(item_id)
+}
+
+fn clear_seen_codex_reasoning_item_ids(
+    seen_reasoning_item_ids: &Arc<Mutex<HashSet<String>>>,
+) {
+    seen_reasoning_item_ids
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+}
+
+fn external_status_from_dynamic_status(
+    status: app_server_protocol::DynamicToolCallStatus,
+) -> protocol::protocol::ExternalToolCallStatus {
+    match status {
+        app_server_protocol::DynamicToolCallStatus::InProgress => {
+            protocol::protocol::ExternalToolCallStatus::InProgress
+        }
+        app_server_protocol::DynamicToolCallStatus::Completed => {
+            protocol::protocol::ExternalToolCallStatus::Completed
+        }
+        app_server_protocol::DynamicToolCallStatus::Failed => {
+            protocol::protocol::ExternalToolCallStatus::Failed
+        }
+    }
+}
+
+fn external_status_from_mcp_status(
+    status: app_server_protocol::McpToolCallStatus,
+) -> protocol::protocol::ExternalToolCallStatus {
+    match status {
+        app_server_protocol::McpToolCallStatus::InProgress => {
+            protocol::protocol::ExternalToolCallStatus::InProgress
+        }
+        app_server_protocol::McpToolCallStatus::Completed => {
+            protocol::protocol::ExternalToolCallStatus::Completed
+        }
+        app_server_protocol::McpToolCallStatus::Failed => {
+            protocol::protocol::ExternalToolCallStatus::Failed
+        }
+    }
+}
+
+fn external_status_from_command_status(
+    status: app_server_protocol::CommandExecutionStatus,
+) -> protocol::protocol::ExternalToolCallStatus {
+    match status {
+        app_server_protocol::CommandExecutionStatus::InProgress => {
+            protocol::protocol::ExternalToolCallStatus::InProgress
+        }
+        app_server_protocol::CommandExecutionStatus::Completed => {
+            protocol::protocol::ExternalToolCallStatus::Completed
+        }
+        app_server_protocol::CommandExecutionStatus::Failed
+        | app_server_protocol::CommandExecutionStatus::Declined => {
+            protocol::protocol::ExternalToolCallStatus::Failed
+        }
+    }
+}
+
+fn codex_thread_item_type_name(item: &app_server_protocol::ThreadItem) -> &'static str {
+    match item {
+        app_server_protocol::ThreadItem::UserMessage { .. } => "userMessage",
+        app_server_protocol::ThreadItem::HookPrompt { .. } => "hookPrompt",
+        app_server_protocol::ThreadItem::InjectedContext { .. } => "injectedContext",
+        app_server_protocol::ThreadItem::AgentMessage { .. } => "agentMessage",
+        app_server_protocol::ThreadItem::Plan { .. } => "plan",
+        app_server_protocol::ThreadItem::Reasoning { .. } => "reasoning",
+        app_server_protocol::ThreadItem::CommandExecution { .. } => "commandExecution",
+        app_server_protocol::ThreadItem::CommandExecutionNotification { .. } => {
+            "commandExecutionNotification"
+        }
+        app_server_protocol::ThreadItem::CommandWait { .. } => "commandWait",
+        app_server_protocol::ThreadItem::CommandWriteStdin { .. } => "commandWriteStdin",
+        app_server_protocol::ThreadItem::FileChange { .. } => "fileChange",
+        app_server_protocol::ThreadItem::McpToolCall { .. } => "mcpToolCall",
+        app_server_protocol::ThreadItem::BuiltinToolCall { .. } => "builtinToolCall",
+        app_server_protocol::ThreadItem::DynamicToolCall { .. } => "dynamicToolCall",
+        app_server_protocol::ThreadItem::EventDrivenToolCall { .. } => "eventDrivenToolCall",
+        app_server_protocol::ThreadItem::EventDrivenTool { .. } => "eventDrivenTool",
+        app_server_protocol::ThreadItem::EventCommandCall { .. } => "eventCommandCall",
+        app_server_protocol::ThreadItem::EventCommandEvent { .. } => "eventCommandEvent",
+        app_server_protocol::ThreadItem::ThreadGoalUpdate { .. } => "threadGoalUpdate",
+        app_server_protocol::ThreadItem::ContextCompaction { .. } => "contextCompaction",
+        app_server_protocol::ThreadItem::WorkflowRunProgress { .. } => "workflowRunProgress",
+        app_server_protocol::ThreadItem::EnteredReviewMode { .. } => "enteredReviewMode",
+        app_server_protocol::ThreadItem::ExitedReviewMode { .. } => "exitedReviewMode",
+        app_server_protocol::ThreadItem::CollabAgentToolCall { .. } => "collabAgentToolCall",
+        app_server_protocol::ThreadItem::CollabAgentStatusUpdate { .. } => {
+            "collabAgentStatusUpdate"
+        }
+        app_server_protocol::ThreadItem::CollabAgentMessage { .. } => "collabAgentMessage",
+        app_server_protocol::ThreadItem::WebSearch { .. } => "webSearch",
+        app_server_protocol::ThreadItem::ImageView { .. } => "imageView",
+        app_server_protocol::ThreadItem::ImageGeneration { .. } => "imageGeneration",
     }
 }
 
@@ -2141,6 +2498,13 @@ fn text_field(value: &serde_json::Value) -> Option<String> {
     ["message", "text", "content", "summary", "error"]
         .into_iter()
         .find_map(|key| value.get(key).and_then(serde_json::Value::as_str))
+        .map(ToOwned::to_owned)
+}
+
+fn delta_field(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("delta")
+        .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned)
 }
 
@@ -2533,6 +2897,214 @@ mod tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_reasoning_item_as_display_event() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","completedAtMs":10,"item":{"type":"reasoning","id":"reasoning_1","summary":["look at project files"],"content":[]}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningSummary(
+                    "look at project files".to_string()
+                )
+            )))
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_reasoning_delta_as_display_event() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"reasoning_1","delta":"reading files","summaryIndex":0}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningSummary("reading files".to_string())
+            )))
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_reasoning_text_delta_as_display_event() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"item/reasoning/textDelta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"reasoning_1","delta":"raw thinking","contentIndex":0}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningRawContent("raw thinking".to_string())
+            )))
+        );
+    }
+
+    #[test]
+    fn skips_codex_app_server_completed_reasoning_after_seen_delta_item() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let seen_reasoning_item_ids = Arc::new(Mutex::new(HashSet::new()));
+        let delta_event = parse_codex_app_server_jsonrpc_line_with_seen(
+            r#"{"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"reasoning_1","delta":"reading files","summaryIndex":0}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+            &seen_reasoning_item_ids,
+        );
+        let completed_event = parse_codex_app_server_jsonrpc_line_with_seen(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","completedAtMs":10,"item":{"type":"reasoning","id":"reasoning_1","summary":["reading files"],"content":[]}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+            &seen_reasoning_item_ids,
+        );
+
+        assert!(matches!(
+            delta_event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningSummary(_)
+            )))
+        ));
+        assert!(completed_event.is_none());
+    }
+
+    #[test]
+    fn clears_seen_codex_app_server_reasoning_items_when_turn_completes() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let seen_reasoning_item_ids = Arc::new(Mutex::new(HashSet::new()));
+        let delta_event = parse_codex_app_server_jsonrpc_line_with_seen(
+            r#"{"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"reasoning_1","delta":"reading files","summaryIndex":0}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+            &seen_reasoning_item_ids,
+        );
+        let turn_completed_event = parse_codex_app_server_jsonrpc_line_with_seen(
+            r#"{"method":"turn/completed","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":1,"completedAt":2,"durationMs":100}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+            &seen_reasoning_item_ids,
+        );
+        let completed_event = parse_codex_app_server_jsonrpc_line_with_seen(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_2","completedAtMs":10,"item":{"type":"reasoning","id":"reasoning_1","summary":["fresh turn reasoning"],"content":[]}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+            &seen_reasoning_item_ids,
+        );
+
+        assert!(matches!(
+            delta_event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningSummary(_)
+            )))
+        ));
+        assert!(turn_completed_event.is_none());
+        assert_eq!(
+            completed_event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningSummary(
+                    "fresh turn reasoning".to_string()
+                )
+            )))
+        );
+    }
+
+    #[test]
+    fn malformed_codex_app_server_reasoning_delta_does_not_suppress_completed_item() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let seen_reasoning_item_ids = Arc::new(Mutex::new(HashSet::new()));
+        let malformed_delta_event = parse_codex_app_server_jsonrpc_line_with_seen(
+            r#"{"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"reasoning_1","summaryIndex":0}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+            &seen_reasoning_item_ids,
+        );
+        let completed_event = parse_codex_app_server_jsonrpc_line_with_seen(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","completedAtMs":10,"item":{"type":"reasoning","id":"reasoning_1","summary":["completed reasoning"],"content":[]}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+            &seen_reasoning_item_ids,
+        );
+
+        assert!(malformed_delta_event.is_none());
+        assert_eq!(
+            completed_event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ReasoningSummary(
+                    "completed reasoning".to_string()
+                )
+            )))
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_tool_item_as_display_event() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","completedAtMs":10,"item":{"type":"eventDrivenToolCall","id":"tool_1","tool":"read_file","arguments":{"path":"Cargo.toml"},"status":"completed","output":{"ok":true}}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ToolCall(ExternalProviderToolDisplayEvent {
+                    id: "tool_1".to_string(),
+                    tool: "read_file".to_string(),
+                    arguments: json!({"path": "Cargo.toml"}),
+                    status: protocol::protocol::ExternalToolCallStatus::Completed,
+                    output: Some(json!({"ok": true})),
+                })
+            )))
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_command_execution_as_display_event() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","completedAtMs":10,"item":{"type":"commandExecution","id":"cmd_1","command":"ls","cwd":"/tmp/project","processId":null,"source":"unifiedExecStartup","status":"completed","initialWaitMs":null,"notifyOn":null,"commandActions":[],"aggregatedOutput":"ok","exitCode":0,"durationMs":25}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
+                ExternalProviderDisplayEvent::ToolCall(ExternalProviderToolDisplayEvent {
+                    id: "cmd_1".to_string(),
+                    tool: "command_execution".to_string(),
+                    arguments: json!({
+                        "command": "ls",
+                        "cwd": "/tmp/project",
+                    }),
+                    status: protocol::protocol::ExternalToolCallStatus::Completed,
+                    output: Some(json!({
+                        "durationMs": 25,
+                        "exitCode": 0,
+                        "output": "ok",
+                    })),
+                })
+            )))
         );
     }
 

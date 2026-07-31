@@ -1109,6 +1109,23 @@ impl AgentControl {
                                 return AgentStatus::Errored(err);
                             }
                         }
+                        Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Display(display))) => {
+                            if current_turn_id.is_none() {
+                                let turn_id = uuid::Uuid::new_v4().to_string();
+                                self.persist_external_terminal_status_with_turn_id(
+                                    thread_id,
+                                    Some(&turn_id),
+                                    &AgentStatus::Running,
+                                ).await;
+                                current_turn_id = Some(turn_id);
+                            }
+                            let turn_id = current_turn_id.clone().expect("external turn id");
+                            self.persist_external_provider_display_event(
+                                thread_id,
+                                &turn_id,
+                                display,
+                            ).await;
+                        }
                         Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Message(text)))
                         | Ok(ExternalProcessEvent::Cli(crate::agent::external::ExternalCliEvent::Completion(text))) => {
                             if current_turn_id.is_none() {
@@ -1528,6 +1545,61 @@ impl AgentControl {
                 output: Some(bounded_external_tool_result(result)),
                 lifecycle_at_ms: Utc::now().timestamp_millis(),
             });
+        self.persist_external_items(thread_id, Some(turn_id), vec![RolloutItem::EventMsg(event)])
+            .await;
+    }
+
+    async fn persist_external_provider_display_event(
+        &self,
+        thread_id: ThreadId,
+        turn_id: &str,
+        display: crate::agent::external::ExternalProviderDisplayEvent,
+    ) {
+        let event = match display {
+            crate::agent::external::ExternalProviderDisplayEvent::ReasoningSummary(text) => {
+                protocol::protocol::EventMsg::AgentReasoning(
+                    protocol::protocol::AgentReasoningEvent {
+                        text: bounded_external_output(&text),
+                    },
+                )
+            }
+            crate::agent::external::ExternalProviderDisplayEvent::ReasoningRawContent(text) => {
+                protocol::protocol::EventMsg::AgentReasoningRawContent(
+                    protocol::protocol::AgentReasoningRawContentEvent {
+                        text: bounded_external_output(&text),
+                    },
+                )
+            }
+            crate::agent::external::ExternalProviderDisplayEvent::ToolCall(tool) => {
+                let event = ExternalToolCallDisplayEvent {
+                    thread_id,
+                    turn_id: turn_id.to_string(),
+                    id: tool.id,
+                    tool: tool.tool,
+                    arguments: bounded_external_tool_arguments(&tool.arguments),
+                    status: tool.status,
+                    output: tool.output.map(|output| {
+                        crate::agent::external::bounded_json_for_external_display_output(&output)
+                    }),
+                    lifecycle_at_ms: Utc::now().timestamp_millis(),
+                };
+                match event.status {
+                    ExternalToolCallStatus::InProgress => {
+                        protocol::protocol::EventMsg::ExternalToolCallStarted(event)
+                    }
+                    ExternalToolCallStatus::Completed | ExternalToolCallStatus::Failed => {
+                        protocol::protocol::EventMsg::ExternalToolCallCompleted(event)
+                    }
+                }
+            }
+            crate::agent::external::ExternalProviderDisplayEvent::FallbackMessage(message) => {
+                protocol::protocol::EventMsg::AgentMessage(AgentMessageEvent {
+                    message: bounded_external_output(&message),
+                    phase: None,
+                    memory_citation: None,
+                })
+            }
+        };
         self.persist_external_items(thread_id, Some(turn_id), vec![RolloutItem::EventMsg(event)])
             .await;
     }

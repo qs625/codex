@@ -32,6 +32,7 @@ test-support = [
 
 [dependencies]
 anyhow = { workspace = true }
+app-server-protocol = { workspace = true }
 async-channel = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 codex-approval-service-api = { workspace = true }
@@ -150,7 +151,6 @@ codex-windows-sandbox = { package = "codex-windows-sandbox", path = "../windows-
 
 [dev-dependencies]
 approval-service = { workspace = true }
-app-server-protocol = { workspace = true }
 assert_cmd = { workspace = true }
 assert_matches = { workspace = true }
 async-trait = { workspace = true }

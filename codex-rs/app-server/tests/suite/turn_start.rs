@@ -8,6 +8,7 @@ use app_server_protocol::CollabAgentToolCallStatus;
 use app_server_protocol::CommandExecutionApprovalDecision;
 use app_server_protocol::CommandExecutionRequestApprovalResponse;
 use app_server_protocol::CommandExecutionStatus;
+use app_server_protocol::DynamicToolCallStatus;
 use app_server_protocol::FileChangeApprovalDecision;
 use app_server_protocol::FileChangePatchUpdatedNotification;
 use app_server_protocol::FileChangeRequestApprovalResponse;
