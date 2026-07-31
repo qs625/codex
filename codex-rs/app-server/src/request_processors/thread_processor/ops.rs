@@ -1215,8 +1215,24 @@ impl ThreadRequestProcessor {
         {
             Ok(thread) => {
                 if thread.archived_at.is_none() {
+                    if let Some(rollout_path) = thread.rollout_path.as_ref() {
+                        match tokio::fs::try_exists(rollout_path).await {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                return Ok((ThreadArchiveResponse {}, vec![params.thread_id]));
+                            }
+                            Err(err) => {
+                                return Err(internal_error(format!(
+                                    "failed to inspect rollout path for thread id {thread_id}: {err}"
+                                )));
+                            }
+                        }
+                    }
                     archive_thread_ids.push(thread_id);
                 }
+            }
+            Err(err) if Self::is_missing_rollout_for_thread(&err, thread_id) => {
+                return Ok((ThreadArchiveResponse {}, vec![params.thread_id]));
             }
             Err(err) => return Err(thread_store_archive_error("archive", err)),
         }
@@ -1284,6 +1300,18 @@ impl ThreadRequestProcessor {
         }
 
         Ok((ThreadArchiveResponse {}, archived_thread_ids))
+    }
+
+    fn thread_archive_missing_rollout_message(thread_id: ThreadId) -> String {
+        format!("no rollout found for thread id {thread_id}")
+    }
+
+    fn is_missing_rollout_for_thread(err: &ThreadStoreError, thread_id: ThreadId) -> bool {
+        matches!(
+            err,
+            ThreadStoreError::InvalidRequest { message }
+                if message == &Self::thread_archive_missing_rollout_message(thread_id)
+        )
     }
 
     pub(super) async fn thread_increment_elicitation_inner(
