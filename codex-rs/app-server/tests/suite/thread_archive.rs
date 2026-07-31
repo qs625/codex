@@ -18,13 +18,16 @@ use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::to_response;
+use chrono::Utc;
 use pretty_assertions::assert_eq;
 use protocol::ThreadId;
 use rollout::ARCHIVED_SESSIONS_SUBDIR;
+use rollout::SESSIONS_SUBDIR;
 use rollout::find_archived_thread_path_by_id_str;
 use rollout::find_thread_path_by_id_str;
 use state::DirectionalThreadSpawnEdgeStatus;
 use state::StateRuntime;
+use state::ThreadMetadata;
 use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -106,6 +109,119 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
         "expected archived rollout path {} to exist",
         archived_rollout_path.display()
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_archive_missing_rollout_is_idempotent_success() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let missing_thread_id = ThreadId::new().to_string();
+    let archive_id = mcp
+        .send_thread_archive_request(ThreadArchiveParams {
+            thread_id: missing_thread_id.clone(),
+        })
+        .await?;
+    let archive_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(archive_id)),
+    )
+    .await??;
+    let _: ThreadArchiveResponse = to_response::<ThreadArchiveResponse>(archive_resp)?;
+
+    let archive_notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/archived"),
+    )
+    .await??;
+    let archived_notification: ThreadArchivedNotification = serde_json::from_value(
+        archive_notification
+            .params
+            .expect("thread/archived notification params"),
+    )?;
+    assert_eq!(archived_notification.thread_id, missing_thread_id);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_archive_missing_rollout_file_with_metadata_is_idempotent_success() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let missing_thread_id = ThreadId::new();
+    let missing_rollout_path = codex_home.path().join(SESSIONS_SUBDIR).join(format!(
+        "rollout-2025-01-01T00-00-00-{missing_thread_id}.jsonl"
+    ));
+    let now = Utc::now();
+    let state_db =
+        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    state_db
+        .upsert_thread(&ThreadMetadata {
+            id: missing_thread_id,
+            rollout_path: missing_rollout_path.clone(),
+            created_at: now,
+            updated_at: now,
+            source: "cli".to_string(),
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            model_provider: "mock_provider".to_string(),
+            model: Some("mock-model".to_string()),
+            reasoning_effort: None,
+            cwd: codex_home.path().to_path_buf(),
+            cli_version: "test".to_string(),
+            title: "stale local thread".to_string(),
+            preview: Some("stale local thread".to_string()),
+            sandbox_policy: "read-only".to_string(),
+            approval_mode: "on-request".to_string(),
+            tokens_used: 0,
+            first_user_message: Some("stale local thread".to_string()),
+            archived_at: None,
+            git_sha: None,
+            git_branch: None,
+            git_origin_url: None,
+        })
+        .await?;
+    assert!(
+        !missing_rollout_path.exists(),
+        "test setup should leave rollout path missing"
+    );
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let archive_id = mcp
+        .send_thread_archive_request(ThreadArchiveParams {
+            thread_id: missing_thread_id.to_string(),
+        })
+        .await?;
+    let archive_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(archive_id)),
+    )
+    .await??;
+    let _: ThreadArchiveResponse = to_response::<ThreadArchiveResponse>(archive_resp)?;
+
+    let archive_notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/archived"),
+    )
+    .await??;
+    let archived_notification: ThreadArchivedNotification = serde_json::from_value(
+        archive_notification
+            .params
+            .expect("thread/archived notification params"),
+    )?;
+    assert_eq!(archived_notification.thread_id, missing_thread_id.to_string());
 
     Ok(())
 }
