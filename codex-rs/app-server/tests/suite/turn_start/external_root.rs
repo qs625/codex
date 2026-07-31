@@ -30,9 +30,18 @@ async fn start_named_external_root_thread(
     cwd: &Path,
     task_name: &str,
 ) -> Result<String> {
+    start_named_external_root_thread_with_provider(mcp, cwd, task_name, "claude_cli").await
+}
+
+async fn start_named_external_root_thread_with_provider(
+    mcp: &mut McpProcess,
+    cwd: &Path,
+    task_name: &str,
+    provider: &str,
+) -> Result<String> {
     let thread_req = mcp
         .send_thread_start_request(ThreadStartParams {
-            thread_provider: Some("claude_cli".to_string()),
+            thread_provider: Some(provider.to_string()),
             cwd: Some(cwd.to_string_lossy().into_owned()),
             task_name: Some(task_name.to_string()),
             ..Default::default()
@@ -44,11 +53,11 @@ async fn start_named_external_root_thread(
     )
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(thread_resp)?;
-    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.model_provider, provider);
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     let expected_agent_path = format!("/{task_name}");
     assert_eq!(thread.agent_path.as_deref(), Some(expected_agent_path.as_str()));
-    assert_eq!(thread.agent_role.as_deref(), Some("claude_cli"));
+    assert_eq!(thread.agent_role.as_deref(), Some(provider));
     assert!(matches!(
         thread.lifecycle_status,
         ThreadLifecycleStatus::Active { .. }
@@ -128,6 +137,67 @@ async fn start_external_root_mcp_with_input_capture(
         &[
             ("PATH", Some(test_path.as_str())),
             ("FAKE_CLAUDE_STDIN_LOG", Some(capture_path.as_str())),
+        ],
+    )
+    .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+fn write_fake_codex_cli_with_input_capture(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_codex = bin_dir.join("codex");
+    std::fs::write(
+        &fake_codex,
+        r#"#!/bin/sh
+# Test double for codex_cli app-server stdio input coverage.
+if IFS= read -r _initialize; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"codexHome":"/tmp/fake-codex","platformFamily":"unix","platformOs":"macos","userAgent":"fake-codex-cli"}}'
+fi
+IFS= read -r _initialized || exit 0
+if IFS= read -r _thread_start; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"fake-codex-thread"}}}'
+fi
+if IFS= read -r line; then
+  if [ -n "$FAKE_CODEX_STDIN_LOG" ]; then
+    printf '%s\n' "$line" > "$FAKE_CODEX_STDIN_LOG"
+  fi
+  printf '%s\n' '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"fake-codex-thread","turn":{"id":"fake-codex-turn","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":1,"completedAt":null,"durationMs":null}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"fake-codex-thread","turnId":"fake-codex-turn","item":{"type":"agentMessage","id":"fake-codex-agent-message","text":"Codex external assistant done","phase":null,"memoryCitation":null},"completedAtMs":2000}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"fake-codex-thread","turn":{"id":"fake-codex-turn","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":1,"completedAt":2,"durationMs":1000}}}'
+fi
+"#,
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_codex)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, permissions)?;
+    }
+    Ok(())
+}
+
+async fn start_external_root_mcp_with_codex_input_capture(
+    codex_home: &TempDir,
+    fake_bin: &TempDir,
+    capture_path: &Path,
+) -> Result<McpProcess> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    create_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        "never",
+        &BTreeMap::default(),
+    )?;
+    write_fake_codex_cli_with_input_capture(fake_bin.path())?;
+    let test_path = prepend_path_env(fake_bin.path())?;
+    let capture_path = capture_path.to_string_lossy().into_owned();
+    let mut mcp = McpProcess::new_with_env(
+        codex_home.path(),
+        &[
+            ("PATH", Some(test_path.as_str())),
+            ("FAKE_CODEX_STDIN_LOG", Some(capture_path.as_str())),
         ],
     )
     .await?;
@@ -383,6 +453,84 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
     assert!(provider_content.contains("Current external agent metadata"));
     assert!(provider_content.contains("agent_path: /foo_project"));
     assert!(provider_content.contains("agent_role: claude_cli"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn codex_cli_named_external_root_turn_start_sends_context_to_provider() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let provider_input_log = codex_home.path().join("codex-provider-input.jsonl");
+    let mut mcp =
+        start_external_root_mcp_with_codex_input_capture(&codex_home, &fake_bin, &provider_input_log)
+            .await?;
+    let thread_id = start_named_external_root_thread_with_provider(
+        &mut mcp,
+        codex_home.path(),
+        "cp_http_api",
+        "codex_cli",
+    )
+    .await?;
+    let input_text = "Explain this project";
+
+    let turn_req = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread_id.clone(),
+            input: vec![V2UserInput::Text {
+                text: input_text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+
+    let user_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(user_item.turn_id, turn.id);
+    match user_item.item {
+        ThreadItem::UserMessage { content, .. } => {
+            assert_eq!(
+                content,
+                vec![V2UserInput::Text {
+                    text: input_text.to_string(),
+                    text_elements: Vec::new(),
+                }]
+            );
+        }
+        other => panic!("expected codex_cli external user message item, got {other:?}"),
+    }
+
+    let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(assistant_item.turn_id, turn.id);
+    match assistant_item.item {
+        ThreadItem::AgentMessage { text, .. } => {
+            assert_eq!(text, "Codex external assistant done");
+        }
+        other => panic!("expected codex_cli external assistant message item, got {other:?}"),
+    }
+
+    let completed = read_external_root_turn_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(completed.turn.id, turn.id);
+    assert_eq!(completed.turn.status, TurnStatus::Completed);
+
+    let provider_input_line = std::fs::read_to_string(&provider_input_log)?;
+    let provider_input: serde_json::Value = serde_json::from_str(provider_input_line.trim())?;
+    assert_eq!(provider_input["method"], "turn/start");
+    let provider_content = provider_input["params"]["input"][0]["text"]
+        .as_str()
+        .expect("codex provider content should be string");
+    assert!(provider_content.contains(input_text));
+    assert!(provider_content.contains("spawn_external_agent"));
+    assert!(provider_content.contains("external_tool_call"));
+    assert!(provider_content.contains("Current external agent metadata"));
+    assert!(provider_content.contains("agent_path: /cp_http_api"));
+    assert!(provider_content.contains("agent_role: codex_cli"));
 
     Ok(())
 }
