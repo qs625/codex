@@ -3285,8 +3285,6 @@ async fn external_stream_loop_persists_and_broadcasts_initial_context_prompt() {
         agent_role: Some("claude_cli".to_string()),
     });
     let initial_task = "inspect the workspace";
-    let expected_context_prompt =
-        crate::agent::external::external_agent_context_prompt(initial_task);
     let agent_metadata = AgentMetadata {
         agent_id: Some(external_thread_id),
         agent_path: Some(external_agent_path.clone()),
@@ -3311,23 +3309,26 @@ async fn external_stream_loop_persists_and_broadcasts_initial_context_prompt() {
         .control
         .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
         .await;
+    let run = ExternalAgentRun {
+        thread_id: external_thread_id,
+        parent_thread_id: root_thread_id,
+        agent_path: external_agent_path,
+        provider: SpawnAgentProvider::ClaudeCli,
+        depth: 1,
+        spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+        input_sink: None,
+        live_thread: Some(live_thread),
+        status: AgentStatus::Running,
+        active_turn_id: None,
+        last_task_message: Some(initial_task.to_string()),
+        abort_handle: None,
+    };
+    let expected_context_prompt =
+        crate::agent::external::external_agent_context_prompt_for_run(initial_task, &run);
     harness
         .control
         .external_agents
-        .insert_running(ExternalAgentRun {
-            thread_id: external_thread_id,
-            parent_thread_id: root_thread_id,
-            agent_path: external_agent_path,
-            provider: SpawnAgentProvider::ClaudeCli,
-            depth: 1,
-            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
-            input_sink: None,
-            live_thread: Some(live_thread),
-            status: AgentStatus::Running,
-            active_turn_id: None,
-            last_task_message: Some(initial_task.to_string()),
-            abort_handle: None,
-        });
+        .insert_running(run);
     let mut thread_created_rx = harness.manager.subscribe_thread_created();
     let mut stream =
         FakeExternalStream::new(vec![crate::agent::external::ExternalProcessEvent::Cli(
@@ -3894,6 +3895,54 @@ async fn external_stream_loop_delivers_followup_input_to_same_process() {
     let followup = stream.next_input().await;
     assert!(initial.contains("initial task"));
     assert_eq!(followup, "follow up while running");
+}
+
+#[tokio::test]
+async fn external_root_first_input_sends_context_prompt_to_provider() {
+    let harness = AgentControlHarness::new().await;
+    let external_thread_id = ThreadId::new();
+    let mut stream =
+        FakeExternalStream::new(vec![crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Message("done".to_string()),
+        )]);
+    let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+    input_tx
+        .send(crate::agent::external::ExternalAgentInput {
+            turn_id: Some("turn-1".to_string()),
+            content: "explain this project".to_string(),
+        })
+        .expect("send root input");
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: external_thread_id,
+            agent_path: AgentPath::try_from("/cp_http_api").expect("agent path"),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 0,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            active_turn_id: Some("turn-1".to_string()),
+            last_task_message: None,
+            abort_handle: None,
+        });
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(external_thread_id, None, input_rx, &mut stream)
+        .await;
+
+    assert_eq!(status, AgentStatus::Completed(Some("done".to_string())));
+    let provider_input = stream.next_input().await;
+    assert!(provider_input.contains("explain this project"));
+    assert!(provider_input.contains("spawn_external_agent"));
+    assert!(provider_input.contains("external_tool_call"));
+    assert!(provider_input.contains("Current external agent metadata"));
+    assert!(provider_input.contains("agent_path: /cp_http_api"));
+    assert!(provider_input.contains("agent_role: claude_cli"));
 }
 
 #[tokio::test]

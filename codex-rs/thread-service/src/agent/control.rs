@@ -15,6 +15,7 @@ use crate::agent::external::bounded_external_tool_arguments;
 use crate::agent::external::bounded_external_tool_result;
 use crate::agent::external::completion_communication;
 use crate::agent::external::external_agent_context_prompt;
+use crate::agent::external::external_agent_context_prompt_for_run;
 use crate::agent::external::external_live_agent;
 use crate::agent::external::external_metadata;
 use crate::agent::external::external_restore_plan_support;
@@ -945,6 +946,8 @@ impl AgentControl {
     {
         let provider_input = stream.input_sink();
         let mut current_turn_id = None::<String>;
+        let context_run = self.external_agents.get(thread_id);
+        let mut sent_context_prompt = initial_message.is_some();
         if let Some(message) = initial_message {
             let turn_id = uuid::Uuid::new_v4().to_string();
             self.persist_external_terminal_status_with_turn_id(
@@ -954,7 +957,10 @@ impl AgentControl {
             )
             .await;
             current_turn_id = Some(turn_id);
-            let initial_input = external_agent_context_prompt(&message);
+            let initial_input = match context_run.as_ref() {
+                Some(run) => external_agent_context_prompt_for_run(&message, run),
+                None => external_agent_context_prompt(&message),
+            };
             self.persist_external_user_message(
                 thread_id,
                 current_turn_id.as_deref(),
@@ -998,7 +1004,16 @@ impl AgentControl {
                                 current_turn_id.as_deref(),
                                 &input.content,
                             ).await;
-                            if let Err(err) = provider_input.send(input.content) {
+                            let provider_content = if sent_context_prompt {
+                                input.content
+                            } else {
+                                sent_context_prompt = true;
+                                match context_run.as_ref() {
+                                    Some(run) => external_agent_context_prompt_for_run(&input.content, run),
+                                    None => external_agent_context_prompt(&input.content),
+                                }
+                            };
+                            if let Err(err) = provider_input.send(provider_content) {
                                 self.persist_external_error(thread_id, &err).await;
                                 self.persist_external_terminal_status_with_turn_id(
                                     thread_id,

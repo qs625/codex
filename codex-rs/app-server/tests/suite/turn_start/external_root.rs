@@ -91,6 +91,50 @@ async fn start_external_root_mcp_with_assistant_output(
     Ok(mcp)
 }
 
+fn write_fake_claude_cli_with_input_capture(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_claude = bin_dir.join("claude");
+    std::fs::write(
+        &fake_claude,
+        "#!/bin/sh\n# Test double for external root provider input coverage.\nif IFS= read -r line; then\n  if [ -n \"$FAKE_CLAUDE_STDIN_LOG\" ]; then\n    printf '%s\\n' \"$line\" > \"$FAKE_CLAUDE_STDIN_LOG\"\n  fi\n  echo 'External assistant done'\nfi\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_claude)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_claude, permissions)?;
+    }
+    Ok(())
+}
+
+async fn start_external_root_mcp_with_input_capture(
+    codex_home: &TempDir,
+    fake_bin: &TempDir,
+    capture_path: &Path,
+) -> Result<McpProcess> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    create_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        "never",
+        &BTreeMap::default(),
+    )?;
+    write_fake_claude_cli_with_input_capture(fake_bin.path())?;
+    let test_path = prepend_path_env(fake_bin.path())?;
+    let capture_path = capture_path.to_string_lossy().into_owned();
+    let mut mcp = McpProcess::new_with_env(
+        codex_home.path(),
+        &[
+            ("PATH", Some(test_path.as_str())),
+            ("FAKE_CLAUDE_STDIN_LOG", Some(capture_path.as_str())),
+        ],
+    )
+    .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
 async fn expect_external_root_native_only_error(
     mcp: &mut McpProcess,
     request_id: i64,
@@ -269,15 +313,19 @@ async fn external_root_turn_start_accepts_text_input() -> Result<()> {
 async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;
-    let mut mcp = start_external_root_mcp(&codex_home, &fake_bin).await?;
+    let provider_input_log = codex_home.path().join("provider-input.jsonl");
+    let mut mcp =
+        start_external_root_mcp_with_input_capture(&codex_home, &fake_bin, &provider_input_log)
+            .await?;
     let thread_id =
         start_named_external_root_thread(&mut mcp, codex_home.path(), "foo_project").await?;
+    let input_text = "Hello named external root";
 
     let turn_req = mcp
         .send_turn_start_request(TurnStartParams {
             thread_id: thread_id.clone(),
             input: vec![V2UserInput::Text {
-                text: "Hello named external root".to_string(),
+                text: input_text.to_string(),
                 text_elements: Vec::new(),
             }],
             ..Default::default()
@@ -303,13 +351,38 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
             assert_eq!(
                 content,
                 vec![V2UserInput::Text {
-                    text: "Hello named external root".to_string(),
+                    text: input_text.to_string(),
                     text_elements: Vec::new(),
                 }]
             );
         }
         other => panic!("expected named external user message item, got {other:?}"),
     }
+
+    let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(assistant_item.turn_id, turn.id);
+    match assistant_item.item {
+        ThreadItem::AgentMessage { text, .. } => {
+            assert_eq!(text, "External assistant done");
+        }
+        other => panic!("expected named external assistant message item, got {other:?}"),
+    }
+
+    let completed = read_external_root_turn_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(completed.turn.id, turn.id);
+    assert_eq!(completed.turn.status, TurnStatus::Completed);
+
+    let provider_input_line = std::fs::read_to_string(&provider_input_log)?;
+    let provider_input: serde_json::Value = serde_json::from_str(provider_input_line.trim())?;
+    let provider_content = provider_input["message"]["content"]
+        .as_str()
+        .expect("provider content should be string");
+    assert!(provider_content.contains(input_text));
+    assert!(provider_content.contains("spawn_external_agent"));
+    assert!(provider_content.contains("external_tool_call"));
+    assert!(provider_content.contains("Current external agent metadata"));
+    assert!(provider_content.contains("agent_path: /foo_project"));
+    assert!(provider_content.contains("agent_role: claude_cli"));
 
     Ok(())
 }

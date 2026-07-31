@@ -700,6 +700,30 @@ Original task:
     )
 }
 
+pub(crate) fn external_agent_context_prompt_for_run(
+    message: &str,
+    run: &ExternalAgentRun,
+) -> String {
+    let context = external_agent_context_prompt(message);
+    format!(
+        r#"{context}
+
+Current external agent metadata:
+- thread_id: {thread_id}
+- parent_thread_id: {parent_thread_id}
+- agent_path: {agent_path}
+- agent_role: {agent_role}
+- provider: {provider}
+- depth: {depth}"#,
+        thread_id = run.thread_id,
+        parent_thread_id = run.parent_thread_id,
+        agent_path = run.agent_path,
+        agent_role = provider_name(run.provider),
+        provider = provider_name(run.provider),
+        depth = run.depth,
+    )
+}
+
 pub(crate) enum ExternalStreamingSession {
     Cli(ExternalCliSession),
     CodexAppServer(CodexAppServerSession),
@@ -2223,6 +2247,32 @@ mod tests {
         assert!(context.contains("Do not call internal Morpheus tools"));
         assert!(!context.contains("unsupported"));
         assert!(context.contains("review this patch"));
+    }
+
+    #[test]
+    fn external_context_for_run_injects_agent_metadata() {
+        let run = ExternalAgentRun {
+            thread_id: ThreadId::new(),
+            parent_thread_id: ThreadId::new(),
+            agent_path: AgentPath::try_from("/cp_http_api").expect("agent path"),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 0,
+            spawn_config: None,
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: None,
+            abort_handle: None,
+        };
+
+        let context = external_agent_context_prompt_for_run("explain this project", &run);
+
+        assert!(context.contains("explain this project"));
+        assert!(context.contains("spawn_external_agent"));
+        assert!(context.contains("Current external agent metadata"));
+        assert!(context.contains("agent_path: /cp_http_api"));
+        assert!(context.contains("agent_role: claude_cli"));
     }
 
     #[test]
