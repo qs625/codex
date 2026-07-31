@@ -757,18 +757,18 @@ test("command wait item notifications create visible conversation entries", () =
   );
 });
 
-test("project external root item notifications keep assistant messages visible", () => {
+test("codex cli project external root item notifications keep assistant messages visible", () => {
   const externalProjectThread = makeSidebarThread({
     id: "external-project",
     sessionId: "session-external-project",
-    modelProvider: "claude_cli",
+    modelProvider: "codex_cli",
     model: null,
     cwd: "/work/project",
     source: "appServer",
     threadSource: "user",
-    agentPath: "/foo_project",
-    agentNickname: "foo_project",
-    agentRole: "claude_cli",
+    agentPath: "/cp_http_api",
+    agentNickname: "cp_http_api",
+    agentRole: "codex_cli",
     lifecycleStatus: { type: "active", activeFlags: ["running"] },
   });
   const turnId = "turn-external-project";
