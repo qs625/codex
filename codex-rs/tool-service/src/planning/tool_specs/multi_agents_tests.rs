@@ -307,6 +307,44 @@ fn poll_event_output_schema_matches_thread_poll_event_result_json_keys() {
 }
 
 #[test]
+fn poll_event_command_notification_payload_serializes_with_schema_keys() {
+    let serialized = serde_json::to_value(
+        thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            message: "Command exited.".to_string(),
+            output: Some("done\n".to_string()),
+            exit_code: Some(0),
+            created_at_ms: 1234,
+        },
+    )
+    .expect("serialize command poll event");
+
+    assert_eq!(serialized["type"], "command_execution_notification");
+    assert_eq!(serialized["commandItemId"], "cmd-1");
+    assert_eq!(serialized["kind"], "exit");
+    assert_eq!(serialized["message"], "Command exited.");
+    assert_eq!(serialized["output"], "done\n");
+    assert_eq!(serialized["exitCode"], 0);
+    assert_eq!(serialized["createdAtMs"], 1234);
+
+    let tool = function_tool(create_poll_event_tool(), "poll_event");
+    let output_schema = tool.output_schema.expect("poll_event output schema");
+    let event_variants = output_schema["properties"]["event"]["anyOf"][0]["anyOf"]
+        .as_array()
+        .expect("event payload variants");
+    assert!(
+        event_variants.iter().any(|variant| {
+            variant["properties"]["type"]["const"] == "command_execution_notification"
+                && variant["properties"]["commandItemId"].is_object()
+                && variant["properties"]["exitCode"].is_object()
+                && variant["properties"]["createdAtMs"].is_object()
+        }),
+        "poll_event schema should document command notification payload"
+    );
+}
+
+#[test]
 fn spawn_external_agent_shares_common_fields_but_excludes_native_only_options() {
     let native = function_tool(
         create_spawn_agent_tool_v2(SpawnAgentToolOptions {
