@@ -719,6 +719,33 @@ fn thread_poll_event_for_pending_input(
                 communication: communication.clone(),
             },
         ),
+        PendingInputItem::ResponseItem(ResponseItem::CommandExecutionNotification {
+            command_item_id,
+            kind,
+            message,
+            output,
+            exit_code,
+            created_at_ms,
+            ..
+        })
+        | PendingInputItem::HookInspectable(ResponseItem::CommandExecutionNotification {
+            command_item_id,
+            kind,
+            message,
+            output,
+            exit_code,
+            created_at_ms,
+            ..
+        }) => Some(
+            thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+                command_item_id: command_item_id.clone(),
+                kind: *kind,
+                message: message.clone(),
+                output: output.clone(),
+                exit_code: *exit_code,
+                created_at_ms: *created_at_ms,
+            },
+        ),
         PendingInputItem::ResponseItem(_) | PendingInputItem::HookInspectable(_) => None,
     }
 }

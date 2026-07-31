@@ -2695,7 +2695,28 @@ async fn poll_event_returns_immediately_for_existing_pending_command_output() {
     assert!(!result.timed_out);
     assert_eq!(result.waited_ms, 0);
     assert_eq!(result.source_hint.as_deref(), Some("command_output"));
-    assert_eq!(result.event, None);
+    match result.event {
+        Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+            command_item_id,
+            kind,
+            message,
+            output,
+            exit_code,
+            created_at_ms,
+        }) => {
+            assert_eq!(command_item_id, "cmd-1");
+            assert_eq!(
+                kind,
+                protocol::models::CommandExecutionNotificationKind::Output
+            );
+            assert_eq!(message, "Command output notification received.");
+            assert_eq!(output.as_deref(), Some("wake"));
+            assert_eq!(exit_code, None);
+            assert_eq!(created_at_ms, 1234);
+        }
+        other => panic!("expected command output payload, got {other:?}"),
+    }
+    assert_eq!(result.events.len(), 1);
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
@@ -2830,6 +2851,7 @@ async fn poll_event_lists_later_child_completion_while_older_completion_is_pendi
             thread_service_api::ThreadPollEvent::InterAgentCommunication { communication } => {
                 communication.author.as_str()
             }
+            other => panic!("expected inter-agent payload, got {other:?}"),
         })
         .collect::<Vec<_>>();
     assert_eq!(authors, vec!["/root/explorer", "/root/owner"]);
@@ -2882,6 +2904,28 @@ async fn poll_event_wakes_for_command_exit_notification() {
         .expect("poll_event task");
     assert!(!result.timed_out);
     assert_eq!(result.source_hint.as_deref(), Some("command_exit"));
+    match result.event {
+        Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+            command_item_id,
+            kind,
+            message,
+            output,
+            exit_code,
+            created_at_ms,
+        }) => {
+            assert_eq!(command_item_id, "cmd-1");
+            assert_eq!(
+                kind,
+                protocol::models::CommandExecutionNotificationKind::Exit
+            );
+            assert_eq!(message, "Command exit notification received.");
+            assert_eq!(output, None);
+            assert_eq!(exit_code, Some(0));
+            assert_eq!(created_at_ms, 1234);
+        }
+        other => panic!("expected command exit payload, got {other:?}"),
+    }
+    assert_eq!(result.events.len(), 1);
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 }
@@ -2948,6 +2992,13 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
         .expect("poll_event should wake");
     assert!(!poll_result.timed_out);
     assert_eq!(poll_result.source_hint.as_deref(), Some("command_exit"));
+    assert!(matches!(
+        poll_result.event,
+        Some(thread_service_api::ThreadPollEvent::CommandExecutionNotification {
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            ..
+        })
+    ));
 
     while let Ok(event) = rx.try_recv() {
         assert!(

@@ -41,8 +41,8 @@ use mcp_types::McpServerElicitationRequestParams;
 use mcp_types::McpToolApprovalMetadata;
 use mcp_types::SandboxState;
 use mcp_types::ToolInfo;
-use protocol::ThreadId;
 use protocol::AgentPath;
+use protocol::ThreadId;
 use protocol::config_types::ApprovalsReviewer;
 use protocol::config_types::Personality;
 use protocol::config_types::WindowsSandboxLevel;
@@ -57,6 +57,7 @@ use protocol::mcp::RequestId;
 use protocol::mcp::Resource;
 use protocol::mcp::ResourceTemplate;
 use protocol::models::ActivePermissionProfile;
+use protocol::models::CommandExecutionNotificationKind;
 use protocol::models::PermissionProfile;
 use protocol::models::ResponseItem;
 use protocol::openai_models::ReasoningEffort;
@@ -286,6 +287,17 @@ pub struct ThreadPollEventResult {
 pub enum ThreadPollEvent {
     InterAgentCommunication {
         communication: InterAgentCommunication,
+    },
+    CommandExecutionNotification {
+        #[serde(rename = "commandItemId")]
+        command_item_id: String,
+        kind: CommandExecutionNotificationKind,
+        message: String,
+        output: Option<String>,
+        #[serde(rename = "exitCode")]
+        exit_code: Option<i32>,
+        #[serde(rename = "createdAtMs")]
+        created_at_ms: i64,
     },
 }
 
