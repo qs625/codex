@@ -1845,6 +1845,20 @@ fn parse_codex_app_server_jsonrpc_line(
                 codex_turn_failure_message(params),
             ))
         }
+        "error" => {
+            let message = codex_app_server_error_message(params);
+            if params
+                .get("willRetry")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                Some(ExternalProcessEvent::Cli(ExternalCliEvent::Status(message)))
+            } else {
+                set_active_turn_id(active_turn_id, None);
+                set_pending_codex_completion_event(pending_completion_event, None);
+                Some(ExternalProcessEvent::StdinError(message))
+            }
+        }
         "item/completed" => {
             if let Some(text) = item_agent_message_text(params) {
                 set_pending_codex_completion_event(
@@ -1859,6 +1873,29 @@ fn parse_codex_app_server_jsonrpc_line(
             text_field(params).map(|text| ExternalProcessEvent::Cli(ExternalCliEvent::Status(text)))
         }
         _ => None,
+    }
+}
+
+fn codex_app_server_error_message(params: &serde_json::Value) -> String {
+    let message = params
+        .get("error")
+        .and_then(turn_error_text)
+        .or_else(|| text_field(params))
+        .unwrap_or_else(|| "codex_cli app-server reported an error".to_string());
+    let details = params
+        .get("additionalDetails")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|details| !details.is_empty());
+    match details {
+        Some(details) => truncate_chars(
+            &format!("codex_cli app-server error: {message}; {details}"),
+            MAX_EXTERNAL_ERROR_CHARS,
+        ),
+        None => truncate_chars(
+            &format!("codex_cli app-server error: {message}"),
+            MAX_EXTERNAL_ERROR_CHARS,
+        ),
     }
 }
 
@@ -2658,6 +2695,65 @@ mod tests {
         );
         assert!(
             active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_retrying_error_as_status_without_clearing_state() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"error","params":{"threadId":"thr_1","turnId":"turn_1","error":{"message":"Reconnecting... 2/5"},"additionalDetails":"unexpected status 401 Unauthorized","willRetry":true}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::Cli(ExternalCliEvent::Status(
+                "codex_cli app-server error: Reconnecting... 2/5; unexpected status 401 Unauthorized"
+                    .to_string()
+            )))
+        );
+        assert_eq!(
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_deref(),
+            Some("turn_1")
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_terminal_error_as_stdin_error_and_clears_state() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(Some(ExternalCliEvent::Completion(
+            "stale".to_string(),
+        ))));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"error","params":{"threadId":"thr_1","turnId":"turn_1","error":{"message":"Authentication failed"},"additionalDetails":"unexpected status 401 Unauthorized","willRetry":false}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::StdinError(
+                "codex_cli app-server error: Authentication failed; unexpected status 401 Unauthorized"
+                    .to_string()
+            ))
+        );
+        assert!(
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+        assert!(
+            pending_completion_event
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_none()

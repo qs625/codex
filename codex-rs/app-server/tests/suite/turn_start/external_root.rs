@@ -178,6 +178,37 @@ fi
     Ok(())
 }
 
+fn write_fake_codex_cli_with_error_notification(bin_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(bin_dir)?;
+    let fake_codex = bin_dir.join("codex");
+    std::fs::write(
+        &fake_codex,
+        r#"#!/bin/sh
+# Test double for real codex_cli app-server error notifications.
+if IFS= read -r _initialize; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"codexHome":"/tmp/fake-codex","platformFamily":"unix","platformOs":"macos","userAgent":"fake-codex-cli"}}'
+fi
+IFS= read -r _initialized || exit 0
+if IFS= read -r _thread_start; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"fake-codex-thread"}}}'
+fi
+if IFS= read -r _turn_start; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"turn":{"id":"fake-codex-turn","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"fake-codex-thread","turn":{"id":"fake-codex-turn","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":1,"completedAt":null,"durationMs":null}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","method":"error","params":{"threadId":"fake-codex-thread","turnId":"fake-codex-turn","error":{"message":"Authentication failed"},"additionalDetails":"unexpected status 401 Unauthorized","willRetry":false}}'
+fi
+"#,
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&fake_codex)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, permissions)?;
+    }
+    Ok(())
+}
+
 async fn start_external_root_mcp_with_codex_input_capture(
     codex_home: &TempDir,
     fake_bin: &TempDir,
@@ -201,6 +232,25 @@ async fn start_external_root_mcp_with_codex_input_capture(
         ],
     )
     .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+async fn start_external_root_mcp_with_codex_error_notification(
+    codex_home: &TempDir,
+    fake_bin: &TempDir,
+) -> Result<McpProcess> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    create_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        "never",
+        &BTreeMap::default(),
+    )?;
+    write_fake_codex_cli_with_error_notification(fake_bin.path())?;
+    let test_path = prepend_path_env(fake_bin.path())?;
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("PATH", Some(test_path.as_str()))]).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
     Ok(mcp)
 }
@@ -312,6 +362,99 @@ async fn read_external_root_turn_completed(
             return Ok(completed);
         }
     }
+}
+
+#[tokio::test]
+async fn codex_cli_error_notification_is_visible_and_terminal() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let fake_bin = TempDir::new()?;
+    let mut mcp =
+        start_external_root_mcp_with_codex_error_notification(&codex_home, &fake_bin).await?;
+    let thread_id = start_named_external_root_thread_with_provider(
+        &mut mcp,
+        codex_home.path(),
+        "dotfiles",
+        "codex_cli",
+    )
+    .await?;
+    let input_text = "Explain this project";
+
+    let turn_req = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread_id.clone(),
+            input: vec![V2UserInput::Text {
+                text: input_text.to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
+    )
+    .await??;
+    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+
+    let user_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(user_item.turn_id, turn.id);
+    match user_item.item {
+        ThreadItem::UserMessage { content, .. } => {
+            assert_eq!(
+                content,
+                vec![V2UserInput::Text {
+                    text: input_text.to_string(),
+                    text_elements: Vec::new(),
+                }]
+            );
+        }
+        other => panic!("expected codex_cli external user message item, got {other:?}"),
+    }
+
+    let error_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(error_item.turn_id, turn.id);
+    let error_text = match error_item.item {
+        ThreadItem::AgentMessage { text, .. } => text,
+        other => panic!("expected codex_cli external error message item, got {other:?}"),
+    };
+    assert!(error_text.contains("codex_cli app-server error"));
+    assert!(error_text.contains("Authentication failed"));
+    assert!(error_text.contains("401 Unauthorized"));
+
+    let completed = read_external_root_turn_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(completed.turn.id, turn.id);
+    assert_eq!(completed.turn.status, TurnStatus::Failed);
+    let error = completed
+        .turn
+        .error
+        .expect("failed codex_cli turn should include an error");
+    assert!(error.message.contains("Authentication failed"));
+
+    let read_req = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread_id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_req)),
+    )
+    .await??;
+    let read: ThreadReadResponse = to_response(read_resp)?;
+    let persisted_turn = read
+        .thread
+        .turns
+        .first()
+        .expect("thread/read should include failed external turn");
+    assert_eq!(persisted_turn.status, TurnStatus::Failed);
+    assert!(persisted_turn.items.iter().any(|item| matches!(
+        item,
+        ThreadItem::AgentMessage { text, .. }
+            if text.contains("Authentication failed") && text.contains("401 Unauthorized")
+    )));
+
+    Ok(())
 }
 
 #[tokio::test]

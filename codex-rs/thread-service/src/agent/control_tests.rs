@@ -4033,6 +4033,39 @@ async fn external_stream_loop_returns_stdin_error() {
 }
 
 #[tokio::test]
+async fn external_stream_loop_treats_success_exit_during_active_turn_as_error() {
+    let harness = AgentControlHarness::new().await;
+    let external_thread_id = ThreadId::new();
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::ProcessExited {
+            success: true,
+            status: "exit status: 0".to_string(),
+        },
+    ]);
+    let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+    input_tx
+        .send(crate::agent::external::ExternalAgentInput {
+            turn_id: Some("turn-1".to_string()),
+            content: "initial question".to_string(),
+        })
+        .expect("send external root input");
+    drop(input_tx);
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(external_thread_id, None, input_rx, &mut stream)
+        .await;
+
+    assert_eq!(
+        status,
+        AgentStatus::Errored(
+            "external provider exited with status exit status: 0 before producing an agent message"
+                .to_string()
+        )
+    );
+}
+
+#[tokio::test]
 async fn external_stream_loop_broadcasts_stdin_error_as_turn_agent_message() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;

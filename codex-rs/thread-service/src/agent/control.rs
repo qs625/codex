@@ -1154,6 +1154,24 @@ impl AgentControl {
                         }
                         Ok(ExternalProcessEvent::ProcessExited { success, status }) => {
                             if success {
+                                if current_turn_id.is_some() {
+                                    let error = last_status.unwrap_or_else(|| {
+                                        format!(
+                                            "external provider exited with status {status} before producing an agent message"
+                                        )
+                                    });
+                                    self.persist_external_error_with_turn_id(
+                                        thread_id,
+                                        current_turn_id.as_deref(),
+                                        &error,
+                                    ).await;
+                                    self.persist_external_terminal_status_with_turn_id(
+                                        thread_id,
+                                        current_turn_id.as_deref(),
+                                        &AgentStatus::Errored(error.clone()),
+                                    ).await;
+                                    return AgentStatus::Errored(error);
+                                }
                                 let status = AgentStatus::Completed(last_status);
                                 self.persist_external_terminal_status_with_turn_id(
                                     thread_id,
