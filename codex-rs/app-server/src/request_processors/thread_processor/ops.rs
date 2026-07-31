@@ -514,6 +514,30 @@ impl ThreadRequestProcessor {
                     completed_at_ms: chrono::Utc::now().timestamp_millis(),
                 })
             }
+            EventMsg::AgentReasoning(payload) => {
+                ServerNotification::ItemCompleted(ItemCompletedNotification {
+                    thread_id: thread_id_string,
+                    turn_id,
+                    item: ThreadItem::Reasoning {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        summary: vec![payload.text],
+                        content: Vec::new(),
+                    },
+                    completed_at_ms: chrono::Utc::now().timestamp_millis(),
+                })
+            }
+            EventMsg::AgentReasoningRawContent(payload) => {
+                ServerNotification::ItemCompleted(ItemCompletedNotification {
+                    thread_id: thread_id_string,
+                    turn_id,
+                    item: ThreadItem::Reasoning {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        summary: Vec::new(),
+                        content: vec![payload.text],
+                    },
+                    completed_at_ms: chrono::Utc::now().timestamp_millis(),
+                })
+            }
             EventMsg::Error(_) => {
                 return;
             }

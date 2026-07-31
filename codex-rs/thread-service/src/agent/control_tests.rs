@@ -4166,6 +4166,137 @@ async fn external_stream_loop_broadcasts_stdin_error_as_turn_agent_message() {
 }
 
 #[tokio::test]
+async fn external_stream_loop_broadcasts_provider_display_items_before_final_message() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let external_thread_id = ThreadId::new();
+    let external_agent_path = AgentPath::try_from("/root/external").expect("agent path");
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_thread_id,
+        depth: 1,
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+    });
+    let initial_task = "inspect the workspace";
+    let agent_metadata = AgentMetadata {
+        agent_id: Some(external_thread_id),
+        agent_path: Some(external_agent_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some("codex_cli".to_string()),
+        last_task_message: Some(initial_task.to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &ExternalSpawnConfig::from_config(&harness.config),
+            external_thread_id,
+            session_source.clone(),
+            ThreadSource::Subagent,
+            &agent_metadata,
+        )
+        .await
+        .expect("create persisted external thread");
+    harness
+        .control
+        .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
+        .await;
+    harness.control.external_agents.insert_running(ExternalAgentRun {
+        thread_id: external_thread_id,
+        parent_thread_id: root_thread_id,
+        agent_path: external_agent_path,
+        provider: SpawnAgentProvider::CodexCli,
+        depth: 1,
+        spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+        input_sink: None,
+        live_thread: Some(live_thread),
+        status: AgentStatus::Running,
+        active_turn_id: None,
+        last_task_message: Some(initial_task.to_string()),
+        abort_handle: None,
+    });
+    let mut thread_created_rx = harness.manager.subscribe_thread_created();
+    let mut stream = FakeExternalStream::new(vec![
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Display(
+                crate::agent::external::ExternalProviderDisplayEvent::ReasoningSummary(
+                    "checking project shape".to_string(),
+                ),
+            ),
+        ),
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Display(
+                crate::agent::external::ExternalProviderDisplayEvent::ToolCall(
+                    crate::agent::external::ExternalProviderToolDisplayEvent {
+                        id: "tool_1".to_string(),
+                        tool: "read_file".to_string(),
+                        arguments: serde_json::json!({"path": "Cargo.toml"}),
+                        status: protocol::protocol::ExternalToolCallStatus::Completed,
+                        output: Some(serde_json::json!({"ok": true})),
+                    },
+                ),
+            ),
+        ),
+        crate::agent::external::ExternalProcessEvent::Cli(
+            crate::agent::external::ExternalCliEvent::Completion("done".to_string()),
+        ),
+    ]);
+    let (_input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let status = harness
+        .control
+        .run_external_agent_stream_loop(
+            external_thread_id,
+            Some(initial_task.to_string()),
+            input_rx,
+            &mut stream,
+        )
+        .await;
+
+    assert_eq!(status, AgentStatus::Completed(Some("done".to_string())));
+    let mut saw_reasoning = false;
+    let mut saw_tool = false;
+    let mut saw_final = false;
+    for _ in 0..12 {
+        let event = timeout(Duration::from_secs(1), thread_created_rx.recv())
+            .await
+            .expect("live event should arrive")
+            .expect("live event");
+        let thread_service_api::ThreadCreatedEvent::LiveEvent {
+            thread_id, event, ..
+        } = event
+        else {
+            continue;
+        };
+        if thread_id != external_thread_id {
+            continue;
+        }
+        match event {
+            EventMsg::AgentReasoning(reasoning) => {
+                saw_reasoning |= reasoning.text == "checking project shape";
+            }
+            EventMsg::ExternalToolCallCompleted(tool) => {
+                saw_tool |= tool.id == "tool_1"
+                    && tool.tool == "read_file"
+                    && tool.status == protocol::protocol::ExternalToolCallStatus::Completed;
+            }
+            EventMsg::AgentMessage(message) => {
+                saw_final |= message.message == "done";
+            }
+            _ => {}
+        }
+        if saw_reasoning && saw_tool && saw_final {
+            break;
+        }
+    }
+    assert!(saw_reasoning, "reasoning display event should be broadcast");
+    assert!(saw_tool, "tool display event should be broadcast");
+    assert!(saw_final, "final agent message should still be broadcast");
+}
+
+#[tokio::test]
 async fn external_completed_agent_is_listed_from_persisted_thread_after_restart() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
