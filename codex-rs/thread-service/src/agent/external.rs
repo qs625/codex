@@ -1829,8 +1829,21 @@ fn parse_codex_app_server_jsonrpc_line(
             set_active_turn_id(active_turn_id, None);
             let event = last_agent_message_text(params)
                 .map(codex_completion_event_from_text)
-                .or_else(|| take_pending_codex_completion_event(pending_completion_event))?;
-            Some(ExternalProcessEvent::Cli(event))
+                .or_else(|| take_pending_codex_completion_event(pending_completion_event));
+            if let Some(event) = event {
+                return Some(ExternalProcessEvent::Cli(event));
+            }
+            if let Some(error) = codex_turn_completed_without_message_error(params) {
+                return Some(ExternalProcessEvent::StdinError(error));
+            }
+            None
+        }
+        "turn/failed" | "turn/interrupted" => {
+            set_active_turn_id(active_turn_id, None);
+            set_pending_codex_completion_event(pending_completion_event, None);
+            Some(ExternalProcessEvent::StdinError(
+                codex_turn_failure_message(params),
+            ))
         }
         "item/completed" => {
             if let Some(text) = item_agent_message_text(params) {
@@ -1847,6 +1860,49 @@ fn parse_codex_app_server_jsonrpc_line(
         }
         _ => None,
     }
+}
+
+fn codex_turn_completed_without_message_error(params: &serde_json::Value) -> Option<String> {
+    let status = params
+        .get("turn")
+        .and_then(|turn| turn.get("status"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("completed");
+    if status == "completed" {
+        return None;
+    }
+    Some(codex_turn_failure_message(params))
+}
+
+fn codex_turn_failure_message(params: &serde_json::Value) -> String {
+    let status = params
+        .get("turn")
+        .and_then(|turn| turn.get("status"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("failed");
+    let error_text = params
+        .get("turn")
+        .and_then(|turn| turn.get("error"))
+        .and_then(turn_error_text)
+        .or_else(|| params.get("error").and_then(turn_error_text));
+    match error_text {
+        Some(error) if !error.trim().is_empty() => format!(
+            "codex_cli app-server turn completed with status {status}: {}",
+            truncate_chars(error.trim(), MAX_EXTERNAL_ERROR_CHARS)
+        ),
+        _ => format!(
+            "codex_cli app-server turn completed with status {status} before producing an agent message"
+        ),
+    }
+}
+
+fn turn_error_text(value: &serde_json::Value) -> Option<String> {
+    value.as_str().map(ToOwned::to_owned).or_else(|| {
+        ["message", "text", "error"]
+            .into_iter()
+            .find_map(|key| value.get(key).and_then(serde_json::Value::as_str))
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn set_active_turn_id(active_turn_id: &Arc<Mutex<Option<String>>>, value: Option<String>) {
@@ -2549,6 +2605,56 @@ mod tests {
             Some(ExternalProcessEvent::Cli(ExternalCliEvent::Completion(
                 "done".to_string()
             )))
+        );
+        assert!(
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_interrupted_turn_completed_as_stdin_error() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"turn/completed","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"itemsView":"notLoaded","status":"interrupted","error":{"message":"provider stopped"},"startedAt":1,"completedAt":2,"durationMs":100}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::StdinError(
+                "codex_cli app-server turn completed with status interrupted: provider stopped"
+                    .to_string()
+            ))
+        );
+        assert!(
+            active_turn_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_interrupted_turn_without_message_as_stdin_error() {
+        let active_turn_id = Arc::new(Mutex::new(Some("turn_1".to_string())));
+        let pending_completion_event = Arc::new(Mutex::new(None));
+        let event = parse_codex_app_server_jsonrpc_line(
+            r#"{"method":"turn/completed","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"itemsView":"notLoaded","status":"interrupted","error":null,"startedAt":1,"completedAt":2,"durationMs":100}}}"#,
+            &active_turn_id,
+            &pending_completion_event,
+        );
+
+        assert_eq!(
+            event,
+            Some(ExternalProcessEvent::StdinError(
+                "codex_cli app-server turn completed with status interrupted before producing an agent message"
+                    .to_string()
+            ))
         );
         assert!(
             active_turn_id
