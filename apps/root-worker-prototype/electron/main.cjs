@@ -184,6 +184,23 @@ ipcMain.handle("codex:batchWriteConfig", async (_event, payload) => {
   return appServerClient.request("config/batchWrite", payload);
 });
 
+ipcMain.handle("codex:readAccount", async (_event, payload = {}) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("account/read", {
+    refreshToken: Boolean(payload?.refreshToken),
+  });
+});
+
+ipcMain.handle("codex:startAccountLogin", async (_event, payload) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("account/login/start", payload);
+});
+
+ipcMain.handle("codex:cancelAccountLogin", async (_event, payload) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("account/login/cancel", payload);
+});
+
 ipcMain.handle("codex:listAgentTypes", async (_event, cwd = defaultWorkspace) => {
   await ensureDefaultWorkspace();
   return appServerClient.request("agentType/list", { cwd });

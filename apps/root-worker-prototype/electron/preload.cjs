@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:writeConfigValue", payload),
   batchWriteConfig: (payload) =>
     ipcRenderer.invoke("codex:batchWriteConfig", payload),
+  readAccount: (payload) => ipcRenderer.invoke("codex:readAccount", payload),
+  startAccountLogin: (payload) =>
+    ipcRenderer.invoke("codex:startAccountLogin", payload),
+  cancelAccountLogin: (payload) =>
+    ipcRenderer.invoke("codex:cancelAccountLogin", payload),
   listAgentTypes: (cwd) => ipcRenderer.invoke("codex:listAgentTypes", cwd),
   listThreadProviders: (cwd) =>
     ipcRenderer.invoke("codex:listThreadProviders", cwd),

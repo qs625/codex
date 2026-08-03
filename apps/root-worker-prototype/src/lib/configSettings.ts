@@ -11,7 +11,7 @@ export type ConfigFieldKind = "text" | "select";
 export type ConfigFieldDefinition = {
   keyPath: string;
   label: string;
-  section: "model" | "execution" | "desktop";
+  section: "provider" | "execution" | "desktop";
   kind: ConfigFieldKind;
   options?: Array<{ value: string; label: string }>;
   placeholder?: string;
@@ -28,17 +28,40 @@ export type ConfigFieldState = ConfigFieldDefinition & {
 
 export type SettingsConfigState = {
   fields: ConfigFieldState[];
+  providerGroups: ProviderSettingsGroup[];
+  globalSections: SettingsFieldSection[];
   userConfigPath: string | null;
   userVersion: string | null;
 };
 
+export type ProviderSettingsGroup = {
+  id: "openai" | "modelhub" | "custom";
+  title: string;
+  providerValue: string | null;
+  description: string;
+  status: "active" | "available" | "custom";
+  fields: ConfigFieldState[];
+};
+
+export type SettingsFieldSection = {
+  id: "execution" | "desktop";
+  title: string;
+  fields: ConfigFieldState[];
+};
+
 const UNSET_VALUE = "__codex_unset__";
+const PROVIDER_FIELD_KEYS = new Set([
+  "model",
+  "model_provider",
+  "model_reasoning_effort",
+  "model_verbosity",
+]);
 
 export const SUPPORTED_CONFIG_FIELDS: ConfigFieldDefinition[] = [
   {
     keyPath: "model",
     label: "Model",
-    section: "model",
+    section: "provider",
     kind: "text",
     placeholder: "Provider default",
     unsetLabel: "Provider default",
@@ -46,7 +69,7 @@ export const SUPPORTED_CONFIG_FIELDS: ConfigFieldDefinition[] = [
   {
     keyPath: "model_provider",
     label: "Model provider",
-    section: "model",
+    section: "provider",
     kind: "text",
     placeholder: "Configured provider",
     unsetLabel: "Configured provider",
@@ -54,7 +77,7 @@ export const SUPPORTED_CONFIG_FIELDS: ConfigFieldDefinition[] = [
   {
     keyPath: "model_reasoning_effort",
     label: "Reasoning effort",
-    section: "model",
+    section: "provider",
     kind: "select",
     unsetLabel: "Model default",
     options: [
@@ -71,7 +94,7 @@ export const SUPPORTED_CONFIG_FIELDS: ConfigFieldDefinition[] = [
   {
     keyPath: "model_verbosity",
     label: "Verbosity",
-    section: "model",
+    section: "provider",
     kind: "select",
     unsetLabel: "Model default",
     options: [
@@ -132,10 +155,9 @@ export const SUPPORTED_CONFIG_FIELDS: ConfigFieldDefinition[] = [
 ];
 
 export const CONFIG_SECTION_LABELS: Record<
-  ConfigFieldDefinition["section"],
+  SettingsFieldSection["id"],
   string
 > = {
-  model: "Model",
   execution: "Execution",
   desktop: "Desktop",
 };
@@ -143,13 +165,82 @@ export const CONFIG_SECTION_LABELS: Record<
 export function buildSettingsConfigState(
   response: ConfigReadResponse,
 ): SettingsConfigState {
+  const fields = SUPPORTED_CONFIG_FIELDS.map((definition) =>
+    buildFieldState(definition, response),
+  );
   return {
-    fields: SUPPORTED_CONFIG_FIELDS.map((definition) =>
-      buildFieldState(definition, response),
-    ),
+    fields,
+    providerGroups: buildProviderSettingsGroups(fields),
+    globalSections: buildGlobalSettingsSections(fields),
     userConfigPath: findUserConfigPath(response.layers, response.origins),
     userVersion: findUserConfigVersion(response.layers, response.origins),
   };
+}
+
+export function buildProviderSettingsGroups(
+  fields: ConfigFieldState[],
+): ProviderSettingsGroup[] {
+  const providerField = fields.find((field) => field.keyPath === "model_provider");
+  const providerValue = providerField?.draftValue ?? UNSET_VALUE;
+  const activeProvider =
+    providerValue === UNSET_VALUE ? null : providerValue.toLowerCase();
+  const providerFields = fields.filter((field) =>
+    PROVIDER_FIELD_KEYS.has(field.keyPath),
+  );
+  const standardFields = providerFields.filter(
+    (field) => field.keyPath !== "model_provider",
+  );
+
+  const groups: ProviderSettingsGroup[] = [
+    {
+      id: "openai",
+      title: "OpenAI",
+      providerValue: "openai",
+      description: "OpenAI-hosted models and ChatGPT-managed authentication.",
+      status:
+        activeProvider === null || activeProvider === "openai"
+          ? "active"
+          : "available",
+      fields: standardFields,
+    },
+    {
+      id: "modelhub",
+      title: "ModelHub",
+      providerValue: "modelhub",
+      description: "ModelHub provider settings use the same model keys.",
+      status: activeProvider === "modelhub" ? "active" : "available",
+      fields: standardFields,
+    },
+  ];
+
+  if (
+    activeProvider &&
+    activeProvider !== "openai" &&
+    activeProvider !== "modelhub"
+  ) {
+    groups.push({
+      id: "custom",
+      title: "Custom provider",
+      providerValue: activeProvider,
+      description: "Current provider is not one of the built-in groups.",
+      status: "custom",
+      fields: providerFields,
+    });
+  }
+
+  return groups;
+}
+
+export function buildGlobalSettingsSections(
+  fields: ConfigFieldState[],
+): SettingsFieldSection[] {
+  return (["execution", "desktop"] as const)
+    .map((section) => ({
+      id: section,
+      title: CONFIG_SECTION_LABELS[section],
+      fields: fields.filter((field) => field.section === section),
+    }))
+    .filter((section) => section.fields.length > 0);
 }
 
 export function buildConfigSaveParams(
