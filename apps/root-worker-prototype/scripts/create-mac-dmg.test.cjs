@@ -4,8 +4,14 @@ const path = require("node:path");
 
 const {
   assertMacPackagingPlatform,
-  buildHdiutilCreateArgs,
+  buildFinderLayoutScriptArgs,
+  buildHdiutilAttachArgs,
+  buildHdiutilConvertArgs,
+  buildHdiutilCreateWritableArgs,
+  buildHdiutilDetachArgs,
   buildMacDmgPaths,
+  isMountedVolumeOutput,
+  toAppleScriptString,
 } = require("./create-mac-dmg.cjs");
 
 test("buildMacDmgPaths keeps app names with spaces intact", () => {
@@ -28,14 +34,26 @@ test("buildMacDmgPaths keeps app names with spaces intact", () => {
     paths.stagingDir,
     path.join("/tmp/root worker", "dist-app", "dmg-staging"),
   );
+  assert.equal(
+    paths.mountRootDir,
+    path.join("/tmp/root worker", "dist-app", "dmg-mount"),
+  );
+  assert.equal(
+    paths.volumePath,
+    path.join("/tmp/root worker", "dist-app", "dmg-mount", "Root Worker Prototype"),
+  );
+  assert.equal(
+    paths.tempDmgPath,
+    path.join("/tmp/root worker", "dist-app", "Root Worker Prototype-arm64.temp.dmg"),
+  );
 });
 
-test("buildHdiutilCreateArgs builds a compressed image command", () => {
+test("buildHdiutilCreateWritableArgs builds a writable image command", () => {
   assert.deepEqual(
-    buildHdiutilCreateArgs({
+    buildHdiutilCreateWritableArgs({
       appName: "Root Worker Prototype",
-      dmgPath: "/tmp/dist/Root Worker Prototype-arm64.dmg",
       stagingDir: "/tmp/dist/dmg-staging",
+      tempDmgPath: "/tmp/dist/Root Worker Prototype-arm64.temp.dmg",
     }),
     [
       "create",
@@ -45,9 +63,131 @@ test("buildHdiutilCreateArgs builds a compressed image command", () => {
       "/tmp/dist/dmg-staging",
       "-ov",
       "-format",
+      "UDRW",
+      "/tmp/dist/Root Worker Prototype-arm64.temp.dmg",
+    ],
+  );
+});
+
+test("buildHdiutilAttachArgs mounts the writable image under a controlled root", () => {
+  assert.deepEqual(
+    buildHdiutilAttachArgs({
+      mountRootDir: "/tmp/dist/dmg-mount",
+      tempDmgPath: "/tmp/dist/Root Worker Prototype-arm64.temp.dmg",
+    }),
+    [
+      "attach",
+      "/tmp/dist/Root Worker Prototype-arm64.temp.dmg",
+      "-readwrite",
+      "-noverify",
+      "-noautoopen",
+      "-mountroot",
+      "/tmp/dist/dmg-mount",
+    ],
+  );
+});
+
+test("buildHdiutilDetachArgs detaches the mounted volume path", () => {
+  assert.deepEqual(
+    buildHdiutilDetachArgs({
+      volumePath: "/tmp/dist/dmg-mount/Root Worker Prototype",
+    }),
+    [
+      "detach",
+      "/tmp/dist/dmg-mount/Root Worker Prototype",
+      "-force",
+    ],
+  );
+});
+
+test("buildHdiutilConvertArgs builds the final compressed image command", () => {
+  assert.deepEqual(
+    buildHdiutilConvertArgs({
+      dmgPath: "/tmp/dist/Root Worker Prototype-arm64.dmg",
+      tempDmgPath: "/tmp/dist/Root Worker Prototype-arm64.temp.dmg",
+    }),
+    [
+      "convert",
+      "/tmp/dist/Root Worker Prototype-arm64.temp.dmg",
+      "-format",
       "UDZO",
+      "-o",
       "/tmp/dist/Root Worker Prototype-arm64.dmg",
     ],
+  );
+});
+
+test("buildFinderLayoutScriptArgs lays out app and Applications icons", () => {
+  const args = buildFinderLayoutScriptArgs({
+    appName: "Root Worker Prototype",
+    volumePath: "/tmp/root worker/dist-app/dmg-mount/Root Worker Prototype",
+  });
+
+  assert.equal(args[0], "-e");
+  assert.ok(
+    args.includes(
+      "set dmgFolder to POSIX file \"/tmp/root worker/dist-app/dmg-mount/Root Worker Prototype/\" as alias",
+    ),
+  );
+  assert.ok(args.includes("set current view of container window of dmgFolder to icon view"));
+  assert.ok(args.includes("set icon size of viewOptions to 96"));
+  assert.ok(
+    args.includes(
+      "set position of item \"Root Worker Prototype.app\" of dmgFolder to {150, 165}",
+    ),
+  );
+  assert.ok(
+    args.includes(
+      "set position of item \"Applications\" of dmgFolder to {390, 165}",
+    ),
+  );
+});
+
+test("buildFinderLayoutScriptArgs requires a mounted volume path", () => {
+  assert.throws(
+    () => buildFinderLayoutScriptArgs({ appName: "Root Worker Prototype" }),
+    /requires a mounted volume path/,
+  );
+});
+
+test("toAppleScriptString escapes quoted paths", () => {
+  assert.equal(
+    toAppleScriptString("Root \"Worker\" Prototype"),
+    "\"Root \\\"Worker\\\" Prototype\"",
+  );
+});
+
+test("isMountedVolumeOutput matches mounted volumes with spaces", () => {
+  const output = [
+    "/dev/disk1s5 on / (apfs, local, read-only, journaled)",
+    "/dev/disk4s1 on /tmp/root worker/dist-app/dmg-mount/Root Worker Prototype (hfs, local)",
+  ].join("\n");
+
+  assert.equal(
+    isMountedVolumeOutput(
+      output,
+      "/tmp/root worker/dist-app/dmg-mount/Root Worker Prototype",
+    ),
+    true,
+  );
+  assert.equal(
+    isMountedVolumeOutput(
+      output,
+      "/tmp/root worker/dist-app/dmg-mount/Other Volume",
+    ),
+    false,
+  );
+});
+
+test("isMountedVolumeOutput does not treat stale ordinary directories as mounts", () => {
+  const output = "/dev/disk1s5 on / (apfs, local, read-only, journaled)";
+
+  assert.equal(
+    isMountedVolumeOutput(
+      output,
+      "/tmp/root worker/dist-app/dmg-mount/Root Worker Prototype",
+    ),
+    false,
   );
 });
 
