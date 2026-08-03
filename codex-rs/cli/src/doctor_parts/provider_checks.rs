@@ -122,7 +122,7 @@ fn non_empty_trimmed(value: String) -> Option<String> {
 
 async fn state_check(config: &Config) -> DoctorCheck {
     let mut details = Vec::new();
-    path_readiness(&mut details, "CODEX_HOME", &config.codex_home);
+    path_readiness(&mut details, "MORPHEUS_HOME", &config.codex_home);
     path_readiness(&mut details, "log dir", &config.log_dir);
     path_readiness(&mut details, "sqlite home", &config.sqlite_home);
     let state_db = state::state_db_path(&config.sqlite_home);
@@ -148,7 +148,7 @@ async fn state_check(config: &Config) -> DoctorCheck {
     let mut check = DoctorCheck::new("state.paths", "state", status, summary).details(details);
     if status == CheckStatus::Fail {
         check = check
-            .remediation("Back up CODEX_HOME, then remove or repair the affected SQLite database.");
+            .remediation("Back up MORPHEUS_HOME, then remove or repair the affected SQLite database.");
     }
     check
 }
@@ -485,14 +485,14 @@ fn fallback_state_check() -> DoctorCheck {
             "state.paths",
             "state",
             CheckStatus::Ok,
-            "CODEX_HOME was resolved without config",
+            "MORPHEUS_HOME was resolved without config",
         )
-        .detail(format!("CODEX_HOME: {}", path.display())),
+        .detail(format!("MORPHEUS_HOME: {}", path.display())),
         Err(err) => DoctorCheck::new(
             "state.paths",
             "state",
             CheckStatus::Warning,
-            "CODEX_HOME could not be resolved",
+            "MORPHEUS_HOME could not be resolved",
         )
         .detail(err.to_string()),
     }

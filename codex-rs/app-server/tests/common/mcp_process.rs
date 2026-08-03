@@ -68,8 +68,8 @@ use app_server_protocol::ReviewStartParams;
 use app_server_protocol::SendAddCreditsNudgeEmailParams;
 use app_server_protocol::ServerRequest;
 use app_server_protocol::SkillsListParams;
-use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadApproveGuardianDeniedActionParams;
+use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadBackgroundTerminalsCleanParams;
 use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadForkParams;
@@ -182,7 +182,7 @@ impl McpProcess {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         cmd.current_dir(codex_home);
-        cmd.env("CODEX_HOME", codex_home);
+        cmd.env("MORPHEUS_HOME", codex_home);
         cmd.env("RUST_LOG", "warn");
         // Keep integration tests isolated from host managed configuration.
         cmd.env(

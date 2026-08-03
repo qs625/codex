@@ -74,7 +74,7 @@ where
     child.stdout(Stdio::piped());
     child.stderr(Stdio::inherit());
     child.kill_on_drop(true);
-    child.env("CODEX_HOME", codex_home.path());
+    child.env("MORPHEUS_HOME", codex_home.path());
     child.envs(env);
     let mut child = child.spawn()?;
 

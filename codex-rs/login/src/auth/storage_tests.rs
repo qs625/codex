@@ -284,7 +284,7 @@ fn keyring_auth_storage_load_returns_deserialized_auth() -> anyhow::Result<()> {
 
 #[test]
 fn keyring_auth_storage_compute_store_key_for_home_directory() -> anyhow::Result<()> {
-    let codex_home = PathBuf::from("~/.codex");
+    let codex_home = PathBuf::from("~/.morpheus");
 
     let key = compute_store_key(codex_home.as_path())?;
 

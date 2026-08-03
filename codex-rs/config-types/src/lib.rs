@@ -50,16 +50,16 @@ pub use mcp::McpServerOAuthConfig;
 pub use mcp::McpServerToolConfig;
 pub use mcp::McpServerTransportConfig;
 pub use mcp::RawMcpServerConfig;
+pub use memories::CompactReplacementFileConfig;
+pub use memories::CompactReplacementFileRole;
+pub use memories::CompactReplacementFileToml;
+pub use memories::DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT;
 pub use memories::DEFAULT_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION;
 pub use memories::DEFAULT_MEMORIES_MAX_ROLLOUT_AGE_DAYS;
 pub use memories::DEFAULT_MEMORIES_MAX_ROLLOUTS_PER_STARTUP;
 pub use memories::DEFAULT_MEMORIES_MAX_UNUSED_DAYS;
 pub use memories::DEFAULT_MEMORIES_MIN_RATE_LIMIT_REMAINING_PERCENT;
 pub use memories::DEFAULT_MEMORIES_MIN_ROLLOUT_IDLE_HOURS;
-pub use memories::DEFAULT_COMPACT_REPLACEMENT_FILE_TOKEN_LIMIT;
-pub use memories::CompactReplacementFileConfig;
-pub use memories::CompactReplacementFileRole;
-pub use memories::CompactReplacementFileToml;
 pub use memories::MemoriesConfig;
 pub use memories::MemoriesToml;
 pub use otel::DEFAULT_OTEL_ENVIRONMENT;
@@ -75,6 +75,7 @@ pub use plugin::MarketplaceConfig;
 pub use plugin::MarketplaceSourceType;
 pub use plugin::PluginConfig;
 pub use plugin::PluginMcpServerConfig;
+use protocol::config_types::TrustLevel;
 pub use realtime::RealtimeAudioConfig;
 pub use realtime::RealtimeTransport;
 pub use realtime::RealtimeWsMode;
@@ -113,7 +114,6 @@ pub use ui::TuiPetAnchor;
 pub use ui::UriBasedFileOpener;
 pub use ui::WindowsSandboxModeToml;
 pub use ui::WindowsToml;
-use protocol::config_types::TrustLevel;
 
 /// Project-local trust decision loaded from the `[projects]` config map.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
@@ -155,7 +155,7 @@ pub enum ConfigLayerSource {
         file: AbsolutePathBuf,
     },
 
-    /// User config layer from $CODEX_HOME/config.toml. This layer is special
+    /// User config layer from $MORPHEUS_HOME/config.toml. This layer is special
     /// in that it is expected to be:
     /// - writable by the user
     /// - generally outside the workspace directory
@@ -246,7 +246,7 @@ pub struct ConfigLayer {
     pub disabled_reason: Option<String>,
 }
 
-/// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
+/// Settings that govern if and what will be written to `~/.morpheus/history.jsonl`.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[serde(default)]
 #[schemars(deny_unknown_fields)]
@@ -274,11 +274,11 @@ pub enum HistoryPersistence {
 #[serde(rename_all = "lowercase")]
 pub enum AuthCredentialsStoreMode {
     #[default]
-    /// Persist credentials in CODEX_HOME/auth.json.
+    /// Persist credentials in MORPHEUS_HOME/auth.json.
     File,
     /// Persist credentials in the keyring. Fail if unavailable.
     Keyring,
-    /// Use keyring when available; otherwise, fall back to a file in CODEX_HOME.
+    /// Use keyring when available; otherwise, fall back to a file in MORPHEUS_HOME.
     Auto,
     /// Store credentials in memory only for the current process.
     Ephemeral,
@@ -292,7 +292,7 @@ pub enum OAuthCredentialsStoreMode {
     /// Credentials stored in the keyring will only be readable by Codex unless the user explicitly grants access via OS-level keyring access.
     #[default]
     Auto,
-    /// CODEX_HOME/.credentials.json
+    /// MORPHEUS_HOME/.credentials.json
     /// This file will be readable to Codex and other applications running as the same user.
     File,
     /// Keyring when available, otherwise fail.

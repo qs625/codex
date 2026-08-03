@@ -13,7 +13,7 @@ pub const WORKFLOW_ABORT_TOOL_NAME: &str = "workflow_abort";
 pub fn create_workflow_list_tool() -> ToolSpec {
     ToolSpec::Function(ResponsesApiTool {
         name: WORKFLOW_LIST_TOOL_NAME.to_string(),
-        description: "List Codex Dynamic Workflows available from CODEX_HOME and the current project's .codex/workflows directories.".to_string(),
+        description: "List Codex Dynamic Workflows available from MORPHEUS_HOME and the current project's .codex/workflows directories.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(BTreeMap::new(), /*required*/ None, Some(false.into())),

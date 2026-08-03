@@ -1,13 +1,13 @@
 use super::*;
+use codex_file_system::LOCAL_FS;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_absolute_path::test_support::PathBufExt;
+use codex_utils_absolute_path::test_support::PathExt;
 use config_service::CONFIG_TOML_FILE;
 use config_service::ConfigLayerEntry;
 use config_service::ConfigLayerStack;
 use config_service::ConfigRequirements;
 use config_service::ConfigRequirementsToml;
-use codex_file_system::LOCAL_FS;
-use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_absolute_path::test_support::PathBufExt;
-use codex_utils_absolute_path::test_support::PathExt;
 use dunce::canonicalize as canonicalize_path;
 use pretty_assertions::assert_eq;
 use protocol::protocol::Product;
@@ -985,7 +985,7 @@ async fn does_not_loop_on_symlink_cycle_for_user_scope() {
     let codex_home = tempfile::tempdir().expect("tempdir");
 
     // Create a cycle:
-    //   $CODEX_HOME/skills/cycle/loop -> $CODEX_HOME/skills/cycle
+    //   $MORPHEUS_HOME/skills/cycle/loop -> $MORPHEUS_HOME/skills/cycle
     let cycle_dir = codex_home.path().join("skills/cycle");
     fs::create_dir_all(&cycle_dir).unwrap();
     symlink_dir(&cycle_dir, &cycle_dir.join("loop"));

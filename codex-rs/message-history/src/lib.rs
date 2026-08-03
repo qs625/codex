@@ -1,6 +1,6 @@
 //! Persistence layer for the global, append-only *message history* file.
 //!
-//! The history is stored at `~/.codex/history.jsonl` with **one JSON object per
+//! The history is stored at `~/.morpheus/history.jsonl` with **one JSON object per
 //! line** so that it can be efficiently appended to and parsed with standard
 //! JSON-Lines tooling. Each record has the following schema:
 //!
@@ -41,7 +41,7 @@ use std::os::unix::fs::OpenOptionsExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-/// Filename that stores the message history inside `~/.codex`.
+/// Filename that stores the message history inside `~/.morpheus`.
 const HISTORY_FILENAME: &str = "history.jsonl";
 
 /// When history exceeds the hard cap, trim it down to this fraction of `max_bytes`.
@@ -110,7 +110,7 @@ pub async fn append_entry(
 
     // TODO: check `text` for sensitive patterns
 
-    // Resolve `~/.codex/history.jsonl` and ensure the parent directory exists.
+    // Resolve `~/.morpheus/history.jsonl` and ensure the parent directory exists.
     let path = history_filepath(config);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;

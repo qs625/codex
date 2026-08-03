@@ -34,7 +34,7 @@ pub struct SharedCliOptions {
     #[arg(long = "profile", short = 'p')]
     pub config_profile: Option<String>,
 
-    /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
+    /// Layer $MORPHEUS_HOME/<name>.config.toml on top of the base user config.
     #[arg(long = "profile-v2")]
     pub config_profile_v2: Option<ProfileV2Name>,
 

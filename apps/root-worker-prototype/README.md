@@ -13,14 +13,14 @@ This starts:
 
 - Vite on `http://localhost:5173` for the Electron renderer
 - Electron, which starts `../../codex-rs/target/debug/app-server --listen stdio://` by default when that local build exists, otherwise it falls back to `app-server --listen stdio://` from `PATH`
-- the prototype defaults `CODEX_HOME` to `~/.codex-home`
+- the prototype defaults `MORPHEUS_HOME` to `~/.morpheus`
 
 Use this only when you specifically want the Vite dev server flow.
 
-You can override the app-server command, Codex home, or workspace with:
+You can override the app-server command, Morpheus home, or workspace with:
 
 ```bash
-CODEX_HOME=/tmp/my-codex-root-worker-ui-env/codex-home \
+MORPHEUS_HOME=/tmp/my-codex-root-worker-ui-env/morpheus-home \
 ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-ui-env/workspace \
 APP_SERVER_CMD="app-server --listen stdio://" \
 pnpm --filter @my-codex/root-worker-prototype dev

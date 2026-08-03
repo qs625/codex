@@ -55,7 +55,7 @@ const MAX_EXTERNAL_ERROR_CHARS: usize = 4_000;
 const MAX_EXTERNAL_SESSION_ID_CHARS: usize = 512;
 const MAX_EXTERNAL_TRANSCRIPT_LINE_CHARS: usize = 8_000;
 const MAX_EXTERNAL_TOOL_ARGUMENT_CHARS: usize = 8_000;
-const CODEX_APP_SERVER_ENV_REMOVALS: &[&str] = &["CODEX_HOME", "CODEX_THREAD_ID"];
+const CODEX_APP_SERVER_ENV_REMOVALS: &[&str] = &["MORPHEUS_HOME", "CODEX_HOME", "CODEX_THREAD_ID"];
 const OPENCODE_RECONNECT_PROOF_BLOCK: &str = "opencode reconnect descriptor only stores the provider session id; the current adapter starts a transient opencode serve HTTP/SSE endpoint on port 0 and has no durable endpoint, input ownership, or wait state facts for cold reattach";
 
 #[derive(Clone)]
@@ -2860,6 +2860,7 @@ mod tests {
             .map(|(name, value)| (name.to_string_lossy().to_string(), value.is_some()))
             .collect::<Vec<_>>();
 
+        assert!(envs.contains(&("MORPHEUS_HOME".to_string(), false)));
         assert!(envs.contains(&("CODEX_HOME".to_string(), false)));
         assert!(envs.contains(&("CODEX_THREAD_ID".to_string(), false)));
     }

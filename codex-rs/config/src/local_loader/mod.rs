@@ -6,9 +6,7 @@ mod strict_config;
 mod thread_config;
 
 use self::layer_io::LoadedConfigLayers;
-use codex_config_state::ConfigError;
-use codex_config_state::config_error_from_toml;
-use codex_config_state::io_error_from_config_error;
+use crate::CloudRequirementsLoader;
 use crate::loader::ConfigLayerLoadFuture;
 use crate::loader::ConfigLayerLoadRequest;
 use crate::loader::ConfigLayerLoader;
@@ -23,14 +21,16 @@ use crate::loader::normalized_project_trust_keys;
 use crate::loader::project_root_markers_from_config;
 use crate::loader::project_trust_for_lookup_key;
 pub use crate::loader::project_trust_key;
-use crate::CloudRequirementsLoader;
 use codex_config_requirements::ConfigRequirementsToml;
 use codex_config_requirements::ConfigRequirementsWithSources;
 use codex_config_requirements::RequirementSource;
 use codex_config_requirements::SandboxModeRequirement;
+use codex_config_state::ConfigError;
 use codex_config_state::ConfigLayerEntry;
 use codex_config_state::ConfigLayerStack;
+use codex_config_state::config_error_from_toml;
 use codex_config_state::first_layer_config_error_from_entries as typed_first_layer_config_error_from_entries;
+use codex_config_state::io_error_from_config_error;
 use codex_config_state::merge_toml_values;
 use codex_config_toml::config_toml::ConfigToml;
 pub use codex_config_toml::resolve_relative_paths_in_config_toml;
@@ -147,8 +147,8 @@ async fn first_layer_config_error_from_entries(layers: &[ConfigLayerEntry]) -> O
 /// - admin:    managed preferences (*)
 /// - system    `/etc/codex/config.toml` (Unix) or
 ///   `%ProgramData%\OpenAI\Codex\config.toml` (Windows)
-/// - user      `${CODEX_HOME}/config.toml`
-/// - profile   `${CODEX_HOME}/<name>.config.toml`, when selected
+/// - user      `${MORPHEUS_HOME}/config.toml`
+/// - profile   `${MORPHEUS_HOME}/<name>.config.toml`, when selected
 /// - cwd       `${PWD}/config.toml` (loaded but disabled when the directory is untrusted)
 /// - tree      parent directories up to root looking for `./.codex/config.toml` (loaded but disabled when untrusted)
 /// - repo      `$(git rev-parse --show-toplevel)/.codex/config.toml` (loaded but disabled when untrusted)

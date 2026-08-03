@@ -114,13 +114,13 @@ pub struct Tui {
     /// Syntax highlighting theme name (kebab-case).
     ///
     /// When set, overrides automatic light/dark theme detection.
-    /// Use `/theme` in the TUI or see `$CODEX_HOME/themes` for custom themes.
+    /// Use `/theme` in the TUI or see `$MORPHEUS_HOME/themes` for custom themes.
     #[serde(default)]
     pub theme: Option<String>,
 
     /// Pet id to preselect in the terminal pet picker.
     ///
-    /// Custom pet ids resolve against CODEX_HOME/pets/<pet-id>/pet.json.
+    /// Custom pet ids resolve against MORPHEUS_HOME/pets/<pet-id>/pet.json.
     #[serde(default)]
     pub pet: Option<String>,
 

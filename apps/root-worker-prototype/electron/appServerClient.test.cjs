@@ -6,10 +6,10 @@ const {
   resolveAppServerCommand,
 } = require("./appServerClient.cjs");
 
-test("app-server environment includes enhanced PATH and CODEX_HOME", () => {
+test("app-server environment includes enhanced PATH and MORPHEUS_HOME", () => {
   const env = buildAppServerEnvironment(
     {
-      CODEX_HOME: "/tmp/codex-home",
+      MORPHEUS_HOME: "/tmp/morpheus-home",
       HOME: "/Users/alice",
       PATH: "/usr/bin",
     },
@@ -19,10 +19,21 @@ test("app-server environment includes enhanced PATH and CODEX_HOME", () => {
     },
   );
 
-  assert.equal(env.CODEX_HOME, "/tmp/codex-home");
+  assert.equal(env.MORPHEUS_HOME, "/tmp/morpheus-home");
   assert.ok(env.PATH.startsWith("/usr/bin:/shell/bin:"));
   assert.ok(env.PATH.includes("/opt/homebrew/bin"));
   assert.ok(env.PATH.includes("/usr/local/bin"));
+});
+
+test("app-server environment ignores CODEX_HOME for MORPHEUS_HOME", () => {
+  const env = buildAppServerEnvironment({
+    CODEX_HOME: "/tmp/legacy-codex-home",
+    HOME: "/Users/alice",
+    PATH: "/usr/bin",
+  });
+
+  assert.notEqual(env.MORPHEUS_HOME, "/tmp/legacy-codex-home");
+  assert.ok(env.MORPHEUS_HOME.endsWith("/.morpheus"));
 });
 
 test("app-server command keeps APP_SERVER_CMD priority over CODEX_APP_SERVER_CMD", () => {

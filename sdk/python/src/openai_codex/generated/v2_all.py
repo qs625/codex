@@ -1762,7 +1762,7 @@ class InitializeResponse(BaseModel):
     codex_home: Annotated[
         AbsolutePathBuf,
         Field(
-            alias="codexHome", description="Absolute path to the server's $CODEX_HOME directory."
+            alias="codexHome", description="Absolute path to the server's $MORPHEUS_HOME directory."
         ),
     ]
     platform_family: Annotated[

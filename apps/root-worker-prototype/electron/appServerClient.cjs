@@ -7,7 +7,7 @@ const { EventEmitter } = require("node:events");
 const { buildDesktopEnvironment } = require("./environment.cjs");
 
 const DEFAULT_APP_SERVER_COMMAND = `${resolveWorkspaceAppServerBinary()} --listen stdio://`;
-const DEFAULT_CODEX_HOME = resolvePrototypeCodexHome();
+const DEFAULT_MORPHEUS_HOME = resolvePrototypeMorpheusHome();
 
 class AppServerClient extends EventEmitter {
   constructor() {
@@ -50,8 +50,8 @@ class AppServerClient extends EventEmitter {
   start() {
     const command = resolveAppServerCommand(process.env);
     const env = buildAppServerEnvironment(process.env);
-    const codexHome = env.CODEX_HOME;
-    fs.mkdirSync(codexHome, { recursive: true });
+    const morpheusHome = env.MORPHEUS_HOME;
+    fs.mkdirSync(morpheusHome, { recursive: true });
     this.child = spawn(command, {
       cwd: process.cwd(),
       env,
@@ -193,7 +193,7 @@ module.exports = {
 
 function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {}) {
   const env = buildDesktopEnvironment(baseEnv, environmentOptions);
-  env.CODEX_HOME = baseEnv.CODEX_HOME ?? DEFAULT_CODEX_HOME;
+  env.MORPHEUS_HOME = baseEnv.MORPHEUS_HOME ?? DEFAULT_MORPHEUS_HOME;
   return env;
 }
 
@@ -222,8 +222,8 @@ function resolveWorkspaceAppServerBinary() {
   return "app-server";
 }
 
-function resolvePrototypeCodexHome() {
-  return path.join(os.homedir(), ".codex-home");
+function resolvePrototypeMorpheusHome() {
+  return path.join(os.homedir(), ".morpheus");
 }
 
 function shellQuote(value) {

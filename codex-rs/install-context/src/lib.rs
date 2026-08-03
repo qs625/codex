@@ -17,7 +17,7 @@ pub enum StandalonePlatform {
 pub enum InstallContext {
     Standalone {
         /// The managed standalone release directory, for example
-        /// `~/.codex/packages/standalone/releases/0.111.0-x86_64-unknown-linux-musl`.
+        /// `~/.morpheus/packages/standalone/releases/0.111.0-x86_64-unknown-linux-musl`.
         release_dir: PathBuf,
         /// The bundled resource directory that sits next to the executable when
         /// this install ships managed dependencies.

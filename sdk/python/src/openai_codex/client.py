@@ -560,4 +560,4 @@ class AppServerClient:
 
 
 def default_codex_home() -> str:
-    return str(Path.home() / ".codex")
+    return os.environ.get("MORPHEUS_HOME", str(Path.home() / ".morpheus"))

@@ -1,7 +1,7 @@
 //! TUI keymap config schema and canonical key-spec normalization.
 //!
 //! This module defines the on-disk `[tui.keymap]` contract used by
-//! `~/.codex/config.toml` and normalizes user-entered key specs into canonical
+//! `~/.morpheus/config.toml` and normalizes user-entered key specs into canonical
 //! forms consumed by runtime keymap resolution in `codex-rs/tui/src/keymap.rs`.
 //!
 //! Responsibilities:

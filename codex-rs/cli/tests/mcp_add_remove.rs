@@ -1,15 +1,15 @@
 use std::path::Path;
 
 use anyhow::Result;
-use config_service::load_global_mcp_servers;
 use codex_config_types::McpServerTransportConfig;
+use config_service::load_global_mcp_servers;
 use predicates::str::contains;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
-    cmd.env("CODEX_HOME", codex_home);
+    cmd.env("MORPHEUS_HOME", codex_home);
     Ok(cmd)
 }
 

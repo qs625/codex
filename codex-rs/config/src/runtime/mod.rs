@@ -400,7 +400,7 @@ pub fn validate_feature_requirements_for_config_toml(
     managed_features::validate_feature_requirements_in_config_toml(cfg, feature_requirements)
 }
 
-/// Patch `CODEX_HOME/config.toml` project state to set trust level.
+/// Patch `MORPHEUS_HOME/config.toml` project state to set trust level.
 /// Use with caution.
 pub fn set_project_trust_level(
     codex_home: &Path,
@@ -505,13 +505,13 @@ fn normalize_guardian_policy_config(value: Option<&str>) -> Option<String> {
     })
 }
 
-/// Returns the path to the Codex configuration directory, which can be
-/// specified by the `CODEX_HOME` environment variable. If not set, defaults to
-/// `~/.codex`.
+/// Returns the path to the Morpheus configuration directory, which can be
+/// specified by the `MORPHEUS_HOME` environment variable. If not set, defaults
+/// to `~/.morpheus`.
 ///
-/// - If `CODEX_HOME` is set, the value must exist and be a directory. The
+/// - If `MORPHEUS_HOME` is set, the value must exist and be a directory. The
 ///   value will be canonicalized and this function will Err otherwise.
-/// - If `CODEX_HOME` is not set, this function does not verify that the
+/// - If `MORPHEUS_HOME` is not set, this function does not verify that the
 ///   directory exists.
 pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {
     codex_utils_home_dir::find_codex_home()

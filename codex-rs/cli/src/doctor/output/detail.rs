@@ -267,7 +267,7 @@ fn config_details(parsed: &[ParsedDetail], options: HumanOutputOptions) -> Vec<H
         &mut out,
         parsed,
         &[
-            "CODEX_HOME",
+            "MORPHEUS_HOME",
             "cwd",
             "model",
             "model provider",
@@ -289,7 +289,7 @@ fn config_details(parsed: &[ParsedDetail], options: HumanOutputOptions) -> Vec<H
 
 fn state_details(parsed: &[ParsedDetail]) -> Vec<HumanDetail> {
     let mut out = Vec::new();
-    push_row_if_present(&mut out, parsed, "CODEX_HOME", "CODEX_HOME");
+    push_row_if_present(&mut out, parsed, "MORPHEUS_HOME", "MORPHEUS_HOME");
     push_row_if_present(&mut out, parsed, "log dir", "log dir");
     push_row_if_present(&mut out, parsed, "sqlite home", "sqlite home");
     push_database_row(&mut out, parsed, "state DB");
@@ -312,7 +312,7 @@ fn state_details(parsed: &[ParsedDetail]) -> Vec<HumanDetail> {
         &mut out,
         parsed,
         &[
-            "CODEX_HOME",
+            "MORPHEUS_HOME",
             "log dir",
             "sqlite home",
             "state DB",

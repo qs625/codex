@@ -35,7 +35,7 @@ dangerously_allow_non_loopback_proxy = false
 mode = "full" # default when unset; use "limited" for read-only mode
 # When true, HTTPS CONNECT can be terminated so limited-mode method policy still applies.
 mitm = false
-# CA cert/key are managed internally under $CODEX_HOME/proxy/ (ca.pem + ca.key).
+# CA cert/key are managed internally under $MORPHEUS_HOME/proxy/ (ca.pem + ca.key).
 
 # If false, local/private networking is rejected. Explicit allowlisting of local IP literals
 # (or `localhost`) is required to permit them.

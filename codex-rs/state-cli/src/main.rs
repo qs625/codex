@@ -15,8 +15,8 @@ use state::StateRuntime;
 #[command(name = "state-logs")]
 #[command(about = "Tail Codex logs from the dedicated logs SQLite database with simple filters")]
 struct Args {
-    /// Path to CODEX_HOME. Defaults to $CODEX_HOME or ~/.codex.
-    #[arg(long, env = "CODEX_HOME")]
+    /// Path to MORPHEUS_HOME. Defaults to $MORPHEUS_HOME or ~/.morpheus.
+    #[arg(long, env = "MORPHEUS_HOME")]
     codex_home: Option<PathBuf>,
 
     /// Direct path to the logs SQLite database. Overrides --codex-home.

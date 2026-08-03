@@ -38,12 +38,6 @@ use app_server_protocol::ThreadSourceKind;
 use app_server_session::AppServerSession;
 use codex_auth_types::AuthMode as AppServerAuthMode;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
-use config_service::ConfigLoadError;
-use config_service::format_config_error_with_source;
-use config_service::ConfigLoadOptions;
-use config_service::LoaderOverrides;
-use config_service::LocalConfigLayerLoader;
-use config_service::CloudRequirementsLoader;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::AuthConfig;
@@ -56,6 +50,12 @@ use codex_utils_home_dir::find_codex_home;
 use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
 use color_eyre::eyre::WrapErr;
+use config_service::CloudRequirementsLoader;
+use config_service::ConfigLoadError;
+use config_service::ConfigLoadOptions;
+use config_service::LoaderOverrides;
+use config_service::LocalConfigLayerLoader;
+use config_service::format_config_error_with_source;
 use cwd_prompt::CwdPromptAction;
 use protocol::ThreadId;
 use protocol::config_types::AltScreenMode;
@@ -378,7 +378,7 @@ fn websocket_url_supports_auth_token(parsed: &Url) -> bool {
 pub fn resolve_remote_addr(addr: &str) -> color_eyre::Result<RemoteAppServerEndpoint> {
     if let Some(socket_path) = addr.strip_prefix("unix://") {
         let socket_path = if socket_path.is_empty() {
-            let codex_home = find_codex_home().wrap_err("failed to resolve CODEX_HOME")?;
+            let codex_home = find_codex_home().wrap_err("failed to resolve MORPHEUS_HOME")?;
             app_server_client::app_server_control_socket_path(&codex_home)
                 .map_err(color_eyre::Report::new)?
         } else {
@@ -1936,7 +1936,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_addr_accepts_default_socket() -> color_eyre::Result<()> {
-        let codex_home = find_codex_home().wrap_err("failed to resolve CODEX_HOME")?;
+        let codex_home = find_codex_home().wrap_err("failed to resolve MORPHEUS_HOME")?;
         assert_eq!(
             resolve_remote_addr("unix://")?,
             RemoteAppServerEndpoint::UnixSocket {

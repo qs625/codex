@@ -602,12 +602,12 @@ switch ($architecture) {
     }
 }
 
-$codexHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
-    Join-Path $env:USERPROFILE ".codex"
+$morpheusHome = if (-not [string]::IsNullOrWhiteSpace($env:MORPHEUS_HOME)) {
+    $env:MORPHEUS_HOME
 } else {
-    $env:CODEX_HOME
+    Join-Path $env:USERPROFILE ".morpheus"
 }
-$standaloneRoot = Join-Path $codexHome "packages\standalone"
+$standaloneRoot = Join-Path $morpheusHome "packages\standalone"
 $releasesDir = Join-Path $standaloneRoot "releases"
 $currentDir = Join-Path $standaloneRoot "current"
 $lockPath = Join-Path $standaloneRoot "install.lock"

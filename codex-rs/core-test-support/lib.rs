@@ -9,13 +9,13 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use tempfile::TempDir;
 
-use config_service::LoaderOverrides;
-use config_service::CloudRequirementsLoader;
-use config_service::ConfigRequirementsToml;
-use config_service::NetworkRequirementsToml;
 use codex_utils_absolute_path::AbsolutePathBuf;
 pub use codex_utils_absolute_path::test_support::PathBufExt;
 pub use codex_utils_absolute_path::test_support::PathExt;
+use config_service::CloudRequirementsLoader;
+use config_service::ConfigRequirementsToml;
+use config_service::LoaderOverrides;
+use config_service::NetworkRequirementsToml;
 use regex_lite::Regex;
 use rollout::StateDbHandle;
 use std::path::PathBuf;
@@ -183,7 +183,7 @@ pub fn fetch_dotslash_file(
 
 /// Returns a default `Config` whose on-disk state is confined to the provided
 /// temporary directory. Using a per-test directory keeps tests hermetic and
-/// avoids clobbering a developer’s real `~/.codex`.
+/// avoids clobbering a developer’s real `~/.morpheus`.
 pub async fn load_default_config_for_test(codex_home: &TempDir) -> Config {
     load_default_config_for_test_with_cloud_requirements(
         codex_home,

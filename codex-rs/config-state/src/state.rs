@@ -136,7 +136,7 @@ pub struct ConfigLayerStack {
     /// Index into [layers] of the active user config layer, if any.
     ///
     /// When profile config is active, there can be more than one user layer:
-    /// the base `$CODEX_HOME/config.toml` layer followed by the profile override
+    /// the base `$MORPHEUS_HOME/config.toml` layer followed by the profile override
     /// layer. This index points at the highest-precedence user layer because that
     /// is the writable layer for profile-aware edits.
     user_layer_index: Option<usize>,
@@ -202,7 +202,7 @@ impl ConfigLayerStack {
     ///
     /// This does not merge other config layers or apply any requirements. When
     /// a profile-v2 layer is active, this returns that profile layer rather than
-    /// the base `$CODEX_HOME/config.toml` layer because the active layer is the
+    /// the base `$MORPHEUS_HOME/config.toml` layer because the active layer is the
     /// writable target for profile-aware edits.
     pub fn get_active_user_layer(&self) -> Option<&ConfigLayerEntry> {
         self.user_layer_index

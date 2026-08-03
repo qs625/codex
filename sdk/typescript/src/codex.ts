@@ -28,7 +28,7 @@ export class Codex {
 
   /**
    * Resumes a conversation with an agent based on the thread id.
-   * Threads are persisted in ~/.codex/sessions.
+   * Threads are persisted in ~/.morpheus/sessions.
    *
    * @param id The id of the thread to resume.
    * @returns A new thread instance.
