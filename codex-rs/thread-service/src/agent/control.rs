@@ -31,6 +31,7 @@ use crate::thread::NewThread;
 use crate::thread::ResumeThreadWithHistoryOptions;
 use crate::thread::ThreadConfigSnapshot;
 use crate::thread::ThreadServiceState;
+use crate::turn_timing::now_unix_timestamp_ms;
 use chrono::DateTime;
 use chrono::Utc;
 use codex_agent_roles::AgentRoleConfig;
@@ -83,6 +84,9 @@ use protocol::SessionId;
 use protocol::ThreadId;
 use protocol::error::CodexErr;
 use protocol::error::Result as CodexResult;
+use protocol::items::InjectedContextItem;
+use protocol::items::InjectedContextSection;
+use protocol::items::TurnItem;
 #[cfg(test)]
 use protocol::models::ResponseItem;
 use protocol::protocol::AgentMessageEvent;
@@ -93,6 +97,7 @@ use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::ExternalToolCallDisplayEvent;
 use protocol::protocol::ExternalToolCallStatus;
 use protocol::protocol::InitialHistory;
+use protocol::protocol::ItemCompletedEvent;
 use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::InterAgentOperation;
 use protocol::protocol::Op;
@@ -1013,10 +1018,16 @@ impl AgentControl {
                                 input.content
                             } else {
                                 sent_context_prompt = true;
-                                match context_run.as_ref() {
+                                let provider_content = match context_run.as_ref() {
                                     Some(run) => external_agent_context_prompt_for_run(&input.content, run),
                                     None => external_agent_context_prompt(&input.content),
-                                }
+                                };
+                                self.persist_external_injected_context(
+                                    thread_id,
+                                    current_turn_id.as_deref(),
+                                    &provider_content,
+                                ).await;
+                                provider_content
                             };
                             if let Err(err) = provider_input.send(provider_content) {
                                 self.persist_external_error_with_turn_id(
@@ -1347,6 +1358,49 @@ impl AgentControl {
                     local_images: Vec::new(),
                     skills: Vec::new(),
                     text_elements: Vec::new(),
+                }),
+            )],
+        )
+        .await;
+    }
+
+    async fn persist_external_injected_context(
+        &self,
+        thread_id: ThreadId,
+        turn_id: Option<&str>,
+        provider_content: &str,
+    ) {
+        let Some(turn_id) = turn_id else {
+            return;
+        };
+        let bounded_provider_content = bounded_external_output(provider_content);
+        let mut sections = vec![InjectedContextSection {
+            label: "Provider input".to_string(),
+            text: bounded_provider_content,
+        }];
+        if let Some((_, metadata)) =
+            provider_content.split_once("Current external agent metadata:")
+        {
+            sections.push(InjectedContextSection {
+                label: "Current external agent metadata".to_string(),
+                text: bounded_external_output(metadata),
+            });
+        }
+
+        self.persist_external_items(
+            thread_id,
+            Some(turn_id),
+            vec![RolloutItem::EventMsg(
+                protocol::protocol::EventMsg::ItemCompleted(ItemCompletedEvent {
+                    thread_id,
+                    turn_id: turn_id.to_string(),
+                    item: TurnItem::InjectedContext(InjectedContextItem {
+                        id: format!("{turn_id}:external-provider-init-context"),
+                        title: "Init Context".to_string(),
+                        preview: "External provider initialization context".to_string(),
+                        sections,
+                    }),
+                    completed_at_ms: now_unix_timestamp_ms(),
                 }),
             )],
         )
