@@ -3877,6 +3877,136 @@ svg {
   font-size: 12px;
 }
 
+.browser-panel {
+  min-height: 0;
+  background: rgba(252, 251, 249, 0.52);
+}
+
+.browser-header {
+  align-items: center;
+}
+
+.browser-open-external {
+  flex: none;
+}
+
+.browser-toolbar {
+  display: grid;
+  grid-template-columns: 28px 28px 28px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.browser-icon-button,
+.browser-go-button {
+  display: inline-grid;
+  place-items: center;
+  height: 28px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #44403c;
+  cursor: pointer;
+}
+
+.browser-icon-button {
+  width: 28px;
+  padding: 0;
+}
+
+.browser-icon-button:disabled,
+.browser-go-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.browser-icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.browser-toolbar input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #292524;
+  font-size: 11px;
+  outline: 0;
+  padding: 0 9px;
+}
+
+.browser-toolbar input:focus {
+  border-color: rgba(15, 118, 110, 0.42);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
+.browser-go-button {
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.browser-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 5px 11px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.07);
+  color: #57534e;
+  font-size: 10px;
+}
+
+.browser-status-row span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #a8a29e;
+  flex: none;
+}
+
+.browser-status-dot.loading {
+  background: #0f766e;
+}
+
+.browser-native-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.browser-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: #78716c;
+  font-size: 12px;
+}
+
+.browser-empty svg {
+  width: 22px;
+  height: 22px;
+  color: #57534e;
+}
+
 .preview-editor-shell {
   display: flex;
   flex: 1;

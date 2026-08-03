@@ -3,7 +3,12 @@ import type { RightPanelView } from "../types";
 const RIGHT_PANEL_VIEW_STORAGE_KEY = "root-worker-prototype:right-panel-view";
 
 const DEFAULT_RIGHT_PANEL_VIEW: RightPanelView = "skills";
-const RIGHT_PANEL_VIEWS = new Set<RightPanelView>(["preview", "skills", "git"]);
+const RIGHT_PANEL_VIEWS = new Set<RightPanelView>([
+  "preview",
+  "skills",
+  "git",
+  "browser",
+]);
 
 type PanelViewStorage = Pick<Storage, "getItem" | "setItem">;
 

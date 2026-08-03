@@ -3,15 +3,21 @@ import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 
 import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
   BranchIcon,
+  BrowserIcon,
   DocumentIcon,
   GridIcon,
   GearIcon,
   OpenIcon,
+  RefreshIcon,
   SearchIcon,
+  StopIcon,
 } from "./icons";
 import { LocalImagePreview } from "./Conversation";
 import { isChatCompatCwd } from "../lib/chatCompat";
+import { normalizeBrowserUrl } from "../lib/browserUrl";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
 import { MarkdownContent } from "../lib/markdown";
 import {
@@ -35,6 +41,45 @@ import type {
 } from "../types";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
+
+type BrowserViewBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type BrowserPanelState = {
+  url: string | null;
+  title: string | null;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  error: string | null;
+};
+
+type BrowserPanelApi = Pick<
+  Window["codexDesktop"],
+  | "browserGoBack"
+  | "browserGoForward"
+  | "hideBrowserView"
+  | "navigateBrowserView"
+  | "openLink"
+  | "reloadBrowserView"
+  | "setBrowserViewBounds"
+  | "showBrowserView"
+  | "stopBrowserView"
+  | "subscribeBrowserState"
+>;
+
+const EMPTY_BROWSER_STATE: BrowserPanelState = {
+  url: null,
+  title: null,
+  loading: false,
+  canGoBack: false,
+  canGoForward: false,
+  error: null,
+};
 
 function formatByteSize(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -148,6 +193,8 @@ export function RightPanel({
             />
           ) : activeView === "git" ? (
             <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
+          ) : activeView === "browser" ? (
+            <BrowserPanel />
           ) : (
             <FilePreviewPanel
               expandedTreeDirectories={expandedTreeDirectories}
@@ -200,6 +247,12 @@ export function RightPanel({
                     : "",
               },
               {
+                view: "browser",
+                label: "Browser",
+                icon: <BrowserIcon />,
+                badge: "",
+              },
+              {
                 view: null,
                 label: "Search",
                 icon: <SearchIcon />,
@@ -238,6 +291,266 @@ export function RightPanel({
       </div>
     </aside>
   );
+}
+
+function BrowserPanel() {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [address, setAddress] = useState("");
+  const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const hasBrowserApi = currentBrowserPanelApi() !== null;
+
+  useEffect(() => {
+    const browserApi = currentBrowserPanelApi();
+    const unsubscribe = browserApi?.subscribeBrowserState((nextState) => {
+      setState({
+        url: nextState.url,
+        title: nextState.title,
+        loading: nextState.loading,
+        canGoBack: nextState.canGoBack,
+        canGoForward: nextState.canGoForward,
+        error: nextState.error,
+      });
+      if (nextState.url) {
+        setAddress(nextState.url);
+      }
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const browserApi = currentBrowserPanelApi();
+    if (!viewport || !browserApi) {
+      return undefined;
+    }
+
+    const updateBounds = () => {
+      const bounds = browserBoundsFromElement(viewport);
+      void browserApi
+        .setBrowserViewBounds(bounds)
+        .catch((error) => setLocalError(toBrowserError(error)));
+    };
+
+    void browserApi
+      .showBrowserView(browserBoundsFromElement(viewport))
+      .then((nextState) => {
+        setState(nextState);
+        if (nextState.url) {
+          setAddress(nextState.url);
+        }
+      })
+      .catch((error) => setLocalError(toBrowserError(error)));
+
+    updateBounds();
+    const resizeObserver = new ResizeObserver(updateBounds);
+    resizeObserver.observe(viewport);
+    window.addEventListener("resize", updateBounds);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateBounds);
+      void browserApi.hideBrowserView();
+    };
+  }, []);
+
+  const displayUrl = state.url ?? "";
+  const error = localError ?? state.error;
+
+  const navigate = () => {
+    const normalized = normalizeBrowserUrl(address);
+    if (!normalized.ok) {
+      setLocalError(normalized.reason);
+      return;
+    }
+    const browserApi = currentBrowserPanelApi();
+    if (!browserApi) {
+      setLocalError("In-app browser is unavailable in this environment.");
+      return;
+    }
+    setLocalError(null);
+    void browserApi
+      .navigateBrowserView(normalized.url)
+      .then(setState)
+      .catch((navigationError) => setLocalError(toBrowserError(navigationError)));
+  };
+
+  const runCommand = (
+    command: (browserApi: BrowserPanelApi) => Promise<BrowserPanelState>,
+    fallbackError: string,
+  ) => {
+    const browserApi = currentBrowserPanelApi();
+    if (!browserApi) {
+      setLocalError("In-app browser is unavailable in this environment.");
+      return;
+    }
+    setLocalError(null);
+    void command(browserApi)
+      .then(setState)
+      .catch((commandError) =>
+        setLocalError(toBrowserError(commandError) || fallbackError),
+      );
+  };
+
+  return (
+    <div className="preview-panel browser-panel">
+      <header className="panel-content-header browser-header">
+        <div className="panel-content-copy">
+          <span className="panel-eyebrow">Browser</span>
+          <h2>{state.title || "Browser"}</h2>
+        </div>
+        <button
+          type="button"
+          className="panel-inline-action browser-open-external"
+          aria-label="Open browser page externally"
+          title="Open externally"
+          disabled={!displayUrl || !hasBrowserApi}
+          onClick={() => {
+            if (!displayUrl) {
+              return;
+            }
+            runCommand(
+              (browserApi) => browserApi.openLink(displayUrl).then(() => state),
+              "Could not open the page externally.",
+            );
+          }}
+        >
+          <OpenIcon />
+        </button>
+      </header>
+
+      <form
+        className="browser-toolbar"
+        onSubmit={(event) => {
+          event.preventDefault();
+          navigate();
+        }}
+      >
+        <button
+          type="button"
+          className="browser-icon-button"
+          aria-label="Go back"
+          title="Back"
+          disabled={!state.canGoBack || !hasBrowserApi}
+          onClick={() =>
+            runCommand(
+              (browserApi) => browserApi.browserGoBack(),
+              "Could not go back.",
+            )
+          }
+        >
+          <ArrowLeftIcon />
+        </button>
+        <button
+          type="button"
+          className="browser-icon-button"
+          aria-label="Go forward"
+          title="Forward"
+          disabled={!state.canGoForward || !hasBrowserApi}
+          onClick={() =>
+            runCommand(
+              (browserApi) => browserApi.browserGoForward(),
+              "Could not go forward.",
+            )
+          }
+        >
+          <ArrowRightIcon />
+        </button>
+        <button
+          type="button"
+          className="browser-icon-button"
+          aria-label={state.loading ? "Stop loading" : "Reload"}
+          title={state.loading ? "Stop" : "Reload"}
+          disabled={!hasBrowserApi}
+          onClick={() =>
+            runCommand(
+              (browserApi) =>
+                state.loading
+                  ? browserApi.stopBrowserView()
+                  : browserApi.reloadBrowserView(),
+              "Could not update the page.",
+            )
+          }
+        >
+          {state.loading ? <StopIcon /> : <RefreshIcon />}
+        </button>
+        <input
+          aria-label="Browser URL"
+          value={address}
+          placeholder="https://example.com or localhost:5173"
+          onChange={(event) => setAddress(event.target.value)}
+        />
+        <button
+          type="submit"
+          className="browser-go-button"
+          disabled={!hasBrowserApi}
+        >
+          Go
+        </button>
+      </form>
+
+      <div className="browser-status-row" role="status">
+        <span className={`browser-status-dot ${state.loading ? "loading" : "idle"}`} />
+        <span title={error ?? displayUrl}>
+          {error ?? (displayUrl || "Ready")}
+        </span>
+      </div>
+
+      <div ref={viewportRef} className="browser-native-viewport">
+        {!displayUrl ? (
+          <div className="browser-empty">
+            <BrowserIcon />
+            <span>Open a page in the right panel.</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function browserBoundsFromElement(element: HTMLElement): BrowserViewBounds {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.round(rect.left)),
+    y: Math.max(0, Math.round(rect.top)),
+    width: Math.max(0, Math.round(rect.width)),
+    height: Math.max(0, Math.round(rect.height)),
+  };
+}
+
+function currentBrowserPanelApi(): BrowserPanelApi | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const browserApi = window.codexDesktop;
+  if (
+    !browserApi?.browserGoBack ||
+    !browserApi.browserGoForward ||
+    !browserApi.hideBrowserView ||
+    !browserApi.navigateBrowserView ||
+    !browserApi.openLink ||
+    !browserApi.reloadBrowserView ||
+    !browserApi.setBrowserViewBounds ||
+    !browserApi.showBrowserView ||
+    !browserApi.stopBrowserView ||
+    !browserApi.subscribeBrowserState
+  ) {
+    return null;
+  }
+  return browserApi;
+}
+
+function toBrowserError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return "Browser action failed.";
 }
 
 function ThreadAnalysisPanel({
