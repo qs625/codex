@@ -20,12 +20,20 @@ import { isChatCompatCwd } from "../lib/chatCompat";
 import { normalizeBrowserUrl } from "../lib/browserUrl";
 import { getContextUsageCategoryColor } from "../lib/contextUsage";
 import { MarkdownContent } from "../lib/markdown";
+import { resolveRightPanelTabClick } from "../lib/rightPanelView";
 import {
   buildThreadAnalysis,
   type MonitorSummary,
   type ScheduleAgendaGroup,
   type ThreadAnalysis,
 } from "../lib/threadAnalysis";
+import {
+  buildWorkflowPanelViewModel,
+  formatWorkflowTimestamp,
+  type WorkflowRunView,
+  type WorkflowStageView,
+  type WorkflowTimelineItem,
+} from "../lib/workflowProgress";
 import type {
   FilePanelView,
   FileLocation,
@@ -38,6 +46,7 @@ import type {
   ThreadPlanUpdate,
   ThreadSkill,
   TodoCardItem,
+  WorkflowSummary,
 } from "../types";
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
@@ -111,11 +120,14 @@ function formatTokenCount(value: number | null) {
 export function RightPanel({
   activeView,
   availableSkillCount,
+  availableWorkflows,
+  isCollapsed,
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
   onSelectCommandMonitor,
   onSetActiveView,
+  onSetCollapsed,
   onSetFilePanelView,
   onToggleTreeDirectory,
   onCancelGoal,
@@ -140,11 +152,14 @@ export function RightPanel({
 }: {
   activeView: RightPanelView;
   availableSkillCount: number;
+  availableWorkflows: WorkflowSummary[];
+  isCollapsed: boolean;
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
+  onSetCollapsed: (value: boolean) => void;
   onSetFilePanelView: (value: FilePanelView) => void;
   onToggleTreeDirectory: (path: string) => void;
   onCancelGoal: () => void;
@@ -173,47 +188,52 @@ export function RightPanel({
     availableSkillCount,
     modelContextWindowOverride,
   );
+  const workflowPanel = buildWorkflowPanelViewModel(thread, availableWorkflows);
   const { contextUsage } = threadAnalysis;
 
   return (
-    <aside className="right-panel">
+    <aside className={`right-panel ${isCollapsed ? "collapsed" : ""}`}>
       <div className="right-panel-body">
-        <div className="right-panel-content">
-          {activeView === "skills" ? (
-            <ThreadAnalysisPanel
-              analysis={threadAnalysis}
-              goal={goal}
-              goalAction={goalAction}
-              goalActionError={goalActionError}
-              onCancelGoal={onCancelGoal}
-              onPauseGoal={onPauseGoal}
-              onResumeGoal={onResumeGoal}
-              onSelectCommandMonitor={onSelectCommandMonitor}
-              planUpdate={planUpdate}
-            />
-          ) : activeView === "git" ? (
-            <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
-          ) : activeView === "browser" ? (
-            <BrowserPanel />
-          ) : (
-            <FilePreviewPanel
-              expandedTreeDirectories={expandedTreeDirectories}
-              filePanelView={filePanelView}
-              fileTreeEntriesByPath={fileTreeEntriesByPath}
-              fileTreeErrorsByPath={fileTreeErrorsByPath}
-              fileTreeLoadingPath={fileTreeLoadingPath}
-              onNavigateToSymbol={onNavigateToSymbol}
-              onOpenPreviewExternally={onOpenPreviewExternally}
-              onOpenTreeFile={onOpenTreeFile}
-              onSetFilePanelView={onSetFilePanelView}
-              onToggleTreeDirectory={onToggleTreeDirectory}
-              preview={preview}
-              previewError={previewError}
-              previewLoading={previewLoading}
-              thread={thread}
-            />
-          )}
-        </div>
+        {!isCollapsed ? (
+          <div className="right-panel-content">
+            {activeView === "skills" ? (
+              <ThreadAnalysisPanel
+                analysis={threadAnalysis}
+                goal={goal}
+                goalAction={goalAction}
+                goalActionError={goalActionError}
+                onCancelGoal={onCancelGoal}
+                onPauseGoal={onPauseGoal}
+                onResumeGoal={onResumeGoal}
+                onSelectCommandMonitor={onSelectCommandMonitor}
+                planUpdate={planUpdate}
+              />
+            ) : activeView === "git" ? (
+              <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
+            ) : activeView === "browser" ? (
+              <BrowserPanel />
+            ) : activeView === "workflow" ? (
+              <WorkflowPanel model={workflowPanel} />
+            ) : (
+              <FilePreviewPanel
+                expandedTreeDirectories={expandedTreeDirectories}
+                filePanelView={filePanelView}
+                fileTreeEntriesByPath={fileTreeEntriesByPath}
+                fileTreeErrorsByPath={fileTreeErrorsByPath}
+                fileTreeLoadingPath={fileTreeLoadingPath}
+                onNavigateToSymbol={onNavigateToSymbol}
+                onOpenPreviewExternally={onOpenPreviewExternally}
+                onOpenTreeFile={onOpenTreeFile}
+                onSetFilePanelView={onSetFilePanelView}
+                onToggleTreeDirectory={onToggleTreeDirectory}
+                preview={preview}
+                previewError={previewError}
+                previewLoading={previewLoading}
+                thread={thread}
+              />
+            )}
+          </div>
+        ) : null}
 
         <nav className="panel-rail" aria-label="Right panel views">
           {(
@@ -253,6 +273,17 @@ export function RightPanel({
                 badge: "",
               },
               {
+                view: "workflow",
+                label: "Workflow",
+                icon: <GridIcon />,
+                badge:
+                  workflowPanel.selectedRun?.statusTone === "running"
+                    ? "1"
+                    : workflowPanel.runs.length > 0
+                      ? String(workflowPanel.runs.length)
+                      : "",
+              },
+              {
                 view: null,
                 label: "Search",
                 icon: <SearchIcon />,
@@ -279,7 +310,13 @@ export function RightPanel({
               disabled={item.view == null}
               onClick={() => {
                 if (item.view) {
-                  onSetActiveView(item.view);
+                  const next = resolveRightPanelTabClick({
+                    activeView,
+                    clickedView: item.view,
+                    isCollapsed,
+                  });
+                  onSetActiveView(next.nextView);
+                  onSetCollapsed(next.nextCollapsed);
                 }
               }}
             >
@@ -291,6 +328,220 @@ export function RightPanel({
       </div>
     </aside>
   );
+}
+
+function WorkflowPanel({
+  model,
+}: {
+  model: ReturnType<typeof buildWorkflowPanelViewModel>;
+}) {
+  const run = model.selectedRun;
+  return (
+    <div className="skills-panel workflow-panel">
+      <header className="panel-content-header">
+        <div className="panel-content-copy">
+          <span className="panel-eyebrow">Workflow</span>
+          <h2>{run ? run.workflowName : "Workflow"}</h2>
+          <p>
+            {run
+              ? `${run.runId} · ${run.statusLabel}`
+              : `${model.availableWorkflows.length} available workflow${model.availableWorkflows.length === 1 ? "" : "s"}`}
+          </p>
+        </div>
+        {run ? (
+          <span className={`workflow-status-pill ${run.statusTone}`}>
+            {run.statusLabel}
+          </span>
+        ) : null}
+      </header>
+
+      <div className="skills-scroll workflow-scroll">
+        {run ? (
+          <>
+            <WorkflowRunSummary run={run} />
+            <WorkflowStageRail run={run} />
+            <WorkflowTimeline timeline={run.timeline} />
+          </>
+        ) : (
+          <WorkflowEmptyState availableWorkflows={model.availableWorkflows} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WorkflowRunSummary({ run }: { run: WorkflowRunView }) {
+  return (
+    <section className="workflow-summary-card">
+      <div className="workflow-summary-grid">
+        <WorkflowSummaryMetric label="Runner" value={run.runnerStatus || "unknown"} />
+        <WorkflowSummaryMetric label="Run" value={run.statusLabel} tone={run.statusTone} />
+        <WorkflowSummaryMetric label="Updated" value={formatWorkflowTimestamp(run.updatedAt)} />
+      </div>
+      <div className="workflow-message" title={run.message}>
+        {run.message || "No workflow message."}
+      </div>
+      <div className="workflow-run-meta">
+        <span title={run.runId}>{run.runId}</span>
+        <span>{run.source}</span>
+      </div>
+    </section>
+  );
+}
+
+function WorkflowSummaryMetric({
+  label,
+  value,
+  tone = "unknown",
+}: {
+  label: string;
+  value: string;
+  tone?: WorkflowRunView["statusTone"];
+}) {
+  return (
+    <div className={`workflow-summary-metric ${tone}`}>
+      <span>{label}</span>
+      <strong title={value}>{value}</strong>
+    </div>
+  );
+}
+
+function WorkflowStageRail({ run }: { run: WorkflowRunView }) {
+  return (
+    <section className="context-section-card workflow-graph-card">
+      <div className="context-section-header">
+        <div>
+          <span className="context-section-eyebrow">Graph</span>
+          <strong>Stages</strong>
+        </div>
+        <span className={`workflow-graph-source ${run.graphSource}`}>
+          {run.graphSource}
+        </span>
+      </div>
+
+      {run.stages.length > 0 ? (
+        <ol className="workflow-stage-list" aria-label="Workflow stages">
+          {run.stages.map((stage, index) => (
+            <WorkflowStageRow
+              key={stage.id}
+              isLast={index === run.stages.length - 1}
+              stage={stage}
+            />
+          ))}
+        </ol>
+      ) : (
+        <div className="workflow-graph-empty">Graph unavailable</div>
+      )}
+
+      {run.graphNote ? <p className="workflow-graph-note">{run.graphNote}</p> : null}
+    </section>
+  );
+}
+
+function WorkflowStageRow({
+  isLast,
+  stage,
+}: {
+  isLast: boolean;
+  stage: WorkflowStageView;
+}) {
+  return (
+    <li className={`workflow-stage-row ${stage.status}`}>
+      <span className="workflow-stage-marker" aria-hidden="true">
+        <span className="workflow-stage-dot" />
+        {!isLast ? <span className="workflow-stage-line" /> : null}
+      </span>
+      <span className="workflow-stage-label">{stage.label}</span>
+      <span className={`workflow-stage-status ${stage.status}`}>
+        {formatWorkflowStageStatus(stage.status)}
+      </span>
+    </li>
+  );
+}
+
+function WorkflowTimeline({ timeline }: { timeline: WorkflowTimelineItem[] }) {
+  return (
+    <section className="context-section-card workflow-timeline-card">
+      <div className="context-section-header">
+        <div>
+          <span className="context-section-eyebrow">Progress</span>
+          <strong>Recent Events</strong>
+        </div>
+        <span className="context-inline-metric">
+          {timeline.length} event{timeline.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      <div className="workflow-timeline-list">
+        {timeline.map((item) => (
+          <article key={item.id} className="workflow-timeline-row">
+            <div className="workflow-timeline-main">
+              <div className="workflow-timeline-head">
+                <strong>{item.label}</strong>
+                <span className={`workflow-status-pill ${item.statusTone}`}>
+                  {item.statusLabel}
+                </span>
+              </div>
+              <span title={item.message}>{item.message || item.runnerStatus}</span>
+              <time dateTime={new Date(item.updatedAt * 1000).toISOString()}>
+                {formatWorkflowTimestamp(item.updatedAt)}
+              </time>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WorkflowEmptyState({
+  availableWorkflows,
+}: {
+  availableWorkflows: WorkflowSummary[];
+}) {
+  return (
+    <div className="workflow-empty-state">
+      <div className="empty-card">
+        <p>No workflow activity in this thread.</p>
+      </div>
+      {availableWorkflows.length > 0 ? (
+        <section className="context-section-card workflow-available-card">
+          <div className="context-section-header">
+            <div>
+              <span className="context-section-eyebrow">Available</span>
+              <strong>Workflows</strong>
+            </div>
+            <span className="context-inline-metric">{availableWorkflows.length}</span>
+          </div>
+          <div className="workflow-available-list">
+            {availableWorkflows.slice(0, 5).map((workflow) => (
+              <article key={workflow.id} className="workflow-available-row">
+                <strong>{workflow.name || workflow.id}</strong>
+                <span>{workflow.description || workflow.id}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function formatWorkflowStageStatus(status: WorkflowStageView["status"]) {
+  switch (status) {
+    case "completed":
+      return "Done";
+    case "current":
+      return "Current";
+    case "failed":
+      return "Failed";
+    case "aborted":
+      return "Aborted";
+    case "pending":
+      return "Waiting";
+    default:
+      return "Unknown";
+  }
 }
 
 function BrowserPanel() {
