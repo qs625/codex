@@ -83,6 +83,7 @@ pub struct WorkflowFollowupTaskToolCall {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowLegacyAgentWaitToolCall {
+    pub agent_id: Option<String>,
     pub target: String,
 }
 
@@ -159,7 +160,13 @@ pub fn workflow_legacy_agent_wait_tool_call(
     request: &WorkflowRuntimeRequest,
 ) -> Result<WorkflowLegacyAgentWaitToolCall, WorkflowRuntimeError> {
     let target = required_runtime_string(&request.params, "target")?;
-    Ok(WorkflowLegacyAgentWaitToolCall { target })
+    let agent_id = request
+        .params
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    Ok(WorkflowLegacyAgentWaitToolCall { agent_id, target })
 }
 
 pub fn workflow_poll_event_tool_call(
@@ -369,6 +376,12 @@ mod tests {
                 .expect("legacy agent.wait should validate")
                 .target,
             "/root/agent"
+        );
+        assert_eq!(
+            workflow_legacy_agent_wait_tool_call(&wait)
+                .expect("legacy agent.wait should validate")
+                .agent_id,
+            None
         );
     }
 

@@ -434,8 +434,22 @@ export interface WorkflowAgent {
   id: string;
   options: WorkflowAgentOptions;
   binding: WorkflowAgentBinding;
-  wait(): Promise<WorkflowPollEventResult>;
+  wait(): Promise<WorkflowAgentWaitResult>;
   followup(message: string): Promise<unknown>;
+}
+
+export interface WorkflowAgentWaitResult {
+  agentId?: string | null;
+  target: string;
+  status?: unknown;
+  statusKind?: "completed" | "errored" | "shutdown" | "not_found" | "interrupted" | "pending_init" | "running" | "unknown";
+  text?: string | null;
+  message?: string | null;
+  content?: string;
+  event?: WorkflowPollEvent | null;
+  events?: WorkflowPollEvent[];
+  sourceHint?: string | null;
+  timedOut?: false;
 }
 
 export interface WorkflowAgentBinding {

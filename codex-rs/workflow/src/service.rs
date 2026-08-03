@@ -1,16 +1,23 @@
+use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Weak;
 
+use protocol::AgentPath;
 use protocol::models::ResponseItem;
 use protocol::models::WorkflowRunProgressEvent;
 use protocol::models::WorkflowRunProgressKind;
+use protocol::protocol::AgentStatus;
+use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentOperation;
 use serde::Deserialize;
 use serde_json::Value;
 use thread_service_api::NativeAgentRuntime;
 use thread_service_api::NativeTurnEventRuntime;
+use thread_service_api::ThreadPollEvent;
 use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadServiceFuture;
@@ -18,6 +25,7 @@ use thread_service_api::ThreadSpawnAgentForkMode;
 use thread_service_api::ThreadSpawnAgentRequest;
 use thread_service_api::ThreadSpawnAgentResult;
 use thread_service_api::ThreadTurnCapability;
+use tokio::sync::Mutex;
 use tool_types::FunctionCallError;
 
 use crate::workflow_runs::WorkflowRunManager;
@@ -353,6 +361,8 @@ fn record_terminal_workflow_progress(
 struct ThreadWorkflowRuntimeBridge {
     thread_runtime: Weak<dyn WorkflowThreadRuntime>,
     turn: Option<Arc<dyn ThreadTurnCapability>>,
+    pending_events: Mutex<VecDeque<CachedWorkflowEvent>>,
+    consumed_completion_keys: Mutex<HashSet<String>>,
 }
 
 impl ThreadWorkflowRuntimeBridge {
@@ -363,8 +373,16 @@ impl ThreadWorkflowRuntimeBridge {
         Self {
             thread_runtime,
             turn,
+            pending_events: Mutex::new(VecDeque::new()),
+            consumed_completion_keys: Mutex::new(HashSet::new()),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct CachedWorkflowEvent {
+    event: ThreadPollEvent,
+    completion_key: Option<String>,
 }
 
 impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
@@ -426,12 +444,19 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
                     Ok(serde_json::json!({ "ok": true }))
                 }
                 "agent.wait" => {
-                    let _tool_call = workflow_legacy_agent_wait_tool_call(&request)?;
-                    poll_workflow_event(&thread_runtime, Arc::clone(&turn)).await
+                    let tool_call = workflow_legacy_agent_wait_tool_call(&request)?;
+                    wait_for_workflow_agent(
+                        &thread_runtime,
+                        Arc::clone(&turn),
+                        self,
+                        tool_call.agent_id.as_deref(),
+                        &tool_call.target,
+                    )
+                    .await
                 }
                 "event.poll" => {
                     let _tool_call = workflow_poll_event_tool_call(&request)?;
-                    poll_workflow_event(&thread_runtime, Arc::clone(&turn)).await
+                    poll_workflow_event(&thread_runtime, Arc::clone(&turn), self).await
                 }
                 "shell.exec" => Err(WorkflowRuntimeError::unsupported(
                     "wf.shell is not connected to exec_command in this phase; use an agent to request shell work",
@@ -447,7 +472,12 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
 async fn poll_workflow_event(
     thread_runtime: &Arc<dyn WorkflowThreadRuntime>,
     turn: Arc<dyn ThreadTurnCapability>,
+    bridge: &ThreadWorkflowRuntimeBridge,
 ) -> Result<Value, WorkflowRuntimeError> {
+    if let Some(result) = bridge.cached_poll_result().await {
+        return serde_json::to_value(result)
+            .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()));
+    }
     let result = thread_runtime
         .poll_event(
             turn,
@@ -460,6 +490,241 @@ async fn poll_workflow_event(
         .map_err(runtime_error_from_tool_error)?;
     serde_json::to_value(result)
         .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
+}
+
+async fn wait_for_workflow_agent(
+    thread_runtime: &Arc<dyn WorkflowThreadRuntime>,
+    turn: Arc<dyn ThreadTurnCapability>,
+    bridge: &ThreadWorkflowRuntimeBridge,
+    agent_id: Option<&str>,
+    target: &str,
+) -> Result<Value, WorkflowRuntimeError> {
+    loop {
+        if let Some(event) = bridge.take_cached_matching_agent_completion(target).await {
+            return workflow_agent_wait_result(agent_id, target, event);
+        }
+
+        let poll_result = thread_runtime
+            .poll_event(
+                Arc::clone(&turn),
+                ThreadPollEventRequest {
+                    initial_timeout_ms: None,
+                    hard_cap_timeout_ms: None,
+                },
+            )
+            .await
+            .map_err(runtime_error_from_tool_error)?;
+        let (matching, pending) = bridge
+            .split_wait_events(poll_events_with_primary(poll_result), target)
+            .await;
+        bridge.push_pending_events(pending).await;
+        if let Some(event) = matching {
+            return workflow_agent_wait_result(agent_id, target, event);
+        }
+    }
+}
+
+fn split_wait_events_for_bridge(
+    events: Vec<ThreadPollEvent>,
+    target: &str,
+    consumed_completion_keys: &mut HashSet<String>,
+) -> (Option<ThreadPollEvent>, Vec<CachedWorkflowEvent>) {
+    let mut matching = None;
+    let mut pending = Vec::new();
+    let mut occurrence_by_base_key = HashMap::<String, usize>::new();
+    for event in events {
+        let completion_key = completion_event_key(&event, &mut occurrence_by_base_key);
+        if let Some(key) = completion_key.as_ref()
+            && consumed_completion_keys.contains(key)
+        {
+            continue;
+        }
+        if is_target_agent_completion(&event, target) {
+            if matching.is_none()
+                && let Some(key) = completion_key.as_ref()
+            {
+                consumed_completion_keys.insert(key.clone());
+                matching = Some(event);
+                continue;
+            }
+        }
+        pending.push(CachedWorkflowEvent {
+            event,
+            completion_key,
+        });
+    }
+    (matching, pending)
+}
+
+fn poll_events_with_primary(result: ThreadPollEventResult) -> Vec<ThreadPollEvent> {
+    let mut events = result.events;
+    if let Some(event) = result.event
+        && !events.contains(&event)
+    {
+        events.insert(0, event);
+    }
+    events
+}
+
+fn is_target_agent_completion(event: &ThreadPollEvent, target: &str) -> bool {
+    let ThreadPollEvent::InterAgentCommunication { communication } = event else {
+        return false;
+    };
+    communication.author.as_str() == target
+        && matches!(
+            communication.operation,
+            InterAgentOperation::ChildCompletion
+        )
+}
+
+fn completion_event_key(
+    event: &ThreadPollEvent,
+    occurrence_by_base_key: &mut HashMap<String, usize>,
+) -> Option<String> {
+    let ThreadPollEvent::InterAgentCommunication { communication } = event else {
+        return None;
+    };
+    if !matches!(
+        communication.operation,
+        InterAgentOperation::ChildCompletion
+    ) {
+        return None;
+    }
+    let base_key = serde_json::json!({
+        "author": &communication.author,
+        "senderThreadId": &communication.sender_thread_id,
+        "operation": &communication.operation,
+        "status": &communication.status,
+        "content": &communication.content,
+    })
+    .to_string();
+    let occurrence = occurrence_by_base_key.entry(base_key.clone()).or_default();
+    let key = format!("{base_key}#{occurrence}");
+    *occurrence += 1;
+    Some(key)
+}
+
+fn workflow_agent_wait_result(
+    agent_id: Option<&str>,
+    target: &str,
+    event: ThreadPollEvent,
+) -> Result<Value, WorkflowRuntimeError> {
+    let (status, status_kind, text, content) = match &event {
+        ThreadPollEvent::InterAgentCommunication { communication } => {
+            workflow_agent_completion_fields(communication)
+        }
+        ThreadPollEvent::CommandExecutionNotification { .. } => {
+            (None, "unknown", None, String::new())
+        }
+    };
+    serde_json::to_value(serde_json::json!({
+        "agentId": agent_id,
+        "target": target,
+        "status": status,
+        "statusKind": status_kind,
+        "text": text,
+        "message": text,
+        "content": content,
+        "event": event,
+        "events": [event],
+        "sourceHint": "child_completion",
+        "timedOut": false,
+    }))
+    .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
+}
+
+fn workflow_agent_completion_fields(
+    communication: &InterAgentCommunication,
+) -> (Option<Value>, &'static str, Option<String>, String) {
+    let content = communication.content.clone();
+    let status = communication
+        .status
+        .as_ref()
+        .and_then(|status| serde_json::to_value(status).ok());
+    let status_kind = match communication.status.as_ref() {
+        Some(AgentStatus::Completed(_)) => "completed",
+        Some(AgentStatus::Errored(_)) => "errored",
+        Some(AgentStatus::Shutdown) => "shutdown",
+        Some(AgentStatus::NotFound) => "not_found",
+        Some(AgentStatus::Interrupted) => "interrupted",
+        Some(AgentStatus::PendingInit) => "pending_init",
+        Some(AgentStatus::Running) => "running",
+        None => "unknown",
+    };
+    let text = match communication.status.as_ref() {
+        Some(AgentStatus::Completed(Some(text))) => Some(text.clone()),
+        Some(AgentStatus::Completed(None)) => Some(content.clone()),
+        Some(AgentStatus::Errored(message)) => Some(message.clone()),
+        _ if !content.is_empty() => Some(content.clone()),
+        _ => None,
+    };
+    (status, status_kind, text, content)
+}
+
+impl ThreadWorkflowRuntimeBridge {
+    async fn cached_poll_result(&self) -> Option<ThreadPollEventResult> {
+        let mut pending_events = self.pending_events.lock().await;
+        if pending_events.is_empty() {
+            return None;
+        }
+        let events: Vec<_> = pending_events
+            .drain(..)
+            .map(|cached| cached.event)
+            .collect();
+        Some(ThreadPollEventResult {
+            timed_out: false,
+            source_hint: Some("workflow_cached_event".to_string()),
+            event: events.first().cloned(),
+            events,
+            waited_ms: 0,
+            initial_timeout_ms: 0,
+            current_timeout_ms: 0,
+            hard_cap_timeout_ms: 0,
+        })
+    }
+
+    async fn take_cached_matching_agent_completion(&self, target: &str) -> Option<ThreadPollEvent> {
+        let mut pending_events = self.pending_events.lock().await;
+        let mut consumed_completion_keys = self.consumed_completion_keys.lock().await;
+        let mut index = 0;
+        while index < pending_events.len() {
+            let cached = pending_events.get(index)?;
+            if cached
+                .completion_key
+                .as_ref()
+                .is_some_and(|key| consumed_completion_keys.contains(key))
+            {
+                pending_events.remove(index);
+                continue;
+            }
+            if is_target_agent_completion(&cached.event, target) {
+                let cached = pending_events.remove(index)?;
+                if let Some(key) = cached.completion_key.as_ref() {
+                    consumed_completion_keys.insert(key.clone());
+                }
+                return Some(cached.event);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    async fn push_pending_events(&self, events: Vec<CachedWorkflowEvent>) {
+        if events.is_empty() {
+            return;
+        }
+        let mut pending_events = self.pending_events.lock().await;
+        pending_events.extend(events);
+    }
+
+    async fn split_wait_events(
+        &self,
+        events: Vec<ThreadPollEvent>,
+        target: &str,
+    ) -> (Option<ThreadPollEvent>, Vec<CachedWorkflowEvent>) {
+        let mut consumed_completion_keys = self.consumed_completion_keys.lock().await;
+        split_wait_events_for_bridge(events, target, &mut consumed_completion_keys)
+    }
 }
 
 struct ThreadWorkflowProgressSink {
@@ -615,5 +880,128 @@ fn workflow_progress_kind_for_terminal_status(
         WorkflowRunStatus::Completed => Some(WorkflowRunProgressKind::Completed),
         WorkflowRunStatus::Failed => Some(WorkflowRunProgressKind::Failed),
         WorkflowRunStatus::Aborted => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn completion_event(author: &str, text: &str) -> ThreadPollEvent {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from(author).expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            text.to_string(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(AgentStatus::Completed(Some(text.to_string())));
+        ThreadPollEvent::InterAgentCommunication { communication }
+    }
+
+    #[test]
+    fn split_wait_events_returns_only_target_agent_completion() {
+        let mut consumed = HashSet::new();
+        let (matching, pending) = split_wait_events_for_bridge(
+            vec![
+                completion_event("/root/explorer", "research done"),
+                completion_event("/root/owner", "implementation done"),
+            ],
+            "/root/owner",
+            &mut consumed,
+        );
+
+        assert!(is_target_agent_completion(
+            matching.as_ref().expect("target completion"),
+            "/root/owner"
+        ));
+        assert_eq!(pending.len(), 1);
+        assert!(is_target_agent_completion(
+            &pending.first().expect("pending completion").event,
+            "/root/explorer"
+        ));
+        assert_eq!(consumed.len(), 1);
+    }
+
+    #[test]
+    fn split_wait_events_skips_consumed_target_completion_and_keeps_next_match() {
+        let old_completion = completion_event("/root/owner", "same done");
+        let mut occurrences = HashMap::new();
+        let old_key =
+            completion_event_key(&old_completion, &mut occurrences).expect("completion key");
+        let mut consumed = HashSet::from([old_key]);
+        let (matching, pending) = split_wait_events_for_bridge(
+            vec![old_completion, completion_event("/root/owner", "same done")],
+            "/root/owner",
+            &mut consumed,
+        );
+
+        let matching = matching.expect("new target completion");
+        let ThreadPollEvent::InterAgentCommunication { communication } = matching else {
+            panic!("expected inter-agent communication");
+        };
+        assert_eq!(communication.content, "same done");
+        assert!(pending.is_empty());
+        assert_eq!(consumed.len(), 2);
+    }
+
+    #[test]
+    fn split_wait_events_ignores_repeated_consumed_completion() {
+        let old_completion = completion_event("/root/owner", "old done");
+        let mut occurrences = HashMap::new();
+        let old_key =
+            completion_event_key(&old_completion, &mut occurrences).expect("completion key");
+        let mut consumed = HashSet::from([old_key]);
+        let (matching, pending) =
+            split_wait_events_for_bridge(vec![old_completion], "/root/owner", &mut consumed);
+
+        assert!(matching.is_none());
+        assert!(pending.is_empty());
+        assert_eq!(consumed.len(), 1);
+    }
+
+    #[test]
+    fn split_wait_events_preserves_additional_target_completion_for_later_wait() {
+        let mut consumed = HashSet::new();
+        let (matching, pending) = split_wait_events_for_bridge(
+            vec![
+                completion_event("/root/owner", "first done"),
+                completion_event("/root/owner", "second done"),
+            ],
+            "/root/owner",
+            &mut consumed,
+        );
+
+        let matching = matching.expect("first target completion");
+        let ThreadPollEvent::InterAgentCommunication { communication } = matching else {
+            panic!("expected inter-agent communication");
+        };
+        assert_eq!(communication.content, "first done");
+        assert_eq!(pending.len(), 1);
+        assert!(is_target_agent_completion(
+            &pending.first().expect("pending target completion").event,
+            "/root/owner"
+        ));
+        assert_eq!(consumed.len(), 1);
+    }
+
+    #[test]
+    fn workflow_agent_wait_result_exposes_stable_completion_fields() {
+        let result = workflow_agent_wait_result(
+            Some("owner"),
+            "/root/owner",
+            completion_event("/root/owner", "implementation done"),
+        )
+        .expect("wait result");
+
+        assert_eq!(result["agentId"], "owner");
+        assert_eq!(result["target"], "/root/owner");
+        assert_eq!(result["statusKind"], "completed");
+        assert_eq!(result["text"], "implementation done");
+        assert_eq!(result["message"], "implementation done");
+        assert_eq!(
+            result["event"]["communication"]["author"],
+            serde_json::json!("/root/owner")
+        );
     }
 }
