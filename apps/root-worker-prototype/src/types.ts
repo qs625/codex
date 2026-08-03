@@ -916,3 +916,38 @@ export type ConfigWriteResponse = {
     effectiveValue: JsonConfigValue;
   } | null;
 };
+
+export type Account =
+  | { type: "apiKey" }
+  | { type: "chatgpt"; email: string; planType: string }
+  | { type: "amazonBedrock" };
+
+export type GetAccountResponse = {
+  account: Account | null;
+  requiresOpenaiAuth: boolean;
+};
+
+export type LoginAccountParams =
+  | { type: "apiKey"; apiKey: string }
+  | { type: "chatgpt"; codexStreamlinedLogin?: boolean }
+  | { type: "chatgptDeviceCode" };
+
+export type LoginAccountResponse =
+  | { type: "apiKey" }
+  | { type: "chatgpt"; loginId: string; authUrl: string }
+  | {
+      type: "chatgptDeviceCode";
+      loginId: string;
+      verificationUrl: string;
+      userCode: string;
+    };
+
+export type CancelLoginAccountResponse = {
+  status: "canceled" | "notFound";
+};
+
+export type AccountLoginCompletedNotification = {
+  loginId: string | null;
+  success: boolean;
+  error: string | null;
+};

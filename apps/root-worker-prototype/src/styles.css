@@ -1458,6 +1458,202 @@ svg {
   gap: 6px;
 }
 
+.settings-provider-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-provider-card {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.settings-provider-card.active {
+  border-color: rgba(2, 132, 199, 0.25);
+  background: rgba(240, 249, 255, 0.54);
+}
+
+.settings-provider-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-provider-title {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.settings-provider-title strong {
+  overflow: hidden;
+  color: #18181b;
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-provider-title span,
+.settings-provider-note {
+  color: #78716c;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.settings-provider-header button,
+.settings-auth-actions button,
+.settings-auth-pending button,
+.settings-api-key-row button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #292524;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.settings-provider-header button:disabled,
+.settings-auth-actions button:disabled,
+.settings-auth-pending button:disabled,
+.settings-api-key-row button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.settings-auth-panel {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.settings-auth-status {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 7px;
+  background: rgba(16, 24, 40, 0.03);
+}
+
+.settings-auth-status span {
+  overflow: hidden;
+  color: #292524;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-auth-status small {
+  overflow: hidden;
+  color: #78716c;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-auth-status.authenticated {
+  border-color: rgba(4, 120, 87, 0.18);
+  background: rgba(4, 120, 87, 0.08);
+}
+
+.settings-auth-status.authenticated span {
+  color: #047857;
+}
+
+.settings-auth-status.required {
+  border-color: rgba(217, 119, 6, 0.24);
+  background: rgba(254, 243, 199, 0.4);
+}
+
+.settings-auth-status.required span {
+  color: #92400e;
+}
+
+.settings-auth-error {
+  overflow: hidden;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: #fef2f2;
+  color: #b42318;
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+.settings-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.settings-auth-actions button:first-child {
+  border-color: rgba(2, 132, 199, 0.4);
+  background: #0284c7;
+  color: #ffffff;
+}
+
+.settings-api-key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  min-width: 0;
+}
+
+.settings-api-key-row input {
+  min-width: 0;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #18181b;
+  font-size: 11px;
+  outline: none;
+}
+
+.settings-auth-pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: rgba(2, 132, 199, 0.08);
+}
+
+.settings-auth-pending div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.settings-auth-pending strong {
+  color: #075985;
+  font-size: 11px;
+}
+
+.settings-auth-pending span {
+  overflow: hidden;
+  color: #0369a1;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-field {
   display: grid;
   grid-template-columns: minmax(128px, 0.72fr) minmax(0, 1fr);
@@ -1623,6 +1819,17 @@ svg {
   }
 
   .settings-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-provider-header,
+  .settings-auth-pending,
+  .settings-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-api-key-row {
     grid-template-columns: minmax(0, 1fr);
   }
 }

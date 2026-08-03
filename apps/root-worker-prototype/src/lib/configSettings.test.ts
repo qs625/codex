@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildGlobalSettingsSections,
   buildConfigSaveParams,
+  buildProviderSettingsGroups,
   buildSettingsConfigState,
   getUnsetDraftValue,
   isSettingsDirty,
@@ -65,6 +67,10 @@ test("buildSettingsConfigState maps supported scalar config fields", () => {
   assert.equal(
     state.fields.find((field) => field.keyPath === "sandbox_mode")?.originLabel,
     "Project",
+  );
+  assert.deepEqual(
+    state.globalSections.map((section) => section.id),
+    ["execution", "desktop"],
   );
 });
 
@@ -176,4 +182,60 @@ test("unsupported text field objects and arrays stay readonly and unsaved", () =
   assert.equal(arrayProvider?.isUnsupported, true);
   assert.match(arrayProvider?.unsupportedValue ?? "", /openai/);
   assert.equal(buildConfigSaveParams(arrayState.fields, arrayState.userVersion), null);
+});
+
+test("provider groups expose OpenAI and ModelHub without losing unknown providers", () => {
+  const openAiState = buildSettingsConfigState(
+    readResponse({
+      model_provider: "openai",
+      model: "gpt-5",
+    }),
+  );
+  const openAiGroups = buildProviderSettingsGroups(openAiState.fields);
+
+  assert.equal(openAiGroups[0]?.id, "openai");
+  assert.equal(openAiGroups[0]?.status, "active");
+  assert.equal(openAiGroups[1]?.id, "modelhub");
+  assert.equal(openAiGroups[1]?.status, "available");
+  assert.deepEqual(
+    openAiGroups[0]?.fields.map((field) => field.keyPath),
+    ["model", "model_reasoning_effort", "model_verbosity"],
+  );
+
+  const customState = buildSettingsConfigState(
+    readResponse({
+      model_provider: "local-proxy",
+      model: "llama",
+    }),
+  );
+  const customGroups = buildProviderSettingsGroups(customState.fields);
+  const customGroup = customGroups.find((group) => group.id === "custom");
+
+  assert.equal(customGroup?.status, "custom");
+  assert.equal(customGroup?.providerValue, "local-proxy");
+  assert.ok(
+    customGroup?.fields.some((field) => field.keyPath === "model_provider"),
+  );
+});
+
+test("global settings sections exclude provider fields", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model_provider: "modelhub",
+      sandbox_mode: "workspace-write",
+      desktop: { appearanceTheme: "dark" },
+    }),
+  );
+  const sections = buildGlobalSettingsSections(state.fields);
+
+  assert.deepEqual(
+    sections.map((section) => section.id),
+    ["execution", "desktop"],
+  );
+  assert.equal(
+    sections.some((section) =>
+      section.fields.some((field) => field.keyPath === "model_provider"),
+    ),
+    false,
+  );
 });

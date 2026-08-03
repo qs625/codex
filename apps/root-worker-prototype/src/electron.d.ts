@@ -46,6 +46,16 @@ declare global {
         expectedVersion?: string | null;
         reloadUserConfig?: boolean;
       }) => Promise<unknown>;
+      readAccount: (payload?: {
+        refreshToken?: boolean;
+      }) => Promise<unknown>;
+      startAccountLogin: (payload:
+        | { type: "apiKey"; apiKey: string }
+        | { type: "chatgpt"; codexStreamlinedLogin?: boolean }
+        | { type: "chatgptDeviceCode" }) => Promise<unknown>;
+      cancelAccountLogin: (payload: {
+        loginId: string;
+      }) => Promise<unknown>;
       listAgentTypes: (cwd?: string) => Promise<{
         data: Array<{
           name: string;
