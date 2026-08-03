@@ -101,6 +101,7 @@ export function SidebarPanel({
   onSelectProject,
   onSelectThread,
   onSetNewProjectName,
+  onOpenSettings,
   onSubmitNewThreadDraft,
   onToggleProject,
   onToggleTreeNode,
@@ -120,6 +121,7 @@ export function SidebarPanel({
   onSelectProject: (projectId: string, threadId: string) => void;
   onSelectThread: (threadId: string) => void;
   onSetNewProjectName: (value: string) => void;
+  onOpenSettings: () => void;
   onSubmitNewThreadDraft: (draft: NewThreadDraft) => void;
   onToggleProject: (projectId: string) => void;
   onToggleTreeNode: (threadId: string) => void;
@@ -210,7 +212,12 @@ export function SidebarPanel({
         />
       </div>
 
-      <button type="button" className="sidebar-footer">
+      <button
+        type="button"
+        className="sidebar-footer"
+        onClick={onOpenSettings}
+        aria-label="Open settings"
+      >
         <div className="sidebar-footer-left">
           <GearIcon />
           <span>Settings</span>

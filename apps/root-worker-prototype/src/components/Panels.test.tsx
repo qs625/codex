@@ -136,6 +136,7 @@ function renderSidebar(
       onSelectProject={() => {}}
       onSelectThread={() => {}}
       onSetNewProjectName={() => {}}
+      onOpenSettings={() => {}}
       onSubmitNewThreadDraft={() => {}}
       onToggleProject={() => {}}
       onToggleTreeNode={() => {}}
@@ -226,6 +227,23 @@ test("SidebarPanel renders projects with nested subagents and no extra root row"
   assert.doesNotMatch(markup, /Beta chat/);
   assert.doesNotMatch(markup, /Agent Tree/);
   assert.doesNotMatch(markup, /New Root/);
+});
+
+test("SidebarPanel exposes the settings action", () => {
+  const sidebar: ProjectAgentSidebar = {
+    projects: [],
+    chat: {
+      id: "chat",
+      statusClass: "todo",
+      updatedAt: 0,
+      conversations: [],
+    },
+  };
+
+  const markup = renderSidebar(sidebar);
+
+  assert.match(markup, /aria-label="Open settings"/);
+  assert.match(markup, /Settings/);
 });
 
 test("SidebarPanel indents project subagents relative to the project header", () => {

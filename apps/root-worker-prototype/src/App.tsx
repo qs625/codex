@@ -16,6 +16,7 @@ import {
   TreeContextMenu,
 } from "./components/Panels";
 import { RightPanel } from "./components/RightPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
 import {
   clearComposerDraft,
   getComposerDraft,
@@ -192,6 +193,7 @@ function App() {
   const [isStoppingTurn, setIsStoppingTurn] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [isCreatingChatThread, setIsCreatingChatThread] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("Project chat");
   const [error, setError] = useState<string | null>(null);
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
@@ -2677,6 +2679,7 @@ function App() {
           onSelectProject={selectProject}
           onSelectThread={selectThread}
           onSetNewProjectName={setNewProjectName}
+          onOpenSettings={() => setIsSettingsOpen(true)}
           onSubmitNewThreadDraft={(draft) => void submitNewThreadDraft(draft)}
           onToggleProject={toggleProject}
           onToggleTreeNode={toggleTreeNode}
@@ -2784,6 +2787,12 @@ function App() {
         onArchiveProjectThread={(threadId) => void archiveProjectThread(threadId)}
         onArchiveThread={(threadId) => void archiveThread(threadId)}
       />
+      {isSettingsOpen ? (
+        <SettingsPanel
+          onClose={() => setIsSettingsOpen(false)}
+          workspacePath={workspace}
+        />
+      ) : null}
     </div>
   );
 }

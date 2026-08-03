@@ -25,6 +25,27 @@ declare global {
       }>;
       listThreads: (cwd?: string) => Promise<{ data: unknown[] }>;
       listModels: () => Promise<unknown>;
+      readConfig: (payload?: {
+        includeLayers?: boolean;
+        cwd?: string | null;
+      }) => Promise<unknown>;
+      writeConfigValue: (payload: {
+        keyPath: string;
+        value: unknown;
+        mergeStrategy: "replace" | "upsert";
+        filePath?: string | null;
+        expectedVersion?: string | null;
+      }) => Promise<unknown>;
+      batchWriteConfig: (payload: {
+        edits: Array<{
+          keyPath: string;
+          value: unknown;
+          mergeStrategy: "replace" | "upsert";
+        }>;
+        filePath?: string | null;
+        expectedVersion?: string | null;
+        reloadUserConfig?: boolean;
+      }) => Promise<unknown>;
       listAgentTypes: (cwd?: string) => Promise<{
         data: Array<{
           name: string;
