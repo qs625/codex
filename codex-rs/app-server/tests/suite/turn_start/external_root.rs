@@ -417,6 +417,51 @@ async fn read_external_root_turn_completed(
     }
 }
 
+fn assert_external_provider_init_context_item(
+    item: &ThreadItem,
+    input_text: &str,
+    agent_path: &str,
+    agent_role: &str,
+) {
+    let ThreadItem::InjectedContext {
+        title,
+        preview,
+        sections,
+        ..
+    } = item
+    else {
+        panic!("expected external provider init context item, got {item:?}");
+    };
+    assert_eq!(title, "Init Context");
+    assert_eq!(preview, "External provider initialization context");
+    let context_text = sections
+        .iter()
+        .map(|section| format!("{}\n{}", section.label, section.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(context_text.contains(input_text));
+    assert!(context_text.contains("spawn_external_agent"));
+    assert!(context_text.contains("external_tool_call"));
+    assert!(context_text.contains("Current external agent metadata"));
+    assert!(context_text.contains(&format!("agent_path: {agent_path}")));
+    assert!(context_text.contains(&format!("agent_role: {agent_role}")));
+}
+
+fn assert_turn_contains_external_provider_init_context(
+    items: &[ThreadItem],
+    input_text: &str,
+    agent_path: &str,
+    agent_role: &str,
+) {
+    let init_context = items
+        .iter()
+        .find(|item| {
+            matches!(item, ThreadItem::InjectedContext { title, .. } if title == "Init Context")
+        })
+        .expect("expected persisted external provider init context item");
+    assert_external_provider_init_context_item(init_context, input_text, agent_path, agent_role);
+}
+
 #[tokio::test]
 async fn codex_cli_error_notification_is_visible_and_terminal() -> Result<()> {
     let codex_home = TempDir::new()?;
@@ -464,6 +509,15 @@ async fn codex_cli_error_notification_is_visible_and_terminal() -> Result<()> {
         other => panic!("expected codex_cli external user message item, got {other:?}"),
     }
 
+    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(init_context_item.turn_id, turn.id);
+    assert_external_provider_init_context_item(
+        &init_context_item.item,
+        input_text,
+        "/dotfiles",
+        "codex_cli",
+    );
+
     let error_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(error_item.turn_id, turn.id);
     let error_text = match error_item.item {
@@ -506,6 +560,12 @@ async fn codex_cli_error_notification_is_visible_and_terminal() -> Result<()> {
         ThreadItem::AgentMessage { text, .. }
             if text.contains("Authentication failed") && text.contains("401 Unauthorized")
     )));
+    assert_turn_contains_external_provider_init_context(
+        &persisted_turn.items,
+        input_text,
+        "/dotfiles",
+        "codex_cli",
+    );
 
     Ok(())
 }
@@ -542,6 +602,13 @@ async fn codex_cli_display_items_are_visible_and_recoverable() -> Result<()> {
     let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
 
     let _user_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_external_provider_init_context_item(
+        &init_context_item.item,
+        "Explain this project",
+        "/dotfiles",
+        "codex_cli",
+    );
 
     let reasoning_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(reasoning_item.turn_id, turn.id);
@@ -616,6 +683,12 @@ async fn codex_cli_display_items_are_visible_and_recoverable() -> Result<()> {
         item,
         ThreadItem::AgentMessage { text, .. } if text == "Codex final answer"
     )));
+    assert_turn_contains_external_provider_init_context(
+        &persisted_turn.items,
+        "Explain this project",
+        "/dotfiles",
+        "codex_cli",
+    );
 
     Ok(())
 }
@@ -668,6 +741,15 @@ async fn external_root_turn_start_accepts_text_input() -> Result<()> {
         }
         other => panic!("expected external user message item, got {other:?}"),
     }
+
+    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(init_context_item.turn_id, turn.id);
+    assert_external_provider_init_context_item(
+        &init_context_item.item,
+        "Hello external root",
+        "/root",
+        "claude_cli",
+    );
 
     let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(assistant_item.turn_id, turn.id);
@@ -735,6 +817,15 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
         other => panic!("expected named external user message item, got {other:?}"),
     }
 
+    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(init_context_item.turn_id, turn.id);
+    assert_external_provider_init_context_item(
+        &init_context_item.item,
+        input_text,
+        "/foo_project",
+        "claude_cli",
+    );
+
     let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(assistant_item.turn_id, turn.id);
     match assistant_item.item {
@@ -759,6 +850,30 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
     assert!(provider_content.contains("Current external agent metadata"));
     assert!(provider_content.contains("agent_path: /foo_project"));
     assert!(provider_content.contains("agent_role: claude_cli"));
+
+    let read_req = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread_id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_req)),
+    )
+    .await??;
+    let read: ThreadReadResponse = to_response(read_resp)?;
+    let persisted_turn = read
+        .thread
+        .turns
+        .first()
+        .expect("thread/read should include named external turn");
+    assert_turn_contains_external_provider_init_context(
+        &persisted_turn.items,
+        input_text,
+        "/foo_project",
+        "claude_cli",
+    );
 
     Ok(())
 }
@@ -812,6 +927,15 @@ async fn codex_cli_named_external_root_turn_start_sends_context_to_provider() ->
         other => panic!("expected codex_cli external user message item, got {other:?}"),
     }
 
+    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
+    assert_eq!(init_context_item.turn_id, turn.id);
+    assert_external_provider_init_context_item(
+        &init_context_item.item,
+        input_text,
+        "/cp_http_api",
+        "codex_cli",
+    );
+
     let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(assistant_item.turn_id, turn.id);
     match assistant_item.item {
@@ -837,6 +961,30 @@ async fn codex_cli_named_external_root_turn_start_sends_context_to_provider() ->
     assert!(provider_content.contains("Current external agent metadata"));
     assert!(provider_content.contains("agent_path: /cp_http_api"));
     assert!(provider_content.contains("agent_role: codex_cli"));
+
+    let read_req = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread_id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_req)),
+    )
+    .await??;
+    let read: ThreadReadResponse = to_response(read_resp)?;
+    let persisted_turn = read
+        .thread
+        .turns
+        .first()
+        .expect("thread/read should include codex_cli external turn");
+    assert_turn_contains_external_provider_init_context(
+        &persisted_turn.items,
+        input_text,
+        "/cp_http_api",
+        "codex_cli",
+    );
 
     Ok(())
 }
