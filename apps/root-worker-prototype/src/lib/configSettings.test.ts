@@ -4,12 +4,18 @@ import assert from "node:assert/strict";
 import {
   buildGlobalSettingsSections,
   buildConfigSaveParams,
-  buildProviderSettingsGroups,
   buildSettingsConfigState,
+  createModelHubOptionEntry,
+  createProviderRegistryEntry,
   getUnsetDraftValue,
+  isModelOptionsDirty,
+  isProviderRegistryDirty,
   isSettingsDirty,
+  resetModelOptionDrafts,
   resetFieldDrafts,
+  resetProviderRegistryDrafts,
   updateFieldDraft,
+  validateSettingsDrafts,
 } from "./configSettings";
 import type { ConfigReadResponse } from "../types";
 
@@ -42,7 +48,7 @@ function readResponse(
   };
 }
 
-test("buildSettingsConfigState maps supported scalar config fields", () => {
+test("buildSettingsConfigState maps supported global config fields", () => {
   const state = buildSettingsConfigState(
     readResponse({
       model: "gpt-5",
@@ -60,6 +66,10 @@ test("buildSettingsConfigState maps supported scalar config fields", () => {
     "gpt-5",
   );
   assert.equal(
+    state.fields.find((field) => field.keyPath === "model")?.section,
+    "defaults",
+  );
+  assert.equal(
     state.fields.find((field) => field.keyPath === "desktop.appearanceTheme")
       ?.draftValue,
     "dark",
@@ -70,7 +80,7 @@ test("buildSettingsConfigState maps supported scalar config fields", () => {
   );
   assert.deepEqual(
     state.globalSections.map((section) => section.id),
-    ["execution", "desktop"],
+    ["defaults", "execution", "desktop"],
   );
 });
 
@@ -97,6 +107,247 @@ test("buildConfigSaveParams saves multiple dirty fields with reloadUserConfig", 
     expectedVersion: "v1",
     reloadUserConfig: true,
   });
+});
+
+test("configured model options are saved as catalog entries without changing global model", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model: "gpt-5",
+      model_provider: "openai",
+      model_options: [
+        {
+          model: "gpt-5.5-2026-04-24",
+          provider: "modelhub-gpt",
+          base_url: "https://example.invalid/api/modelhub/online/v2/crawl",
+          wire_api: "azure_chat_completions",
+          ak: "abc",
+          query_params: { region: "cn" },
+          context_window: 200000,
+        },
+      ],
+    }),
+  );
+
+  const modelOption = state.modelOptions[0];
+  assert.equal(modelOption?.provider, "modelhub-gpt");
+  assert.equal(modelOption?.model, "gpt-5.5-2026-04-24");
+  assert.equal(modelOption?.contextWindow, "200000");
+
+  const modelOptions = state.modelOptions.map((entry) =>
+    entry.id === modelOption?.id
+      ? { ...entry, model: "gpt-5.5-2026-05-01", maxTokens: "8192" }
+      : entry,
+  );
+  const params = buildConfigSaveParams(
+    state.fields,
+    state.userVersion,
+    state.providerRegistry,
+    modelOptions,
+  );
+
+  assert.deepEqual(params?.edits, [
+    {
+      keyPath: "model_options",
+      mergeStrategy: "replace",
+      value: [
+        {
+          model: "gpt-5.5-2026-05-01",
+          provider: "modelhub-gpt",
+          base_url: "https://example.invalid/api/modelhub/online/v2/crawl",
+          wire_api: "azure_chat_completions",
+          ak: "abc",
+          query_params: { region: "cn" },
+          context_window: 200000,
+          max_tokens: 8192,
+        },
+      ],
+    },
+  ]);
+  assert.equal(
+    params?.edits.some((edit) => edit.keyPath === "model"),
+    false,
+  );
+  assert.equal(
+    params?.edits.some((edit) => edit.keyPath === "model_provider"),
+    false,
+  );
+});
+
+test("creating a ModelHub option prepares a model_options write", () => {
+  const state = buildSettingsConfigState(readResponse({}));
+  const entry = {
+    ...createModelHubOptionEntry(state.modelOptions),
+    model: "modelhub-gpt-5",
+    baseUrl: "https://example.invalid/modelhub",
+    ak: "secret-ak",
+    contextWindow: "128000",
+  };
+
+  assert.equal(entry.provider, "modelhub-gpt");
+  assert.equal(isModelOptionsDirty([entry]), true);
+  assert.deepEqual(
+    buildConfigSaveParams(state.fields, state.userVersion, [], [entry])?.edits,
+    [
+      {
+        keyPath: "model_options",
+        mergeStrategy: "replace",
+        value: [
+          {
+            model: "modelhub-gpt-5",
+            provider: "modelhub-gpt",
+            base_url: "https://example.invalid/modelhub",
+            wire_api: "azure_chat_completions",
+            ak: "secret-ak",
+            context_window: 128000,
+          },
+        ],
+      },
+    ],
+  );
+});
+
+test("custom provider registry writes provider paths and rejects reserved ids", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model_providers: {
+        openai: {
+          name: "OpenAI",
+          wire_api: "responses",
+        },
+        corp: {
+          name: "Corp Gateway",
+          base_url: "https://corp.example.invalid/v1",
+          wire_api: "responses",
+          env_key: "CORP_API_KEY",
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    state.providerRegistry.map((entry) => entry.effectiveId),
+    ["corp"],
+  );
+
+  const providerRegistry = state.providerRegistry.map((entry) => ({
+    ...entry,
+    draftId: "corp-east",
+    baseUrl: "https://east.example.invalid/v1",
+  }));
+  const params = buildConfigSaveParams(
+    state.fields,
+    state.userVersion,
+    providerRegistry,
+    state.modelOptions,
+  );
+
+  assert.deepEqual(params?.edits, [
+    { keyPath: "model_providers.corp", value: null, mergeStrategy: "replace" },
+    {
+      keyPath: "model_providers.corp-east",
+      mergeStrategy: "replace",
+      value: {
+        name: "Corp Gateway",
+        base_url: "https://east.example.invalid/v1",
+        wire_api: "responses",
+        env_key: "CORP_API_KEY",
+      },
+    },
+  ]);
+  assert.deepEqual(
+    validateSettingsDrafts(
+      [{ ...providerRegistry[0]!, draftId: "openai" }],
+      state.modelOptions,
+    ),
+    ['Provider id "openai" is reserved.'],
+  );
+});
+
+test("inline model option providers are not duplicated as custom registry entries", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model_options: [
+        {
+          model: "gpt-5.5-2026-04-24",
+          provider: "modelhub-gpt",
+          base_url: "https://example.invalid/modelhub",
+        },
+      ],
+      model_providers: {
+        "modelhub-gpt": {
+          name: "modelhub-gpt",
+          base_url: "https://example.invalid/modelhub",
+          wire_api: "azure_chat_completions",
+        },
+        corp: {
+          name: "Corp Gateway",
+          base_url: "https://corp.example.invalid/v1",
+          wire_api: "responses",
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    state.providerRegistry.map((entry) => entry.effectiveId),
+    ["corp"],
+  );
+});
+
+test("real custom provider with same id as inline model option remains visible", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model_options: [
+        {
+          model: "gpt-5.5-2026-04-24",
+          provider: "modelhub-gpt",
+          base_url: "https://example.invalid/modelhub",
+          ak: "inline-ak",
+        },
+      ],
+      model_providers: {
+        "modelhub-gpt": {
+          name: "modelhub-gpt",
+          base_url: "https://gateway.example.invalid/v1",
+          wire_api: "azure_chat_completions",
+          env_key: "MODELHUB_API_KEY",
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    state.providerRegistry.map((entry) => entry.effectiveId),
+    ["modelhub-gpt"],
+  );
+});
+
+test("provider registry preserves advanced fields as readonly", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model_providers: {
+        corp: {
+          name: "Corp Gateway",
+          base_url: "https://corp.example.invalid/v1",
+          wire_api: "responses",
+          query_params: { tenant: "codex" },
+        },
+      },
+    }),
+  );
+  const entry = state.providerRegistry[0];
+
+  assert.equal(entry?.isReadonly, true);
+  assert.equal(isProviderRegistryDirty(state.providerRegistry), false);
+  assert.equal(
+    buildConfigSaveParams(
+      state.fields,
+      state.userVersion,
+      state.providerRegistry,
+      state.modelOptions,
+    ),
+    null,
+  );
 });
 
 test("unset draft values clear config paths", () => {
@@ -129,6 +380,34 @@ test("resetFieldDrafts reverts dirty fields to effective values", () => {
 
   assert.equal(isSettingsDirty(fields), true);
   assert.equal(isSettingsDirty(resetFieldDrafts(fields)), false);
+});
+
+test("reset helpers restore provider and model catalog drafts", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model_options: [{ model: "a", provider: "modelhub-gpt" }],
+      model_providers: {
+        corp: {
+          name: "Corp",
+          base_url: "https://corp.example.invalid/v1",
+          wire_api: "responses",
+        },
+      },
+    }),
+  );
+  const providerDrafts = [
+    { ...state.providerRegistry[0]!, name: "Changed" },
+    createProviderRegistryEntry(state.providerRegistry),
+  ];
+  const modelDrafts = [
+    { ...state.modelOptions[0]!, model: "changed" },
+    createModelHubOptionEntry(state.modelOptions),
+  ];
+
+  assert.equal(resetProviderRegistryDrafts(providerDrafts).length, 1);
+  assert.equal(resetProviderRegistryDrafts(providerDrafts)[0]?.name, "Corp");
+  assert.equal(resetModelOptionDrafts(modelDrafts).length, 1);
+  assert.equal(resetModelOptionDrafts(modelDrafts)[0]?.model, "a");
 });
 
 test("missing optional fields and unsupported nested values do not crash", () => {
@@ -184,41 +463,7 @@ test("unsupported text field objects and arrays stay readonly and unsaved", () =
   assert.equal(buildConfigSaveParams(arrayState.fields, arrayState.userVersion), null);
 });
 
-test("provider groups expose OpenAI and ModelHub without losing unknown providers", () => {
-  const openAiState = buildSettingsConfigState(
-    readResponse({
-      model_provider: "openai",
-      model: "gpt-5",
-    }),
-  );
-  const openAiGroups = buildProviderSettingsGroups(openAiState.fields);
-
-  assert.equal(openAiGroups[0]?.id, "openai");
-  assert.equal(openAiGroups[0]?.status, "active");
-  assert.equal(openAiGroups[1]?.id, "modelhub");
-  assert.equal(openAiGroups[1]?.status, "available");
-  assert.deepEqual(
-    openAiGroups[0]?.fields.map((field) => field.keyPath),
-    ["model", "model_reasoning_effort", "model_verbosity"],
-  );
-
-  const customState = buildSettingsConfigState(
-    readResponse({
-      model_provider: "local-proxy",
-      model: "llama",
-    }),
-  );
-  const customGroups = buildProviderSettingsGroups(customState.fields);
-  const customGroup = customGroups.find((group) => group.id === "custom");
-
-  assert.equal(customGroup?.status, "custom");
-  assert.equal(customGroup?.providerValue, "local-proxy");
-  assert.ok(
-    customGroup?.fields.some((field) => field.keyPath === "model_provider"),
-  );
-});
-
-test("global settings sections exclude provider fields", () => {
+test("global settings sections keep model defaults outside provider registry", () => {
   const state = buildSettingsConfigState(
     readResponse({
       model_provider: "modelhub",
@@ -230,12 +475,26 @@ test("global settings sections exclude provider fields", () => {
 
   assert.deepEqual(
     sections.map((section) => section.id),
-    ["execution", "desktop"],
+    ["defaults", "execution", "desktop"],
   );
   assert.equal(
     sections.some((section) =>
       section.fields.some((field) => field.keyPath === "model_provider"),
     ),
-    false,
+    true,
   );
+});
+
+test("model option validation rejects empty models and non-positive windows", () => {
+  const entry = {
+    ...createModelHubOptionEntry([]),
+    model: "",
+    provider: "modelhub-gpt",
+    contextWindow: "0",
+  };
+
+  assert.deepEqual(validateSettingsDrafts([], [entry]), [
+    "Configured model id is required.",
+    "Configured model context window must be positive.",
+  ]);
 });

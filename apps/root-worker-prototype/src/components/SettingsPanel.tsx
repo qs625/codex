@@ -9,14 +9,21 @@ import {
 import {
   buildConfigSaveParams,
   buildGlobalSettingsSections,
-  buildProviderSettingsGroups,
   buildSettingsConfigState,
+  createModelHubOptionEntry,
+  createProviderRegistryEntry,
   getUnsetDraftValue,
+  isModelOptionsDirty,
+  isProviderRegistryDirty,
   isSettingsDirty,
+  resetModelOptionDrafts,
   resetFieldDrafts,
+  resetProviderRegistryDrafts,
   updateFieldDraft,
+  validateSettingsDrafts,
   type ConfigFieldState,
-  type ProviderSettingsGroup,
+  type ModelOptionEntry,
+  type ProviderRegistryEntry,
   type SettingsFieldSection,
 } from "../lib/configSettings";
 import { toErrorMessage } from "../lib/shared";
@@ -40,6 +47,10 @@ export function SettingsPanel({
 }) {
   const [status, setStatus] = useState<SettingsPanelStatus>("loading");
   const [fields, setFields] = useState<ConfigFieldState[]>([]);
+  const [providerRegistry, setProviderRegistry] = useState<
+    ProviderRegistryEntry[]
+  >([]);
+  const [modelOptions, setModelOptions] = useState<ModelOptionEntry[]>([]);
   const [userConfigPath, setUserConfigPath] = useState<string | null>(null);
   const [userVersion, setUserVersion] = useState<string | null>(null);
   const [accountResponse, setAccountResponse] =
@@ -53,12 +64,14 @@ export function SettingsPanel({
   const [authError, setAuthError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const dirty = useMemo(() => isSettingsDirty(fields), [fields]);
-  const unsetValue = getUnsetDraftValue();
-  const providerGroups = useMemo(
-    () => buildProviderSettingsGroups(fields),
-    [fields],
+  const dirty = useMemo(
+    () =>
+      isSettingsDirty(fields) ||
+      isProviderRegistryDirty(providerRegistry) ||
+      isModelOptionsDirty(modelOptions),
+    [fields, providerRegistry, modelOptions],
   );
+  const unsetValue = getUnsetDraftValue();
   const globalSections = useMemo(
     () => buildGlobalSettingsSections(fields),
     [fields],
@@ -113,6 +126,8 @@ export function SettingsPanel({
         }
         const state = buildSettingsConfigState(response);
         setFields(state.fields);
+        setProviderRegistry(state.providerRegistry);
+        setModelOptions(state.modelOptions);
         setUserConfigPath(state.userConfigPath);
         setUserVersion(state.userVersion);
         setStatus("ready");
@@ -153,7 +168,17 @@ export function SettingsPanel({
   }
 
   async function saveSettings() {
-    const params = buildConfigSaveParams(fields, userVersion);
+    const validationErrors = validateSettingsDrafts(providerRegistry, modelOptions);
+    if (validationErrors.length > 0) {
+      setError(validationErrors[0] ?? "Settings contain invalid values.");
+      return;
+    }
+    const params = buildConfigSaveParams(
+      fields,
+      userVersion,
+      providerRegistry,
+      modelOptions,
+    );
     if (!params) {
       setNotice("No changes to save.");
       return;
@@ -171,6 +196,8 @@ export function SettingsPanel({
       })) as ConfigReadResponse;
       const state = buildSettingsConfigState(nextRead);
       setFields(state.fields);
+      setProviderRegistry(state.providerRegistry);
+      setModelOptions(state.modelOptions);
       setUserConfigPath(state.userConfigPath ?? response.filePath ?? null);
       setUserVersion(state.userVersion ?? response.version ?? null);
       setNotice(
@@ -190,9 +217,19 @@ export function SettingsPanel({
     setNotice(null);
   }
 
-  function setProvider(provider: string | null) {
-    setFields((current) =>
-      updateFieldDraft(current, "model_provider", provider ?? unsetValue),
+  function updateProviderEntry(
+    id: string,
+    patch: Partial<ProviderRegistryEntry>,
+  ) {
+    setProviderRegistry((current) =>
+      current.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
+    );
+    setNotice(null);
+  }
+
+  function updateModelOption(id: string, patch: Partial<ModelOptionEntry>) {
+    setModelOptions((current) =>
+      current.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)),
     );
     setNotice(null);
   }
@@ -342,25 +379,85 @@ export function SettingsPanel({
                   <h3>Providers</h3>
                 </div>
                 <div className="settings-provider-list">
-                  {providerGroups.map((group) => (
-                    <ProviderSettingsCard
+                  <OpenAiProviderCard
                       accountStatus={accountStatus}
                       authError={authError}
                       authState={openAiAuthState}
                       apiKeyDraft={apiKeyDraft}
-                      group={group}
-                      key={group.id}
                       onApiKeyChange={setApiKeyDraft}
                       onCancelLogin={() => void cancelLogin()}
-                      onSelectProvider={setProvider}
                       onStartApiKeyLogin={() => void startApiKeyLogin()}
                       onStartChatgptLogin={() => void startChatgptLogin()}
                       onStartDeviceLogin={() => void startDeviceLogin()}
-                      onUpdateDraft={updateDraft}
                       pendingLogin={pendingLogin}
-                      unsetValue={unsetValue}
                     />
-                  ))}
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-section-heading settings-section-heading-row">
+                  <h3>Configured Models</h3>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setModelOptions((current) => [
+                        ...current,
+                        createModelHubOptionEntry(current),
+                      ])
+                    }
+                  >
+                    Add ModelHub Model
+                  </button>
+                </div>
+                <div className="settings-provider-list">
+                  {modelOptions.filter((entry) => !entry.isDeleted).length === 0 ? (
+                    <div className="settings-state compact">
+                      No configured model catalog entries.
+                    </div>
+                  ) : null}
+                  {modelOptions
+                    .filter((entry) => !entry.isDeleted)
+                    .map((entry) => (
+                      <ModelOptionCard
+                        entry={entry}
+                        key={entry.id}
+                        onChange={updateModelOption}
+                      />
+                    ))}
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <div className="settings-section-heading settings-section-heading-row">
+                  <h3>Custom Providers</h3>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setProviderRegistry((current) => [
+                        ...current,
+                        createProviderRegistryEntry(current),
+                      ])
+                    }
+                  >
+                    Add Provider
+                  </button>
+                </div>
+                <div className="settings-provider-list">
+                  {providerRegistry.filter((entry) => !entry.isDeleted).length ===
+                  0 ? (
+                    <div className="settings-state compact">
+                      No custom provider registry entries.
+                    </div>
+                  ) : null}
+                  {providerRegistry
+                    .filter((entry) => !entry.isDeleted)
+                    .map((entry) => (
+                      <ProviderRegistryCard
+                        entry={entry}
+                        key={entry.id}
+                        onChange={updateProviderEntry}
+                      />
+                    ))}
                 </div>
               </div>
 
@@ -387,6 +484,12 @@ export function SettingsPanel({
               type="button"
               onClick={() => {
                 setFields((current) => resetFieldDrafts(current));
+                setProviderRegistry((current) =>
+                  resetProviderRegistryDrafts(current),
+                );
+                setModelOptions((current) =>
+                  resetModelOptionDrafts(current),
+                );
                 setNotice(null);
               }}
               disabled={!dirty || status === "saving"}
@@ -410,96 +513,195 @@ export function SettingsPanel({
   return createPortal(panel, document.body);
 }
 
-function ProviderSettingsCard({
+function OpenAiProviderCard({
   accountStatus,
   apiKeyDraft,
   authError,
   authState,
-  group,
   onApiKeyChange,
   onCancelLogin,
-  onSelectProvider,
   onStartApiKeyLogin,
   onStartChatgptLogin,
   onStartDeviceLogin,
-  onUpdateDraft,
   pendingLogin,
-  unsetValue,
 }: {
   accountStatus: AccountPanelStatus;
   apiKeyDraft: string;
   authError: string | null;
   authState: ReturnType<typeof resolveOpenAiAuthState>;
-  group: ProviderSettingsGroup;
   onApiKeyChange: (value: string) => void;
   onCancelLogin: () => void;
-  onSelectProvider: (provider: string | null) => void;
   onStartApiKeyLogin: () => void;
   onStartChatgptLogin: () => void;
   onStartDeviceLogin: () => void;
-  onUpdateDraft: (keyPath: string, value: string) => void;
   pendingLogin: PendingOpenAiLogin | null;
-  unsetValue: string;
 }) {
-  const isOpenAi = group.id === "openai";
-  const isActive = group.status === "active" || group.status === "custom";
-  const providerButtonLabel =
-    group.id === "custom"
-      ? "Current"
-      : isActive
-        ? "Selected"
-        : `Use ${group.title}`;
-
   return (
-    <section className={`settings-provider-card ${isActive ? "active" : ""}`}>
+    <section className="settings-provider-card">
       <header className="settings-provider-header">
         <div className="settings-provider-title">
-          <strong>{group.title}</strong>
-          <span>{group.description}</span>
+          <strong>OpenAI</strong>
+          <span>Built-in provider authentication.</span>
+        </div>
+      </header>
+
+      <OpenAiAuthControls
+        accountStatus={accountStatus}
+        apiKeyDraft={apiKeyDraft}
+        authError={authError}
+        authState={authState}
+        onApiKeyChange={onApiKeyChange}
+        onCancelLogin={onCancelLogin}
+        onStartApiKeyLogin={onStartApiKeyLogin}
+        onStartChatgptLogin={onStartChatgptLogin}
+        onStartDeviceLogin={onStartDeviceLogin}
+        pendingLogin={pendingLogin}
+      />
+    </section>
+  );
+}
+
+function ModelOptionCard({
+  entry,
+  onChange,
+}: {
+  entry: ModelOptionEntry;
+  onChange: (id: string, patch: Partial<ModelOptionEntry>) => void;
+}) {
+  return (
+    <section className="settings-provider-card">
+      <header className="settings-provider-header">
+        <div className="settings-provider-title">
+          <strong>{entry.model || "New configured model"}</strong>
+          <span>
+            {entry.provider || "Provider id"} · appears in the thread model picker
+          </span>
         </div>
         <button
           type="button"
-          disabled={isActive || group.providerValue == null}
-          onClick={() => onSelectProvider(group.providerValue)}
+          onClick={() => onChange(entry.id, { isDeleted: true })}
         >
-          {providerButtonLabel}
+          Remove
         </button>
       </header>
-
-      {isOpenAi ? (
-        <OpenAiAuthControls
-          accountStatus={accountStatus}
-          apiKeyDraft={apiKeyDraft}
-          authError={authError}
-          authState={authState}
-          onApiKeyChange={onApiKeyChange}
-          onCancelLogin={onCancelLogin}
-          onStartApiKeyLogin={onStartApiKeyLogin}
-          onStartChatgptLogin={onStartChatgptLogin}
-          onStartDeviceLogin={onStartDeviceLogin}
-          pendingLogin={pendingLogin}
+      <div className="settings-form-grid">
+        <TextInput label="Model ID" value={entry.model} onChange={(model) => onChange(entry.id, { model })} />
+        <TextInput label="Provider ID" value={entry.provider} onChange={(provider) => onChange(entry.id, { provider })} />
+        <TextInput label="Base URL" value={entry.baseUrl} onChange={(baseUrl) => onChange(entry.id, { baseUrl })} />
+        <SelectInput
+          label="Wire API"
+          value={entry.wireApi}
+          options={[
+            ["azure_chat_completions", "Azure chat completions"],
+            ["responses", "Responses"],
+            ["chat_completions", "Chat completions"],
+          ]}
+          onChange={(wireApi) => onChange(entry.id, { wireApi })}
         />
-      ) : null}
-
-      {group.id === "modelhub" ? (
-        <div className="settings-provider-note">
-          ModelHub authentication is managed outside this settings panel.
-        </div>
-      ) : null}
-
-      {isActive ? (
-        <div className="settings-field-list">
-          {group.fields.map((field) => (
-            <SettingsField
-              field={field}
-              key={field.keyPath}
-              onChange={onUpdateDraft}
-              unsetValue={unsetValue}
-            />
-          ))}
-        </div>
-      ) : null}
+        <TextInput label="AK query param" value={entry.ak} onChange={(ak) => onChange(entry.id, { ak })} />
+        <TextInput label="Env key" value={entry.envKey} onChange={(envKey) => onChange(entry.id, { envKey })} />
+        <TextInput label="Context window" value={entry.contextWindow} inputMode="numeric" onChange={(contextWindow) => onChange(entry.id, { contextWindow })} />
+        <TextInput label="Max context" value={entry.maxContextWindow} inputMode="numeric" onChange={(maxContextWindow) => onChange(entry.id, { maxContextWindow })} />
+        <TextInput label="Auto compact" value={entry.autoCompactTokenLimit} inputMode="numeric" onChange={(autoCompactTokenLimit) => onChange(entry.id, { autoCompactTokenLimit })} />
+        <TextInput label="Max tokens" value={entry.maxTokens} inputMode="numeric" onChange={(maxTokens) => onChange(entry.id, { maxTokens })} />
+      </div>
     </section>
+  );
+}
+
+function ProviderRegistryCard({
+  entry,
+  onChange,
+}: {
+  entry: ProviderRegistryEntry;
+  onChange: (id: string, patch: Partial<ProviderRegistryEntry>) => void;
+}) {
+  return (
+    <section className={`settings-provider-card ${entry.isReadonly ? "readonly" : ""}`}>
+      <header className="settings-provider-header">
+        <div className="settings-provider-title">
+          <strong>{entry.draftId || "New provider"}</strong>
+          <span>{entry.readonlyReason ?? "User provider registry entry."}</span>
+        </div>
+        <button
+          type="button"
+          disabled={entry.isReadonly}
+          onClick={() => onChange(entry.id, { isDeleted: true })}
+        >
+          Remove
+        </button>
+      </header>
+      {entry.isReadonly ? (
+        <div className="settings-readonly-value">
+          {JSON.stringify(entry.raw)}
+        </div>
+      ) : (
+        <div className="settings-form-grid">
+          <TextInput label="Provider ID" value={entry.draftId} onChange={(draftId) => onChange(entry.id, { draftId })} />
+          <TextInput label="Name" value={entry.name} onChange={(name) => onChange(entry.id, { name })} />
+          <TextInput label="Base URL" value={entry.baseUrl} onChange={(baseUrl) => onChange(entry.id, { baseUrl })} />
+          <SelectInput
+            label="Wire API"
+            value={entry.wireApi}
+            options={[
+              ["responses", "Responses"],
+              ["azure_chat_completions", "Azure chat completions"],
+              ["chat_completions", "Chat completions"],
+            ]}
+            onChange={(wireApi) => onChange(entry.id, { wireApi })}
+          />
+          <TextInput label="Env key" value={entry.envKey} onChange={(envKey) => onChange(entry.id, { envKey })} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TextInput({
+  inputMode,
+  label,
+  onChange,
+  value,
+}: {
+  inputMode?: "numeric";
+  label: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="settings-inline-field">
+      <span>{label}</span>
+      <input
+        inputMode={inputMode}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function SelectInput({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  options: Array<[string, string]>;
+  value: string;
+}) {
+  return (
+    <label className="settings-inline-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
