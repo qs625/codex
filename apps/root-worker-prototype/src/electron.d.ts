@@ -216,6 +216,90 @@ declare global {
         workspaceRoot: string | null;
       }>;
       openLink: (target: string) => Promise<{ ok: boolean }>;
+      showBrowserView: (bounds: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }) => Promise<{
+        url: string | null;
+        title: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      }>;
+      hideBrowserView: () => Promise<{
+        url: string | null;
+        title: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      }>;
+      setBrowserViewBounds: (bounds: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }) => Promise<{
+        url: string | null;
+        title: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      }>;
+      navigateBrowserView: (target: string) => Promise<{
+        url: string | null;
+        title: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      }>;
+      browserGoBack: () => Promise<{
+        url: string | null;
+        title: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      }>;
+      browserGoForward: () => Promise<{
+        url: string | null;
+        title: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      }>;
+      reloadBrowserView: () => Promise<{
+        url: string | null;
+        title: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      }>;
+      stopBrowserView: () => Promise<{
+        url: string | null;
+        title: string | null;
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      }>;
+      subscribeBrowserState: (
+        listener: (state: {
+          url: string | null;
+          title: string | null;
+          loading: boolean;
+          canGoBack: boolean;
+          canGoForward: boolean;
+          error: string | null;
+        }) => void,
+      ) => () => void;
       sendMessage: (payload: {
         threadId: string;
         model?: string | null;

@@ -48,6 +48,16 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     ipcRenderer.invoke("codex:lspDefinition", payload),
   lspStatus: (filePath) => ipcRenderer.invoke("codex:lspStatus", filePath),
   openLink: (target) => ipcRenderer.invoke("codex:openLink", target),
+  showBrowserView: (bounds) => ipcRenderer.invoke("codex:browser:show", bounds),
+  hideBrowserView: () => ipcRenderer.invoke("codex:browser:hide"),
+  setBrowserViewBounds: (bounds) =>
+    ipcRenderer.invoke("codex:browser:setBounds", bounds),
+  navigateBrowserView: (target) =>
+    ipcRenderer.invoke("codex:browser:navigate", target),
+  browserGoBack: () => ipcRenderer.invoke("codex:browser:goBack"),
+  browserGoForward: () => ipcRenderer.invoke("codex:browser:goForward"),
+  reloadBrowserView: () => ipcRenderer.invoke("codex:browser:reload"),
+  stopBrowserView: () => ipcRenderer.invoke("codex:browser:stop"),
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
   interruptTurn: (payload) =>
     ipcRenderer.invoke("codex:interruptTurn", payload),
@@ -70,6 +80,17 @@ contextBridge.exposeInMainWorld("codexDesktop", {
     return () => {
       ipcRenderer.removeListener("codex:notification", onNotification);
       ipcRenderer.removeListener("codex:status", onStatus);
+    };
+  },
+  subscribeBrowserState(listener) {
+    const onBrowserState = (_event, state) => {
+      listener(state);
+    };
+
+    ipcRenderer.on("codex:browser:state", onBrowserState);
+
+    return () => {
+      ipcRenderer.removeListener("codex:browser:state", onBrowserState);
     };
   },
 });

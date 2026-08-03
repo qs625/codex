@@ -79,6 +79,42 @@ export function OpenIcon() {
   );
 }
 
+export function BrowserIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M4 12h16" />
+      <path d="M12 3.8c2.1 2.1 3.1 4.8 3.1 8.2s-1 6.1-3.1 8.2" />
+      <path d="M12 3.8C9.9 5.9 8.9 8.6 8.9 12s1 6.1 3.1 8.2" />
+    </svg>
+  );
+}
+
+export function ArrowLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15 6 9 12l6 6" />
+    </svg>
+  );
+}
+
+export function ArrowRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+export function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M19 12a7 7 0 1 1-2.1-5" />
+      <path d="M19 5.5v5h-5" />
+    </svg>
+  );
+}
+
 export function GearIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">

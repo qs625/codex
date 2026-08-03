@@ -9,8 +9,13 @@ const {
   session,
   shell,
   systemPreferences,
+  WebContentsView,
 } = require("electron");
 const { AppServerClient } = require("./appServerClient.cjs");
+const {
+  browserNavigationEventDecision,
+  normalizeBrowserTarget,
+} = require("./browserPanelSecurity.cjs");
 const {
   isLocalLinkTarget,
   localFilePathFromTarget,
@@ -46,11 +51,13 @@ const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
 const windows = new Set();
+const browserPanelsByWindowId = new Map();
 const threadRuntimeById = new Map();
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const builtRendererPath = path.join(__dirname, "../dist/index.html");
+const browserSessionPartition = "persist:root-worker-browser";
 
 async function createWindow() {
   const window = new BrowserWindow({
@@ -69,6 +76,7 @@ async function createWindow() {
 
   windows.add(window);
   window.on("closed", () => {
+    destroyBrowserPanel(window);
     windows.delete(window);
   });
 
@@ -335,6 +343,70 @@ ipcMain.handle("codex:openLink", async (_event, target) => {
   return { ok: true };
 });
 
+ipcMain.handle("codex:browser:show", async (event, bounds) => {
+  const panel = browserPanelForEvent(event);
+  attachBrowserPanel(panel);
+  setBrowserPanelBounds(panel, bounds);
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:hide", async (event) => {
+  const panel = browserPanelForEvent(event);
+  detachBrowserPanel(panel);
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:setBounds", async (event, bounds) => {
+  const panel = browserPanelForEvent(event);
+  setBrowserPanelBounds(panel, bounds);
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:navigate", async (event, target) => {
+  const panel = browserPanelForEvent(event);
+  const normalized = normalizeBrowserTarget(target);
+  if (!normalized.ok) {
+    throw new Error(normalized.reason);
+  }
+  panel.state.error = null;
+  await panel.view.webContents.loadURL(normalized.url);
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:goBack", async (event) => {
+  const panel = browserPanelForEvent(event);
+  const navigation = browserNavigation(panel.view.webContents);
+  if (navigation.canGoBack()) {
+    navigation.goBack();
+  }
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:goForward", async (event) => {
+  const panel = browserPanelForEvent(event);
+  const navigation = browserNavigation(panel.view.webContents);
+  if (navigation.canGoForward()) {
+    navigation.goForward();
+  }
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:reload", async (event) => {
+  const panel = browserPanelForEvent(event);
+  if (panel.view.webContents.getURL()) {
+    panel.view.webContents.reload();
+  }
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:stop", async (event) => {
+  const panel = browserPanelForEvent(event);
+  panel.view.webContents.stop();
+  panel.state.loading = false;
+  sendBrowserPanelState(panel);
+  return browserPanelState(panel);
+});
+
 ipcMain.handle("codex:readLocalFile", async (_event, target) => {
   return readLocalFileTarget(target);
 });
@@ -440,19 +512,12 @@ ipcMain.handle("codex:stopRealtime", async (_event, payload) => {
 });
 
 app.whenReady().then(() => {
-  session.defaultSession.setPermissionCheckHandler(
-    (_webContents, permission) => {
-      return permission === "media";
-    },
+  configurePermissionHandlers(session.defaultSession, ({ webContents, permission }) =>
+    permission === "media" && !isBrowserPanelWebContents(webContents),
   );
-  session.defaultSession.setPermissionRequestHandler(
-    (_webContents, permission, callback) => {
-      if (permission === "media") {
-        callback(true);
-        return;
-      }
-      callback(false);
-    },
+  configurePermissionHandlers(
+    session.fromPartition(browserSessionPartition),
+    () => false,
   );
   void ensureDefaultWorkspace()
     .then(async () => {
@@ -474,6 +539,218 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+function browserPanelForEvent(event) {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) {
+    throw new Error("Browser panel requires an active application window");
+  }
+  return browserPanelForWindow(window);
+}
+
+function browserPanelForWindow(window) {
+  const existing = browserPanelsByWindowId.get(window.id);
+  if (existing) {
+    return existing;
+  }
+
+  if (typeof WebContentsView !== "function") {
+    throw new Error("This Electron version does not support WebContentsView");
+  }
+
+  const view = new WebContentsView({
+    webPreferences: {
+      allowRunningInsecureContent: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: browserSessionPartition,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+
+  const panel = {
+    window,
+    view,
+    visible: false,
+    state: {
+      url: null,
+      title: null,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    },
+  };
+
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    const normalized = normalizeBrowserTarget(url);
+    if (normalized.ok) {
+      void shell.openExternal(normalized.url);
+    }
+    return { action: "deny" };
+  });
+
+  view.webContents.on("will-navigate", (event, url) =>
+    guardBrowserPanelNavigation(panel, event, url),
+  );
+  view.webContents.on("will-frame-navigate", (event, url) =>
+    guardBrowserPanelNavigation(panel, event, url),
+  );
+  view.webContents.on("will-redirect", (event, url) =>
+    guardBrowserPanelNavigation(panel, event, url),
+  );
+  view.webContents.on("did-start-loading", () => {
+    panel.state.loading = true;
+    panel.state.error = null;
+    sendBrowserPanelState(panel);
+  });
+  view.webContents.on("did-stop-loading", () => {
+    updateBrowserPanelLocationState(panel);
+    panel.state.loading = false;
+    sendBrowserPanelState(panel);
+  });
+  view.webContents.on("did-navigate", (_event, url) => {
+    panel.state.url = url || null;
+    updateBrowserPanelLocationState(panel);
+    sendBrowserPanelState(panel);
+  });
+  view.webContents.on("did-navigate-in-page", (_event, url) => {
+    panel.state.url = url || null;
+    updateBrowserPanelLocationState(panel);
+    sendBrowserPanelState(panel);
+  });
+  view.webContents.on("page-title-updated", (_event, title) => {
+    panel.state.title = title || null;
+    sendBrowserPanelState(panel);
+  });
+  view.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) {
+        return;
+      }
+      panel.state.url = validatedUrl || panel.state.url;
+      panel.state.loading = false;
+      panel.state.error = errorDescription || "Page failed to load";
+      updateBrowserPanelLocationState(panel);
+      sendBrowserPanelState(panel);
+    },
+  );
+  view.webContents.on("destroyed", () => {
+    browserPanelsByWindowId.delete(window.id);
+  });
+
+  browserPanelsByWindowId.set(window.id, panel);
+  return panel;
+}
+
+function attachBrowserPanel(panel) {
+  if (panel.visible) {
+    return;
+  }
+  panel.window.contentView.addChildView(panel.view);
+  panel.visible = true;
+}
+
+function detachBrowserPanel(panel) {
+  if (!panel.visible) {
+    return;
+  }
+  panel.window.contentView.removeChildView(panel.view);
+  panel.visible = false;
+}
+
+function destroyBrowserPanel(window) {
+  const panel = browserPanelsByWindowId.get(window.id);
+  if (!panel) {
+    return;
+  }
+  detachBrowserPanel(panel);
+  panel.view.webContents.close({ waitForBeforeUnload: false });
+  browserPanelsByWindowId.delete(window.id);
+}
+
+function setBrowserPanelBounds(panel, bounds) {
+  panel.view.setBounds(normalizeBrowserBounds(bounds));
+}
+
+function normalizeBrowserBounds(bounds) {
+  return {
+    x: Math.max(0, Math.round(Number(bounds?.x) || 0)),
+    y: Math.max(0, Math.round(Number(bounds?.y) || 0)),
+    width: Math.max(0, Math.round(Number(bounds?.width) || 0)),
+    height: Math.max(0, Math.round(Number(bounds?.height) || 0)),
+  };
+}
+
+function sendBrowserPanelState(panel) {
+  if (!panel.window.isDestroyed()) {
+    panel.window.webContents.send("codex:browser:state", browserPanelState(panel));
+  }
+}
+
+function browserPanelState(panel) {
+  updateBrowserPanelLocationState(panel);
+  return { ...panel.state };
+}
+
+function updateBrowserPanelLocationState(panel) {
+  if (!panel.view.webContents.isDestroyed()) {
+    const navigation = browserNavigation(panel.view.webContents);
+    panel.state.url = panel.view.webContents.getURL() || panel.state.url;
+    panel.state.title = panel.view.webContents.getTitle() || panel.state.title;
+    panel.state.loading = panel.view.webContents.isLoading();
+    panel.state.canGoBack = navigation.canGoBack();
+    panel.state.canGoForward = navigation.canGoForward();
+  }
+}
+
+function browserNavigation(webContents) {
+  return {
+    canGoBack: () =>
+      webContents.navigationHistory?.canGoBack?.() ?? webContents.canGoBack(),
+    canGoForward: () =>
+      webContents.navigationHistory?.canGoForward?.() ??
+      webContents.canGoForward(),
+    goBack: () =>
+      webContents.navigationHistory?.goBack?.() ?? webContents.goBack(),
+    goForward: () =>
+      webContents.navigationHistory?.goForward?.() ?? webContents.goForward(),
+  };
+}
+
+function isBrowserPanelWebContents(webContents) {
+  for (const panel of browserPanelsByWindowId.values()) {
+    if (panel.view.webContents === webContents) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function guardBrowserPanelNavigation(panel, event, target) {
+  const decision = browserNavigationEventDecision(event, target);
+  if (decision.allow) {
+    return;
+  }
+
+  event.preventDefault();
+  panel.state.error = decision.reason;
+  panel.state.loading = false;
+  sendBrowserPanelState(panel);
+}
+
+function configurePermissionHandlers(targetSession, isAllowed) {
+  targetSession.setPermissionCheckHandler((webContents, permission) => {
+    return isAllowed({ webContents, permission });
+  });
+  targetSession.setPermissionRequestHandler(
+    (webContents, permission, callback) => {
+      callback(isAllowed({ webContents, permission }));
+    },
+  );
+}
 
 async function ensureBuiltRenderer() {
   try {

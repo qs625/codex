@@ -167,6 +167,15 @@ test("renders thread analysis title and monitor empty states", () => {
   assert.match(markup, /No scheduled listeners\./);
 });
 
+test("renders browser panel and rail button", () => {
+  const markup = renderRightPanel(makeThread([]), "browser");
+
+  assert.match(markup, /aria-label="Browser"/);
+  assert.match(markup, /Browser URL/);
+  assert.match(markup, /class="browser-go-button" disabled=""/);
+  assert.match(markup, /Open a page in the right panel/);
+});
+
 test("renders thread goal details in thread analysis", () => {
   const markup = renderToStaticMarkup(
     <RightPanel
