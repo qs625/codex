@@ -8,6 +8,7 @@ const RIGHT_PANEL_VIEWS = new Set<RightPanelView>([
   "skills",
   "git",
   "browser",
+  "workflow",
 ]);
 
 type PanelViewStorage = Pick<Storage, "getItem" | "setItem">;
@@ -40,6 +41,27 @@ export function storeRightPanelView(
   } catch {
     // Ignore storage failures; the panel should still switch immediately.
   }
+}
+
+export function resolveRightPanelTabClick({
+  activeView,
+  clickedView,
+  isCollapsed,
+}: {
+  activeView: RightPanelView;
+  clickedView: RightPanelView;
+  isCollapsed: boolean;
+}): { nextView: RightPanelView; nextCollapsed: boolean } {
+  if (clickedView === activeView) {
+    return {
+      nextView: activeView,
+      nextCollapsed: !isCollapsed,
+    };
+  }
+  return {
+    nextView: clickedView,
+    nextCollapsed: false,
+  };
 }
 
 function isRightPanelView(value: string | null): value is RightPanelView {

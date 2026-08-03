@@ -814,7 +814,7 @@ export type DraftSkill = {
   path: string;
 };
 
-export type RightPanelView = "preview" | "skills" | "git" | "browser";
+export type RightPanelView = "preview" | "skills" | "git" | "browser" | "workflow";
 
 export type FilePanelView = "preview" | "tree";
 

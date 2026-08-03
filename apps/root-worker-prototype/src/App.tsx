@@ -144,6 +144,7 @@ const LEFT_PANEL_MIN_RATIO = 0.13;
 const LEFT_PANEL_MAX_RATIO = 0.34;
 const RIGHT_PANEL_MIN_RATIO = 0.22;
 const RIGHT_PANEL_MAX_RATIO = 0.46;
+const RIGHT_PANEL_COLLAPSED_WIDTH = 46;
 
 type GoalActionKind = "set" | "pause" | "resume" | "clear";
 type CompactHistoryViewState = {
@@ -202,6 +203,7 @@ function App() {
   const [rightPanelView, setRightPanelView] = useState<RightPanelView>(
     readStoredRightPanelView,
   );
+  const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
   const [focusedConversationItem, setFocusedConversationItem] = useState<{
     itemId: string;
     token: number;
@@ -2663,7 +2665,9 @@ function App() {
       <main
         className="workspace"
         style={{
-          gridTemplateColumns: `${sidebarWidth}px 1px minmax(0, 1fr) 1px ${rightPanelWidth}px`,
+          gridTemplateColumns: `${sidebarWidth}px 1px minmax(0, 1fr) 1px ${
+            isRightPanelCollapsed ? RIGHT_PANEL_COLLAPSED_WIDTH : rightPanelWidth
+          }px`,
         }}
       >
         <SidebarPanel
@@ -2738,11 +2742,18 @@ function App() {
           className="panel-resizer"
           role="separator"
           aria-label="Resize right panel"
-          onPointerDown={(event) => beginResize("right", event.clientX)}
+          onPointerDown={(event) => {
+            if (isRightPanelCollapsed) {
+              setIsRightPanelCollapsed(false);
+            }
+            beginResize("right", event.clientX);
+          }}
         />
         <RightPanel
           activeView={rightPanelView}
           availableSkillCount={availableSkills.length}
+          availableWorkflows={availableWorkflows}
+          isCollapsed={isRightPanelCollapsed}
           expandedTreeDirectories={expandedTreeDirectories}
           filePanelView={filePanelView}
           fileTreeEntriesByPath={fileTreeEntriesByPath}
@@ -2760,6 +2771,7 @@ function App() {
             }))
           }
           onSetActiveView={setRightPanelView}
+          onSetCollapsed={setIsRightPanelCollapsed}
           onSetFilePanelView={handleSetFilePanelView}
           onToggleTreeDirectory={handleToggleTreeDirectory}
           preview={filePreview}

@@ -11,6 +11,8 @@ import type {
   Thread,
   ThreadPlanUpdate,
   ThreadLifecycleStatus,
+  ThreadWorkflowRunProgressKind,
+  WorkflowSummary,
 } from "../types";
 import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
 
@@ -21,6 +23,18 @@ const {
   filePreviewRenderMode,
   resolveMarkdownPreviewLocalFileTarget,
 } = await import("./RightPanel");
+
+const FEATURE_DEV_WORKFLOW: WorkflowSummary = {
+  id: "feature-dev",
+  name: "Feature Development",
+  description: "Research, implement, review, and verify.",
+  source: "project",
+  path: "/repo/.codex/workflows/feature-dev",
+  entry: "workflow.ts",
+  version: "0.1.0",
+  whenToUse: [],
+  inputs: {},
+};
 
 function makeThread(
   items: Thread["turns"][number]["items"],
@@ -63,6 +77,28 @@ function makeThread(
   };
 }
 
+function makeWorkflowProgressItem(
+  kind: ThreadWorkflowRunProgressKind,
+  overrides: Partial<
+    Extract<Thread["turns"][number]["items"][number], { type: "workflowRunProgress" }>["event"]
+  > = {},
+): Extract<Thread["turns"][number]["items"][number], { type: "workflowRunProgress" }> {
+  return {
+    id: `workflow-${kind}-${overrides.runId ?? "wf_1"}`,
+    type: "workflowRunProgress",
+    event: {
+      runId: "wf_1",
+      workflowId: "feature-dev",
+      status: kind,
+      runnerStatus: kind === "started" || kind === "resumed" ? "running" : kind,
+      kind,
+      message: `${kind} message`,
+      updatedAt: 1_785_737_385,
+      ...overrides,
+    },
+  };
+}
+
 function renderRightPanel(
   thread: Thread | null,
   activeView: RightPanelView = "skills",
@@ -71,6 +107,7 @@ function renderRightPanel(
     filePanelView?: FilePanelView;
     fileTreeEntriesByPath?: Record<string, FileTreeEntry[]>;
     expandedTreeDirectories?: string[];
+    isCollapsed?: boolean;
     preview?: FilePreview | null;
     todoItems?: React.ComponentProps<typeof RightPanel>["todoItems"];
   },
@@ -79,6 +116,8 @@ function renderRightPanel(
     <RightPanel
       activeView={activeView}
       availableSkillCount={0}
+      availableWorkflows={[FEATURE_DEV_WORKFLOW]}
+      isCollapsed={options?.isCollapsed ?? false}
       expandedTreeDirectories={options?.expandedTreeDirectories ?? []}
       filePanelView={options?.filePanelView ?? "preview"}
       fileTreeEntriesByPath={options?.fileTreeEntriesByPath ?? {}}
@@ -88,6 +127,7 @@ function renderRightPanel(
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
       onSetActiveView={() => {}}
+      onSetCollapsed={() => {}}
       onSetFilePanelView={() => {}}
       onToggleTreeDirectory={() => {}}
       onCancelGoal={() => {}}
@@ -176,11 +216,70 @@ test("renders browser panel and rail button", () => {
   assert.match(markup, /Open a page in the right panel/);
 });
 
+test("collapsed browser panel keeps rail and omits browser content", () => {
+  const markup = renderRightPanel(makeThread([]), "browser", null, {
+    isCollapsed: true,
+  });
+
+  assert.match(markup, /right-panel collapsed/);
+  assert.match(markup, /aria-label="Browser"/);
+  assert.doesNotMatch(markup, /Browser URL/);
+  assert.doesNotMatch(markup, /Open a page in the right panel/);
+});
+
+test("renders workflow empty state with available workflows", () => {
+  const markup = renderRightPanel(makeThread([]), "workflow");
+
+  assert.match(markup, /No workflow activity in this thread/);
+  assert.match(markup, /Feature Development/);
+  assert.match(markup, /aria-label="Workflow"/);
+});
+
+test("renders workflow run summary, feature-dev graph fallback, and timeline", () => {
+  const markup = renderRightPanel(
+    makeThread([
+      makeWorkflowProgressItem("started", {
+        message: "Workflow started",
+        runnerStatus: "runner_starting",
+      }),
+    ]),
+    "workflow",
+  );
+
+  assert.match(markup, /wf_1 · Started/);
+  assert.match(markup, /runner_starting/);
+  assert.match(markup, /Research/);
+  assert.match(markup, /Implement/);
+  assert.match(markup, /Review\/Fix/);
+  assert.match(markup, /Verify/);
+  assert.match(markup, /Using built-in feature-dev stage fallback/);
+  assert.match(markup, /Workflow started/);
+});
+
+test("renders aborted workflow progress without marking it running", () => {
+  const markup = renderRightPanel(
+    makeThread([
+      makeWorkflowProgressItem("aborted", {
+        message: "User aborted",
+        runnerStatus: "aborted",
+      }),
+    ]),
+    "workflow",
+  );
+
+  assert.match(markup, /Aborted/);
+  assert.match(markup, /User aborted/);
+  assert.match(markup, /workflow-status-pill aborted/);
+  assert.doesNotMatch(markup, /workflow-status-pill running/);
+});
+
 test("renders thread goal details in thread analysis", () => {
   const markup = renderToStaticMarkup(
     <RightPanel
       activeView="skills"
       availableSkillCount={0}
+      availableWorkflows={[FEATURE_DEV_WORKFLOW]}
+      isCollapsed={false}
       expandedTreeDirectories={[]}
       filePanelView="preview"
       fileTreeEntriesByPath={{}}
@@ -190,6 +289,7 @@ test("renders thread goal details in thread analysis", () => {
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
       onSetActiveView={() => {}}
+      onSetCollapsed={() => {}}
       onSetFilePanelView={() => {}}
       onToggleTreeDirectory={() => {}}
       onCancelGoal={() => {}}
@@ -624,6 +724,8 @@ test("renders directory-specific cwd tree errors instead of empty state", () => 
     <RightPanel
       activeView="preview"
       availableSkillCount={0}
+      availableWorkflows={[FEATURE_DEV_WORKFLOW]}
+      isCollapsed={false}
       expandedTreeDirectories={["/tmp/src"]}
       filePanelView="tree"
       fileTreeEntriesByPath={{
@@ -635,6 +737,7 @@ test("renders directory-specific cwd tree errors instead of empty state", () => 
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
       onSetActiveView={() => {}}
+      onSetCollapsed={() => {}}
       onSetFilePanelView={() => {}}
       onToggleTreeDirectory={() => {}}
       onCancelGoal={() => {}}

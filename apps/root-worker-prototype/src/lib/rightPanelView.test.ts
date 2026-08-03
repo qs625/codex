@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   readStoredRightPanelView,
+  resolveRightPanelTabClick,
   storeRightPanelView,
 } from "./rightPanelView";
 
@@ -22,6 +23,7 @@ test("readStoredRightPanelView restores a valid stored view", () => {
   assert.equal(readStoredRightPanelView(makeStorage("skills")), "skills");
   assert.equal(readStoredRightPanelView(makeStorage("git")), "git");
   assert.equal(readStoredRightPanelView(makeStorage("browser")), "browser");
+  assert.equal(readStoredRightPanelView(makeStorage("workflow")), "workflow");
 });
 
 test("readStoredRightPanelView falls back for invalid stored values", () => {
@@ -66,4 +68,34 @@ test("storeRightPanelView persists the selected view", () => {
   storeRightPanelView("preview", storage);
 
   assert.equal(readStoredRightPanelView(storage), "preview");
+});
+
+test("resolveRightPanelTabClick toggles collapse for the active view", () => {
+  assert.deepEqual(
+    resolveRightPanelTabClick({
+      activeView: "workflow",
+      clickedView: "workflow",
+      isCollapsed: false,
+    }),
+    { nextView: "workflow", nextCollapsed: true },
+  );
+  assert.deepEqual(
+    resolveRightPanelTabClick({
+      activeView: "workflow",
+      clickedView: "workflow",
+      isCollapsed: true,
+    }),
+    { nextView: "workflow", nextCollapsed: false },
+  );
+});
+
+test("resolveRightPanelTabClick switches inactive tabs and expands panel", () => {
+  assert.deepEqual(
+    resolveRightPanelTabClick({
+      activeView: "workflow",
+      clickedView: "browser",
+      isCollapsed: true,
+    }),
+    { nextView: "browser", nextCollapsed: false },
+  );
 });
