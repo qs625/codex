@@ -5,6 +5,7 @@ const { promisify } = require("node:util");
 
 const { adapterForFile } = require("./adapters.cjs");
 const { LspClient } = require("./client.cjs");
+const { buildDesktopEnvironment } = require("../environment.cjs");
 const { resolveWorkspaceRoot } = require("./workspaceRoots.cjs");
 
 const execFileAsync = promisify(execFile);
@@ -160,6 +161,7 @@ class LspManager {
         const { stdout } = await execFileAsync(
           commandSpec.resolveCommand.command,
           commandSpec.resolveCommand.args,
+          buildLspExecOptions(),
         );
         const resolvedPath = stdout.trim();
         if (!resolvedPath) {
@@ -187,7 +189,7 @@ class LspManager {
     if (!this.commandChecks.has(commandSpec.command)) {
       this.commandChecks.set(
         commandSpec.command,
-        execFileAsync("which", [commandSpec.command])
+        execFileAsync("which", [commandSpec.command], buildLspExecOptions())
           .then(() => true)
           .catch(() => false),
       );
@@ -199,4 +201,11 @@ class LspManager {
 
 module.exports = {
   LspManager,
+  buildLspExecOptions,
 };
+
+function buildLspExecOptions(baseEnv = process.env, environmentOptions = {}) {
+  return {
+    env: buildDesktopEnvironment(baseEnv, environmentOptions),
+  };
+}

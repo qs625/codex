@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { createInterface } = require("node:readline");
 const { EventEmitter } = require("node:events");
+const { buildDesktopEnvironment } = require("./environment.cjs");
 
 const DEFAULT_APP_SERVER_COMMAND = `${resolveWorkspaceAppServerBinary()} --listen stdio://`;
 const DEFAULT_CODEX_HOME = resolvePrototypeCodexHome();
@@ -47,15 +48,13 @@ class AppServerClient extends EventEmitter {
   }
 
   start() {
-    const command = process.env.APP_SERVER_CMD ?? DEFAULT_APP_SERVER_COMMAND;
-    const codexHome = process.env.CODEX_HOME ?? DEFAULT_CODEX_HOME;
+    const command = resolveAppServerCommand(process.env);
+    const env = buildAppServerEnvironment(process.env);
+    const codexHome = env.CODEX_HOME;
     fs.mkdirSync(codexHome, { recursive: true });
     this.child = spawn(command, {
       cwd: process.cwd(),
-      env: {
-        ...process.env,
-        CODEX_HOME: codexHome,
-      },
+      env,
       shell: true,
       stdio: "pipe",
     });
@@ -188,7 +187,23 @@ class AppServerClient extends EventEmitter {
 
 module.exports = {
   AppServerClient,
+  buildAppServerEnvironment,
+  resolveAppServerCommand,
 };
+
+function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {}) {
+  const env = buildDesktopEnvironment(baseEnv, environmentOptions);
+  env.CODEX_HOME = baseEnv.CODEX_HOME ?? DEFAULT_CODEX_HOME;
+  return env;
+}
+
+function resolveAppServerCommand(baseEnv = process.env) {
+  return (
+    baseEnv.APP_SERVER_CMD ??
+    baseEnv.CODEX_APP_SERVER_CMD ??
+    DEFAULT_APP_SERVER_COMMAND
+  );
+}
 
 function resolveWorkspaceAppServerBinary() {
   for (

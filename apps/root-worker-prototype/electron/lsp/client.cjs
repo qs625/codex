@@ -8,6 +8,7 @@ const {
   markClientReady,
   snapshotClientStatus,
 } = require("./status.cjs");
+const { buildDesktopEnvironment } = require("../environment.cjs");
 
 class LspClient {
   constructor({ adapter, commandSpec, onExit, workspaceRoot }) {
@@ -23,10 +24,11 @@ class LspClient {
     this.isInitialized = false;
     this.initializingPromise = null;
     this.status = createClientStatus();
-    this.process = spawn(commandSpec.command, commandSpec.args, {
-      cwd: commandSpec.cwd ?? workspaceRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    this.process = spawn(
+      commandSpec.command,
+      commandSpec.args,
+      buildLspSpawnOptions({ commandSpec, workspaceRoot }),
+    );
 
     this.process.stdout.on("data", (chunk) => {
       this.handleStdout(chunk);
@@ -260,6 +262,20 @@ function normalizeLocations(result) {
   ];
 }
 
+function buildLspSpawnOptions({
+  baseEnv = process.env,
+  commandSpec,
+  environmentOptions = {},
+  workspaceRoot,
+}) {
+  return {
+    cwd: commandSpec.cwd ?? workspaceRoot,
+    env: buildDesktopEnvironment(baseEnv, environmentOptions),
+    stdio: ["pipe", "pipe", "pipe"],
+  };
+}
+
 module.exports = {
+  buildLspSpawnOptions,
   LspClient,
 };
