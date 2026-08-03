@@ -9,6 +9,8 @@ use app_server_protocol::RequestId;
 use app_server_protocol::ServerRequest;
 use app_server_protocol::ThreadClosedNotification;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadLoadedListParams;
@@ -17,11 +19,9 @@ use app_server_protocol::ThreadReadParams;
 use app_server_protocol::ThreadReadResponse;
 use app_server_protocol::ThreadResumeParams;
 use app_server_protocol::ThreadResumeResponse;
+use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadLifecycleFinalStatus;
-use app_server_protocol::ThreadLifecycleStatus;
-use app_server_protocol::ThreadSource;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::ThreadUnsubscribeParams;
 use app_server_protocol::ThreadUnsubscribeResponse;
@@ -31,8 +31,8 @@ use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
 use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
-use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::create_mock_responses_server_repeating_assistant;
+use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::to_response;
 use core_test_support::responses;
 use core_test_support::streaming_sse::StreamingSseChunk;
@@ -99,7 +99,8 @@ async fn thread_unsubscribe_keeps_thread_loaded_until_idle_timeout() -> Result<(
 }
 
 #[tokio::test]
-async fn thread_unsubscribe_hidden_external_root_closes_loaded_state_and_preserves_read_history() -> Result<()> {
+async fn thread_unsubscribe_hidden_external_root_closes_loaded_state_and_preserves_read_history()
+-> Result<()> {
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;
     let mut mcp = start_external_root_unsubscribe_mcp(codex_home.path(), fake_bin.path()).await?;
@@ -434,7 +435,10 @@ async fn thread_unsubscribe_preserves_cached_status_before_idle_unload() -> Resu
     )
     .await??;
     let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
-    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::system_error(None));
+    assert_eq!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::system_error(None)
+    );
 
     let unsubscribe_id = mcp
         .send_thread_unsubscribe_request(ThreadUnsubscribeParams {
@@ -469,7 +473,10 @@ async fn thread_unsubscribe_preserves_cached_status_before_idle_unload() -> Resu
     )
     .await??;
     let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
-    assert_eq!(resume.thread.lifecycle_status, ThreadLifecycleStatus::system_error(None));
+    assert_eq!(
+        resume.thread.lifecycle_status,
+        ThreadLifecycleStatus::system_error(None)
+    );
 
     Ok(())
 }
@@ -496,7 +503,10 @@ async fn thread_unsubscribe_reports_not_subscribed_before_idle_unload() -> Resul
     )
     .await??;
     let first_unsubscribe = to_response::<ThreadUnsubscribeResponse>(first_unsubscribe_resp)?;
-    assert_eq!(first_unsubscribe.status, ThreadUnsubscribeStatus::Unsubscribed);
+    assert_eq!(
+        first_unsubscribe.status,
+        ThreadUnsubscribeStatus::Unsubscribed
+    );
 
     let second_unsubscribe_id = mcp
         .send_thread_unsubscribe_request(ThreadUnsubscribeParams { thread_id })
@@ -552,8 +562,7 @@ fn write_fake_claude_cli(bin_dir: &Path) -> Result<()> {
 
 fn prepend_path_env(path: &Path) -> Result<String> {
     let original_path = std::env::var_os("PATH").unwrap_or_default();
-    let paths =
-        std::iter::once(path.to_path_buf()).chain(std::env::split_paths(&original_path));
+    let paths = std::iter::once(path.to_path_buf()).chain(std::env::split_paths(&original_path));
     Ok(std::env::join_paths(paths)?.to_string_lossy().into_owned())
 }
 
@@ -720,8 +729,16 @@ fn assert_external_root_metadata(
 }
 
 fn assert_single_user_message_turn(thread: &app_server_protocol::Thread, expected_text: &str) {
-    assert_eq!(thread.turns.len(), 1, "expected one restored turn");
-    let turn = &thread.turns[0];
+    assert_external_root_pre_input_init_context(thread, Some(expected_text));
+    let turn = thread
+        .turns
+        .iter()
+        .find(|turn| {
+            turn.items
+                .iter()
+                .any(|item| matches!(item, ThreadItem::UserMessage { .. }))
+        })
+        .expect("expected one restored user turn");
     assert_eq!(turn.items_view, TurnItemsView::Full);
     let user_messages = turn
         .items
@@ -742,19 +759,57 @@ fn assert_single_user_message_turn(thread: &app_server_protocol::Thread, expecte
 }
 
 fn has_single_user_message_turn(thread: &app_server_protocol::Thread, expected_text: &str) -> bool {
-    if thread.turns.len() != 1 {
-        return false;
+    thread
+        .turns
+        .iter()
+        .find(|turn| {
+            turn.items
+                .iter()
+                .any(|item| matches!(item, ThreadItem::UserMessage { .. }))
+        })
+        .is_some_and(|turn| {
+            turn.items.iter().any(|item| match item {
+                ThreadItem::UserMessage { content, .. } => {
+                    content
+                        == &vec![V2UserInput::Text {
+                            text: expected_text.to_string(),
+                            text_elements: Vec::new(),
+                        }]
+                }
+                _ => false,
+            })
+        })
+}
+
+fn assert_external_root_pre_input_init_context(
+    thread: &app_server_protocol::Thread,
+    forbidden_user_text: Option<&str>,
+) {
+    let init_turn = thread
+        .turns
+        .first()
+        .expect("expected pre-input external init context turn");
+    let context_text = init_turn
+        .items
+        .iter()
+        .find_map(|item| match item {
+            ThreadItem::InjectedContext {
+                title, sections, ..
+            } if title == "Init Context" => Some(
+                sections
+                    .iter()
+                    .map(|section| section.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .expect("expected pre-input Init Context item");
+    assert!(context_text.contains("spawn_external_agent"));
+    assert!(context_text.contains("Current external agent metadata"));
+    if let Some(forbidden_user_text) = forbidden_user_text {
+        assert!(!context_text.contains(forbidden_user_text));
     }
-    thread.turns[0].items.iter().any(|item| match item {
-        ThreadItem::UserMessage { content, .. } => {
-            content
-                == &vec![V2UserInput::Text {
-                    text: expected_text.to_string(),
-                    text_elements: Vec::new(),
-                }]
-        }
-        _ => false,
-    })
 }
 
 async fn wait_for_thread_user_message(

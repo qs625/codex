@@ -16,6 +16,7 @@ use crate::agent::external::bounded_external_tool_result;
 use crate::agent::external::completion_communication;
 use crate::agent::external::external_agent_context_prompt;
 use crate::agent::external::external_agent_context_prompt_for_run;
+use crate::agent::external::external_agent_initialization_context_for_run;
 use crate::agent::external::external_live_agent;
 use crate::agent::external::external_metadata;
 use crate::agent::external::external_restore_plan_support;
@@ -37,8 +38,8 @@ use chrono::Utc;
 use codex_agent_roles::AgentRoleConfig;
 use codex_agent_roles::DEFAULT_ROLE_NAME;
 use codex_agent_roles::resolve_role_config;
-use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::AgentDetails;
+use codex_agent_runtime::AgentMetadata;
 use codex_agent_runtime::AgentMode;
 use codex_agent_runtime::AgentPathReservation;
 use codex_agent_runtime::AgentRegistry;
@@ -57,14 +58,14 @@ use codex_agent_runtime::build_thread_spawn_children_by_parent;
 use codex_agent_runtime::current_agent_path_for_session;
 use codex_agent_runtime::direct_subagent_paths_from_children;
 use codex_agent_runtime::is_final;
-use codex_agent_runtime::list_agents_plan;
 use codex_agent_runtime::lightweight_lifecycle_status;
+use codex_agent_runtime::list_agents_plan;
 use codex_agent_runtime::normalized_thread_lifecycle_from_inputs;
 use codex_agent_runtime::prepare_thread_spawn_plan;
 use codex_agent_runtime::render_input_preview;
 use codex_agent_runtime::resolve_agent_reference_path;
-use codex_agent_runtime::root_listed_agent;
 use codex_agent_runtime::root_last_task_message;
+use codex_agent_runtime::root_listed_agent;
 use codex_agent_runtime::select_forked_rollout_items;
 use codex_agent_runtime::should_ignore_descendant_shutdown_error;
 use codex_agent_runtime::should_release_agent_after_thread_request_error;
@@ -97,9 +98,9 @@ use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::ExternalToolCallDisplayEvent;
 use protocol::protocol::ExternalToolCallStatus;
 use protocol::protocol::InitialHistory;
-use protocol::protocol::ItemCompletedEvent;
 use protocol::protocol::InterAgentCommunication;
 use protocol::protocol::InterAgentOperation;
+use protocol::protocol::ItemCompletedEvent;
 use protocol::protocol::Op;
 use protocol::protocol::ResumedHistory;
 use protocol::protocol::RolloutItem;
@@ -547,17 +548,16 @@ impl AgentControl {
             last_task_message: None,
             abort_handle: None,
         };
+        let init_context_run = run.clone();
         self.external_agents.insert_running(run);
+        self.persist_external_initialization_context(thread_id, &init_context_run)
+            .await;
         agent_metadata.agent_id = Some(thread_id);
         if let Some(reservation) = agent_path_reservation.take() {
             reservation.commit(agent_metadata);
         } else if agent_metadata.agent_path.is_some() {
             self.register_root_scope_agent_metadata(agent_metadata);
         }
-        if let Ok(state) = self.upgrade() {
-            state.notify_thread_started(thread_id);
-        }
-
         let task_control = self.clone();
         let cwd = config.cwd.as_path().to_path_buf();
         let handle = tokio::spawn(async move {
@@ -1018,16 +1018,10 @@ impl AgentControl {
                                 input.content
                             } else {
                                 sent_context_prompt = true;
-                                let provider_content = match context_run.as_ref() {
+                                match context_run.as_ref() {
                                     Some(run) => external_agent_context_prompt_for_run(&input.content, run),
                                     None => external_agent_context_prompt(&input.content),
-                                };
-                                self.persist_external_injected_context(
-                                    thread_id,
-                                    current_turn_id.as_deref(),
-                                    &provider_content,
-                                ).await;
-                                provider_content
+                                }
                             };
                             if let Err(err) = provider_input.send(provider_content) {
                                 self.persist_external_error_with_turn_id(
@@ -1364,22 +1358,19 @@ impl AgentControl {
         .await;
     }
 
-    async fn persist_external_injected_context(
+    async fn persist_external_initialization_context(
         &self,
         thread_id: ThreadId,
-        turn_id: Option<&str>,
-        provider_content: &str,
+        run: &ExternalAgentRun,
     ) {
-        let Some(turn_id) = turn_id else {
-            return;
-        };
-        let bounded_provider_content = bounded_external_output(provider_content);
+        let turn_id = format!("{thread_id}:external-init-context");
+        let provider_content = external_agent_initialization_context_for_run(run);
+        let bounded_provider_content = bounded_external_output(&provider_content);
         let mut sections = vec![InjectedContextSection {
             label: "Provider input".to_string(),
             text: bounded_provider_content,
         }];
-        if let Some((_, metadata)) =
-            provider_content.split_once("Current external agent metadata:")
+        if let Some((_, metadata)) = provider_content.split_once("Current external agent metadata:")
         {
             sections.push(InjectedContextSection {
                 label: "Current external agent metadata".to_string(),
@@ -1389,20 +1380,39 @@ impl AgentControl {
 
         self.persist_external_items(
             thread_id,
-            Some(turn_id),
-            vec![RolloutItem::EventMsg(
-                protocol::protocol::EventMsg::ItemCompleted(ItemCompletedEvent {
-                    thread_id,
-                    turn_id: turn_id.to_string(),
-                    item: TurnItem::InjectedContext(InjectedContextItem {
-                        id: format!("{turn_id}:external-provider-init-context"),
-                        title: "Init Context".to_string(),
-                        preview: "External provider initialization context".to_string(),
-                        sections,
-                    }),
-                    completed_at_ms: now_unix_timestamp_ms(),
-                }),
-            )],
+            None,
+            vec![
+                RolloutItem::EventMsg(protocol::protocol::EventMsg::TurnStarted(
+                    TurnStartedEvent {
+                        turn_id: turn_id.clone(),
+                        started_at: Some(Utc::now().timestamp()),
+                        model_context_window: None,
+                        collaboration_mode_kind: Default::default(),
+                    },
+                )),
+                RolloutItem::EventMsg(protocol::protocol::EventMsg::ItemCompleted(
+                    ItemCompletedEvent {
+                        thread_id,
+                        turn_id: turn_id.clone(),
+                        item: TurnItem::InjectedContext(InjectedContextItem {
+                            id: format!("{turn_id}:external-provider-init-context"),
+                            title: "Init Context".to_string(),
+                            preview: "External provider initialization context".to_string(),
+                            sections,
+                        }),
+                        completed_at_ms: now_unix_timestamp_ms(),
+                    },
+                )),
+                RolloutItem::EventMsg(protocol::protocol::EventMsg::TurnComplete(
+                    TurnCompleteEvent {
+                        turn_id: turn_id.clone(),
+                        last_agent_message: None,
+                        completed_at: Some(Utc::now().timestamp()),
+                        duration_ms: None,
+                        time_to_first_token_ms: None,
+                    },
+                )),
+            ],
         )
         .await;
     }
@@ -1454,12 +1464,7 @@ impl AgentControl {
                 codex_error_info: None,
             },
         )));
-        self.persist_external_items(
-            thread_id,
-            turn_id,
-            items,
-        )
-        .await;
+        self.persist_external_items(thread_id, turn_id, items).await;
     }
 
     async fn persist_external_terminal_status(&self, thread_id: ThreadId, status: &AgentStatus) {
@@ -4140,11 +4145,9 @@ impl AgentControl {
             AgentReferenceResolution::Unsupported { message, .. } => {
                 Err(CodexErr::UnsupportedOperation(message))
             }
-            AgentReferenceResolution::NotFound { agent_path } => {
-                Err(CodexErr::UnsupportedOperation(format!(
-                    "unknown agent target `{agent_path}`"
-                )))
-            }
+            AgentReferenceResolution::NotFound { agent_path } => Err(
+                CodexErr::UnsupportedOperation(format!("unknown agent target `{agent_path}`")),
+            ),
         }
     }
 

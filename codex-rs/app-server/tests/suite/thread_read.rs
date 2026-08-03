@@ -15,9 +15,9 @@ use app_server_protocol::RequestId;
 use app_server_protocol::SandboxPolicy as ApiSandboxPolicy;
 use app_server_protocol::SessionSource;
 use app_server_protocol::SortDirection;
+use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadForkParams;
 use app_server_protocol::ThreadForkResponse;
-use app_server_protocol::ThreadCompactStartParams;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadLifecycleFinalStatus;
@@ -41,6 +41,7 @@ use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadTurnsItemsListParams;
 use app_server_protocol::ThreadTurnsListParams;
 use app_server_protocol::ThreadTurnsListResponse;
+use app_server_protocol::Turn;
 use app_server_protocol::TurnCompletedNotification;
 use app_server_protocol::TurnItemsView;
 use app_server_protocol::TurnStartParams;
@@ -238,7 +239,10 @@ async fn start_named_external_root_thread(
     assert_eq!(thread.model_provider, "claude_cli");
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     let expected_agent_path = format!("/{task_name}");
-    assert_eq!(thread.agent_path.as_deref(), Some(expected_agent_path.as_str()));
+    assert_eq!(
+        thread.agent_path.as_deref(),
+        Some(expected_agent_path.as_str())
+    );
     assert_eq!(thread.agent_role.as_deref(), Some("claude_cli"));
     assert!(matches!(
         thread.lifecycle_status,
@@ -355,7 +359,10 @@ fn assert_named_external_root_metadata(
     assert_eq!(thread.model_provider, "claude_cli");
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     let expected_agent_path = format!("/{task_name}");
-    assert_eq!(thread.agent_path.as_deref(), Some(expected_agent_path.as_str()));
+    assert_eq!(
+        thread.agent_path.as_deref(),
+        Some(expected_agent_path.as_str())
+    );
     assert_eq!(thread.agent_role.as_deref(), Some("claude_cli"));
     let expected_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
     let actual_cwd =
@@ -366,8 +373,8 @@ fn assert_named_external_root_metadata(
 }
 
 fn assert_single_user_message_turn(thread: &app_server_protocol::Thread, expected_text: &str) {
-    assert_eq!(thread.turns.len(), 1, "expected one restored turn");
-    let turn = &thread.turns[0];
+    assert_external_root_pre_input_init_context(thread, Some(expected_text));
+    let turn = external_root_user_turn(thread).expect("expected one restored user turn");
     assert_eq!(turn.items_view, TurnItemsView::Full);
     let user_messages = turn
         .items
@@ -392,8 +399,8 @@ fn assert_single_user_and_agent_message_turn(
     expected_user_text: &str,
     expected_agent_text: &str,
 ) {
-    assert_eq!(thread.turns.len(), 1, "expected one restored turn");
-    let turn = &thread.turns[0];
+    assert_external_root_pre_input_init_context(thread, Some(expected_user_text));
+    let turn = external_root_user_turn(thread).expect("expected one restored user turn");
     assert_eq!(turn.items_view, TurnItemsView::Full);
     assert_eq!(turn.status, TurnStatus::Completed);
     let user_messages = turn
@@ -426,19 +433,17 @@ fn assert_single_user_and_agent_message_turn(
 }
 
 fn has_single_user_message_turn(thread: &app_server_protocol::Thread, expected_text: &str) -> bool {
-    if thread.turns.len() != 1 {
-        return false;
-    }
-    let turn = &thread.turns[0];
-    turn.items.iter().any(|item| match item {
-        ThreadItem::UserMessage { content, .. } => {
-            content
-                == &vec![UserInput::Text {
-                    text: expected_text.to_string(),
-                    text_elements: Vec::new(),
-                }]
-        }
-        _ => false,
+    external_root_user_turn(thread).is_some_and(|turn| {
+        turn.items.iter().any(|item| match item {
+            ThreadItem::UserMessage { content, .. } => {
+                content
+                    == &vec![UserInput::Text {
+                        text: expected_text.to_string(),
+                        text_elements: Vec::new(),
+                    }]
+            }
+            _ => false,
+        })
     })
 }
 
@@ -447,10 +452,9 @@ fn has_single_user_and_agent_message_turn(
     expected_user_text: &str,
     expected_agent_text: &str,
 ) -> bool {
-    if thread.turns.len() != 1 {
+    let Some(turn) = external_root_user_turn(thread) else {
         return false;
-    }
-    let turn = &thread.turns[0];
+    };
     let has_user_message = turn.items.iter().any(|item| match item {
         ThreadItem::UserMessage { content, .. } => {
             content
@@ -466,6 +470,46 @@ fn has_single_user_and_agent_message_turn(
         _ => false,
     });
     has_user_message && has_agent_message && turn.status == TurnStatus::Completed
+}
+
+fn assert_external_root_pre_input_init_context(
+    thread: &app_server_protocol::Thread,
+    forbidden_user_text: Option<&str>,
+) {
+    let init_turn = thread
+        .turns
+        .first()
+        .expect("expected pre-input external init context turn");
+    assert_eq!(init_turn.status, TurnStatus::Completed);
+    let context_text = init_turn
+        .items
+        .iter()
+        .find_map(|item| match item {
+            ThreadItem::InjectedContext {
+                title, sections, ..
+            } if title == "Init Context" => Some(
+                sections
+                    .iter()
+                    .map(|section| section.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .expect("expected pre-input Init Context item");
+    assert!(context_text.contains("spawn_external_agent"));
+    assert!(context_text.contains("Current external agent metadata"));
+    if let Some(forbidden_user_text) = forbidden_user_text {
+        assert!(!context_text.contains(forbidden_user_text));
+    }
+}
+
+fn external_root_user_turn(thread: &app_server_protocol::Thread) -> Option<&Turn> {
+    thread.turns.iter().find(|turn| {
+        turn.items
+            .iter()
+            .any(|item| matches!(item, ThreadItem::UserMessage { .. }))
+    })
 }
 
 async fn wait_for_thread_user_message(
@@ -594,8 +638,11 @@ async fn thread_read_hidden_external_root_preserves_metadata_before_turns() -> R
 
     let with_turns = read_thread(&mut mcp, &thread_id, /*include_turns*/ true).await?;
     assert_external_root_metadata(&with_turns, &thread_id, codex_home.path());
-    assert_eq!(with_turns.turns, Vec::new());
-    assert_ne!(with_turns.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
+    assert_external_root_pre_input_init_context(&with_turns, None);
+    assert_ne!(
+        with_turns.lifecycle_status,
+        ThreadLifecycleStatus::NotLoaded
+    );
 
     Ok(())
 }
@@ -677,7 +724,8 @@ async fn thread_read_external_root_restores_assistant_response_after_restart() -
         start_external_root_read_mcp_with_assistant_output(codex_home.path(), fake_bin.path())
             .await?;
     let task_name = "foo_project";
-    let thread_id = start_named_external_root_thread(&mut mcp, codex_home.path(), task_name).await?;
+    let thread_id =
+        start_named_external_root_thread(&mut mcp, codex_home.path(), task_name).await?;
     let input_text = "Hello persisted external assistant";
     let output_text = "External assistant done";
 
@@ -1420,8 +1468,7 @@ fn thread_list_includes_store_thread_without_rollout_path() -> Result<()> {
 fn thread_read_and_list_project_external_root_terminal_facts_without_live_runtime() -> Result<()> {
     run_current_thread_test_with_stack(async {
         let codex_home = TempDir::new()?;
-        let completed_id =
-            protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000125")?;
+        let completed_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000125")?;
         let errored_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000126")?;
         let store_id = Uuid::new_v4().to_string();
         create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
@@ -1431,13 +1478,15 @@ fn thread_read_and_list_project_external_root_terminal_facts_without_live_runtim
             &store,
             completed_id,
             codex_home.path(),
-            vec![RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
-                turn_id: "turn-completed".to_string(),
-                last_agent_message: Some("done".to_string()),
-                completed_at: Some(1),
-                duration_ms: None,
-                time_to_first_token_ms: None,
-            }))],
+            vec![RolloutItem::EventMsg(EventMsg::TurnComplete(
+                TurnCompleteEvent {
+                    turn_id: "turn-completed".to_string(),
+                    last_agent_message: Some("done".to_string()),
+                    completed_at: Some(1),
+                    duration_ms: None,
+                    time_to_first_token_ms: None,
+                },
+            ))],
         )
         .await?;
         seed_external_root_store_thread(
@@ -1607,12 +1656,9 @@ fn thread_read_and_list_project_external_root_terminal_facts_without_live_runtim
 fn external_root_resume_returns_readonly_snapshot_and_fork_creates_native_thread() -> Result<()> {
     run_current_thread_test_with_stack(async {
         let codex_home = TempDir::new()?;
-        let completed_id =
-            protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000127")?;
-        let errored_id =
-            protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000128")?;
-        let running_id =
-            protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000129")?;
+        let completed_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000127")?;
+        let errored_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000128")?;
+        let running_id = protocol::ThreadId::from_string("00000000-0000-4000-8000-000000000129")?;
         let store_id = Uuid::new_v4().to_string();
         create_config_toml_with_thread_store(codex_home.path(), &store_id)?;
         let store = InMemoryThreadStore::for_id(store_id.clone());
@@ -1806,7 +1852,9 @@ fn external_root_resume_returns_readonly_snapshot_and_fork_creates_native_thread
             .expect_err("read-only external root thread/resume should not create a live session");
         assert_eq!(turn_start_error.code, INVALID_REQUEST_ERROR_CODE);
         assert!(
-            turn_start_error.message.contains("thread provider 'claude_cli'")
+            turn_start_error
+                .message
+                .contains("thread provider 'claude_cli'")
                 && turn_start_error.message.contains("turn/start")
                 && turn_start_error.message.contains("does not support")
                 && turn_start_error.message.contains("external root threads"),
@@ -1835,7 +1883,10 @@ fn external_root_resume_returns_readonly_snapshot_and_fork_creates_native_thread
             ..
         } = serde_json::from_value(completed_fork_result)?;
         assert_ne!(completed_fork.id, completed_id.to_string());
-        assert_eq!(completed_fork.forked_from_id, Some(completed_id.to_string()));
+        assert_eq!(
+            completed_fork.forked_from_id,
+            Some(completed_id.to_string())
+        );
         assert_eq!(completed_fork.model_provider, "mock_provider");
         assert_eq!(model_provider, "mock_provider");
         assert_eq!(
@@ -1918,8 +1969,7 @@ fn external_root_resume_returns_readonly_snapshot_and_fork_creates_native_thread
             })
             .await?
             .expect("thread/loaded/list should succeed after native forks");
-        let ThreadLoadedListResponse { data, next_cursor } =
-            serde_json::from_value(loaded_result)?;
+        let ThreadLoadedListResponse { data, next_cursor } = serde_json::from_value(loaded_result)?;
         assert_eq!(next_cursor, None);
         for forked_id in [
             completed_fork.id.as_str(),
@@ -2107,7 +2157,9 @@ fn external_root_persisted_subscription_restart_stays_readonly() -> Result<()> {
             .expect_err("descriptor-present external root should remain read-only");
         assert_eq!(turn_start_error.code, INVALID_REQUEST_ERROR_CODE);
         assert!(
-            turn_start_error.message.contains("thread provider 'opencode'")
+            turn_start_error
+                .message
+                .contains("thread provider 'opencode'")
                 && turn_start_error.message.contains("turn/start")
                 && turn_start_error.message.contains("does not support")
                 && turn_start_error.message.contains("external root threads"),
@@ -2482,7 +2534,10 @@ async fn thread_read_loaded_thread_returns_precomputed_path_before_materializati
     assert_eq!(read.path, Some(thread_path));
     assert!(read.preview.is_empty());
     assert_eq!(read.turns.len(), 0);
-    assert_eq!(read.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        read.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
 
     Ok(())
 }
@@ -2693,8 +2748,8 @@ async fn thread_read_include_turns_omits_initial_context_for_fresh_loaded_thread
 }
 
 #[tokio::test]
-async fn thread_read_after_auto_compaction_preserves_init_context_without_dup_live_assistant_items(
-) -> Result<()> {
+async fn thread_read_after_auto_compaction_preserves_init_context_without_dup_live_assistant_items()
+-> Result<()> {
     let server = responses::start_mock_server().await;
     let sse1 = responses::sse(vec![
         responses::ev_assistant_message("m1", "FIRST_REPLY"),
@@ -2798,7 +2853,9 @@ instruction_files = [
         .turns
         .iter()
         .flat_map(|turn| turn.items.iter())
-        .filter(|item| matches!(item, ThreadItem::AgentMessage { text, .. } if text == "FINAL_REPLY"))
+        .filter(
+            |item| matches!(item, ThreadItem::AgentMessage { text, .. } if text == "FINAL_REPLY"),
+        )
         .count();
     assert_eq!(final_reply_count, 1);
 
@@ -2951,7 +3008,10 @@ async fn thread_read_reports_system_error_idle_flag_after_failed_turn() -> Resul
     .await??;
     let ThreadReadResponse { thread, .. } = to_response::<ThreadReadResponse>(read_resp)?;
 
-    assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::system_error(None),);
+    assert_eq!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::system_error(None),
+    );
 
     Ok(())
 }
@@ -3428,17 +3488,21 @@ async fn send_turn_and_wait_for_thread_read(
     Ok(turn.id)
 }
 
-async fn wait_for_turn_completed_for_thread_read(mcp: &mut McpProcess, turn_id: &str) -> Result<()> {
+async fn wait_for_turn_completed_for_thread_read(
+    mcp: &mut McpProcess,
+    turn_id: &str,
+) -> Result<()> {
     loop {
         let notification: JSONRPCNotification = timeout(
             DEFAULT_READ_TIMEOUT,
             mcp.read_stream_until_notification_message("turn/completed"),
         )
         .await??;
-        let completed: TurnCompletedNotification =
-            serde_json::from_value(notification.params.ok_or_else(|| {
-                anyhow::anyhow!("turn/completed params missing")
-            })?)?;
+        let completed: TurnCompletedNotification = serde_json::from_value(
+            notification
+                .params
+                .ok_or_else(|| anyhow::anyhow!("turn/completed params missing"))?,
+        )?;
         if completed.turn.id == turn_id {
             return Ok(());
         }
@@ -3454,10 +3518,11 @@ async fn wait_for_context_compaction_started_for_thread_read(
             mcp.read_stream_until_notification_message("item/started"),
         )
         .await??;
-        let started: ItemStartedNotification =
-            serde_json::from_value(notification.params.ok_or_else(|| {
-                anyhow::anyhow!("item/started params missing")
-            })?)?;
+        let started: ItemStartedNotification = serde_json::from_value(
+            notification
+                .params
+                .ok_or_else(|| anyhow::anyhow!("item/started params missing"))?,
+        )?;
         if let ThreadItem::ContextCompaction { .. } = started.item {
             return Ok(started);
         }
@@ -3473,10 +3538,11 @@ async fn wait_for_context_compaction_completed_for_thread_read(
             mcp.read_stream_until_notification_message("item/completed"),
         )
         .await??;
-        let completed: ItemCompletedNotification =
-            serde_json::from_value(notification.params.ok_or_else(|| {
-                anyhow::anyhow!("item/completed params missing")
-            })?)?;
+        let completed: ItemCompletedNotification = serde_json::from_value(
+            notification
+                .params
+                .ok_or_else(|| anyhow::anyhow!("item/completed params missing"))?,
+        )?;
         if let ThreadItem::ContextCompaction { .. } = completed.item {
             return Ok(completed);
         }

@@ -33,10 +33,10 @@ use protocol::protocol::InterAgentOperation;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
-use thread_service_api::ThreadPollEventRequest;
-use thread_service_api::ThreadPollEventTimeoutMetadata;
-use thread_service_api::ThreadPollEventResult;
 use thread_service_api::ThreadPollEvent;
+use thread_service_api::ThreadPollEventRequest;
+use thread_service_api::ThreadPollEventResult;
+use thread_service_api::ThreadPollEventTimeoutMetadata;
 use thread_store_api::SharedLiveThread;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
@@ -691,9 +691,8 @@ pub(crate) fn external_session_spec(
     }
 }
 
-pub(crate) fn external_agent_context_prompt(message: &str) -> String {
-    format!(
-        r#"You are running as an external code agent connected to the Morpheus backend bus.
+pub(crate) fn external_agent_initialization_context() -> String {
+    r#"You are running as an external code agent connected to the Morpheus backend bus.
 
 Use only this external-agent JSON protocol to collaborate with other agents. Do not call internal Morpheus tools such as spawn_agent, followup_task, list_agents, poll_event, or close_agent.
 
@@ -713,10 +712,22 @@ The backend returns results as JSON objects:
 {{"type":"external_tool_result","id":"call_1","ok":false,"error":{{"code":"invalid_arguments","message":"..."}}}}
 
 When the backend sends an external_tool_result as input, continue the task using that result. Emit another external_tool_call only if you need another backend action; otherwise finish with a normal final answer.
+"#
+    .to_string()
+}
 
+pub(crate) fn external_agent_context_prompt(message: &str) -> String {
+    format!(
+        r#"{context}
 Original task:
-{message}"#
+{message}"#,
+        context = external_agent_initialization_context(),
     )
+}
+
+pub(crate) fn external_agent_initialization_context_for_run(run: &ExternalAgentRun) -> String {
+    let context = external_agent_initialization_context();
+    external_agent_context_with_run_metadata(&context, run)
 }
 
 pub(crate) fn external_agent_context_prompt_for_run(
@@ -724,6 +735,10 @@ pub(crate) fn external_agent_context_prompt_for_run(
     run: &ExternalAgentRun,
 ) -> String {
     let context = external_agent_context_prompt(message);
+    external_agent_context_with_run_metadata(&context, run)
+}
+
+fn external_agent_context_with_run_metadata(context: &str, run: &ExternalAgentRun) -> String {
     format!(
         r#"{context}
 
@@ -2084,23 +2099,21 @@ fn codex_provider_display_event_from_thread_item(
                 },
             ))
         }
-        app_server_protocol::ThreadItem::WebSearch { id, query, action } => {
-            Some(ExternalProviderDisplayEvent::ToolCall(
-                ExternalProviderToolDisplayEvent {
-                    id,
-                    tool: "web_search".to_string(),
-                    arguments: bounded_json_value(
-                        &serde_json::json!({
-                            "query": query,
-                            "action": action,
-                        }),
-                        MAX_EXTERNAL_TOOL_ARGUMENT_CHARS,
-                    ),
-                    status: protocol::protocol::ExternalToolCallStatus::Completed,
-                    output: None,
-                },
-            ))
-        }
+        app_server_protocol::ThreadItem::WebSearch { id, query, action } => Some(
+            ExternalProviderDisplayEvent::ToolCall(ExternalProviderToolDisplayEvent {
+                id,
+                tool: "web_search".to_string(),
+                arguments: bounded_json_value(
+                    &serde_json::json!({
+                        "query": query,
+                        "action": action,
+                    }),
+                    MAX_EXTERNAL_TOOL_ARGUMENT_CHARS,
+                ),
+                status: protocol::protocol::ExternalToolCallStatus::Completed,
+                output: None,
+            }),
+        ),
         other => Some(ExternalProviderDisplayEvent::FallbackMessage(
             bounded_external_output(&format!(
                 "codex_cli emitted unsupported display item `{}`",
@@ -2137,9 +2150,7 @@ fn take_seen_codex_reasoning_item_id(
         .remove(item_id)
 }
 
-fn clear_seen_codex_reasoning_item_ids(
-    seen_reasoning_item_ids: &Arc<Mutex<HashSet<String>>>,
-) {
+fn clear_seen_codex_reasoning_item_ids(seen_reasoning_item_ids: &Arc<Mutex<HashSet<String>>>) {
     seen_reasoning_item_ids
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2733,6 +2744,32 @@ mod tests {
     }
 
     #[test]
+    fn external_initialization_context_for_run_excludes_original_task() {
+        let run = ExternalAgentRun {
+            thread_id: ThreadId::new(),
+            parent_thread_id: ThreadId::new(),
+            agent_path: AgentPath::try_from("/cp_http_api").expect("agent path"),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 0,
+            spawn_config: None,
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: None,
+            abort_handle: None,
+        };
+
+        let context = external_agent_initialization_context_for_run(&run);
+
+        assert!(context.contains("spawn_external_agent"));
+        assert!(context.contains("Current external agent metadata"));
+        assert!(context.contains("agent_path: /cp_http_api"));
+        assert!(context.contains("agent_role: claude_cli"));
+        assert!(!context.contains("Original task:"));
+    }
+
+    #[test]
     fn external_tool_result_line_is_bounded_but_keeps_json_envelope() {
         let result = ExternalToolResult::ok(
             "call_1",
@@ -2913,9 +2950,7 @@ mod tests {
         assert_eq!(
             event,
             Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
-                ExternalProviderDisplayEvent::ReasoningSummary(
-                    "look at project files".to_string()
-                )
+                ExternalProviderDisplayEvent::ReasoningSummary("look at project files".to_string())
             )))
         );
     }
@@ -3017,9 +3052,7 @@ mod tests {
         assert_eq!(
             completed_event,
             Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
-                ExternalProviderDisplayEvent::ReasoningSummary(
-                    "fresh turn reasoning".to_string()
-                )
+                ExternalProviderDisplayEvent::ReasoningSummary("fresh turn reasoning".to_string())
             )))
         );
     }
@@ -3046,9 +3079,7 @@ mod tests {
         assert_eq!(
             completed_event,
             Some(ExternalProcessEvent::Cli(ExternalCliEvent::Display(
-                ExternalProviderDisplayEvent::ReasoningSummary(
-                    "completed reasoning".to_string()
-                )
+                ExternalProviderDisplayEvent::ReasoningSummary("completed reasoning".to_string())
             )))
         );
     }
