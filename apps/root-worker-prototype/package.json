@@ -8,7 +8,9 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && ROOT_WORKER_RENDERER_MODE=dev electron .\"",
     "build": "vite build",
     "test": "tsx --test",
-    "package:mac": "pnpm build && rm -rf dist-app && pnpm dlx @electron/packager . \"Root Worker Prototype\" --platform=darwin --arch=arm64 --out=dist-app --overwrite --app-bundle-id=com.openai.root-worker-prototype.dev --app-category-type=public.app-category.developer-tools --extend-info=electron/Info.plist --ignore='^/dist-app($|/)' --no-prune && codesign --force --deep --sign - \"dist-app/Root Worker Prototype-darwin-arm64/Root Worker Prototype.app\"",
+    "package:mac": "pnpm run package:mac:app && pnpm run package:mac:dmg",
+    "package:mac:app": "pnpm build && rm -rf dist-app && pnpm dlx @electron/packager . \"Root Worker Prototype\" --platform=darwin --arch=arm64 --out=dist-app --overwrite --app-bundle-id=com.openai.root-worker-prototype.dev --app-category-type=public.app-category.developer-tools --extend-info=electron/Info.plist --ignore='^/dist-app($|/)' --no-prune && codesign --force --deep --sign - \"dist-app/Root Worker Prototype-darwin-arm64/Root Worker Prototype.app\"",
+    "package:mac:dmg": "node scripts/create-mac-dmg.cjs",
     "start": "electron ."
   },
   "dependencies": {
