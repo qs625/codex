@@ -21,8 +21,8 @@ use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::Turn;
-use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnEnvironmentParams;
+use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStatus;
 use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::ChatGptAuthFixture;
@@ -220,6 +220,61 @@ fn assert_single_completed_init_context_turn(turns: &[Turn], context: &str) {
     }
 }
 
+fn assert_single_completed_external_init_context_turn(
+    turns: &[Turn],
+    agent_path: &str,
+    agent_role: &str,
+    context: &str,
+) {
+    let mut injected_context_count = 0;
+    let mut init_context_text = String::new();
+    for turn in turns {
+        for item in &turn.items {
+            if let ThreadItem::InjectedContext {
+                title,
+                preview,
+                sections,
+                ..
+            } = item
+            {
+                injected_context_count += 1;
+                assert_eq!(title, "Init Context", "{context}");
+                assert_eq!(
+                    preview, "External provider initialization context",
+                    "{context}"
+                );
+                assert_eq!(turn.status, TurnStatus::Completed, "{context}");
+                for section in sections {
+                    init_context_text.push_str(&section.text);
+                    init_context_text.push('\n');
+                }
+            }
+        }
+    }
+    assert_eq!(
+        injected_context_count, 1,
+        "{context} should include exactly one external Init Context display item"
+    );
+    for expected in [
+        "spawn_external_agent".to_string(),
+        "followup_external_task".to_string(),
+        "poll_external_event".to_string(),
+        "external_tool_call".to_string(),
+        "Current external agent metadata".to_string(),
+        format!("agent_path: {agent_path}"),
+        format!("agent_role: {agent_role}"),
+    ] {
+        assert!(
+            init_context_text.contains(&expected),
+            "{context} should include external init context text {expected}, got {init_context_text}"
+        );
+    }
+    assert!(
+        !init_context_text.contains("Original task:"),
+        "{context} should not include a concrete user task before first input"
+    );
+}
+
 #[tokio::test]
 async fn thread_start_deprecates_persist_extended_history_true() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
@@ -347,6 +402,12 @@ async fn thread_start_accepts_hidden_external_root_provider_and_emits_started() 
     assert_eq!(thread.agent_role, None);
     assert_eq!(cwd.as_path(), codex_home.path());
     assert_eq!(thread.cwd.as_path(), codex_home.path());
+    assert_single_completed_external_init_context_turn(
+        &thread.turns,
+        "/root",
+        "claude_cli",
+        "thread/start response",
+    );
     assert!(matches!(
         thread.lifecycle_status,
         ThreadLifecycleStatus::Active { .. }
@@ -368,6 +429,13 @@ async fn thread_start_accepts_hidden_external_root_provider_and_emits_started() 
     assert_eq!(started.thread.thread_source, Some(ThreadSource::User));
     assert_eq!(started.thread.agent_path, None);
     assert_eq!(started.thread.agent_role, None);
+    assert_single_completed_external_init_context_turn(
+        &started.thread.turns,
+        "/root",
+        "claude_cli",
+        "thread/started notification",
+    );
+    assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
 
     Ok(())
 }
@@ -406,6 +474,12 @@ async fn thread_start_external_root_accepts_common_params_and_persists_agent_pat
     assert_eq!(thread.model_provider, "codex_cli");
     assert_eq!(thread.agent_path.as_deref(), Some("/foo_project"));
     assert_eq!(thread.agent_role.as_deref(), Some("codex_cli"));
+    assert_single_completed_external_init_context_turn(
+        &thread.turns,
+        "/foo_project",
+        "codex_cli",
+        "thread/start response",
+    );
 
     let notification = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -420,6 +494,12 @@ async fn thread_start_external_root_accepts_common_params_and_persists_agent_pat
     assert_eq!(started.thread.id, thread.id);
     assert_eq!(started.thread.agent_path.as_deref(), Some("/foo_project"));
     assert_eq!(started.thread.agent_role.as_deref(), Some("codex_cli"));
+    assert_single_completed_external_init_context_turn(
+        &started.thread.turns,
+        "/foo_project",
+        "codex_cli",
+        "thread/started notification",
+    );
 
     let list_req_id = mcp
         .send_thread_list_request(ThreadListParams {

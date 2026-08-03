@@ -18,6 +18,7 @@ async fn start_hidden_external_root_thread(mcp: &mut McpProcess, cwd: &Path) -> 
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     assert_eq!(thread.agent_path, None);
     assert_eq!(thread.agent_role, None);
+    assert_thread_has_pre_input_init_context(&thread, None, "/root", "claude_cli");
     assert!(matches!(
         thread.lifecycle_status,
         ThreadLifecycleStatus::Active { .. }
@@ -56,8 +57,12 @@ async fn start_named_external_root_thread_with_provider(
     assert_eq!(thread.model_provider, provider);
     assert_eq!(thread.thread_source, Some(ThreadSource::User));
     let expected_agent_path = format!("/{task_name}");
-    assert_eq!(thread.agent_path.as_deref(), Some(expected_agent_path.as_str()));
+    assert_eq!(
+        thread.agent_path.as_deref(),
+        Some(expected_agent_path.as_str())
+    );
     assert_eq!(thread.agent_role.as_deref(), Some(provider));
+    assert_thread_has_pre_input_init_context(&thread, None, &expected_agent_path, provider);
     assert!(matches!(
         thread.lifecycle_status,
         ThreadLifecycleStatus::Active { .. }
@@ -419,7 +424,7 @@ async fn read_external_root_turn_completed(
 
 fn assert_external_provider_init_context_item(
     item: &ThreadItem,
-    input_text: &str,
+    forbidden_input_text: Option<&str>,
     agent_path: &str,
     agent_role: &str,
 ) {
@@ -439,7 +444,9 @@ fn assert_external_provider_init_context_item(
         .map(|section| format!("{}\n{}", section.label, section.text))
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(context_text.contains(input_text));
+    if let Some(forbidden_input_text) = forbidden_input_text {
+        assert!(!context_text.contains(forbidden_input_text));
+    }
     assert!(context_text.contains("spawn_external_agent"));
     assert!(context_text.contains("external_tool_call"));
     assert!(context_text.contains("Current external agent metadata"));
@@ -447,19 +454,36 @@ fn assert_external_provider_init_context_item(
     assert!(context_text.contains(&format!("agent_role: {agent_role}")));
 }
 
-fn assert_turn_contains_external_provider_init_context(
-    items: &[ThreadItem],
-    input_text: &str,
+fn assert_thread_has_pre_input_init_context(
+    thread: &app_server_protocol::Thread,
+    forbidden_input_text: Option<&str>,
     agent_path: &str,
     agent_role: &str,
 ) {
-    let init_context = items
+    let turn = thread
+        .turns
+        .first()
+        .expect("expected pre-input init context turn");
+    assert_eq!(turn.status, TurnStatus::Completed);
+    let init_context = turn
+        .items
         .iter()
         .find(|item| {
             matches!(item, ThreadItem::InjectedContext { title, .. } if title == "Init Context")
         })
         .expect("expected persisted external provider init context item");
-    assert_external_provider_init_context_item(init_context, input_text, agent_path, agent_role);
+    assert_external_provider_init_context_item(
+        init_context,
+        forbidden_input_text,
+        agent_path,
+        agent_role,
+    );
+}
+
+fn assert_turn_excludes_external_provider_init_context(items: &[ThreadItem]) {
+    assert!(!items.iter().any(|item| {
+        matches!(item, ThreadItem::InjectedContext { title, .. } if title == "Init Context")
+    }));
 }
 
 #[tokio::test]
@@ -509,15 +533,6 @@ async fn codex_cli_error_notification_is_visible_and_terminal() -> Result<()> {
         other => panic!("expected codex_cli external user message item, got {other:?}"),
     }
 
-    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
-    assert_eq!(init_context_item.turn_id, turn.id);
-    assert_external_provider_init_context_item(
-        &init_context_item.item,
-        input_text,
-        "/dotfiles",
-        "codex_cli",
-    );
-
     let error_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(error_item.turn_id, turn.id);
     let error_text = match error_item.item {
@@ -549,10 +564,17 @@ async fn codex_cli_error_notification_is_visible_and_terminal() -> Result<()> {
     )
     .await??;
     let read: ThreadReadResponse = to_response(read_resp)?;
+    assert_thread_has_pre_input_init_context(
+        &read.thread,
+        Some(input_text),
+        "/dotfiles",
+        "codex_cli",
+    );
     let persisted_turn = read
         .thread
         .turns
-        .first()
+        .iter()
+        .find(|turn| turn.status == TurnStatus::Failed)
         .expect("thread/read should include failed external turn");
     assert_eq!(persisted_turn.status, TurnStatus::Failed);
     assert!(persisted_turn.items.iter().any(|item| matches!(
@@ -560,12 +582,7 @@ async fn codex_cli_error_notification_is_visible_and_terminal() -> Result<()> {
         ThreadItem::AgentMessage { text, .. }
             if text.contains("Authentication failed") && text.contains("401 Unauthorized")
     )));
-    assert_turn_contains_external_provider_init_context(
-        &persisted_turn.items,
-        input_text,
-        "/dotfiles",
-        "codex_cli",
-    );
+    assert_turn_excludes_external_provider_init_context(&persisted_turn.items);
 
     Ok(())
 }
@@ -574,8 +591,7 @@ async fn codex_cli_error_notification_is_visible_and_terminal() -> Result<()> {
 async fn codex_cli_display_items_are_visible_and_recoverable() -> Result<()> {
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;
-    let mut mcp =
-        start_external_root_mcp_with_codex_display_items(&codex_home, &fake_bin).await?;
+    let mut mcp = start_external_root_mcp_with_codex_display_items(&codex_home, &fake_bin).await?;
     let thread_id = start_named_external_root_thread_with_provider(
         &mut mcp,
         codex_home.path(),
@@ -602,18 +618,13 @@ async fn codex_cli_display_items_are_visible_and_recoverable() -> Result<()> {
     let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
 
     let _user_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
-    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
-    assert_external_provider_init_context_item(
-        &init_context_item.item,
-        "Explain this project",
-        "/dotfiles",
-        "codex_cli",
-    );
 
     let reasoning_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(reasoning_item.turn_id, turn.id);
     match reasoning_item.item {
-        ThreadItem::Reasoning { summary, content, .. } => {
+        ThreadItem::Reasoning {
+            summary, content, ..
+        } => {
             assert_eq!(summary, vec!["checking project shape".to_string()]);
             assert!(content.is_empty());
         }
@@ -664,10 +675,22 @@ async fn codex_cli_display_items_are_visible_and_recoverable() -> Result<()> {
     )
     .await??;
     let read: ThreadReadResponse = to_response(read_resp)?;
+    assert_thread_has_pre_input_init_context(
+        &read.thread,
+        Some("Explain this project"),
+        "/dotfiles",
+        "codex_cli",
+    );
     let persisted_turn = read
         .thread
         .turns
-        .first()
+        .iter()
+        .find(|turn| {
+            turn.items.iter().any(|item| {
+                matches!(item, ThreadItem::Reasoning { summary, .. }
+                    if summary == &vec!["checking project shape".to_string()])
+            })
+        })
         .expect("thread/read should include external display turn");
     assert!(persisted_turn.items.iter().any(|item| matches!(
         item,
@@ -683,12 +706,7 @@ async fn codex_cli_display_items_are_visible_and_recoverable() -> Result<()> {
         item,
         ThreadItem::AgentMessage { text, .. } if text == "Codex final answer"
     )));
-    assert_turn_contains_external_provider_init_context(
-        &persisted_turn.items,
-        "Explain this project",
-        "/dotfiles",
-        "codex_cli",
-    );
+    assert_turn_excludes_external_provider_init_context(&persisted_turn.items);
 
     Ok(())
 }
@@ -741,15 +759,6 @@ async fn external_root_turn_start_accepts_text_input() -> Result<()> {
         }
         other => panic!("expected external user message item, got {other:?}"),
     }
-
-    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
-    assert_eq!(init_context_item.turn_id, turn.id);
-    assert_external_provider_init_context_item(
-        &init_context_item.item,
-        "Hello external root",
-        "/root",
-        "claude_cli",
-    );
 
     let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(assistant_item.turn_id, turn.id);
@@ -817,15 +826,6 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
         other => panic!("expected named external user message item, got {other:?}"),
     }
 
-    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
-    assert_eq!(init_context_item.turn_id, turn.id);
-    assert_external_provider_init_context_item(
-        &init_context_item.item,
-        input_text,
-        "/foo_project",
-        "claude_cli",
-    );
-
     let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(assistant_item.turn_id, turn.id);
     match assistant_item.item {
@@ -863,17 +863,18 @@ async fn named_external_root_turn_start_accepts_text_input() -> Result<()> {
     )
     .await??;
     let read: ThreadReadResponse = to_response(read_resp)?;
-    let persisted_turn = read
-        .thread
-        .turns
-        .first()
-        .expect("thread/read should include named external turn");
-    assert_turn_contains_external_provider_init_context(
-        &persisted_turn.items,
-        input_text,
+    assert_thread_has_pre_input_init_context(
+        &read.thread,
+        Some(input_text),
         "/foo_project",
         "claude_cli",
     );
+    let persisted_turn = read
+        .thread
+        .turns
+        .last()
+        .expect("thread/read should include named external turn");
+    assert_turn_excludes_external_provider_init_context(&persisted_turn.items);
 
     Ok(())
 }
@@ -883,9 +884,12 @@ async fn codex_cli_named_external_root_turn_start_sends_context_to_provider() ->
     let codex_home = TempDir::new()?;
     let fake_bin = TempDir::new()?;
     let provider_input_log = codex_home.path().join("codex-provider-input.jsonl");
-    let mut mcp =
-        start_external_root_mcp_with_codex_input_capture(&codex_home, &fake_bin, &provider_input_log)
-            .await?;
+    let mut mcp = start_external_root_mcp_with_codex_input_capture(
+        &codex_home,
+        &fake_bin,
+        &provider_input_log,
+    )
+    .await?;
     let thread_id = start_named_external_root_thread_with_provider(
         &mut mcp,
         codex_home.path(),
@@ -927,15 +931,6 @@ async fn codex_cli_named_external_root_turn_start_sends_context_to_provider() ->
         other => panic!("expected codex_cli external user message item, got {other:?}"),
     }
 
-    let init_context_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
-    assert_eq!(init_context_item.turn_id, turn.id);
-    assert_external_provider_init_context_item(
-        &init_context_item.item,
-        input_text,
-        "/cp_http_api",
-        "codex_cli",
-    );
-
     let assistant_item = read_external_root_item_completed(&mut mcp, &thread_id).await?;
     assert_eq!(assistant_item.turn_id, turn.id);
     match assistant_item.item {
@@ -974,17 +969,18 @@ async fn codex_cli_named_external_root_turn_start_sends_context_to_provider() ->
     )
     .await??;
     let read: ThreadReadResponse = to_response(read_resp)?;
-    let persisted_turn = read
-        .thread
-        .turns
-        .first()
-        .expect("thread/read should include codex_cli external turn");
-    assert_turn_contains_external_provider_init_context(
-        &persisted_turn.items,
-        input_text,
+    assert_thread_has_pre_input_init_context(
+        &read.thread,
+        Some(input_text),
         "/cp_http_api",
         "codex_cli",
     );
+    let persisted_turn = read
+        .thread
+        .turns
+        .last()
+        .expect("thread/read should include codex_cli external turn");
+    assert_turn_excludes_external_provider_init_context(&persisted_turn.items);
 
     Ok(())
 }

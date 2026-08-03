@@ -137,7 +137,9 @@ pub(super) fn serialize_thread_turns_cursor(
     .map_err(|err| internal_error(format!("failed to serialize cursor: {err}")))
 }
 
-pub(super) fn parse_thread_turns_cursor(cursor: &str) -> Result<ThreadTurnsCursor, JSONRPCErrorError> {
+pub(super) fn parse_thread_turns_cursor(
+    cursor: &str,
+) -> Result<ThreadTurnsCursor, JSONRPCErrorError> {
     serde_json::from_str(cursor).map_err(|_| invalid_request(format!("invalid cursor: {cursor}")))
 }
 
@@ -213,6 +215,11 @@ fn persisted_terminal_agent_status_from_rollout_items(
     items: &[RolloutItem],
 ) -> Option<AgentStatus> {
     items.iter().rev().find_map(|item| match item {
+        RolloutItem::EventMsg(protocol::protocol::EventMsg::TurnComplete(event))
+            if event.last_agent_message.is_none() =>
+        {
+            None
+        }
         RolloutItem::EventMsg(event) => codex_agent_runtime::agent_status_from_event(event)
             .filter(is_persisted_terminal_agent_status),
         _ => None,
@@ -241,11 +248,13 @@ pub(in crate::request_processors) fn should_preserve_persisted_lifecycle_status_
 ) -> bool {
     match &thread.lifecycle_status {
         ThreadLifecycleStatus::Final {
-            result: app_server_protocol::ThreadLifecycleFinalStatus::Shutdown
+            result:
+                app_server_protocol::ThreadLifecycleFinalStatus::Shutdown
                 | app_server_protocol::ThreadLifecycleFinalStatus::Interrupted,
         } => true,
         ThreadLifecycleStatus::Final {
-            result: app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. }
+            result:
+                app_server_protocol::ThreadLifecycleFinalStatus::Completed { .. }
                 | app_server_protocol::ThreadLifecycleFinalStatus::Errored { .. },
         } => is_external_root_lifecycle_projection_thread(thread),
         _ => false,
@@ -347,10 +356,7 @@ mod persisted_lifecycle_status_tests {
 
         apply_persisted_thread_lifecycle_status(&mut thread, &[]);
 
-        assert_eq!(
-            thread.lifecycle_status,
-            ThreadLifecycleStatus::NotLoaded
-        );
+        assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
     }
 
     #[test]
@@ -414,6 +420,29 @@ mod persisted_lifecycle_status_tests {
         assert_eq!(
             completed_thread.lifecycle_status,
             ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+    }
+
+    #[test]
+    fn external_root_turn_complete_without_message_does_not_project_completed() {
+        let mut thread = external_root_thread();
+        let items = vec![RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "external-init-context".to_string(),
+                last_agent_message: None,
+                completed_at: Some(1),
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            }),
+        )];
+
+        apply_persisted_thread_lifecycle_status(&mut thread, &items);
+
+        assert_eq!(
+            thread.lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            }
         );
     }
 
@@ -543,7 +572,10 @@ pub(super) fn core_thread_write_error(operation: &str, err: CodexErr) -> JSONRPC
     }
 }
 
-pub(super) fn thread_store_archive_error(operation: &str, err: ThreadStoreError) -> JSONRPCErrorError {
+pub(super) fn thread_store_archive_error(
+    operation: &str,
+    err: ThreadStoreError,
+) -> JSONRPCErrorError {
     match err {
         ThreadStoreError::InvalidRequest { message } => invalid_request(message),
         ThreadStoreError::Unsupported {
@@ -560,7 +592,10 @@ pub(super) fn set_thread_name_from_title(thread: &mut Thread, title: String) {
     thread.name = Some(title);
 }
 
-pub(super) fn apply_thread_usage_from_rollout_items(thread: &mut Thread, rollout_items: &[RolloutItem]) {
+pub(super) fn apply_thread_usage_from_rollout_items(
+    thread: &mut Thread,
+    rollout_items: &[RolloutItem],
+) {
     thread.token_usage =
         super::token_usage_replay::latest_thread_token_usage_from_rollout_items(rollout_items);
     thread.context_usage =
