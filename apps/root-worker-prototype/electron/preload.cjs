@@ -7,6 +7,11 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   bootstrap: () => ipcRenderer.invoke("codex:bootstrap"),
   listThreads: (cwd) => ipcRenderer.invoke("codex:listThreads", cwd),
   listModels: () => ipcRenderer.invoke("codex:listModels"),
+  readConfig: (payload) => ipcRenderer.invoke("codex:readConfig", payload),
+  writeConfigValue: (payload) =>
+    ipcRenderer.invoke("codex:writeConfigValue", payload),
+  batchWriteConfig: (payload) =>
+    ipcRenderer.invoke("codex:batchWriteConfig", payload),
   listAgentTypes: (cwd) => ipcRenderer.invoke("codex:listAgentTypes", cwd),
   listThreadProviders: (cwd) =>
     ipcRenderer.invoke("codex:listThreadProviders", cwd),

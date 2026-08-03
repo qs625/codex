@@ -166,6 +166,24 @@ ipcMain.handle("codex:listModels", async () => {
   return appServerClient.request("model/list", { includeHidden: false });
 });
 
+ipcMain.handle("codex:readConfig", async (_event, payload = {}) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("config/read", {
+    includeLayers: Boolean(payload?.includeLayers),
+    cwd: payload?.cwd ?? null,
+  });
+});
+
+ipcMain.handle("codex:writeConfigValue", async (_event, payload) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("config/value/write", payload);
+});
+
+ipcMain.handle("codex:batchWriteConfig", async (_event, payload) => {
+  await ensureDefaultWorkspace();
+  return appServerClient.request("config/batchWrite", payload);
+});
+
 ipcMain.handle("codex:listAgentTypes", async (_event, cwd = defaultWorkspace) => {
   await ensureDefaultWorkspace();
   return appServerClient.request("agentType/list", { cwd });

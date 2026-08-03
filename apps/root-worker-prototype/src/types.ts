@@ -857,3 +857,62 @@ export type FileTreeEntry = {
   name: string;
   kind: "file" | "directory";
 };
+
+export type JsonConfigValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonConfigValue[]
+  | { [key: string]: JsonConfigValue | undefined };
+
+export type ConfigLayerSource =
+  | { type: "mdm"; domain: string; key: string }
+  | { type: "system"; file: string }
+  | { type: "user"; file: string; profile: string | null }
+  | { type: "project"; dotCodexFolder: string }
+  | { type: "sessionFlags" }
+  | { type: "legacyManagedConfigTomlFromFile"; file: string }
+  | { type: "legacyManagedConfigTomlFromMdm" };
+
+export type ConfigLayerMetadata = {
+  name: ConfigLayerSource;
+  version: string;
+};
+
+export type ConfigLayer = {
+  name: ConfigLayerSource;
+  version: string;
+  config: JsonConfigValue;
+  disabledReason: string | null;
+};
+
+export type ConfigReadResponse = {
+  config: Record<string, JsonConfigValue | undefined>;
+  origins: Record<string, ConfigLayerMetadata | undefined>;
+  layers: ConfigLayer[] | null;
+};
+
+export type ConfigEdit = {
+  keyPath: string;
+  value: JsonConfigValue;
+  mergeStrategy: "replace" | "upsert";
+};
+
+export type ConfigBatchWriteParams = {
+  edits: ConfigEdit[];
+  filePath?: string | null;
+  expectedVersion?: string | null;
+  reloadUserConfig?: boolean;
+};
+
+export type ConfigWriteResponse = {
+  status: "ok" | "okOverridden";
+  version: string;
+  filePath: string;
+  overriddenMetadata?: {
+    message: string;
+    overridingLayer: ConfigLayerMetadata;
+    effectiveValue: JsonConfigValue;
+  } | null;
+};
