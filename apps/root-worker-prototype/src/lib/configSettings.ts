@@ -689,6 +689,9 @@ function providerEntryDirty(entry: ProviderRegistryEntry) {
   if (entry.isReadonly) {
     return false;
   }
+  if (!entry.isNew && entry.draftId.trim() !== entry.effectiveId) {
+    return true;
+  }
   return stableJson(providerValueFromEntry(entry)) !== stableJson(entry.raw);
 }
 

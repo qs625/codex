@@ -263,6 +263,48 @@ test("custom provider registry writes provider paths and rejects reserved ids", 
   );
 });
 
+test("custom provider registry rename is dirty even when value is unchanged", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model_providers: {
+        corp: {
+          name: "Corp Gateway",
+          base_url: "https://corp.example.invalid/v1",
+          wire_api: "responses",
+          env_key: "CORP_API_KEY",
+        },
+      },
+    }),
+  );
+  const providerRegistry = state.providerRegistry.map((entry) => ({
+    ...entry,
+    draftId: "corp2",
+  }));
+
+  assert.equal(isProviderRegistryDirty(providerRegistry), true);
+  assert.deepEqual(
+    buildConfigSaveParams(
+      state.fields,
+      state.userVersion,
+      providerRegistry,
+      state.modelOptions,
+    )?.edits,
+    [
+      { keyPath: "model_providers.corp", value: null, mergeStrategy: "replace" },
+      {
+        keyPath: "model_providers.corp2",
+        mergeStrategy: "replace",
+        value: {
+          name: "Corp Gateway",
+          base_url: "https://corp.example.invalid/v1",
+          wire_api: "responses",
+          env_key: "CORP_API_KEY",
+        },
+      },
+    ],
+  );
+});
+
 test("inline model option providers are not duplicated as custom registry entries", () => {
   const state = buildSettingsConfigState(
     readResponse({
