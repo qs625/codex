@@ -859,23 +859,31 @@ mod tests {
                         })
                         .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
                     }
-                    "event.poll" => {
+                    "agent.wait" => {
+                        let target = request
+                            .params
+                            .get("target")
+                            .and_then(Value::as_str)
+                            .expect("wait target");
                         let poll_count = {
                             let mut guard = self.poll_count.lock().expect("poll count lock");
                             *guard += 1;
                             *guard
                         };
-                        let explorer = completion_event("/root/explorer", "explorer done");
-                        let events = if poll_count >= 3 {
-                            vec![explorer, completion_event("/root/owner", "owner done")]
+                        let event = if target == "/root/owner" || poll_count >= 3 {
+                            completion_event("/root/owner", "owner done")
                         } else {
-                            vec![explorer]
+                            completion_event("/root/explorer", "explorer done")
                         };
                         Ok(serde_json::json!({
                             "sourceHint": "child_completion",
                             "timedOut": false,
-                            "event": events.first().cloned(),
-                            "events": events
+                            "target": target,
+                            "text": event["communication"]["status"]["completed"],
+                            "statusKind": "completed",
+                            "status": event["communication"]["status"],
+                            "event": event,
+                            "events": [event]
                         }))
                     }
                     method => Err(WorkflowRuntimeError::unsupported(format!(
@@ -925,23 +933,28 @@ mod tests {
                         .map_err(|err| WorkflowRuntimeError::invalid_request(err.to_string()))
                     }
                     "agent.followup" => Ok(serde_json::json!({ "ok": true })),
-                    "event.poll" => {
+                    "agent.wait" => {
+                        let target = request
+                            .params
+                            .get("target")
+                            .and_then(Value::as_str)
+                            .expect("wait target");
                         let poll_count = {
                             let mut guard = self.poll_count.lock().expect("poll count lock");
                             *guard += 1;
                             *guard
                         };
-                        let first = completion_event("/root/owner", "same final text");
-                        let events = if poll_count >= 2 {
-                            vec![first, completion_event("/root/owner", "same final text")]
-                        } else {
-                            vec![first]
-                        };
+                        let event = completion_event("/root/owner", "same final text");
                         Ok(serde_json::json!({
                             "sourceHint": "child_completion",
                             "timedOut": false,
-                            "event": events.first().cloned(),
-                            "events": events
+                            "target": target,
+                            "sequence": poll_count,
+                            "text": event["communication"]["status"]["completed"],
+                            "statusKind": "completed",
+                            "status": event["communication"]["status"],
+                            "event": event,
+                            "events": [event]
                         }))
                     }
                     method => Err(WorkflowRuntimeError::unsupported(format!(
@@ -1163,64 +1176,19 @@ export default defineWorkflow({
     }
 
     #[tokio::test]
-    async fn workflow_runner_can_wait_for_later_agent_when_old_completion_remains_pending() {
+    async fn workflow_runner_can_wait_for_later_agent_with_target_wait_api() {
         let temp = tempfile::tempdir().expect("tempdir");
         let workflow_dir = temp.path().join("workflow");
         write_entry(
             &workflow_dir,
             r#"import { defineWorkflow } from "@codex/workflow";
-
-function events(result) {
-  const events = Array.isArray(result?.events) ? [...result.events] : [];
-  if (result?.event && !events.includes(result.event)) {
-    events.unshift(result.event);
-  }
-  return events;
-}
-
-function key(event) {
-  return `${event?.communication?.author}:${event?.communication?.content}`;
-}
-
-async function sleep() {
-  await new Promise((resolve) => setTimeout(resolve, 1));
-}
-
 export default defineWorkflow({
   async run(wf) {
-    const seen = new Set();
-    async function waitFor(agent) {
-      for (;;) {
-        const result = await wf.pollEvent();
-        let sawOnlySeenEvents = false;
-        for (const event of events(result)) {
-          if (event?.type !== "inter_agent_communication") {
-            continue;
-          }
-          const operation = event.communication?.operation;
-          if (operation !== "childCompletion" && operation !== "child_completion") {
-            continue;
-          }
-          const eventKey = key(event);
-          if (seen.has(eventKey)) {
-            sawOnlySeenEvents = true;
-            continue;
-          }
-          seen.add(eventKey);
-          if (event.communication?.author === agent.binding.agentPath) {
-            return event.communication.status.completed;
-          }
-        }
-        if (sawOnlySeenEvents) {
-          await sleep();
-        }
-      }
-    }
     const explorer = await wf.Agent("explorer", { message: "research" });
-    const research = await waitFor(explorer);
-    const owner = await wf.Agent("owner", { message: research });
-    const implementation = await waitFor(owner);
-    return { research, implementation };
+    const research = await explorer.wait();
+    const owner = await wf.Agent("owner", { message: research.text });
+    const implementation = await owner.wait();
+    return { research: research.text, implementation: implementation.text };
   }
 });"#,
         );
@@ -1254,77 +1222,23 @@ export default defineWorkflow({
                 .and_then(|output| output.pointer("/result/result/implementation")),
             Some(&Value::String("owner done".to_string()))
         );
-        assert_eq!(*bridge.poll_count.lock().expect("poll count lock"), 3);
+        assert_eq!(*bridge.poll_count.lock().expect("poll count lock"), 2);
     }
 
     #[tokio::test]
-    async fn workflow_runner_accepts_same_agent_duplicate_completion_text() {
+    async fn workflow_runner_waits_same_agent_again_after_followup() {
         let temp = tempfile::tempdir().expect("tempdir");
         let workflow_dir = temp.path().join("workflow");
         write_entry(
             &workflow_dir,
             r#"import { defineWorkflow } from "@codex/workflow";
-
-function events(result) {
-  const events = Array.isArray(result?.events) ? [...result.events] : [];
-  const baseKey = (event) => JSON.stringify({
-    author: event?.communication?.author ?? null,
-    status: event?.communication?.status ?? null,
-    content: event?.communication?.content ?? null
-  });
-  if (result?.event && !events.some((event) => baseKey(event) === baseKey(result.event))) {
-    events.unshift(result.event);
-  }
-  return events;
-}
-
-function baseKey(event) {
-  return JSON.stringify({
-    author: event?.communication?.author ?? null,
-    status: event?.communication?.status ?? null,
-    content: event?.communication?.content ?? null
-  });
-}
-
-async function sleep() {
-  await new Promise((resolve) => setTimeout(resolve, 1));
-}
-
 export default defineWorkflow({
   async run(wf) {
-    const seen = new Set();
-    async function waitFor(agent) {
-      for (;;) {
-        const occurrenceByBaseKey = new Map();
-        const result = await wf.pollEvent();
-        for (const event of events(result)) {
-          if (event?.type !== "inter_agent_communication") {
-            continue;
-          }
-          const operation = event.communication?.operation;
-          if (operation !== "childCompletion" && operation !== "child_completion") {
-            continue;
-          }
-          const base = baseKey(event);
-          const occurrence = occurrenceByBaseKey.get(base) ?? 0;
-          occurrenceByBaseKey.set(base, occurrence + 1);
-          const key = `${base}#${occurrence}`;
-          if (seen.has(key)) {
-            continue;
-          }
-          seen.add(key);
-          if (event.communication?.author === agent.binding.agentPath) {
-            return event.communication.status.completed;
-          }
-        }
-        await sleep();
-      }
-    }
     const owner = await wf.Agent("owner", { message: "implement" });
-    const first = await waitFor(owner);
+    const first = await owner.wait();
     await owner.followup("verify");
-    const second = await waitFor(owner);
-    return { first, second };
+    const second = await owner.wait();
+    return { first: first.text, second: second.text };
   }
 });"#,
         );
