@@ -740,8 +740,10 @@ async fn set_rate_limits_retains_previous_credits() {
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
+        approval_policy_is_session_override: false,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile_state: config.permissions.permission_profile_state().clone(),
+        permission_profile_is_session_override: false,
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
         workspace_roots: config.workspace_roots.clone(),
@@ -846,8 +848,10 @@ async fn set_rate_limits_updates_plan_type_when_present() {
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
+        approval_policy_is_session_override: false,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile_state: config.permissions.permission_profile_state().clone(),
+        permission_profile_is_session_override: false,
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
         workspace_roots: config.workspace_roots.clone(),
@@ -1286,10 +1290,7 @@ async fn per_turn_config_preserves_explicit_modelhub_model_and_provider() {
 
     let per_turn_config = Session::build_per_turn_config(&updated, updated.cwd.clone());
 
-    assert_eq!(
-        per_turn_config.model.as_deref(),
-        Some("gpt-5.5-2026-04-24")
-    );
+    assert_eq!(per_turn_config.model.as_deref(), Some("gpt-5.5-2026-04-24"));
     assert_eq!(per_turn_config.model_provider_id, "modelhub-gpt");
     assert_eq!(per_turn_config.model_provider, provider);
 }
@@ -1342,8 +1343,10 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
+        approval_policy_is_session_override: false,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile_state: config.permissions.permission_profile_state().clone(),
+        permission_profile_is_session_override: false,
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
         workspace_roots: config.workspace_roots.clone(),
@@ -1975,8 +1978,10 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
+        approval_policy_is_session_override: false,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile_state: config.permissions.permission_profile_state().clone(),
+        permission_profile_is_session_override: false,
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
         workspace_roots: config.workspace_roots.clone(),
@@ -2119,8 +2124,10 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
+        approval_policy_is_session_override: false,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile_state: config.permissions.permission_profile_state().clone(),
+        permission_profile_is_session_override: false,
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
         workspace_roots: config.workspace_roots.clone(),
@@ -2422,8 +2429,10 @@ async fn make_session_with_config_and_rx(
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
+        approval_policy_is_session_override: false,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile_state: config.permissions.permission_profile_state().clone(),
+        permission_profile_is_session_override: false,
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
         workspace_roots: config.workspace_roots.clone(),
@@ -2554,8 +2563,10 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
+        approval_policy_is_session_override: false,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile_state: config.permissions.permission_profile_state().clone(),
+        permission_profile_is_session_override: false,
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
         workspace_roots: config.workspace_roots.clone(),

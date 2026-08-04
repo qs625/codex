@@ -31,6 +31,8 @@ export type SettingsConfigState = {
   providerRegistry: ProviderRegistryEntry[];
   modelOptions: ModelOptionEntry[];
   globalSections: SettingsFieldSection[];
+  configInventory: ConfigInventoryRow[];
+  resourceOverview: ResourceOverviewSection[];
   userConfigPath: string | null;
   userVersion: string | null;
 };
@@ -74,6 +76,30 @@ export type ModelOptionEntry = {
   raw: Record<string, JsonConfigValue | undefined>;
 };
 
+export type ConfigInventoryRow = {
+  keyPath: string;
+  valueType: string;
+  summary: string;
+  detail: string | null;
+  originLabel: string;
+  isEditable: boolean;
+};
+
+export type ResourceOverviewSection = {
+  id: "global" | "project" | "effective";
+  title: string;
+  rows: ResourceOverviewRow[];
+};
+
+export type ResourceOverviewRow = {
+  keyPath: string;
+  label: string;
+  summary: string;
+  detail: string | null;
+  sourceLabel: string;
+  isEmpty: boolean;
+};
+
 const UNSET_VALUE = "__codex_unset__";
 const BUILT_IN_PROVIDER_IDS = new Set([
   "openai",
@@ -88,7 +114,30 @@ const WIRE_API_OPTIONS = new Set([
   "chat_completions",
   "azure_chat_completions",
 ]);
-
+const CONFIG_INVENTORY_LIMIT = 180;
+const RESOURCE_KEY_PATHS = [
+  "agents",
+  "agent_types",
+  "skills",
+  "plugins",
+  "mcp_servers",
+  "memory",
+  "memory_consolidation",
+  "memory_consolidation_thread",
+  "tools.skills",
+  "tools.plugins",
+];
+const RUNTIME_REFRESHABLE_CONFIG_KEY_PREFIXES = [
+  "approval_policy",
+  "sandbox_mode",
+  "sandbox_workspace_write",
+  "default_permissions",
+  "permissions",
+  "apps",
+  "tool_suggest",
+  "tools",
+  "hooks",
+];
 export const SUPPORTED_CONFIG_FIELDS: ConfigFieldDefinition[] = [
   {
     keyPath: "model",
@@ -206,9 +255,68 @@ export function buildSettingsConfigState(
     providerRegistry: buildProviderRegistryEntries(response),
     modelOptions: buildModelOptionEntries(response),
     globalSections: buildGlobalSettingsSections(fields),
+    configInventory: buildConfigInventory(response, fields),
+    resourceOverview: buildResourceOverview(response),
     userConfigPath: findUserConfigPath(response.layers, response.origins),
     userVersion: findUserConfigVersion(response.layers, response.origins),
   };
+}
+
+export function buildConfigInventory(
+  response: ConfigReadResponse,
+  fields: ConfigFieldState[] = [],
+): ConfigInventoryRow[] {
+  const editablePaths = new Set(fields.map((field) => field.keyPath));
+  const rows: ConfigInventoryRow[] = [];
+  for (const key of Object.keys(response.config).sort((left, right) =>
+    left.localeCompare(right),
+  )) {
+    flattenConfigValue(key, response.config[key], response, editablePaths, rows);
+    if (rows.length >= CONFIG_INVENTORY_LIMIT) {
+      rows.push({
+        keyPath: "...",
+        valueType: "truncated",
+        summary: `Showing first ${CONFIG_INVENTORY_LIMIT} config entries.`,
+        detail: null,
+        originLabel: "Effective config",
+        isEditable: false,
+      });
+      break;
+    }
+  }
+  return rows;
+}
+
+export function buildResourceOverview(
+  response: ConfigReadResponse,
+): ResourceOverviewSection[] {
+  const globalRows = resourceRowsFromLayers(response.layers, "global");
+  const projectRows = resourceRowsFromLayers(response.layers, "project");
+  const effectiveRows = resourceRowsFromConfig(
+    response.config,
+    "Effective config",
+  );
+
+  return [
+    {
+      id: "global",
+      title: "Global Resources",
+      rows: globalRows.length > 0 ? globalRows : [emptyResourceRow("Global")],
+    },
+    {
+      id: "project",
+      title: "Project Resources",
+      rows: projectRows.length > 0 ? projectRows : [emptyResourceRow("Project")],
+    },
+    {
+      id: "effective",
+      title: "Effective Resource Config",
+      rows:
+        effectiveRows.length > 0
+          ? effectiveRows
+          : [emptyResourceRow("Effective config")],
+    },
+  ];
 }
 
 export function buildProviderRegistryEntries(
@@ -220,13 +328,16 @@ export function buildProviderRegistryEntries(
   }
   const inlineModelProviders = inlineModelOptionProviderIds(response);
   return Object.entries(value)
-    .filter(
-      ([id, provider]) =>
-        !BUILT_IN_PROVIDER_IDS.has(id) &&
-        isJsonObject(provider) &&
-        !isInlineModelOptionProvider(id, provider, inlineModelProviders),
-    )
-    .map(([id, provider]) => providerEntryFromRaw(id, provider, false));
+    .flatMap(([id, provider]) => {
+      if (
+        BUILT_IN_PROVIDER_IDS.has(id) ||
+        !isJsonObject(provider) ||
+        isInlineModelOptionProvider(id, provider, inlineModelProviders)
+      ) {
+        return [];
+      }
+      return [providerEntryFromRaw(id, provider, false)];
+    });
 }
 
 export function buildModelOptionEntries(
@@ -279,7 +390,9 @@ export function buildConfigSaveParams(
   return {
     edits,
     expectedVersion,
-    reloadUserConfig: true,
+    reloadUserConfig: edits.some((edit) =>
+      isRuntimeRefreshableConfigKey(edit.keyPath),
+    ),
   };
 }
 
@@ -312,6 +425,12 @@ export function isProviderRegistryDirty(providerRegistry: ProviderRegistryEntry[
 
 export function isModelOptionsDirty(modelOptions: ModelOptionEntry[]) {
   return modelOptions.some((entry) => modelOptionDirty(entry));
+}
+
+function isRuntimeRefreshableConfigKey(keyPath: string) {
+  return RUNTIME_REFRESHABLE_CONFIG_KEY_PREFIXES.some(
+    (prefix) => keyPath === prefix || keyPath.startsWith(`${prefix}.`),
+  );
 }
 
 export function validateSettingsDrafts(
@@ -488,6 +607,224 @@ function valueAtPath(
     current = current[segment];
   }
   return current;
+}
+
+function flattenConfigValue(
+  keyPath: string,
+  value: JsonConfigValue | undefined,
+  response: ConfigReadResponse,
+  editablePaths: Set<string>,
+  rows: ConfigInventoryRow[],
+) {
+  if (rows.length >= CONFIG_INVENTORY_LIMIT) {
+    return;
+  }
+  if (isJsonObject(value)) {
+    const entries = Object.entries(value).filter(
+      ([, entryValue]) => entryValue !== undefined,
+    );
+    if (entries.length === 0) {
+      rows.push(configInventoryRow(keyPath, value, response, editablePaths));
+      return;
+    }
+    for (const [key, entryValue] of entries.sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      flattenConfigValue(
+        `${keyPath}.${key}`,
+        entryValue,
+        response,
+        editablePaths,
+        rows,
+      );
+      if (rows.length >= CONFIG_INVENTORY_LIMIT) {
+        return;
+      }
+    }
+    return;
+  }
+  rows.push(configInventoryRow(keyPath, value, response, editablePaths));
+}
+
+function configInventoryRow(
+  keyPath: string,
+  value: JsonConfigValue | undefined,
+  response: ConfigReadResponse,
+  editablePaths: Set<string>,
+): ConfigInventoryRow {
+  const summary = summarizeConfigValue(value);
+  return {
+    keyPath,
+    valueType: configValueType(value),
+    summary,
+    detail: detailConfigValue(value, summary),
+    originLabel: originLabel(originForPath(response.origins, keyPath)),
+    isEditable: editablePaths.has(keyPath),
+  };
+}
+
+function originForPath(
+  origins: ConfigReadResponse["origins"],
+  keyPath: string,
+): ConfigLayerMetadata | undefined {
+  let current = keyPath;
+  while (current) {
+    const origin = origins[current];
+    if (origin) {
+      return origin;
+    }
+    const dot = current.lastIndexOf(".");
+    current = dot === -1 ? "" : current.slice(0, dot);
+  }
+  return undefined;
+}
+
+function resourceRowsFromLayers(
+  layers: ConfigLayer[] | null,
+  scope: "global" | "project",
+): ResourceOverviewRow[] {
+  if (!layers) {
+    return [];
+  }
+  return layers.flatMap((layer) => {
+    if (scope === "global" && !isGlobalLayer(layer)) {
+      return [];
+    }
+    if (scope === "project" && layer.name.type !== "project") {
+      return [];
+    }
+    if (!isJsonObject(layer.config)) {
+      return [];
+    }
+    return resourceRowsFromConfig(layer.config, layerLabel(layer));
+  });
+}
+
+function resourceRowsFromConfig(
+  config: Record<string, JsonConfigValue | undefined>,
+  sourceLabel: string,
+): ResourceOverviewRow[] {
+  return RESOURCE_KEY_PATHS.flatMap((keyPath) => {
+    const value = valueAtPath(config, keyPath);
+    if (value === undefined) {
+      return [];
+    }
+    return [resourceOverviewRow(keyPath, value, sourceLabel)];
+  });
+}
+
+function resourceOverviewRow(
+  keyPath: string,
+  value: JsonConfigValue | undefined,
+  sourceLabel: string,
+): ResourceOverviewRow {
+  const summary = summarizeConfigValue(value);
+  return {
+    keyPath,
+    label: resourceLabel(keyPath),
+    summary,
+    detail: detailConfigValue(value, summary),
+    sourceLabel,
+    isEmpty: false,
+  };
+}
+
+function emptyResourceRow(sourceLabel: string): ResourceOverviewRow {
+  return {
+    keyPath: "",
+    label: "No resource config",
+    summary: "No agents, skills, plugins, or memory config found in this layer.",
+    detail: null,
+    sourceLabel,
+    isEmpty: true,
+  };
+}
+
+function isGlobalLayer(layer: ConfigLayer) {
+  return layer.name.type === "user" || layer.name.type === "system";
+}
+
+function layerLabel(layer: ConfigLayer) {
+  const label = originLabel({ name: layer.name, version: layer.version });
+  return layer.disabledReason ? `${label} disabled` : label;
+}
+
+function resourceLabel(keyPath: string) {
+  switch (keyPath) {
+    case "agents":
+    case "agent_types":
+      return "Agents";
+    case "skills":
+    case "tools.skills":
+      return "Skills";
+    case "plugins":
+    case "tools.plugins":
+      return "Plugins";
+    case "memory":
+    case "memory_consolidation":
+    case "memory_consolidation_thread":
+      return "Memory";
+    case "mcp_servers":
+      return "MCP Servers";
+    default:
+      return keyPath;
+  }
+}
+
+function summarizeConfigValue(value: JsonConfigValue | undefined): string {
+  if (value === undefined) {
+    return "Unset";
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "string") {
+    return truncate(value || '""', 160);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  }
+  const keys = Object.keys(value).filter((key) => value[key] !== undefined);
+  if (keys.length === 0) {
+    return "Empty object";
+  }
+  return `${keys.length} key${keys.length === 1 ? "" : "s"}: ${truncate(
+    keys.slice(0, 8).join(", "),
+    120,
+  )}`;
+}
+
+function detailConfigValue(
+  value: JsonConfigValue | undefined,
+  summary: string,
+): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) {
+    return summary.length > 90 ? summary : null;
+  }
+  return JSON.stringify(sortJson(value), null, 2);
+}
+
+function configValueType(value: JsonConfigValue | undefined) {
+  if (value === undefined) {
+    return "unset";
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  return typeof value;
+}
+
+function truncate(value: string, maxLength: number) {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
 
 function scalarConfigValue(value: JsonConfigValue | undefined): string | null {

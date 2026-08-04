@@ -63,6 +63,7 @@ use codex_features::FEATURES;
 use codex_features::Feature;
 use codex_features::unstable_features_warning_event;
 use codex_file_system::FileSystemSandboxContext;
+use codex_file_system::LOCAL_FS;
 use codex_network_proxy_api::BlockedRequestObserver;
 use codex_network_proxy_api::NetworkPolicyDecider;
 use codex_network_proxy_api::NetworkProxyAuditMetadata;
@@ -202,10 +203,12 @@ use codex_context_manager::SettingsUpdateInput;
 use config_service::CONFIG_TOML_FILE;
 use config_service::Config;
 use config_service::ConfigLayerStackOrdering;
+use config_service::ConfigOverrides;
 use config_service::Constrained;
 use config_service::ConstraintResult;
 use config_service::PermissionProfileState;
 use config_service::StartedNetworkProxy;
+use config_service::config_toml::ConfigToml;
 use model_service_api::ModelProviderInfo;
 use protocol::config_types::ShellEnvironmentPolicy;
 use protocol::error::CodexErr;
@@ -224,9 +227,9 @@ mod multi_agents;
 mod pending_input;
 mod review;
 mod rollout_reconstruction;
-pub(crate) mod thread_wait;
 #[allow(clippy::module_inception)]
 pub(crate) mod session;
+pub(crate) mod thread_wait;
 pub(crate) mod turn;
 pub(crate) mod turn_context;
 use self::codex_runtime::CYBER_SAFETY_URL;
@@ -1690,16 +1693,69 @@ impl Session {
         // layers such as request/session overrides that were present when this session
         // was created.
         let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
+        let current_config = {
+            let state = self.state.lock().await;
+            Arc::clone(&state.session_configuration.original_config_do_not_use)
+        };
+        let refreshed_config = match Self::rebuild_runtime_config_with_user_layers(
+            current_config.as_ref(),
+            &next_config,
+        )
+        .await
+        {
+            Ok(config) => config,
+            Err(err) => {
+                warn!("failed to rebuild runtime config while refreshing user layer: {err}");
+                return;
+            }
+        };
         let (previous_config, new_config, config) = {
             let mut state = self.state.lock().await;
+            if !Arc::ptr_eq(
+                &state.session_configuration.original_config_do_not_use,
+                &current_config,
+            ) {
+                return;
+            }
             let previous_config = notify_config_contributors
                 .then(|| Self::build_effective_session_config(&state.session_configuration));
-            let mut config = (*state.session_configuration.original_config_do_not_use).clone();
-            config.config_layer_stack = config
-                .config_layer_stack
-                .with_user_layer_from(&next_config.config_layer_stack);
-            config.tool_suggest =
-                resolve_tool_suggest_config_from_layer_stack(&config.config_layer_stack);
+            let mut config = refreshed_config;
+            config.model = current_config.model.clone();
+            config.model_provider_id = current_config.model_provider_id.clone();
+            config.model_provider = current_config.model_provider.clone();
+            config.model_options = current_config.model_options.clone();
+            config.model_providers = current_config.model_providers.clone();
+            config.model_context_window = current_config.model_context_window;
+            config.model_auto_compact_token_limit = current_config.model_auto_compact_token_limit;
+            config.model_auto_compact_soft_ratio = current_config.model_auto_compact_soft_ratio;
+            config.model_auto_compact_hard_ratio = current_config.model_auto_compact_hard_ratio;
+            config.model_reasoning_effort = current_config.model_reasoning_effort.clone();
+            config.model_reasoning_summary = current_config.model_reasoning_summary.clone();
+            config.model_supports_reasoning_summaries =
+                current_config.model_supports_reasoning_summaries;
+            config.model_catalog = current_config.model_catalog.clone();
+            config.model_verbosity = current_config.model_verbosity.clone();
+            if state
+                .session_configuration
+                .approval_policy_is_session_override
+            {
+                config.permissions.approval_policy =
+                    state.session_configuration.approval_policy.clone();
+            } else {
+                state.session_configuration.approval_policy =
+                    config.permissions.approval_policy.clone();
+            }
+            if state
+                .session_configuration
+                .permission_profile_is_session_override
+            {
+                config.permissions.set_permission_profile_state(
+                    state.session_configuration.permission_profile_state.clone(),
+                );
+            } else {
+                state.session_configuration.permission_profile_state =
+                    config.permissions.permission_profile_state().clone();
+            }
             let config = Arc::new(config);
             state.session_configuration.original_config_do_not_use = Arc::clone(&config);
             let new_config = notify_config_contributors
@@ -1730,6 +1786,34 @@ impl Session {
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = hooks;
         }
+    }
+
+    async fn rebuild_runtime_config_with_user_layers(
+        current_config: &Config,
+        next_config: &Config,
+    ) -> std::io::Result<Config> {
+        let config_layer_stack = current_config
+            .config_layer_stack
+            .with_user_layer_from(&next_config.config_layer_stack);
+        let cfg: ConfigToml = config_layer_stack
+            .effective_config()
+            .try_into()
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+        Config::load_config_with_layer_stack(
+            LOCAL_FS.as_ref(),
+            cfg,
+            ConfigOverrides {
+                cwd: Some(current_config.cwd.to_path_buf()),
+                codex_self_exe: current_config.codex_self_exe.clone(),
+                codex_linux_sandbox_exe: current_config.codex_linux_sandbox_exe.clone(),
+                main_execve_wrapper_exe: current_config.main_execve_wrapper_exe.clone(),
+                zsh_path: current_config.zsh_path.clone(),
+                ..Default::default()
+            },
+            current_config.codex_home.clone(),
+            config_layer_stack,
+        )
+        .await
     }
 
     fn emit_config_changed_contributors(
