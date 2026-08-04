@@ -136,6 +136,24 @@ appServerClient.on("notification", (notification) => {
   broadcast("codex:notification", normalizeNotification(notification));
 });
 
+appServerClient.on("request", (request) => {
+  if (!isApprovalServerRequest(request)) {
+    void appServerClient.rejectServerRequest(
+      request.id,
+      `Unsupported server request from app-server: ${request.method}`,
+    );
+    return;
+  }
+  if (windows.size === 0) {
+    void appServerClient.rejectServerRequest(
+      request.id,
+      `No renderer available for app-server request: ${request.method}`,
+    );
+    return;
+  }
+  broadcast("codex:request", normalizeRequest(request));
+});
+
 appServerClient.on("status", (status) => {
   broadcast("codex:status", status);
 });
@@ -458,6 +476,20 @@ ipcMain.handle("codex:interruptTurn", async (_event, payload) => {
     threadId: payload.threadId,
     turnId: payload.turnId,
   });
+});
+
+ipcMain.handle("codex:respondServerRequest", async (_event, payload) => {
+  await appServerClient.respondToServerRequest(payload.requestId, payload.result);
+  return { ok: true };
+});
+
+ipcMain.handle("codex:rejectServerRequest", async (_event, payload) => {
+  await appServerClient.rejectServerRequest(
+    payload.requestId,
+    payload.message,
+    payload.code,
+  );
+  return { ok: true };
 });
 
 ipcMain.handle("codex:requestMicrophoneAccess", async () => {
@@ -908,6 +940,18 @@ function normalizeNotification(notification) {
   }
 
   return notification;
+}
+
+function normalizeRequest(request) {
+  return request;
+}
+
+function isApprovalServerRequest(request) {
+  return (
+    request?.method === "item/commandExecution/requestApproval" ||
+    request?.method === "item/fileChange/requestApproval" ||
+    request?.method === "item/permissions/requestApproval"
+  );
 }
 
 function normalizeThread(thread, runtime = null, options = {}) {

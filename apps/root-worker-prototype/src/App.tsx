@@ -106,9 +106,16 @@ import {
   beginVoiceCaptureStop,
   type ActiveVoiceSession,
 } from "./lib/voiceCaptureState";
+import {
+  approvalRequestKey,
+  buildApprovalResponse,
+  normalizeApprovalRequest,
+} from "./lib/approvalRequests";
 import type {
   BootstrapResponse,
   AppServerErrorNotification,
+  ApprovalDecision,
+  ApprovalRequest,
   ComposerImage,
   DraftSkill,
   FilePanelView,
@@ -184,6 +191,9 @@ function App() {
   >({});
   const [goalActionErrorsByThreadId, setGoalActionErrorsByThreadId] = useState<
     Record<string, string | null>
+  >({});
+  const [approvalRequestsById, setApprovalRequestsById] = useState<
+    Record<string, ApprovalRequest>
   >({});
   const [compactHistoryByThreadId, setCompactHistoryByThreadId] = useState<
     Record<string, Record<string, CompactHistoryViewState>>
@@ -384,6 +394,13 @@ function App() {
   const selectedRunConfigOverride = selectedThreadId
     ? (runConfigOverrideByThreadIdRef.current.get(selectedThreadId) ?? null)
     : null;
+  const selectedApprovalRequests = useMemo(
+    () =>
+      Object.values(approvalRequestsById)
+        .filter((request) => request.threadId === selectedThreadId)
+        .sort((left, right) => left.startedAtMs - right.startedAtMs),
+    [approvalRequestsById, selectedThreadId],
+  );
 
   function cleanupVoiceTransport() {
     voiceEventsChannelRef.current = null;
@@ -1018,6 +1035,16 @@ function App() {
         pendingThreadUpdatesRef.current.delete(threadId);
       }
       return next;
+    });
+    setApprovalRequestsById((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(
+          ([, request]) => !threadIdSet.has(request.threadId),
+        ),
+      );
+      return Object.keys(next).length === Object.keys(current).length
+        ? current
+        : next;
     });
     setThreads((current) => {
       const next = current.filter((thread) => !threadIdSet.has(thread.id));
@@ -2072,6 +2099,109 @@ function App() {
     setSelectedThreadId(threadId);
   }
 
+  function upsertApprovalRequest(request: ApprovalRequest) {
+    setApprovalRequestsById((current) => ({
+      ...current,
+      [approvalRequestKey(request.requestId)]: request,
+    }));
+  }
+
+  function removeApprovalRequest(threadId: string, requestId: string | number) {
+    setApprovalRequestsById((current) => {
+      const key = approvalRequestKey(requestId);
+      if (current[key]?.threadId !== threadId) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function clearThreadApprovalRequests(threadId: string) {
+    setApprovalRequestsById((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(
+          ([, request]) => request.threadId !== threadId,
+        ),
+      );
+      return Object.keys(next).length === Object.keys(current).length
+        ? current
+        : next;
+    });
+  }
+
+  async function respondToApprovalRequest(
+    request: ApprovalRequest,
+    decision: ApprovalDecision,
+  ) {
+    const key = approvalRequestKey(request.requestId);
+    setApprovalRequestsById((current) =>
+      current[key]
+        ? {
+            ...current,
+            [key]: {
+              ...current[key],
+              status: "submitting",
+              error: null,
+            },
+          }
+        : current,
+    );
+    setError(null);
+    try {
+      await window.codexDesktop.respondServerRequest({
+        requestId: request.requestId,
+        result: buildApprovalResponse(request, decision),
+      });
+      setApprovalRequestsById((current) => {
+        if (!current[key]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    } catch (approvalError) {
+      setApprovalRequestsById((current) =>
+        current[key]
+          ? {
+              ...current,
+              [key]: {
+                ...current[key],
+                status: "failed",
+                error: toErrorMessage(approvalError),
+              },
+            }
+          : current,
+      );
+    }
+  }
+
+  function handleServerRequest(request: {
+    id: string | number;
+    method: string;
+    params?: unknown;
+  }) {
+    const approvalRequest = normalizeApprovalRequest(request);
+    if (!approvalRequest) {
+      const message = `Unsupported app-server request: ${request.method}`;
+      setError(message);
+      void window.codexDesktop.rejectServerRequest({
+        requestId: request.id,
+        message,
+      }).catch((requestError) => {
+        setError(toErrorMessage(requestError));
+      });
+      return;
+    }
+    upsertApprovalRequest(approvalRequest);
+    markThreadLive(approvalRequest.threadId);
+    if (!selectedThreadIdRef.current) {
+      setSelectedThreadId(approvalRequest.threadId);
+    }
+  }
+
   function handleStreamEvent(payload: NotificationEnvelope) {
     try {
       if (payload.type === "status" && payload.status) {
@@ -2099,6 +2229,9 @@ function App() {
       }
 
       if (payload.type !== "notification" || !payload.notification) {
+        if (payload.type === "request" && payload.request) {
+          handleServerRequest(payload.request);
+        }
         return;
       }
 
@@ -2221,6 +2354,14 @@ function App() {
           );
           break;
         }
+        case "serverRequest/resolved": {
+          const notification = params as {
+            threadId: string;
+            requestId: string | number;
+          };
+          removeApprovalRequest(notification.threadId, notification.requestId);
+          break;
+        }
         case "thread/goal/updated": {
           const notification = params as {
             threadId: string;
@@ -2246,6 +2387,7 @@ function App() {
         case "turn/completed": {
           const notification = params as { threadId: string; turn: Turn };
           markThreadLive(notification.threadId);
+          clearThreadApprovalRequests(notification.threadId);
           if (
             method === "turn/started" &&
             notification.threadId === selectedThreadId
@@ -2700,6 +2842,7 @@ function App() {
         <ConversationPanel
           availableSkills={availableSkills}
           availableWorkflows={availableWorkflows}
+          approvalRequests={selectedApprovalRequests}
           compactHistoryById={selectedCompactHistory}
           conversationCells={conversationCells}
           conversationScrollRef={conversationScrollRef}
@@ -2725,6 +2868,9 @@ function App() {
           onPauseGoal={pauseCurrentThreadGoal}
           onRemoveDraftImage={removeDraftImage}
           onRemoveDraftSkill={removeDraftSkill}
+          onRespondApproval={(request, decision) =>
+            void respondToApprovalRequest(request, decision)
+          }
           onResumeGoal={resumeCurrentThreadGoal}
           onRunSlashCommand={runComposerSlashCommand}
           onUpdateRunConfig={(selection) =>

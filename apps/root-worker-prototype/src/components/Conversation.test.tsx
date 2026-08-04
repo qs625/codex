@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  ApprovalRequestsPanel,
   ArchivedHistoryRow,
   CompactRow,
   MessageRow,
@@ -14,6 +16,73 @@ import {
   shouldHandleFocusedItemRequest,
 } from "./ConversationVirtualList";
 import type { ConversationEntry } from "../types";
+
+test("approval request panel renders pending command approval actions", () => {
+  const markup = renderToStaticMarkup(
+    <ApprovalRequestsPanel
+      requests={[
+        {
+          requestId: 7,
+          kind: "commandExecution",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "cmd-1",
+          startedAtMs: 1_725_000_000_000,
+          reason: "Needs network access",
+          title: "Command approval",
+          detail: "rtk pnpm build",
+          metadata: [
+            { label: "cwd", value: "/tmp/project" },
+            { label: "network", value: "enabled" },
+          ],
+          status: "pending",
+          error: null,
+          availableDecisions: ["accept", "acceptForSession", "decline", "cancel"],
+        },
+      ]}
+      onRespond={() => {}}
+    />,
+  );
+
+  assert.match(markup, /Pending approvals/);
+  assert.match(markup, /Command approval/);
+  assert.match(markup, /rtk pnpm build/);
+  assert.match(markup, /Needs network access/);
+  assert.match(markup, /Approve/);
+  assert.match(markup, /Session/);
+  assert.match(markup, /Deny/);
+  assert.match(markup, /Cancel/);
+});
+
+test("approval request panel disables actions while submitting", () => {
+  const markup = renderToStaticMarkup(
+    <ApprovalRequestsPanel
+      requests={[
+        {
+          requestId: "request-1",
+          kind: "permissions",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "permissions-1",
+          startedAtMs: 1_725_000_000_000,
+          reason: null,
+          title: "Permissions request",
+          detail: "Grant the requested runtime permissions.",
+          metadata: [{ label: "write paths", value: "/tmp/project" }],
+          permissions: { fileSystem: { write: ["/tmp/project"] } },
+          status: "submitting",
+          error: null,
+          availableDecisions: ["accept", "decline"],
+        },
+      ]}
+      onRespond={() => {}}
+    />,
+  );
+
+  assert.match(markup, /Submitting/);
+  assert.match(markup, /Grant/);
+  assert.match(markup, /disabled=""/);
+});
 
 const entries: ConversationEntry[] = [
   {
@@ -94,6 +163,57 @@ test("message rows expose role classes for chat alignment", () => {
   assert.match(userMarkup, /class="message-avatar user"/);
   assert.match(agentMarkup, /class="message-row message-row-agent"/);
   assert.match(agentMarkup, /class="message-avatar agent"/);
+});
+
+test("conversation text surfaces keep long urls inside measured cells", () => {
+  const longUrl =
+    "https://example.com/search?q=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const messageMarkup = renderToStaticMarkup(
+    <MessageRow
+      entries={[
+        {
+          id: "agent-url",
+          kind: "message",
+          author: "Codex",
+          role: "agent",
+          text: `[result](${longUrl})`,
+          timestamp: "09:41",
+          attachments: [],
+        },
+      ]}
+    />,
+  );
+  const toolMarkup = renderToStaticMarkup(
+    <ToolRow
+      entries={[
+        {
+          id: "web-search-url",
+          kind: "tool",
+          author: "root",
+          role: "system",
+          text: longUrl,
+          timestamp: "09:42",
+          attachments: [],
+          toolName: "web_search",
+          toolStatus: "completed",
+          toolDetails: null,
+          toolCategory: "external",
+        },
+      ]}
+    />,
+  );
+  const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+  assert.match(messageMarkup, /class="message-bubble"/);
+  assert.match(messageMarkup, /class="markdown-content"/);
+  assert.match(toolMarkup, /class="tool-card-copy"/);
+  assert.match(
+    styles,
+    /\.conversation-virtual-row[\s\S]*max-width: 100%;/,
+  );
+  assert.match(styles, /\.markdown-content p[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.markdown-content a[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.tool-card-copy span[\s\S]*overflow-wrap: anywhere;/);
 });
 
 test("grouped agent message rows render one bubble with multiple segments", () => {

@@ -40,6 +40,22 @@ class AppServerClient extends EventEmitter {
     this.write({ method, params });
   }
 
+  async respondToServerRequest(id, result) {
+    await this.ready();
+    this.write({ id, result });
+  }
+
+  async rejectServerRequest(id, message, code = -32601) {
+    await this.ready();
+    this.write({
+      id,
+      error: {
+        code,
+        message,
+      },
+    });
+  }
+
   get status() {
     return {
       connected: this.child?.exitCode == null,
@@ -134,13 +150,14 @@ class AppServerClient extends EventEmitter {
       return;
     }
 
-    if (typeof message.id === "number" && typeof message.method === "string") {
-      this.write({
+    if (
+      (typeof message.id === "number" || typeof message.id === "string") &&
+      typeof message.method === "string"
+    ) {
+      this.emit("request", {
         id: message.id,
-        error: {
-          code: -32601,
-          message: `Unsupported server request from app-server: ${message.method}`,
-        },
+        method: message.method,
+        params: message.params,
       });
       return;
     }
