@@ -1106,8 +1106,10 @@ where
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality)),
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
+        approval_policy_is_session_override: false,
         approvals_reviewer: config.approvals_reviewer,
         permission_profile_state: config.permissions.permission_profile_state().clone(),
+        permission_profile_is_session_override: false,
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
         workspace_roots: config.workspace_roots.clone(),
@@ -1463,7 +1465,9 @@ async fn goal_continuation_reservation_clears_if_goal_stops_before_launch() -> a
             sess.maybe_continue_goal_if_idle_runtime().await;
         })
     };
-    started_rx.await.expect("continuation should reserve before launch");
+    started_rx
+        .await
+        .expect("continuation should reserve before launch");
 
     state_db
         .update_thread_goal(
@@ -1491,7 +1495,8 @@ async fn goal_continuation_reservation_clears_if_goal_stops_before_launch() -> a
 }
 
 #[tokio::test]
-async fn goal_continuation_reservation_keeps_new_mailbox_input_out_of_reserved_turn() -> anyhow::Result<()> {
+async fn goal_continuation_reservation_keeps_new_mailbox_input_out_of_reserved_turn()
+-> anyhow::Result<()> {
     let (sess, tc, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     GoalService
         .create_thread_goal(
@@ -1519,7 +1524,9 @@ async fn goal_continuation_reservation_keeps_new_mailbox_input_out_of_reserved_t
             sess.maybe_continue_goal_if_idle_runtime().await;
         })
     };
-    started_rx.await.expect("continuation should reserve before launch");
+    started_rx
+        .await
+        .expect("continuation should reserve before launch");
 
     let reserved_turn_state = {
         let active_turn = sess.active_turn.lock().await;
@@ -1565,14 +1572,17 @@ async fn goal_continuation_reservation_keeps_new_mailbox_input_out_of_reserved_t
     continue_tx
         .send(())
         .expect("continuation hook should still be waiting");
-    continuation.await.expect("continuation task should finish launching");
+    continuation
+        .await
+        .expect("continuation task should finish launching");
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
 
     Ok(())
 }
 
 #[tokio::test]
-async fn goal_continuation_reservation_keeps_queued_input_for_follow_up_turn() -> anyhow::Result<()> {
+async fn goal_continuation_reservation_keeps_queued_input_for_follow_up_turn() -> anyhow::Result<()>
+{
     let (sess, tc, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     GoalService
         .create_thread_goal(
@@ -1600,7 +1610,9 @@ async fn goal_continuation_reservation_keeps_queued_input_for_follow_up_turn() -
             sess.maybe_continue_goal_if_idle_runtime().await;
         })
     };
-    started_rx.await.expect("continuation should reserve before launch");
+    started_rx
+        .await
+        .expect("continuation should reserve before launch");
 
     let queued_item = PendingInputItem::from(ResponseInputItem::Message {
         role: "user".to_string(),
@@ -1609,7 +1621,8 @@ async fn goal_continuation_reservation_keeps_queued_input_for_follow_up_turn() -
         }],
         phase: None,
     });
-    sess.queue_response_items_for_next_turn(vec![queued_item]).await;
+    sess.queue_response_items_for_next_turn(vec![queued_item])
+        .await;
     assert!(
         sess.has_queued_response_items_for_next_turn().await,
         "queued input should remain pending until a later regular turn"
@@ -1618,7 +1631,9 @@ async fn goal_continuation_reservation_keeps_queued_input_for_follow_up_turn() -
     continue_tx
         .send(())
         .expect("continuation hook should still be waiting");
-    continuation.await.expect("continuation task should finish launching");
+    continuation
+        .await
+        .expect("continuation task should finish launching");
     assert!(
         sess.has_queued_response_items_for_next_turn().await,
         "continuation launch should not consume queued next-turn input"
@@ -2033,8 +2048,8 @@ async fn build_initial_context_emits_standalone_multiagent_context() {
 fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
     let provider_schema =
         tool_service_api::JsonSchema::string(Some("External agent provider.".to_string()));
-    let spawn_external_agent = tool_service_api::ToolSpec::Function(
-        tool_service_api::ResponsesApiTool {
+    let spawn_external_agent =
+        tool_service_api::ToolSpec::Function(tool_service_api::ResponsesApiTool {
             name: "spawn_external_agent".to_string(),
             description: "Spawn an external code agent.".to_string(),
             strict: false,
@@ -2045,8 +2060,7 @@ fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
                 /*additional_properties*/ None,
             ),
             output_schema: None,
-        },
-    );
+        });
     let mut specs = vec![spawn_external_agent];
     for tool_name in [
         "followup_external_task",
@@ -2069,7 +2083,12 @@ fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
             },
         ));
     }
-    for tool_name in ["exec_command", "apply_patch", "spawn_agent", "followup_task"] {
+    for tool_name in [
+        "exec_command",
+        "apply_patch",
+        "spawn_agent",
+        "followup_task",
+    ] {
         specs.push(tool_service_api::ToolSpec::Function(
             tool_service_api::ResponsesApiTool {
                 name: tool_name.to_string(),
@@ -2101,7 +2120,12 @@ fn external_agent_tool_specs_context_section_filters_native_model_api_tools() {
             "expected external tool spec for {tool_name}, got {tool_specs_section}"
         );
     }
-    for tool_name in ["exec_command", "apply_patch", "spawn_agent", "followup_task"] {
+    for tool_name in [
+        "exec_command",
+        "apply_patch",
+        "spawn_agent",
+        "followup_task",
+    ] {
         assert!(
             !tool_specs_section.contains(&format!("\"name\": \"{tool_name}\"")),
             "did not expect native model API tool {tool_name} in external section, got {tool_specs_section}"
@@ -2165,13 +2189,14 @@ async fn build_initial_context_uses_root_scope_agent_metadata_path() {
     let (session, turn_context) = make_session_and_context().await;
     {
         let mut state = session.state.lock().await;
-        state.session_configuration.root_agent_metadata = Some(codex_agent_runtime::AgentMetadata {
-            agent_path: Some(
-                protocol::AgentPath::try_from("/owner_dev").expect("valid agent path"),
-            ),
-            agent_role: Some("feature-owner".to_string()),
-            ..Default::default()
-        });
+        state.session_configuration.root_agent_metadata =
+            Some(codex_agent_runtime::AgentMetadata {
+                agent_path: Some(
+                    protocol::AgentPath::try_from("/owner_dev").expect("valid agent path"),
+                ),
+                agent_role: Some("feature-owner".to_string()),
+                ..Default::default()
+            });
     }
 
     let initial_context = session.build_initial_context(&turn_context).await;
@@ -2722,7 +2747,8 @@ Use this workflow when feature work needs a structured process.
 
 #[cfg(unix)]
 #[tokio::test]
-async fn build_initial_context_skips_disabled_project_workflow_markdown_symlinks_that_escape_repo() {
+async fn build_initial_context_skips_disabled_project_workflow_markdown_symlinks_that_escape_repo()
+{
     fn write_workflow_entry(workflow_dir: &Path) {
         std::fs::create_dir_all(workflow_dir).expect("create workflow dir");
         std::fs::write(workflow_dir.join("workflow.ts"), "export default {};")

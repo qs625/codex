@@ -7,6 +7,8 @@ pub(crate) mod approval_review_session_impl;
 pub(crate) mod approval_support_impl;
 #[path = "mcp_session.rs"]
 pub(crate) mod mcp_session_impl;
+pub(crate) use super::thread_wait::ThreadWaitSource;
+use super::thread_wait::ThreadWaitState;
 use crate::SessionPermissionProfileUpdate;
 use crate::SessionSettingsApplyCurrent;
 use crate::build_session_settings_apply_plan;
@@ -43,8 +45,6 @@ use protocol::ThreadId;
 use protocol::protocol::ThreadSkill;
 use protocol::protocol::ThreadSource;
 use protocol::protocol::TurnEnvironmentSelection;
-pub(crate) use super::thread_wait::ThreadWaitSource;
-use super::thread_wait::ThreadWaitState;
 use session_telemetry_api::SessionTelemetryCreateParams;
 use session_telemetry_api::SharedSessionTelemetryFactory;
 use std::sync::Arc;
@@ -119,11 +119,13 @@ pub(crate) struct SessionConfiguration {
 
     /// When to escalate for approval for execution
     pub(super) approval_policy: Constrained<AskForApproval>,
+    pub(super) approval_policy_is_session_override: bool,
     pub(super) approvals_reviewer: ApprovalsReviewer,
     /// Permission profile state for the session. Keep the constrained profile,
     /// active profile id, and profile-defined workspace roots in sync by using
     /// the methods below instead of mutating the fields independently.
     pub(super) permission_profile_state: PermissionProfileState,
+    pub(super) permission_profile_is_session_override: bool,
     pub(super) windows_sandbox_level: WindowsSandboxLevel,
 
     /// Absolute working directory that should be treated as the *root* of the

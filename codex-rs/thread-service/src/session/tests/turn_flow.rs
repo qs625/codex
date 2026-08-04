@@ -412,8 +412,11 @@ async fn compact_turn_hides_model_visible_tools_without_affecting_regular_turns(
         !compact_tool_inputs.expose_model_visible_tools,
         "compact turns should disable model-visible tools"
     );
-    let compact_specs =
-        crate::session::turn::model_visible_tool_specs(&session, &turn_context, &compact_tool_inputs);
+    let compact_specs = crate::session::turn::model_visible_tool_specs(
+        &session,
+        &turn_context,
+        &compact_tool_inputs,
+    );
     assert!(
         compact_specs.is_empty(),
         "compact turns should not expose model-visible tools"
@@ -1196,6 +1199,23 @@ disabled_tools = [
     let original = session.get_config().await;
     let mut next_config = load_latest_config_for_session(&session).await;
     next_config.model = Some("gpt-5.4".to_string());
+    let provider = ModelProviderInfo {
+        name: "Corp".to_string(),
+        base_url: Some("https://corp.example.test/v1".to_string()),
+        ..ModelProviderInfo::default()
+    };
+    next_config.model_provider_id = "corp".to_string();
+    next_config.model_provider = provider.clone();
+    next_config
+        .model_providers
+        .insert("corp".to_string(), provider);
+    next_config
+        .model_options
+        .push(config_service::config_toml::ModelOptionToml {
+            model: "corp-model".to_string(),
+            provider: "corp".to_string(),
+            ..Default::default()
+        });
     next_config.notify = Some(vec!["echo".to_string()]);
 
     session.refresh_runtime_config(next_config).await;
@@ -1218,6 +1238,10 @@ disabled_tools = [
     assert!(!app.enabled);
     assert_eq!(app.destructive_enabled, Some(false));
     assert_eq!(config.model, original.model);
+    assert_eq!(config.model_provider_id, original.model_provider_id);
+    assert_eq!(config.model_provider, original.model_provider);
+    assert_eq!(config.model_providers, original.model_providers);
+    assert_eq!(config.model_options, original.model_options);
     assert_eq!(config.notify, original.notify);
     assert_eq!(
         config.tool_suggest.disabled_tools,
@@ -1225,6 +1249,257 @@ disabled_tools = [
             ToolSuggestDisabledTool::connector("calendar"),
             ToolSuggestDisabledTool::plugin("slack@openai-curated"),
         ]
+    );
+}
+
+#[tokio::test]
+async fn refresh_runtime_config_updates_default_approval_and_sandbox() {
+    let (session, _turn_context) = make_session_and_context().await;
+    let codex_home = session.codex_home().await;
+    let codex_self_exe = codex_home.join("codex-self").to_path_buf();
+    let codex_linux_sandbox_exe = codex_home.join("codex-linux-sandbox").to_path_buf();
+    let main_execve_wrapper_exe = codex_home.join("main-execve-wrapper").to_path_buf();
+    let zsh_path = codex_home.join("zsh").to_path_buf();
+    std::fs::create_dir_all(&codex_home).expect("create codex home");
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.approval_policy =
+            config_service::Constrained::allow_any(protocol::protocol::AskForApproval::OnRequest);
+        state
+            .session_configuration
+            .approval_policy_is_session_override = false;
+        state
+            .session_configuration
+            .permission_profile_is_session_override = false;
+        let read_only =
+            PermissionProfile::from_legacy_sandbox_policy(&SandboxPolicy::new_read_only_policy());
+        state
+            .session_configuration
+            .set_permission_profile_for_tests(read_only)
+            .expect("test setup should allow read-only permission profile");
+        let mut config = (*state.session_configuration.original_config_do_not_use).clone();
+        config.codex_self_exe = Some(codex_self_exe.clone());
+        config.codex_linux_sandbox_exe = Some(codex_linux_sandbox_exe.clone());
+        config.main_execve_wrapper_exe = Some(main_execve_wrapper_exe.clone());
+        config.zsh_path = Some(zsh_path.clone());
+        config.permissions.approval_policy =
+            config_service::Constrained::allow_any(protocol::protocol::AskForApproval::OnRequest);
+        config.permissions.set_permission_profile_state(
+            config_service::PermissionProfileState::from_constrained_legacy(
+                config_service::Constrained::allow_any(
+                    PermissionProfile::from_legacy_sandbox_policy(
+                        &SandboxPolicy::new_read_only_policy(),
+                    ),
+                ),
+            )
+            .expect("test setup should allow read-only permission state"),
+        );
+        state.session_configuration.original_config_do_not_use = Arc::new(config);
+    }
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"approval_policy = "never"
+sandbox_mode = "workspace-write"
+"#,
+    )
+    .expect("write user config");
+
+    let next_config = load_latest_config_for_session(&session).await;
+    session.refresh_runtime_config(next_config).await;
+
+    let state = session.state.lock().await;
+    assert_eq!(
+        state.session_configuration.approval_policy.value(),
+        protocol::protocol::AskForApproval::Never,
+    );
+    assert!(matches!(
+        state.session_configuration.sandbox_policy(),
+        SandboxPolicy::WorkspaceWrite {
+            network_access: false,
+            ..
+        }
+    ));
+    let per_turn_config = Session::build_per_turn_config(
+        &state.session_configuration,
+        state.session_configuration.cwd.clone(),
+    );
+    assert_eq!(
+        per_turn_config.permissions.approval_policy.value(),
+        protocol::protocol::AskForApproval::Never,
+    );
+    assert!(matches!(
+        per_turn_config.legacy_sandbox_policy(),
+        SandboxPolicy::WorkspaceWrite {
+            network_access: false,
+            ..
+        }
+    ));
+    assert_eq!(per_turn_config.codex_self_exe, Some(codex_self_exe));
+    assert_eq!(
+        per_turn_config.codex_linux_sandbox_exe,
+        Some(codex_linux_sandbox_exe)
+    );
+    assert_eq!(
+        per_turn_config.main_execve_wrapper_exe,
+        Some(main_execve_wrapper_exe)
+    );
+    assert_eq!(per_turn_config.zsh_path, Some(zsh_path));
+}
+
+#[tokio::test]
+async fn refresh_runtime_config_keeps_project_approval_and_sandbox_precedence() {
+    let (session, _turn_context) = make_session_and_context().await;
+    let codex_home = session.codex_home().await;
+    let project_dir = tempfile::tempdir().expect("create project dir");
+    std::fs::create_dir_all(&codex_home).expect("create codex home");
+    {
+        let mut state = session.state.lock().await;
+        let project_read_only =
+            PermissionProfile::from_legacy_sandbox_policy(&SandboxPolicy::new_read_only_policy());
+        state.session_configuration.cwd = project_dir.path().abs();
+        state.session_configuration.approval_policy =
+            config_service::Constrained::allow_any(protocol::protocol::AskForApproval::OnRequest);
+        state
+            .session_configuration
+            .approval_policy_is_session_override = false;
+        state
+            .session_configuration
+            .permission_profile_is_session_override = false;
+        state
+            .session_configuration
+            .set_permission_profile_for_tests(project_read_only.clone())
+            .expect("test setup should allow read-only permission profile");
+
+        let mut config = (*state.session_configuration.original_config_do_not_use).clone();
+        config.cwd = project_dir.path().abs();
+        config.permissions.approval_policy =
+            config_service::Constrained::allow_any(protocol::protocol::AskForApproval::OnRequest);
+        config.permissions.set_permission_profile_state(
+            config_service::PermissionProfileState::from_constrained_legacy(
+                config_service::Constrained::allow_any(project_read_only),
+            )
+            .expect("test setup should allow read-only permission state"),
+        );
+        let project_config: toml::Value = toml::from_str(
+            r#"approval_policy = "on-request"
+sandbox_mode = "read-only"
+"#,
+        )
+        .expect("project config should parse");
+        config.config_layer_stack = config_service::ConfigLayerStack::new(
+            vec![config_service::ConfigLayerEntry::new(
+                codex_config_types::ConfigLayerSource::Project {
+                    dot_codex_folder: project_dir.path().join(".codex").abs(),
+                },
+                project_config,
+            )],
+            Default::default(),
+            Default::default(),
+        )
+        .expect("config layer stack");
+        state.session_configuration.original_config_do_not_use = Arc::new(config);
+    }
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"approval_policy = "never"
+sandbox_mode = "workspace-write"
+"#,
+    )
+    .expect("write user config");
+
+    let next_config = load_latest_config_for_session(&session).await;
+    session.refresh_runtime_config(next_config).await;
+
+    let state = session.state.lock().await;
+    assert_eq!(
+        state.session_configuration.approval_policy.value(),
+        protocol::protocol::AskForApproval::OnRequest,
+    );
+    assert_eq!(
+        state.session_configuration.sandbox_policy(),
+        SandboxPolicy::new_read_only_policy(),
+    );
+    let per_turn_config = Session::build_per_turn_config(
+        &state.session_configuration,
+        state.session_configuration.cwd.clone(),
+    );
+    assert_eq!(
+        per_turn_config.permissions.approval_policy.value(),
+        protocol::protocol::AskForApproval::OnRequest,
+    );
+    assert_eq!(
+        per_turn_config.legacy_sandbox_policy(),
+        SandboxPolicy::new_read_only_policy(),
+    );
+}
+
+#[tokio::test]
+async fn refresh_runtime_config_preserves_explicit_approval_and_sandbox_overrides() {
+    let (session, _turn_context) = make_session_and_context().await;
+    let codex_home = session.codex_home().await;
+    std::fs::create_dir_all(&codex_home).expect("create codex home");
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.approval_policy =
+            config_service::Constrained::allow_any(protocol::protocol::AskForApproval::OnRequest);
+        state
+            .session_configuration
+            .approval_policy_is_session_override = true;
+        state
+            .session_configuration
+            .permission_profile_is_session_override = true;
+        state
+            .session_configuration
+            .set_permission_profile_for_tests(PermissionProfile::from_legacy_sandbox_policy(
+                &SandboxPolicy::new_read_only_policy(),
+            ))
+            .expect("test setup should allow read-only permission profile");
+        let mut config = (*state.session_configuration.original_config_do_not_use).clone();
+        config.permissions.approval_policy =
+            config_service::Constrained::allow_any(protocol::protocol::AskForApproval::OnRequest);
+        config.permissions.set_permission_profile_state(
+            config_service::PermissionProfileState::from_constrained_legacy(
+                config_service::Constrained::allow_any(
+                    PermissionProfile::from_legacy_sandbox_policy(
+                        &SandboxPolicy::new_read_only_policy(),
+                    ),
+                ),
+            )
+            .expect("test setup should allow read-only permission state"),
+        );
+        state.session_configuration.original_config_do_not_use = Arc::new(config);
+    }
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"approval_policy = "never"
+sandbox_mode = "workspace-write"
+"#,
+    )
+    .expect("write user config");
+
+    let next_config = load_latest_config_for_session(&session).await;
+    session.refresh_runtime_config(next_config).await;
+
+    let state = session.state.lock().await;
+    assert_eq!(
+        state.session_configuration.approval_policy.value(),
+        protocol::protocol::AskForApproval::OnRequest,
+    );
+    assert_eq!(
+        state.session_configuration.sandbox_policy(),
+        SandboxPolicy::new_read_only_policy(),
+    );
+    let per_turn_config = Session::build_per_turn_config(
+        &state.session_configuration,
+        state.session_configuration.cwd.clone(),
+    );
+    assert_eq!(
+        per_turn_config.permissions.approval_policy.value(),
+        protocol::protocol::AskForApproval::OnRequest,
+    );
+    assert_eq!(
+        per_turn_config.legacy_sandbox_policy(),
+        SandboxPolicy::new_read_only_policy(),
     );
 }
 

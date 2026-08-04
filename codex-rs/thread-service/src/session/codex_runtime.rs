@@ -379,8 +379,12 @@ impl Codex {
             base_instructions,
             compact_prompt: config.compact_prompt.clone(),
             approval_policy: config.permissions.approval_policy.clone(),
+            approval_policy_is_session_override:
+                SessionConfiguration::approval_policy_is_session_override(&config),
             approvals_reviewer: config.approvals_reviewer,
             permission_profile_state: session_permission_profile_state_from_config(&config)?,
+            permission_profile_is_session_override:
+                SessionConfiguration::permission_profile_is_session_override(&config),
             windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
             cwd: config.cwd.clone(),
             workspace_roots: config.workspace_roots.clone(),

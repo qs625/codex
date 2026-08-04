@@ -21,9 +21,12 @@ import {
   resetProviderRegistryDrafts,
   updateFieldDraft,
   validateSettingsDrafts,
+  type ConfigInventoryRow,
   type ConfigFieldState,
   type ModelOptionEntry,
   type ProviderRegistryEntry,
+  type ResourceOverviewSection,
+  type ResourceOverviewRow,
   type SettingsFieldSection,
 } from "../lib/configSettings";
 import { toErrorMessage } from "../lib/shared";
@@ -51,6 +54,12 @@ export function SettingsPanel({
     ProviderRegistryEntry[]
   >([]);
   const [modelOptions, setModelOptions] = useState<ModelOptionEntry[]>([]);
+  const [configInventory, setConfigInventory] = useState<ConfigInventoryRow[]>(
+    [],
+  );
+  const [resourceOverview, setResourceOverview] = useState<
+    ResourceOverviewSection[]
+  >([]);
   const [userConfigPath, setUserConfigPath] = useState<string | null>(null);
   const [userVersion, setUserVersion] = useState<string | null>(null);
   const [accountResponse, setAccountResponse] =
@@ -128,6 +137,8 @@ export function SettingsPanel({
         setFields(state.fields);
         setProviderRegistry(state.providerRegistry);
         setModelOptions(state.modelOptions);
+        setConfigInventory(state.configInventory);
+        setResourceOverview(state.resourceOverview);
         setUserConfigPath(state.userConfigPath);
         setUserVersion(state.userVersion);
         setStatus("ready");
@@ -198,12 +209,12 @@ export function SettingsPanel({
       setFields(state.fields);
       setProviderRegistry(state.providerRegistry);
       setModelOptions(state.modelOptions);
+      setConfigInventory(state.configInventory);
+      setResourceOverview(state.resourceOverview);
       setUserConfigPath(state.userConfigPath ?? response.filePath ?? null);
       setUserVersion(state.userVersion ?? response.version ?? null);
       setNotice(
-        response.status === "okOverridden"
-          ? "Saved, but a higher-precedence layer still overrides one value."
-          : "Saved to user config.",
+        buildSaveNotice(response.status, Boolean(params.reloadUserConfig)),
       );
     } catch (saveError) {
       setError(toErrorMessage(saveError));
@@ -357,122 +368,141 @@ export function SettingsPanel({
         </header>
 
         <div className="settings-body">
-          {status === "loading" ? (
-            <div className="settings-state">Loading config...</div>
-          ) : null}
+          <nav className="settings-nav" aria-label="Settings sections">
+            <a href="#settings-providers">Providers</a>
+            <a href="#settings-models">Models</a>
+            <a href="#settings-editable">Editable Config</a>
+            <a href="#settings-all-config">All Config</a>
+            <a href="#settings-resources">Resources</a>
+          </nav>
 
-          {error ? (
-            <div className="settings-error" role="alert">
-              <span>{error}</span>
-              <button type="button" onClick={() => setError(null)}>
-                Dismiss
-              </button>
-            </div>
-          ) : null}
+          <div className="settings-content">
+            {status === "loading" ? (
+              <div className="settings-state">Loading config...</div>
+            ) : null}
 
-          {notice ? <div className="settings-notice">{notice}</div> : null}
-
-          {fields.length > 0 ? (
-            <>
-              <div className="settings-section">
-                <div className="settings-section-heading">
-                  <h3>Providers</h3>
-                </div>
-                <div className="settings-provider-list">
-                  <OpenAiProviderCard
-                      accountStatus={accountStatus}
-                      authError={authError}
-                      authState={openAiAuthState}
-                      apiKeyDraft={apiKeyDraft}
-                      onApiKeyChange={setApiKeyDraft}
-                      onCancelLogin={() => void cancelLogin()}
-                      onStartApiKeyLogin={() => void startApiKeyLogin()}
-                      onStartChatgptLogin={() => void startChatgptLogin()}
-                      onStartDeviceLogin={() => void startDeviceLogin()}
-                      pendingLogin={pendingLogin}
-                    />
-                </div>
+            {error ? (
+              <div className="settings-error" role="alert">
+                <span>{error}</span>
+                <button type="button" onClick={() => setError(null)}>
+                  Dismiss
+                </button>
               </div>
+            ) : null}
 
-              <div className="settings-section">
-                <div className="settings-section-heading settings-section-heading-row">
-                  <h3>Configured Models</h3>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setModelOptions((current) => [
-                        ...current,
-                        createModelHubOptionEntry(current),
-                      ])
-                    }
-                  >
-                    Add ModelHub Model
-                  </button>
-                </div>
-                <div className="settings-provider-list">
-                  {modelOptions.filter((entry) => !entry.isDeleted).length === 0 ? (
-                    <div className="settings-state compact">
-                      No configured model catalog entries.
-                    </div>
-                  ) : null}
-                  {modelOptions
-                    .filter((entry) => !entry.isDeleted)
-                    .map((entry) => (
-                      <ModelOptionCard
-                        entry={entry}
-                        key={entry.id}
-                        onChange={updateModelOption}
-                      />
-                    ))}
-                </div>
+            {notice ? <div className="settings-notice">{notice}</div> : null}
+
+            <div className="settings-section" id="settings-providers">
+              <div className="settings-section-heading">
+                <h3>Providers</h3>
               </div>
-
-              <div className="settings-section">
-                <div className="settings-section-heading settings-section-heading-row">
-                  <h3>Custom Providers</h3>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setProviderRegistry((current) => [
-                        ...current,
-                        createProviderRegistryEntry(current),
-                      ])
-                    }
-                  >
-                    Add Provider
-                  </button>
-                </div>
-                <div className="settings-provider-list">
-                  {providerRegistry.filter((entry) => !entry.isDeleted).length ===
-                  0 ? (
-                    <div className="settings-state compact">
-                      No custom provider registry entries.
-                    </div>
-                  ) : null}
-                  {providerRegistry
-                    .filter((entry) => !entry.isDeleted)
-                    .map((entry) => (
-                      <ProviderRegistryCard
-                        entry={entry}
-                        key={entry.id}
-                        onChange={updateProviderEntry}
-                      />
-                    ))}
-                </div>
-              </div>
-
-              {globalSections.map((section) => (
-                <SettingsSectionFields
-                  key={section.id}
-                  onChange={updateDraft}
-                  section={section}
-                  unsetValue={unsetValue}
+              <div className="settings-provider-list">
+                <OpenAiProviderCard
+                  accountStatus={accountStatus}
+                  authError={authError}
+                  authState={openAiAuthState}
+                  apiKeyDraft={apiKeyDraft}
+                  onApiKeyChange={setApiKeyDraft}
+                  onCancelLogin={() => void cancelLogin()}
+                  onStartApiKeyLogin={() => void startApiKeyLogin()}
+                  onStartChatgptLogin={() => void startChatgptLogin()}
+                  onStartDeviceLogin={() => void startDeviceLogin()}
+                  pendingLogin={pendingLogin}
                 />
-              ))}
-            </>
-          ) : status !== "loading" ? (
-            <div className="settings-state">No editable config values found.</div>
-          ) : null}
+              </div>
+            </div>
+
+            <div className="settings-section" id="settings-models">
+              <div className="settings-section-heading settings-section-heading-row">
+                <h3>Configured Models</h3>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setModelOptions((current) => [
+                      ...current,
+                      createModelHubOptionEntry(current),
+                    ])
+                  }
+                >
+                  Add ModelHub Model
+                </button>
+              </div>
+              <div className="settings-provider-list">
+                {modelOptions.filter((entry) => !entry.isDeleted).length ===
+                0 ? (
+                  <div className="settings-state compact">
+                    No configured model catalog entries.
+                  </div>
+                ) : null}
+                {modelOptions
+                  .filter((entry) => !entry.isDeleted)
+                  .map((entry) => (
+                    <ModelOptionCard
+                      entry={entry}
+                      key={entry.id}
+                      onChange={updateModelOption}
+                    />
+                  ))}
+              </div>
+            </div>
+
+            <div className="settings-section">
+              <div className="settings-section-heading settings-section-heading-row">
+                <h3>Custom Providers</h3>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setProviderRegistry((current) => [
+                      ...current,
+                      createProviderRegistryEntry(current),
+                    ])
+                  }
+                >
+                  Add Provider
+                </button>
+              </div>
+              <div className="settings-provider-list">
+                {providerRegistry.filter((entry) => !entry.isDeleted).length ===
+                0 ? (
+                  <div className="settings-state compact">
+                    No custom provider registry entries.
+                  </div>
+                ) : null}
+                {providerRegistry
+                  .filter((entry) => !entry.isDeleted)
+                  .map((entry) => (
+                    <ProviderRegistryCard
+                      entry={entry}
+                      key={entry.id}
+                      onChange={updateProviderEntry}
+                    />
+                  ))}
+              </div>
+            </div>
+
+            <div className="settings-section" id="settings-editable">
+              <div className="settings-section-heading">
+                <h3>Editable Config</h3>
+              </div>
+              {globalSections.length > 0 ? (
+                globalSections.map((section) => (
+                  <SettingsSectionFields
+                    key={section.id}
+                    onChange={updateDraft}
+                    section={section}
+                    unsetValue={unsetValue}
+                  />
+                ))
+              ) : status !== "loading" ? (
+                <div className="settings-state">
+                  No editable config values found.
+                </div>
+              ) : null}
+            </div>
+
+            <ReadonlyConfigSection rows={configInventory} />
+            <ResourceOverview sections={resourceOverview} />
+          </div>
         </div>
 
         <footer className="settings-actions">
@@ -511,6 +541,15 @@ export function SettingsPanel({
   );
 
   return createPortal(panel, document.body);
+}
+
+function buildSaveNotice(status: ConfigWriteResponse["status"], reloaded: boolean) {
+  const reloadNotice = reloaded
+    ? "Runtime-refreshable settings were reloaded."
+    : "Model defaults, provider, and catalog changes apply to new threads or explicit run config updates.";
+  return status === "okOverridden"
+    ? `Saved to user config. ${reloadNotice} A higher-precedence layer still overrides one value.`
+    : `Saved to user config. ${reloadNotice}`;
 }
 
 function OpenAiProviderCard({
@@ -781,6 +820,90 @@ function OpenAiAuthControls({
           </button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ReadonlyConfigSection({ rows }: { rows: ConfigInventoryRow[] }) {
+  return (
+    <div className="settings-section" id="settings-all-config">
+      <div className="settings-section-heading">
+        <h3>All Config</h3>
+      </div>
+      {rows.length === 0 ? (
+        <div className="settings-state compact">No effective config values.</div>
+      ) : (
+        <div className="settings-inventory-list">
+          {rows.map((row) => (
+            <ReadonlyConfigRow key={row.keyPath} row={row} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReadonlyConfigRow({ row }: { row: ConfigInventoryRow }) {
+  return (
+    <div className="settings-inventory-row">
+      <div className="settings-inventory-key">
+        <span>{row.keyPath}</span>
+        <small>
+          {row.valueType} · {row.originLabel}
+          {row.isEditable ? " · editable above" : ""}
+        </small>
+      </div>
+      <div className="settings-inventory-value">
+        <span title={row.summary}>{row.summary}</span>
+        {row.detail ? <pre>{row.detail}</pre> : null}
+      </div>
+    </div>
+  );
+}
+
+function ResourceOverview({
+  sections,
+}: {
+  sections: ResourceOverviewSection[];
+}) {
+  return (
+    <div className="settings-section" id="settings-resources">
+      <div className="settings-section-heading">
+        <h3>Resources</h3>
+      </div>
+      <div className="settings-resource-sections">
+        {sections.map((section) => (
+          <section className="settings-resource-section" key={section.id}>
+            <h4>{section.title}</h4>
+            <div className="settings-resource-list">
+              {section.rows.map((row, index) => (
+                <ResourceOverviewRowView
+                  key={`${row.sourceLabel}:${row.keyPath || index}`}
+                  row={row}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ResourceOverviewRowView({ row }: { row: ResourceOverviewRow }) {
+  return (
+    <div className={`settings-resource-row ${row.isEmpty ? "empty" : ""}`}>
+      <div className="settings-resource-meta">
+        <span>{row.label}</span>
+        <small>
+          {row.sourceLabel}
+          {row.keyPath ? ` · ${row.keyPath}` : ""}
+        </small>
+      </div>
+      <div className="settings-resource-value">
+        <span title={row.summary}>{row.summary}</span>
+        {row.detail ? <pre>{row.detail}</pre> : null}
+      </div>
     </div>
   );
 }

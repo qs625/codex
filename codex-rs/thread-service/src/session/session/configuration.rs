@@ -1,6 +1,21 @@
 use super::*;
 
 impl SessionConfiguration {
+    pub(crate) fn approval_policy_is_session_override(config: &Config) -> bool {
+        config_origin_is_session_flags(config, "approval_policy")
+    }
+
+    pub(crate) fn permission_profile_is_session_override(config: &Config) -> bool {
+        [
+            "sandbox_mode",
+            "default_permissions",
+            "permissions",
+            "sandbox_workspace_write",
+        ]
+        .into_iter()
+        .any(|key_path| config_origin_is_session_flags(config, key_path))
+    }
+
     pub(crate) fn codex_home(&self) -> &AbsolutePathBuf {
         &self.codex_home
     }
@@ -166,6 +181,7 @@ impl SessionConfiguration {
         next_configuration.personality = plan.personality;
         if let Some(approval_policy) = updates.approval_policy {
             next_configuration.approval_policy.set(approval_policy)?;
+            next_configuration.approval_policy_is_session_override = true;
         }
         if let Some(approvals_reviewer) = updates.approvals_reviewer {
             next_configuration.approvals_reviewer = approvals_reviewer;
@@ -177,6 +193,7 @@ impl SessionConfiguration {
         next_configuration.cwd = plan.cwd;
         next_configuration.workspace_roots = plan.workspace_roots;
         if let Some(permission_profile_update) = plan.permission_profile_update {
+            next_configuration.permission_profile_is_session_override = true;
             match permission_profile_update {
                 SessionPermissionProfileUpdate::ActiveProfile {
                     permission_profile,
@@ -200,4 +217,14 @@ impl SessionConfiguration {
         next_configuration.app_server_client_version = plan.app_server_client_version;
         Ok(next_configuration)
     }
+}
+
+fn config_origin_is_session_flags(config: &Config, key_path: &str) -> bool {
+    config
+        .config_layer_stack
+        .origins()
+        .get(key_path)
+        .is_some_and(|origin| {
+            matches!(origin.name, config_service::ConfigLayerSource::SessionFlags)
+        })
 }

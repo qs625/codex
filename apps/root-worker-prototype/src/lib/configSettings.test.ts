@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildConfigInventory,
   buildGlobalSettingsSections,
   buildConfigSaveParams,
+  buildResourceOverview,
   buildSettingsConfigState,
   createModelHubOptionEntry,
   createProviderRegistryEntry,
@@ -109,6 +111,39 @@ test("buildConfigSaveParams saves multiple dirty fields with reloadUserConfig", 
   });
 });
 
+test("model default edits do not request runtime config reload", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model_reasoning_effort: "medium",
+      model_verbosity: "medium",
+    }),
+  );
+  const fields = updateFieldDraft(
+    updateFieldDraft(state.fields, "model_reasoning_effort", "high"),
+    "model_verbosity",
+    "low",
+  );
+
+  const params = buildConfigSaveParams(fields, state.userVersion);
+
+  assert.deepEqual(params, {
+    edits: [
+      {
+        keyPath: "model_reasoning_effort",
+        value: "high",
+        mergeStrategy: "replace",
+      },
+      {
+        keyPath: "model_verbosity",
+        value: "low",
+        mergeStrategy: "replace",
+      },
+    ],
+    expectedVersion: "v1",
+    reloadUserConfig: false,
+  });
+});
+
 test("configured model options are saved as catalog entries without changing global model", () => {
   const state = buildSettingsConfigState(
     readResponse({
@@ -171,6 +206,7 @@ test("configured model options are saved as catalog entries without changing glo
     params?.edits.some((edit) => edit.keyPath === "model_provider"),
     false,
   );
+  assert.equal(params?.reloadUserConfig, false);
 });
 
 test("creating a ModelHub option prepares a model_options write", () => {
@@ -185,8 +221,11 @@ test("creating a ModelHub option prepares a model_options write", () => {
 
   assert.equal(entry.provider, "modelhub-gpt");
   assert.equal(isModelOptionsDirty([entry]), true);
+  const params = buildConfigSaveParams(state.fields, state.userVersion, [], [
+    entry,
+  ]);
   assert.deepEqual(
-    buildConfigSaveParams(state.fields, state.userVersion, [], [entry])?.edits,
+    params?.edits,
     [
       {
         keyPath: "model_options",
@@ -204,6 +243,7 @@ test("creating a ModelHub option prepares a model_options write", () => {
       },
     ],
   );
+  assert.equal(params?.reloadUserConfig, false);
 });
 
 test("custom provider registry writes provider paths and rejects reserved ids", () => {
@@ -539,4 +579,148 @@ test("model option validation rejects empty models and non-positive windows", ()
     "Configured model id is required.",
     "Configured model context window must be positive.",
   ]);
+});
+
+test("config inventory includes unknown nested effective config with origins", () => {
+  const state = buildSettingsConfigState(
+    readResponse(
+      {
+        model: "gpt-5",
+        workflow: {
+          approval: {
+            enabled: true,
+            reviewers: ["alice", "bob"],
+          },
+        },
+        desktop: {
+          appearanceTheme: "dark",
+          customSidebarWidth: 320,
+        },
+      },
+      {
+        origins: {
+          workflow: {
+            name: { type: "project", dotCodexFolder: "/work/.codex" },
+            version: "project-v1",
+          },
+          "desktop.customSidebarWidth": {
+            name: {
+              type: "user",
+              file: "/home/.codex/config.toml",
+              profile: null,
+            },
+            version: "v1",
+          },
+        },
+      },
+    ),
+  );
+
+  const workflowEnabled = state.configInventory.find(
+    (row) => row.keyPath === "workflow.approval.enabled",
+  );
+  const reviewers = state.configInventory.find(
+    (row) => row.keyPath === "workflow.approval.reviewers",
+  );
+  const customDesktop = state.configInventory.find(
+    (row) => row.keyPath === "desktop.customSidebarWidth",
+  );
+
+  assert.equal(workflowEnabled?.summary, "true");
+  assert.equal(workflowEnabled?.originLabel, "Project");
+  assert.equal(reviewers?.valueType, "array");
+  assert.match(reviewers?.detail ?? "", /alice/);
+  assert.equal(customDesktop?.summary, "320");
+  assert.equal(customDesktop?.originLabel, "User");
+  assert.equal(
+    state.configInventory.find((row) => row.keyPath === "model")?.isEditable,
+    true,
+  );
+});
+
+test("resource overview derives global project and effective resource config", () => {
+  const overview = buildResourceOverview(
+    readResponse(
+      {
+        agents: { reviewer: { model: "gpt-5.4" } },
+        memory: { enabled: true },
+      },
+      {
+        layers: [
+          {
+            name: {
+              type: "user",
+              file: "/home/.codex/config.toml",
+              profile: null,
+            },
+            version: "user-v1",
+            config: {
+              skills: { enabled: ["ui-design"] },
+              plugins: { github: { enabled: true } },
+            },
+            disabledReason: null,
+          },
+          {
+            name: { type: "project", dotCodexFolder: "/work/.codex" },
+            version: "project-v1",
+            config: {
+              agents: { owner: { model: "gpt-5.6" } },
+              memory: { project: true },
+            },
+            disabledReason: null,
+          },
+        ],
+      },
+    ),
+  );
+
+  assert.deepEqual(
+    overview.map((section) => section.id),
+    ["global", "project", "effective"],
+  );
+  assert.equal(
+    overview
+      .find((section) => section.id === "global")
+      ?.rows.some((row) => row.keyPath === "skills"),
+    true,
+  );
+  assert.equal(
+    overview
+      .find((section) => section.id === "project")
+      ?.rows.some((row) => row.keyPath === "agents"),
+    true,
+  );
+  assert.equal(
+    overview
+      .find((section) => section.id === "effective")
+      ?.rows.some((row) => row.keyPath === "memory"),
+    true,
+  );
+});
+
+test("readonly inventory rows never become save edits", () => {
+  const state = buildSettingsConfigState(
+    readResponse({
+      model: "gpt-5",
+      unknown_runtime: { enabled: true },
+    }),
+  );
+  const rows = buildConfigInventory(readResponse({
+    model: "gpt-5",
+    unknown_runtime: { enabled: true },
+  }));
+
+  assert.equal(
+    rows.some((row) => row.keyPath === "unknown_runtime.enabled"),
+    true,
+  );
+  assert.equal(
+    buildConfigSaveParams(
+      state.fields,
+      state.userVersion,
+      state.providerRegistry,
+      state.modelOptions,
+    ),
+    null,
+  );
 });
