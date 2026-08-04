@@ -458,6 +458,33 @@ export type ThreadLifecycleStatus =
       activeFlags: ThreadLifecycleActiveFlag[];
     };
 
+export type JsonRpcRequestId = string | number;
+
+export type ApprovalRequestKind = "commandExecution" | "fileChange" | "permissions";
+
+export type ApprovalDecision =
+  | "accept"
+  | "acceptForSession"
+  | "decline"
+  | "cancel";
+
+export type ApprovalRequest = {
+  requestId: JsonRpcRequestId;
+  kind: ApprovalRequestKind;
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  startedAtMs: number;
+  reason: string | null;
+  title: string;
+  detail: string;
+  metadata: Array<{ label: string; value: string }>;
+  permissions?: unknown;
+  status: "pending" | "submitting" | "failed";
+  error: string | null;
+  availableDecisions: ApprovalDecision[];
+};
+
 export type ThreadGoalStatus =
   | "active"
   | "paused"
@@ -598,8 +625,13 @@ export type ThreadProviderListResponse = {
 };
 
 export type NotificationEnvelope = {
-  type: "notification" | "status" | "ready";
+  type: "notification" | "request" | "status" | "ready";
   notification?: {
+    method: string;
+    params?: unknown;
+  };
+  request?: {
+    id: JsonRpcRequestId;
     method: string;
     params?: unknown;
   };

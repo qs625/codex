@@ -13,7 +13,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { AgentTreeNode } from "./AgentTree";
-import { ThinkingIndicator } from "./Conversation";
+import { ApprovalRequestsPanel, ThinkingIndicator } from "./Conversation";
 import { ConversationVirtualList } from "./ConversationVirtualList";
 import { RunConfigPicker } from "./RunConfigPicker";
 import {
@@ -67,6 +67,8 @@ import type {
   ComposerImage,
   ConversationCell,
   DraftSkill,
+  ApprovalDecision,
+  ApprovalRequest,
   AgentTypeListResponse,
   AgentTypeOption,
   NewThreadDraft,
@@ -1132,6 +1134,7 @@ function ChatSection({
 export function ConversationPanel({
   availableSkills,
   availableWorkflows,
+  approvalRequests,
   compactHistoryById,
   conversationCells,
   conversationScrollRef,
@@ -1157,6 +1160,7 @@ export function ConversationPanel({
   onPauseGoal,
   onRemoveDraftImage,
   onRemoveDraftSkill,
+  onRespondApproval,
   onResumeGoal,
   onRunSlashCommand,
   onUpdateRunConfig,
@@ -1170,6 +1174,7 @@ export function ConversationPanel({
 }: {
   availableSkills: ThreadSkill[];
   availableWorkflows: WorkflowSummary[];
+  approvalRequests: ApprovalRequest[];
   compactHistoryById: Readonly<
     Record<string, { isLoading: boolean; isExpanded: boolean; error: string | null }>
   >;
@@ -1197,6 +1202,10 @@ export function ConversationPanel({
   onPauseGoal: () => void;
   onRemoveDraftImage: (imageId: string) => void;
   onRemoveDraftSkill: (path: string) => void;
+  onRespondApproval: (
+    request: ApprovalRequest,
+    decision: ApprovalDecision,
+  ) => void;
   onResumeGoal: () => void;
   onRunSlashCommand: (commandId: ComposerSlashCommandId) => void;
   onUpdateRunConfig: (selection: RunConfigSelection) => void;
@@ -1539,6 +1548,11 @@ export function ConversationPanel({
         onCancel={onCancelGoal}
         onPause={onPauseGoal}
         onResume={onResumeGoal}
+      />
+
+      <ApprovalRequestsPanel
+        requests={approvalRequests}
+        onRespond={onRespondApproval}
       />
 
       <div

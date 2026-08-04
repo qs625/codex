@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  AppServerClient,
   buildAppServerEnvironment,
   resolveAppServerCommand,
 } = require("./appServerClient.cjs");
@@ -53,4 +54,48 @@ test("app-server command accepts CODEX_APP_SERVER_CMD when APP_SERVER_CMD is abs
     }),
     "/custom/codex-app-server --listen stdio://",
   );
+});
+
+test("app-server client emits server requests for renderer approval handling", () => {
+  const client = Object.create(AppServerClient.prototype);
+  const requests = [];
+  const writes = [];
+  client.on("request", (request) => requests.push(request));
+  client.write = (message) => writes.push(message);
+
+  client.handleMessage({
+    id: "approval-1",
+    method: "item/commandExecution/requestApproval",
+    params: { threadId: "thread-1" },
+  });
+
+  assert.deepEqual(requests, [
+    {
+      id: "approval-1",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread-1" },
+    },
+  ]);
+  assert.deepEqual(writes, []);
+});
+
+test("app-server client writes server request responses and rejections", async () => {
+  const client = Object.create(AppServerClient.prototype);
+  const writes = [];
+  client.ready = async () => {};
+  client.write = (message) => writes.push(message);
+
+  await client.respondToServerRequest("approval-1", { decision: "accept" });
+  await client.rejectServerRequest("approval-2", "unsupported");
+
+  assert.deepEqual(writes, [
+    { id: "approval-1", result: { decision: "accept" } },
+    {
+      id: "approval-2",
+      error: {
+        code: -32601,
+        message: "unsupported",
+      },
+    },
+  ]);
 });

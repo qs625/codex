@@ -61,12 +61,19 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   sendMessage: (payload) => ipcRenderer.invoke("codex:sendMessage", payload),
   interruptTurn: (payload) =>
     ipcRenderer.invoke("codex:interruptTurn", payload),
+  respondServerRequest: (payload) =>
+    ipcRenderer.invoke("codex:respondServerRequest", payload),
+  rejectServerRequest: (payload) =>
+    ipcRenderer.invoke("codex:rejectServerRequest", payload),
   requestMicrophoneAccess: () =>
     ipcRenderer.invoke("codex:requestMicrophoneAccess"),
   startRealtime: (payload) =>
     ipcRenderer.invoke("codex:startRealtime", payload),
   stopRealtime: (payload) => ipcRenderer.invoke("codex:stopRealtime", payload),
   subscribe(listener) {
+    const onRequest = (_event, request) => {
+      listener({ type: "request", request });
+    };
     const onNotification = (_event, notification) => {
       listener({ type: "notification", notification });
     };
@@ -74,10 +81,12 @@ contextBridge.exposeInMainWorld("codexDesktop", {
       listener({ type: "status", status });
     };
 
+    ipcRenderer.on("codex:request", onRequest);
     ipcRenderer.on("codex:notification", onNotification);
     ipcRenderer.on("codex:status", onStatus);
 
     return () => {
+      ipcRenderer.removeListener("codex:request", onRequest);
       ipcRenderer.removeListener("codex:notification", onNotification);
       ipcRenderer.removeListener("codex:status", onStatus);
     };

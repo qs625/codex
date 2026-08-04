@@ -320,6 +320,15 @@ declare global {
         threadId: string;
         turnId: string;
       }) => Promise<unknown>;
+      respondServerRequest: (payload: {
+        requestId: string | number;
+        result: unknown;
+      }) => Promise<{ ok: boolean }>;
+      rejectServerRequest: (payload: {
+        requestId: string | number;
+        message: string;
+        code?: number;
+      }) => Promise<{ ok: boolean }>;
       requestMicrophoneAccess: () => Promise<{
         granted: boolean;
         status: string;
@@ -341,8 +350,9 @@ declare global {
       stopRealtime: (payload: { threadId: string }) => Promise<unknown>;
       subscribe: (
         listener: (event: {
-          type: "notification" | "status";
+          type: "notification" | "request" | "status";
           notification?: { method: string; params?: unknown };
+          request?: { id: string | number; method: string; params?: unknown };
           status?: { connected: boolean; pid?: number | null; reason?: string };
         }) => void,
       ) => () => void;

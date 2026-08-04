@@ -495,6 +495,7 @@ function MeasuredConversationCell({
     };
 
     notifyHeight();
+    const frameId = window.requestAnimationFrame(notifyHeight);
 
     const resizeObserver = new ResizeObserver(() => {
       notifyHeight();
@@ -502,6 +503,7 @@ function MeasuredConversationCell({
     resizeObserver.observe(element);
 
     return () => {
+      window.cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
     };
   }, []);

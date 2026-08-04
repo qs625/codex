@@ -2,7 +2,12 @@ import React, { memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { MarkdownContent } from "../lib/markdown";
-import type { ConversationCell, ConversationEntry } from "../types";
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  ConversationCell,
+  ConversationEntry,
+} from "../types";
 import {
   BranchIcon,
   CodeIcon,
@@ -43,6 +48,11 @@ type CompactRowProps = {
 type ArchivedHistoryRowProps = {
   entry: ConversationEntry;
   onOpenLocalFile?: (target: string) => void;
+};
+
+type ApprovalRequestsPanelProps = {
+  requests: ApprovalRequest[];
+  onRespond: (request: ApprovalRequest, decision: ApprovalDecision) => void;
 };
 
 type LocalImageCacheEntry = {
@@ -589,6 +599,118 @@ export function ThinkingIndicator() {
       </div>
     </div>
   );
+}
+
+export function ApprovalRequestsPanel({
+  requests,
+  onRespond,
+}: ApprovalRequestsPanelProps) {
+  if (requests.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="approval-request-strip" aria-label="Pending approvals">
+      {requests.map((request) => (
+        <article
+          key={String(request.requestId)}
+          className={`approval-request-card approval-request-${request.kind}`}
+        >
+          <div className="approval-request-icon">
+            {approvalRequestIcon(request.kind)}
+          </div>
+          <div className="approval-request-main">
+            <div className="approval-request-heading">
+              <strong>{request.title}</strong>
+              <span>{approvalRequestStatusLabel(request)}</span>
+            </div>
+            <p>{request.detail}</p>
+            {request.reason ? (
+              <p className="approval-request-reason">{request.reason}</p>
+            ) : null}
+            {request.metadata.length > 0 ? (
+              <dl className="approval-request-metadata">
+                {request.metadata.map((item) => (
+                  <div key={`${item.label}:${item.value}`}>
+                    <dt>{item.label}</dt>
+                    <dd title={item.value}>{item.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+            {request.error ? (
+              <div className="approval-request-error" role="status">
+                {request.error}
+              </div>
+            ) : null}
+          </div>
+          <div className="approval-request-actions">
+            {request.availableDecisions.includes("accept") ? (
+              <button
+                type="button"
+                className="approval-request-action primary"
+                disabled={request.status === "submitting"}
+                onClick={() => onRespond(request, "accept")}
+              >
+                {request.kind === "permissions" ? "Grant" : "Approve"}
+              </button>
+            ) : null}
+            {request.availableDecisions.includes("acceptForSession") ? (
+              <button
+                type="button"
+                className="approval-request-action"
+                disabled={request.status === "submitting"}
+                onClick={() => onRespond(request, "acceptForSession")}
+              >
+                Session
+              </button>
+            ) : null}
+            {request.availableDecisions.includes("decline") ? (
+              <button
+                type="button"
+                className="approval-request-action danger"
+                disabled={request.status === "submitting"}
+                onClick={() => onRespond(request, "decline")}
+              >
+                Deny
+              </button>
+            ) : null}
+            {request.availableDecisions.includes("cancel") ? (
+              <button
+                type="button"
+                className="approval-request-action"
+                disabled={request.status === "submitting"}
+                onClick={() => onRespond(request, "cancel")}
+              >
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function approvalRequestIcon(kind: ApprovalRequest["kind"]) {
+  switch (kind) {
+    case "commandExecution":
+      return <TerminalIcon />;
+    case "fileChange":
+      return <DocumentIcon />;
+    case "permissions":
+      return <GearIcon />;
+  }
+}
+
+function approvalRequestStatusLabel(request: ApprovalRequest) {
+  if (request.status === "submitting") {
+    return "Submitting";
+  }
+  if (request.status === "failed") {
+    return "Failed";
+  }
+  return "Awaiting approval";
 }
 
 export const MessageRow = memo(function MessageRow({
