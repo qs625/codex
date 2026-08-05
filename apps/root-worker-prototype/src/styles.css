@@ -4980,7 +4980,12 @@ svg {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  background: #fafaf9;
+  background: #111827;
+}
+
+.git-panel.resizing-panes {
+  cursor: row-resize;
+  user-select: none;
 }
 
 .git-section {
@@ -4992,13 +4997,14 @@ svg {
 .git-graph-section {
   flex: 1 1 64%;
   min-height: 128px;
-  border-bottom: 1px solid rgba(16, 24, 40, 0.1);
+  background: #111827;
 }
 
 .git-changes-section {
   flex: 0 1 36%;
   min-height: 112px;
   max-height: 44%;
+  background: #fafaf9;
 }
 
 .git-graph-section.changes-collapsed {
@@ -5020,6 +5026,19 @@ svg {
   padding: 0 10px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
   background: rgba(255, 255, 255, 0.68);
+}
+
+.git-graph-section .git-section-header {
+  border-bottom-color: rgba(148, 163, 184, 0.18);
+  background: #1f2937;
+}
+
+.git-graph-section .git-section-title {
+  color: #e5e7eb;
+}
+
+.git-graph-section .git-section-marker {
+  color: #94a3b8;
 }
 
 .git-section-title,
@@ -5101,6 +5120,46 @@ svg {
   white-space: nowrap;
 }
 
+.git-ref-select-label {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 220px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #bfdbfe;
+}
+
+.git-ref-select-label svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.git-ref-select {
+  min-width: 0;
+  max-width: 170px;
+  border: 0;
+  background: transparent;
+  color: #dbeafe;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  outline: none;
+}
+
+.git-ref-select option {
+  background: #111827;
+  color: #e5e7eb;
+}
+
+.git-ref-select:disabled {
+  opacity: 0.55;
+}
+
 .git-branch-pill svg,
 .git-icon-button svg {
   width: 15px;
@@ -5130,6 +5189,39 @@ svg {
   cursor: default;
 }
 
+.git-graph-section .git-icon-button {
+  color: #cbd5e1;
+}
+
+.git-graph-section .git-icon-button:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.14);
+  color: #ffffff;
+}
+
+.git-pane-splitter {
+  position: relative;
+  flex: 0 0 8px;
+  background: linear-gradient(180deg, #111827 0%, #374151 45%, #f5f5f4 100%);
+  cursor: row-resize;
+}
+
+.git-pane-splitter::before {
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 42px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.72);
+  content: "";
+  transform: translateX(-50%);
+}
+
+.git-pane-splitter:hover::before,
+.git-pane-splitter:focus-visible::before {
+  background: #60a5fa;
+}
+
 .git-graph-list,
 .git-changes-list {
   flex: 1 1 auto;
@@ -5156,30 +5248,48 @@ svg {
 .git-graph-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 8px;
+  gap: 2px;
+  padding: 6px;
+  background: #111827;
 }
 
 .git-graph-row {
-  display: grid;
-  grid-template-columns: max-content minmax(220px, 1fr);
-  align-items: center;
   width: max-content;
   min-width: 100%;
-  min-height: 36px;
-  column-gap: 10px;
-  padding: 4px 7px;
-  border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 5px;
+  color: #d1d5db;
+  outline: none;
 }
 
 .git-graph-row:hover {
-  border-color: rgba(59, 130, 246, 0.14);
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(55, 65, 81, 0.56);
+}
+
+.git-graph-row.selected {
+  background: rgba(71, 85, 105, 0.78);
+  box-shadow: inset 2px 0 0 #60a5fa;
+}
+
+.git-graph-row:focus-visible {
+  box-shadow: inset 0 0 0 1px #60a5fa;
 }
 
 .git-graph-row.merge {
-  background: rgba(14, 165, 233, 0.05);
+  background: rgba(30, 41, 59, 0.82);
+}
+
+.git-graph-row.selected.merge {
+  background: rgba(71, 85, 105, 0.86);
+}
+
+.git-graph-row-main {
+  display: grid;
+  grid-template-columns: max-content minmax(240px, 1fr);
+  align-items: center;
+  min-height: 30px;
+  column-gap: 10px;
+  padding: 3px 8px;
+  cursor: pointer;
 }
 
 .git-graph-lanes {
@@ -5253,7 +5363,7 @@ svg {
   flex: 1 1 auto;
   min-width: 34px;
   overflow: hidden;
-  color: #292524;
+  color: #f9fafb;
   font-size: 13px;
   font-weight: 700;
   text-overflow: ellipsis;
@@ -5285,8 +5395,8 @@ svg {
 
 .git-ref-pill,
 .git-ref-more {
-  background: rgba(41, 37, 36, 0.08);
-  color: #57534e;
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
 }
 
 .git-ref-more {
@@ -5297,10 +5407,81 @@ svg {
   display: block;
   margin-top: 1px;
   overflow: hidden;
-  color: #78716c;
+  color: #9ca3af;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.git-commit-files,
+.git-commit-files-state {
+  margin: 0 8px 6px 68px;
+  border-left: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.git-commit-files-state {
+  padding: 7px 10px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.git-commit-files-state.error {
+  color: #fca5a5;
+}
+
+.git-commit-file-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 22px;
+  align-items: center;
+  min-height: 28px;
+  gap: 7px;
+  padding: 2px 8px;
+}
+
+.git-file-kind {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.git-commit-file-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.git-commit-file-copy strong,
+.git-commit-file-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-commit-file-copy strong {
+  color: #e5e7eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.git-commit-file-copy span {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.git-commit-file-status {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
 }
 
 .git-changes-list {
@@ -5389,22 +5570,30 @@ svg {
 }
 
 .git-status-letter.added,
-.git-change-state.added {
+.git-change-state.added,
+.git-file-kind.added,
+.git-commit-file-status.added {
   color: #16a34a;
 }
 
 .git-status-letter.deleted,
-.git-change-state.deleted {
+.git-change-state.deleted,
+.git-file-kind.deleted,
+.git-commit-file-status.deleted {
   color: #dc2626;
 }
 
 .git-status-letter.renamed,
-.git-change-state.renamed {
+.git-change-state.renamed,
+.git-file-kind.renamed,
+.git-commit-file-status.renamed {
   color: #7c3aed;
 }
 
 .git-status-letter.untracked,
-.git-change-state.untracked {
+.git-change-state.untracked,
+.git-file-kind.untracked,
+.git-commit-file-status.untracked {
   color: #0284c7;
 }
 

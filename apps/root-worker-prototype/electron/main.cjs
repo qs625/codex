@@ -21,7 +21,7 @@ const {
   localFilePathFromTarget,
   parseLocalFileTarget,
 } = require("./fileTargets.cjs");
-const { readGitSnapshot } = require("./gitPanel.cjs");
+const { readGitCommitFiles, readGitSnapshot } = require("./gitPanel.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
 const {
   normalizeThreadLifecycleStatus,
@@ -438,8 +438,12 @@ ipcMain.handle("codex:readLocalImage", async (_event, target) => {
   return readLocalImageTarget(target);
 });
 
-ipcMain.handle("codex:readGitSnapshot", async (_event, cwd) => {
-  return readGitSnapshot(cwd);
+ipcMain.handle("codex:readGitSnapshot", async (_event, cwd, options) => {
+  return readGitSnapshot(cwd, options);
+});
+
+ipcMain.handle("codex:readGitCommitFiles", async (_event, cwd, hash) => {
+  return readGitCommitFiles(cwd, hash);
 });
 
 ipcMain.handle("codex:lspDefinition", async (_event, payload) => {
