@@ -85,7 +85,9 @@ type BrowserPanelApi = Pick<
 
 type GitSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitSnapshot"]>>;
 type GitChange = GitSnapshot["changes"][number];
-type GitGraphCommit = GitSnapshot["graph"][number];
+type GitGraphItem = GitSnapshot["graph"][number];
+type GitGraphCommit = Extract<GitGraphItem, { type: "commit" }>;
+type GitGraphConnector = Extract<GitGraphItem, { type: "connector" }>;
 type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
 type GitGraphTopologySegment = "vertical" | "horizontal" | "diagonal-left" | "diagonal-right";
@@ -1407,6 +1409,7 @@ function GitPanel({
   const stagedChanges = snapshot?.changes.filter((change) => change.staged) ?? [];
   const unstagedChanges = snapshot?.changes.filter((change) => change.unstaged) ?? [];
   const changeCount = snapshot?.changes.length ?? changedFiles.length;
+  const graphCommitCount = snapshot?.graph.filter(isGitGraphCommit).length ?? 0;
   const branchLabel = snapshot?.selectedRef ?? snapshot?.branch ?? "Auto";
 
   function loadCommitFiles(hash: string) {
@@ -1508,7 +1511,7 @@ function GitPanel({
         style={!changesCollapsed ? { flexBasis: `${graphPanePercent}%` } : undefined}
       >
         <GitSectionHeader
-          count={snapshot?.graph.length ?? 0}
+          count={graphCommitCount}
           title="Graph"
           trailing={
             <>
@@ -1564,17 +1567,21 @@ function GitPanel({
             <GitEmptyState message="Loading Git graph..." />
           ) : snapshot?.available === false ? (
             <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
-          ) : snapshot && snapshot.graph.length > 0 ? (
-            snapshot.graph.map((commit) => (
-              <GitGraphRow
-                key={commit.hash}
-                commit={commit}
-                filesSnapshot={commitFilesByHash[commit.hash]}
-                isLoadingFiles={Boolean(commitFilesLoadingByHash[commit.hash])}
-                isSelected={selectedCommitHash === commit.hash}
-                onToggle={() => toggleSelectedCommit(commit)}
-              />
-            ))
+          ) : snapshot && graphCommitCount > 0 ? (
+            snapshot.graph.map((item, index) =>
+              isGitGraphCommit(item) ? (
+                <GitGraphRow
+                  key={item.hash}
+                  commit={item}
+                  filesSnapshot={commitFilesByHash[item.hash]}
+                  isLoadingFiles={Boolean(commitFilesLoadingByHash[item.hash])}
+                  isSelected={selectedCommitHash === item.hash}
+                  onToggle={() => toggleSelectedCommit(item)}
+                />
+              ) : (
+                <GitGraphConnectorRow key={`connector:${index}:${item.graph}`} connector={item} />
+              ),
+            )
           ) : (
             <GitEmptyState message="No commits found in this repository." />
           )}
@@ -1641,6 +1648,10 @@ function GitPanel({
       </section>
     </div>
   );
+}
+
+function isGitGraphCommit(item: GitGraphItem): item is GitGraphCommit {
+  return item.type === "commit";
 }
 
 function GitSectionHeader({
@@ -1750,6 +1761,16 @@ function GitGraphRow({
         <GitCommitFileList filesSnapshot={filesSnapshot} isLoading={isLoadingFiles} />
       ) : null}
     </article>
+  );
+}
+
+function GitGraphConnectorRow({ connector }: { connector: GitGraphConnector }) {
+  return (
+    <div className="git-graph-connector-row" aria-hidden="true">
+      <div className="git-graph-lanes connector" data-drag-scroll-handle="true">
+        {renderGraphPrefix(connector.graph)}
+      </div>
+    </div>
   );
 }
 

@@ -176,7 +176,7 @@ function parseGitGraph(stdout) {
 function parseGitGraphLine(line) {
   const recordIndex = line.indexOf(GRAPH_RECORD_SEPARATOR);
   if (recordIndex < 0) {
-    return null;
+    return parseGitGraphConnectorLine(line);
   }
 
   const graph = line.slice(0, recordIndex);
@@ -186,6 +186,7 @@ function parseGitGraphLine(line) {
   }
 
   return {
+    type: "commit",
     graph,
     hash: fields[0],
     shortHash: fields[1],
@@ -194,6 +195,16 @@ function parseGitGraphLine(line) {
     subject: fields[4],
     author: fields[5],
     relativeTime: fields[6] ?? "",
+  };
+}
+
+function parseGitGraphConnectorLine(line) {
+  if (!/[|/\\_\-]/.test(line)) {
+    return null;
+  }
+  return {
+    type: "connector",
+    graph: line,
   };
 }
 
