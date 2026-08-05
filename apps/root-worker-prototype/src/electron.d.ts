@@ -166,16 +166,23 @@ declare global {
           fullName: string;
           head: boolean;
         }>;
-        graph: Array<{
-          graph: string;
-          hash: string;
-          shortHash: string;
-          parents: string[];
-          refs: string[];
-          subject: string;
-          author: string;
-          relativeTime: string;
-        }>;
+        graph: Array<
+          | {
+              type: "commit";
+              graph: string;
+              hash: string;
+              shortHash: string;
+              parents: string[];
+              refs: string[];
+              subject: string;
+              author: string;
+              relativeTime: string;
+            }
+          | {
+              type: "connector";
+              graph: string;
+            }
+        >;
         changes: Array<{
           path: string;
           originalPath: string | null;

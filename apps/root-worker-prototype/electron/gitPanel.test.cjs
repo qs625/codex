@@ -25,6 +25,7 @@ test("parseGitGraph reads git graph commit records", () => {
 
   assert.deepEqual(graph, [
     {
+      type: "commit",
       graph: "* ",
       hash: "abc123",
       shortHash: "abc123",
@@ -35,6 +36,7 @@ test("parseGitGraph reads git graph commit records", () => {
       relativeTime: "2 hours ago",
     },
     {
+      type: "commit",
       graph: "| * ",
       hash: "def456",
       shortHash: "def456",
@@ -43,6 +45,10 @@ test("parseGitGraph reads git graph commit records", () => {
       subject: "Add demo",
       author: "Bob",
       relativeTime: "yesterday",
+    },
+    {
+      type: "connector",
+      graph: "|/",
     },
   ]);
 });
@@ -57,6 +63,23 @@ test("parseGitGraph matches the git log pretty format used by readGitSnapshot", 
   assert.equal(graph[0].relativeTime, "1 minute ago");
   assert.deepEqual(graph[0].parents, ["parent1", "parent2"]);
   assert.deepEqual(graph[0].refs, ["HEAD -> feature/demo"]);
+});
+
+test("parseGitGraph preserves connector-only topology rows", () => {
+  const graph = parseGitGraph(
+    [
+      "| * \x1fdef456\x1fdef456\x1f\x1ffeature/demo\x1fAdd demo\x1fBob\x1fyesterday",
+      "|\\",
+      "| |",
+      "|/",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(graph.slice(1), [
+    { type: "connector", graph: "|\\" },
+    { type: "connector", graph: "| |" },
+    { type: "connector", graph: "|/" },
+  ]);
 });
 
 test("buildGitLogArgs keeps the git graph history bounded", () => {

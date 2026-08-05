@@ -654,6 +654,12 @@ test("builds structured git graph topology cells instead of display characters",
     { lane: 2, commit: false, segments: ["horizontal"] },
     { lane: 3, commit: false, segments: ["horizontal"] },
   ]);
+
+  assert.deepEqual(buildGitGraphTopology("| |"), [
+    { lane: 0, commit: false, segments: ["vertical"] },
+    { lane: 1, commit: false, segments: [] },
+    { lane: 2, commit: false, segments: ["vertical"] },
+  ]);
 });
 
 test("renders cwd tree inside the preview panel", () => {
