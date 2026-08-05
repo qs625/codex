@@ -7,8 +7,10 @@ import {
   ArrowRightIcon,
   BranchIcon,
   BrowserIcon,
+  ChevronDownIcon,
   DocumentIcon,
   GridIcon,
+  MoreIcon,
   GearIcon,
   OpenIcon,
   RefreshIcon,
@@ -80,6 +82,10 @@ type BrowserPanelApi = Pick<
   | "stopBrowserView"
   | "subscribeBrowserState"
 >;
+
+type GitSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitSnapshot"]>>;
+type GitChange = GitSnapshot["changes"][number];
+type GitGraphCommit = GitSnapshot["graph"][number];
 
 const EMPTY_BROWSER_STATE: BrowserPanelState = {
   url: null,
@@ -1309,55 +1315,276 @@ function GitPanel({
   thread: Thread | null;
 }) {
   const hasProjectCwd = thread ? !isChatCompatCwd(thread.cwd) : false;
+  const [snapshot, setSnapshot] = useState<GitSnapshot | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSnapshot(null);
+
+    if (!thread || !hasProjectCwd) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    window.codexDesktop
+      .readGitSnapshot(thread.cwd)
+      .then((nextSnapshot) => {
+        if (!cancelled) {
+          setSnapshot(nextSnapshot);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSnapshot({
+            available: false,
+            root: null,
+            branch: null,
+            graph: [],
+            changes: [],
+            error: error instanceof Error ? error.message : "Failed to read Git status.",
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasProjectCwd, refreshKey, thread?.cwd]);
+
+  const stagedChanges = snapshot?.changes.filter((change) => change.staged) ?? [];
+  const unstagedChanges = snapshot?.changes.filter((change) => change.unstaged) ?? [];
+  const changeCount = snapshot?.changes.length ?? changedFiles.length;
+  const branchLabel = snapshot?.branch ?? "Auto";
+
   return (
     <div className="preview-panel git-panel">
-      <header className="panel-content-header">
-        <div className="panel-content-copy">
-          <span className="panel-eyebrow">Git Changes</span>
-          <h2>{thread ? "Thread File Deltas" : "Select a Thread"}</h2>
-          <p>Unique files touched by this thread's recorded file change events.</p>
+      <section className="git-section git-graph-section" aria-label="Git graph">
+        <GitSectionHeader
+          count={snapshot?.graph.length ?? 0}
+          title="Graph"
+          trailing={
+            <>
+              <span className="git-branch-pill" title={branchLabel}>
+                <BranchIcon />
+                {branchLabel}
+              </span>
+              <button
+                type="button"
+                className="git-icon-button"
+                disabled={!thread || !hasProjectCwd || loading}
+                onClick={() => setRefreshKey((value) => value + 1)}
+                title="Refresh Git view"
+                aria-label="Refresh Git view"
+              >
+                <RefreshIcon />
+              </button>
+              <button
+                type="button"
+                className="git-icon-button"
+                disabled
+                title="More Git actions"
+                aria-label="More Git actions"
+              >
+                <MoreIcon />
+              </button>
+            </>
+          }
+        />
+        <div className="git-graph-list">
+          {!thread ? (
+            <GitEmptyState message="Select a thread to inspect its repository." />
+          ) : !hasProjectCwd ? (
+            <GitEmptyState message="This thread has no project workspace." />
+          ) : loading && !snapshot ? (
+            <GitEmptyState message="Loading Git graph..." />
+          ) : snapshot?.available === false ? (
+            <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
+          ) : snapshot && snapshot.graph.length > 0 ? (
+            snapshot.graph.map((commit) => (
+              <GitGraphRow key={commit.hash} commit={commit} />
+            ))
+          ) : (
+            <GitEmptyState message="No commits found in this repository." />
+          )}
         </div>
-      </header>
+      </section>
 
-      <div className="git-summary-strip">
-        <span className="git-summary-label">
-          {thread ? (hasProjectCwd ? trimPath(thread.cwd) : "No project") : "No thread selected"}
-        </span>
-        <span className="git-summary-count">
-          {changedFiles.length} file{changedFiles.length === 1 ? "" : "s"}
+      <section className="git-section git-changes-section" aria-label="Git changes">
+        <GitSectionHeader
+          count={changeCount}
+          title="Changes"
+          trailing={
+            <button
+              type="button"
+              className="git-icon-button"
+              disabled={!thread || !hasProjectCwd || loading}
+              onClick={() => setRefreshKey((value) => value + 1)}
+              title="Refresh changes"
+              aria-label="Refresh changes"
+            >
+              <RefreshIcon />
+            </button>
+          }
+        />
+        <div className="git-changes-list">
+          {loading && !snapshot ? (
+            <GitEmptyState message="Loading changes..." />
+          ) : snapshot?.available === false ? (
+            <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
+          ) : snapshot ? (
+            <>
+              <GitChangeGroup changes={stagedChanges} mode="staged" title="Staged Changes" />
+              <GitChangeGroup changes={unstagedChanges} mode="unstaged" title="Changes" />
+            </>
+          ) : (
+            <GitEmptyState message="Select a Git repository to inspect changes." />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function GitSectionHeader({
+  count,
+  title,
+  trailing,
+}: {
+  count: number;
+  title: string;
+  trailing?: ReactNode;
+}) {
+  return (
+    <div className="git-section-header">
+      <div className="git-section-title">
+        <ChevronDownIcon />
+        <span>{title}</span>
+        {count > 0 ? <span className="git-section-count">{count}</span> : null}
+      </div>
+      {trailing ? <div className="git-section-actions">{trailing}</div> : null}
+    </div>
+  );
+}
+
+function GitGraphRow({ commit }: { commit: GitGraphCommit }) {
+  const headRef = commit.refs.find((ref) => ref.startsWith("HEAD -> "));
+  return (
+    <article className="git-graph-row">
+      <div className="git-graph-lanes" aria-hidden="true">
+        {renderGraphPrefix(commit.graph)}
+      </div>
+      <div className="git-graph-copy">
+        <div className="git-graph-subject-line">
+          <strong title={commit.subject}>{commit.subject}</strong>
+          {headRef ? (
+            <span className="git-head-ref" title={headRef}>
+              {headRef.replace("HEAD -> ", "")}
+            </span>
+          ) : null}
+        </div>
+        <span className="git-graph-meta">
+          {commit.author} · {commit.shortHash}
         </span>
       </div>
+    </article>
+  );
+}
 
-      {thread ? (
-        changedFiles.length > 0 ? (
-          <div className="git-file-list">
-            {changedFiles.map((file) => (
-              <article key={file.path} className="git-file-row">
-                <div className="git-file-copy">
-                  <strong title={file.path}>{file.displayPath}</strong>
-                  <span title={file.path}>{file.path}</span>
-                </div>
-                <div className="git-file-meta">
-                  <span className={`git-kind-badge ${gitKindClassName(file.kind)}`}>
-                    {formatGitKind(file.kind)}
-                  </span>
-                  <span className="git-file-count">
-                    {file.updateCount} update{file.updateCount === 1 ? "" : "s"}
-                  </span>
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div className="preview-empty">
-            <p>No file changes recorded for this thread.</p>
-          </div>
-        )
-      ) : (
-        <div className="preview-empty">
-          <p>Select a thread to inspect its changed files.</p>
+function renderGraphPrefix(graph: string) {
+  const chars = graph.length > 0 ? [...graph] : ["*"];
+  return chars.map((char, index) => {
+    const displayChar = formatGraphChar(char);
+    return (
+      <span
+        key={`${index}:${char}`}
+        className={`git-graph-char ${char.trim() ? `lane-${index % 6}` : "space"}`}
+      >
+        {displayChar}
+      </span>
+    );
+  });
+}
+
+function formatGraphChar(char: string) {
+  switch (char) {
+    case "*":
+      return "●";
+    case "|":
+      return "│";
+    case "/":
+      return "╱";
+    case "\\":
+      return "╲";
+    case "_":
+    case "-":
+      return "─";
+    default:
+      return char;
+  }
+}
+
+function GitChangeGroup({
+  changes,
+  mode,
+  title,
+}: {
+  changes: GitChange[];
+  mode: "staged" | "unstaged";
+  title: string;
+}) {
+  return (
+    <div className="git-change-group">
+      <div className="git-change-group-header">
+        <ChevronDownIcon />
+        <span>{title}</span>
+        <span className="git-change-count">{changes.length}</span>
+      </div>
+      {changes.length > 0 ? (
+        <div className="git-change-rows">
+          {changes.map((change) => (
+            <GitChangeRow
+              key={`${title}:${change.path}:${change.originalPath ?? ""}`}
+              change={change}
+              mode={mode}
+            />
+          ))}
         </div>
-      )}
+      ) : null}
+    </div>
+  );
+}
+
+function GitChangeRow({ change, mode }: { change: GitChange; mode: "staged" | "unstaged" }) {
+  const status =
+    (mode === "staged" ? change.stagedStatus : change.unstagedStatus) ??
+    change.stagedStatus ??
+    change.unstagedStatus ??
+    "M";
+  const directory = directoryName(change.path);
+  return (
+    <article className="git-change-row">
+      <span className={`git-status-letter ${gitStatusClass(status)}`}>{gitStatusLabel(status)}</span>
+      <div className="git-change-copy">
+        <strong title={change.path}>{baseName(change.path)}</strong>
+        <span title={change.path}>{directory}</span>
+      </div>
+      <span className={`git-change-state ${gitStatusClass(status)}`}>{gitStatusLabel(status)}</span>
+    </article>
+  );
+}
+
+function GitEmptyState({ message }: { message: string }) {
+  return (
+    <div className="git-empty-state" role="status">
+      {message}
     </div>
   );
 }
@@ -1983,28 +2210,31 @@ function previewLspState(preview: FilePreview) {
   return preview.lsp.lspStatus.phase;
 }
 
-function formatGitKind(kind: string) {
-  switch (kind) {
-    case "added":
-      return "Added";
-    case "deleted":
-      return "Deleted";
-    case "renamed":
-      return "Renamed";
-    case "modified":
-    case "edited":
-      return "Modified";
-    default:
-      return kind;
-  }
+function baseName(value: string) {
+  const parts = value.split("/");
+  return parts[parts.length - 1] || value;
 }
 
-function gitKindClassName(kind: string) {
-  switch (kind) {
-    case "added":
-    case "deleted":
-    case "renamed":
-      return kind;
+function directoryName(value: string) {
+  const index = value.lastIndexOf("/");
+  return index > 0 ? value.slice(0, index) : ".";
+}
+
+function gitStatusLabel(status: string) {
+  return status === "?" ? "U" : status;
+}
+
+function gitStatusClass(status: string) {
+  switch (status) {
+    case "A":
+      return "added";
+    case "D":
+      return "deleted";
+    case "R":
+    case "C":
+      return "renamed";
+    case "?":
+      return "untracked";
     default:
       return "modified";
   }

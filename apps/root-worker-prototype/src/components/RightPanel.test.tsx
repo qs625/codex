@@ -620,12 +620,11 @@ test("renders git panel with deduped thread file changes", () => {
     "git",
   );
 
-  assert.match(markup, /Git Changes/);
-  assert.match(markup, /Thread File Deltas/);
-  assert.match(markup, /src\/app\.tsx/);
-  assert.match(markup, /README\.md/);
-  assert.match(markup, /Deleted/);
-  assert.match(markup, /2 updates/);
+  assert.match(markup, /Git graph/);
+  assert.match(markup, /Graph/);
+  assert.match(markup, /Changes/);
+  assert.match(markup, /panel-rail-badge">2/);
+  assert.doesNotMatch(markup, /Thread File Deltas/);
 });
 
 test("renders cwd tree inside the preview panel", () => {

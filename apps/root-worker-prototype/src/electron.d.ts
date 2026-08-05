@@ -156,6 +156,30 @@ declare global {
         byteSize: number;
         bytes: ArrayBuffer;
       }>;
+      readGitSnapshot: (cwd: string) => Promise<{
+        available: boolean;
+        root: string | null;
+        branch: string | null;
+        graph: Array<{
+          graph: string;
+          hash: string;
+          shortHash: string;
+          parents: string[];
+          refs: string[];
+          subject: string;
+          author: string;
+          relativeTime: string;
+        }>;
+        changes: Array<{
+          path: string;
+          originalPath: string | null;
+          stagedStatus: string | null;
+          unstagedStatus: string | null;
+          staged: boolean;
+          unstaged: boolean;
+        }>;
+        error: string | null;
+      }>;
       readLocalFile: (target: string) => Promise<{
         path: string;
         displayPath: string;
