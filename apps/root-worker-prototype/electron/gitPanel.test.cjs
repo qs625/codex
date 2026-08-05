@@ -1,7 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { parseGitGraph, parseGitStatus } = require("./gitPanel.cjs");
+const {
+  GIT_GRAPH_MAX_COUNT,
+  buildGitLogArgs,
+  parseGitGraph,
+  parseGitStatus,
+} = require("./gitPanel.cjs");
 
 test("parseGitGraph reads git graph commit records", () => {
   const graph = parseGitGraph(
@@ -46,6 +51,15 @@ test("parseGitGraph matches the git log pretty format used by readGitSnapshot", 
   assert.equal(graph[0].relativeTime, "1 minute ago");
   assert.deepEqual(graph[0].parents, ["parent1", "parent2"]);
   assert.deepEqual(graph[0].refs, ["HEAD -> feature/demo"]);
+});
+
+test("buildGitLogArgs keeps the git graph history bounded", () => {
+  const args = buildGitLogArgs();
+
+  assert.equal(GIT_GRAPH_MAX_COUNT, 120);
+  assert.ok(args.includes("--graph"));
+  assert.ok(args.includes("--decorate=short"));
+  assert.ok(args.includes(`--max-count=${GIT_GRAPH_MAX_COUNT}`));
 });
 
 test("parseGitStatus groups staged and unstaged porcelain entries", () => {

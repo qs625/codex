@@ -4979,7 +4979,8 @@ svg {
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  background: rgba(250, 250, 249, 0.82);
+  overflow: hidden;
+  background: #fafaf9;
 }
 
 .git-section {
@@ -4989,12 +4990,25 @@ svg {
 }
 
 .git-graph-section {
-  flex: 1 1 56%;
-  border-bottom: 2px solid rgba(14, 165, 233, 0.48);
+  flex: 1 1 64%;
+  min-height: 128px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.1);
 }
 
 .git-changes-section {
-  flex: 1 1 44%;
+  flex: 0 1 36%;
+  min-height: 112px;
+  max-height: 44%;
+}
+
+.git-graph-section.changes-collapsed {
+  flex-basis: auto;
+}
+
+.git-changes-section.collapsed {
+  flex: 0 0 auto;
+  min-height: 38px;
+  max-height: none;
 }
 
 .git-section-header {
@@ -5022,11 +5036,38 @@ svg {
   font-weight: 700;
 }
 
-.git-section-title svg,
+.git-section-marker,
+.git-section-toggle,
 .git-change-group-header svg {
+  display: inline-grid;
   width: 15px;
   height: 15px;
+  place-items: center;
   flex: 0 0 auto;
+}
+
+.git-section-marker {
+  color: #78716c;
+}
+
+.git-section-toggle {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #57534e;
+  cursor: pointer;
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.git-section-toggle:hover {
+  background: rgba(28, 25, 23, 0.06);
+  color: #1c1917;
+}
+
+.git-section-toggle[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
 }
 
 .git-section-count,
@@ -5043,7 +5084,7 @@ svg {
 }
 
 .git-branch-pill {
-  display: inline-flex;
+  display: flex;
   min-width: 0;
   max-width: 180px;
   align-items: center;
@@ -5055,6 +5096,9 @@ svg {
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-branch-pill svg,
@@ -5062,12 +5106,6 @@ svg {
   width: 15px;
   height: 15px;
   flex: 0 0 auto;
-}
-
-.git-branch-pill {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .git-icon-button {
@@ -5094,37 +5132,82 @@ svg {
 
 .git-graph-list,
 .git-changes-list {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.drag-scroll-region {
+  cursor: grab;
+  user-select: text;
+}
+
+.drag-scroll-region.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.drag-scroll-region [data-drag-scroll-handle] {
+  cursor: grab;
 }
 
 .git-graph-list {
-  padding: 8px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
 }
 
 .git-graph-row {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: max-content minmax(220px, 1fr);
   align-items: center;
-  min-height: 28px;
-  column-gap: 8px;
+  width: max-content;
+  min-width: 100%;
+  min-height: 36px;
+  column-gap: 10px;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+}
+
+.git-graph-row:hover {
+  border-color: rgba(59, 130, 246, 0.14);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.git-graph-row.merge {
+  background: rgba(14, 165, 233, 0.05);
 }
 
 .git-graph-lanes {
   display: inline-flex;
-  min-width: 42px;
+  min-width: 50px;
   justify-content: flex-start;
-  color: #60a5fa;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1;
   white-space: pre;
 }
 
 .git-graph-char {
   display: inline-block;
-  width: 9px;
+  width: 8px;
+  font-weight: 700;
   text-align: center;
+}
+
+.git-graph-char.commit {
+  font-size: 15px;
+  text-shadow: 0 0 0 currentColor;
+}
+
+.git-graph-char.diagonal,
+.git-graph-char.horizontal,
+.git-graph-char.line {
+  opacity: 0.8;
 }
 
 .git-graph-char.space {
@@ -5167,7 +5250,8 @@ svg {
 }
 
 .git-graph-subject-line strong {
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 34px;
   overflow: hidden;
   color: #292524;
   font-size: 13px;
@@ -5176,20 +5260,37 @@ svg {
   white-space: nowrap;
 }
 
-.git-head-ref {
-  display: inline-block;
-  max-width: 128px;
+.git-head-ref,
+.git-ref-pill,
+.git-ref-more {
+  display: inline-flex;
+  flex: 0 1 auto;
+  max-width: 118px;
   min-width: 0;
+  align-items: center;
   overflow: hidden;
   padding: 3px 7px;
   border-radius: 999px;
-  background: rgba(59, 130, 246, 0.86);
-  color: #ffffff;
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.git-head-ref {
+  background: rgba(37, 99, 235, 0.9);
+  color: #ffffff;
+}
+
+.git-ref-pill,
+.git-ref-more {
+  background: rgba(41, 37, 36, 0.08);
+  color: #57534e;
+}
+
+.git-ref-more {
+  flex: 0 0 auto;
 }
 
 .git-graph-meta {
