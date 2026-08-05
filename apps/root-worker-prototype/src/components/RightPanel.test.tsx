@@ -20,6 +20,7 @@ import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
 const {
   RightPanel,
   ScheduleAgendaDateGroup,
+  buildGitGraphTopology,
   filePreviewRenderMode,
   resolveMarkdownPreviewLocalFileTarget,
 } = await import("./RightPanel");
@@ -629,6 +630,30 @@ test("renders git panel with deduped thread file changes", () => {
   assert.match(markup, /Resize Git graph and changes panes/);
   assert.match(markup, /panel-rail-badge">2/);
   assert.doesNotMatch(markup, /Thread File Deltas/);
+});
+
+test("builds structured git graph topology cells instead of display characters", () => {
+  assert.deepEqual(buildGitGraphTopology("* "), [
+    { lane: 0, commit: true, segments: ["vertical"] },
+  ]);
+
+  assert.deepEqual(buildGitGraphTopology("| * "), [
+    { lane: 0, commit: false, segments: ["vertical"] },
+    { lane: 1, commit: false, segments: [] },
+    { lane: 2, commit: true, segments: ["vertical"] },
+  ]);
+
+  assert.deepEqual(buildGitGraphTopology("|/"), [
+    { lane: 0, commit: false, segments: ["vertical"] },
+    { lane: 1, commit: false, segments: ["diagonal-left"] },
+  ]);
+
+  assert.deepEqual(buildGitGraphTopology("|\\-_"), [
+    { lane: 0, commit: false, segments: ["vertical"] },
+    { lane: 1, commit: false, segments: ["diagonal-right"] },
+    { lane: 2, commit: false, segments: ["horizontal"] },
+    { lane: 3, commit: false, segments: ["horizontal"] },
+  ]);
 });
 
 test("renders cwd tree inside the preview panel", () => {

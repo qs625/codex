@@ -88,6 +88,12 @@ type GitChange = GitSnapshot["changes"][number];
 type GitGraphCommit = GitSnapshot["graph"][number];
 type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
+type GitGraphTopologySegment = "vertical" | "horizontal" | "diagonal-left" | "diagonal-right";
+type GitGraphTopologyCell = {
+  lane: number;
+  commit: boolean;
+  segments: GitGraphTopologySegment[];
+};
 
 const EMPTY_BROWSER_STATE: BrowserPanelState = {
   url: null,
@@ -1802,51 +1808,78 @@ function fileIconLabel(path: string) {
 }
 
 function renderGraphPrefix(graph: string) {
-  const chars = graph.length > 0 ? [...graph] : ["*"];
-  return chars.map((char, index) => {
-    const displayChar = formatGraphChar(char);
+  return buildGitGraphTopology(graph).map((cell) => {
     return (
       <span
-        key={`${index}:${char}`}
-        className={`git-graph-char ${graphCharClass(char)} ${char.trim() ? `lane-${index % 6}` : "space"}`}
+        key={cell.lane}
+        className={`git-graph-cell lane-${cell.lane % 6} ${cell.commit ? "has-commit" : ""}`}
+        data-graph-cell="true"
       >
-        {displayChar}
+        {cell.segments.map((segment) => (
+          <span
+            key={segment}
+            className={`git-graph-segment ${segment}`}
+            data-graph-segment={segment}
+          />
+        ))}
+        {cell.commit ? <span className="git-graph-dot" data-graph-dot="true" /> : null}
       </span>
     );
   });
 }
 
-function graphCharClass(char: string) {
+export function buildGitGraphTopology(graph: string): GitGraphTopologyCell[] {
+  const chars = graph.length > 0 ? [...graph] : ["*"];
+  const cells: GitGraphTopologyCell[] = [];
+
+  chars.forEach((char, index) => {
+    const segments = graphSegmentsForChar(char);
+    const commit = char === "*";
+    if (!commit && segments.length === 0 && char.trim() === "") {
+      cells.push({ lane: index, commit: false, segments: [] });
+      return;
+    }
+    cells.push({
+      lane: index,
+      commit,
+      segments: commit ? uniqueSegments(["vertical", ...segments]) : segments,
+    });
+  });
+
+  return trimTrailingEmptyGraphCells(cells);
+}
+
+function graphSegmentsForChar(char: string): GitGraphTopologySegment[] {
   switch (char) {
     case "*":
-      return "commit";
+    case "|":
+      return ["vertical"];
     case "/":
+      return ["diagonal-left"];
     case "\\":
-      return "diagonal";
+      return ["diagonal-right"];
     case "_":
     case "-":
-      return "horizontal";
+      return ["horizontal"];
     default:
-      return "line";
+      return char.trim() ? ["vertical"] : [];
   }
 }
 
-function formatGraphChar(char: string) {
-  switch (char) {
-    case "*":
-      return "●";
-    case "|":
-      return "│";
-    case "/":
-      return "╱";
-    case "\\":
-      return "╲";
-    case "_":
-    case "-":
-      return "─";
-    default:
-      return char;
+function uniqueSegments(segments: GitGraphTopologySegment[]) {
+  return [...new Set(segments)];
+}
+
+function trimTrailingEmptyGraphCells(cells: GitGraphTopologyCell[]) {
+  let lastMeaningfulIndex = cells.length - 1;
+  while (
+    lastMeaningfulIndex > 0 &&
+    !cells[lastMeaningfulIndex].commit &&
+    cells[lastMeaningfulIndex].segments.length === 0
+  ) {
+    lastMeaningfulIndex -= 1;
   }
+  return cells.slice(0, lastMeaningfulIndex + 1);
 }
 
 function GitChangeGroup({

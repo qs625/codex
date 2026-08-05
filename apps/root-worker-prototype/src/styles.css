@@ -5294,57 +5294,108 @@ svg {
 
 .git-graph-lanes {
   display: inline-flex;
-  min-width: 50px;
+  align-self: stretch;
+  min-width: 58px;
   justify-content: flex-start;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 17px;
-  line-height: 1;
-  white-space: pre;
+  white-space: nowrap;
 }
 
-.git-graph-char {
+.git-graph-cell {
+  position: relative;
   display: inline-block;
-  width: 8px;
-  font-weight: 700;
-  text-align: center;
+  width: 14px;
+  min-height: 30px;
+  flex: 0 0 14px;
 }
 
-.git-graph-char.commit {
-  font-size: 15px;
-  text-shadow: 0 0 0 currentColor;
+.git-graph-segment,
+.git-graph-dot {
+  position: absolute;
+  left: 50%;
+  pointer-events: none;
+  transform: translateX(-50%);
 }
 
-.git-graph-char.diagonal,
-.git-graph-char.horizontal,
-.git-graph-char.line {
-  opacity: 0.8;
+.git-graph-segment.vertical {
+  top: -6px;
+  bottom: -6px;
+  width: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
 }
 
-.git-graph-char.space {
-  color: transparent;
+.git-graph-segment.horizontal {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+  transform: translateY(-50%);
 }
 
-.git-graph-char.lane-0 {
+.git-graph-segment.diagonal-left,
+.git-graph-segment.diagonal-right {
+  top: 50%;
+  width: 20px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.76;
+  transform-origin: center;
+}
+
+.git-graph-segment.diagonal-left {
+  transform: translateX(-50%) rotate(-42deg);
+}
+
+.git-graph-segment.diagonal-right {
+  transform: translateX(-50%) rotate(42deg);
+}
+
+.git-graph-dot {
+  top: 50%;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #111827;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 1px currentColor;
+  transform: translate(-50%, -50%);
+}
+
+.git-graph-row.selected .git-graph-dot {
+  width: 12px;
+  height: 12px;
+  border-color: #475569;
+  background: #111827;
+  box-shadow: 0 0 0 2px currentColor;
+}
+
+.git-graph-cell.lane-0 {
   color: #3b82f6;
 }
 
-.git-graph-char.lane-1 {
+.git-graph-cell.lane-1 {
   color: #f59e0b;
 }
 
-.git-graph-char.lane-2 {
+.git-graph-cell.lane-2 {
   color: #ec4899;
 }
 
-.git-graph-char.lane-3 {
+.git-graph-cell.lane-3 {
   color: #14b8a6;
 }
 
-.git-graph-char.lane-4 {
+.git-graph-cell.lane-4 {
   color: #8b5cf6;
 }
 
-.git-graph-char.lane-5 {
+.git-graph-cell.lane-5 {
   color: #22c55e;
 }
 
