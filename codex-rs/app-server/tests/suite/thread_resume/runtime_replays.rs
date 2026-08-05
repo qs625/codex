@@ -1068,7 +1068,6 @@ description: Resume role fixture.
 
     let start_id = primary
         .send_thread_start_request(ThreadStartParams {
-            task_name: Some("resume_role_thread".to_string()),
             agent_type: Some("resume-role".to_string()),
             ..Default::default()
         })
@@ -1079,6 +1078,7 @@ description: Resume role fixture.
     )
     .await??;
     let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    assert_eq!(thread.agent_path, None);
     assert_eq!(thread.agent_role.as_deref(), Some("resume-role"));
 
     let materialize_id = primary
@@ -1117,6 +1117,7 @@ description: Resume role fixture.
     )
     .await??;
     let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
+    assert_eq!(resume.thread.agent_path, None);
     assert_eq!(resume.thread.agent_role.as_deref(), Some("resume-role"));
 
     let turn_id = secondary

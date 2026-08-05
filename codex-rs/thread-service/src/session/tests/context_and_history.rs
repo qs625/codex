@@ -158,6 +158,87 @@ async fn record_context_updates_emits_injected_context_with_agent_file_instructi
 }
 
 #[tokio::test]
+async fn process_compacted_history_reinjects_agent_file_instructions_into_initial_context() {
+    let agent_file_instructions = "Compact agent type body: keep role instructions visible.";
+    let role_dir = tempfile::tempdir().expect("agent role tempdir");
+    let role_path = role_dir.path().join("compact-role.agent.md");
+    std::fs::write(
+        &role_path,
+        format!(
+            "---\nname: compact-role\ndescription: Compact role.\n---\n{agent_file_instructions}\n"
+        ),
+    )
+    .expect("write agent role file");
+    let (session, mut turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        |config| {
+            config.agent_roles.insert(
+                "compact-role".to_string(),
+                crate::config::AgentRoleConfig {
+                    description: Some("Compact role.".to_string()),
+                    source_path: Some(role_path.clone()),
+                    ..Default::default()
+                },
+            );
+        },
+    )
+    .await;
+    let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: ThreadId::default(),
+        depth: 1,
+        agent_path: Some("/root/compact_role".parse().expect("agent path")),
+        agent_nickname: Some("compact_role".to_string()),
+        agent_role: Some("compact-role".to_string()),
+    });
+    {
+        let mut state = session.state.lock().await;
+        state.session_configuration.session_source = session_source.clone();
+    }
+    Arc::get_mut(&mut turn_context)
+        .expect("turn context should not be shared")
+        .session_source = session_source;
+    let compacted_history = vec![ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "summary".to_string(),
+        }],
+        phase: None,
+    }];
+
+    let refreshed = crate::compact::process_compacted_history(
+        &session,
+        turn_context.as_ref(),
+        compacted_history,
+        crate::compact::InitialContextInjection::BeforeLastUserMessage,
+    )
+    .await;
+    let refreshed_text = refreshed
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => Some(
+                content
+                    .iter()
+                    .filter_map(|part| match part {
+                        ContentItem::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        refreshed_text.contains(agent_file_instructions),
+        "expected compacted history to preserve agent file instructions, got {refreshed_text:?}"
+    );
+}
+
+#[tokio::test]
 async fn record_context_updates_and_set_reference_context_item_reinjects_full_context_after_clear()
 {
     let (session, turn_context) = make_session_and_context().await;

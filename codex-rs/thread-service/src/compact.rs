@@ -51,12 +51,12 @@ const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
 
 /// Controls whether compaction replacement history must include initial context.
 ///
-/// Pre-turn/manual compaction variants use `DoNotInject`: they replace history with a summary and
-/// clear `reference_context_item`, so the next regular turn will fully reinject initial context
-/// after compaction.
+/// Pre-turn compaction may use `DoNotInject`: it replaces history with a summary and clears
+/// `reference_context_item`, so the next regular turn will fully reinject initial context after
+/// compaction.
 ///
-/// Mid-turn compaction must use `BeforeLastUserMessage` so the rebuilt initial context lands
-/// ahead of the retained compact checkpoint block instead of being omitted entirely.
+/// Manual and mid-turn compaction use `BeforeLastUserMessage` so the rebuilt initial context lands
+/// ahead of the retained compact checkpoint block and remains visible in replacement history.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InitialContextInjection {
     BeforeLastUserMessage,
@@ -99,7 +99,7 @@ pub(crate) async fn run_compact_task(
         sess.clone(),
         turn_context,
         input,
-        InitialContextInjection::DoNotInject,
+        InitialContextInjection::BeforeLastUserMessage,
         CompactionTrigger::Manual,
         CompactionReason::UserRequested,
         CompactionPhase::StandaloneTurn,

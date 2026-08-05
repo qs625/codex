@@ -2750,6 +2750,8 @@ async fn thread_read_include_turns_omits_initial_context_for_fresh_loaded_thread
 #[tokio::test]
 async fn thread_read_after_auto_compaction_preserves_init_context_without_dup_live_assistant_items()
 -> Result<()> {
+    const ROLE_BODY: &str = "ROLE_COMPACT_AGENT_MD_UNIQUE_INSTRUCTION";
+
     let server = responses::start_mock_server().await;
     let sse1 = responses::sse(vec![
         responses::ev_assistant_message("m1", "FIRST_REPLY"),
@@ -2779,10 +2781,23 @@ async fn thread_read_after_auto_compaction_preserves_init_context_without_dup_li
         "mock_provider",
         "Summarize the conversation.",
     )?;
-
     let workspace = TempDir::new()?;
     let project_config_dir = workspace.path().join(".codex");
     std::fs::create_dir_all(&project_config_dir)?;
+    let agents_dir = project_config_dir.join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("compact-role.agent.md"),
+        format!(
+            r#"---
+name: compact-role
+description: Compact role fixture.
+---
+
+{ROLE_BODY}
+"#
+        ),
+    )?;
     let instruction_dir = workspace.path().join("memory");
     std::fs::create_dir_all(&instruction_dir)?;
     std::fs::write(
@@ -2810,6 +2825,7 @@ instruction_files = [
         .send_thread_start_request(ThreadStartParams {
             cwd: Some(workspace.path().display().to_string()),
             environments: Some(Vec::new()),
+            agent_type: Some("compact-role".to_string()),
             ..Default::default()
         })
         .await?;
@@ -2846,6 +2862,13 @@ instruction_files = [
             .flat_map(|turn| turn.items.iter())
             .any(|item| matches!(item, ThreadItem::InjectedContext { .. })),
         "thread/read should preserve an injected init context item after compaction, got {:?}",
+        thread_visible_texts(&thread)
+    );
+    assert!(
+        thread_visible_texts(&thread)
+            .iter()
+            .any(|text| text.contains(ROLE_BODY)),
+        "thread/read should preserve agent role body in injected init context after compaction, got {:?}",
         thread_visible_texts(&thread)
     );
 
@@ -3567,6 +3590,35 @@ fn thread_visible_texts(thread: &app_server_protocol::Thread) -> Vec<String> {
                 })
                 .collect::<Vec<_>>(),
             ThreadItem::AgentMessage { text, .. } => vec![text.clone()],
+            ThreadItem::ContextCompaction {
+                replacement_history,
+                ..
+            } => replacement_history
+                .iter()
+                .flat_map(|replacement| match replacement {
+                    app_server_protocol::ContextCompactionReplacementItem::InjectedContext {
+                        sections,
+                        ..
+                    } => sections
+                        .iter()
+                        .map(|section| section.text.clone())
+                        .collect::<Vec<_>>(),
+                    app_server_protocol::ContextCompactionReplacementItem::UserMessage {
+                        content,
+                        ..
+                    } => content
+                        .iter()
+                        .filter_map(|input| match input {
+                            UserInput::Text { text, .. } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                    app_server_protocol::ContextCompactionReplacementItem::AgentMessage {
+                        text,
+                        ..
+                    } => vec![text.clone()],
+                })
+                .collect(),
             _ => Vec::new(),
         })
         .collect()

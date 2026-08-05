@@ -186,24 +186,27 @@ fn collect_resume_override_mismatches(
     mismatch_details
 }
 
-fn native_agent_role_for_resume(
-    session_source: Option<&protocol::protocol::SessionSource>,
-) -> Option<&str> {
-    let Some(protocol::protocol::SessionSource::SubAgent(
+fn native_agent_role_for_resume<'a>(
+    session_source: Option<&'a protocol::protocol::SessionSource>,
+    agent_metadata: Option<&'a codex_agent_runtime::AgentMetadata>,
+) -> Option<&'a str> {
+    let role = if let Some(protocol::protocol::SessionSource::SubAgent(
         protocol::protocol::SubAgentSource::ThreadSpawn {
             agent_role: Some(agent_role),
             ..
         },
     )) = session_source
-    else {
-        return None;
-    };
+    {
+        Some(agent_role.as_str())
+    } else {
+        agent_metadata.and_then(|metadata| metadata.agent_role.as_deref())
+    }?;
 
-    if is_external_agent_provider_label(agent_role) {
+    if is_external_agent_provider_label(role) {
         return None;
     }
 
-    Some(agent_role.as_str())
+    Some(role)
 }
 
 fn is_external_agent_provider_label(label: &str) -> bool {

@@ -13,6 +13,8 @@ use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
+use app_server_protocol::ThreadReadParams;
+use app_server_protocol::ThreadReadResponse;
 use app_server_protocol::ThreadResumeParams;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadSource;
@@ -436,6 +438,60 @@ async fn thread_start_accepts_hidden_external_root_provider_and_emits_started() 
         "thread/started notification",
     );
     assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_external_root_ignores_role_only_agent_type_metadata() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+    let fake_bin = TempDir::new()?;
+    write_fake_claude_cli(fake_bin.path())?;
+    let test_path = prepend_path_env(fake_bin.path())?;
+
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("PATH", Some(test_path.as_str()))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let req_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            thread_provider: Some("claude_cli".to_string()),
+            cwd: Some(codex_home.path().to_string_lossy().into_owned()),
+            agent_type: Some("feature-owner".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(req_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(response)?;
+    assert_eq!(thread.model_provider, "claude_cli");
+    assert_eq!(thread.agent_path, None);
+    assert_eq!(thread.agent_role, None);
+    assert_single_completed_external_init_context_turn(
+        &thread.turns,
+        "/root",
+        "claude_cli",
+        "thread/start response",
+    );
+
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/started"),
+    )
+    .await??;
+    let started: ThreadStartedNotification = serde_json::from_value(
+        notification
+            .params
+            .expect("thread/started params should be present"),
+    )?;
+    assert_eq!(started.thread.id, thread.id);
+    assert_eq!(started.thread.agent_path, None);
+    assert_eq!(started.thread.agent_role, None);
 
     Ok(())
 }
@@ -1168,6 +1224,64 @@ instruction_files = [
         "project thread/started notification should include initial context display turns",
     );
     assert_no_startup_injected_context_replay(&mut mcp, &thread.id).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_start_preserves_role_only_agent_type_metadata() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml_without_approval_policy(codex_home.path(), &server.uri())?;
+
+    let workspace = TempDir::new()?;
+    let agents_dir = workspace.path().join(".codex").join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+    std::fs::write(
+        agents_dir.join("role-only.agent.md"),
+        r#"---
+name: role-only
+description: Role-only root fixture.
+---
+
+Role-only developer instructions.
+"#,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(workspace.path().display().to_string()),
+            agent_type: Some("role-only".to_string()),
+            environments: Some(Vec::new()),
+            ..Default::default()
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(response)?;
+    assert_eq!(thread.agent_path, None);
+    assert_eq!(thread.agent_role.as_deref(), Some("role-only"));
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: false,
+        })
+        .await?;
+    let read_response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread } = to_response::<ThreadReadResponse>(read_response)?;
+    assert_eq!(thread.agent_path, None);
+    assert_eq!(thread.agent_role.as_deref(), Some("role-only"));
 
     Ok(())
 }
