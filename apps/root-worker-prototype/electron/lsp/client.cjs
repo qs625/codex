@@ -20,7 +20,7 @@ class LspClient {
     this.pendingRequests = new Map();
     this.readBuffer = Buffer.alloc(0);
     this.stderrChunks = [];
-    this.openDocuments = new Set();
+    this.openDocuments = new Map();
     this.isInitialized = false;
     this.initializingPromise = null;
     this.status = createClientStatus();
@@ -137,7 +137,21 @@ class LspClient {
 
   async openDocument(filePath, text) {
     const uri = pathToFileURL(filePath).href;
-    if (this.openDocuments.has(uri)) {
+    const existingDocument = this.openDocuments.get(uri);
+    if (existingDocument) {
+      if (existingDocument.text === text) {
+        return;
+      }
+
+      const version = existingDocument.version + 1;
+      this.notify("textDocument/didChange", {
+        textDocument: {
+          uri,
+          version,
+        },
+        contentChanges: [{ text }],
+      });
+      this.openDocuments.set(uri, { text, version });
       return;
     }
 
@@ -149,7 +163,7 @@ class LspClient {
         text,
       },
     });
-    this.openDocuments.add(uri);
+    this.openDocuments.set(uri, { text, version: 1 });
   }
 
   request(method, params) {
@@ -278,4 +292,5 @@ function buildLspSpawnOptions({
 module.exports = {
   buildLspSpawnOptions,
   LspClient,
+  normalizeLocations,
 };
