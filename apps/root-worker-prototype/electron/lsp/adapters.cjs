@@ -1,6 +1,11 @@
 const path = require("node:path");
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
+const REPO_ROOT = path.resolve(APP_ROOT, "..", "..");
+const TYPESCRIPT_LANGUAGE_SERVER_BINS = [
+  path.join(APP_ROOT, "node_modules", ".bin", "typescript-language-server"),
+  path.join(REPO_ROOT, "node_modules", ".bin", "typescript-language-server"),
+];
 
 const ADAPTERS = [
   {
@@ -13,7 +18,7 @@ const ADAPTERS = [
         cwd: APP_ROOT,
         availability: {
           type: "file",
-          path: path.join(APP_ROOT, "node_modules", ".bin", "typescript-language-server"),
+          paths: TYPESCRIPT_LANGUAGE_SERVER_BINS,
         },
       },
     ],
@@ -38,7 +43,7 @@ const ADAPTERS = [
         cwd: APP_ROOT,
         availability: {
           type: "file",
-          path: path.join(APP_ROOT, "node_modules", ".bin", "typescript-language-server"),
+          paths: TYPESCRIPT_LANGUAGE_SERVER_BINS,
         },
       },
     ],
