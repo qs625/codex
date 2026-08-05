@@ -183,7 +183,8 @@ class LspManager {
 
   async commandAvailable(commandSpec) {
     if (commandSpec.availability?.type === "file") {
-      return fsSync.existsSync(commandSpec.availability.path);
+      const paths = commandSpec.availability.paths ?? [commandSpec.availability.path];
+      return paths.some((candidatePath) => candidatePath && fsSync.existsSync(candidatePath));
     }
 
     if (!this.commandChecks.has(commandSpec.command)) {
