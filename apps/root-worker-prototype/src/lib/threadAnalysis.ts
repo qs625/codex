@@ -318,6 +318,12 @@ function threadAllowsLiveCommandMonitors(thread: Thread | null) {
   if (thread.lifecycleStatus.type === "active") {
     return thread.lifecycleStatus.activeFlags.includes("running");
   }
+  if (thread.lifecycleStatus.type === "idle") {
+    return (
+      thread.lifecycleStatus.reason === "waitCommand" ||
+      thread.lifecycleStatus.reason === "waitChild"
+    );
+  }
   return (
     thread.lifecycleStatus.type === "waiting" &&
     (thread.lifecycleStatus.reason === "command" ||
