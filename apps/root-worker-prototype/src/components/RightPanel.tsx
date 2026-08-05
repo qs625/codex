@@ -96,6 +96,18 @@ type GitGraphTopologyCell = {
   commit: boolean;
   segments: GitGraphTopologySegment[];
 };
+type PreviewDefinitionPositionEditor = {
+  getModel(): {
+    getWordAtPosition(position: PreviewDefinitionPosition): {
+      startColumn: number;
+      endColumn: number;
+    } | null;
+  } | null;
+};
+type PreviewDefinitionPosition = {
+  lineNumber: number;
+  column: number;
+};
 
 const EMPTY_BROWSER_STATE: BrowserPanelState = {
   url: null,
@@ -2386,8 +2398,14 @@ function FilePreviewPanel({
                     }
 
                     pendingDefinitionRef.current = true;
+                    event.event.preventDefault();
+                    event.event.stopPropagation();
                     event.event.browserEvent.preventDefault();
-                    const sourcePosition = event.target.position;
+                    event.event.browserEvent.stopPropagation();
+                    const sourcePosition = resolvePreviewDefinitionPosition(
+                      editor,
+                      event.target.position,
+                    );
 
                     void window.codexDesktop
                       .lspDefinition({
@@ -2748,4 +2766,22 @@ function updateLinkDecoration(
       },
     },
   ]);
+}
+
+export function resolvePreviewDefinitionPosition(
+  editor: PreviewDefinitionPositionEditor,
+  position: PreviewDefinitionPosition,
+) {
+  const word = editor.getModel()?.getWordAtPosition(position);
+  if (!word) {
+    return position;
+  }
+
+  return {
+    lineNumber: position.lineNumber,
+    column: Math.min(
+      Math.max(position.column, word.startColumn),
+      Math.max(word.startColumn, word.endColumn - 1),
+    ),
+  };
 }

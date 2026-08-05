@@ -22,6 +22,7 @@ const {
   ScheduleAgendaDateGroup,
   buildGitGraphTopology,
   filePreviewRenderMode,
+  resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
 } = await import("./RightPanel");
 
@@ -709,6 +710,31 @@ test("keeps non-markdown file previews on the editor render path", () => {
       }),
     ),
     "editor",
+  );
+});
+
+test("resolves preview definition clicks to a column inside the current word", () => {
+  const editor = {
+    getModel() {
+      return {
+        getWordAtPosition() {
+          return {
+            word: "Button",
+            startColumn: 12,
+            endColumn: 18,
+          };
+        },
+      };
+    },
+  };
+
+  assert.deepEqual(
+    resolvePreviewDefinitionPosition(editor, { lineNumber: 3, column: 18 }),
+    { lineNumber: 3, column: 17 },
+  );
+  assert.deepEqual(
+    resolvePreviewDefinitionPosition(editor, { lineNumber: 3, column: 14 }),
+    { lineNumber: 3, column: 14 },
   );
 });
 
