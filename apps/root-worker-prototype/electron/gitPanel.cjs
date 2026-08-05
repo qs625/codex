@@ -3,6 +3,7 @@ const { promisify } = require("node:util");
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 5000;
+const GIT_GRAPH_MAX_COUNT = 120;
 const GRAPH_RECORD_SEPARATOR = "\x1f";
 
 async function readGitSnapshot(cwd) {
@@ -18,15 +19,7 @@ async function readGitSnapshot(cwd) {
   const root = rootResult.stdout.trim();
   const [branchResult, graphResult, statusResult] = await Promise.all([
     runGit(root, ["branch", "--show-current"]),
-    runGit(root, [
-      "log",
-      "--graph",
-      "--date-order",
-      "--decorate=short",
-      "--pretty=format:%x1f%H%x1f%h%x1f%P%x1f%D%x1f%s%x1f%an%x1f%cr",
-      "--abbrev-commit",
-      "--max-count=40",
-    ]),
+    runGit(root, buildGitLogArgs()),
     runGit(root, ["status", "--porcelain=v1", "-z"]),
   ]);
 
@@ -38,6 +31,18 @@ async function readGitSnapshot(cwd) {
     changes: statusResult.ok ? parseGitStatus(statusResult.stdout) : [],
     error: graphResult.ok && statusResult.ok ? null : "Git snapshot is incomplete.",
   };
+}
+
+function buildGitLogArgs() {
+  return [
+    "log",
+    "--graph",
+    "--date-order",
+    "--decorate=short",
+    "--pretty=format:%x1f%H%x1f%h%x1f%P%x1f%D%x1f%s%x1f%an%x1f%cr",
+    "--abbrev-commit",
+    `--max-count=${GIT_GRAPH_MAX_COUNT}`,
+  ];
 }
 
 function unavailableSnapshot(reason) {
@@ -133,6 +138,8 @@ function parseGitStatus(stdout) {
 }
 
 module.exports = {
+  GIT_GRAPH_MAX_COUNT,
+  buildGitLogArgs,
   parseGitGraph,
   parseGitStatus,
   readGitSnapshot,

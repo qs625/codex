@@ -1318,6 +1318,9 @@ function GitPanel({
   const [snapshot, setSnapshot] = useState<GitSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [changesCollapsed, setChangesCollapsed] = useState(false);
+  const graphScroll = useDragScroll<HTMLDivElement>();
+  const changesScroll = useDragScroll<HTMLDivElement>();
 
   useEffect(() => {
     let cancelled = false;
@@ -1366,7 +1369,10 @@ function GitPanel({
 
   return (
     <div className="preview-panel git-panel">
-      <section className="git-section git-graph-section" aria-label="Git graph">
+      <section
+        className={`git-section git-graph-section ${changesCollapsed ? "changes-collapsed" : ""}`}
+        aria-label="Git graph"
+      >
         <GitSectionHeader
           count={snapshot?.graph.length ?? 0}
           title="Graph"
@@ -1398,7 +1404,7 @@ function GitPanel({
             </>
           }
         />
-        <div className="git-graph-list">
+        <div className="git-graph-list drag-scroll-region" {...graphScroll}>
           {!thread ? (
             <GitEmptyState message="Select a thread to inspect its repository." />
           ) : !hasProjectCwd ? (
@@ -1417,9 +1423,14 @@ function GitPanel({
         </div>
       </section>
 
-      <section className="git-section git-changes-section" aria-label="Git changes">
+      <section
+        className={`git-section git-changes-section ${changesCollapsed ? "collapsed" : ""}`}
+        aria-label="Git changes"
+      >
         <GitSectionHeader
+          collapsed={changesCollapsed}
           count={changeCount}
+          onToggle={() => setChangesCollapsed((collapsed) => !collapsed)}
           title="Changes"
           trailing={
             <button
@@ -1434,38 +1445,58 @@ function GitPanel({
             </button>
           }
         />
-        <div className="git-changes-list">
-          {loading && !snapshot ? (
-            <GitEmptyState message="Loading changes..." />
-          ) : snapshot?.available === false ? (
-            <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
-          ) : snapshot ? (
-            <>
-              <GitChangeGroup changes={stagedChanges} mode="staged" title="Staged Changes" />
-              <GitChangeGroup changes={unstagedChanges} mode="unstaged" title="Changes" />
-            </>
-          ) : (
-            <GitEmptyState message="Select a Git repository to inspect changes." />
-          )}
-        </div>
+        {!changesCollapsed ? (
+          <div className="git-changes-list drag-scroll-region" {...changesScroll}>
+            {loading && !snapshot ? (
+              <GitEmptyState message="Loading changes..." />
+            ) : snapshot?.available === false ? (
+              <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
+            ) : snapshot ? (
+              <>
+                <GitChangeGroup changes={stagedChanges} mode="staged" title="Staged Changes" />
+                <GitChangeGroup changes={unstagedChanges} mode="unstaged" title="Changes" />
+              </>
+            ) : (
+              <GitEmptyState message="Select a Git repository to inspect changes." />
+            )}
+          </div>
+        ) : null}
       </section>
     </div>
   );
 }
 
 function GitSectionHeader({
+  collapsed,
   count,
+  onToggle,
   title,
   trailing,
 }: {
+  collapsed?: boolean;
   count: number;
+  onToggle?: () => void;
   title: string;
   trailing?: ReactNode;
 }) {
   return (
     <div className="git-section-header">
       <div className="git-section-title">
-        <ChevronDownIcon />
+        {onToggle ? (
+          <button
+            type="button"
+            className="git-section-toggle"
+            onClick={onToggle}
+            aria-expanded={!collapsed}
+            title={`${collapsed ? "Expand" : "Collapse"} ${title}`}
+          >
+            <ChevronDownIcon />
+          </button>
+        ) : (
+          <span className="git-section-marker" aria-hidden="true">
+            <ChevronDownIcon />
+          </span>
+        )}
         <span>{title}</span>
         {count > 0 ? <span className="git-section-count">{count}</span> : null}
       </div>
@@ -1476,9 +1507,12 @@ function GitSectionHeader({
 
 function GitGraphRow({ commit }: { commit: GitGraphCommit }) {
   const headRef = commit.refs.find((ref) => ref.startsWith("HEAD -> "));
+  const otherRefs = commit.refs.filter((ref) => ref !== headRef).slice(0, 3);
+  const extraRefCount = Math.max(0, commit.refs.length - (headRef ? 1 : 0) - otherRefs.length);
+  const isMerge = commit.parents.length > 1;
   return (
-    <article className="git-graph-row">
-      <div className="git-graph-lanes" aria-hidden="true">
+    <article className={`git-graph-row ${isMerge ? "merge" : ""}`}>
+      <div className="git-graph-lanes" aria-hidden="true" data-drag-scroll-handle="true">
         {renderGraphPrefix(commit.graph)}
       </div>
       <div className="git-graph-copy">
@@ -1489,9 +1523,16 @@ function GitGraphRow({ commit }: { commit: GitGraphCommit }) {
               {headRef.replace("HEAD -> ", "")}
             </span>
           ) : null}
+          {otherRefs.map((ref) => (
+            <span key={ref} className="git-ref-pill" title={ref}>
+              {ref}
+            </span>
+          ))}
+          {extraRefCount > 0 ? <span className="git-ref-more">+{extraRefCount}</span> : null}
         </div>
         <span className="git-graph-meta">
-          {commit.author} · {commit.shortHash}
+          {commit.author} · {commit.relativeTime || "recently"} · {commit.shortHash}
+          {isMerge ? ` · merge ${commit.parents.length}` : ""}
         </span>
       </div>
     </article>
@@ -1505,12 +1546,27 @@ function renderGraphPrefix(graph: string) {
     return (
       <span
         key={`${index}:${char}`}
-        className={`git-graph-char ${char.trim() ? `lane-${index % 6}` : "space"}`}
+        className={`git-graph-char ${graphCharClass(char)} ${char.trim() ? `lane-${index % 6}` : "space"}`}
       >
         {displayChar}
       </span>
     );
   });
+}
+
+function graphCharClass(char: string) {
+  switch (char) {
+    case "*":
+      return "commit";
+    case "/":
+    case "\\":
+      return "diagonal";
+    case "_":
+    case "-":
+      return "horizontal";
+    default:
+      return "line";
+  }
 }
 
 function formatGraphChar(char: string) {
@@ -1542,7 +1598,7 @@ function GitChangeGroup({
 }) {
   return (
     <div className="git-change-group">
-      <div className="git-change-group-header">
+      <div className="git-change-group-header" data-drag-scroll-handle="true">
         <ChevronDownIcon />
         <span>{title}</span>
         <span className="git-change-count">{changes.length}</span>
@@ -1571,12 +1627,16 @@ function GitChangeRow({ change, mode }: { change: GitChange; mode: "staged" | "u
   const directory = directoryName(change.path);
   return (
     <article className="git-change-row">
-      <span className={`git-status-letter ${gitStatusClass(status)}`}>{gitStatusLabel(status)}</span>
+      <span className={`git-status-letter ${gitStatusClass(status)}`} data-drag-scroll-handle="true">
+        {gitStatusLabel(status)}
+      </span>
       <div className="git-change-copy">
         <strong title={change.path}>{baseName(change.path)}</strong>
         <span title={change.path}>{directory}</span>
       </div>
-      <span className={`git-change-state ${gitStatusClass(status)}`}>{gitStatusLabel(status)}</span>
+      <span className={`git-change-state ${gitStatusClass(status)}`} data-drag-scroll-handle="true">
+        {gitStatusLabel(status)}
+      </span>
     </article>
   );
 }
@@ -1586,6 +1646,76 @@ function GitEmptyState({ message }: { message: string }) {
     <div className="git-empty-state" role="status">
       {message}
     </div>
+  );
+}
+
+function useDragScroll<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const dragState = useRef<{
+    dragging: boolean;
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
+
+  function endDrag() {
+    dragState.current = null;
+    ref.current?.classList.remove("is-dragging");
+  }
+
+  return {
+    ref,
+    onMouseDown(event: React.MouseEvent<T>) {
+      const element = ref.current;
+      if (
+        !element ||
+        event.button !== 0 ||
+        isInteractiveDragTarget(event.target) ||
+        !isDragScrollHandle(event.target, element)
+      ) {
+        return;
+      }
+      dragState.current = {
+        dragging: false,
+        startX: event.clientX,
+        startY: event.clientY,
+        scrollLeft: element.scrollLeft,
+        scrollTop: element.scrollTop,
+      };
+    },
+    onMouseMove(event: React.MouseEvent<T>) {
+      const state = dragState.current;
+      const element = ref.current;
+      if (!state || !element) {
+        return;
+      }
+      const deltaX = event.clientX - state.startX;
+      const deltaY = event.clientY - state.startY;
+      if (!state.dragging && Math.hypot(deltaX, deltaY) < 4) {
+        return;
+      }
+      if (!state.dragging) {
+        state.dragging = true;
+        element.classList.add("is-dragging");
+      }
+      element.scrollLeft = state.scrollLeft - deltaX;
+      element.scrollTop = state.scrollTop - deltaY;
+      event.preventDefault();
+    },
+    onMouseLeave: endDrag,
+    onMouseUp: endDrag,
+  };
+}
+
+function isInteractiveDragTarget(target: EventTarget) {
+  return target instanceof Element && Boolean(target.closest("button,a,input,textarea,select"));
+}
+
+function isDragScrollHandle(target: EventTarget, scrollRoot: HTMLElement) {
+  return (
+    target instanceof Element &&
+    (target === scrollRoot || Boolean(target.closest("[data-drag-scroll-handle]")))
   );
 }
 
