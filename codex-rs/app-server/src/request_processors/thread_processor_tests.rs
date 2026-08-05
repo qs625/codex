@@ -1127,7 +1127,7 @@ mod thread_processor_behavior_tests {
         let source = thread_spawn_source(Some("worker"), Some("feature-owner"));
 
         assert_eq!(
-            native_agent_role_for_resume(Some(&source)),
+            native_agent_role_for_resume(Some(&source), None),
             Some("feature-owner")
         );
     }
@@ -1137,8 +1137,21 @@ mod thread_processor_behavior_tests {
         let source = thread_spawn_source(Some("custom-task"), Some("missing-role"));
 
         assert_eq!(
-            native_agent_role_for_resume(Some(&source)),
+            native_agent_role_for_resume(Some(&source), None),
             Some("missing-role")
+        );
+    }
+
+    #[test]
+    fn native_agent_role_for_resume_uses_root_agent_metadata() {
+        let metadata = codex_agent_runtime::AgentMetadata {
+            agent_role: Some("role-only".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            native_agent_role_for_resume(None, Some(&metadata)),
+            Some("role-only")
         );
     }
 
@@ -1146,21 +1159,21 @@ mod thread_processor_behavior_tests {
     fn native_agent_role_for_resume_skips_external_codex_provider_metadata() {
         let source = thread_spawn_source(Some("codex_cli"), Some("codex_cli"));
 
-        assert_eq!(native_agent_role_for_resume(Some(&source)), None);
+        assert_eq!(native_agent_role_for_resume(Some(&source), None), None);
     }
 
     #[test]
     fn native_agent_role_for_resume_skips_external_provider_metadata_without_nickname() {
         let source = thread_spawn_source(None, Some("opencode"));
 
-        assert_eq!(native_agent_role_for_resume(Some(&source)), None);
+        assert_eq!(native_agent_role_for_resume(Some(&source), None), None);
     }
 
     #[test]
     fn native_agent_role_for_resume_skips_external_provider_metadata_with_generated_nickname() {
         let source = thread_spawn_source(Some("worker"), Some("claude_cli"));
 
-        assert_eq!(native_agent_role_for_resume(Some(&source)), None);
+        assert_eq!(native_agent_role_for_resume(Some(&source), None), None);
     }
 
     #[test]

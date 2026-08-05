@@ -798,7 +798,9 @@ impl ThreadRequestProcessor {
                         agent_role: agent.agent_role,
                         ..Default::default()
                     })
-                    .filter(|metadata| metadata.agent_path.is_some()),
+                    .filter(|metadata| {
+                        metadata.agent_path.is_some() || metadata.agent_role.is_some()
+                    }),
                 thread_source,
                 dynamic_tools: core_dynamic_tools,
                 persist_extended_history: false,
@@ -863,9 +865,11 @@ impl ThreadRequestProcessor {
             session_configured.rollout_path.clone(),
         );
         if let Some(agent) = thread_start_agent.as_ref() {
+            if agent.agent_role.is_some() {
+                thread.agent_role = agent.agent_role.clone();
+            }
             if let Some(agent_path) = agent.agent_path.as_ref() {
                 thread.agent_path = Some(agent_path.to_string());
-                thread.agent_role = agent.agent_role.clone();
             }
         }
 

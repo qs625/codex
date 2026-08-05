@@ -627,7 +627,7 @@ pub(super) fn stored_thread_root_agent_metadata(thread: &StoredThread) -> Option
             })
             .ok()
     });
-    if agent_path.is_none() {
+    if agent_path.is_none() && thread.agent_role.is_none() {
         return None;
     }
     Some(AgentMetadata {

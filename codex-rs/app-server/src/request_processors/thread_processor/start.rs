@@ -727,7 +727,10 @@ impl ThreadRequestProcessor {
         let resume_agent_metadata = resume_source_thread
             .as_ref()
             .and_then(stored_thread_root_agent_metadata);
-        let resume_agent_role = native_agent_role_for_resume(resume_session_source.as_ref());
+        let resume_agent_role = native_agent_role_for_resume(
+            resume_session_source.as_ref(),
+            resume_agent_metadata.as_ref(),
+        );
 
         let history_cwd = thread_history.session_cwd();
         let mut typesafe_overrides = self.build_thread_config_overrides(
