@@ -86,6 +86,8 @@ type BrowserPanelApi = Pick<
 type GitSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitSnapshot"]>>;
 type GitChange = GitSnapshot["changes"][number];
 type GitGraphCommit = GitSnapshot["graph"][number];
+type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
+type GitCommitFile = GitCommitFilesSnapshot["files"][number];
 
 const EMPTY_BROWSER_STATE: BrowserPanelState = {
   url: null,
@@ -1315,16 +1317,45 @@ function GitPanel({
   thread: Thread | null;
 }) {
   const hasProjectCwd = thread ? !isChatCompatCwd(thread.cwd) : false;
+  const gitPanelRef = useRef<HTMLDivElement | null>(null);
   const [snapshot, setSnapshot] = useState<GitSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [selectedGraphRef, setSelectedGraphRef] = useState<string | null>(null);
   const [changesCollapsed, setChangesCollapsed] = useState(false);
+  const [graphPanePercent, setGraphPanePercent] = useState(66);
+  const [isResizingPanes, setIsResizingPanes] = useState(false);
+  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
+  const [commitFilesByHash, setCommitFilesByHash] = useState<
+    Record<string, GitCommitFilesSnapshot | undefined>
+  >({});
+  const [commitFilesLoadingByHash, setCommitFilesLoadingByHash] = useState<Record<string, boolean>>(
+    {},
+  );
+  const lastGitCwd = useRef<string | null>(null);
+  const gitRequestScope = useRef(0);
   const graphScroll = useDragScroll<HTMLDivElement>();
   const changesScroll = useDragScroll<HTMLDivElement>();
 
   useEffect(() => {
     let cancelled = false;
+    const currentCwd = thread?.cwd ?? null;
+    if (lastGitCwd.current !== currentCwd) {
+      lastGitCwd.current = currentCwd;
+      if (selectedGraphRef) {
+        setSnapshot(null);
+        setSelectedCommitHash(null);
+        setCommitFilesByHash({});
+        setCommitFilesLoadingByHash({});
+        setSelectedGraphRef(null);
+        return;
+      }
+    }
+    gitRequestScope.current += 1;
     setSnapshot(null);
+    setSelectedCommitHash(null);
+    setCommitFilesByHash({});
+    setCommitFilesLoadingByHash({});
 
     if (!thread || !hasProjectCwd) {
       setLoading(false);
@@ -1333,10 +1364,13 @@ function GitPanel({
 
     setLoading(true);
     window.codexDesktop
-      .readGitSnapshot(thread.cwd)
+      .readGitSnapshot(thread.cwd, selectedGraphRef ? { ref: selectedGraphRef } : undefined)
       .then((nextSnapshot) => {
         if (!cancelled) {
           setSnapshot(nextSnapshot);
+          if (selectedGraphRef && !nextSnapshot.selectedRef) {
+            setSelectedGraphRef(null);
+          }
         }
       })
       .catch((error) => {
@@ -1345,6 +1379,8 @@ function GitPanel({
             available: false,
             root: null,
             branch: null,
+            selectedRef: null,
+            refs: [],
             graph: [],
             changes: [],
             error: error instanceof Error ? error.message : "Failed to read Git status.",
@@ -1360,28 +1396,137 @@ function GitPanel({
     return () => {
       cancelled = true;
     };
-  }, [hasProjectCwd, refreshKey, thread?.cwd]);
+  }, [hasProjectCwd, refreshKey, selectedGraphRef, thread?.cwd]);
 
   const stagedChanges = snapshot?.changes.filter((change) => change.staged) ?? [];
   const unstagedChanges = snapshot?.changes.filter((change) => change.unstaged) ?? [];
   const changeCount = snapshot?.changes.length ?? changedFiles.length;
-  const branchLabel = snapshot?.branch ?? "Auto";
+  const branchLabel = snapshot?.selectedRef ?? snapshot?.branch ?? "Auto";
+
+  function loadCommitFiles(hash: string) {
+    if (!thread || !hasProjectCwd || commitFilesByHash[hash] || commitFilesLoadingByHash[hash]) {
+      return;
+    }
+
+    const scope = gitRequestScope.current;
+    setCommitFilesLoadingByHash((current) => ({ ...current, [hash]: true }));
+    window.codexDesktop
+      .readGitCommitFiles(thread.cwd, hash)
+      .then((filesSnapshot) => {
+        if (gitRequestScope.current === scope) {
+          setCommitFilesByHash((current) => ({ ...current, [hash]: filesSnapshot }));
+        }
+      })
+      .catch((error) => {
+        if (gitRequestScope.current === scope) {
+          setCommitFilesByHash((current) => ({
+            ...current,
+            [hash]: {
+              available: false,
+              files: [],
+              error: error instanceof Error ? error.message : "Failed to read commit files.",
+            },
+          }));
+        }
+      })
+      .finally(() => {
+        if (gitRequestScope.current === scope) {
+          setCommitFilesLoadingByHash((current) => ({ ...current, [hash]: false }));
+        }
+      });
+  }
+
+  function toggleSelectedCommit(commit: GitGraphCommit) {
+    setSelectedCommitHash((current) => {
+      if (current === commit.hash) {
+        return null;
+      }
+      loadCommitFiles(commit.hash);
+      return commit.hash;
+    });
+  }
+
+  function updatePaneSplit(clientY: number) {
+    const panel = gitPanelRef.current;
+    if (!panel) {
+      return;
+    }
+    const rect = panel.getBoundingClientRect();
+    const nextPercent = ((clientY - rect.top) / Math.max(1, rect.height)) * 100;
+    setGraphPanePercent(Math.min(82, Math.max(35, nextPercent)));
+  }
+
+  function handlePaneSplitterPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (changesCollapsed) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsResizingPanes(true);
+    updatePaneSplit(event.clientY);
+    event.preventDefault();
+  }
+
+  function handlePaneSplitterPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!isResizingPanes) {
+      return;
+    }
+    updatePaneSplit(event.clientY);
+    event.preventDefault();
+  }
+
+  function handlePaneSplitterPointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    if (isResizingPanes && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setIsResizingPanes(false);
+  }
+
+  function handlePaneSplitterKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowUp") {
+      setGraphPanePercent((value) => Math.max(35, value - 4));
+      event.preventDefault();
+    } else if (event.key === "ArrowDown") {
+      setGraphPanePercent((value) => Math.min(82, value + 4));
+      event.preventDefault();
+    }
+  }
 
   return (
-    <div className="preview-panel git-panel">
+    <div
+      ref={gitPanelRef}
+      className={`preview-panel git-panel ${isResizingPanes ? "resizing-panes" : ""}`}
+    >
       <section
         className={`git-section git-graph-section ${changesCollapsed ? "changes-collapsed" : ""}`}
         aria-label="Git graph"
+        style={!changesCollapsed ? { flexBasis: `${graphPanePercent}%` } : undefined}
       >
         <GitSectionHeader
           count={snapshot?.graph.length ?? 0}
           title="Graph"
           trailing={
             <>
-              <span className="git-branch-pill" title={branchLabel}>
+              <label className="git-ref-select-label" title="Select Git ref">
                 <BranchIcon />
-                {branchLabel}
-              </span>
+                <select
+                  className="git-ref-select"
+                  value={selectedGraphRef ?? ""}
+                  disabled={!thread || !hasProjectCwd || loading || !snapshot?.available}
+                  onChange={(event) => {
+                    setSelectedGraphRef(event.target.value || null);
+                  }}
+                  aria-label="Select Git branch or ref"
+                  title={branchLabel}
+                >
+                  <option value="">Auto: {snapshot?.branch ?? "current"}</option>
+                  {(snapshot?.refs ?? []).map((ref) => (
+                    <option key={ref.name} value={ref.name}>
+                      {ref.head ? "* " : ""}
+                      {ref.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 type="button"
                 className="git-icon-button"
@@ -1415,7 +1560,14 @@ function GitPanel({
             <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
           ) : snapshot && snapshot.graph.length > 0 ? (
             snapshot.graph.map((commit) => (
-              <GitGraphRow key={commit.hash} commit={commit} />
+              <GitGraphRow
+                key={commit.hash}
+                commit={commit}
+                filesSnapshot={commitFilesByHash[commit.hash]}
+                isLoadingFiles={Boolean(commitFilesLoadingByHash[commit.hash])}
+                isSelected={selectedCommitHash === commit.hash}
+                onToggle={() => toggleSelectedCommit(commit)}
+              />
             ))
           ) : (
             <GitEmptyState message="No commits found in this repository." />
@@ -1423,9 +1575,28 @@ function GitPanel({
         </div>
       </section>
 
+      {!changesCollapsed ? (
+        <div
+          className="git-pane-splitter"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize Git graph and changes panes"
+          aria-valuemin={35}
+          aria-valuemax={82}
+          aria-valuenow={Math.round(graphPanePercent)}
+          tabIndex={0}
+          onPointerDown={handlePaneSplitterPointerDown}
+          onPointerMove={handlePaneSplitterPointerMove}
+          onPointerUp={handlePaneSplitterPointerEnd}
+          onPointerCancel={handlePaneSplitterPointerEnd}
+          onKeyDown={handlePaneSplitterKeyDown}
+        />
+      ) : null}
+
       <section
         className={`git-section git-changes-section ${changesCollapsed ? "collapsed" : ""}`}
         aria-label="Git changes"
+        style={!changesCollapsed ? { flexBasis: `${100 - graphPanePercent}%` } : undefined}
       >
         <GitSectionHeader
           collapsed={changesCollapsed}
@@ -1505,38 +1676,129 @@ function GitSectionHeader({
   );
 }
 
-function GitGraphRow({ commit }: { commit: GitGraphCommit }) {
+function GitGraphRow({
+  commit,
+  filesSnapshot,
+  isLoadingFiles,
+  isSelected,
+  onToggle,
+}: {
+  commit: GitGraphCommit;
+  filesSnapshot?: GitCommitFilesSnapshot;
+  isLoadingFiles: boolean;
+  isSelected: boolean;
+  onToggle: () => void;
+}) {
   const headRef = commit.refs.find((ref) => ref.startsWith("HEAD -> "));
   const otherRefs = commit.refs.filter((ref) => ref !== headRef).slice(0, 3);
   const extraRefCount = Math.max(0, commit.refs.length - (headRef ? 1 : 0) - otherRefs.length);
   const isMerge = commit.parents.length > 1;
   return (
-    <article className={`git-graph-row ${isMerge ? "merge" : ""}`}>
-      <div className="git-graph-lanes" aria-hidden="true" data-drag-scroll-handle="true">
-        {renderGraphPrefix(commit.graph)}
-      </div>
-      <div className="git-graph-copy">
-        <div className="git-graph-subject-line">
-          <strong title={commit.subject}>{commit.subject}</strong>
-          {headRef ? (
-            <span className="git-head-ref" title={headRef}>
-              {headRef.replace("HEAD -> ", "")}
-            </span>
-          ) : null}
-          {otherRefs.map((ref) => (
-            <span key={ref} className="git-ref-pill" title={ref}>
-              {ref}
-            </span>
-          ))}
-          {extraRefCount > 0 ? <span className="git-ref-more">+{extraRefCount}</span> : null}
+    <article
+      className={`git-graph-row ${isMerge ? "merge" : ""} ${isSelected ? "selected" : ""}`}
+      role="button"
+      tabIndex={0}
+      aria-expanded={isSelected}
+      aria-label={`${isSelected ? "Hide" : "Show"} files changed by ${commit.shortHash}`}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onToggle();
+        }
+      }}
+    >
+      <div
+        className="git-graph-row-main"
+        onClick={(event) => {
+          if (isSuppressedDragScrollClick(event.target)) {
+            return;
+          }
+          onToggle();
+        }}
+      >
+        <div className="git-graph-lanes" aria-hidden="true" data-drag-scroll-handle="true">
+          {renderGraphPrefix(commit.graph)}
         </div>
-        <span className="git-graph-meta">
-          {commit.author} · {commit.relativeTime || "recently"} · {commit.shortHash}
-          {isMerge ? ` · merge ${commit.parents.length}` : ""}
-        </span>
+        <div className="git-graph-copy">
+          <div className="git-graph-subject-line">
+            <strong title={commit.subject}>{commit.subject}</strong>
+            {headRef ? (
+              <span className="git-head-ref" title={headRef}>
+                {headRef.replace("HEAD -> ", "")}
+              </span>
+            ) : null}
+            {otherRefs.map((ref) => (
+              <span key={ref} className="git-ref-pill" title={ref}>
+                {ref}
+              </span>
+            ))}
+            {extraRefCount > 0 ? <span className="git-ref-more">+{extraRefCount}</span> : null}
+          </div>
+          <span className="git-graph-meta">
+            {commit.author} · {commit.relativeTime || "recently"} · {commit.shortHash}
+            {isMerge ? ` · merge ${commit.parents.length}` : ""}
+          </span>
+        </div>
       </div>
+      {isSelected ? (
+        <GitCommitFileList filesSnapshot={filesSnapshot} isLoading={isLoadingFiles} />
+      ) : null}
     </article>
   );
+}
+
+function GitCommitFileList({
+  filesSnapshot,
+  isLoading,
+}: {
+  filesSnapshot?: GitCommitFilesSnapshot;
+  isLoading: boolean;
+}) {
+  if (isLoading && !filesSnapshot) {
+    return <div className="git-commit-files-state">Loading commit files...</div>;
+  }
+  if (filesSnapshot?.available === false) {
+    return (
+      <div className="git-commit-files-state error">
+        {filesSnapshot.error ?? "Failed to read commit files."}
+      </div>
+    );
+  }
+  if (!filesSnapshot || filesSnapshot.files.length === 0) {
+    return <div className="git-commit-files-state">No file changes in this commit.</div>;
+  }
+
+  return (
+    <div className="git-commit-files" aria-label="Commit changed files">
+      {filesSnapshot.files.map((file) => (
+        <GitCommitFileRow key={`${file.status}:${file.path}:${file.originalPath ?? ""}`} file={file} />
+      ))}
+    </div>
+  );
+}
+
+function GitCommitFileRow({ file }: { file: GitCommitFile }) {
+  const directory = directoryName(file.path);
+  return (
+    <article className="git-commit-file-row">
+      <span className={`git-file-kind ${gitStatusClass(file.status)}`} aria-hidden="true">
+        {fileIconLabel(file.path)}
+      </span>
+      <div className="git-commit-file-copy">
+        <strong title={file.path}>{baseName(file.path)}</strong>
+        <span title={file.path}>{directory}</span>
+        {file.originalPath ? <span title={file.originalPath}>from {file.originalPath}</span> : null}
+      </div>
+      <span className={`git-commit-file-status ${gitStatusClass(file.status)}`}>
+        {gitStatusLabel(file.status)}
+      </span>
+    </article>
+  );
+}
+
+function fileIconLabel(path: string) {
+  const extension = path.split(".").pop()?.toUpperCase() ?? "";
+  return extension && extension.length <= 3 ? extension.slice(0, 2) : "F";
 }
 
 function renderGraphPrefix(graph: string) {
@@ -1668,6 +1930,9 @@ function useDragScroll<T extends HTMLElement>() {
     ref,
     onMouseDown(event: React.MouseEvent<T>) {
       const element = ref.current;
+      if (element) {
+        delete element.dataset.dragScrollSuppressed;
+      }
       if (
         !element ||
         event.button !== 0 ||
@@ -1698,6 +1963,7 @@ function useDragScroll<T extends HTMLElement>() {
       if (!state.dragging) {
         state.dragging = true;
         element.classList.add("is-dragging");
+        element.dataset.dragScrollSuppressed = "true";
       }
       element.scrollLeft = state.scrollLeft - deltaX;
       element.scrollTop = state.scrollTop - deltaY;
@@ -1716,6 +1982,14 @@ function isDragScrollHandle(target: EventTarget, scrollRoot: HTMLElement) {
   return (
     target instanceof Element &&
     (target === scrollRoot || Boolean(target.closest("[data-drag-scroll-handle]")))
+  );
+}
+
+function isSuppressedDragScrollClick(target: EventTarget) {
+  return (
+    target instanceof Element &&
+    target.closest(".drag-scroll-region") instanceof HTMLElement &&
+    target.closest(".drag-scroll-region")?.getAttribute("data-drag-scroll-suppressed") === "true"
   );
 }
 

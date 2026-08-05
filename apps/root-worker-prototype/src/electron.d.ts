@@ -156,10 +156,16 @@ declare global {
         byteSize: number;
         bytes: ArrayBuffer;
       }>;
-      readGitSnapshot: (cwd: string) => Promise<{
+      readGitSnapshot: (cwd: string, options?: { ref?: string | null }) => Promise<{
         available: boolean;
         root: string | null;
         branch: string | null;
+        selectedRef: string | null;
+        refs: Array<{
+          name: string;
+          fullName: string;
+          head: boolean;
+        }>;
         graph: Array<{
           graph: string;
           hash: string;
@@ -177,6 +183,16 @@ declare global {
           unstagedStatus: string | null;
           staged: boolean;
           unstaged: boolean;
+        }>;
+        error: string | null;
+      }>;
+      readGitCommitFiles: (cwd: string, hash: string) => Promise<{
+        available: boolean;
+        files: Array<{
+          path: string;
+          originalPath: string | null;
+          status: string;
+          score: string | null;
         }>;
         error: string | null;
       }>;

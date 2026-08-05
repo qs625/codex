@@ -44,7 +44,10 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),
   readLocalImage: (target) =>
     ipcRenderer.invoke("codex:readLocalImage", target),
-  readGitSnapshot: (cwd) => ipcRenderer.invoke("codex:readGitSnapshot", cwd),
+  readGitSnapshot: (cwd, options) =>
+    ipcRenderer.invoke("codex:readGitSnapshot", cwd, options),
+  readGitCommitFiles: (cwd, hash) =>
+    ipcRenderer.invoke("codex:readGitCommitFiles", cwd, hash),
   lspDefinition: (payload) =>
     ipcRenderer.invoke("codex:lspDefinition", payload),
   lspStatus: (filePath) => ipcRenderer.invoke("codex:lspStatus", filePath),

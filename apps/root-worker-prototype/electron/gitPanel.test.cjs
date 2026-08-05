@@ -3,8 +3,14 @@ const assert = require("node:assert/strict");
 
 const {
   GIT_GRAPH_MAX_COUNT,
+  GIT_REF_MAX_COUNT,
+  buildGitCommitFilesArgs,
   buildGitLogArgs,
+  buildGitRefsArgs,
+  isValidCommitHash,
+  parseGitCommitFiles,
   parseGitGraph,
+  parseGitRefs,
   parseGitStatus,
 } = require("./gitPanel.cjs");
 
@@ -60,6 +66,82 @@ test("buildGitLogArgs keeps the git graph history bounded", () => {
   assert.ok(args.includes("--graph"));
   assert.ok(args.includes("--decorate=short"));
   assert.ok(args.includes(`--max-count=${GIT_GRAPH_MAX_COUNT}`));
+});
+
+test("buildGitLogArgs can target a selected ref without shell interpolation", () => {
+  const args = buildGitLogArgs("origin/feature/demo");
+
+  assert.equal(args.at(-1), "origin/feature/demo");
+  assert.ok(args.includes(`--max-count=${GIT_GRAPH_MAX_COUNT}`));
+});
+
+test("buildGitRefsArgs keeps branch selection refs bounded", () => {
+  const args = buildGitRefsArgs();
+
+  assert.equal(GIT_REF_MAX_COUNT, 200);
+  assert.ok(args.includes(`--count=${GIT_REF_MAX_COUNT}`));
+  assert.ok(args.includes("refs/heads"));
+  assert.ok(args.includes("refs/remotes"));
+  assert.ok(args.includes("refs/tags"));
+});
+
+test("parseGitRefs dedupes refs and keeps the current head first", () => {
+  const refs = parseGitRefs(
+    [
+      "feature/demo\0refs/heads/feature/demo\0",
+      "main\0refs/heads/main\0*",
+      "origin/HEAD\0refs/remotes/origin/HEAD\0",
+      "origin/main\0refs/remotes/origin/main\0",
+      "main\0refs/heads/main\0*",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(refs, [
+    { name: "main", fullName: "refs/heads/main", head: true },
+    { name: "feature/demo", fullName: "refs/heads/feature/demo", head: false },
+    { name: "origin/main", fullName: "refs/remotes/origin/main", head: false },
+  ]);
+});
+
+test("parseGitCommitFiles reads name-status output including renames and copies", () => {
+  const files = parseGitCommitFiles(
+    [
+      "M",
+      "src/app.ts",
+      "A",
+      "README.md",
+      "R100",
+      "src/old.ts",
+      "src/new.ts",
+      "C80",
+      "src/base.ts",
+      "src/copy.ts",
+      "",
+    ].join("\0"),
+  );
+
+  assert.deepEqual(files, [
+    { path: "src/app.ts", originalPath: null, status: "M", score: null },
+    { path: "README.md", originalPath: null, status: "A", score: null },
+    { path: "src/new.ts", originalPath: "src/old.ts", status: "R", score: "100" },
+    { path: "src/copy.ts", originalPath: "src/base.ts", status: "C", score: "80" },
+  ]);
+});
+
+test("buildGitCommitFilesArgs validates the command shape for one commit", () => {
+  const args = buildGitCommitFilesArgs("abc1234");
+
+  assert.deepEqual(args, [
+    "show",
+    "--name-status",
+    "--format=",
+    "--find-renames",
+    "--find-copies",
+    "-z",
+    "abc1234",
+  ]);
+  assert.equal(isValidCommitHash("abc1234"), true);
+  assert.equal(isValidCommitHash("--bad"), false);
 });
 
 test("parseGitStatus groups staged and unstaged porcelain entries", () => {

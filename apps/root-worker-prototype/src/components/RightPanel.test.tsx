@@ -625,6 +625,8 @@ test("renders git panel with deduped thread file changes", () => {
   assert.match(markup, /Changes/);
   assert.match(markup, /aria-expanded="true"/);
   assert.match(markup, /Collapse Changes/);
+  assert.match(markup, /Select Git branch or ref/);
+  assert.match(markup, /Resize Git graph and changes panes/);
   assert.match(markup, /panel-rail-badge">2/);
   assert.doesNotMatch(markup, /Thread File Deltas/);
 });
