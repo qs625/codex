@@ -23,6 +23,7 @@ use crate::agent::external::external_restore_plan_support;
 use crate::agent::external::external_session_spec;
 use crate::agent::external::external_tool_name;
 use crate::agent::external::external_tool_result_input;
+use crate::agent::multi_agent::validate_no_text_image_ref_misuse;
 use crate::agent::spawn_support::thread_spawn_source;
 use crate::runtime_shell_snapshot::ShellSnapshot;
 use crate::session::emit_subagent_session_started;
@@ -251,6 +252,7 @@ fn external_followup_message_content(
     message: String,
     content_parts: &[InterAgentContentPart],
 ) -> Result<String, FunctionCallError> {
+    validate_no_text_image_ref_misuse(&message)?;
     if content_parts.is_empty() {
         if message.trim().is_empty() {
             return Err(FunctionCallError::RespondToModel(
@@ -266,6 +268,7 @@ fn external_followup_message_content(
             InterAgentContentPart::Text { text } => {
                 let text = text.trim();
                 if !text.is_empty() {
+                    validate_no_text_image_ref_misuse(text)?;
                     preview_parts.push(text.to_string());
                 }
             }

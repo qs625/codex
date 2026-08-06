@@ -375,6 +375,70 @@ fn message_content(message: String) -> Result<String, FunctionCallError> {
     Ok(message)
 }
 
+const IMAGE_REF_TEXT_MISUSE_ERROR: &str = "Image references in followup_task must use structured content parts. Use \
+     `content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]` instead of writing \
+     image placeholders in `message` or text parts.";
+
+pub(crate) fn validate_no_text_image_ref_misuse(text: &str) -> Result<(), FunctionCallError> {
+    if looks_like_image_ref_text_misuse(text) {
+        return Err(FunctionCallError::RespondToModel(
+            IMAGE_REF_TEXT_MISUSE_ERROR.to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn looks_like_image_ref_text_misuse(text: &str) -> bool {
+    contains_bracket_image_ref(text) || contains_image_attachment_tag(text)
+}
+
+fn contains_bracket_image_ref(text: &str) -> bool {
+    let mut remaining = text;
+    while let Some(start) = remaining.find("[image:") {
+        let after_start = &remaining[start + "[image:".len()..];
+        let Some(end) = after_start.find(']') else {
+            return false;
+        };
+        if is_model_visible_image_attachment_id(&after_start[..end]) {
+            return true;
+        }
+        remaining = &after_start[end + 1..];
+    }
+    false
+}
+
+fn contains_image_attachment_tag(text: &str) -> bool {
+    let mut remaining = text;
+    while let Some(start) = remaining.find("<image") {
+        let after_start = &remaining[start..];
+        let Some(end) = after_start.find('>') else {
+            return false;
+        };
+        let tag = &after_start[..=end];
+        if let Some((_, after_key)) = tag.split_once("attachment_id=") {
+            let attachment_id = after_key
+                .trim_start()
+                .trim_start_matches('"')
+                .trim_start_matches('\'')
+                .split(|ch: char| ch.is_whitespace() || ch == '>' || ch == '"' || ch == '\'')
+                .next()
+                .unwrap_or_default();
+            if is_model_visible_image_attachment_id(attachment_id) {
+                return true;
+            }
+        }
+        remaining = &after_start[end + 1..];
+    }
+    false
+}
+
+fn is_model_visible_image_attachment_id(value: &str) -> bool {
+    let Some(label) = value.trim().strip_prefix("image-") else {
+        return false;
+    };
+    !label.is_empty() && label.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VisibleImageAttachment {
     attachment_id: String,
@@ -414,6 +478,7 @@ fn followup_message_content(
     content_parts: Vec<InterAgentContentPart>,
     visible_attachments: &[VisibleImageAttachment],
 ) -> Result<(String, Vec<InterAgentContentPart>), FunctionCallError> {
+    validate_no_text_image_ref_misuse(&message)?;
     if content_parts.is_empty() {
         return message_content(message).map(|message| (message, Vec::new()));
     }
@@ -425,6 +490,7 @@ fn followup_message_content(
             InterAgentContentPart::Text { text } => {
                 let text = text.trim();
                 if !text.is_empty() {
+                    validate_no_text_image_ref_misuse(text)?;
                     preview_parts.push(text.to_string());
                     resolved_content_parts.push(InterAgentContentPart::Text {
                         text: text.to_string(),
@@ -818,6 +884,67 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn followup_message_content_rejects_image_ref_placeholder_in_message() {
+        let err = followup_message_content(
+            "please inspect [image:image-1]".to_string(),
+            Vec::new(),
+            &[],
+        )
+        .expect_err("image placeholder text should fail");
+
+        assert!(matches!(err, FunctionCallError::RespondToModel(message)
+                if message.contains("content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]")
+                    && message.contains("message")));
+    }
+
+    #[test]
+    fn followup_message_content_rejects_image_attachment_tag_in_text_part() {
+        let err = followup_message_content(
+            String::new(),
+            vec![InterAgentContentPart::Text {
+                text: "look at <image attachment_id=image-1>".to_string(),
+            }],
+            &[],
+        )
+        .expect_err("image open tag text should fail");
+
+        assert!(matches!(err, FunctionCallError::RespondToModel(message)
+                if message.contains("content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]")
+                    && message.contains("text parts")));
+    }
+
+    #[test]
+    fn followup_message_content_rejects_local_image_open_tag_in_text_part() {
+        let err = followup_message_content(
+            String::new(),
+            vec![InterAgentContentPart::Text {
+                text: "look at <image name=[Image #1] attachment_id=image-1>".to_string(),
+            }],
+            &[],
+        )
+        .expect_err("local image open tag text should fail");
+
+        assert!(matches!(err, FunctionCallError::RespondToModel(message)
+                if message.contains("content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]")));
+    }
+
+    #[test]
+    fn followup_message_content_allows_plain_discussion_about_image_refs() {
+        let (preview, content_parts) = followup_message_content(
+            "image ref validation should explain the structured format".to_string(),
+            Vec::new(),
+            &[],
+        )
+        .expect("plain discussion should remain valid text");
+
+        assert_eq!(
+            preview,
+            "image ref validation should explain the structured format"
+        );
+        assert!(content_parts.is_empty());
     }
 
     #[test]

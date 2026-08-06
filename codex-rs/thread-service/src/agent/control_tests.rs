@@ -31,6 +31,7 @@ use protocol::protocol::ErrorEvent;
 use protocol::protocol::Event;
 use protocol::protocol::EventMsg;
 use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentContentPart;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
@@ -60,6 +61,40 @@ use tokio::time::Duration;
 use tokio::time::sleep;
 use tokio::time::timeout;
 use toml::Value as TomlValue;
+
+#[test]
+fn external_followup_message_content_rejects_image_ref_placeholder_in_message() {
+    let err = external_followup_message_content("please inspect [image: image-1]".to_string(), &[])
+        .expect_err("external text image placeholder should fail");
+
+    assert!(matches!(err, FunctionCallError::RespondToModel(message)
+            if message.contains("content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]")));
+}
+
+#[test]
+fn external_followup_message_content_rejects_image_attachment_tag_in_text_part() {
+    let parts = vec![InterAgentContentPart::Text {
+        text: "look at <image attachment_id=\"image-1\">".to_string(),
+    }];
+    let err = external_followup_message_content(String::new(), &parts)
+        .expect_err("external text image tag should fail");
+
+    assert!(matches!(err, FunctionCallError::RespondToModel(message)
+            if message.contains("content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]")));
+}
+
+#[test]
+fn external_followup_message_content_keeps_structured_image_ref_unsupported_error() {
+    let parts = vec![InterAgentContentPart::ImageRef {
+        attachment_id: "image-1".to_string(),
+        image_url: None,
+    }];
+    let err = external_followup_message_content(String::new(), &parts)
+        .expect_err("external structured image_ref should remain unsupported");
+
+    assert!(matches!(err, FunctionCallError::RespondToModel(message)
+            if message.contains("not supported from external agents")));
+}
 
 async fn test_config_with_cli_overrides(
     cli_overrides: Vec<(String, TomlValue)>,

@@ -136,7 +136,9 @@ fn followup_task_properties(
         ),
         (
             "message".to_string(),
-            JsonSchema::string(Some(message_description.to_string())),
+            JsonSchema::string(Some(format!(
+                "{message_description} Do not write image placeholders such as `[image:image-1]` or `<image attachment_id=image-1>` here; image references must use `content: [{{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}}]`."
+            ))),
         ),
         (
             "content".to_string(),
@@ -166,7 +168,7 @@ fn followup_task_properties(
                     Some(false.into()),
                 ),
                 Some(
-                    "Structured followup content. Use text parts and image_ref parts; image_ref requires an attachment_id that is visible in the parent thread."
+                    "Structured followup content. Use text parts and image_ref parts; image_ref requires an attachment_id that is visible in the parent thread. Do not put image placeholders inside text parts; use a separate image_ref part instead."
                         .to_string(),
                 ),
             ),
