@@ -7,6 +7,7 @@
 - 当前项目的 PM / owner / reviewer 协作规则以 `.codex/agents/project-pm.agent.md` 及对应 owner agent 定义为准。
 - 我们自己的 agent/runtime 产品名定为 Morpheus；外部官方 Codex provider 仍称 `codex_cli` / external Codex CLI provider。
 - 代码 crate、模块、变量名默认使用语义名，除非明确表达产品本身语义，否则不要带 Morpheus/Codex 等产品名。
+- `daily-cargo-clean-worktrees` schedule 触发时不是只确认通知，而是要实际在四个 checkout 的 `codex-rs/` 下运行 `rtk cargo clean`：`my-codex`、`my-codex-dev`、`my-codex-dev-2`、`my-codex-dev-3`。
 
 ## System Model
 - 这个项目的核心不是单一 CLI，而是一套围绕 thread、agent、tool call、event replay 和客户端展示组织起来的运行时系统。
@@ -17,19 +18,25 @@
 - 许多问题都来自把这 3 层混在一起；排查时先判断故障发生在 live path、persisted replay，还是 model context。
 
 ## Stable Architecture Rules
+- Morpheus 自己的用户配置 home 使用 `MORPHEUS_HOME`，默认目录是 `~/.morpheus`；不要再让 `CODEX_HOME` 控制 Morpheus config home。project-local `.codex/` 目录、workflow/agents/memory 目录语义保持不变；external official `codex_cli` / `~/.codex` 只在外部 provider 语义中出现。
 - app-server / root-worker conversation display 走 typed `EventMsg -> ThreadItem` 路径。
 - `ResponseItem` 主要用于模型交互、模型可见 history/context，不应用作 display-only 展示源。
 - 不要从 raw marker、assistant JSON envelope 或 legacy 解析路径反解客户端展示项。
 - external code agents 使用独立 external tool surface（如 `spawn_external_agent`、`followup_external_task`、`list_external_agents`），不通过内部/native `spawn_agent` 的 provider 参数暴露给 native 模型。
 - 命名边界：Morpheus 指本项目自己的 agent/runtime 产品；`codex_cli` 指外部官方 Codex CLI/server provider。不要用 “Codex agent” 泛指 Morpheus/native agent，避免和 external Codex provider 混淆。
 - external CLI agent 的协作协议由后端 bridge 在启动 context 中注入 JSON tool schema/call/result 约定；provider raw stdout/JSON 只在后端 adapter 解析，UI 不解析 raw external JSON。
+- 产品透明性原则：所有实际输入给模型/provider 的内容，以及模型/provider 返回的内容，都应通过 typed history/display 路径可见并可 reload 恢复。external agent initial prompt 中注入的 external tool spec 是 provider-visible 输入，也应作为输入事实展示；不能只展示用户原始 task、也不能只在 UI fake 展示。
+- External tool spec 注入必须由 Morpheus backend bridge 负责，不能依赖 external provider 自己的 init context 或 compact 保留策略。external provider 发生内部 compact 后，我们无法控制其 retained context；因此需要明确的 spec reinjection policy。但不要每次输入都重复完整 spec：应优先采用版本化 protocol context、compact-aware reinjection、parse-failure repair、或有界阈值 reinjection，并按透明性原则把实际 reinjected provider-visible content 进入 typed history/display。
 - external tools 与 internal tools 可共享 AgentControl / InterAgentCommunication / pending input / completion 事实源，但 model-visible tool 名称和 schema 必须分离。
+- ThreadProvider / agent provider 架构目标是 native 和 external 都作为一等公民接入 provider-neutral runtime；capability、prompt、tool schema 和 dispatch 不一致时，优先补齐 external 的真实 runtime 能力，而不是隐藏 external tool surface 或把 external 降级成次等 provider。
+- 当同一能力存在多个 provider 或设计路径时，架构判断应把它们都作为一等公民处理；差异应通过明确 capability、typed facts 和 provider-neutral 边界表达，而不是让某个设计长期停留在隐式例外或次等路径。
 - `thread/read` 和 `thread/turns/list` 的 live persisted history 读取已迁到 `LiveThreadHistoryRuntime` / `AppServerLiveThreadHistoryRuntime`。
 - listener/event-stream 入口已迁到 `LiveThreadListenerRuntime` / `LiveThreadListenerHandle`；idle-unload shutdown/removal、listener lifecycle live `AgentStatus` read 和 TurnComplete post-turn `ThreadRuntimeStatus` read 已迁到 `ThreadLifecycleRuntime`，running resume usage replay 已迁到 `LiveThreadUsageRuntime` / `AppServerLiveThreadUsageRuntime`，running resume goal effects/idle continuation 已迁到 `LiveThreadGoalRuntime` / `AppServerLiveThreadGoalRuntime`。listener handle 不再暴露 shutdown/wait、token/context usage、goal resume/continue effects、`AgentStatus` copied read 或 `ThreadRuntimeStatus` copied read。旧 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` facade 已删除。后续不要通过恢复 broad registry 来获取 live handle；需要新能力时应继续拆窄 runtime 或挂到明确的 provider-neutral runtime 边界。
 - Memory consolidation startup/shutdown/status/token usage 已从 broad `AppServerLiveThreadHandle` 迁到 memory-specific `AppServerMemoryConsolidationThreadHandle`；memory code 只需要 submit user input、agent status、wait terminated、token usage 和 shutdown，不应访问 config/read/history/context/goal/listener 能力。
 - 等待模型的长期方向已确定为统一收口到 `poll_event`；`wait_agent` / `command_wait` 应删除，不再作为独立 tool surface 保留。
 - `poll_event` 需要支持在同一个 turn 内等待并在 event 到达后继续执行；runtime 不应维护会影响状态机的硬性等待目标，event 应直接作为 pending input 注入当前 turn，并携带来源信息供模型判断。
 - `poll_event` 对模型暴露的是空参数对象；默认 `initial_timeout_ms` / `hard_cap_timeout_ms` 由 thread runtime 从 `TurnContext.config.multi_agent_v2` 注入，再结合 thread-scoped backoff 计算每次调用的 `current_timeout_ms`。
+- `poll_event` result 不再只是 wake metadata：它仍保留 `timedOut` / `sourceHint` / timeout fields，但可通过 optional `event` 和 `events` 暴露 typed pending payload。`poll_event` 是 agent 内部等待事件的 tool，workflow runtime 可在底层复用同一唤醒链路；普通 workflow JS 脚本应使用 target-specific `await agent.wait()` 等待指定 agent 完成，不应直接手写 `wf.pollEvent()` 扫描 child completion。`wf.pollEvent()` / `event.poll` 保留为空参数、非 target-specific 的低层/advanced API。
 - command output / exit、child completion、inter-agent completion 应复用同一套 pending-input 唤醒链路；不要再为某一类等待事件维护平行 wait API。
 - parent-side child completion bookkeeping 只用于 completion envelope 的投递、去重和清理，不应定义 child 当前是否 active；`WaitChild` / `IdleWaitChild` 只应由 direct child thread 的本地 active 状态驱动。
 - thread init context 中的 workflow discovery 依赖 `TurnContext::discovery_context()`，其 project workflows 来自 `config.config_layer_stack` 中各 project layer 的 `.codex/workflows`。
@@ -125,13 +132,16 @@
 - 不能假设 `Extended` 中有事件就足够；如果 reload 路径只读 `Limited`，那对恢复语义来说 `Extended` 等于不存在。
 - 进入 `Limited` 的恢复型事件仍要保持 payload 有界；否则 `thread/read` / reload 会把大输出原样带回客户端。对 `ExecCommandEnd` 这类事件，持久化 sanitize 与展示恢复语义需要一起考虑。
 - `UnifiedExecStartup` / `Agent` 来源的 `ExecCommandBegin` 与 `ExecCommandEnd` 应进入 `Limited` 以支持 reload；`UserShell` / `UnifiedExecInteraction` 不应借此进入可恢复展示路径。
+- active schedule monitor 的 reload display 可由 `SessionMeta.subscriptions` 恢复：`thread-history` 会把 latest subscription snapshot 合成为 bounded typed `schedule_subscribe` / `schedule_unsubscribe` builtin items；`subscriptions: Some([])` 表示最新快照已无 active subscription，`subscriptions: None` 不能当作清空。
 
 ## Runtime And Agent Lifecycle
 - agent 是否可见、是否 active、是否 complete，不能只从某一个 bookkeeping 字段推断；需要区分本地 active 状态、completion 投递状态，以及 reload 后是否重新注册到 runtime 索引。
 - child completion 相关逻辑的长期目标是“完成态事件投递正确”而不是“靠 bookkeeping 假装 child 仍 active”。
 - `list_agents` 这类查询面向的是 runtime 可见集合；如果需求是“重启后仍能列出已完成 agent”，通常要检查恢复后的 runtime 注册语义，而不是只改查询接口。
 - external agent 的长期目标是成为 backend thread/provider execution mode：thread lifecycle、followup/pending input、tool loop、close/abort、parent completion 应与 native thread 对齐，差异只应留在 model IO / provider transport adapter。
+- external root 也参与统一 agent identity/path 模型：`thread/start.taskName` 应由后端 provider route 校验并落到 root agent path / metadata；不能要求客户端过滤，也不能简单忽略。external root 与 external subagent 的持久化分类应依赖 provider id、root-vs-subagent `SessionSource` / thread-spawn facts 和 `ThreadSource::User`，不要再用 `agent_path/role/nickname == None` 识别 external root。
 - external runtime 不应再是纯 live-only registry：external spawn 应创建 persisted thread-store thread 与 thread-spawn edge，external input / assistant output / tool-result / terminal status 应进入可 replay 的 bounded rollout history。reload 后 completed external 应可通过 persisted metadata/list_agents 恢复；running external 若没有可重连 provider session，应明确收口为 interrupted，不能静默丢失或伪装 active。
+- OpenCode 当前已持久化 provider session id descriptor，但这还不足以 cold reattach：现有 adapter 依赖 transient `opencode serve --port 0` HTTP/SSE endpoint，缺 durable endpoint、input ownership 和 wait-state facts。因此 descriptor-present running OpenCode 仍应保持 restore-disabled / Interrupted / read-only，不能产生 `RunningReconnectable` 或 flip external `restoreThread`。
 - external provider tool call/result 展示与恢复应走 bounded typed `ExternalToolCallStarted` / `ExternalToolCallCompleted` events；provider raw `external_tool_call` / `external_tool_result` JSON 只属于 adapter stdin/stdout 协议，不应作为普通 `AgentMessage` / `UserMessage` 持久化给 UI replay。
 - external provider Errored / Shutdown 终态应走 bounded typed `ExternalTerminalStatus` event 进入 `Limited` 并由 status inference 恢复；generic `Error` / `ShutdownComplete` 的 Limited policy 不应为 external reload 需求全局放宽。
 - external durable default list / agent-reference recovery 基于 Open thread-spawn edge：Open + terminal Completed 的 external agent reload 后可列出，Open + 无可重连 live process 的 external agent reload 后列为 Interrupted；显式 close 后的 Closed + Shutdown external agent 不应进入默认 `list_agents`，也不应由 `resolve_agent_reference` 从 Closed edge 恢复。
