@@ -91,11 +91,31 @@ type GitGraphConnector = Extract<GitGraphItem, { type: "connector" }>;
 type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
 type GitGraphTopologySegment = "vertical" | "horizontal" | "diagonal-left" | "diagonal-right";
-type GitGraphTopologyCell = {
-  lane: number;
-  commit: boolean;
-  segments: GitGraphTopologySegment[];
+type GitGraphTopologyPrimitive =
+  | {
+      type: "line";
+      lane: number;
+      segment: GitGraphTopologySegment;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+    }
+  | {
+      type: "dot";
+      lane: number;
+      x: number;
+      y: number;
+    };
+type GitGraphTopology = {
+  width: number;
+  height: number;
+  primitives: GitGraphTopologyPrimitive[];
 };
+
+const GIT_GRAPH_LANE_WIDTH = 12;
+const GIT_GRAPH_COMMIT_ROW_HEIGHT = 30;
+const GIT_GRAPH_CONNECTOR_ROW_HEIGHT = 14;
 type PreviewDefinitionPositionEditor = {
   getModel(): {
     getWordAtPosition(position: PreviewDefinitionPosition): {
@@ -1746,7 +1766,7 @@ function GitGraphRow({
         }}
       >
         <div className="git-graph-lanes" aria-hidden="true" data-drag-scroll-handle="true">
-          {renderGraphPrefix(commit.graph)}
+          {renderGraphPrefix(commit.graph, GIT_GRAPH_COMMIT_ROW_HEIGHT)}
         </div>
         <div className="git-graph-copy">
           <div className="git-graph-subject-line">
@@ -1780,7 +1800,7 @@ function GitGraphConnectorRow({ connector }: { connector: GitGraphConnector }) {
   return (
     <div className="git-graph-connector-row" aria-hidden="true">
       <div className="git-graph-lanes connector" data-drag-scroll-handle="true">
-        {renderGraphPrefix(connector.graph)}
+        {renderGraphPrefix(connector.graph, GIT_GRAPH_CONNECTOR_ROW_HEIGHT)}
       </div>
     </div>
   );
@@ -1840,46 +1860,131 @@ function fileIconLabel(path: string) {
   return extension && extension.length <= 3 ? extension.slice(0, 2) : "F";
 }
 
-function renderGraphPrefix(graph: string) {
-  return buildGitGraphTopology(graph).map((cell) => {
-    return (
-      <span
-        key={cell.lane}
-        className={`git-graph-cell lane-${cell.lane % 6} ${cell.commit ? "has-commit" : ""}`}
-        data-graph-cell="true"
-      >
-        {cell.segments.map((segment) => (
-          <span
-            key={segment}
-            className={`git-graph-segment ${segment}`}
-            data-graph-segment={segment}
+function renderGraphPrefix(graph: string, rowHeight: number) {
+  const topology = buildGitGraphTopology(graph, rowHeight);
+  return (
+    <svg
+      className="git-graph-svg"
+      width={topology.width}
+      height={topology.height}
+      viewBox={`0 0 ${topology.width} ${topology.height}`}
+      data-graph-svg="true"
+    >
+      {topology.primitives.map((primitive, index) => {
+        if (primitive.type === "dot") {
+          return (
+            <circle
+              key={`dot:${index}:${primitive.lane}`}
+              className={`git-graph-dot lane-${primitive.lane % 6}`}
+              cx={primitive.x}
+              cy={primitive.y}
+              r="4"
+              data-graph-dot="true"
+            />
+          );
+        }
+        return (
+          <line
+            key={`line:${index}:${primitive.lane}:${primitive.segment}`}
+            className={`git-graph-line lane-${primitive.lane % 6} ${primitive.segment}`}
+            x1={primitive.x1}
+            y1={primitive.y1}
+            x2={primitive.x2}
+            y2={primitive.y2}
+            data-graph-segment={primitive.segment}
           />
-        ))}
-        {cell.commit ? <span className="git-graph-dot" data-graph-dot="true" /> : null}
-      </span>
-    );
-  });
+        );
+      })}
+    </svg>
+  );
 }
 
-export function buildGitGraphTopology(graph: string): GitGraphTopologyCell[] {
-  const chars = graph.length > 0 ? [...graph] : ["*"];
-  const cells: GitGraphTopologyCell[] = [];
+export function buildGitGraphTopology(
+  graph: string,
+  rowHeight = GIT_GRAPH_COMMIT_ROW_HEIGHT,
+): GitGraphTopology {
+  const chars = graphTopologyChars(graph);
+  const primitives: GitGraphTopologyPrimitive[] = [];
+  let maxLane = Math.max(0, chars.length - 1);
+  const middleY = rowHeight / 2;
 
   chars.forEach((char, index) => {
     const segments = graphSegmentsForChar(char);
     const commit = char === "*";
-    if (!commit && segments.length === 0 && char.trim() === "") {
-      cells.push({ lane: index, commit: false, segments: [] });
-      return;
+    for (const segment of commit ? uniqueSegments(["vertical", ...segments]) : segments) {
+      if (segment === "vertical") {
+        primitives.push({
+          type: "line",
+          lane: index,
+          segment,
+          x1: laneCenterX(index),
+          y1: 0,
+          x2: laneCenterX(index),
+          y2: rowHeight,
+        });
+      } else if (segment === "horizontal") {
+        maxLane = Math.max(maxLane, index + 1);
+        primitives.push({
+          type: "line",
+          lane: index,
+          segment,
+          x1: laneCenterX(index),
+          y1: middleY,
+          x2: laneCenterX(index + 1),
+          y2: middleY,
+        });
+      } else if (segment === "diagonal-left") {
+        const targetLane = Math.max(0, index - 1);
+        primitives.push({
+          type: "line",
+          lane: index,
+          segment,
+          x1: laneCenterX(index),
+          y1: 0,
+          x2: laneCenterX(targetLane),
+          y2: rowHeight,
+        });
+      } else {
+        maxLane = Math.max(maxLane, index + 1);
+        primitives.push({
+          type: "line",
+          lane: index,
+          segment,
+          x1: laneCenterX(index),
+          y1: 0,
+          x2: laneCenterX(index + 1),
+          y2: rowHeight,
+        });
+      }
     }
-    cells.push({
-      lane: index,
-      commit,
-      segments: commit ? uniqueSegments(["vertical", ...segments]) : segments,
-    });
+    if (commit) {
+      primitives.push({
+        type: "dot",
+        lane: index,
+        x: laneCenterX(index),
+        y: middleY,
+      });
+    }
   });
 
-  return trimTrailingEmptyGraphCells(cells);
+  return {
+    width: laneCenterX(maxLane) + GIT_GRAPH_LANE_WIDTH / 2,
+    height: rowHeight,
+    primitives,
+  };
+}
+
+function graphTopologyChars(graph: string) {
+  const chars = graph.length > 0 ? [...graph] : ["*"];
+  let lastMeaningfulIndex = chars.length - 1;
+  while (lastMeaningfulIndex > 0 && chars[lastMeaningfulIndex]?.trim() === "") {
+    lastMeaningfulIndex -= 1;
+  }
+  return chars.slice(0, lastMeaningfulIndex + 1);
+}
+
+function laneCenterX(lane: number) {
+  return lane * GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_LANE_WIDTH / 2;
 }
 
 function graphSegmentsForChar(char: string): GitGraphTopologySegment[] {
@@ -1901,18 +2006,6 @@ function graphSegmentsForChar(char: string): GitGraphTopologySegment[] {
 
 function uniqueSegments(segments: GitGraphTopologySegment[]) {
   return [...new Set(segments)];
-}
-
-function trimTrailingEmptyGraphCells(cells: GitGraphTopologyCell[]) {
-  let lastMeaningfulIndex = cells.length - 1;
-  while (
-    lastMeaningfulIndex > 0 &&
-    !cells[lastMeaningfulIndex].commit &&
-    cells[lastMeaningfulIndex].segments.length === 0
-  ) {
-    lastMeaningfulIndex -= 1;
-  }
-  return cells.slice(0, lastMeaningfulIndex + 1);
 }
 
 function GitChangeGroup({

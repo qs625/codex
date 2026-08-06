@@ -633,33 +633,37 @@ test("renders git panel with deduped thread file changes", () => {
   assert.doesNotMatch(markup, /Thread File Deltas/);
 });
 
-test("builds structured git graph topology cells instead of display characters", () => {
-  assert.deepEqual(buildGitGraphTopology("* "), [
-    { lane: 0, commit: true, segments: ["vertical"] },
+test("builds structured git graph topology primitives instead of display characters", () => {
+  assert.deepEqual(buildGitGraphTopology("* "), {
+    width: 12,
+    height: 30,
+    primitives: [
+      { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 30 },
+      { type: "dot", lane: 0, x: 6, y: 15 },
+    ],
+  });
+
+  assert.deepEqual(buildGitGraphTopology("| * ").primitives, [
+    { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 30 },
+    { type: "line", lane: 2, segment: "vertical", x1: 30, y1: 0, x2: 30, y2: 30 },
+    { type: "dot", lane: 2, x: 30, y: 15 },
   ]);
 
-  assert.deepEqual(buildGitGraphTopology("| * "), [
-    { lane: 0, commit: false, segments: ["vertical"] },
-    { lane: 1, commit: false, segments: [] },
-    { lane: 2, commit: true, segments: ["vertical"] },
+  assert.deepEqual(buildGitGraphTopology("|/").primitives, [
+    { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 30 },
+    { type: "line", lane: 1, segment: "diagonal-left", x1: 18, y1: 0, x2: 6, y2: 30 },
   ]);
 
-  assert.deepEqual(buildGitGraphTopology("|/"), [
-    { lane: 0, commit: false, segments: ["vertical"] },
-    { lane: 1, commit: false, segments: ["diagonal-left"] },
+  assert.deepEqual(buildGitGraphTopology("|\\-_").primitives, [
+    { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 30 },
+    { type: "line", lane: 1, segment: "diagonal-right", x1: 18, y1: 0, x2: 30, y2: 30 },
+    { type: "line", lane: 2, segment: "horizontal", x1: 30, y1: 15, x2: 42, y2: 15 },
+    { type: "line", lane: 3, segment: "horizontal", x1: 42, y1: 15, x2: 54, y2: 15 },
   ]);
 
-  assert.deepEqual(buildGitGraphTopology("|\\-_"), [
-    { lane: 0, commit: false, segments: ["vertical"] },
-    { lane: 1, commit: false, segments: ["diagonal-right"] },
-    { lane: 2, commit: false, segments: ["horizontal"] },
-    { lane: 3, commit: false, segments: ["horizontal"] },
-  ]);
-
-  assert.deepEqual(buildGitGraphTopology("| |"), [
-    { lane: 0, commit: false, segments: ["vertical"] },
-    { lane: 1, commit: false, segments: [] },
-    { lane: 2, commit: false, segments: ["vertical"] },
+  assert.deepEqual(buildGitGraphTopology("| |", 14).primitives, [
+    { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 14 },
+    { type: "line", lane: 2, segment: "vertical", x1: 30, y1: 0, x2: 30, y2: 14 },
   ]);
 });
 
