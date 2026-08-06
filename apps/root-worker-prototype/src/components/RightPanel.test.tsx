@@ -20,7 +20,7 @@ import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
 const {
   RightPanel,
   ScheduleAgendaDateGroup,
-  buildGitGraphTopology,
+  buildGitGraphVisualModel,
   filePreviewRenderMode,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
@@ -170,6 +170,25 @@ function makePreview(overrides: Partial<FilePreview> = {}): FilePreview {
     },
     image: null,
     ...overrides,
+  };
+}
+
+function makeGitCommit(
+  graph: string,
+  hash: string,
+  parents: string[] = ["parent"],
+  subject = hash,
+) {
+  return {
+    type: "commit" as const,
+    graph,
+    hash,
+    shortHash: hash.slice(0, 7),
+    parents,
+    refs: [],
+    subject,
+    author: "Author",
+    relativeTime: "now",
   };
 }
 
@@ -633,38 +652,61 @@ test("renders git panel with deduped thread file changes", () => {
   assert.doesNotMatch(markup, /Thread File Deltas/);
 });
 
-test("builds structured git graph topology primitives instead of display characters", () => {
-  assert.deepEqual(buildGitGraphTopology("* "), {
-    width: 12,
-    height: 30,
-    primitives: [
-      { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 30 },
-      { type: "dot", lane: 0, x: 6, y: 15 },
+test("builds a commit-level git graph visual model with a spine and curved branches", () => {
+  const graph = [
+    makeGitCommit("* ", "merge-a", ["parent-a", "parent-b"], "Merge feature"),
+    { type: "connector" as const, graph: "|\\" },
+    makeGitCommit("| * ", "side-a", ["merge-a"], "feature work"),
+    { type: "connector" as const, graph: "|/" },
+    makeGitCommit("* ", "merge-b", ["parent-c", "side-a"], "Merge feature"),
+  ];
+
+  const visualModel = buildGitGraphVisualModel(graph);
+
+  assert.equal(visualModel.width, 54);
+  assert.equal(visualModel.height, 144);
+  assert.deepEqual(
+    visualModel.commits.map((commit) => ({
+      hash: commit.commit.hash,
+      lane: commit.lane,
+      x: commit.x,
+      y: commit.y,
+    })),
+    [
+      { hash: "merge-a", lane: 0, x: 18, y: 24 },
+      { hash: "side-a", lane: 1, x: 42, y: 72 },
+      { hash: "merge-b", lane: 0, x: 18, y: 120 },
     ],
+  );
+  assert.deepEqual(visualModel.paths, [
+    {
+      id: "main-spine",
+      lane: 0,
+      colorLane: 0,
+      kind: "main",
+      d: "M 18 24 L 18 120",
+    },
+    {
+      id: "branch:1:2:1",
+      lane: 1,
+      colorLane: 1,
+      kind: "branch",
+      d: "M 18 24 C 42 24 42 55.68 42 72 C 42 88.32 42 120 18 120",
+    },
+  ]);
+
+  const expandedVisualModel = buildGitGraphVisualModel(graph, {
+    expandedHeightsByHash: { "merge-a": 62 },
   });
-
-  assert.deepEqual(buildGitGraphTopology("| * ").primitives, [
-    { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 30 },
-    { type: "line", lane: 2, segment: "vertical", x1: 30, y1: 0, x2: 30, y2: 30 },
-    { type: "dot", lane: 2, x: 30, y: 15 },
-  ]);
-
-  assert.deepEqual(buildGitGraphTopology("|/").primitives, [
-    { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 30 },
-    { type: "line", lane: 1, segment: "diagonal-left", x1: 18, y1: 0, x2: 6, y2: 30 },
-  ]);
-
-  assert.deepEqual(buildGitGraphTopology("|\\-_").primitives, [
-    { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 30 },
-    { type: "line", lane: 1, segment: "diagonal-right", x1: 18, y1: 0, x2: 30, y2: 30 },
-    { type: "line", lane: 2, segment: "horizontal", x1: 30, y1: 15, x2: 42, y2: 15 },
-    { type: "line", lane: 3, segment: "horizontal", x1: 42, y1: 15, x2: 54, y2: 15 },
-  ]);
-
-  assert.deepEqual(buildGitGraphTopology("| |", 14).primitives, [
-    { type: "line", lane: 0, segment: "vertical", x1: 6, y1: 0, x2: 6, y2: 14 },
-    { type: "line", lane: 2, segment: "vertical", x1: 30, y1: 0, x2: 30, y2: 14 },
-  ]);
+  assert.equal(expandedVisualModel.height, 206);
+  assert.deepEqual(
+    expandedVisualModel.commits.map((commit) => ({ hash: commit.commit.hash, y: commit.y })),
+    [
+      { hash: "merge-a", y: 24 },
+      { hash: "side-a", y: 134 },
+      { hash: "merge-b", y: 182 },
+    ],
+  );
 });
 
 test("renders cwd tree inside the preview panel", () => {
