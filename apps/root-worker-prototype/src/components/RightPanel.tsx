@@ -116,8 +116,8 @@ type GitGraphVisualOptions = {
 };
 
 const GIT_GRAPH_SPINE_X = 18;
-const GIT_GRAPH_LANE_WIDTH = 24;
-const GIT_GRAPH_COMMIT_ROW_HEIGHT = 48;
+const GIT_GRAPH_LANE_WIDTH = 23;
+const GIT_GRAPH_COMMIT_ROW_HEIGHT = 42;
 const GIT_COMMIT_FILE_ROW_HEIGHT = 28;
 const GIT_COMMIT_FILES_STATE_HEIGHT = 34;
 const GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM = 6;
@@ -1548,7 +1548,8 @@ function GitPanel({
         style={!changesCollapsed ? { flexBasis: `${graphPanePercent}%` } : undefined}
       >
         <GitSectionHeader
-          count={graphCommitCount}
+          graphToolbar
+          count={0}
           title="Graph"
           trailing={
             <>
@@ -1564,7 +1565,7 @@ function GitPanel({
                   aria-label="Select Git branch or ref"
                   title={branchLabel}
                 >
-                  <option value="">Auto: {snapshot?.branch ?? "current"}</option>
+                  <option value="">Auto</option>
                   {(snapshot?.refs ?? []).map((ref) => (
                     <option key={ref.name} value={ref.name}>
                       {ref.head ? "* " : ""}
@@ -1573,6 +1574,33 @@ function GitPanel({
                   ))}
                 </select>
               </label>
+              <button
+                type="button"
+                className="git-icon-button"
+                disabled
+                title="Focus current ref"
+                aria-label="Focus current Git ref"
+              >
+                <BrowserIcon />
+              </button>
+              <button
+                type="button"
+                className="git-icon-button"
+                disabled
+                title="Fetch"
+                aria-label="Fetch Git refs"
+              >
+                <ArrowLeftIcon />
+              </button>
+              <button
+                type="button"
+                className="git-icon-button"
+                disabled
+                title="Pull"
+                aria-label="Pull Git refs"
+              >
+                <ArrowRightIcon />
+              </button>
               <button
                 type="button"
                 className="git-icon-button"
@@ -1687,18 +1715,20 @@ function isGitGraphCommit(item: GitGraphItem): item is GitGraphCommit {
 function GitSectionHeader({
   collapsed,
   count,
+  graphToolbar,
   onToggle,
   title,
   trailing,
 }: {
   collapsed?: boolean;
   count: number;
+  graphToolbar?: boolean;
   onToggle?: () => void;
   title: string;
   trailing?: ReactNode;
 }) {
   return (
-    <div className="git-section-header">
+    <div className={`git-section-header ${graphToolbar ? "graph-toolbar" : ""}`}>
       <div className="git-section-title">
         {onToggle ? (
           <button
@@ -1848,6 +1878,7 @@ function GitGraphRow({
             <strong title={commit.subject}>{commit.subject}</strong>
             {headRef ? (
               <span className="git-head-ref" title={headRef}>
+                <span className="git-head-ref-target" aria-hidden="true" />
                 {headRef.replace("HEAD -> ", "")}
               </span>
             ) : null}
@@ -1863,6 +1894,9 @@ function GitGraphRow({
             {isMerge ? ` · merge ${commit.parents.length}` : ""}
           </span>
         </div>
+        <span className="git-graph-row-affordance" aria-hidden="true">
+          <DocumentIcon />
+        </span>
       </div>
       {isSelected ? (
         <GitCommitFileList filesSnapshot={filesSnapshot} isLoading={isLoadingFiles} />
