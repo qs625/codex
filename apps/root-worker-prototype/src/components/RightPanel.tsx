@@ -1784,6 +1784,7 @@ function GitGraphVisualList({
       style={
         {
           "--git-graph-visual-width": `${visualModel.width}px`,
+          "--git-graph-visual-height": `${visualModel.height}px`,
         } as React.CSSProperties
       }
     >

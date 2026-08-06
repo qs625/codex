@@ -715,14 +715,20 @@ test("builds a commit-level git graph visual model with a spine and curved branc
   );
 });
 
-test("git graph styles use the reference dark compact rail treatment", () => {
+test("git graph styles keep a light theme and full-size visible rail overlay", () => {
   const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
 
-  assert.match(css, /\.git-graph-section \{[\s\S]*background: #0f1419;/);
+  assert.match(css, /\.git-panel \{[\s\S]*background: #f8fafc;/);
+  assert.match(css, /\.git-graph-section \{[\s\S]*background: #f8fafc;/);
+  assert.doesNotMatch(css, /\.git-panel \{[\s\S]*background: #0f1419;/);
+  assert.match(css, /\.git-graph-overlay \{[\s\S]*width: var\(--git-graph-visual-width, 58px\);/);
+  assert.match(css, /\.git-graph-overlay \{[\s\S]*height: var\(--git-graph-visual-height, 42px\);/);
   assert.match(css, /\.git-graph-row-main \{[\s\S]*min-height: 42px;/);
-  assert.match(css, /\.git-graph-dot\.main \{[\s\S]*fill: #0f1419;[\s\S]*stroke-width: 3\.4;/);
-  assert.match(css, /\.git-head-ref \{[\s\S]*background: #58a8ff;/);
-  assert.match(css, /\.git-graph-row-affordance/);
+  assert.match(css, /\.git-graph-dot\.main \{[\s\S]*fill: #f8fafc;[\s\S]*stroke-width: 3\.4;/);
+  assert.match(css, /\.git-graph-dot\.branch \{[\s\S]*fill: currentColor;/);
+  assert.match(css, /\.git-head-ref \{[\s\S]*background: #2563eb;/);
+  assert.match(source, /"--git-graph-visual-height": `\$\{visualModel\.height\}px`/);
 });
 
 test("renders cwd tree inside the preview panel", () => {
