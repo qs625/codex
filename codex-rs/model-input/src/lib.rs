@@ -6,9 +6,10 @@ use codex_utils_image::load_for_prompt_bytes;
 use protocol::models::ContentItem;
 use protocol::models::DEFAULT_IMAGE_DETAIL;
 use protocol::models::ResponseInputItem;
+use protocol::models::image_attachment_id;
 use protocol::models::image_close_tag_text;
-use protocol::models::image_open_tag_text;
-use protocol::models::local_image_open_tag_text;
+use protocol::models::image_open_tag_text_with_attachment_id;
+use protocol::models::local_image_open_tag_text_with_attachment_id;
 use protocol::user_input::UserInput;
 
 pub fn response_input_item_from_user_input(items: Vec<UserInput>) -> ResponseInputItem {
@@ -21,7 +22,7 @@ pub fn response_input_item_from_user_input(items: Vec<UserInput>) -> ResponseInp
                 UserInput::Text { text, .. } => vec![ContentItem::InputText { text }],
                 UserInput::Image { image_url } => {
                     image_index += 1;
-                    image_content_items(image_url)
+                    image_content_items(image_url, &image_attachment_id(image_index))
                 }
                 UserInput::LocalImage { path } => {
                     image_index += 1;
@@ -30,6 +31,7 @@ pub fn response_input_item_from_user_input(items: Vec<UserInput>) -> ResponseInp
                             &path,
                             file_bytes,
                             Some(image_index),
+                            Some(image_attachment_id(image_index)),
                             PromptImageMode::ResizeToFit,
                         ),
                         Err(err) => vec![local_image_error_placeholder(&path, err)],
@@ -47,6 +49,7 @@ pub fn local_image_content_items_with_label_number(
     path: &Path,
     file_bytes: Vec<u8>,
     label_number: Option<usize>,
+    attachment_id: Option<String>,
     mode: PromptImageMode,
 ) -> Vec<ContentItem> {
     match load_for_prompt_bytes(path, file_bytes, mode) {
@@ -54,7 +57,13 @@ pub fn local_image_content_items_with_label_number(
             let mut items = Vec::with_capacity(3);
             if let Some(label_number) = label_number {
                 items.push(ContentItem::InputText {
-                    text: local_image_open_tag_text(label_number),
+                    text: match attachment_id.as_deref() {
+                        Some(attachment_id) => local_image_open_tag_text_with_attachment_id(
+                            label_number,
+                            attachment_id,
+                        ),
+                        None => protocol::models::local_image_open_tag_text(label_number),
+                    },
                 });
             }
             items.push(ContentItem::InputImage {
@@ -87,10 +96,10 @@ pub fn local_image_content_items_with_label_number(
     }
 }
 
-fn image_content_items(image_url: String) -> Vec<ContentItem> {
+fn image_content_items(image_url: String, attachment_id: &str) -> Vec<ContentItem> {
     vec![
         ContentItem::InputText {
-            text: image_open_tag_text(),
+            text: image_open_tag_text_with_attachment_id(attachment_id),
         },
         ContentItem::InputImage {
             image_url,
@@ -140,9 +149,10 @@ mod tests {
     use protocol::models::ContentItem;
     use protocol::models::DEFAULT_IMAGE_DETAIL;
     use protocol::models::ResponseInputItem;
+    use protocol::models::image_attachment_id;
     use protocol::models::image_close_tag_text;
-    use protocol::models::image_open_tag_text;
-    use protocol::models::local_image_open_tag_text;
+    use protocol::models::image_open_tag_text_with_attachment_id;
+    use protocol::models::local_image_open_tag_text_with_attachment_id;
     use protocol::user_input::UserInput;
     use tempfile::tempdir;
 
@@ -158,7 +168,7 @@ mod tests {
             ResponseInputItem::Message { content, .. } => {
                 let expected = vec![
                     ContentItem::InputText {
-                        text: image_open_tag_text(),
+                        text: image_open_tag_text_with_attachment_id(&image_attachment_id(1)),
                     },
                     ContentItem::InputImage {
                         image_url,
@@ -202,7 +212,7 @@ mod tests {
                 assert_eq!(
                     content.first(),
                     Some(&ContentItem::InputText {
-                        text: image_open_tag_text(),
+                        text: image_open_tag_text_with_attachment_id(&image_attachment_id(1)),
                     })
                 );
                 assert_eq!(
@@ -221,7 +231,10 @@ mod tests {
                 assert_eq!(
                     content.get(3),
                     Some(&ContentItem::InputText {
-                        text: local_image_open_tag_text(/*label_number*/ 2),
+                        text: local_image_open_tag_text_with_attachment_id(
+                            /*label_number*/ 2,
+                            &image_attachment_id(2)
+                        ),
                     })
                 );
                 assert!(matches!(

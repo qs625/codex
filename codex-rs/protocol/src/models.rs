@@ -1150,11 +1150,21 @@ pub const VIEW_IMAGE_TOOL_NAME: &str = "view_image";
 
 const IMAGE_OPEN_TAG: &str = "<image>";
 const IMAGE_CLOSE_TAG: &str = "</image>";
+const IMAGE_ATTACHMENT_OPEN_TAG_PREFIX: &str = "<image attachment_id=";
 const LOCAL_IMAGE_OPEN_TAG_PREFIX: &str = "<image name=";
 const LOCAL_IMAGE_OPEN_TAG_SUFFIX: &str = ">";
+const LOCAL_IMAGE_ATTACHMENT_SEPARATOR: &str = " attachment_id=";
 
 pub fn image_open_tag_text() -> String {
     IMAGE_OPEN_TAG.to_string()
+}
+
+pub fn image_attachment_id(label_number: usize) -> String {
+    format!("image-{label_number}")
+}
+
+pub fn image_open_tag_text_with_attachment_id(attachment_id: &str) -> String {
+    format!("{IMAGE_ATTACHMENT_OPEN_TAG_PREFIX}{attachment_id}{LOCAL_IMAGE_OPEN_TAG_SUFFIX}")
 }
 
 pub fn image_close_tag_text() -> String {
@@ -1170,6 +1180,16 @@ pub fn local_image_open_tag_text(label_number: usize) -> String {
     format!("{LOCAL_IMAGE_OPEN_TAG_PREFIX}{label}{LOCAL_IMAGE_OPEN_TAG_SUFFIX}")
 }
 
+pub fn local_image_open_tag_text_with_attachment_id(
+    label_number: usize,
+    attachment_id: &str,
+) -> String {
+    let label = local_image_label_text(label_number);
+    format!(
+        "{LOCAL_IMAGE_OPEN_TAG_PREFIX}{label}{LOCAL_IMAGE_ATTACHMENT_SEPARATOR}{attachment_id}{LOCAL_IMAGE_OPEN_TAG_SUFFIX}"
+    )
+}
+
 pub fn is_local_image_open_tag_text(text: &str) -> bool {
     text.strip_prefix(LOCAL_IMAGE_OPEN_TAG_PREFIX)
         .is_some_and(|rest| rest.ends_with(LOCAL_IMAGE_OPEN_TAG_SUFFIX))
@@ -1181,10 +1201,26 @@ pub fn is_local_image_close_tag_text(text: &str) -> bool {
 
 pub fn is_image_open_tag_text(text: &str) -> bool {
     text == IMAGE_OPEN_TAG
+        || text
+            .strip_prefix(IMAGE_ATTACHMENT_OPEN_TAG_PREFIX)
+            .is_some_and(|rest| rest.ends_with(LOCAL_IMAGE_OPEN_TAG_SUFFIX))
 }
 
 pub fn is_image_close_tag_text(text: &str) -> bool {
     text == IMAGE_CLOSE_TAG
+}
+
+pub fn image_attachment_id_from_open_tag_text(text: &str) -> Option<&str> {
+    if let Some(rest) = text.strip_prefix(IMAGE_ATTACHMENT_OPEN_TAG_PREFIX) {
+        return rest
+            .strip_suffix(LOCAL_IMAGE_OPEN_TAG_SUFFIX)
+            .filter(|value| !value.trim().is_empty());
+    }
+    let rest = text.strip_prefix(LOCAL_IMAGE_OPEN_TAG_PREFIX)?;
+    let (_, attachment) = rest.split_once(LOCAL_IMAGE_ATTACHMENT_SEPARATOR)?;
+    attachment
+        .strip_suffix(LOCAL_IMAGE_OPEN_TAG_SUFFIX)
+        .filter(|value| !value.trim().is_empty())
 }
 
 impl From<ResponseInputItem> for ResponseItem {
@@ -1299,24 +1335,30 @@ pub enum ReasoningItemContent {
 
 impl From<Vec<UserInput>> for ResponseInputItem {
     fn from(items: Vec<UserInput>) -> Self {
+        let mut image_index = 0;
         Self::Message {
             role: "user".to_string(),
             content: items
                 .into_iter()
                 .flat_map(|c| match c {
                     UserInput::Text { text, .. } => vec![ContentItem::InputText { text }],
-                    UserInput::Image { image_url } => vec![
-                        ContentItem::InputText {
-                            text: image_open_tag_text(),
-                        },
-                        ContentItem::InputImage {
-                            image_url,
-                            detail: Some(DEFAULT_IMAGE_DETAIL),
-                        },
-                        ContentItem::InputText {
-                            text: image_close_tag_text(),
-                        },
-                    ],
+                    UserInput::Image { image_url } => {
+                        image_index += 1;
+                        vec![
+                            ContentItem::InputText {
+                                text: image_open_tag_text_with_attachment_id(&image_attachment_id(
+                                    image_index,
+                                )),
+                            },
+                            ContentItem::InputImage {
+                                image_url,
+                                detail: Some(DEFAULT_IMAGE_DETAIL),
+                            },
+                            ContentItem::InputText {
+                                text: image_close_tag_text(),
+                            },
+                        ]
+                    }
                     UserInput::LocalImage { path } => {
                         vec![ContentItem::InputText {
                             text: format!(

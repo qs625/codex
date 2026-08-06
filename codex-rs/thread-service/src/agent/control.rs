@@ -99,6 +99,7 @@ use protocol::protocol::ExternalToolCallDisplayEvent;
 use protocol::protocol::ExternalToolCallStatus;
 use protocol::protocol::InitialHistory;
 use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentContentPart;
 use protocol::protocol::InterAgentOperation;
 use protocol::protocol::ItemCompletedEvent;
 use protocol::protocol::Op;
@@ -201,7 +202,9 @@ struct ExternalSpawnAgentArgs {
 #[serde(deny_unknown_fields)]
 struct ExternalFollowupTaskArgs {
     target: String,
-    message: String,
+    message: Option<String>,
+    #[serde(default)]
+    content: Vec<InterAgentContentPart>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -242,6 +245,53 @@ where
     serde_json::from_value(arguments.clone()).map_err(|err| {
         FunctionCallError::RespondToModel(format!("failed to parse external tool arguments: {err}"))
     })
+}
+
+fn external_followup_message_content(
+    message: String,
+    content_parts: &[InterAgentContentPart],
+) -> Result<String, FunctionCallError> {
+    if content_parts.is_empty() {
+        if message.trim().is_empty() {
+            return Err(FunctionCallError::RespondToModel(
+                "Empty message can't be sent to an agent".to_string(),
+            ));
+        }
+        return Ok(message);
+    }
+
+    let mut preview_parts = Vec::new();
+    for part in content_parts {
+        match part {
+            InterAgentContentPart::Text { text } => {
+                let text = text.trim();
+                if !text.is_empty() {
+                    preview_parts.push(text.to_string());
+                }
+            }
+            InterAgentContentPart::ImageRef {
+                attachment_id,
+                image_url: _,
+            } => {
+                let attachment_id = attachment_id.trim();
+                if attachment_id.is_empty() {
+                    return Err(FunctionCallError::RespondToModel(
+                        "image_ref content requires a non-empty attachment_id".to_string(),
+                    ));
+                }
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "image_ref `{attachment_id}` is not supported from external agents"
+                )));
+            }
+        }
+    }
+
+    if preview_parts.is_empty() {
+        return Err(FunctionCallError::RespondToModel(
+            "Empty content can't be sent to an agent".to_string(),
+        ));
+    }
+    Ok(preview_parts.join("\n"))
 }
 
 fn external_tool_context(run: &ExternalAgentRun) -> ExternalToolContext {
@@ -2169,6 +2219,16 @@ impl AgentControl {
         communication: InterAgentCommunication,
     ) -> CodexResult<String> {
         if let Some(run) = self.external_agents.get(agent_id) {
+            if communication
+                .content_parts
+                .iter()
+                .any(|part| matches!(part, InterAgentContentPart::ImageRef { .. }))
+            {
+                return Err(CodexErr::UnsupportedOperation(
+                    "external agent followup input does not support image_ref content yet"
+                        .to_string(),
+                ));
+            }
             let input_sink = run.input_sink.ok_or_else(|| {
                 CodexErr::UnsupportedOperation(
                     "external agent is not ready to receive followup input".to_string(),
@@ -2455,6 +2515,10 @@ impl AgentControl {
             }
             ExternalToolName::FollowupExternalTask => {
                 let args: ExternalFollowupTaskArgs = parse_external_arguments(&call.arguments)?;
+                let prompt = external_followup_message_content(
+                    args.message.unwrap_or_default(),
+                    &args.content,
+                )?;
                 let receiver_thread_id = self
                     .resolve_external_live_target(&sender, &args.target, "follow up to")
                     .await?;
@@ -2481,9 +2545,10 @@ impl AgentControl {
                     sender.agent_path.clone(),
                     receiver_agent_path,
                     Vec::new(),
-                    args.message,
+                    prompt,
                     InterAgentOperation::FollowupTask,
                 )
+                .with_content_parts(args.content)
                 .with_thread_ids(sender.thread_id, receiver_thread_id)
                 .with_trigger_turn(true);
                 self.send_inter_agent_communication(receiver_thread_id, communication)

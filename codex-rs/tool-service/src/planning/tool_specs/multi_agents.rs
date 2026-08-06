@@ -110,29 +110,68 @@ pub fn create_spawn_external_agent_tool() -> ToolSpec {
 }
 
 pub fn create_followup_external_task_tool() -> ToolSpec {
-    let properties = BTreeMap::from([
-        (
-            "target".to_string(),
-            JsonSchema::string(Some(
-                "External or native agent id/canonical task name to message.".to_string(),
-            )),
-        ),
-        (
-            "message".to_string(),
-            JsonSchema::string(Some(
-                "Message text to send through the shared agent bus.".to_string(),
-            )),
-        ),
-    ]);
+    let properties = followup_task_properties(
+        "External or native agent id/canonical task name to message.",
+        "Message text to send through the shared agent bus.",
+    );
 
     ToolSpec::Function(ResponsesApiTool {
         name: "followup_external_task".to_string(),
         description: "Send a follow-up message from the external-agent collaboration surface. This uses the same backend agent bus as native followup_task while keeping the model-visible external protocol separate.".to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::object(properties, Some(vec!["target".to_string(), "message".to_string()]), Some(false.into())),
+        parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
         output_schema: None,
     })
+}
+
+fn followup_task_properties(
+    target_description: &str,
+    message_description: &str,
+) -> BTreeMap<String, JsonSchema> {
+    BTreeMap::from([
+        (
+            "target".to_string(),
+            JsonSchema::string(Some(target_description.to_string())),
+        ),
+        (
+            "message".to_string(),
+            JsonSchema::string(Some(message_description.to_string())),
+        ),
+        (
+            "content".to_string(),
+            JsonSchema::array(
+                JsonSchema::object(
+                    BTreeMap::from([
+                        (
+                            "type".to_string(),
+                            JsonSchema::string(Some(
+                                "`text` for text parts or `image_ref` for image references."
+                                    .to_string(),
+                            )),
+                        ),
+                        (
+                            "text".to_string(),
+                            JsonSchema::string(Some("Text for a `text` content part.".to_string())),
+                        ),
+                        (
+                            "attachment_id".to_string(),
+                            JsonSchema::string(Some(
+                                "Model-visible attachment id for an image visible in the parent thread, for example `image-1`."
+                                    .to_string(),
+                            )),
+                        ),
+                    ]),
+                    Some(vec!["type".to_string()]),
+                    Some(false.into()),
+                ),
+                Some(
+                    "Structured followup content. Use text parts and image_ref parts; image_ref requires an attachment_id that is visible in the parent thread."
+                        .to_string(),
+                ),
+            ),
+        ),
+    ])
 }
 
 pub fn create_poll_external_event_tool() -> ToolSpec {
@@ -174,20 +213,10 @@ pub fn create_close_external_agent_tool() -> ToolSpec {
 }
 
 pub fn create_followup_task_tool() -> ToolSpec {
-    let properties = BTreeMap::from([
-        (
-            "target".to_string(),
-            JsonSchema::string(Some(
-                "Agent id or canonical task name to message (from spawn_agent).".to_string(),
-            )),
-        ),
-        (
-            "message".to_string(),
-            JsonSchema::string(Some(
-                "Message text to send to the target agent.".to_string(),
-            )),
-        ),
-    ]);
+    let properties = followup_task_properties(
+        "Agent id or canonical task name to message (from spawn_agent).",
+        "Message text to send to the target agent.",
+    );
 
     ToolSpec::Function(ResponsesApiTool {
         name: "followup_task".to_string(),
@@ -195,7 +224,7 @@ pub fn create_followup_task_tool() -> ToolSpec {
             .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::object(properties, Some(vec!["target".to_string(), "message".to_string()]), Some(false.into())),
+        parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
         output_schema: None,
     })
 }

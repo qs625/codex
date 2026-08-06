@@ -5,6 +5,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::AgentStatus;
 use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentContentPart;
 use serde::Serialize;
 use tool_service_api::FunctionCallError;
 
@@ -111,6 +112,7 @@ pub trait MultiAgentToolSession<Turn>: Send + Sync + 'static {
         call_id: String,
         target: String,
         message: String,
+        content_parts: Vec<InterAgentContentPart>,
     ) -> impl Future<Output = Result<(), FunctionCallError>> + Send + '_;
 
     fn wait_agent_tool(
@@ -160,6 +162,7 @@ where
         call_id: String,
         target: String,
         message: String,
+        content_parts: Vec<InterAgentContentPart>,
     ) -> impl Future<Output = Result<(), FunctionCallError>> + Send + '_ {
         <T as MultiAgentToolSession<Turn>>::followup_task_tool(
             Arc::clone(self.as_ref()),
@@ -167,6 +170,7 @@ where
             call_id,
             target,
             message,
+            content_parts,
         )
     }
 
