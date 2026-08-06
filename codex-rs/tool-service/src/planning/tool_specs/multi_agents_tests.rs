@@ -466,9 +466,23 @@ fn followup_task_tool_accepts_legacy_message_or_structured_content() {
         .expect("followup_task should use object params");
     assert!(properties.contains_key("target"));
     assert!(properties.contains_key("message"));
+    let message_description = properties
+        .get("message")
+        .and_then(|schema| schema.description.as_deref())
+        .expect("message should describe image_ref misuse");
+    assert!(message_description.contains("[image:image-1]"));
+    assert!(
+        message_description
+            .contains("content: [{\"type\":\"image_ref\",\"attachment_id\":\"image-1\"}]")
+    );
     let content = properties
         .get("content")
         .expect("structured content schema");
+    let content_description = content
+        .description
+        .as_deref()
+        .expect("content should describe image_ref text parts");
+    assert!(content_description.contains("Do not put image placeholders inside text parts"));
     let content_item = content
         .items
         .as_deref()
