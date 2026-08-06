@@ -87,35 +87,40 @@ type GitSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitSnapshot"]>
 type GitChange = GitSnapshot["changes"][number];
 type GitGraphItem = GitSnapshot["graph"][number];
 type GitGraphCommit = Extract<GitGraphItem, { type: "commit" }>;
-type GitGraphConnector = Extract<GitGraphItem, { type: "connector" }>;
 type GitCommitFilesSnapshot = Awaited<ReturnType<Window["codexDesktop"]["readGitCommitFiles"]>>;
 type GitCommitFile = GitCommitFilesSnapshot["files"][number];
-type GitGraphTopologySegment = "vertical" | "horizontal" | "diagonal-left" | "diagonal-right";
-type GitGraphTopologyPrimitive =
-  | {
-      type: "line";
-      lane: number;
-      segment: GitGraphTopologySegment;
-      x1: number;
-      y1: number;
-      x2: number;
-      y2: number;
-    }
-  | {
-      type: "dot";
-      lane: number;
-      x: number;
-      y: number;
-    };
-type GitGraphTopology = {
+type GitGraphVisualCommit = {
+  commit: GitGraphCommit;
+  rowIndex: number;
+  lane: number;
+  colorLane: number;
+  x: number;
+  y: number;
+};
+type GitGraphVisualPath = {
+  id: string;
+  lane: number;
+  colorLane: number;
+  kind: "main" | "branch";
+  d: string;
+};
+type GitGraphVisualModel = {
   width: number;
   height: number;
-  primitives: GitGraphTopologyPrimitive[];
+  commits: GitGraphVisualCommit[];
+  paths: GitGraphVisualPath[];
+};
+type GitGraphVisualOptions = {
+  expandedHeightsByHash?: Record<string, number>;
+  rowHeight?: number;
 };
 
-const GIT_GRAPH_LANE_WIDTH = 12;
-const GIT_GRAPH_COMMIT_ROW_HEIGHT = 30;
-const GIT_GRAPH_CONNECTOR_ROW_HEIGHT = 14;
+const GIT_GRAPH_SPINE_X = 18;
+const GIT_GRAPH_LANE_WIDTH = 24;
+const GIT_GRAPH_COMMIT_ROW_HEIGHT = 48;
+const GIT_COMMIT_FILE_ROW_HEIGHT = 28;
+const GIT_COMMIT_FILES_STATE_HEIGHT = 34;
+const GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM = 6;
 type PreviewDefinitionPositionEditor = {
   getModel(): {
     getWordAtPosition(position: PreviewDefinitionPosition): {
@@ -1600,20 +1605,13 @@ function GitPanel({
           ) : snapshot?.available === false ? (
             <GitEmptyState message={snapshot.error ?? "Git is unavailable for this workspace."} />
           ) : snapshot && graphCommitCount > 0 ? (
-            snapshot.graph.map((item, index) =>
-              isGitGraphCommit(item) ? (
-                <GitGraphRow
-                  key={item.hash}
-                  commit={item}
-                  filesSnapshot={commitFilesByHash[item.hash]}
-                  isLoadingFiles={Boolean(commitFilesLoadingByHash[item.hash])}
-                  isSelected={selectedCommitHash === item.hash}
-                  onToggle={() => toggleSelectedCommit(item)}
-                />
-              ) : (
-                <GitGraphConnectorRow key={`connector:${index}:${item.graph}`} connector={item} />
-              ),
-            )
+            <GitGraphVisualList
+              commitFilesByHash={commitFilesByHash}
+              commitFilesLoadingByHash={commitFilesLoadingByHash}
+              graph={snapshot.graph}
+              onToggleCommit={toggleSelectedCommit}
+              selectedCommitHash={selectedCommitHash}
+            />
           ) : (
             <GitEmptyState message="No commits found in this repository." />
           )}
@@ -1725,6 +1723,83 @@ function GitSectionHeader({
   );
 }
 
+function GitGraphVisualList({
+  commitFilesByHash,
+  commitFilesLoadingByHash,
+  graph,
+  onToggleCommit,
+  selectedCommitHash,
+}: {
+  commitFilesByHash: Record<string, GitCommitFilesSnapshot | undefined>;
+  commitFilesLoadingByHash: Record<string, boolean>;
+  graph: GitGraphItem[];
+  onToggleCommit: (commit: GitGraphCommit) => void;
+  selectedCommitHash: string | null;
+}) {
+  const selectedCommitExtraHeight = selectedCommitHash
+    ? estimateGitCommitFilesBlockHeight(
+        commitFilesByHash[selectedCommitHash],
+        Boolean(commitFilesLoadingByHash[selectedCommitHash]),
+      )
+    : 0;
+  const visualModel = buildGitGraphVisualModel(graph, {
+    expandedHeightsByHash:
+      selectedCommitHash && selectedCommitExtraHeight > 0
+        ? { [selectedCommitHash]: selectedCommitExtraHeight }
+        : undefined,
+  });
+  return (
+    <div
+      className="git-graph-visual-stack"
+      style={
+        {
+          "--git-graph-visual-width": `${visualModel.width}px`,
+        } as React.CSSProperties
+      }
+    >
+      <svg
+        className="git-graph-overlay"
+        width={visualModel.width}
+        height={visualModel.height}
+        viewBox={`0 0 ${visualModel.width} ${visualModel.height}`}
+        aria-hidden="true"
+        data-graph-overlay="true"
+      >
+        {visualModel.paths.map((path) => (
+          <path
+            key={path.id}
+            className={`git-graph-path ${path.kind} lane-${path.colorLane % 6}`}
+            d={path.d}
+            data-graph-path-kind={path.kind}
+          />
+        ))}
+        {visualModel.commits.map((visualCommit) => (
+          <circle
+            key={`dot:${visualCommit.commit.hash}`}
+            className={`git-graph-dot lane-${visualCommit.colorLane % 6} ${
+              visualCommit.lane === 0 ? "main" : "branch"
+            } ${selectedCommitHash === visualCommit.commit.hash ? "selected" : ""}`}
+            cx={visualCommit.x}
+            cy={visualCommit.y}
+            r={visualCommit.lane === 0 ? 4 : 4.25}
+            data-graph-dot-lane={visualCommit.lane}
+          />
+        ))}
+      </svg>
+      {visualModel.commits.map((visualCommit) => (
+        <GitGraphRow
+          key={visualCommit.commit.hash}
+          commit={visualCommit.commit}
+          filesSnapshot={commitFilesByHash[visualCommit.commit.hash]}
+          isLoadingFiles={Boolean(commitFilesLoadingByHash[visualCommit.commit.hash])}
+          isSelected={selectedCommitHash === visualCommit.commit.hash}
+          onToggle={() => onToggleCommit(visualCommit.commit)}
+        />
+      ))}
+    </div>
+  );
+}
+
 function GitGraphRow({
   commit,
   filesSnapshot,
@@ -1766,7 +1841,7 @@ function GitGraphRow({
         }}
       >
         <div className="git-graph-lanes" aria-hidden="true" data-drag-scroll-handle="true">
-          {renderGraphPrefix(commit.graph, GIT_GRAPH_COMMIT_ROW_HEIGHT)}
+          <span className="git-graph-lane-placeholder" />
         </div>
         <div className="git-graph-copy">
           <div className="git-graph-subject-line">
@@ -1793,16 +1868,6 @@ function GitGraphRow({
         <GitCommitFileList filesSnapshot={filesSnapshot} isLoading={isLoadingFiles} />
       ) : null}
     </article>
-  );
-}
-
-function GitGraphConnectorRow({ connector }: { connector: GitGraphConnector }) {
-  return (
-    <div className="git-graph-connector-row" aria-hidden="true">
-      <div className="git-graph-lanes connector" data-drag-scroll-handle="true">
-        {renderGraphPrefix(connector.graph, GIT_GRAPH_CONNECTOR_ROW_HEIGHT)}
-      </div>
-    </div>
   );
 }
 
@@ -1860,152 +1925,151 @@ function fileIconLabel(path: string) {
   return extension && extension.length <= 3 ? extension.slice(0, 2) : "F";
 }
 
-function renderGraphPrefix(graph: string, rowHeight: number) {
-  const topology = buildGitGraphTopology(graph, rowHeight);
-  return (
-    <svg
-      className="git-graph-svg"
-      width={topology.width}
-      height={topology.height}
-      viewBox={`0 0 ${topology.width} ${topology.height}`}
-      data-graph-svg="true"
-    >
-      {topology.primitives.map((primitive, index) => {
-        if (primitive.type === "dot") {
-          return (
-            <circle
-              key={`dot:${index}:${primitive.lane}`}
-              className={`git-graph-dot lane-${primitive.lane % 6}`}
-              cx={primitive.x}
-              cy={primitive.y}
-              r="4"
-              data-graph-dot="true"
-            />
-          );
-        }
-        return (
-          <line
-            key={`line:${index}:${primitive.lane}:${primitive.segment}`}
-            className={`git-graph-line lane-${primitive.lane % 6} ${primitive.segment}`}
-            x1={primitive.x1}
-            y1={primitive.y1}
-            x2={primitive.x2}
-            y2={primitive.y2}
-            data-graph-segment={primitive.segment}
-          />
-        );
-      })}
-    </svg>
-  );
-}
-
-export function buildGitGraphTopology(
-  graph: string,
-  rowHeight = GIT_GRAPH_COMMIT_ROW_HEIGHT,
-): GitGraphTopology {
-  const chars = graphTopologyChars(graph);
-  const primitives: GitGraphTopologyPrimitive[] = [];
-  let maxLane = Math.max(0, chars.length - 1);
-  const middleY = rowHeight / 2;
-
-  chars.forEach((char, index) => {
-    const segments = graphSegmentsForChar(char);
-    const commit = char === "*";
-    for (const segment of commit ? uniqueSegments(["vertical", ...segments]) : segments) {
-      if (segment === "vertical") {
-        primitives.push({
-          type: "line",
-          lane: index,
-          segment,
-          x1: laneCenterX(index),
-          y1: 0,
-          x2: laneCenterX(index),
-          y2: rowHeight,
-        });
-      } else if (segment === "horizontal") {
-        maxLane = Math.max(maxLane, index + 1);
-        primitives.push({
-          type: "line",
-          lane: index,
-          segment,
-          x1: laneCenterX(index),
-          y1: middleY,
-          x2: laneCenterX(index + 1),
-          y2: middleY,
-        });
-      } else if (segment === "diagonal-left") {
-        const targetLane = Math.max(0, index - 1);
-        primitives.push({
-          type: "line",
-          lane: index,
-          segment,
-          x1: laneCenterX(index),
-          y1: 0,
-          x2: laneCenterX(targetLane),
-          y2: rowHeight,
-        });
-      } else {
-        maxLane = Math.max(maxLane, index + 1);
-        primitives.push({
-          type: "line",
-          lane: index,
-          segment,
-          x1: laneCenterX(index),
-          y1: 0,
-          x2: laneCenterX(index + 1),
-          y2: rowHeight,
-        });
-      }
-    }
-    if (commit) {
-      primitives.push({
-        type: "dot",
-        lane: index,
-        x: laneCenterX(index),
-        y: middleY,
-      });
-    }
+export function buildGitGraphVisualModel(
+  graph: GitGraphItem[],
+  options: GitGraphVisualOptions | number = {},
+): GitGraphVisualModel {
+  const rowHeight = typeof options === "number" ? options : options.rowHeight ?? GIT_GRAPH_COMMIT_ROW_HEIGHT;
+  const expandedHeightsByHash = typeof options === "number" ? undefined : options.expandedHeightsByHash;
+  const commits = graph.filter(isGitGraphCommit);
+  let nextRowTop = 0;
+  const visualCommits = commits.map((commit, rowIndex): GitGraphVisualCommit => {
+    const lane = gitGraphVisualLane(commit);
+    const visualCommit = {
+      commit,
+      rowIndex,
+      lane,
+      colorLane: lane,
+      x: laneCenterX(lane),
+      y: nextRowTop + rowHeight / 2,
+    };
+    nextRowTop += rowHeight + (expandedHeightsByHash?.[commit.hash] ?? 0);
+    return visualCommit;
   });
+  const maxLane = Math.max(0, ...visualCommits.map((commit) => commit.lane));
+  const height = Math.max(rowHeight, nextRowTop);
+  const paths: GitGraphVisualPath[] = [];
+
+  if (visualCommits.length > 0) {
+    const firstY = visualCommits[0].y;
+    const lastY = visualCommits[visualCommits.length - 1].y;
+    paths.push({
+      id: "main-spine",
+      lane: 0,
+      colorLane: 0,
+      kind: "main",
+      d: `M ${laneCenterX(0)} ${firstY} L ${laneCenterX(0)} ${lastY}`,
+    });
+  }
+
+  let index = 0;
+  while (index < visualCommits.length) {
+    const current = visualCommits[index];
+    if (current.lane === 0) {
+      index += 1;
+      continue;
+    }
+
+    const runStart = index;
+    const lane = current.lane;
+    while (index < visualCommits.length && visualCommits[index].lane === lane) {
+      index += 1;
+    }
+    const run = visualCommits.slice(runStart, index);
+    const startAnchor = findMainlineCommitBefore(visualCommits, runStart);
+    const endAnchor = findMainlineCommitAfter(visualCommits, index);
+    paths.push({
+      id: `branch:${runStart}:${index}:${lane}`,
+      lane,
+      colorLane: lane,
+      kind: "branch",
+      d: buildBranchPath(run, startAnchor, endAnchor, rowHeight),
+    });
+  }
 
   return {
     width: laneCenterX(maxLane) + GIT_GRAPH_LANE_WIDTH / 2,
-    height: rowHeight,
-    primitives,
+    height,
+    commits: visualCommits,
+    paths,
   };
 }
 
-function graphTopologyChars(graph: string) {
-  const chars = graph.length > 0 ? [...graph] : ["*"];
-  let lastMeaningfulIndex = chars.length - 1;
-  while (lastMeaningfulIndex > 0 && chars[lastMeaningfulIndex]?.trim() === "") {
-    lastMeaningfulIndex -= 1;
+function estimateGitCommitFilesBlockHeight(
+  filesSnapshot: GitCommitFilesSnapshot | undefined,
+  isLoadingFiles: boolean,
+) {
+  if (isLoadingFiles && !filesSnapshot) {
+    return GIT_COMMIT_FILES_STATE_HEIGHT + GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM;
   }
-  return chars.slice(0, lastMeaningfulIndex + 1);
+  if (!filesSnapshot || filesSnapshot.available === false || filesSnapshot.files.length === 0) {
+    return GIT_COMMIT_FILES_STATE_HEIGHT + GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM;
+  }
+  return filesSnapshot.files.length * GIT_COMMIT_FILE_ROW_HEIGHT + GIT_COMMIT_FILES_BLOCK_MARGIN_BOTTOM;
+}
+
+function gitGraphVisualLane(commit: GitGraphCommit) {
+  if (commit.parents.length > 1) {
+    return 0;
+  }
+  const markerIndex = [...commit.graph].findIndex((char) => char === "*");
+  if (markerIndex <= 0) {
+    return 0;
+  }
+  const occupiedLaneCount = [...commit.graph.slice(0, markerIndex)].filter(
+    (char) => char.trim().length > 0,
+  ).length;
+  return Math.min(Math.max(0, occupiedLaneCount), 3);
+}
+
+function findMainlineCommitBefore(commits: GitGraphVisualCommit[], beforeIndex: number) {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    if (commits[index].lane === 0) {
+      return commits[index];
+    }
+  }
+  return null;
+}
+
+function findMainlineCommitAfter(commits: GitGraphVisualCommit[], afterIndex: number) {
+  for (let index = afterIndex; index < commits.length; index += 1) {
+    if (commits[index].lane === 0) {
+      return commits[index];
+    }
+  }
+  return null;
+}
+
+function buildBranchPath(
+  run: GitGraphVisualCommit[],
+  startAnchor: GitGraphVisualCommit | null,
+  endAnchor: GitGraphVisualCommit | null,
+  rowHeight: number,
+) {
+  const first = run[0];
+  const last = run[run.length - 1];
+  const spineX = laneCenterX(0);
+  const branchX = first.x;
+  const startY = startAnchor?.y ?? first.y - rowHeight;
+  const endY = endAnchor?.y ?? last.y + rowHeight;
+  const pull = Math.max(GIT_GRAPH_LANE_WIDTH, (branchX - spineX) * 0.72);
+  const commands = [
+    `M ${spineX} ${startY}`,
+    `C ${spineX + pull} ${startY} ${branchX} ${first.y - rowHeight * 0.34} ${branchX} ${first.y}`,
+  ];
+
+  for (const nextCommit of run.slice(1)) {
+    commands.push(`L ${branchX} ${nextCommit.y}`);
+  }
+
+  commands.push(
+    `C ${branchX} ${last.y + rowHeight * 0.34} ${spineX + pull} ${endY} ${spineX} ${endY}`,
+  );
+  return commands.join(" ");
 }
 
 function laneCenterX(lane: number) {
-  return lane * GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_LANE_WIDTH / 2;
-}
-
-function graphSegmentsForChar(char: string): GitGraphTopologySegment[] {
-  switch (char) {
-    case "*":
-    case "|":
-      return ["vertical"];
-    case "/":
-      return ["diagonal-left"];
-    case "\\":
-      return ["diagonal-right"];
-    case "_":
-    case "-":
-      return ["horizontal"];
-    default:
-      return char.trim() ? ["vertical"] : [];
-  }
-}
-
-function uniqueSegments(segments: GitGraphTopologySegment[]) {
-  return [...new Set(segments)];
+  return lane * GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_SPINE_X;
 }
 
 function GitChangeGroup({
