@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Weak;
 
+#[cfg(test)]
 use protocol::AgentPath;
 use protocol::models::ResponseItem;
 use protocol::models::WorkflowRunProgressEvent;
@@ -17,6 +18,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use thread_service_api::NativeAgentRuntime;
 use thread_service_api::NativeTurnEventRuntime;
+use thread_service_api::ThreadFollowupTaskInput;
 use thread_service_api::ThreadPollEvent;
 use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
@@ -80,7 +82,7 @@ pub trait WorkflowNativeAgentRuntime: Send + Sync + 'static {
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
 }
 
@@ -131,9 +133,9 @@ where
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
-        NativeAgentRuntime::followup_task(self, turn, call_id, target, message)
+        NativeAgentRuntime::followup_task(self, turn, call_id, target, input)
     }
 }
 
@@ -437,7 +439,10 @@ impl WorkflowRuntimeBridge for ThreadWorkflowRuntimeBridge {
                             Arc::clone(&turn),
                             workflow_tool_call_id(&request, "followup_task"),
                             tool_call.target,
-                            tool_call.message,
+                            ThreadFollowupTaskInput {
+                                message: tool_call.message,
+                                content_parts: Vec::new(),
+                            },
                         )
                         .await
                         .map_err(runtime_error_from_tool_error)?;

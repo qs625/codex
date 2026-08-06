@@ -28,6 +28,7 @@ use thread_service_api::PersistedThreadProviderFactsRuntime;
 use thread_service_api::PersistedThreadProviderFactsSelector;
 use thread_service_api::RootThreadProviderResolutionError;
 use thread_service_api::RootThreadProviderRoute;
+use thread_service_api::ThreadAgentDetails;
 use thread_service_api::ThreadAgentDirectoryRuntime;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
@@ -43,7 +44,6 @@ use thread_service_api::ThreadProviderRootCapability;
 use thread_service_api::ThreadProviderRuntimeCapabilities;
 use thread_service_api::ThreadProviderRuntimeDescriptor;
 use thread_service_api::ThreadProviderRuntimeKind;
-use thread_service_api::ThreadAgentDetails;
 use thread_service_api::ThreadReadAgentResult;
 use thread_service_api::ThreadServiceFuture;
 use thread_service_api::ThreadShutdownReport;
@@ -413,7 +413,7 @@ impl NativeAgentRuntime for ThreadService {
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: thread_service_api::ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
         Box::pin(async move {
             let turn = turn_context(turn)?;
@@ -422,7 +422,8 @@ impl NativeAgentRuntime for ThreadService {
                 Arc::clone(&turn),
                 call_id,
                 target,
-                message,
+                input.message,
+                input.content_parts,
             )
             .await
         })
@@ -506,7 +507,7 @@ impl ThreadCollaborationRuntime for ThreadService {
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: thread_service_api::ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
         Box::pin(async move {
             let turn = turn_context(turn)?;
@@ -515,7 +516,8 @@ impl ThreadCollaborationRuntime for ThreadService {
                 Arc::clone(&turn),
                 call_id,
                 target,
-                message,
+                input.message,
+                input.content_parts,
             )
             .await
         })

@@ -3390,10 +3390,7 @@ async fn external_stream_loop_persists_and_broadcasts_initial_context_prompt() {
     };
     let expected_context_prompt =
         crate::agent::external::external_agent_context_prompt_for_run(initial_task, &run);
-    harness
-        .control
-        .external_agents
-        .insert_running(run);
+    harness.control.external_agents.insert_running(run);
     let mut thread_created_rx = harness.manager.subscribe_thread_created();
     let mut stream =
         FakeExternalStream::new(vec![crate::agent::external::ExternalProcessEvent::Cli(
@@ -4103,20 +4100,23 @@ async fn external_stream_loop_broadcasts_stdin_error_as_turn_agent_message() {
         .control
         .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
         .await;
-    harness.control.external_agents.insert_running(ExternalAgentRun {
-        thread_id: external_thread_id,
-        parent_thread_id: root_thread_id,
-        agent_path: external_agent_path,
-        provider: SpawnAgentProvider::CodexCli,
-        depth: 1,
-        spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
-        input_sink: None,
-        live_thread: Some(live_thread),
-        status: AgentStatus::Running,
-        active_turn_id: None,
-        last_task_message: Some(initial_task.to_string()),
-        abort_handle: None,
-    });
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path,
+            provider: SpawnAgentProvider::CodexCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some(initial_task.to_string()),
+            abort_handle: None,
+        });
     let mut thread_created_rx = harness.manager.subscribe_thread_created();
     let mut stream = FakeExternalStream::new(vec![
         crate::agent::external::ExternalProcessEvent::StdinError(
@@ -4137,9 +4137,7 @@ async fn external_stream_loop_broadcasts_stdin_error_as_turn_agent_message() {
 
     assert_eq!(
         status,
-        AgentStatus::Errored(
-            "codex_cli app-server turn completed with status failed".to_string()
-        )
+        AgentStatus::Errored("codex_cli app-server turn completed with status failed".to_string())
     );
     let mut broadcast_agent_message = None;
     for _ in 0..8 {
@@ -4203,20 +4201,23 @@ async fn external_stream_loop_broadcasts_provider_display_items_before_final_mes
         .control
         .persist_thread_spawn_edge_for_source(external_thread_id, Some(&session_source))
         .await;
-    harness.control.external_agents.insert_running(ExternalAgentRun {
-        thread_id: external_thread_id,
-        parent_thread_id: root_thread_id,
-        agent_path: external_agent_path,
-        provider: SpawnAgentProvider::CodexCli,
-        depth: 1,
-        spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
-        input_sink: None,
-        live_thread: Some(live_thread),
-        status: AgentStatus::Running,
-        active_turn_id: None,
-        last_task_message: Some(initial_task.to_string()),
-        abort_handle: None,
-    });
+    harness
+        .control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_thread_id,
+            parent_thread_id: root_thread_id,
+            agent_path: external_agent_path,
+            provider: SpawnAgentProvider::CodexCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: Some(live_thread),
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some(initial_task.to_string()),
+            abort_handle: None,
+        });
     let mut thread_created_rx = harness.manager.subscribe_thread_created();
     let mut stream = FakeExternalStream::new(vec![
         crate::agent::external::ExternalProcessEvent::Cli(
@@ -7024,6 +7025,7 @@ async fn followup_task_by_thread_id_restores_persisted_child_after_restart() {
         "call-followup".to_string(),
         worker_thread_id.to_string(),
         "followup after restart".to_string(),
+        Vec::new(),
     )
     .await
     .expect("followup_task should restore and deliver to persisted child thread id");
@@ -7143,6 +7145,7 @@ async fn followup_task_by_path_does_not_restore_archived_persisted_child() {
         "call-followup".to_string(),
         worker_path.as_str().to_string(),
         "followup after restart".to_string(),
+        Vec::new(),
     )
     .await
     .expect_err("followup_task should not restore an archived persisted child by path");
@@ -7223,6 +7226,7 @@ async fn followup_task_by_thread_id_does_not_restore_archived_persisted_child() 
         "call-followup".to_string(),
         worker_thread_id.to_string(),
         "followup after restart".to_string(),
+        Vec::new(),
     )
     .await
     .expect_err("followup_task should not restore an archived persisted child by thread id");
@@ -7296,6 +7300,7 @@ async fn followup_task_by_path_does_not_restore_deleted_metadata_child() {
         "call-followup".to_string(),
         worker_path.as_str().to_string(),
         "followup after restart".to_string(),
+        Vec::new(),
     )
     .await
     .expect_err("followup_task should not restore a deleted metadata child by path");
@@ -7369,6 +7374,7 @@ async fn followup_task_by_thread_id_does_not_restore_deleted_metadata_child() {
         "call-followup".to_string(),
         worker_thread_id.to_string(),
         "followup after restart".to_string(),
+        Vec::new(),
     )
     .await
     .expect_err("followup_task should not restore a deleted metadata child by thread id");
@@ -7494,6 +7500,7 @@ async fn followup_task_by_path_restores_latest_completed_generation_after_stale_
         "call-followup".to_string(),
         worker_path.as_str().to_string(),
         "followup after restart".to_string(),
+        Vec::new(),
     )
     .await
     .expect("followup_task should select the latest completed generation");
@@ -7649,6 +7656,7 @@ async fn followup_task_by_path_ignores_archived_old_generation() {
         "call-followup".to_string(),
         worker_path.as_str().to_string(),
         "followup after restart".to_string(),
+        Vec::new(),
     )
     .await
     .expect("followup_task should select the current non-archived generation");
@@ -7894,6 +7902,7 @@ async fn followup_task_to_completed_child_does_not_emit_old_completion() {
         "followup-call".to_string(),
         worker_path.to_string(),
         "please continue".to_string(),
+        Vec::new(),
     )
     .await
     .expect("followup_task should enqueue input for completed child");

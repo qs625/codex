@@ -732,12 +732,28 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InterAgentContentPart {
+    Text {
+        text: String,
+    },
+    ImageRef {
+        attachment_id: String,
+        #[serde(default)]
+        #[ts(optional = false, type = "string | null")]
+        image_url: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
 pub struct InterAgentCommunication {
     pub author: AgentPath,
     pub recipient: AgentPath,
     #[serde(default)]
     pub other_recipients: Vec<AgentPath>,
     pub content: String,
+    #[serde(default)]
+    pub content_parts: Vec<InterAgentContentPart>,
     #[serde(default)]
     pub operation: InterAgentOperation,
     #[serde(default = "default_true")]
@@ -772,6 +788,7 @@ impl InterAgentCommunication {
             recipient,
             other_recipients,
             content,
+            content_parts: Vec::new(),
             operation,
             trigger_turn: true,
             sender_thread_id: None,
@@ -780,6 +797,11 @@ impl InterAgentCommunication {
             agent_nickname: None,
             agent_role: None,
         }
+    }
+
+    pub fn with_content_parts(mut self, content_parts: Vec<InterAgentContentPart>) -> Self {
+        self.content_parts = content_parts;
+        self
     }
 
     pub fn with_trigger_turn(mut self, trigger_turn: bool) -> Self {
@@ -813,6 +835,45 @@ impl InterAgentCommunication {
     }
 
     pub fn to_response_input_item(&self) -> ResponseInputItem {
+        if !self.content_parts.is_empty() {
+            let mut content = Vec::new();
+            for part in &self.content_parts {
+                match part {
+                    InterAgentContentPart::Text { text } => {
+                        content.push(ContentItem::InputText { text: text.clone() });
+                    }
+                    InterAgentContentPart::ImageRef {
+                        attachment_id,
+                        image_url: Some(image_url),
+                    } => {
+                        content.push(ContentItem::InputText {
+                            text: format!("Image attachment_id={attachment_id} begins"),
+                        });
+                        content.push(ContentItem::InputText {
+                            text: crate::models::image_open_tag_text_with_attachment_id(
+                                attachment_id,
+                            ),
+                        });
+                        content.push(ContentItem::InputImage {
+                            image_url: image_url.clone(),
+                            detail: Some(crate::models::DEFAULT_IMAGE_DETAIL),
+                        });
+                        content.push(ContentItem::InputText {
+                            text: crate::models::image_close_tag_text(),
+                        });
+                        content.push(ContentItem::InputText {
+                            text: format!("Image attachment_id={attachment_id} ends"),
+                        });
+                    }
+                    InterAgentContentPart::ImageRef { .. } => {}
+                }
+            }
+            return ResponseInputItem::Message {
+                role: "user".to_string(),
+                content,
+                phase: None,
+            };
+        }
         ResponseInputItem::Message {
             role: "assistant".to_string(),
             content: vec![ContentItem::OutputText {

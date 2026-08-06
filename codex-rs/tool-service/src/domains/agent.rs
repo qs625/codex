@@ -29,14 +29,16 @@ use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::BuiltinToolCallDisplayEvent;
 use protocol::protocol::BuiltinToolCallStatus;
 use protocol::protocol::EventMsg;
+use protocol::protocol::InterAgentContentPart;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 use thread_service_api::NativeAgentRuntime;
+use thread_service_api::NativeTurnEventRuntime;
 use thread_service_api::SessionAgentJobCaller;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
-use thread_service_api::NativeTurnEventRuntime;
+use thread_service_api::ThreadFollowupTaskInput;
 use thread_service_api::ThreadListAgentsResult;
 use thread_service_api::ThreadPollEventRequest;
 use thread_service_api::ThreadPollEventResult;
@@ -87,7 +89,7 @@ pub trait AgentToolRuntime: Send + Sync + 'static {
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
 
     fn close_agent<'a>(
@@ -123,7 +125,7 @@ pub trait AgentToolRuntime: Send + Sync + 'static {
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
 
     fn close_external_agent<'a>(
@@ -178,9 +180,9 @@ where
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
-        NativeAgentRuntime::followup_task(self, turn, call_id, target, message)
+        NativeAgentRuntime::followup_task(self, turn, call_id, target, input)
     }
 
     fn close_agent<'a>(
@@ -224,9 +226,9 @@ where
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
-        ThreadCollaborationRuntime::followup_external_task(self, turn, call_id, target, message)
+        ThreadCollaborationRuntime::followup_external_task(self, turn, call_id, target, input)
     }
 
     fn close_external_agent<'a>(
@@ -353,13 +355,13 @@ pub(crate) async fn dispatch(
         }
         FOLLOWUP_TASK_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
-            let (target, message) = followup_task_from_arguments(&arguments)?;
+            let (target, input) = followup_task_from_arguments(&arguments)?;
             agent_runtime
                 .followup_task(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
                     target,
-                    message,
+                    input,
                 )
                 .await?;
             FunctionToolOutput::from_text(String::new(), Some(true))
@@ -383,13 +385,13 @@ pub(crate) async fn dispatch(
         }
         FOLLOWUP_EXTERNAL_TASK_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
-            let (target, message) = followup_task_from_arguments(&arguments)?;
+            let (target, input) = followup_task_from_arguments(&arguments)?;
             agent_runtime
                 .followup_external_task(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
                     target,
-                    message,
+                    input,
                 )
                 .await?;
             FunctionToolOutput::from_text(String::new(), Some(true))
@@ -803,7 +805,9 @@ struct SpawnExternalAgentArgs {
 #[serde(deny_unknown_fields)]
 struct FollowupTaskArgs {
     target: String,
-    message: String,
+    message: Option<String>,
+    #[serde(default)]
+    content: Vec<InterAgentContentPart>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -841,9 +845,17 @@ fn spawn_agent_request_from_arguments(
     args.into_request()
 }
 
-fn followup_task_from_arguments(arguments: &str) -> Result<(String, String), FunctionCallError> {
+fn followup_task_from_arguments(
+    arguments: &str,
+) -> Result<(String, ThreadFollowupTaskInput), FunctionCallError> {
     let args: FollowupTaskArgs = parse_arguments(arguments)?;
-    Ok((args.target, args.message))
+    Ok((
+        args.target,
+        ThreadFollowupTaskInput {
+            message: args.message.unwrap_or_default(),
+            content_parts: args.content,
+        },
+    ))
 }
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
@@ -912,7 +924,7 @@ mod tests {
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
             _call_id: String,
             _target: String,
-            _message: String,
+            _input: ThreadFollowupTaskInput,
         ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
             Box::pin(async { unreachable!("followup_task should not be called in this test") })
         }
@@ -960,7 +972,7 @@ mod tests {
             _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
             _call_id: String,
             _target: String,
-            _message: String,
+            _input: ThreadFollowupTaskInput,
         ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>> {
             Box::pin(async {
                 unreachable!("followup_external_task should not be called in this test")

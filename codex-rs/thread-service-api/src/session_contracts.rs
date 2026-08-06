@@ -66,6 +66,7 @@ use protocol::protocol::AgentStatus;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::EventMsg;
 use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentContentPart;
 use protocol::protocol::McpServerRefreshConfig;
 use protocol::protocol::Op;
 use protocol::protocol::SessionConfiguredEvent;
@@ -258,6 +259,13 @@ pub enum ThreadSpawnAgentResult {
     HiddenMetadata {
         task_name: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadFollowupTaskInput {
+    pub message: String,
+    #[serde(default)]
+    pub content_parts: Vec<InterAgentContentPart>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -790,7 +798,7 @@ pub trait NativeAgentRuntime: Send + Sync + 'static {
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
 
     fn close_agent<'a>(
@@ -832,7 +840,7 @@ pub trait ThreadCollaborationRuntime: Send + Sync + 'static {
         turn: Arc<dyn ThreadTurnCapability>,
         call_id: String,
         target: String,
-        message: String,
+        input: ThreadFollowupTaskInput,
     ) -> ThreadServiceFuture<'a, Result<(), FunctionCallError>>;
 
     fn close_external_agent<'a>(

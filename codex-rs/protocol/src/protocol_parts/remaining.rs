@@ -274,6 +274,7 @@ mod tests {
             recipient: AgentPath::root().join("reviewer").expect("recipient path"),
             other_recipients: vec![AgentPath::root().join("worker").expect("recipient path")],
             content: "review the diff".to_string(),
+            content_parts: Vec::new(),
             operation: InterAgentOperation::Unknown,
             trigger_turn: true,
             sender_thread_id: None,
@@ -291,6 +292,56 @@ mod tests {
                     text: serde_json::to_string(&communication).expect("serialize communication"),
                 }],
                 phase: Some(MessagePhase::Commentary),
+            }
+        );
+    }
+
+    #[test]
+    fn inter_agent_communication_structured_image_ref_becomes_user_image_input() {
+        let image_url = "data:image/png;base64,abc".to_string();
+        let communication = InterAgentCommunication::new(
+            AgentPath::root(),
+            AgentPath::root().join("reviewer").expect("recipient path"),
+            Vec::new(),
+            "[image:img-1]".to_string(),
+            InterAgentOperation::FollowupTask,
+        )
+        .with_content_parts(vec![
+            InterAgentContentPart::Text {
+                text: "Please inspect this UI.".to_string(),
+            },
+            InterAgentContentPart::ImageRef {
+                attachment_id: "img-1".to_string(),
+                image_url: Some(image_url.clone()),
+            },
+        ]);
+
+        assert_eq!(
+            communication.to_response_input_item(),
+            ResponseInputItem::Message {
+                role: "user".to_string(),
+                content: vec![
+                    ContentItem::InputText {
+                        text: "Please inspect this UI.".to_string(),
+                    },
+                    ContentItem::InputText {
+                        text: "Image attachment_id=img-1 begins".to_string(),
+                    },
+                    ContentItem::InputText {
+                        text: crate::models::image_open_tag_text_with_attachment_id("img-1"),
+                    },
+                    ContentItem::InputImage {
+                        image_url,
+                        detail: Some(crate::models::DEFAULT_IMAGE_DETAIL),
+                    },
+                    ContentItem::InputText {
+                        text: crate::models::image_close_tag_text(),
+                    },
+                    ContentItem::InputText {
+                        text: "Image attachment_id=img-1 ends".to_string(),
+                    },
+                ],
+                phase: None,
             }
         );
     }

@@ -515,6 +515,49 @@ fn skips_unnamed_image_label_text() {
 }
 
 #[test]
+fn skips_attachment_image_label_text() {
+    let image_url = "data:image/png;base64,abc".to_string();
+    let user_text = "Please review this image.".to_string();
+
+    let item = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![
+            ContentItem::InputText {
+                text: protocol::models::image_open_tag_text_with_attachment_id("image-1"),
+            },
+            ContentItem::InputImage {
+                image_url: image_url.clone(),
+                detail: Some(DEFAULT_IMAGE_DETAIL),
+            },
+            ContentItem::InputText {
+                text: protocol::models::image_close_tag_text(),
+            },
+            ContentItem::InputText {
+                text: user_text.clone(),
+            },
+        ],
+        phase: None,
+    };
+
+    let turn_item = parse_turn_item(&item).expect("expected user message turn item");
+
+    match turn_item {
+        TurnItem::UserMessage(user) => {
+            let expected_content = vec![
+                UserInput::Image { image_url },
+                UserInput::Text {
+                    text: user_text,
+                    text_elements: Vec::new(),
+                },
+            ];
+            assert_eq!(user.content, expected_content);
+        }
+        other => panic!("expected TurnItem::UserMessage, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_event_command_event_as_distinct_turn_item() {
     let event = EventCommandEvent {
         subscription_id: "sub-command".to_string(),

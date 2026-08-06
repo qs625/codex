@@ -18,6 +18,9 @@ use codex_agent_runtime::SpawnExternalAgentToolRequest;
 use codex_agent_runtime::render_input_preview;
 use protocol::AgentPath;
 use protocol::ThreadId;
+use protocol::models::ContentItem;
+use protocol::models::ResponseItem;
+use protocol::models::image_attachment_id_from_open_tag_text;
 use protocol::protocol::CollabAgentInteractionBeginEvent;
 use protocol::protocol::CollabAgentInteractionEndEvent;
 use protocol::protocol::CollabAgentSpawnBeginEvent;
@@ -28,6 +31,7 @@ use protocol::protocol::CollabListAgentsBeginEvent;
 use protocol::protocol::CollabListAgentsEndEvent;
 use protocol::protocol::CollabListedAgent;
 use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentContentPart;
 use protocol::protocol::InterAgentOperation;
 use protocol::protocol::Op;
 use protocol::protocol::SessionSource;
@@ -96,8 +100,9 @@ pub(crate) async fn followup_external_task_tool(
     call_id: String,
     target: String,
     message: String,
+    content_parts: Vec<InterAgentContentPart>,
 ) -> Result<(), FunctionCallError> {
-    followup_task_tool(session, turn, call_id, target, message).await
+    followup_task_tool(session, turn, call_id, target, message, content_parts).await
 }
 
 pub(crate) async fn close_external_agent_tool(
@@ -133,8 +138,12 @@ pub(crate) async fn followup_task_tool(
     call_id: String,
     target: String,
     message: String,
+    content_parts: Vec<InterAgentContentPart>,
 ) -> Result<(), FunctionCallError> {
-    let prompt = message_content(message)?;
+    let visible_attachments =
+        visible_image_attachments_from_history(session.clone_history().await.raw_items());
+    let (prompt, content_parts) =
+        followup_message_content(message, content_parts, &visible_attachments)?;
     let sender_thread_id = session.thread_id();
     let sender_agent_path = session.current_agent_path_for_turn(turn.as_ref());
     let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
@@ -169,6 +178,7 @@ pub(crate) async fn followup_task_tool(
         prompt.clone(),
         InterAgentOperation::FollowupTask,
     )
+    .with_content_parts(content_parts)
     .with_thread_ids(sender_thread_id, receiver_thread_id);
     let result = session
         .send_inter_agent_communication(receiver_thread_id, communication.with_trigger_turn(true))
@@ -363,6 +373,111 @@ fn message_content(message: String) -> Result<String, FunctionCallError> {
         ));
     }
     Ok(message)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VisibleImageAttachment {
+    attachment_id: String,
+    image_url: String,
+}
+
+fn visible_image_attachments_from_history(items: &[ResponseItem]) -> Vec<VisibleImageAttachment> {
+    let mut attachments = Vec::new();
+    for item in items {
+        let ResponseItem::Message { content, .. } = item else {
+            continue;
+        };
+        for (index, content_item) in content.iter().enumerate() {
+            let ContentItem::InputImage { image_url, .. } = content_item else {
+                continue;
+            };
+            let Some(ContentItem::InputText { text }) = index
+                .checked_sub(1)
+                .and_then(|previous| content.get(previous))
+            else {
+                continue;
+            };
+            let Some(attachment_id) = image_attachment_id_from_open_tag_text(text) else {
+                continue;
+            };
+            attachments.push(VisibleImageAttachment {
+                attachment_id: attachment_id.to_string(),
+                image_url: image_url.clone(),
+            });
+        }
+    }
+    attachments
+}
+
+fn followup_message_content(
+    message: String,
+    content_parts: Vec<InterAgentContentPart>,
+    visible_attachments: &[VisibleImageAttachment],
+) -> Result<(String, Vec<InterAgentContentPart>), FunctionCallError> {
+    if content_parts.is_empty() {
+        return message_content(message).map(|message| (message, Vec::new()));
+    }
+
+    let mut preview_parts = Vec::new();
+    let mut resolved_content_parts = Vec::with_capacity(content_parts.len());
+    for part in content_parts {
+        match part {
+            InterAgentContentPart::Text { text } => {
+                let text = text.trim();
+                if !text.is_empty() {
+                    preview_parts.push(text.to_string());
+                    resolved_content_parts.push(InterAgentContentPart::Text {
+                        text: text.to_string(),
+                    });
+                }
+            }
+            InterAgentContentPart::ImageRef {
+                attachment_id,
+                image_url: _,
+            } => {
+                let attachment_id = attachment_id.trim();
+                if attachment_id.is_empty() {
+                    return Err(FunctionCallError::RespondToModel(
+                        "image_ref content requires a non-empty attachment_id".to_string(),
+                    ));
+                }
+                let image_url = resolve_visible_image_ref(attachment_id, visible_attachments)?;
+                preview_parts.push(format!("[image:{attachment_id}]"));
+                resolved_content_parts.push(InterAgentContentPart::ImageRef {
+                    attachment_id: attachment_id.to_string(),
+                    image_url: Some(image_url.clone()),
+                });
+            }
+        }
+    }
+
+    if preview_parts.is_empty() {
+        return Err(FunctionCallError::RespondToModel(
+            "Empty content can't be sent to an agent".to_string(),
+        ));
+    }
+    Ok((preview_parts.join("\n"), resolved_content_parts))
+}
+
+fn resolve_visible_image_ref(
+    attachment_id: &str,
+    visible_attachments: &[VisibleImageAttachment],
+) -> Result<String, FunctionCallError> {
+    let mut matches = visible_attachments
+        .iter()
+        .filter(|attachment| attachment.attachment_id == attachment_id)
+        .map(|attachment| attachment.image_url.clone());
+    let Some(image_url) = matches.next() else {
+        return Err(FunctionCallError::RespondToModel(format!(
+            "image_ref `{attachment_id}` is not visible in the parent thread"
+        )));
+    };
+    if matches.next().is_some() {
+        return Err(FunctionCallError::RespondToModel(format!(
+            "image_ref `{attachment_id}` is ambiguous in the parent thread"
+        )));
+    }
+    Ok(image_url)
 }
 
 async fn handle_spawn_agent_request(
@@ -663,4 +778,148 @@ async fn spawn_external_agent_request(
         task_name,
         nickname,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn followup_message_content_uses_structured_preview_without_image_payload() {
+        let (preview, content_parts) = followup_message_content(
+            String::new(),
+            vec![
+                InterAgentContentPart::Text {
+                    text: "inspect this".to_string(),
+                },
+                InterAgentContentPart::ImageRef {
+                    attachment_id: "image-1".to_string(),
+                    image_url: None,
+                },
+            ],
+            &[VisibleImageAttachment {
+                attachment_id: "image-1".to_string(),
+                image_url: "data:image/png;base64,abc".to_string(),
+            }],
+        )
+        .expect("structured followup should normalize");
+
+        assert_eq!(preview, "inspect this\n[image:image-1]");
+        assert!(!preview.contains("base64"));
+        assert_eq!(
+            content_parts,
+            vec![
+                InterAgentContentPart::Text {
+                    text: "inspect this".to_string(),
+                },
+                InterAgentContentPart::ImageRef {
+                    attachment_id: "image-1".to_string(),
+                    image_url: Some("data:image/png;base64,abc".to_string()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn followup_message_content_rejects_unresolved_image_ref() {
+        let err = followup_message_content(
+            String::new(),
+            vec![InterAgentContentPart::ImageRef {
+                attachment_id: "image-1".to_string(),
+                image_url: None,
+            }],
+            &[],
+        )
+        .expect_err("unresolved image_ref should fail");
+
+        assert!(
+            matches!(err, FunctionCallError::RespondToModel(message) if message.contains("not visible"))
+        );
+    }
+
+    #[test]
+    fn followup_message_content_rejects_ambiguous_image_ref() {
+        let err = followup_message_content(
+            String::new(),
+            vec![InterAgentContentPart::ImageRef {
+                attachment_id: "image-1".to_string(),
+                image_url: None,
+            }],
+            &[
+                VisibleImageAttachment {
+                    attachment_id: "image-1".to_string(),
+                    image_url: "data:image/png;base64,one".to_string(),
+                },
+                VisibleImageAttachment {
+                    attachment_id: "image-1".to_string(),
+                    image_url: "data:image/png;base64,two".to_string(),
+                },
+            ],
+        )
+        .expect_err("ambiguous image_ref should fail");
+
+        assert!(
+            matches!(err, FunctionCallError::RespondToModel(message) if message.contains("ambiguous"))
+        );
+    }
+
+    #[test]
+    fn followup_message_content_ignores_unrelated_duplicate_image_refs() {
+        let (preview, content_parts) = followup_message_content(
+            String::new(),
+            vec![InterAgentContentPart::ImageRef {
+                attachment_id: "image-2".to_string(),
+                image_url: None,
+            }],
+            &[
+                VisibleImageAttachment {
+                    attachment_id: "image-1".to_string(),
+                    image_url: "data:image/png;base64,old-one".to_string(),
+                },
+                VisibleImageAttachment {
+                    attachment_id: "image-1".to_string(),
+                    image_url: "data:image/png;base64,new-one".to_string(),
+                },
+                VisibleImageAttachment {
+                    attachment_id: "image-2".to_string(),
+                    image_url: "data:image/png;base64,two".to_string(),
+                },
+            ],
+        )
+        .expect("unrelated duplicate ids should not block unique requested id");
+
+        assert_eq!(preview, "[image:image-2]");
+        assert_eq!(
+            content_parts,
+            vec![InterAgentContentPart::ImageRef {
+                attachment_id: "image-2".to_string(),
+                image_url: Some("data:image/png;base64,two".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn visible_image_attachments_include_forwarded_inter_agent_images() {
+        let image_url = "data:image/png;base64,forwarded".to_string();
+        let communication = InterAgentCommunication::new(
+            AgentPath::root(),
+            AgentPath::root().join("worker").expect("agent path"),
+            Vec::new(),
+            "[image:image-1]".to_string(),
+            InterAgentOperation::FollowupTask,
+        )
+        .with_content_parts(vec![InterAgentContentPart::ImageRef {
+            attachment_id: "image-1".to_string(),
+            image_url: Some(image_url.clone()),
+        }]);
+        let history_item: ResponseItem = communication.to_response_input_item().into();
+
+        assert_eq!(
+            visible_image_attachments_from_history(&[history_item]),
+            vec![VisibleImageAttachment {
+                attachment_id: "image-1".to_string(),
+                image_url,
+            }]
+        );
+    }
 }

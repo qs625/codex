@@ -447,7 +447,7 @@ fn spawn_agent_tool_hides_service_tier_with_spawn_metadata() {
 }
 
 #[test]
-fn followup_task_tool_requires_message_and_has_no_output_schema() {
+fn followup_task_tool_accepts_legacy_message_or_structured_content() {
     let ToolSpec::Function(ResponsesApiTool {
         parameters,
         output_schema,
@@ -466,10 +466,25 @@ fn followup_task_tool_requires_message_and_has_no_output_schema() {
         .expect("followup_task should use object params");
     assert!(properties.contains_key("target"));
     assert!(properties.contains_key("message"));
+    let content = properties
+        .get("content")
+        .expect("structured content schema");
+    let content_item = content
+        .items
+        .as_deref()
+        .expect("structured content should be an array of item objects");
+    let content_item_properties = content_item
+        .properties
+        .as_ref()
+        .expect("structured content item should have properties");
+    assert!(content_item_properties.contains_key("type"));
+    assert!(content_item_properties.contains_key("text"));
+    assert!(content_item_properties.contains_key("attachment_id"));
+    assert!(!content_item_properties.contains_key("image_url"));
     assert!(!properties.contains_key("items"));
     assert_eq!(
         parameters.required.as_ref(),
-        Some(&vec!["target".to_string(), "message".to_string()])
+        Some(&vec!["target".to_string()])
     );
     assert_eq!(output_schema, None);
 }
@@ -578,8 +593,8 @@ fn read_agent_tool_exposes_full_agent_details() {
         ])
     );
     assert_eq!(
-        schema["properties"]["agent"]["properties"]["lifecycleStatus"]["allOf"][0]["oneOf"][4]
-            ["properties"]["result"]["oneOf"][0]["properties"]["last_agent_message"]["type"],
+        schema["properties"]["agent"]["properties"]["lifecycleStatus"]["allOf"][0]["oneOf"][4]["properties"]
+            ["result"]["oneOf"][0]["properties"]["last_agent_message"]["type"],
         json!(["string", "null"])
     );
 }
