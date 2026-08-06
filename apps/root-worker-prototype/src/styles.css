@@ -4980,7 +4980,7 @@ svg {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  background: #f8fafc;
+  background: #0f1419;
 }
 
 .git-panel.resizing-panes {
@@ -4997,14 +4997,15 @@ svg {
 .git-graph-section {
   flex: 1 1 64%;
   min-height: 128px;
-  background: #f8fafc;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: #0f1419;
 }
 
 .git-changes-section {
   flex: 0 1 36%;
   min-height: 112px;
   max-height: 44%;
-  background: #fafaf9;
+  background: #f7f6f2;
 }
 
 .git-graph-section.changes-collapsed {
@@ -5021,24 +5022,28 @@ svg {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 10px;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 8px;
   border-bottom: 1px solid rgba(16, 24, 40, 0.08);
   background: rgba(255, 255, 255, 0.68);
 }
 
+.git-section-header.graph-toolbar {
+  justify-content: flex-start;
+}
+
 .git-graph-section .git-section-header {
-  border-bottom-color: rgba(15, 23, 42, 0.1);
-  background: #f1f5f9;
+  border-bottom-color: rgba(148, 163, 184, 0.16);
+  background: #10161c;
 }
 
 .git-graph-section .git-section-title {
-  color: #1f2937;
+  color: #d7d9dd;
 }
 
 .git-graph-section .git-section-marker {
-  color: #64748b;
+  color: #c7cbd1;
 }
 
 .git-section-title,
@@ -5046,13 +5051,25 @@ svg {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 
 .git-section-title {
   color: #292524;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
+}
+
+.git-section-header.graph-toolbar .git-section-title {
+  flex: 0 1 auto;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.git-section-header.graph-toolbar .git-section-actions {
+  flex: 0 1 auto;
+  justify-content: flex-start;
+  gap: 3px;
 }
 
 .git-section-marker,
@@ -5092,8 +5109,8 @@ svg {
 .git-section-count,
 .git-change-count {
   display: inline-grid;
-  min-width: 20px;
-  height: 20px;
+  min-width: 18px;
+  height: 18px;
   place-items: center;
   border-radius: 999px;
   background: rgba(41, 37, 36, 0.74);
@@ -5123,37 +5140,38 @@ svg {
 .git-ref-select-label {
   display: inline-flex;
   min-width: 0;
-  max-width: 220px;
+  max-width: 118px;
   align-items: center;
-  gap: 6px;
-  padding: 4px 7px;
-  border: 1px solid rgba(59, 130, 246, 0.22);
-  border-radius: 7px;
-  background: #ffffff;
-  color: #1d4ed8;
+  gap: 5px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #d7d9dd;
 }
 
 .git-ref-select-label svg {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
+  color: #cfd3d8;
 }
 
 .git-ref-select {
   min-width: 0;
-  max-width: 170px;
+  max-width: 72px;
   border: 0;
   background: transparent;
-  color: #1d4ed8;
+  color: #d7d9dd;
   font: inherit;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 650;
   outline: none;
 }
 
 .git-ref-select option {
-  background: #ffffff;
-  color: #1f2937;
+  background: #111820;
+  color: #e5e7eb;
 }
 
 .git-ref-select:disabled {
@@ -5162,18 +5180,18 @@ svg {
 
 .git-branch-pill svg,
 .git-icon-button svg {
-  width: 15px;
-  height: 15px;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
 }
 
 .git-icon-button {
   display: inline-grid;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   border: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   color: #57534e;
   cursor: pointer;
@@ -5190,18 +5208,22 @@ svg {
 }
 
 .git-graph-section .git-icon-button {
-  color: #475569;
+  color: #c4c9cf;
 }
 
 .git-graph-section .git-icon-button:hover:not(:disabled) {
-  background: rgba(15, 23, 42, 0.07);
-  color: #0f172a;
+  background: rgba(148, 163, 184, 0.12);
+  color: #f8fafc;
+}
+
+.git-graph-section .git-icon-button:disabled {
+  opacity: 0.72;
 }
 
 .git-pane-splitter {
   position: relative;
   flex: 0 0 8px;
-  background: #f1f5f9;
+  background: #151b22;
   cursor: row-resize;
 }
 
@@ -5249,8 +5271,8 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 6px;
-  background: #f8fafc;
+  padding: 4px 0 8px 10px;
+  background: #0f1419;
 }
 
 .git-graph-visual-stack {
@@ -5262,8 +5284,8 @@ svg {
 .git-graph-overlay {
   position: absolute;
   top: 0;
-  left: 8px;
-  z-index: 3;
+  left: 0;
+  z-index: 4;
   display: block;
   overflow: visible;
   pointer-events: none;
@@ -5274,18 +5296,18 @@ svg {
   z-index: 2;
   width: max-content;
   min-width: 100%;
-  border-radius: 5px;
-  color: #334155;
+  border-radius: 4px 0 0 4px;
+  color: #d5d7dc;
   outline: none;
 }
 
 .git-graph-row:hover {
-  background: rgba(226, 232, 240, 0.74);
+  background: rgba(55, 65, 81, 0.48);
 }
 
 .git-graph-row.selected {
-  background: rgba(219, 234, 254, 0.84);
-  box-shadow: inset 2px 0 0 #60a5fa;
+  background: rgba(78, 85, 99, 0.82);
+  box-shadow: inset 2px 0 0 rgba(96, 165, 250, 0.92);
 }
 
 .git-graph-row:focus-visible {
@@ -5293,20 +5315,20 @@ svg {
 }
 
 .git-graph-row.merge {
-  background: rgba(241, 245, 249, 0.9);
+  background: transparent;
 }
 
 .git-graph-row.selected.merge {
-  background: rgba(219, 234, 254, 0.92);
+  background: rgba(78, 85, 99, 0.82);
 }
 
 .git-graph-row-main {
   display: grid;
-  grid-template-columns: var(--git-graph-visual-width, 58px) minmax(240px, 1fr);
+  grid-template-columns: var(--git-graph-visual-width, 58px) minmax(220px, 1fr) 28px;
   align-items: center;
-  min-height: 48px;
-  column-gap: 10px;
-  padding: 0 8px;
+  min-height: 42px;
+  column-gap: 6px;
+  padding: 0 6px 0 0;
   cursor: pointer;
 }
 
@@ -5319,7 +5341,7 @@ svg {
 .git-graph-lane-placeholder {
   display: block;
   width: var(--git-graph-visual-width, 58px);
-  min-height: 48px;
+  min-height: 42px;
 }
 
 .git-graph-path {
@@ -5327,49 +5349,49 @@ svg {
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2;
+  stroke-width: 2.2;
   opacity: 0.88;
   vector-effect: non-scaling-stroke;
 }
 
 .git-graph-path.main {
-  stroke-width: 2.1;
-  opacity: 0.82;
+  stroke-width: 2.25;
+  opacity: 0.95;
 }
 
 .git-graph-path.branch {
-  stroke-width: 2;
+  stroke-width: 2.05;
   opacity: 0.9;
 }
 
 .git-graph-dot {
   fill: currentColor;
-  stroke: #f8fafc;
+  stroke: #0f1419;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
 .git-graph-dot.main {
-  fill: #f8fafc;
+  fill: #0f1419;
   stroke: currentColor;
-  stroke-width: 2.8;
+  stroke-width: 3.4;
 }
 
 .git-graph-dot.branch {
   fill: currentColor;
-  stroke: #f8fafc;
-  stroke-width: 2.1;
+  stroke: #0f1419;
+  stroke-width: 2.2;
 }
 
 .git-graph-dot.selected {
-  fill: #ffffff;
+  fill: #0f1419;
   stroke: #60a5fa;
-  stroke-width: 3;
+  stroke-width: 3.6;
 }
 
 .git-graph-path.lane-0,
 .git-graph-dot.lane-0 {
-  color: #2563eb;
+  color: #4aa3ff;
 }
 
 .git-graph-path.lane-1,
@@ -5384,12 +5406,12 @@ svg {
 
 .git-graph-path.lane-3,
 .git-graph-dot.lane-3 {
-  color: #0f766e;
+  color: #38bdb2;
 }
 
 .git-graph-path.lane-4,
 .git-graph-dot.lane-4 {
-  color: #7c3aed;
+  color: #a45cff;
 }
 
 .git-graph-path.lane-5,
@@ -5405,16 +5427,17 @@ svg {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .git-graph-subject-line strong {
   flex: 1 1 auto;
   min-width: 34px;
   overflow: hidden;
-  color: #1f2937;
-  font-size: 13px;
-  font-weight: 700;
+  color: #d7d9dd;
+  font-size: 14px;
+  font-weight: 730;
+  line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5427,25 +5450,44 @@ svg {
   max-width: 118px;
   min-width: 0;
   align-items: center;
+  gap: 4px;
   overflow: hidden;
-  padding: 3px 7px;
+  padding: 4px 8px;
   border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 730;
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .git-head-ref {
-  background: rgba(37, 99, 235, 0.9);
-  color: #ffffff;
+  background: #58a8ff;
+  color: #09131f;
+}
+
+.git-head-ref-target {
+  position: relative;
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+}
+
+.git-head-ref-target::after {
+  position: absolute;
+  inset: 3px;
+  border: 2px solid currentColor;
+  border-radius: inherit;
+  content: "";
 }
 
 .git-ref-pill,
 .git-ref-more {
-  background: rgba(100, 116, 139, 0.12);
-  color: #475569;
+  background: rgba(168, 85, 247, 0.95);
+  color: #10141b;
 }
 
 .git-ref-more {
@@ -5454,26 +5496,53 @@ svg {
 
 .git-graph-meta {
   display: block;
-  margin-top: 1px;
+  margin-top: 2px;
   overflow: hidden;
-  color: #64748b;
-  font-size: 11px;
+  color: #8f969f;
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.git-graph-row-affordance {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid rgba(209, 213, 219, 0.54);
+  border-radius: 5px;
+  color: #c9ced6;
+  opacity: 0;
+  transform: translateX(3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.git-graph-row-affordance svg {
+  width: 16px;
+  height: 16px;
+}
+
+.git-graph-row:hover .git-graph-row-affordance,
+.git-graph-row.selected .git-graph-row-affordance,
+.git-graph-row:focus-within .git-graph-row-affordance {
+  opacity: 1;
+  transform: translateX(0);
+}
+
 .git-commit-files,
 .git-commit-files-state {
-  margin: 0 8px 6px 84px;
-  border-left: 1px solid rgba(100, 116, 139, 0.24);
-  background: rgba(255, 255, 255, 0.74);
+  margin: 0 8px 6px calc(var(--git-graph-visual-width, 58px) + 6px);
+  border-left: 1px solid rgba(96, 165, 250, 0.38);
+  background: rgba(17, 24, 39, 0.72);
 }
 
 .git-commit-files-state {
   box-sizing: border-box;
   min-height: 34px;
   padding: 7px 10px;
-  color: #64748b;
+  color: #aab2bd;
   font-size: 12px;
 }
 
@@ -5497,8 +5566,8 @@ svg {
   height: 18px;
   place-items: center;
   border-radius: 4px;
-  background: rgba(100, 116, 139, 0.12);
-  color: #475569;
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
   font-size: 10px;
   font-weight: 800;
 }
@@ -5519,18 +5588,18 @@ svg {
 }
 
 .git-commit-file-copy strong {
-  color: #1f2937;
+  color: #e5e7eb;
   font-size: 12px;
   font-weight: 700;
 }
 
 .git-commit-file-copy span {
-  color: #64748b;
+  color: #9ca3af;
   font-size: 11px;
 }
 
 .git-commit-file-status {
-  color: #475569;
+  color: #cbd5e1;
   font-size: 12px;
   font-weight: 800;
   text-align: right;

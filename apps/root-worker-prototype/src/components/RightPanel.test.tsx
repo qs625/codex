@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -643,6 +644,11 @@ test("renders git panel with deduped thread file changes", () => {
 
   assert.match(markup, /Git graph/);
   assert.match(markup, /Graph/);
+  assert.match(markup, /graph-toolbar/);
+  assert.match(markup, />Auto</);
+  assert.match(markup, /Focus current Git ref/);
+  assert.match(markup, /Fetch Git refs/);
+  assert.match(markup, /Pull Git refs/);
   assert.match(markup, /Changes/);
   assert.match(markup, /aria-expanded="true"/);
   assert.match(markup, /Collapse Changes/);
@@ -663,8 +669,8 @@ test("builds a commit-level git graph visual model with a spine and curved branc
 
   const visualModel = buildGitGraphVisualModel(graph);
 
-  assert.equal(visualModel.width, 54);
-  assert.equal(visualModel.height, 144);
+  assert.equal(visualModel.width, 52.5);
+  assert.equal(visualModel.height, 126);
   assert.deepEqual(
     visualModel.commits.map((commit) => ({
       hash: commit.commit.hash,
@@ -673,9 +679,9 @@ test("builds a commit-level git graph visual model with a spine and curved branc
       y: commit.y,
     })),
     [
-      { hash: "merge-a", lane: 0, x: 18, y: 24 },
-      { hash: "side-a", lane: 1, x: 42, y: 72 },
-      { hash: "merge-b", lane: 0, x: 18, y: 120 },
+      { hash: "merge-a", lane: 0, x: 18, y: 21 },
+      { hash: "side-a", lane: 1, x: 41, y: 63 },
+      { hash: "merge-b", lane: 0, x: 18, y: 105 },
     ],
   );
   assert.deepEqual(visualModel.paths, [
@@ -684,29 +690,39 @@ test("builds a commit-level git graph visual model with a spine and curved branc
       lane: 0,
       colorLane: 0,
       kind: "main",
-      d: "M 18 24 L 18 120",
+      d: "M 18 21 L 18 105",
     },
     {
       id: "branch:1:2:1",
       lane: 1,
       colorLane: 1,
       kind: "branch",
-      d: "M 18 24 C 42 24 42 55.68 42 72 C 42 88.32 42 120 18 120",
+      d: "M 18 21 C 41 21 41 48.72 41 63 C 41 77.28 41 105 18 105",
     },
   ]);
 
   const expandedVisualModel = buildGitGraphVisualModel(graph, {
     expandedHeightsByHash: { "merge-a": 62 },
   });
-  assert.equal(expandedVisualModel.height, 206);
+  assert.equal(expandedVisualModel.height, 188);
   assert.deepEqual(
     expandedVisualModel.commits.map((commit) => ({ hash: commit.commit.hash, y: commit.y })),
     [
-      { hash: "merge-a", y: 24 },
-      { hash: "side-a", y: 134 },
-      { hash: "merge-b", y: 182 },
+      { hash: "merge-a", y: 21 },
+      { hash: "side-a", y: 125 },
+      { hash: "merge-b", y: 167 },
     ],
   );
+});
+
+test("git graph styles use the reference dark compact rail treatment", () => {
+  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+  assert.match(css, /\.git-graph-section \{[\s\S]*background: #0f1419;/);
+  assert.match(css, /\.git-graph-row-main \{[\s\S]*min-height: 42px;/);
+  assert.match(css, /\.git-graph-dot\.main \{[\s\S]*fill: #0f1419;[\s\S]*stroke-width: 3\.4;/);
+  assert.match(css, /\.git-head-ref \{[\s\S]*background: #58a8ff;/);
+  assert.match(css, /\.git-graph-row-affordance/);
 });
 
 test("renders cwd tree inside the preview panel", () => {
