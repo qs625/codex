@@ -5296,16 +5296,9 @@ svg {
   display: inline-flex;
   align-self: stretch;
   min-width: 58px;
+  align-items: stretch;
   justify-content: flex-start;
   white-space: nowrap;
-}
-
-.git-graph-cell {
-  position: relative;
-  display: inline-block;
-  width: 14px;
-  min-height: 30px;
-  flex: 0 0 14px;
 }
 
 .git-graph-connector-row {
@@ -5317,109 +5310,69 @@ svg {
   padding: 0 8px;
 }
 
-.git-graph-lanes.connector .git-graph-cell {
-  min-height: 14px;
-}
-
-.git-graph-lanes.connector .git-graph-segment.vertical {
-  top: -3px;
-  bottom: -3px;
-}
-
-.git-graph-lanes.connector .git-graph-segment.diagonal-left,
-.git-graph-lanes.connector .git-graph-segment.diagonal-right {
-  width: 18px;
-}
-
-.git-graph-segment,
-.git-graph-dot {
-  position: absolute;
-  left: 50%;
+.git-graph-svg {
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
   pointer-events: none;
-  transform: translateX(-50%);
 }
 
-.git-graph-segment.vertical {
-  top: -6px;
-  bottom: -6px;
-  width: 2px;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.72;
+.git-graph-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  opacity: 0.82;
+  vector-effect: non-scaling-stroke;
 }
 
-.git-graph-segment.horizontal {
-  top: 50%;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.72;
-  transform: translateY(-50%);
-}
-
-.git-graph-segment.diagonal-left,
-.git-graph-segment.diagonal-right {
-  top: 50%;
-  width: 20px;
-  height: 2px;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.76;
-  transform-origin: center;
-}
-
-.git-graph-segment.diagonal-left {
-  transform: translateX(-50%) rotate(-42deg);
-}
-
-.git-graph-segment.diagonal-right {
-  transform: translateX(-50%) rotate(42deg);
+.git-graph-line.horizontal,
+.git-graph-line.diagonal-left,
+.git-graph-line.diagonal-right {
+  opacity: 0.9;
 }
 
 .git-graph-dot {
-  top: 50%;
-  z-index: 1;
-  width: 10px;
-  height: 10px;
-  border: 2px solid #f8fafc;
-  border-radius: 999px;
-  background: currentColor;
-  box-shadow: 0 0 0 1px currentColor;
-  transform: translate(-50%, -50%);
+  fill: currentColor;
+  stroke: #f8fafc;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
 }
 
 .git-graph-row.selected .git-graph-dot {
-  width: 12px;
-  height: 12px;
-  border-color: #dbeafe;
-  background: #ffffff;
-  box-shadow: 0 0 0 2px currentColor;
+  fill: #ffffff;
+  stroke-width: 2.6;
 }
 
-.git-graph-cell.lane-0 {
-  color: #3b82f6;
+.git-graph-line.lane-0,
+.git-graph-dot.lane-0 {
+  color: #2563eb;
 }
 
-.git-graph-cell.lane-1 {
-  color: #f59e0b;
+.git-graph-line.lane-1,
+.git-graph-dot.lane-1 {
+  color: #d97706;
 }
 
-.git-graph-cell.lane-2 {
-  color: #ec4899;
+.git-graph-line.lane-2,
+.git-graph-dot.lane-2 {
+  color: #db2777;
 }
 
-.git-graph-cell.lane-3 {
-  color: #14b8a6;
+.git-graph-line.lane-3,
+.git-graph-dot.lane-3 {
+  color: #0f766e;
 }
 
-.git-graph-cell.lane-4 {
-  color: #8b5cf6;
+.git-graph-line.lane-4,
+.git-graph-dot.lane-4 {
+  color: #7c3aed;
 }
 
-.git-graph-cell.lane-5 {
-  color: #22c55e;
+.git-graph-line.lane-5,
+.git-graph-dot.lane-5 {
+  color: #16a34a;
 }
 
 .git-graph-copy {
