@@ -8,27 +8,16 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Eliminate raw subagent_notification message production at the source.
+None
 
 ## Active Work
-- id: eliminate-legacy-subagent-message-source
-  owner: /my_codex/owner_dev_3
-  checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: bugfix/eliminate-legacy-subagent-message-source
-  task_type: bugfix
-  depends_on: backend display filter commit `be5d792108`; that filter is only a defensive boundary and should not be treated as final source fix
-  files: codex-rs/thread-service/src/session_prefix.rs; codex-rs/thread-service/src/session/events_history.rs; codex-rs/thread-service/src/agent/external.rs; codex-rs/thread-service/src/agent/multi_agent.rs; codex-rs/thread-service/src/session/** tests; app-server-protocol/thread-history tests only as needed
-  base_commit: 78f505a9f3bb773b32688adca21bc41178d4aa1d
-  pending_sync_from_main: no
-  status: in_progress
-  objective: User clarified that raw `<subagent_notification>` messages should not be produced at all; locate and remove the source paths that format child completion as raw assistant text, preserving only typed inter-agent completion facts for display/history/model-visible semantics.
-  last_update: 2026-08-07 User said "而是就不应该有这种legacy message". PM quick rg found `format_subagent_notification_message` used in thread-service child/external completion history paths.
-  next_action: Owner dev-3 to trace `format_subagent_notification_message` call sites, replace raw message production with typed `InterAgentCommunication` / `ResponseItem::InterAgentCommunication` where appropriate, remove obsolete source helper if possible, keep defensive display filter only if needed for old persisted data, review/test/commit.
-  blockers: None known.
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: ba78e07fcf
+  summary: Merged and accepted `/my_codex/owner_dev_3` source bugfix commit `f91742319e4e898d96b98b371d0221ade83e8f47` (`Stop producing legacy subagent completion envelopes`). New native and external child completion production paths no longer render typed status through raw `<subagent_notification>` envelopes: `events_history.rs` and external `completion_communication` now use bounded plain content derived from `AgentStatus`, while typed `InterAgentCommunication::ChildCompletion`, status, thread ids, trigger-turn, poll_event/display/replay semantics remain intact. The old `thread-service/src/session_prefix.rs::format_subagent_notification_message` production helper was deleted. Existing backend filters for old persisted raw envelopes remain only as compatibility defense.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after catching the content truncation bound. PM inspected the source-level change against the user's clarification that legacy messages should not be produced, confirmed no frontend parser or extra display-only text workaround was added, confirmed `format_subagent_notification_message` no longer exists, and reran on merged main: `rtk cargo test -p thread-service child_completion_content --lib` -> 2 passed; `rtk cargo test -p thread-service completion_communication_uses_plain_typed_status_content --lib` -> 1 passed; `rtk cargo test -p thread-service multi_agent_v2_completion_allows_active_event_subscription --lib` -> 1 passed; `rtk cargo test -p thread-service inter_agent_child_completion_live_item_waits_for_typed_recording --lib` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed. PM `rg` found remaining `<subagent_notification>` references only in old-data defensive filters/tests and negative assertions.
+  residual_risk: Old persisted raw envelope data may still be present in existing histories and is intentionally handled by the already-merged defensive backend projection filter. No Electron manual smoke was run.
 - commit: be5d792108
   summary: Merged and accepted `/my_codex/owner_dev_3` backend bugfix commit `15d6a53137e32a01555d57e53ff8b7b594760942` (`Suppress raw subagent notification display items`). This replaces the rejected frontend raw-envelope parser workaround: typed child completion already exists through `InterAgentCommunicationCompleted`, and the raw `<subagent_notification>` duplicate came from legacy structured assistant `AgentMessage` projection/replay plus app-server direct live `EventMsg::AgentMessage` bypass. The fix filters legacy structured assistant messages in the shared backend projection and app-server direct live sender, removes the frontend parser and its tests, and keeps ordinary JSON agent messages visible.
   validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after requiring app-server direct helper coverage and removal of ineffective test-tree changes. PM inspected that `parseLegacySubagentNotification` and related frontend special cases were deleted, and that the backend fix uses the existing legacy structured assistant message filter rather than renderer parsing. PM reran on merged main: `rtk cargo test -p app-server-protocol item_event_to_server_notification_skips_raw_subagent_notification_agent_item --lib` -> 1 passed; `rtk cargo test -p thread-history replay_skips_raw_subagent_notification_agent_item_when_typed_completion_exists --lib` -> 1 passed; `rtk cargo test -p app-server direct_live_agent_message --lib` -> 2 passed; `rtk pnpm test -- src/lib/conversation.test.ts` -> 47 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk pnpm build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
