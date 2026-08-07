@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix schedule monitor missing after restart.
+Display read_agent tool results in the Root Worker client.
 
 ## Active Work
 - id: schedule-reload-still-missing
@@ -17,13 +17,13 @@ Fix schedule monitor missing after restart.
   branch: bugfix/schedule-reload-still-missing
   task_type: bugfix
   depends_on: prior main fix `50dfe5b7be`
-  files: codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; codex-rs/rollout/src/policy.rs; codex-rs/app-server/**; apps/root-worker-prototype/src/lib/threadAnalysis.ts only if API replay is already correct
+  files: codex-rs/app-server-protocol/src/protocol/event_mapping.rs; codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/components/Conversation*; protocol ThreadItem schema/types as needed
   base_commit: c9ca4b69a95cb73b73b55d31f22651c11a1134c0
   pending_sync_from_main: no
   status: in_progress
-  objective: User reports that after restarting, the active schedule monitor still does not appear despite main commit `50dfe5b7be`; identify the actual broken reload path and fix it at the persisted typed replay/runtime registration layer.
-  last_update: 2026-08-07 User reported "重启之后还是没有啊"; main/dev-2/dev-3 are all at `c9ca4b69a9` and clean.
-  next_action: Owner dev-3 to reproduce/inspect restart reload path, compare persisted `SessionMeta.subscriptions` with `thread/read`/Root Worker display inputs, implement missing backend replay/runtime fix, review, test, and commit on dev-3.
+  objective: User clarified the missing client display is for the `read_agent` tool; add or complete a typed ThreadItem/mapping so `read_agent` tool calls/results appear in the Root Worker client for live and reload/history paths.
+  last_update: 2026-08-07 User clarified: "read_agent的tool客户端不显示, 增加一个新的threaditem". PM redirected owner dev-3 from schedule replay investigation to `read_agent` ThreadItem/display support.
+  next_action: Owner dev-3 to inspect `read_agent` tool event/response shape, add the appropriate typed ThreadItem or mapping, cover live event mapping, reload/history replay, and Root Worker rendering, then review/test/commit on dev-3.
   blockers: None known.
   validation: pending
   commit:
