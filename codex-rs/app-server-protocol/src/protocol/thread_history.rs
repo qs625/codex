@@ -1,15 +1,20 @@
+use crate::protocol::DynamicToolCallStatus;
+use crate::protocol::ThreadItem;
 use crate::protocol::Turn;
 use crate::protocol::event_item_projection::project_event_msg_item;
 use protocol::protocol::EventMsg;
 use protocol::protocol::RolloutItem;
+use protocol::protocol::SessionMetaLine;
+use protocol::subscriptions::PersistedSubscription;
+use std::collections::{HashMap, HashSet};
 
-mod pending_turn;
 mod basic_events;
-mod turn_helpers;
 mod collab;
 mod lifecycle;
-mod tool_events;
+mod pending_turn;
 mod support;
+mod tool_events;
+mod turn_helpers;
 use pending_turn::PendingTurn;
 use pending_turn::upsert_turn_item;
 use support::PendingAgentMessageResponse;
@@ -33,6 +38,9 @@ pub struct ThreadHistoryBuilder {
     current_rollout_index: usize,
     next_rollout_index: usize,
     pending_agent_message_responses: Vec<PendingAgentMessageResponse>,
+    latest_subscription_snapshot: Option<(usize, Vec<PersistedSubscription>)>,
+    schedule_subscription_rollout_indexes: HashMap<String, usize>,
+    schedule_unsubscription_rollout_indexes: HashMap<String, usize>,
 }
 
 impl Default for ThreadHistoryBuilder {
@@ -50,6 +58,9 @@ impl ThreadHistoryBuilder {
             current_rollout_index: 0,
             next_rollout_index: 0,
             pending_agent_message_responses: Vec::new(),
+            latest_subscription_snapshot: None,
+            schedule_subscription_rollout_indexes: HashMap::new(),
+            schedule_unsubscription_rollout_indexes: HashMap::new(),
         }
     }
 
@@ -59,6 +70,7 @@ impl ThreadHistoryBuilder {
 
     pub fn finish(mut self) -> Vec<Turn> {
         self.finish_current_turn();
+        self.append_subscription_snapshot_items();
         self.turns
     }
 
@@ -204,12 +216,198 @@ impl ThreadHistoryBuilder {
         self.current_rollout_index = self.next_rollout_index;
         self.next_rollout_index += 1;
         match item {
-            RolloutItem::EventMsg(event) => self.handle_event(event),
+            RolloutItem::EventMsg(event) => {
+                self.handle_event(event);
+                self.record_schedule_subscription_event(event);
+            }
             RolloutItem::Compacted(payload) => self.handle_compacted(payload),
             RolloutItem::ResponseItem(_) => {}
             RolloutItem::TurnContext(payload) => self.handle_turn_context(payload),
-            RolloutItem::SessionMeta(_) => {}
+            RolloutItem::SessionMeta(payload) => self.handle_session_meta(payload),
         }
     }
 
+    fn handle_session_meta(&mut self, payload: &SessionMetaLine) {
+        let Some(subscriptions) = payload.meta.subscriptions.clone() else {
+            return;
+        };
+        self.latest_subscription_snapshot = Some((self.current_rollout_index, subscriptions));
+    }
+
+    fn record_schedule_subscription_event(&mut self, event: &EventMsg) {
+        let Some((tool, status, output)) = builtin_tool_event_parts(event) else {
+            return;
+        };
+        if status != protocol::protocol::BuiltinToolCallStatus::Completed {
+            return;
+        }
+        let Some(subscription_id) = output.as_ref().and_then(subscription_id_from_json) else {
+            return;
+        };
+
+        match tool {
+            "schedule_subscribe" => {
+                self.schedule_subscription_rollout_indexes
+                    .insert(subscription_id, self.current_rollout_index);
+            }
+            "schedule_unsubscribe"
+                if output
+                    .as_ref()
+                    .and_then(|output| output.get("unsubscribed"))
+                    .and_then(|value| value.as_bool())
+                    == Some(true) =>
+            {
+                self.schedule_unsubscription_rollout_indexes
+                    .insert(subscription_id, self.current_rollout_index);
+            }
+            _ => {}
+        }
+    }
+
+    fn append_subscription_snapshot_items(&mut self) {
+        let Some((snapshot_index, subscriptions)) = self.latest_subscription_snapshot.take() else {
+            return;
+        };
+        let active_schedule_ids = active_schedule_subscription_ids(&subscriptions);
+        let inactive_items = self.inactive_schedule_items(snapshot_index, &active_schedule_ids);
+        let active_items = subscriptions
+            .iter()
+            .filter_map(|subscription| self.active_schedule_item_if_missing(subscription))
+            .collect::<Vec<_>>();
+        let items = inactive_items
+            .into_iter()
+            .chain(active_items)
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return;
+        }
+
+        let mut turn = self.new_turn(Some("active-subscriptions".to_string()));
+        turn.items = items;
+        self.turns.push(Turn::from(turn));
+    }
+
+    fn inactive_schedule_items(
+        &self,
+        snapshot_index: usize,
+        active_schedule_ids: &HashSet<String>,
+    ) -> Vec<ThreadItem> {
+        self.schedule_subscription_rollout_indexes
+            .iter()
+            .filter(|(subscription_id, subscribe_index)| {
+                **subscribe_index < snapshot_index
+                    && !active_schedule_ids.contains(*subscription_id)
+                    && self
+                        .schedule_unsubscription_rollout_indexes
+                        .get(*subscription_id)
+                        .is_none_or(|unsubscribe_index| unsubscribe_index < subscribe_index)
+            })
+            .map(|(subscription_id, _)| ThreadItem::BuiltinToolCall {
+                id: format!("active-subscription:{subscription_id}:inactive"),
+                tool: "schedule_unsubscribe".to_string(),
+                arguments: serde_json::json!({
+                    "subscription_id": subscription_id,
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(serde_json::json!({
+                    "subscription_id": subscription_id,
+                    "unsubscribed": true,
+                })),
+            })
+            .collect()
+    }
+
+    fn active_schedule_item_if_missing(
+        &self,
+        subscription: &PersistedSubscription,
+    ) -> Option<ThreadItem> {
+        let PersistedSubscription::Schedule {
+            subscription_id,
+            schedule,
+            label,
+            message,
+        } = subscription
+        else {
+            return None;
+        };
+        if self.has_schedule_monitor_item(subscription_id) {
+            return None;
+        }
+        let mut arguments = serde_json::json!({
+            "schedule": schedule,
+            "label": label,
+        });
+        if let Some(message) = message {
+            arguments["message"] = serde_json::Value::String(message.clone());
+        }
+
+        Some(ThreadItem::BuiltinToolCall {
+            id: format!("active-subscription:{subscription_id}"),
+            tool: "schedule_subscribe".to_string(),
+            arguments,
+            status: DynamicToolCallStatus::Completed,
+            output: Some(serde_json::json!({
+                "subscription_id": subscription_id,
+            })),
+        })
+    }
+
+    fn has_schedule_monitor_item(&self, subscription_id: &str) -> bool {
+        self.turns
+            .iter()
+            .flat_map(|turn| turn.items.iter())
+            .chain(self.current_turn.iter().flat_map(|turn| turn.items.iter()))
+            .any(|item| schedule_subscription_id(item).as_deref() == Some(subscription_id))
+    }
+}
+
+fn schedule_subscription_id(item: &ThreadItem) -> Option<String> {
+    let ThreadItem::BuiltinToolCall {
+        tool,
+        status,
+        output,
+        ..
+    } = item
+    else {
+        return None;
+    };
+    if tool != "schedule_subscribe" || *status != DynamicToolCallStatus::Completed {
+        return None;
+    }
+    output.as_ref().and_then(subscription_id_from_json)
+}
+
+fn builtin_tool_event_parts(
+    event: &EventMsg,
+) -> Option<(
+    &str,
+    protocol::protocol::BuiltinToolCallStatus,
+    &Option<serde_json::Value>,
+)> {
+    match event {
+        EventMsg::BuiltinToolCallStarted(event) => Some((&event.tool, event.status, &event.output)),
+        EventMsg::BuiltinToolCallCompleted(event) => {
+            Some((&event.tool, event.status, &event.output))
+        }
+        _ => None,
+    }
+}
+
+fn subscription_id_from_json(output: &serde_json::Value) -> Option<String> {
+    output
+        .get("subscription_id")
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+}
+
+fn active_schedule_subscription_ids(subscriptions: &[PersistedSubscription]) -> HashSet<String> {
+    subscriptions
+        .iter()
+        .filter_map(|subscription| match subscription {
+            PersistedSubscription::Schedule {
+                subscription_id, ..
+            } => Some(subscription_id.clone()),
+            _ => None,
+        })
+        .collect()
 }
