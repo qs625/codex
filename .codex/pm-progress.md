@@ -8,27 +8,16 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Hide raw subagent_notification envelopes in client conversation display.
+None
 
 ## Active Work
-- id: raw-subagent-notification-display
-  owner: /my_codex/owner_dev_2
-  checkout: /Users/bytedance/Projects/my-codex-dev-2
-  branch: bugfix/raw-subagent-notification-display
-  task_type: bugfix
-  depends_on: none
-  files: apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/conversation.test.ts; app-server-protocol/thread-history display mapping only if raw envelope is produced before frontend
-  base_commit: 7b8b26e01118dd5d938672112098a84fef7f39c5
-  pending_sync_from_main: no
-  status: in_progress
-  objective: User observed a raw JSON/inter-agent message containing `<subagent_notification>` displayed in the client; render it as the existing inter-agent/child-completion item or suppress duplicate raw envelope text instead of showing the raw payload.
-  last_update: 2026-08-07 User pasted a raw message from `/cp_http_api/explore_cp_api_patterns_2` to `/cp_http_api` with `<subagent_notification>` content visible in the client.
-  next_action: Owner dev-2 to identify where raw envelope is converted into conversation entries, implement typed/inter-agent display or duplicate suppression, add focused tests with the user's sample shape, review/test/commit.
-  blockers: None known.
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: 1986bbf0e6
+  summary: Merged and accepted `/my_codex/owner_dev_2` bugfix commit `2453c2587574333cdc75d7a24d9b04108fc87fa3` (`Render raw subagent notifications as completions`). Root Worker conversation now handles legacy/raw inter-agent messages whose full agent message text is a JSON communication object with `content` wrapped in `<subagent_notification>...</subagent_notification>`: legacy-only envelopes render through the existing subagent completion/inter-agent style, typed duplicates are suppressed, ordinary JSON messages remain visible, and malformed envelopes fall back safely without crashing.
+  validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after catching a compile-risk issue. PM inspected the strict parser and tests against the user sample and brief: it does not globally hide JSON or raw text, and it does not change runtime protocol. PM reran on merged main: `rtk pnpm exec tsx --test src/lib/conversation.test.ts` -> 50 passed; `rtk pnpm build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
+  residual_risk: No Electron screenshot/manual smoke was run. Unknown future raw status shapes fall back to ordinary message display by design to avoid silently swallowing content.
 - commit: 432fe3b150
   summary: Merged and accepted `/my_codex/owner_dev_3` UI bugfix commit `40b3c637b2426b6169e5fd6d7f3044f756b9525b` (`Style read_agent as inter-agent tool item`). Root Worker conversation now classifies `read_agent` builtin tool entries as `multiAgent`, so they reuse the same inter-agent/multi-agent visual treatment instead of the ordinary builtin tool style. The fix is intentionally minimal: no new CSS and no backend/event/history changes.
   validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed. PM inspected the diff against the UI design anchor: existing inter-agent item styling is reused via `toolCategory`, while `poll_event` remains ordinary `external`. PM reran on merged main: `rtk pnpm test -- src/lib/conversation.test.ts` -> 46 passed; `rtk pnpm build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
