@@ -20,13 +20,13 @@ Fix two client display gaps: schedule monitor after restart and read_agent tool 
   files: codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; codex-rs/rollout/src/policy.rs; codex-rs/app-server/**; apps/root-worker-prototype/src/lib/threadAnalysis.ts only if API replay is already correct
   base_commit: c9ca4b69a95cb73b73b55d31f22651c11a1134c0
   pending_sync_from_main: yes, main has PM-only progress commits through `dd59618`; do not sync while owner dev-3 is active unless it can fast-forward safely
-  status: in_progress
+  status: review
   objective: User reports that after restarting, the active schedule monitor still does not appear despite main commit `50dfe5b7be`; identify the actual broken reload path and fix it at the persisted typed replay/runtime registration layer.
-  last_update: 2026-08-07 User corrected that schedule reload and read_agent display are two separate tasks, and noted dev-3 had already been doing schedule work. PM restored dev-3 to schedule after an erroneous switch brief.
-  next_action: Owner dev-3 to reproduce/inspect restart reload path, compare persisted `SessionMeta.subscriptions` with `thread/read`/Root Worker display inputs, implement missing backend replay/runtime fix, review, test, and commit on dev-3.
+  last_update: 2026-08-07 Owner dev-3 delivered commit `53fa93ec374d6cc9aeac5033e71612652a3d8282`, identifying the real gap as loaded live `thread/read` overriding persisted synthetic `active-subscriptions` turns after startup restore. PM design review found duplicate guard covered `schedule_subscribe` but not existing real `schedule_unsubscribe` with the same subscription_id.
+  next_action: Owner dev-3 to add unsubscribe duplicate guard + focused test, rerun reviewer/validation, and return updated commit.
   blockers: None known.
-  validation: pending
-  commit:
+  validation: owner reported passing app-server focused tests/build/rustfmt/diff-check for `53fa93ec...`; PM requested one duplicate-guard fix before merge.
+  commit: 53fa93ec374d6cc9aeac5033e71612652a3d8282 pending fix
 - id: read-agent-client-thread-item
   owner: /my_codex/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
