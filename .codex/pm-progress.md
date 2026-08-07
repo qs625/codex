@@ -22,11 +22,11 @@ Display read_agent tool results in the Root Worker client.
   pending_sync_from_main: no
   status: in_progress
   objective: `read_agent` tool calls/results currently do not show in the Root Worker client; add or complete a typed ThreadItem/mapping so they appear for live and reload/history paths.
-  last_update: 2026-08-07 User clarified: "read_agent的tool客户端不显示, 增加一个新的threaditem". PM assigned this as a separate dev-2 task after syncing dev-2 to `dd59618`.
-  next_action: Owner dev-2 to inspect `read_agent` tool event/response shape, add the appropriate typed ThreadItem or mapping, cover live event mapping, reload/history replay, and Root Worker rendering, then review/test/commit on dev-2.
+  last_update: 2026-08-07 Owner dev-2 mistakenly returned unrelated sidebar connector commit `0960b273c1` on the `bugfix/read-agent-thread-item` branch while `read_agent` files remained uncommitted. PM marked the branch as polluted, told owner to continue `read_agent`, and will not merge the branch wholesale.
+  next_action: Owner dev-2 to finish and commit only the `read_agent` ThreadItem/display changes in a new independent commit excluding sidebar/styles.css churn; PM should cherry-pick only that read_agent commit if accepted.
   blockers: None known.
   validation: pending
-  commit:
+  commit: pending; branch contains unrelated `0960b273c1` that must not be merged for this task
 
 ## Completed
 - commit: cf04c82b25
