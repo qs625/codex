@@ -1943,6 +1943,7 @@ test("builds visible entries for poll_event builtin tools", () => {
       kind: entry.kind,
       text: entry.text,
       toolName: entry.toolName,
+      toolCategory: entry.toolCategory,
     })),
     [
       {
@@ -1950,6 +1951,7 @@ test("builds visible entries for poll_event builtin tools", () => {
         kind: "tool",
         text: "poll_event • mailbox_message",
         toolName: "poll_event",
+        toolCategory: "external",
       },
     ],
   );
@@ -1991,6 +1993,7 @@ test("builds visible entries for read_agent builtin tools", () => {
       text: entry.text,
       toolName: entry.toolName,
       toolStatus: entry.toolStatus,
+      toolCategory: entry.toolCategory,
     })),
     [
       {
@@ -1999,6 +2002,7 @@ test("builds visible entries for read_agent builtin tools", () => {
         text: "read_agent • /root/worker • completed • done",
         toolName: "read_agent",
         toolStatus: "completed",
+        toolCategory: "multiAgent",
       },
     ],
   );
@@ -2030,6 +2034,7 @@ test("builds failed read_agent builtin entries with target and error", () => {
       text: entry.text,
       toolName: entry.toolName,
       toolStatus: entry.toolStatus,
+      toolCategory: entry.toolCategory,
     })),
     [
       {
@@ -2038,6 +2043,45 @@ test("builds failed read_agent builtin entries with target and error", () => {
         text: "read_agent • /root/missing • failed: No agent found",
         toolName: "read_agent",
         toolStatus: "failed",
+        toolCategory: "multiAgent",
+      },
+    ],
+  );
+});
+
+test("builds in-progress read_agent builtin entries with inter-agent styling metadata", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "builtin-read-agent-running",
+        tool: "read_agent",
+        arguments: {
+          target: "/root/worker",
+        },
+        status: "in_progress",
+        output: null,
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolStatus: entry.toolStatus,
+      toolCategory: entry.toolCategory,
+    })),
+    [
+      {
+        id: "builtin-read-agent-running",
+        kind: "tool",
+        text: "read_agent • /root/worker",
+        toolName: "read_agent",
+        toolStatus: "in_progress",
+        toolCategory: "multiAgent",
       },
     ],
   );
