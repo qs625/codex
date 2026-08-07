@@ -1650,6 +1650,9 @@ function extractEventDrivenSummaryDetails(tool: string, args: unknown) {
 }
 
 function toolCategoryForName(tool: string, namespace?: string | null) {
+  if (tool === "read_agent") {
+    return "multiAgent" as const;
+  }
   if (
     tool === "process_exit_subscribe" ||
     tool === "fs_subscribe" ||
