@@ -679,10 +679,7 @@ pub(crate) async fn dispatch(
                                 tool: READ_AGENT_TOOL_NAME.to_string(),
                                 arguments: display_arguments,
                                 status: BuiltinToolCallStatus::Failed,
-                                output: Some(json!({
-                                    "target": args.target,
-                                    "error": err.to_string(),
-                                })),
+                                output: Some(read_agent_failed_display_output(&args.target, &err)),
                                 lifecycle_at_ms: now_unix_timestamp_ms(),
                             }),
                         )
@@ -748,6 +745,13 @@ fn read_agent_display_output(target: &str, result: &ThreadReadAgentResult) -> se
             .map(bounded_read_agent_display_text),
         "lastAgentMessage": lifecycle_status_message(&agent.lifecycle_status)
             .map(bounded_read_agent_display_text),
+    })
+}
+
+fn read_agent_failed_display_output(target: &str, err: &FunctionCallError) -> serde_json::Value {
+    json!({
+        "target": target,
+        "error": bounded_read_agent_display_text(&err.to_string()),
     })
 }
 
@@ -1209,6 +1213,20 @@ mod tests {
             READ_AGENT_DISPLAY_TEXT_LIMIT + 3
         );
         assert!(last_agent_message.ends_with("..."));
+    }
+
+    #[test]
+    fn read_agent_failed_display_output_is_bounded() {
+        let long_error = "missing agent ".repeat(READ_AGENT_DISPLAY_TEXT_LIMIT);
+        let output = read_agent_failed_display_output(
+            "/root/worker",
+            &FunctionCallError::RespondToModel(long_error),
+        );
+
+        assert_eq!(output["target"], "/root/worker");
+        let error = output["error"].as_str().expect("error");
+        assert_eq!(error.chars().count(), READ_AGENT_DISPLAY_TEXT_LIMIT + 3);
+        assert!(error.ends_with("..."));
     }
 
     #[tokio::test]
