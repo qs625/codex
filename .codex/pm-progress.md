@@ -20,13 +20,13 @@ Display read_agent tool results in the Root Worker client.
   files: codex-rs/app-server-protocol/src/protocol/event_mapping.rs; codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/components/Conversation*; protocol ThreadItem schema/types as needed
   base_commit: dd5961815619fbf504a4a3523aeedc78899fba52
   pending_sync_from_main: no
-  status: in_progress
+  status: review
   objective: `read_agent` tool calls/results currently do not show in the Root Worker client; add or complete a typed ThreadItem/mapping so they appear for live and reload/history paths.
-  last_update: 2026-08-07 Owner dev-2 mistakenly returned unrelated sidebar connector commit `0960b273c1` on the `bugfix/read-agent-thread-item` branch while `read_agent` files remained uncommitted. PM marked the branch as polluted, told owner to continue `read_agent`, and will not merge the branch wholesale.
-  next_action: Owner dev-2 to finish and commit only the `read_agent` ThreadItem/display changes in a new independent commit excluding sidebar/styles.css churn; PM should cherry-pick only that read_agent commit if accepted.
+  last_update: 2026-08-07 Owner dev-2 delivered `d72f7f204f` for `read_agent`, correctly excluding sidebar/styles.css and covering live/reload/frontend paths. PM design review found failure-path display output persisted `err.to_string()` unbounded even though success messages are truncated.
+  next_action: Owner dev-2 to bound/sanitize failed `read_agent` display `error`, rerun reviewer/validation, and return updated read_agent commit. PM should cherry-pick only that read_agent commit if accepted.
   blockers: None known.
-  validation: pending
-  commit: pending; branch contains unrelated `0960b273c1` that must not be merged for this task
+  validation: owner reported app-server-protocol/thread-history/frontend tests and app-server/root-worker builds passing for `d72f7f204f`; PM requested failed-error bounding before merge. `codex-tool-service` focused unit test remains blocked by existing test-only crate issues per owner report.
+  commit: d72f7f204ff11b3115da74d5e9017845e9cbe2a8 pending fix; branch contains unrelated `0960b273c1` that must not be merged for this task
 
 ## Completed
 - commit: cf04c82b25
