@@ -8,27 +8,16 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix backend raw subagent notification emission; remove frontend envelope parser.
+None
 
 ## Active Work
-- id: backend-subagent-notification-typed
-  owner: /my_codex/owner_dev_3
-  checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: bugfix/backend-subagent-notification-typed
-  task_type: bugfix
-  depends_on: frontend workaround commit `1986bbf0e6` must be removed/replaced, not built on as final design
-  files: codex-rs/thread-service/**; codex-rs/app-server-protocol/**; codex-rs/thread-history/**; apps/root-worker-prototype/src/lib/conversation.ts/tests only to remove the frontend workaround and assert typed path
-  base_commit: 99541443087951385ae3257ede1fa83ca7952872
-  pending_sync_from_main: no
-  status: in_progress
-  objective: User rejected frontend special parsing for raw `<subagent_notification>` messages; identify why backend sends/stores this raw envelope as an agent message instead of a typed ThreadItem, fix backend typed event/history path, and remove the frontend raw-envelope parser.
-  last_update: 2026-08-07 User said "不要前端特殊判断啊, 要看后端为啥发送了这种raw message而不是typed threaditem" after PM merged frontend compatibility fix `1986bbf0e6`.
-  next_action: Owner dev-3 to trace emission/persistence of inter-agent child completion, replace raw agent-message display path with typed inter-agent ThreadItem, remove frontend parser workaround, review/test/commit.
-  blockers: None known.
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: be5d792108
+  summary: Merged and accepted `/my_codex/owner_dev_3` backend bugfix commit `15d6a53137e32a01555d57e53ff8b7b594760942` (`Suppress raw subagent notification display items`). This replaces the rejected frontend raw-envelope parser workaround: typed child completion already exists through `InterAgentCommunicationCompleted`, and the raw `<subagent_notification>` duplicate came from legacy structured assistant `AgentMessage` projection/replay plus app-server direct live `EventMsg::AgentMessage` bypass. The fix filters legacy structured assistant messages in the shared backend projection and app-server direct live sender, removes the frontend parser and its tests, and keeps ordinary JSON agent messages visible.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after requiring app-server direct helper coverage and removal of ineffective test-tree changes. PM inspected that `parseLegacySubagentNotification` and related frontend special cases were deleted, and that the backend fix uses the existing legacy structured assistant message filter rather than renderer parsing. PM reran on merged main: `rtk cargo test -p app-server-protocol item_event_to_server_notification_skips_raw_subagent_notification_agent_item --lib` -> 1 passed; `rtk cargo test -p thread-history replay_skips_raw_subagent_notification_agent_item_when_typed_completion_exists --lib` -> 1 passed; `rtk cargo test -p app-server direct_live_agent_message --lib` -> 2 passed; `rtk pnpm test -- src/lib/conversation.test.ts` -> 47 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk pnpm build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
+  residual_risk: No Electron screenshot/manual smoke was run. If old raw envelopes are already embedded inside compact replacement history, that compact-detail path may need a separate targeted cleanup.
 - commit: 1986bbf0e6
   summary: Merged and accepted `/my_codex/owner_dev_2` bugfix commit `2453c2587574333cdc75d7a24d9b04108fc87fa3` (`Render raw subagent notifications as completions`). Root Worker conversation now handles legacy/raw inter-agent messages whose full agent message text is a JSON communication object with `content` wrapped in `<subagent_notification>...</subagent_notification>`: legacy-only envelopes render through the existing subagent completion/inter-agent style, typed duplicates are suppressed, ordinary JSON messages remain visible, and malformed envelopes fall back safely without crashing.
   validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after catching a compile-risk issue. PM inspected the strict parser and tests against the user sample and brief: it does not globally hide JSON or raw text, and it does not change runtime protocol. PM reran on merged main: `rtk pnpm exec tsx --test src/lib/conversation.test.ts` -> 50 passed; `rtk pnpm build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
