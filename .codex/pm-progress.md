@@ -8,10 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Fix schedule monitor missing after restart.
 
 ## Active Work
-None
+- id: schedule-reload-still-missing
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/schedule-reload-still-missing
+  task_type: bugfix
+  depends_on: prior main fix `50dfe5b7be`
+  files: codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; codex-rs/rollout/src/policy.rs; codex-rs/app-server/**; apps/root-worker-prototype/src/lib/threadAnalysis.ts only if API replay is already correct
+  base_commit: c9ca4b69a95cb73b73b55d31f22651c11a1134c0
+  pending_sync_from_main: no
+  status: in_progress
+  objective: User reports that after restarting, the active schedule monitor still does not appear despite main commit `50dfe5b7be`; identify the actual broken reload path and fix it at the persisted typed replay/runtime registration layer.
+  last_update: 2026-08-07 User reported "重启之后还是没有啊"; main/dev-2/dev-3 are all at `c9ca4b69a9` and clean.
+  next_action: Owner dev-3 to reproduce/inspect restart reload path, compare persisted `SessionMeta.subscriptions` with `thread/read`/Root Worker display inputs, implement missing backend replay/runtime fix, review, test, and commit on dev-3.
+  blockers: None known.
+  validation: pending
+  commit:
 
 ## Completed
 - commit: 50dfe5b7be
