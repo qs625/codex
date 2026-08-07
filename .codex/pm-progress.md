@@ -8,10 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Fix backend raw subagent notification emission; remove frontend envelope parser.
 
 ## Active Work
-None
+- id: backend-subagent-notification-typed
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/backend-subagent-notification-typed
+  task_type: bugfix
+  depends_on: frontend workaround commit `1986bbf0e6` must be removed/replaced, not built on as final design
+  files: codex-rs/thread-service/**; codex-rs/app-server-protocol/**; codex-rs/thread-history/**; apps/root-worker-prototype/src/lib/conversation.ts/tests only to remove the frontend workaround and assert typed path
+  base_commit: 99541443087951385ae3257ede1fa83ca7952872
+  pending_sync_from_main: no
+  status: in_progress
+  objective: User rejected frontend special parsing for raw `<subagent_notification>` messages; identify why backend sends/stores this raw envelope as an agent message instead of a typed ThreadItem, fix backend typed event/history path, and remove the frontend raw-envelope parser.
+  last_update: 2026-08-07 User said "不要前端特殊判断啊, 要看后端为啥发送了这种raw message而不是typed threaditem" after PM merged frontend compatibility fix `1986bbf0e6`.
+  next_action: Owner dev-3 to trace emission/persistence of inter-agent child completion, replace raw agent-message display path with typed inter-agent ThreadItem, remove frontend parser workaround, review/test/commit.
+  blockers: None known.
+  validation: pending
+  commit:
 
 ## Completed
 - commit: 1986bbf0e6
