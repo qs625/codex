@@ -8,25 +8,9 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix two client display gaps: schedule monitor after restart and read_agent tool results.
+Display read_agent tool results in the Root Worker client.
 
 ## Active Work
-- id: schedule-reload-still-missing
-  owner: /my_codex/owner_dev_3
-  checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: bugfix/schedule-reload-still-missing
-  task_type: bugfix
-  depends_on: prior main fix `50dfe5b7be`
-  files: codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; codex-rs/rollout/src/policy.rs; codex-rs/app-server/**; apps/root-worker-prototype/src/lib/threadAnalysis.ts only if API replay is already correct
-  base_commit: c9ca4b69a95cb73b73b55d31f22651c11a1134c0
-  pending_sync_from_main: yes, main has PM-only progress commits through `dd59618`; do not sync while owner dev-3 is active unless it can fast-forward safely
-  status: review
-  objective: User reports that after restarting, the active schedule monitor still does not appear despite main commit `50dfe5b7be`; identify the actual broken reload path and fix it at the persisted typed replay/runtime registration layer.
-  last_update: 2026-08-07 Owner dev-3 delivered commit `53fa93ec374d6cc9aeac5033e71612652a3d8282`, identifying the real gap as loaded live `thread/read` overriding persisted synthetic `active-subscriptions` turns after startup restore. PM design review found duplicate guard covered `schedule_subscribe` but not existing real `schedule_unsubscribe` with the same subscription_id.
-  next_action: Owner dev-3 to add unsubscribe duplicate guard + focused test, rerun reviewer/validation, and return updated commit.
-  blockers: None known.
-  validation: owner reported passing app-server focused tests/build/rustfmt/diff-check for `53fa93ec...`; PM requested one duplicate-guard fix before merge.
-  commit: 53fa93ec374d6cc9aeac5033e71612652a3d8282 pending fix
 - id: read-agent-client-thread-item
   owner: /my_codex/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
@@ -45,6 +29,10 @@ Fix two client display gaps: schedule monitor after restart and read_agent tool 
   commit:
 
 ## Completed
+- commit: cf04c82b25
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `dad0d655488b2c5e445a008140f6615d3798feca` (`Restore schedule monitors for loaded thread reads`). Root Worker restart recovery now preserves the active schedule monitor even after `thread/list` restores persisted subscriptions into a loaded live thread: loaded `thread/read includeTurns=true` restores the persisted synthetic `active-subscriptions` display turn instead of letting live history overwrite it away. The merge helper preserves existing injected-context recovery and de-duplicates synthetic schedule monitor items by item id or completed `schedule_subscribe` / `schedule_unsubscribe` `subscription_id`.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after PM requested an unsubscribe duplicate guard返工. PM inspected the implementation against the brief: the fix lands in the actual loaded `thread/read` merge path, not front-end fake display or timer semantics, and explains why prior `app-server-protocol` replay tests passed while the real loaded path still failed. PM reran on merged main: `rtk cargo test -p app-server restore_persisted_display_turns --lib` -> 4 passed; `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_startup_subscription_restore` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
+  residual_risk: No real Electron restart smoke was run. The helper currently keys on the synthetic `active-subscriptions` turn id and schedule tool output `subscription_id`, so future schema/id changes must update this merge path.
 - commit: 50dfe5b7be
   summary: Cherry-picked and accepted `/my_codex/owner_dev_2` schedule bugfix commit `b48f1e7cee6950a22826aea69dd5da3b17aaa188` (`Restore schedule subscriptions in protocol history replay`). Root Worker reload/thread history recovery now restores active schedule subscriptions from persisted `SessionMeta.subscriptions` in the `app-server-protocol` replay builder, synthesizing bounded completed `schedule_subscribe` items for active schedules and successful `schedule_unsubscribe` cleanup items when the latest snapshot is empty. `subscriptions: None` remains non-clearing, and existing schedule monitor items are not duplicated. PM intentionally cherry-picked only the schedule commit because the dev-2 task branch also contained unrelated sidebar UI commit `2d4ce2a03d...`.
   validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after two rounds. PM inspected the replay builder and tests against the brief: the fix lands in typed persisted history replay rather than front-end string synthesis or schedule execution semantics. PM reran on main: `rtk cargo test -p app-server-protocol thread_history_projects_active_schedule_subscription_metadata` -> 1 passed; `rtk cargo test -p app-server-protocol thread_history_does_not_duplicate_existing_schedule_monitor_from_subscription_snapshot` -> 1 passed; `rtk cargo test -p app-server-protocol thread_history_empty_subscription_snapshot_projects_inactive_schedule_cleanup` -> 1 passed; `rtk cargo test -p app-server-protocol thread_history_subscription_snapshot_none_does_not_clear_existing_schedule_monitor` -> 1 passed; `rtk pnpm exec tsx --test src/lib/threadAnalysis.test.ts` -> 18 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
