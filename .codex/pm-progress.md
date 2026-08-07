@@ -8,10 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Hide raw subagent_notification envelopes in client conversation display.
 
 ## Active Work
-None
+- id: raw-subagent-notification-display
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/raw-subagent-notification-display
+  task_type: bugfix
+  depends_on: none
+  files: apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/conversation.test.ts; app-server-protocol/thread-history display mapping only if raw envelope is produced before frontend
+  base_commit: 7b8b26e01118dd5d938672112098a84fef7f39c5
+  pending_sync_from_main: no
+  status: in_progress
+  objective: User observed a raw JSON/inter-agent message containing `<subagent_notification>` displayed in the client; render it as the existing inter-agent/child-completion item or suppress duplicate raw envelope text instead of showing the raw payload.
+  last_update: 2026-08-07 User pasted a raw message from `/cp_http_api/explore_cp_api_patterns_2` to `/cp_http_api` with `<subagent_notification>` content visible in the client.
+  next_action: Owner dev-2 to identify where raw envelope is converted into conversation entries, implement typed/inter-agent display or duplicate suppression, add focused tests with the user's sample shape, review/test/commit.
+  blockers: None known.
+  validation: pending
+  commit:
 
 ## Completed
 - commit: 432fe3b150
