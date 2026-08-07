@@ -8,10 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Align read_agent conversation item styling with inter-agent items.
 
 ## Active Work
-None
+- id: read-agent-inter-agent-style
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/read-agent-inter-agent-style
+  task_type: bugfix
+  depends_on: read_agent display commits `831a0415d4` and `bf73375bfa`
+  files: apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/conversation.test.ts; apps/root-worker-prototype/src/styles.css or conversation components only if needed
+  base_commit: 2d601a32f2110eaebfc1deac25b1b2ddaf39b0ce
+  pending_sync_from_main: no
+  status: in_progress
+  objective: User reports the client item style for `read_agent` differs from other inter-agent items; adjust Root Worker conversation rendering/styling so `read_agent` appears in the same inter-agent visual style.
+  last_update: 2026-08-07 PM used existing inter-agent conversation items as the design anchor; skipped image generation because this is a small style consistency fix with established local patterns.
+  next_action: Owner dev-3 to align `read_agent` conversation entry kind/class/summary/rendering with existing inter-agent item style, cover completed/failed states, review/test/commit.
+  blockers: None known.
+  validation: pending
+  commit:
 
 ## Completed
 - commit: 831a0415d4 + bf73375bfa
