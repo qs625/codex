@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use crate::agent::child_completion_content_from_status;
 use crate::session::session::ThreadWaitSource;
 use crate::session::thread_wait::ThreadWaitOutcome;
 use crate::session::thread_wait::ThreadWaitState;
@@ -1751,10 +1752,7 @@ pub(crate) fn external_live_agent(run: &ExternalAgentRun) -> LiveAgent {
 
 pub(crate) fn completion_communication(run: &ExternalAgentRun) -> Option<InterAgentCommunication> {
     let parent_agent_path = parent_path(&run.agent_path)?;
-    let message = crate::session_prefix::format_subagent_notification_message(
-        run.agent_path.as_str(),
-        &run.status,
-    );
+    let message = child_completion_content_from_status(&run.status);
     Some(
         InterAgentCommunication::new(
             run.agent_path.clone(),
@@ -2767,6 +2765,38 @@ mod tests {
         assert!(context.contains("agent_path: /cp_http_api"));
         assert!(context.contains("agent_role: claude_cli"));
         assert!(!context.contains("Original task:"));
+    }
+
+    #[test]
+    fn completion_communication_uses_plain_typed_status_content() {
+        let parent_thread_id = ThreadId::new();
+        let child_thread_id = ThreadId::new();
+        let run = ExternalAgentRun {
+            thread_id: child_thread_id,
+            parent_thread_id,
+            agent_path: AgentPath::try_from("/root/external").expect("agent path"),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: None,
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Completed(Some("done".to_string())),
+            active_turn_id: None,
+            last_task_message: None,
+            abort_handle: None,
+        };
+
+        let communication = completion_communication(&run).expect("completion communication");
+
+        assert_eq!(communication.content, "done");
+        assert!(!communication.content.contains("<subagent_notification>"));
+        assert_eq!(communication.status, Some(run.status));
+        assert_eq!(
+            communication.operation,
+            InterAgentOperation::ChildCompletion
+        );
+        assert_eq!(communication.sender_thread_id, Some(child_thread_id));
+        assert_eq!(communication.recipient_thread_id, Some(parent_thread_id));
     }
 
     #[test]

@@ -385,7 +385,7 @@ impl Session {
             return false;
         };
 
-        let message = format_subagent_notification_message(child_agent_path.as_str(), &status);
+        let message = child_completion_content_from_status(&status);
         // `communication` owns the message. Keep a second copy only when the
         // recorder will actually need it after parent delivery succeeds.
         let trace_message = self
