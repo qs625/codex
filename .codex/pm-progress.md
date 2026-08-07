@@ -8,27 +8,16 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Display read_agent tool results in the Root Worker client.
+None
 
 ## Active Work
-- id: read-agent-client-thread-item
-  owner: /my_codex/owner_dev_2
-  checkout: /Users/bytedance/Projects/my-codex-dev-2
-  branch: bugfix/read-agent-thread-item
-  task_type: bugfix
-  depends_on: none
-  files: codex-rs/app-server-protocol/src/protocol/event_mapping.rs; codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/components/Conversation*; protocol ThreadItem schema/types as needed
-  base_commit: dd5961815619fbf504a4a3523aeedc78899fba52
-  pending_sync_from_main: no
-  status: review
-  objective: `read_agent` tool calls/results currently do not show in the Root Worker client; add or complete a typed ThreadItem/mapping so they appear for live and reload/history paths.
-  last_update: 2026-08-07 Owner dev-2 delivered `d72f7f204f` for `read_agent`, correctly excluding sidebar/styles.css and covering live/reload/frontend paths. PM design review found failure-path display output persisted `err.to_string()` unbounded even though success messages are truncated.
-  next_action: Owner dev-2 to bound/sanitize failed `read_agent` display `error`, rerun reviewer/validation, and return updated read_agent commit. PM should cherry-pick only that read_agent commit if accepted.
-  blockers: None known.
-  validation: owner reported app-server-protocol/thread-history/frontend tests and app-server/root-worker builds passing for `d72f7f204f`; PM requested failed-error bounding before merge. `codex-tool-service` focused unit test remains blocked by existing test-only crate issues per owner report.
-  commit: d72f7f204ff11b3115da74d5e9017845e9cbe2a8 pending fix; branch contains unrelated `0960b273c1` that must not be merged for this task
+None
 
 ## Completed
+- commit: 831a0415d4 + bf73375bfa
+  summary: Cherry-picked and accepted `/my_codex/owner_dev_2` read_agent display commits `d72f7f204ff11b3115da74d5e9017845e9cbe2a8` (`Show read_agent calls in thread history`) and `f44c4982ae30c76bc23c3b8f35c87ad137d5e497` (`Bound read_agent failed display output`). Native `read_agent` now emits typed `BuiltinToolCallStarted/Completed` display events, so Root Worker can show the tool in live conversation and reload/history replay. Display output is bounded/sanitized: success includes target, agent details, lifecycle summary, and truncated last task/agent messages; failure stores a truncated error. Full model-facing JSON result remains unchanged.
+  validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after PM requested failed-error bounding. PM intentionally cherry-picked only the two read_agent commits because the dev-2 branch also contained unrelated sidebar connector commit `0960b273c1`. PM reran on merged main: `rtk cargo test -p app-server-protocol read_agent_builtin_tool_completed_display_event_maps_to_thread_item` -> 1 passed; `rtk cargo test -p app-server-protocol thread_history_rebuilds_read_agent_builtin_tool_item` -> 1 passed; `rtk cargo test -p thread-history typed_read_agent_builtin_tool_history_rebuilds_thread_item` -> 1 passed; `rtk pnpm exec tsx --test src/lib/conversation.test.ts` -> 45 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk pnpm build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~2..HEAD && rtk git diff --check` -> passed.
+  residual_risk: No Electron screenshot/manual smoke was run. `read_external_agent` remains out of scope and still may need separate display support. The `codex-tool-service` focused unit test documents the bounding helper but cannot currently run because of existing test-only crate dependency/export issues; production build and adjacent protocol/history/frontend tests pass.
 - commit: cf04c82b25
   summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `dad0d655488b2c5e445a008140f6615d3798feca` (`Restore schedule monitors for loaded thread reads`). Root Worker restart recovery now preserves the active schedule monitor even after `thread/list` restores persisted subscriptions into a loaded live thread: loaded `thread/read includeTurns=true` restores the persisted synthetic `active-subscriptions` display turn instead of letting live history overwrite it away. The merge helper preserves existing injected-context recovery and de-duplicates synthetic schedule monitor items by item id or completed `schedule_subscribe` / `schedule_unsubscribe` `subscription_id`.
   validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after PM requested an unsubscribe duplicate guard返工. PM inspected the implementation against the brief: the fix lands in the actual loaded `thread/read` merge path, not front-end fake display or timer semantics, and explains why prior `app-server-protocol` replay tests passed while the real loaded path still failed. PM reran on merged main: `rtk cargo test -p app-server restore_persisted_display_turns --lib` -> 4 passed; `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_startup_subscription_restore` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
