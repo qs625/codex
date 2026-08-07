@@ -8,10 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Eliminate raw subagent_notification message production at the source.
 
 ## Active Work
-None
+- id: eliminate-legacy-subagent-message-source
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/eliminate-legacy-subagent-message-source
+  task_type: bugfix
+  depends_on: backend display filter commit `be5d792108`; that filter is only a defensive boundary and should not be treated as final source fix
+  files: codex-rs/thread-service/src/session_prefix.rs; codex-rs/thread-service/src/session/events_history.rs; codex-rs/thread-service/src/agent/external.rs; codex-rs/thread-service/src/agent/multi_agent.rs; codex-rs/thread-service/src/session/** tests; app-server-protocol/thread-history tests only as needed
+  base_commit: 78f505a9f3bb773b32688adca21bc41178d4aa1d
+  pending_sync_from_main: no
+  status: in_progress
+  objective: User clarified that raw `<subagent_notification>` messages should not be produced at all; locate and remove the source paths that format child completion as raw assistant text, preserving only typed inter-agent completion facts for display/history/model-visible semantics.
+  last_update: 2026-08-07 User said "而是就不应该有这种legacy message". PM quick rg found `format_subagent_notification_message` used in thread-service child/external completion history paths.
+  next_action: Owner dev-3 to trace `format_subagent_notification_message` call sites, replace raw message production with typed `InterAgentCommunication` / `ResponseItem::InterAgentCommunication` where appropriate, remove obsolete source helper if possible, keep defensive display filter only if needed for old persisted data, review/test/commit.
+  blockers: None known.
+  validation: pending
+  commit:
 
 ## Completed
 - commit: be5d792108
