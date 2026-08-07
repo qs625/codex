@@ -5,6 +5,7 @@ import { buildConversationEntries, buildConversationState } from "./conversation
 import { buildThreadAnalysis } from "./threadAnalysis";
 import {
   appendAgentDelta,
+  appendCommandExecutionDelta,
   applyInitializedThreadUpdate,
   applyPendingThreadUpdates,
   buildProjectAgentSidebar,
@@ -682,6 +683,88 @@ test("updateThreadItem creates a running turn when item notifications arrive fir
       durationMs: null,
     },
   ]);
+});
+
+test("command item notifications create a visible running command and complete the same item", () => {
+  const started = updateThreadItem(
+    makeThread(),
+    "turn-1",
+    {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "rtk sleep 1",
+      cwd: "/tmp/project",
+      status: "inProgress",
+      initialWaitMs: 1000,
+      notifyOn: "output",
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+    },
+    { startedAtMs: 2_000 },
+  );
+
+  assert.equal(started.turns.length, 1);
+  assert.equal(started.turns[0]?.status, "running");
+  assert.deepEqual(
+    buildConversationEntries(started).map((entry) => [
+      entry.id,
+      entry.kind,
+      entry.toolCategory,
+      entry.toolStatus,
+      entry.text,
+    ]),
+    [["cmd-1", "tool", "command", "inProgress", "tmp/project • running"]],
+  );
+
+  const withOutput = appendCommandExecutionDelta(
+    started,
+    "turn-1",
+    "cmd-1",
+    "running\n",
+  );
+  assert.equal(
+    (withOutput.turns[0]?.items[0] as Extract<
+      ThreadItem,
+      { type: "commandExecution" }
+    >).aggregatedOutput,
+    "running\n",
+  );
+
+  const completed = updateThreadItem(
+    withOutput,
+    "turn-1",
+    {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "rtk sleep 1",
+      cwd: "/tmp/project",
+      status: "completed",
+      initialWaitMs: 1000,
+      notifyOn: "output",
+      aggregatedOutput: "running\n",
+      exitCode: 0,
+      durationMs: 1000,
+    },
+    { completedAtMs: 3_000 },
+  );
+
+  assert.equal(completed.turns.length, 1);
+  assert.equal(completed.turns[0]?.items.length, 1);
+  assert.deepEqual(completed.turns[0]?.items[0], {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 1",
+    cwd: "/tmp/project",
+    status: "completed",
+    initialWaitMs: 1000,
+    notifyOn: "output",
+    aggregatedOutput: "running\n",
+    exitCode: 0,
+    durationMs: 1000,
+    startedAtMs: 2_000,
+    completedAtMs: 3_000,
+  });
 });
 
 test("updateThreadItem preserves started time when completion updates the same item", () => {

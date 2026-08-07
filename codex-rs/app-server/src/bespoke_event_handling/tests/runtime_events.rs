@@ -194,6 +194,144 @@ use super::*;
     }
 
     #[tokio::test]
+    async fn exec_command_begin_refreshes_provisional_command_started_item() -> Result<()> {
+        let codex_home = TempDir::new()?;
+        let config = load_default_config_for_test(&codex_home).await;
+        let thread_service = Arc::new(
+            thread_service::test_support::thread_service_with_models_provider_and_home(
+                CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                config.model_provider.clone(),
+                config.codex_home.to_path_buf(),
+                Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            ),
+        );
+        let thread_service::NewThread {
+            thread_id: conversation_id,
+            thread: _,
+            ..
+        } = thread_service.start_thread(config).await?;
+        let thread_state = new_thread_state();
+        let thread_watch_manager = ThreadWatchManager::new();
+        let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let outgoing = test_outgoing(tx);
+        let completion_item = command_execution_completion_item("printf hi");
+
+        let first_start = start_command_execution_item(
+            &conversation_id,
+            "turn-1".to_string(),
+            "cmd-1".to_string(),
+            completion_item.command.clone(),
+            completion_item.cwd.clone(),
+            completion_item.command_actions.clone(),
+            CommandExecutionSource::Agent,
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+        assert!(first_start);
+        let provisional = recv_broadcast_message(&mut rx).await?;
+        match provisional {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+                let ThreadItem::CommandExecution {
+                    id,
+                    process_id,
+                    initial_wait_ms,
+                    notify_on,
+                    ..
+                } = payload.item
+                else {
+                    bail!("expected command execution item");
+                };
+                assert_eq!(id, "cmd-1");
+                assert_eq!(process_id, None);
+                assert_eq!(initial_wait_ms, None);
+                assert_eq!(notify_on, None);
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        let begin_event = Event {
+            id: "turn-1".to_string(),
+            msg: EventMsg::ExecCommandBegin(protocol::protocol::ExecCommandBeginEvent {
+                call_id: "cmd-1".to_string(),
+                process_id: Some("pid-1".to_string()),
+                turn_id: "turn-1".to_string(),
+                started_at_ms: 1234,
+                command: vec!["printf".to_string(), "hi".to_string()],
+                cwd: completion_item.cwd.clone(),
+                parsed_cmd: Vec::new(),
+                source: protocol::protocol::ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: Some(500),
+                notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Output),
+            }),
+        };
+
+        apply_bespoke_event_handling(
+            begin_event.clone(),
+            conversation_id,
+            thread_service.clone(),
+            thread_service.clone(),
+            thread_service.clone(),
+            thread_service.clone(),
+            thread_service.clone(),
+            outgoing.clone(),
+            thread_state.clone(),
+            thread_watch_manager.clone(),
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+
+        let authoritative = recv_broadcast_message(&mut rx).await?;
+        match authoritative {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+                assert_eq!(payload.thread_id, conversation_id.to_string());
+                assert_eq!(payload.turn_id, "turn-1");
+                assert_eq!(payload.started_at_ms, 1234);
+                let ThreadItem::CommandExecution {
+                    id,
+                    process_id,
+                    status,
+                    initial_wait_ms,
+                    notify_on,
+                    ..
+                } = payload.item
+                else {
+                    bail!("expected command execution item");
+                };
+                assert_eq!(id, "cmd-1");
+                assert_eq!(process_id.as_deref(), Some("pid-1"));
+                assert_eq!(status, CommandExecutionStatus::InProgress);
+                assert_eq!(initial_wait_ms, Some(500));
+                assert_eq!(
+                    notify_on,
+                    Some(app_server_protocol::CommandExecutionNotifyOn::Output)
+                );
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
+
+        apply_bespoke_event_handling(
+            begin_event,
+            conversation_id,
+            thread_service.clone(),
+            thread_service.clone(),
+            thread_service.clone(),
+            thread_service.clone(),
+            thread_service,
+            outgoing,
+            thread_state,
+            thread_watch_manager,
+            Arc::new(tokio::sync::Semaphore::new(/*permits*/ 1)),
+            "test-provider".to_string(),
+        )
+        .await;
+        assert!(rx.try_recv().is_err(), "duplicate begin should not emit");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn builtin_poll_event_emits_started_and_completed_thread_items() -> Result<()> {
         let codex_home = TempDir::new()?;
         let config = load_default_config_for_test(&codex_home).await;

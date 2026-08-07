@@ -106,6 +106,7 @@ pub(crate) enum ThreadListenerCommand {
 pub(crate) struct TurnSummary {
     pub(crate) started_at: Option<i64>,
     pub(crate) command_execution_started: HashSet<String>,
+    pub(crate) provisional_command_execution_started: HashSet<String>,
     pub(crate) last_error: Option<TurnError>,
 }
 

@@ -607,7 +607,11 @@ mod tests {
     use protocol::protocol::CollabResumeBeginEvent;
     use protocol::protocol::CollabResumeEndEvent;
     use protocol::protocol::CollabWaitingBeginEvent;
+    use protocol::protocol::ExecCommandBeginEvent;
+    use protocol::protocol::ExecCommandEndEvent;
     use protocol::protocol::ExecCommandOutputDeltaEvent;
+    use protocol::protocol::ExecCommandSource;
+    use protocol::protocol::ExecCommandStatus;
     use protocol::protocol::ExecOutputStream;
     use protocol::protocol::InterAgentCommunication;
     use protocol::protocol::InterAgentOperation;
@@ -617,6 +621,7 @@ mod tests {
     use protocol::protocol::ThreadLifecycleStatus;
     use protocol::user_input::UserInput as CoreUserInput;
     use serde_json::json;
+    use std::time::Duration;
 
     fn assert_item_started_server_notification(
         notification: Option<ServerNotification>,
@@ -648,6 +653,10 @@ mod tests {
             }
             other => panic!("expected command execution output delta, got {other:?}"),
         }
+    }
+
+    fn test_cwd() -> codex_utils_absolute_path::AbsolutePathBuf {
+        codex_utils_absolute_path::AbsolutePathBuf::try_from("/tmp/project").expect("absolute cwd")
     }
 
     #[test]
@@ -1413,6 +1422,103 @@ mod tests {
                         )),
                         message: Some("done".to_string()),
                     },
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn exec_command_begin_maps_to_running_command_execution_item_started() {
+        let cwd = test_cwd();
+        let notification = item_event_to_server_notification(
+            EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+                call_id: "cmd-1".to_string(),
+                process_id: Some("pid-1".to_string()),
+                turn_id: "turn-ignored".to_string(),
+                started_at_ms: 1234,
+                command: vec!["echo".to_string(), "hello".to_string()],
+                cwd: cwd.clone(),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: Some(1000),
+                notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Output),
+            }),
+            "thread-1",
+            "turn-1",
+        );
+
+        assert_item_started_server_notification(
+            notification,
+            ItemStartedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                started_at_ms: 1234,
+                item: ThreadItem::CommandExecution {
+                    id: "cmd-1".to_string(),
+                    command: "echo hello".to_string(),
+                    cwd,
+                    process_id: Some("pid-1".to_string()),
+                    source: crate::protocol::CommandExecutionSource::Agent,
+                    status: crate::protocol::CommandExecutionStatus::InProgress,
+                    initial_wait_ms: Some(1000),
+                    notify_on: Some(crate::protocol::CommandExecutionNotifyOn::Output),
+                    command_actions: Vec::new(),
+                    aggregated_output: None,
+                    exit_code: None,
+                    duration_ms: None,
+                },
+            },
+        );
+    }
+
+    #[test]
+    fn exec_command_end_maps_to_same_command_execution_item_completed() {
+        let cwd = test_cwd();
+        let notification = item_event_to_server_notification(
+            EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "cmd-1".to_string(),
+                process_id: Some("pid-1".to_string()),
+                turn_id: "turn-ignored".to_string(),
+                completed_at_ms: 2234,
+                command: vec!["echo".to_string(), "hello".to_string()],
+                cwd: cwd.clone(),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                initial_wait_ms: Some(1000),
+                notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Output),
+                stdout: "hello\n".to_string(),
+                stderr: String::new(),
+                aggregated_output: "hello\n".to_string(),
+                exit_code: 0,
+                duration: Duration::from_millis(250),
+                formatted_output: "hello".to_string(),
+                status: ExecCommandStatus::Completed,
+            }),
+            "thread-1",
+            "turn-1",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                completed_at_ms: 2234,
+                item: ThreadItem::CommandExecution {
+                    id: "cmd-1".to_string(),
+                    command: "echo hello".to_string(),
+                    cwd,
+                    process_id: Some("pid-1".to_string()),
+                    source: crate::protocol::CommandExecutionSource::Agent,
+                    status: crate::protocol::CommandExecutionStatus::Completed,
+                    initial_wait_ms: Some(1000),
+                    notify_on: Some(crate::protocol::CommandExecutionNotifyOn::Output),
+                    command_actions: Vec::new(),
+                    aggregated_output: Some("hello\n".to_string()),
+                    exit_code: Some(0),
+                    duration_ms: Some(250),
                 },
             },
         );

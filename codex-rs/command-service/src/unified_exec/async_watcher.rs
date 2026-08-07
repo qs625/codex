@@ -16,6 +16,8 @@ use super::HeadTailBuffer;
 use super::UnifiedExecContext;
 use super::UnifiedExecProcess;
 use super::command_notification_filter_to_protocol;
+use super::events::command_exit_notification_message;
+use super::events::command_output_notification_message;
 use super::events::emit_unified_exec_end;
 use super::events::emit_unified_exec_end_with_output;
 use super::resolve_aggregated_output;
@@ -176,9 +178,13 @@ pub(crate) fn spawn_exit_watcher(
             .await;
             let item = ResponseItem::CommandExecutionNotification {
                 id: Some(format!("{call_id}:notification:exit")),
-                command_item_id: call_id,
+                command_item_id: call_id.clone(),
                 kind: CommandExecutionNotificationKind::Exit,
-                message: "Command exit notification received.".to_string(),
+                message: command_exit_notification_message(
+                    &call_id,
+                    notification_output.as_deref(),
+                    process.exit_code(),
+                ),
                 output: notification_output,
                 exit_code: process.exit_code(),
                 created_at_ms: completed_at_ms,
@@ -356,7 +362,7 @@ async fn process_chunk(
                 id: Some(format!("{call_id}:notification:output:{sequence}")),
                 command_item_id: call_id.to_string(),
                 kind: CommandExecutionNotificationKind::Output,
-                message: "Command output notification received.".to_string(),
+                message: command_output_notification_message(&call_id),
                 output: Some(output),
                 exit_code: None,
                 created_at_ms: now_unix_timestamp_ms(),

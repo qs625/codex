@@ -277,11 +277,11 @@ use thread_service_api::ThreadLifecycleRuntime;
             &conversation_id,
             "turn-1".to_string(),
             "cmd-1".to_string(),
-            completion_item.command,
-            completion_item.cwd,
+            completion_item.command.clone(),
+            completion_item.cwd.clone(),
             /*process_id*/ None,
             CommandExecutionSource::Agent,
-            completion_item.command_actions,
+            completion_item.command_actions.clone(),
             CommandExecutionStatus::Declined,
             &outgoing,
             &thread_state,
@@ -291,6 +291,33 @@ use thread_service_api::ThreadLifecycleRuntime;
             rx.try_recv().is_err(),
             "completion should not emit after the pending item is cleared"
         );
+
+        let restart_item = command_execution_completion_item("printf bye");
+        let restarted = start_command_execution_item(
+            &conversation_id,
+            "turn-2".to_string(),
+            "cmd-1".to_string(),
+            restart_item.command.clone(),
+            restart_item.cwd.clone(),
+            restart_item.command_actions.clone(),
+            CommandExecutionSource::Agent,
+            &outgoing,
+            &thread_state,
+        )
+        .await;
+        assert!(restarted, "completion should clear command start tracking");
+        let restarted_msg = recv_broadcast_message(&mut rx).await?;
+        match restarted_msg {
+            OutgoingMessage::AppServerNotification(ServerNotification::ItemStarted(payload)) => {
+                assert_eq!(payload.turn_id, "turn-2");
+                let ThreadItem::CommandExecution { id, command, .. } = payload.item else {
+                    bail!("expected command execution item");
+                };
+                assert_eq!(id, "cmd-1");
+                assert_eq!(command, restart_item.command);
+            }
+            other => bail!("unexpected message: {other:?}"),
+        }
         Ok(())
     }
 

@@ -20,6 +20,32 @@ use tokio::sync::Mutex;
 use super::HeadTailBuffer;
 use super::resolve_aggregated_output;
 
+pub(super) fn command_output_notification_message(command_item_id: &str) -> String {
+    format!("Command {command_item_id} produced new output.")
+}
+
+pub(super) fn command_exit_notification_message(
+    command_item_id: &str,
+    output: Option<&str>,
+    exit_code: Option<i32>,
+) -> String {
+    let has_output = output.is_some_and(|output| !output.is_empty());
+    match (exit_code, has_output) {
+        (Some(code), true) => format!("Command {command_item_id} has exited with code {code}."),
+        (Some(code), false) => {
+            format!("Command {command_item_id} has exited with code {code} and produced no output.")
+        }
+        (None, true) => {
+            format!("Command {command_item_id} has exited with unknown exit code.")
+        }
+        (None, false) => {
+            format!(
+                "Command {command_item_id} has exited with unknown exit code and produced no output."
+            )
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn emit_unified_exec_begin(
     session_ref: Arc<dyn ThreadSessionCapability>,
@@ -125,18 +151,57 @@ pub(crate) async fn emit_unified_exec_end_with_output(
     .await;
 
     if process_id.is_some() {
+        let notification_output = (!output.aggregated_output.text.is_empty())
+            .then_some(output.aggregated_output.text);
+        let message = command_exit_notification_message(
+            &call_id,
+            notification_output.as_deref(),
+            Some(output.exit_code),
+        );
         session_ref.record_model_items_and_emit_display_events(turn_ref.as_ref(), vec![
             ResponseItem::CommandExecutionNotification {
                 id: Some(format!("{call_id}:notification:exit")),
                 command_item_id: call_id,
                 kind: CommandExecutionNotificationKind::Exit,
-                message: "Command exit notification received.".to_string(),
-                output: (!output.aggregated_output.text.is_empty())
-                    .then_some(output.aggregated_output.text),
+                message,
+                output: notification_output,
                 exit_code: Some(output.exit_code),
                 created_at_ms: completed_at_ms,
             },
         ])
         .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_output_notification_message_names_command() {
+        assert_eq!(
+            command_output_notification_message("cmd-1"),
+            "Command cmd-1 produced new output."
+        );
+    }
+
+    #[test]
+    fn command_exit_notification_message_describes_exit_code_and_output() {
+        assert_eq!(
+            command_exit_notification_message("cmd-1", Some("hello"), Some(0)),
+            "Command cmd-1 has exited with code 0."
+        );
+        assert_eq!(
+            command_exit_notification_message("cmd-1", None, Some(0)),
+            "Command cmd-1 has exited with code 0 and produced no output."
+        );
+        assert_eq!(
+            command_exit_notification_message("cmd-1", Some("hello"), None),
+            "Command cmd-1 has exited with unknown exit code."
+        );
+        assert_eq!(
+            command_exit_notification_message("cmd-1", None, None),
+            "Command cmd-1 has exited with unknown exit code and produced no output."
+        );
     }
 }

@@ -712,14 +712,19 @@ pub(crate) async fn apply_bespoke_event_handling(
                 return;
             }
             let item_id = exec_command_begin_event.call_id.clone();
-            let first_start = {
+            let should_emit_started = {
                 let mut state = thread_state.lock().await;
-                state
+                let was_provisional = state
+                    .turn_summary
+                    .provisional_command_execution_started
+                    .remove(&item_id);
+                let first_start = state
                     .turn_summary
                     .command_execution_started
-                    .insert(item_id.clone())
+                    .insert(item_id.clone());
+                first_start || was_provisional
             };
-            if first_start {
+            if should_emit_started {
                 if let Some(notification) = item_event_to_server_notification(
                     EventMsg::ExecCommandBegin(exec_command_begin_event),
                     &conversation_id.to_string(),
@@ -745,6 +750,10 @@ pub(crate) async fn apply_bespoke_event_handling(
                 state
                     .turn_summary
                     .command_execution_started
+                    .remove(&call_id);
+                state
+                    .turn_summary
+                    .provisional_command_execution_started
                     .remove(&call_id);
             }
             if matches!(

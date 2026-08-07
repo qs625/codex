@@ -84,10 +84,17 @@ pub(super) async fn start_command_execution_item(
 ) -> bool {
     let first_start = {
         let mut state = thread_state.lock().await;
-        state
+        let inserted = state
             .turn_summary
             .command_execution_started
-            .insert(item_id.clone())
+            .insert(item_id.clone());
+        if inserted {
+            state
+                .turn_summary
+                .provisional_command_execution_started
+                .insert(item_id.clone());
+        }
+        inserted
     };
     if first_start {
         let notification = ItemStartedNotification {
@@ -130,12 +137,18 @@ pub(super) async fn complete_command_execution_item(
     outgoing: &ThreadScopedOutgoingMessageSender,
     thread_state: &Arc<Mutex<ThreadState>>,
 ) {
-    let should_emit = thread_state
-        .lock()
-        .await
-        .turn_summary
-        .command_execution_started
-        .remove(&item_id);
+    let should_emit = {
+        let mut state = thread_state.lock().await;
+        let should_emit = state
+            .turn_summary
+            .command_execution_started
+            .remove(&item_id);
+        state
+            .turn_summary
+            .provisional_command_execution_started
+            .remove(&item_id);
+        should_emit
+    };
     if !should_emit {
         return;
     }
