@@ -8,27 +8,16 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Align read_agent conversation item styling with inter-agent items.
+None
 
 ## Active Work
-- id: read-agent-inter-agent-style
-  owner: /my_codex/owner_dev_3
-  checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: bugfix/read-agent-inter-agent-style
-  task_type: bugfix
-  depends_on: read_agent display commits `831a0415d4` and `bf73375bfa`
-  files: apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/conversation.test.ts; apps/root-worker-prototype/src/styles.css or conversation components only if needed
-  base_commit: 2d601a32f2110eaebfc1deac25b1b2ddaf39b0ce
-  pending_sync_from_main: no
-  status: in_progress
-  objective: User reports the client item style for `read_agent` differs from other inter-agent items; adjust Root Worker conversation rendering/styling so `read_agent` appears in the same inter-agent visual style.
-  last_update: 2026-08-07 PM used existing inter-agent conversation items as the design anchor; skipped image generation because this is a small style consistency fix with established local patterns.
-  next_action: Owner dev-3 to align `read_agent` conversation entry kind/class/summary/rendering with existing inter-agent item style, cover completed/failed states, review/test/commit.
-  blockers: None known.
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: 432fe3b150
+  summary: Merged and accepted `/my_codex/owner_dev_3` UI bugfix commit `40b3c637b2426b6169e5fd6d7f3044f756b9525b` (`Style read_agent as inter-agent tool item`). Root Worker conversation now classifies `read_agent` builtin tool entries as `multiAgent`, so they reuse the same inter-agent/multi-agent visual treatment instead of the ordinary builtin tool style. The fix is intentionally minimal: no new CSS and no backend/event/history changes.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed. PM inspected the diff against the UI design anchor: existing inter-agent item styling is reused via `toolCategory`, while `poll_event` remains ordinary `external`. PM reran on merged main: `rtk pnpm test -- src/lib/conversation.test.ts` -> 46 passed; `rtk pnpm build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
+  residual_risk: No Electron screenshot/manual smoke was run. Future agent-inspection builtin tools may need their own classification decision.
 - commit: 831a0415d4 + bf73375bfa
   summary: Cherry-picked and accepted `/my_codex/owner_dev_2` read_agent display commits `d72f7f204ff11b3115da74d5e9017845e9cbe2a8` (`Show read_agent calls in thread history`) and `f44c4982ae30c76bc23c3b8f35c87ad137d5e497` (`Bound read_agent failed display output`). Native `read_agent` now emits typed `BuiltinToolCallStarted/Completed` display events, so Root Worker can show the tool in live conversation and reload/history replay. Display output is bounded/sanitized: success includes target, agent details, lifecycle summary, and truncated last task/agent messages; failure stores a truncated error. Full model-facing JSON result remains unchanged.
   validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after PM requested failed-error bounding. PM intentionally cherry-picked only the two read_agent commits because the dev-2 branch also contained unrelated sidebar connector commit `0960b273c1`. PM reran on merged main: `rtk cargo test -p app-server-protocol read_agent_builtin_tool_completed_display_event_maps_to_thread_item` -> 1 passed; `rtk cargo test -p app-server-protocol thread_history_rebuilds_read_agent_builtin_tool_item` -> 1 passed; `rtk cargo test -p thread-history typed_read_agent_builtin_tool_history_rebuilds_thread_item` -> 1 passed; `rtk pnpm exec tsx --test src/lib/conversation.test.ts` -> 45 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk pnpm build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~2..HEAD && rtk git diff --check` -> passed.
