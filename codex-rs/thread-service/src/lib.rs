@@ -66,7 +66,6 @@ pub(crate) mod mentions {
     pub(crate) use skill_service_api::build_skill_name_counts;
 }
 mod runtime_shell_detect;
-mod session_prefix;
 mod session_rollout_init_error;
 mod session_settings;
 mod session_startup_prewarm;

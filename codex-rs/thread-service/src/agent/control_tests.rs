@@ -467,27 +467,6 @@ fn history_contains_inter_agent_communication(
     })
 }
 
-async fn wait_for_subagent_notification(parent_thread: &Arc<CodexThread>) -> bool {
-    let wait = async {
-        loop {
-            let history_items = parent_thread
-                .codex
-                .session
-                .clone_history()
-                .await
-                .raw_items()
-                .to_vec();
-            if has_subagent_notification(&history_items) {
-                return true;
-            }
-            sleep(Duration::from_millis(25)).await;
-        }
-    };
-    // CI can take several seconds to schedule the detached status watcher,
-    // especially on slower Windows runners.
-    timeout(Duration::from_secs(10), wait).await.is_ok()
-}
-
 async fn no_subagent_notification(parent_thread: &Arc<CodexThread>) -> bool {
     !timeout(Duration::from_millis(200), async {
         loop {
@@ -615,12 +594,37 @@ fn captured_child_completion(
     child_agent_path: &AgentPath,
     parent_agent_path: &AgentPath,
 ) -> bool {
-    count_captured_child_completions(
+    captured_child_completion_communication(
         captured_ops,
         parent_thread_id,
         child_agent_path,
         parent_agent_path,
-    ) > 0
+    )
+    .is_some()
+}
+
+fn captured_child_completion_communication(
+    captured_ops: &[(ThreadId, Op)],
+    parent_thread_id: ThreadId,
+    child_agent_path: &AgentPath,
+    parent_agent_path: &AgentPath,
+) -> Option<InterAgentCommunication> {
+    captured_ops.iter().find_map(|(thread_id, op)| {
+        if *thread_id != parent_thread_id {
+            return None;
+        }
+        let Op::InterAgentCommunication { communication } = op else {
+            return None;
+        };
+        if communication.author == *child_agent_path
+            && communication.recipient == *parent_agent_path
+            && communication.operation == protocol::protocol::InterAgentOperation::ChildCompletion
+        {
+            Some(communication.clone())
+        } else {
+            None
+        }
+    })
 }
 
 fn count_captured_child_completions(
@@ -8020,12 +8024,22 @@ async fn multi_agent_v2_completion_allows_active_event_subscription() {
         .await;
     let captured_ops = harness.manager.captured_ops();
 
-    assert!(captured_child_completion(
+    let completion = captured_child_completion_communication(
         &captured_ops[baseline_op_count..],
         root_thread_id,
         &worker_path,
         &AgentPath::root(),
-    ));
+    )
+    .expect("child completion should be delivered");
+    assert_eq!(completion.content, "done");
+    assert!(
+        !SubagentNotification::matches_text(&completion.content),
+        "new child completion content must not use the legacy raw marker"
+    );
+    assert_eq!(
+        completion.status,
+        Some(AgentStatus::Completed(Some("done".to_string())))
+    );
 }
 
 #[tokio::test]
