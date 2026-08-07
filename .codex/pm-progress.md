@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Display read_agent tool results in the Root Worker client.
+Fix two client display gaps: schedule monitor after restart and read_agent tool results.
 
 ## Active Work
 - id: schedule-reload-still-missing
@@ -17,13 +17,29 @@ Display read_agent tool results in the Root Worker client.
   branch: bugfix/schedule-reload-still-missing
   task_type: bugfix
   depends_on: prior main fix `50dfe5b7be`
-  files: codex-rs/app-server-protocol/src/protocol/event_mapping.rs; codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/components/Conversation*; protocol ThreadItem schema/types as needed
+  files: codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; codex-rs/rollout/src/policy.rs; codex-rs/app-server/**; apps/root-worker-prototype/src/lib/threadAnalysis.ts only if API replay is already correct
   base_commit: c9ca4b69a95cb73b73b55d31f22651c11a1134c0
+  pending_sync_from_main: yes, main has PM-only progress commits through `dd59618`; do not sync while owner dev-3 is active unless it can fast-forward safely
+  status: in_progress
+  objective: User reports that after restarting, the active schedule monitor still does not appear despite main commit `50dfe5b7be`; identify the actual broken reload path and fix it at the persisted typed replay/runtime registration layer.
+  last_update: 2026-08-07 User corrected that schedule reload and read_agent display are two separate tasks, and noted dev-3 had already been doing schedule work. PM restored dev-3 to schedule after an erroneous switch brief.
+  next_action: Owner dev-3 to reproduce/inspect restart reload path, compare persisted `SessionMeta.subscriptions` with `thread/read`/Root Worker display inputs, implement missing backend replay/runtime fix, review, test, and commit on dev-3.
+  blockers: None known.
+  validation: pending
+  commit:
+- id: read-agent-client-thread-item
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/read-agent-thread-item
+  task_type: bugfix
+  depends_on: none
+  files: codex-rs/app-server-protocol/src/protocol/event_mapping.rs; codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/thread-history/src/lib.rs; apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/components/Conversation*; protocol ThreadItem schema/types as needed
+  base_commit: dd5961815619fbf504a4a3523aeedc78899fba52
   pending_sync_from_main: no
   status: in_progress
-  objective: User clarified the missing client display is for the `read_agent` tool; add or complete a typed ThreadItem/mapping so `read_agent` tool calls/results appear in the Root Worker client for live and reload/history paths.
-  last_update: 2026-08-07 User clarified: "read_agent的tool客户端不显示, 增加一个新的threaditem". PM redirected owner dev-3 from schedule replay investigation to `read_agent` ThreadItem/display support.
-  next_action: Owner dev-3 to inspect `read_agent` tool event/response shape, add the appropriate typed ThreadItem or mapping, cover live event mapping, reload/history replay, and Root Worker rendering, then review/test/commit on dev-3.
+  objective: `read_agent` tool calls/results currently do not show in the Root Worker client; add or complete a typed ThreadItem/mapping so they appear for live and reload/history paths.
+  last_update: 2026-08-07 User clarified: "read_agent的tool客户端不显示, 增加一个新的threaditem". PM assigned this as a separate dev-2 task after syncing dev-2 to `dd59618`.
+  next_action: Owner dev-2 to inspect `read_agent` tool event/response shape, add the appropriate typed ThreadItem or mapping, cover live event mapping, reload/history replay, and Root Worker rendering, then review/test/commit on dev-2.
   blockers: None known.
   validation: pending
   commit:
