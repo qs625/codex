@@ -1955,6 +1955,94 @@ test("builds visible entries for poll_event builtin tools", () => {
   );
 });
 
+test("builds visible entries for read_agent builtin tools", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "builtin-read-agent",
+        tool: "read_agent",
+        arguments: {
+          target: "/root/worker",
+        },
+        status: "completed",
+        output: {
+          target: "/root/worker",
+          agentName: "/root/worker",
+          agentNickname: "Worker",
+          agentRole: "feature-owner",
+          lifecycleStatus: {
+            type: "final",
+            result: {
+              type: "completed",
+            },
+          },
+          lastTaskMessage: "do work",
+          lastAgentMessage: "done",
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolStatus: entry.toolStatus,
+    })),
+    [
+      {
+        id: "builtin-read-agent",
+        kind: "tool",
+        text: "read_agent • /root/worker • completed • done",
+        toolName: "read_agent",
+        toolStatus: "completed",
+      },
+    ],
+  );
+});
+
+test("builds failed read_agent builtin entries with target and error", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "builtin-read-agent-failed",
+        tool: "read_agent",
+        arguments: {
+          target: "/root/missing",
+        },
+        status: "failed",
+        output: {
+          target: "/root/missing",
+          error: "No agent found",
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolStatus: entry.toolStatus,
+    })),
+    [
+      {
+        id: "builtin-read-agent-failed",
+        kind: "tool",
+        text: "read_agent • /root/missing • failed: No agent found",
+        toolName: "read_agent",
+        toolStatus: "failed",
+      },
+    ],
+  );
+});
+
 test("builds in-progress poll_event entries with timeout progress metadata", () => {
   const entries = buildConversationEntries(
     makeThread([

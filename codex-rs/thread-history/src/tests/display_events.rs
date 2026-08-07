@@ -64,6 +64,76 @@ use super::*;
     }
 
     #[test]
+    fn typed_read_agent_builtin_tool_history_rebuilds_thread_item() {
+        let output = serde_json::json!({
+            "target": "/root/worker",
+            "agentName": "/root/worker",
+            "agentNickname": "Worker",
+            "agentRole": "feature-owner",
+            "lifecycleStatus": {
+                "type": "final",
+                "result": {
+                    "type": "completed"
+                }
+            },
+            "lastTaskMessage": "do work",
+            "lastAgentMessage": "done"
+        });
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallStarted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "read-agent-1".into(),
+                    tool: "read_agent".into(),
+                    arguments: serde_json::json!({
+                        "target": "/root/worker",
+                    }),
+                    status: protocol::protocol::BuiltinToolCallStatus::InProgress,
+                    output: None,
+                    lifecycle_at_ms: 100,
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "read-agent-1".into(),
+                    tool: "read_agent".into(),
+                    arguments: serde_json::json!({
+                        "target": "/root/worker",
+                    }),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(output.clone()),
+                    lifecycle_at_ms: 123,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "read-agent-1".into(),
+                tool: "read_agent".into(),
+                arguments: serde_json::json!({
+                    "target": "/root/worker",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(output),
+            }]
+        );
+    }
+
+    #[test]
     fn typed_builtin_tool_started_history_keeps_poll_event_timeout_metadata() {
         let output = serde_json::json!({
             "initialTimeoutMs": 50,

@@ -636,6 +636,82 @@ fn thread_history_preserves_raw_marker_text_with_user_message_metadata() {
 }
 
 #[test]
+fn thread_history_rebuilds_read_agent_builtin_tool_item() {
+    let output = json!({
+        "target": "/root/worker",
+        "agentName": "/root/worker",
+        "agentNickname": "Worker",
+        "agentRole": "feature-owner",
+        "lifecycleStatus": {
+            "type": "final",
+            "result": {
+                "type": "completed"
+            }
+        },
+        "lastTaskMessage": "do work",
+        "lastAgentMessage": "done"
+    });
+    let items = vec![
+        protocol::protocol::RolloutItem::EventMsg(protocol::protocol::EventMsg::TurnStarted(
+            protocol::protocol::TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            },
+        )),
+        protocol::protocol::RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::BuiltinToolCallStarted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: protocol::ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "read-agent-1".into(),
+                    tool: "read_agent".into(),
+                    arguments: json!({
+                        "target": "/root/worker",
+                    }),
+                    status: protocol::protocol::BuiltinToolCallStatus::InProgress,
+                    output: None,
+                    lifecycle_at_ms: 100,
+                },
+            ),
+        ),
+        protocol::protocol::RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: protocol::ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "read-agent-1".into(),
+                    tool: "read_agent".into(),
+                    arguments: json!({
+                        "target": "/root/worker",
+                    }),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(output.clone()),
+                    lifecycle_at_ms: 123,
+                },
+            ),
+        ),
+    ];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        turns[0].items,
+        vec![ThreadItem::BuiltinToolCall {
+            id: "read-agent-1".into(),
+            tool: "read_agent".into(),
+            arguments: json!({
+                "target": "/root/worker",
+            }),
+            status: DynamicToolCallStatus::Completed,
+            output: Some(output),
+        }]
+    );
+}
+
+#[test]
 fn thread_history_projects_active_schedule_subscription_metadata() {
     let items = vec![protocol::protocol::RolloutItem::SessionMeta(
         protocol::protocol::SessionMetaLine {

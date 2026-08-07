@@ -737,6 +737,9 @@ function summarizeToolCall(
 function summarizeBuiltinToolCall(
   item: Extract<ThreadItem, { type: "builtinToolCall" }>,
 ) {
+  if (item.tool === "read_agent") {
+    return summarizeReadAgentToolCall(item);
+  }
   if (item.tool === "poll_event") {
     const output = objectOrNull(item.output);
     const error = stringOrNull(output?.error);
@@ -758,6 +761,40 @@ function summarizeBuiltinToolCall(
   }
   const details = extractEventDrivenSummaryDetails(item.tool, item.arguments);
   return details ? `${item.tool} • ${details}` : item.tool;
+}
+
+function summarizeReadAgentToolCall(
+  item: Extract<ThreadItem, { type: "builtinToolCall" }>,
+) {
+  const argumentsRecord = objectOrNull(item.arguments);
+  const output = objectOrNull(item.output);
+  const target =
+    stringOrNull(output?.target) ?? stringOrNull(argumentsRecord?.target);
+  const agentName = stringOrNull(output?.agentName);
+  const agentLabel = agentName && agentName !== target ? agentName : null;
+  const error = stringOrNull(output?.error);
+  if (item.status === "failed" || error) {
+    return [
+      "read_agent",
+      target,
+      error ? `failed: ${previewInlineText(error, 120)}` : "failed",
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(" • ");
+  }
+  if (isToolStatusInProgress(item.status)) {
+    return ["read_agent", target ?? "reading"].join(" • ");
+  }
+
+  const lifecycleStatus = lifecycleStatusFromUnknown(output?.lifecycleStatus);
+  const status = lifecycleStatus ? formatLifecycleStatus(lifecycleStatus) : null;
+  const message =
+    stringOrNull(output?.lastAgentMessage) ??
+    stringOrNull(output?.lastTaskMessage);
+  const preview = message ? previewInlineText(message, 120) : null;
+  return ["read_agent", target, agentLabel, status, preview]
+    .filter((value): value is string => Boolean(value))
+    .join(" • ");
 }
 
 function buildPollEventProgress(
@@ -1373,6 +1410,35 @@ function formatLifecycleStatus(status: ThreadLifecycleStatus) {
       return status.result.type;
     case "systemError":
       return "systemError";
+  }
+}
+
+function lifecycleStatusFromUnknown(value: unknown): ThreadLifecycleStatus | null {
+  const record = objectOrNull(value);
+  const type = stringOrNull(record?.type);
+  switch (type) {
+    case "notLoaded":
+    case "initializing":
+      return { type };
+    case "active":
+      return Array.isArray(record?.activeFlags)
+        ? { type, activeFlags: record.activeFlags as never[] }
+        : null;
+    case "waiting": {
+      const reason = stringOrNull(record?.reason);
+      return reason ? ({ type, reason } as ThreadLifecycleStatus) : null;
+    }
+    case "final": {
+      const result = objectOrNull(record?.result);
+      const resultType = stringOrNull(result?.type);
+      return resultType
+        ? ({ type, result: { ...result, type: resultType } } as ThreadLifecycleStatus)
+        : null;
+    }
+    case "systemError":
+      return { type, message: stringOrNull(record?.message) ?? undefined };
+    default:
+      return null;
   }
 }
 

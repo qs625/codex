@@ -946,6 +946,58 @@ mod tests {
     }
 
     #[test]
+    fn read_agent_builtin_tool_completed_display_event_maps_to_thread_item() {
+        let output = serde_json::json!({
+            "target": "/root/worker",
+            "agentName": "/root/worker",
+            "lifecycleStatus": {
+                "type": "final",
+                "result": {
+                    "type": "completed"
+                }
+            },
+            "lastTaskMessage": "do work",
+            "lastAgentMessage": "done"
+        });
+        let event = protocol::protocol::BuiltinToolCallDisplayEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-ignored".to_string(),
+            id: "read-agent-1".to_string(),
+            tool: "read_agent".to_string(),
+            arguments: serde_json::json!({
+                "target": "/root/worker"
+            }),
+            status: protocol::protocol::BuiltinToolCallStatus::Completed,
+            output: Some(output.clone()),
+            lifecycle_at_ms: 791,
+        };
+
+        let notification = item_event_to_server_notification(
+            EventMsg::BuiltinToolCallCompleted(event.clone()),
+            "thread-4",
+            "turn-4",
+        );
+
+        assert_item_completed_server_notification(
+            notification,
+            ItemCompletedNotification {
+                thread_id: "thread-4".to_string(),
+                turn_id: "turn-4".to_string(),
+                completed_at_ms: event.lifecycle_at_ms,
+                item: ThreadItem::BuiltinToolCall {
+                    id: "read-agent-1".to_string(),
+                    tool: "read_agent".to_string(),
+                    arguments: serde_json::json!({
+                        "target": "/root/worker"
+                    }),
+                    status: crate::protocol::DynamicToolCallStatus::Completed,
+                    output: Some(output),
+                },
+            },
+        );
+    }
+
+    #[test]
     fn item_completed_preserves_context_compaction_replacement_history() {
         let event = ItemCompletedEvent {
             thread_id: ThreadId::new(),

@@ -30,6 +30,8 @@ use protocol::protocol::BuiltinToolCallDisplayEvent;
 use protocol::protocol::BuiltinToolCallStatus;
 use protocol::protocol::EventMsg;
 use protocol::protocol::InterAgentContentPart;
+use protocol::protocol::ThreadLifecycleFinalStatus;
+use protocol::protocol::ThreadLifecycleStatus;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -75,6 +77,7 @@ const POLL_EXTERNAL_EVENT_TOOL_NAME: &str = "poll_external_event";
 const LIST_EXTERNAL_AGENTS_TOOL_NAME: &str = "list_external_agents";
 const READ_EXTERNAL_AGENT_TOOL_NAME: &str = "read_external_agent";
 const CLOSE_EXTERNAL_AGENT_TOOL_NAME: &str = "close_external_agent";
+const READ_AGENT_DISPLAY_TEXT_LIMIT: usize = 500;
 
 pub trait AgentToolRuntime: Send + Sync + 'static {
     fn spawn_agent<'a>(
@@ -619,14 +622,74 @@ pub(crate) async fn dispatch(
         READ_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             let args: ReadAgentArgs = parse_arguments(&arguments)?;
+            let display_arguments = json!({
+                "target": args.target.clone(),
+            });
+            let item_id = call.call_id.clone();
+            let turn_id = turn.runtime_turn_id_str().to_string();
+            session_capability
+                .emit_event(
+                    turn.as_ref(),
+                    EventMsg::BuiltinToolCallStarted(BuiltinToolCallDisplayEvent {
+                        thread_id: session_capability.conversation_id(),
+                        turn_id: turn_id.clone(),
+                        id: item_id.clone(),
+                        tool: READ_AGENT_TOOL_NAME.to_string(),
+                        arguments: display_arguments.clone(),
+                        status: BuiltinToolCallStatus::InProgress,
+                        output: None,
+                        lifecycle_at_ms: now_unix_timestamp_ms(),
+                    }),
+                )
+                .await;
             let result = agent_runtime
                 .read_agent(
                     Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
                     call.call_id.clone(),
-                    args.target,
+                    args.target.clone(),
                 )
-                .await?;
-            function_tool_json_output(&result, READ_AGENT_TOOL_NAME)?
+                .await;
+            match result {
+                Ok(result) => {
+                    session_capability
+                        .emit_event(
+                            turn.as_ref(),
+                            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                                thread_id: session_capability.conversation_id(),
+                                turn_id,
+                                id: item_id,
+                                tool: READ_AGENT_TOOL_NAME.to_string(),
+                                arguments: display_arguments,
+                                status: BuiltinToolCallStatus::Completed,
+                                output: Some(read_agent_display_output(&args.target, &result)),
+                                lifecycle_at_ms: now_unix_timestamp_ms(),
+                            }),
+                        )
+                        .await;
+                    function_tool_json_output(&result, READ_AGENT_TOOL_NAME)?
+                }
+                Err(err) => {
+                    session_capability
+                        .emit_event(
+                            turn.as_ref(),
+                            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                                thread_id: session_capability.conversation_id(),
+                                turn_id,
+                                id: item_id,
+                                tool: READ_AGENT_TOOL_NAME.to_string(),
+                                arguments: display_arguments,
+                                status: BuiltinToolCallStatus::Failed,
+                                output: Some(json!({
+                                    "target": args.target,
+                                    "error": err.to_string(),
+                                })),
+                                lifecycle_at_ms: now_unix_timestamp_ms(),
+                            }),
+                        )
+                        .await;
+                    return Err(err);
+                }
+            }
         }
         CLOSE_AGENT_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
@@ -669,6 +732,89 @@ fn now_unix_timestamp_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+fn read_agent_display_output(target: &str, result: &ThreadReadAgentResult) -> serde_json::Value {
+    let agent = &result.agent;
+    json!({
+        "target": target,
+        "agentName": agent.agent_name.clone(),
+        "agentNickname": agent.agent_nickname.clone(),
+        "agentRole": agent.agent_role.clone(),
+        "lifecycleStatus": lifecycle_status_display_summary(&agent.lifecycle_status),
+        "lastTaskMessage": agent
+            .last_task_message
+            .as_deref()
+            .map(bounded_read_agent_display_text),
+        "lastAgentMessage": lifecycle_status_message(&agent.lifecycle_status)
+            .map(bounded_read_agent_display_text),
+    })
+}
+
+fn lifecycle_status_message(status: &ThreadLifecycleStatus) -> Option<&str> {
+    match status {
+        ThreadLifecycleStatus::Final {
+            result:
+                ThreadLifecycleFinalStatus::Completed {
+                    last_agent_message: Some(message),
+                },
+        }
+        | ThreadLifecycleStatus::Final {
+            result:
+                ThreadLifecycleFinalStatus::Errored {
+                    message: Some(message),
+                },
+        }
+        | ThreadLifecycleStatus::SystemError {
+            message: Some(message),
+        } => Some(message.as_str()),
+        _ => None,
+    }
+}
+
+fn lifecycle_status_display_summary(status: &ThreadLifecycleStatus) -> serde_json::Value {
+    match status {
+        ThreadLifecycleStatus::NotLoaded => json!({
+            "type": "notLoaded",
+        }),
+        ThreadLifecycleStatus::Initializing => json!({
+            "type": "initializing",
+        }),
+        ThreadLifecycleStatus::Active { active_flags } => json!({
+            "type": "active",
+            "activeFlags": active_flags,
+        }),
+        ThreadLifecycleStatus::Waiting { reason } => json!({
+            "type": "waiting",
+            "reason": reason,
+        }),
+        ThreadLifecycleStatus::Final { result } => json!({
+            "type": "final",
+            "result": {
+                "type": match result {
+                    ThreadLifecycleFinalStatus::Completed { .. } => "completed",
+                    ThreadLifecycleFinalStatus::Errored { .. } => "errored",
+                    ThreadLifecycleFinalStatus::Interrupted => "interrupted",
+                    ThreadLifecycleFinalStatus::Shutdown => "shutdown",
+                },
+            },
+        }),
+        ThreadLifecycleStatus::SystemError { .. } => json!({
+            "type": "systemError",
+        }),
+    }
+}
+
+fn bounded_read_agent_display_text(text: &str) -> String {
+    let mut truncated = String::new();
+    for (index, ch) in text.chars().enumerate() {
+        if index >= READ_AGENT_DISPLAY_TEXT_LIMIT {
+            truncated.push_str("...");
+            return truncated;
+        }
+        truncated.push(ch);
+    }
+    truncated
 }
 
 fn from_runtime_spawn_request(
@@ -1030,6 +1176,39 @@ mod tests {
                 unreachable!("poll_event_timeout_metadata should not be called in this test")
             })
         }
+    }
+
+    #[test]
+    fn read_agent_display_output_is_bounded_and_structured() {
+        let long_message = "x".repeat(READ_AGENT_DISPLAY_TEXT_LIMIT + 20);
+        let result = ThreadReadAgentResult {
+            agent: thread_service_api::ThreadAgentDetails {
+                agent_name: "/root/worker".to_string(),
+                agent_nickname: Some("Worker".to_string()),
+                agent_role: Some("feature-owner".to_string()),
+                lifecycle_status: ThreadLifecycleStatus::completed(Some(long_message)),
+                last_task_message: Some("finish task".to_string()),
+            },
+        };
+
+        let output = read_agent_display_output("/root/worker", &result);
+
+        assert_eq!(output["target"], "/root/worker");
+        assert_eq!(output["agentName"], "/root/worker");
+        assert_eq!(output["agentNickname"], "Worker");
+        assert_eq!(output["agentRole"], "feature-owner");
+        assert_eq!(output["lifecycleStatus"]["type"], "final");
+        assert_eq!(output["lifecycleStatus"]["result"]["type"], "completed");
+        assert!(output["lifecycleStatus"]["result"]["lastAgentMessage"].is_null());
+        assert_eq!(output["lastTaskMessage"], "finish task");
+        let last_agent_message = output["lastAgentMessage"]
+            .as_str()
+            .expect("last agent message");
+        assert_eq!(
+            last_agent_message.chars().count(),
+            READ_AGENT_DISPLAY_TEXT_LIMIT + 3
+        );
+        assert!(last_agent_message.ends_with("..."));
     }
 
     #[tokio::test]
