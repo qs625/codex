@@ -679,6 +679,41 @@ mod tests {
     }
 
     #[test]
+    fn item_event_to_server_notification_skips_raw_subagent_notification_agent_item() {
+        let message = serde_json::json!({
+            "author": "/root/worker",
+            "recipient": "/root",
+            "other_recipients": [],
+            "content": concat!(
+                "<subagent_notification>\n",
+                r#"{"agent_path":"/root/worker","status":{"completed":"done"}}"#,
+                "\n</subagent_notification>"
+            ),
+            "operation": "childCompletion",
+            "sender_thread_id": "11111111-1111-1111-1111-111111111111",
+            "recipient_thread_id": "22222222-2222-2222-2222-222222222222",
+        })
+        .to_string();
+        let notification = item_event_to_server_notification(
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: TurnItem::AgentMessage(AgentMessageItem {
+                    id: "agent-1".into(),
+                    content: vec![AgentMessageContent::Text { text: message }],
+                    phase: None,
+                    memory_citation: None,
+                }),
+                completed_at_ms: 1,
+            }),
+            "thread-1",
+            "turn-1",
+        );
+
+        assert!(notification.is_none());
+    }
+
+    #[test]
     fn collab_resume_begin_maps_to_item_started_resume_agent() {
         let event = CollabResumeBeginEvent {
             call_id: "call-1".to_string(),

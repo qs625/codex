@@ -17,6 +17,7 @@ use crate::protocol::UserInput;
 use crate::protocol::WebSearchAction;
 use crate::protocol::assistant_message_thread_item;
 use crate::protocol::item_builders::convert_patch_changes;
+use crate::protocol::response_item_projection::is_legacy_structured_assistant_message_text;
 use crate::protocol::response_item_projection::is_legacy_structured_user_inputs;
 use crate::protocol::response_item_projection::thread_goal_from_update_goal;
 use crate::protocol::response_item_projection::thread_goal_status_from_update_status;
@@ -251,6 +252,9 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> Option<ThreadItem> {
                     CoreAgentMessageContent::Text { text } => text,
                 })
                 .collect::<String>();
+            if is_legacy_structured_assistant_message_text(&text) {
+                return None;
+            }
             Some(assistant_message_thread_item(
                 agent.id,
                 text,

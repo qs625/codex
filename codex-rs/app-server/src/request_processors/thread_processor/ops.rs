@@ -1,8 +1,8 @@
 use super::*;
 use app_server_protocol::ItemCompletedNotification;
+use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleActiveFlag;
 use app_server_protocol::ThreadLifecycleFinalStatus;
-use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnCompletedNotification;
@@ -10,6 +10,7 @@ use app_server_protocol::TurnItemsView;
 use app_server_protocol::TurnStartedNotification;
 use app_server_protocol::TurnStatus;
 use app_server_protocol::UserInput;
+use app_server_protocol::is_legacy_structured_assistant_message_text;
 use app_server_protocol::item_event_to_server_notification;
 use codex_agent_runtime::AgentMetadata;
 use protocol::AgentPath;
@@ -502,6 +503,9 @@ impl ThreadRequestProcessor {
                 })
             }
             EventMsg::AgentMessage(payload) => {
+                if !should_display_agent_message_event(&payload.message) {
+                    return;
+                }
                 ServerNotification::ItemCompleted(ItemCompletedNotification {
                     thread_id: thread_id_string,
                     turn_id,
@@ -1746,6 +1750,10 @@ impl ThreadRequestProcessor {
     }
 }
 
+fn should_display_agent_message_event(message: &str) -> bool {
+    !is_legacy_structured_assistant_message_text(message)
+}
+
 fn thread_start_create_error(err: CodexErr) -> JSONRPCErrorError {
     match err {
         CodexErr::InvalidRequest(message) => invalid_request(message),
@@ -1836,6 +1844,35 @@ mod tests {
                 result: ThreadLifecycleFinalStatus::Shutdown
             }
         );
+    }
+
+    #[test]
+    fn direct_live_agent_message_suppresses_raw_subagent_notification() {
+        let message = serde_json::json!({
+            "author": "/root/worker",
+            "recipient": "/root",
+            "other_recipients": [],
+            "content": concat!(
+                "<subagent_notification>\n",
+                r#"{"agent_path":"/root/worker","status":{"completed":"done"}}"#,
+                "\n</subagent_notification>"
+            ),
+            "operation": "childCompletion",
+        })
+        .to_string();
+
+        assert!(!should_display_agent_message_event(&message));
+    }
+
+    #[test]
+    fn direct_live_agent_message_preserves_ordinary_json() {
+        let message = serde_json::json!({
+            "content": "ordinary assistant JSON",
+            "status": { "completed": "done" },
+        })
+        .to_string();
+
+        assert!(should_display_agent_message_event(&message));
     }
 
     #[test]
