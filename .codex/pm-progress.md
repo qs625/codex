@@ -22,9 +22,9 @@ Fix Root Worker schedule subscription visibility after client restart.
   pending_sync_from_main: none
   status: in_progress
   objective: Fix the user-reported Root Worker bug where active schedule subscriptions do not appear after restarting/reloading the client.
-  last_update: 2026-08-07 PM dispatched full reload-chain bugfix brief to owner_dev_2 on branch bugfix/schedule-reload-client-display. Existing code has a thread-history SessionMeta subscriptions synthesis path, so owner must verify the full persisted/reload/client consumption chain rather than patching UI text.
-  next_action: Await owner_dev_2 implementation, fixed reviewer result, and focused reload/client tests.
-  blockers: none
+  last_update: 2026-08-07 PM received an owner_dev_2 child completion for unrelated sidebar tree rail marker UI commit `2d4ce2a03d862695685a25dfcce51dac74dd24e5` on the schedule bugfix branch. Dev-2 also has unstaged schedule-related Rust edits, so the schedule bugfix may still be in progress but the branch is polluted by an unrelated UI commit.
+  next_action: Ask owner_dev_2 to confirm schedule bugfix status, stop treating the sidebar UI task as part of this active work, and deliver only the schedule reload fix with clear commit isolation or request PM decision if isolation is not possible.
+  blockers: dev-2 branch contains unrelated sidebar UI commit before schedule bugfix delivery; PM must avoid merging that commit as part of schedule-reload-client-display.
   validation: pending
   commit:
 
