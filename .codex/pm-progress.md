@@ -8,27 +8,16 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix Root Worker schedule subscription visibility after client restart.
+None
 
 ## Active Work
-- id: schedule-reload-client-display
-  owner: /my_codex/owner_dev_2
-  checkout: /Users/bytedance/Projects/my-codex-dev-2
-  branch: bugfix/schedule-reload-client-display
-  task_type: bugfix
-  depends_on: none
-  files: codex-rs/thread-history/src/lib.rs, codex-rs/app-server/tests/suite/thread_read.rs, codex-rs/app-server/tests/suite/thread_status.rs, apps/root-worker-prototype/src/lib/thread.ts, apps/root-worker-prototype/src/lib/threadAnalysis.ts, apps/root-worker-prototype/src/lib/conversation.ts, related focused tests
-  base_commit: 557c6e2741f7874645cceab60a4da56079b7d139
-  pending_sync_from_main: none
-  status: in_progress
-  objective: Fix the user-reported Root Worker bug where active schedule subscriptions do not appear after restarting/reloading the client.
-  last_update: 2026-08-07 PM received an owner_dev_2 child completion for unrelated sidebar tree rail marker UI commit `2d4ce2a03d862695685a25dfcce51dac74dd24e5` on the schedule bugfix branch. Dev-2 also has unstaged schedule-related Rust edits, so the schedule bugfix may still be in progress but the branch is polluted by an unrelated UI commit.
-  next_action: Ask owner_dev_2 to confirm schedule bugfix status, stop treating the sidebar UI task as part of this active work, and deliver only the schedule reload fix with clear commit isolation or request PM decision if isolation is not possible.
-  blockers: dev-2 branch contains unrelated sidebar UI commit before schedule bugfix delivery; PM must avoid merging that commit as part of schedule-reload-client-display.
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: 50dfe5b7be
+  summary: Cherry-picked and accepted `/my_codex/owner_dev_2` schedule bugfix commit `b48f1e7cee6950a22826aea69dd5da3b17aaa188` (`Restore schedule subscriptions in protocol history replay`). Root Worker reload/thread history recovery now restores active schedule subscriptions from persisted `SessionMeta.subscriptions` in the `app-server-protocol` replay builder, synthesizing bounded completed `schedule_subscribe` items for active schedules and successful `schedule_unsubscribe` cleanup items when the latest snapshot is empty. `subscriptions: None` remains non-clearing, and existing schedule monitor items are not duplicated. PM intentionally cherry-picked only the schedule commit because the dev-2 task branch also contained unrelated sidebar UI commit `2d4ce2a03d...`.
+  validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after two rounds. PM inspected the replay builder and tests against the brief: the fix lands in typed persisted history replay rather than front-end string synthesis or schedule execution semantics. PM reran on main: `rtk cargo test -p app-server-protocol thread_history_projects_active_schedule_subscription_metadata` -> 1 passed; `rtk cargo test -p app-server-protocol thread_history_does_not_duplicate_existing_schedule_monitor_from_subscription_snapshot` -> 1 passed; `rtk cargo test -p app-server-protocol thread_history_empty_subscription_snapshot_projects_inactive_schedule_cleanup` -> 1 passed; `rtk cargo test -p app-server-protocol thread_history_subscription_snapshot_none_does_not_clear_existing_schedule_monitor` -> 1 passed; `rtk pnpm exec tsx --test src/lib/threadAnalysis.test.ts` -> 18 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
+  residual_risk: No real Electron manual reload smoke was run. `app-server-protocol` and `thread-history` still duplicate subscription replay semantics, so future changes should keep them aligned or consolidate the shared logic. The unrelated sidebar UI commit on the dev-2 task branch was not merged.
 - commit: 7f85a6dae8e8ca503270f1bb235363485abd8925
   summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `d6bf7f51e635433e85352d1394a93c1f8d76b218` (`Validate followup image ref text misuse`). `followup_task` and `followup_external_task` now fail fast when explicit image placeholder text such as `[image:image-1]`, `[image: image-1]`, `<image attachment_id=image-1>`, or local image open tags are written into plain `message` or text content parts. The error tells the model to use structured content instead: `content: [{"type":"image_ref","attachment_id":"image-1"}]`. Correct native structured `content[].image_ref` forwarding is unchanged; external structured image refs still fail explicitly as unsupported rather than silently degrading.
   validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after three rounds. PM inspected native/external validation, schema wording, and focused tests against the fail-fast design. PM reran on dev-3 and merged main: `rtk cargo test -p thread-service followup_message_content --lib` -> 11 passed; `rtk cargo check -p codex-tool-service --lib` -> passed; `rtk rustfmt --check <5 touched files>` -> passed with existing nightly-only config warnings; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed. PM reran the thread-service focused test, codex-tool-service lib check, and diff check on merged main with the same passing results.
