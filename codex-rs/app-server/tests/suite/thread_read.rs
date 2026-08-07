@@ -92,6 +92,7 @@ use protocol::protocol::ThreadMemoryMode;
 use protocol::protocol::TurnCompleteEvent;
 use protocol::protocol::UserMessageEvent;
 use protocol::subscriptions::PersistedSubscription;
+use protocol::subscriptions::ScheduleSpec;
 use protocol::user_input::ByteRange;
 use protocol::user_input::TextElement;
 use rollout::ARCHIVED_SESSIONS_SUBDIR;
@@ -292,6 +293,19 @@ async fn list_threads(mcp: &mut McpProcess) -> Result<Vec<app_server_protocol::T
     )
     .await??;
     let ThreadListResponse { data, .. } = to_response::<ThreadListResponse>(list_resp)?;
+    Ok(data)
+}
+
+async fn list_loaded_threads(mcp: &mut McpProcess) -> Result<Vec<String>> {
+    let list_id = mcp
+        .send_thread_loaded_list_request(ThreadLoadedListParams::default())
+        .await?;
+    let list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(list_id)),
+    )
+    .await??;
+    let ThreadLoadedListResponse { data, .. } = to_response::<ThreadLoadedListResponse>(list_resp)?;
     Ok(data)
 }
 
@@ -874,6 +888,73 @@ async fn thread_read_can_include_turns() -> Result<()> {
         other => panic!("expected user message item, got {other:?}"),
     }
     assert_eq!(thread.lifecycle_status, ThreadLifecycleStatus::NotLoaded);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_restores_active_schedule_after_startup_subscription_restore() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-00-00";
+    let meta_rfc3339 = "2025-01-05T12:00:00Z";
+    let conversation_id = create_fake_rollout_with_text_elements(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        "Schedule exists",
+        Vec::new(),
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    append_schedule_subscription_snapshot(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        &conversation_id,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let listed = list_threads(&mut mcp).await?;
+    assert!(
+        listed.iter().any(|thread| thread.id == conversation_id),
+        "thread/list should include the scheduled thread"
+    );
+    let loaded = list_loaded_threads(&mut mcp).await?;
+    assert!(
+        loaded.iter().any(|thread_id| thread_id == &conversation_id),
+        "thread/list should restore the scheduled thread into the live loaded set"
+    );
+
+    let thread = read_thread(&mut mcp, &conversation_id, /*include_turns*/ true).await?;
+    let schedule_item = thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .find(|item| {
+            matches!(
+                item,
+                ThreadItem::BuiltinToolCall {
+                    tool,
+                    status,
+                    output: Some(output),
+                    ..
+                } if tool == "schedule_subscribe"
+                    && *status == app_server_protocol::DynamicToolCallStatus::Completed
+                    && output
+                        .get("subscription_id")
+                        .and_then(|value| value.as_str())
+                        == Some("sub-schedule")
+            )
+        });
+    assert!(
+        schedule_item.is_some(),
+        "thread/read should include the restored schedule_subscribe monitor after startup restore"
+    );
 
     Ok(())
 }
@@ -3410,6 +3491,51 @@ fn create_external_root_rollout_with_subscription(
     ];
     std::fs::write(file_path, lines.join("\n") + "\n")?;
     Ok(uuid.to_string())
+}
+
+fn append_schedule_subscription_snapshot(
+    codex_home: &Path,
+    filename_ts: &str,
+    meta_rfc3339: &str,
+    thread_id: &str,
+) -> Result<()> {
+    let thread_id = protocol::ThreadId::from_string(thread_id)?;
+    let file_path = rollout_path(codex_home, filename_ts, &thread_id.to_string());
+    let meta = SessionMeta {
+        id: thread_id,
+        forked_from_id: None,
+        timestamp: meta_rfc3339.to_string(),
+        cwd: PathBuf::from("/"),
+        originator: "codex".to_string(),
+        cli_version: "0.0.0".to_string(),
+        source: ProtocolSessionSource::Cli,
+        thread_source: None,
+        agent_nickname: None,
+        agent_role: None,
+        agent_path: None,
+        model_provider: Some("mock_provider".to_string()),
+        base_instructions: None,
+        dynamic_tools: None,
+        memory_mode: None,
+        subscriptions: Some(vec![PersistedSubscription::Schedule {
+            subscription_id: "sub-schedule".to_string(),
+            schedule: ScheduleSpec::EveryInterval {
+                interval_ms: 60_000,
+            },
+            label: Some("standup".to_string()),
+            message: Some("Run standup checks".to_string()),
+        }]),
+        external_reconnect: None,
+    };
+    let line = json!({
+        "timestamp": meta_rfc3339,
+        "type": "session_meta",
+        "payload": serde_json::to_value(SessionMetaLine { meta, git: None })?,
+    })
+    .to_string();
+    let mut file = std::fs::OpenOptions::new().append(true).open(file_path)?;
+    writeln!(file, "{line}")?;
+    Ok(())
 }
 
 fn create_config_toml_with_thread_store(codex_home: &Path, store_id: &str) -> std::io::Result<()> {

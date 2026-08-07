@@ -1,4 +1,5 @@
 use super::*;
+use app_server_protocol::DynamicToolCallStatus;
 use thread_store_api::ExternalLiveRestoreEligibility;
 
 fn external_root_startup_restore_skip_reason(
@@ -203,7 +204,9 @@ impl ThreadRequestProcessor {
                 {
                     Ok(thread) => thread,
                     Err(ThreadReadViewError::InvalidRequest(message))
-                        if Self::is_include_turns_unavailable_before_first_user_message(&message) =>
+                        if Self::is_include_turns_unavailable_before_first_user_message(
+                            &message,
+                        ) =>
                     {
                         None
                     }
@@ -370,7 +373,7 @@ impl ThreadRequestProcessor {
             Err(err) => return Err(err),
         };
         if include_turns {
-            restore_persisted_injected_context_turns(&mut thread, &persisted_turns);
+            restore_persisted_display_turns(&mut thread, &persisted_turns);
         }
         Ok((thread, has_live_in_progress_turn))
     }
@@ -731,7 +734,9 @@ impl ThreadRequestProcessor {
             }
             Ok(None) => {}
             Err(err) => {
-                warn!("failed to inspect persisted provider facts for active thread {thread_id}: {err}");
+                warn!(
+                    "failed to inspect persisted provider facts for active thread {thread_id}: {err}"
+                );
                 return;
             }
         }
@@ -870,6 +875,11 @@ fn apply_stored_agent_metadata_to_loaded_thread(
     }
 }
 
+fn restore_persisted_display_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
+    restore_persisted_injected_context_turns(thread, persisted_turns);
+    restore_persisted_subscription_snapshot_turns(thread, persisted_turns);
+}
+
 fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
     for (persisted_index, persisted_turn) in persisted_turns.iter().enumerate() {
         let persisted_injected_items: Vec<_> = persisted_turn
@@ -899,6 +909,76 @@ fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns
             injected_context_turn,
         );
     }
+}
+
+fn restore_persisted_subscription_snapshot_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
+    for (persisted_index, persisted_turn) in persisted_turns.iter().enumerate() {
+        if persisted_turn.id != "active-subscriptions" {
+            continue;
+        }
+
+        let mut missing_items = persisted_turn
+            .items
+            .iter()
+            .filter(|item| !thread_has_display_item(thread, item))
+            .cloned()
+            .collect::<Vec<_>>();
+        if missing_items.is_empty() {
+            continue;
+        }
+
+        if let Some(live_turn) = thread
+            .turns
+            .iter_mut()
+            .find(|turn| turn.id == persisted_turn.id)
+        {
+            live_turn.items.append(&mut missing_items);
+            live_turn.items_view = TurnItemsView::Full;
+            continue;
+        }
+
+        let mut subscription_turn = persisted_turn.clone();
+        subscription_turn.items = missing_items;
+        subscription_turn.items_view = TurnItemsView::Full;
+        thread
+            .turns
+            .insert(persisted_index.min(thread.turns.len()), subscription_turn);
+    }
+}
+
+fn thread_has_display_item(thread: &Thread, item: &ThreadItem) -> bool {
+    thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .any(|existing| {
+            existing.id() == item.id()
+                || schedule_monitor_subscription_id(existing).is_some_and(|existing_id| {
+                    schedule_monitor_subscription_id(item).as_deref() == Some(existing_id.as_str())
+                })
+        })
+}
+
+fn schedule_monitor_subscription_id(item: &ThreadItem) -> Option<String> {
+    let ThreadItem::BuiltinToolCall {
+        tool,
+        status,
+        output,
+        ..
+    } = item
+    else {
+        return None;
+    };
+    if !matches!(tool.as_str(), "schedule_subscribe" | "schedule_unsubscribe")
+        || *status != DynamicToolCallStatus::Completed
+    {
+        return None;
+    }
+    output
+        .as_ref()
+        .and_then(|output| output.get("subscription_id"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
 }
 
 fn restore_persisted_injected_context_items(
@@ -993,6 +1073,39 @@ mod restore_persisted_injected_context_turns_tests {
         }
     }
 
+    fn schedule_subscribe_item(id: &str, subscription_id: &str, label: &str) -> ThreadItem {
+        ThreadItem::BuiltinToolCall {
+            id: id.to_string(),
+            tool: "schedule_subscribe".to_string(),
+            arguments: serde_json::json!({
+                "schedule": {
+                    "kind": "every_interval",
+                    "interval_ms": 60000,
+                },
+                "label": label,
+            }),
+            status: DynamicToolCallStatus::Completed,
+            output: Some(serde_json::json!({
+                "subscription_id": subscription_id,
+            })),
+        }
+    }
+
+    fn schedule_unsubscribe_item(id: &str, subscription_id: &str) -> ThreadItem {
+        ThreadItem::BuiltinToolCall {
+            id: id.to_string(),
+            tool: "schedule_unsubscribe".to_string(),
+            arguments: serde_json::json!({
+                "subscription_id": subscription_id,
+            }),
+            status: DynamicToolCallStatus::Completed,
+            output: Some(serde_json::json!({
+                "subscription_id": subscription_id,
+                "unsubscribed": true,
+            })),
+        }
+    }
+
     fn turn(id: &str, items: Vec<ThreadItem>) -> Turn {
         Turn {
             id: id.to_string(),
@@ -1020,7 +1133,7 @@ mod restore_persisted_injected_context_turns_tests {
             )],
         )];
 
-        restore_persisted_injected_context_turns(&mut thread, &persisted_turns);
+        restore_persisted_display_turns(&mut thread, &persisted_turns);
 
         assert_eq!(
             thread.turns[0].items,
@@ -1054,7 +1167,7 @@ mod restore_persisted_injected_context_turns_tests {
             ),
         ];
 
-        restore_persisted_injected_context_turns(&mut thread, &persisted_turns);
+        restore_persisted_display_turns(&mut thread, &persisted_turns);
 
         assert_eq!(thread.turns.len(), 2);
         assert_eq!(
@@ -1070,6 +1183,128 @@ mod restore_persisted_injected_context_turns_tests {
                 injected_context_item("ctx-2", "persisted compact init context"),
                 agent_message_item("msg-1", "final assistant output"),
             ]
+        );
+    }
+
+    #[test]
+    fn restore_persisted_display_turns_inserts_active_subscription_snapshot_turn() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-1",
+            vec![agent_message_item("msg-1", "thread restored live")],
+        )]);
+        let persisted_turns = vec![
+            turn(
+                "turn-1",
+                vec![agent_message_item("msg-1", "thread restored live")],
+            ),
+            turn(
+                "active-subscriptions",
+                vec![schedule_subscribe_item(
+                    "active-subscription:sub-schedule",
+                    "sub-schedule",
+                    "standup",
+                )],
+            ),
+        ];
+
+        restore_persisted_display_turns(&mut thread, &persisted_turns);
+
+        assert_eq!(thread.turns.len(), 2);
+        assert_eq!(thread.turns[1].id, "active-subscriptions");
+        assert_eq!(
+            thread.turns[1].items,
+            vec![schedule_subscribe_item(
+                "active-subscription:sub-schedule",
+                "sub-schedule",
+                "standup"
+            )]
+        );
+    }
+
+    #[test]
+    fn restore_persisted_display_turns_skips_duplicate_schedule_subscription() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-1",
+            vec![schedule_subscribe_item(
+                "call-schedule",
+                "sub-schedule",
+                "standup",
+            )],
+        )]);
+        let persisted_turns = vec![turn(
+            "active-subscriptions",
+            vec![schedule_subscribe_item(
+                "active-subscription:sub-schedule",
+                "sub-schedule",
+                "standup",
+            )],
+        )];
+
+        restore_persisted_display_turns(&mut thread, &persisted_turns);
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(
+            thread.turns[0].items,
+            vec![schedule_subscribe_item(
+                "call-schedule",
+                "sub-schedule",
+                "standup"
+            )]
+        );
+    }
+
+    #[test]
+    fn restore_persisted_display_turns_inserts_empty_snapshot_cleanup_turn() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-1",
+            vec![agent_message_item("msg-1", "thread restored live")],
+        )]);
+        let persisted_turns = vec![turn(
+            "active-subscriptions",
+            vec![schedule_unsubscribe_item(
+                "active-subscription:sub-schedule:inactive",
+                "sub-schedule",
+            )],
+        )];
+
+        restore_persisted_display_turns(&mut thread, &persisted_turns);
+
+        assert_eq!(thread.turns.len(), 2);
+        assert_eq!(
+            thread.turns[0].items,
+            vec![schedule_unsubscribe_item(
+                "active-subscription:sub-schedule:inactive",
+                "sub-schedule"
+            )]
+        );
+    }
+
+    #[test]
+    fn restore_persisted_display_turns_skips_duplicate_schedule_unsubscription() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-1",
+            vec![schedule_unsubscribe_item(
+                "call-unsubscribe",
+                "sub-schedule",
+            )],
+        )]);
+        let persisted_turns = vec![turn(
+            "active-subscriptions",
+            vec![schedule_unsubscribe_item(
+                "active-subscription:sub-schedule:inactive",
+                "sub-schedule",
+            )],
+        )];
+
+        restore_persisted_display_turns(&mut thread, &persisted_turns);
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(
+            thread.turns[0].items,
+            vec![schedule_unsubscribe_item(
+                "call-unsubscribe",
+                "sub-schedule"
+            )]
         );
     }
 
