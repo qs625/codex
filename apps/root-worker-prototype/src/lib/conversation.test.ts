@@ -993,84 +993,6 @@ test("keeps child completions and subagent notifications as visible cells", () =
   );
 });
 
-test("renders legacy raw subagent notification envelopes as typed completion entries", () => {
-  const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "agentMessage",
-        id: "legacy-subagent-notification",
-        text: JSON.stringify({
-          author: "/root/worker",
-          recipient: "/root",
-          other_recipients: [],
-          content:
-            '<subagent_notification>\n{"agent_path":"/root/worker","status":{"completed":"状态：完成\\n实现已完成。"}}\n</subagent_notification>',
-          operation: "childCompletion",
-          sender_thread_id: "thread-2",
-          recipient_thread_id: "thread-1",
-        }),
-        phase: null,
-        memoryCitation: null,
-      },
-    ]),
-  );
-
-  assert.equal(entries.length, 1);
-  assert.equal(entries[0]?.kind, "tool");
-  assert.equal(entries[0]?.toolCategory, "subagentNotification");
-  assert.equal(entries[0]?.toolName, "/root/worker subagent completion");
-  assert.equal(
-    entries[0]?.text,
-    "/root/worker • completed • 状态：完成 实现已完成。",
-  );
-  assert.doesNotMatch(entries[0]?.text ?? "", /subagent_notification/);
-  assert.doesNotMatch(entries[0]?.toolDetails ?? "", /<subagent_notification>/);
-});
-
-test("suppresses duplicate raw subagent notification when typed completion exists", () => {
-  const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "collabAgentStatusUpdate",
-        id: "status-1",
-        senderThreadId: "thread-2",
-        senderPath: "/root/worker",
-        recipientThreadId: "thread-1",
-        recipientPath: "/root",
-        lifecycleStatus: {
-          path: "/root/worker",
-          lifecycleStatus: {
-            type: "final",
-            result: { type: "completed", lastAgentMessage: "done" },
-          },
-          message: "done",
-        },
-      },
-      {
-        type: "agentMessage",
-        id: "legacy-subagent-notification",
-        text: JSON.stringify({
-          author: "/root/worker",
-          recipient: "/root",
-          other_recipients: [],
-          content:
-            '<subagent_notification>\n{"agent_path":"/root/worker","status":{"completed":"done"}}\n</subagent_notification>',
-          operation: "childCompletion",
-          sender_thread_id: "thread-2",
-          recipient_thread_id: "thread-1",
-        }),
-        phase: null,
-        memoryCitation: null,
-      },
-    ]),
-  );
-
-  assert.deepEqual(
-    entries.map((entry) => [entry.id, entry.toolCategory, entry.text]),
-    [["status-1", "subagentNotification", "/root/worker • completed • done"]],
-  );
-});
-
 test("keeps ordinary agent JSON messages visible", () => {
   const text = JSON.stringify({
     content: "example JSON, not a subagent notification",
@@ -1091,31 +1013,6 @@ test("keeps ordinary agent JSON messages visible", () => {
   assert.deepEqual(
     entries.map((entry) => [entry.id, entry.kind, entry.text]),
     [["agent-json", "message", text]],
-  );
-});
-
-test("malformed legacy subagent notification envelopes stay visible without crashing", () => {
-  const text = JSON.stringify({
-    author: "/root/worker",
-    recipient: "/root",
-    content:
-      "<subagent_notification>\n{not valid json}\n</subagent_notification>",
-  });
-  const entries = buildConversationEntries(
-    makeThread([
-      {
-        type: "agentMessage",
-        id: "malformed-subagent-notification",
-        text,
-        phase: null,
-        memoryCitation: null,
-      },
-    ]),
-  );
-
-  assert.deepEqual(
-    entries.map((entry) => [entry.id, entry.kind, entry.text]),
-    [["malformed-subagent-notification", "message", text]],
   );
 });
 

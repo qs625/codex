@@ -58,20 +58,6 @@ type CollabAgentStateView = {
   message?: string | null;
 };
 
-type LegacySubagentNotification = {
-  senderThreadId: string | null;
-  senderPath: string;
-  recipientThreadId: string | null;
-  recipientPath: string;
-  lifecycleStatus: {
-    path?: string | null;
-    agentNickname?: string | null;
-    agentRole?: string | null;
-    lifecycleStatus: ThreadLifecycleStatus;
-    message?: string | null;
-  };
-};
-
 export function buildConversationEntries(
   thread: Thread | null,
   options?: ConversationCellBuildOptions,
@@ -107,9 +93,6 @@ export function buildConversationState(
       turn.completedAt ?? turn.startedAt ?? thread.updatedAt,
     );
 
-    const legacySubagentNotificationKeys =
-      buildTypedSubagentCompletionKeys(turn.items);
-
     for (const item of turn.items) {
       const timestamp = formatItemTimestamp(item) ?? turnTimestamp;
       const previousFlatItem = canReusePrevious
@@ -125,7 +108,6 @@ export function buildConversationState(
               author,
               timestamp,
               commandLookup,
-              legacySubagentNotificationKeys,
             }).map(
               (entry) => ({
                 ...entry,
@@ -158,12 +140,10 @@ function buildConversationItemEntries(
     author,
     timestamp,
     commandLookup,
-    legacySubagentNotificationKeys,
   }: {
     author: string;
     timestamp: string;
     commandLookup: Map<string, string>;
-    legacySubagentNotificationKeys: Set<string>;
   },
 ): ConversationEntry[] {
   if (item.type === "userMessage") {
@@ -182,30 +162,6 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "agentMessage") {
-    const legacyNotification = parseLegacySubagentNotification(item.text);
-    if (legacyNotification) {
-      const duplicateKey = subagentCompletionKey(legacyNotification);
-      if (
-        duplicateKey &&
-        legacySubagentNotificationKeys.has(duplicateKey)
-      ) {
-        return [];
-      }
-      return [
-        buildCollabAgentStatusUpdateEntry(
-          {
-            type: "collabAgentStatusUpdate",
-            id: item.id,
-            senderThreadId: legacyNotification.senderThreadId,
-            senderPath: legacyNotification.senderPath,
-            recipientThreadId: legacyNotification.recipientThreadId,
-            recipientPath: legacyNotification.recipientPath,
-            lifecycleStatus: legacyNotification.lifecycleStatus,
-          },
-          { author, timestamp },
-        ),
-      ];
-    }
     return [
       {
         id: item.id,
@@ -1347,191 +1303,6 @@ function formatCollabAgentMessageOperation(operation: string) {
   return operation === "sendMessage" || operation === "send_message"
     ? "followupTask"
     : operation;
-}
-
-function buildTypedSubagentCompletionKeys(items: ThreadItem[]) {
-  const keys = new Set<string>();
-  for (const item of items) {
-    const key =
-      item.type === "collabAgentStatusUpdate"
-        ? subagentCompletionKey(item)
-        : item.type === "collabAgentMessage" &&
-            item.operation === "childCompletion"
-          ? subagentCompletionKey({
-              senderPath: item.senderPath,
-              lifecycleStatus: {
-                path: item.senderPath,
-                lifecycleStatus: {
-                  type: "final",
-                  result: {
-                    type: "completed",
-                    lastAgentMessage: item.content,
-                  },
-                },
-                message: item.content,
-              },
-            })
-          : null;
-    if (key) {
-      keys.add(key);
-    }
-  }
-  return keys;
-}
-
-function subagentCompletionKey(
-  item:
-    | Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>
-    | Pick<LegacySubagentNotification, "senderPath" | "lifecycleStatus">,
-) {
-  const lifecycleStatus = item.lifecycleStatus.lifecycleStatus;
-  const path =
-    stringOrNull(item.lifecycleStatus.path) ??
-    stringOrNull(item.senderPath);
-  const status = formatLifecycleStatus(lifecycleStatus);
-  const message =
-    stringOrNull(item.lifecycleStatus.message) ??
-    lifecycleStatusMessage(lifecycleStatus);
-  if (!path || !message) {
-    return null;
-  }
-  return `${path}\u0000${status}\u0000${message}`;
-}
-
-function parseLegacySubagentNotification(
-  text: string,
-): LegacySubagentNotification | null {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-    return null;
-  }
-
-  let outer: unknown;
-  try {
-    outer = JSON.parse(trimmed);
-  } catch {
-    return null;
-  }
-
-  const outerRecord = objectOrNull(outer);
-  const content = stringOrNull(outerRecord?.content);
-  if (!outerRecord || !content) {
-    return null;
-  }
-
-  const markerMatch = content.match(
-    /^<subagent_notification>\s*([\s\S]*?)\s*<\/subagent_notification>$/u,
-  );
-  if (!markerMatch) {
-    return null;
-  }
-
-  let inner: unknown;
-  try {
-    inner = JSON.parse(markerMatch[1] ?? "");
-  } catch {
-    return null;
-  }
-
-  const innerRecord = objectOrNull(inner);
-  const agentPath =
-    stringOrNull(innerRecord?.agent_path) ??
-    stringOrNull(outerRecord.author);
-  if (!innerRecord || !agentPath) {
-    return null;
-  }
-
-  const status = legacySubagentNotificationStatus(innerRecord.status);
-  if (!status) {
-    return null;
-  }
-
-  return {
-    senderThreadId: stringOrNull(outerRecord.sender_thread_id),
-    senderPath: agentPath,
-    recipientThreadId: stringOrNull(outerRecord.recipient_thread_id),
-    recipientPath: stringOrFallback(outerRecord.recipient, "unknown"),
-    lifecycleStatus: {
-      path: agentPath,
-      lifecycleStatus: status.lifecycleStatus,
-      message: status.message,
-    },
-  };
-}
-
-function legacySubagentNotificationStatus(
-  statusValue: unknown,
-): { lifecycleStatus: ThreadLifecycleStatus; message: string | null } | null {
-  const status = objectOrNull(statusValue);
-  if (!status) {
-    return null;
-  }
-
-  const completed = stringOrNull(status.completed);
-  if (completed) {
-    return {
-      lifecycleStatus: {
-        type: "final",
-        result: {
-          type: "completed",
-          lastAgentMessage: completed,
-        },
-      },
-      message: completed,
-    };
-  }
-
-  const errored =
-    stringOrNull(status.errored) ??
-    stringOrNull(status.error) ??
-    stringOrNull(status.failed);
-  if (errored) {
-    return {
-      lifecycleStatus: {
-        type: "final",
-        result: {
-          type: "errored",
-          message: errored,
-        },
-      },
-      message: errored,
-    };
-  }
-
-  if (status.interrupted === true || stringOrNull(status.interrupted)) {
-    return {
-      lifecycleStatus: {
-        type: "final",
-        result: { type: "interrupted" },
-      },
-      message: stringOrNull(status.interrupted),
-    };
-  }
-
-  if (status.shutdown === true || stringOrNull(status.shutdown)) {
-    return {
-      lifecycleStatus: {
-        type: "final",
-        result: { type: "shutdown" },
-      },
-      message: stringOrNull(status.shutdown),
-    };
-  }
-
-  return null;
-}
-
-function lifecycleStatusMessage(status: ThreadLifecycleStatus) {
-  if (status.type !== "final") {
-    return null;
-  }
-  if (status.result.type === "completed") {
-    return stringOrNull(status.result.lastAgentMessage);
-  }
-  if (status.result.type === "errored") {
-    return stringOrNull(status.result.message);
-  }
-  return null;
 }
 
 function summarizeCollabAgentStatusUpdate(

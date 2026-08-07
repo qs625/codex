@@ -367,6 +367,73 @@ use super::*;
     }
 
     #[test]
+    fn replay_skips_raw_subagent_notification_agent_item_when_typed_completion_exists() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "done".into(),
+            InterAgentOperation::ChildCompletion,
+        )
+        .with_status(protocol::protocol::AgentStatus::Completed(Some(
+            "done".into(),
+        )));
+        let raw_message = serde_json::json!({
+            "author": "/root/worker",
+            "recipient": "/root",
+            "other_recipients": [],
+            "content": concat!(
+                "<subagent_notification>\n",
+                r#"{"agent_path":"/root/worker","status":{"completed":"done"}}"#,
+                "\n</subagent_notification>"
+            ),
+            "operation": "childCompletion",
+        })
+        .to_string();
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ResponseItemCompleted(ResponseItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: ResponseItem::InterAgentCommunication {
+                    id: Some("collab-response-1".into()),
+                    communication,
+                },
+                completed_at_ms: 123,
+            }),
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::AgentMessage(CoreAgentMessageItem {
+                    id: "raw-agent-message".into(),
+                    content: vec![CoreAgentMessageContent::Text { text: raw_message }],
+                    phase: None,
+                    memory_citation: None,
+                }),
+                completed_at_ms: 124,
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1);
+        assert!(matches!(
+            turns[0].items[0],
+            ThreadItem::CollabAgentStatusUpdate { .. }
+        ));
+    }
+
+    #[test]
     fn maps_legacy_response_item_completed_inter_agent_to_collab_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
