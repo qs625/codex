@@ -38,6 +38,8 @@ use protocol::protocol::ExecCommandStatus;
 use protocol::protocol::ExecOutputStream;
 
 pub(crate) const TRAILING_OUTPUT_GRACE: Duration = Duration::from_millis(100);
+pub(crate) const OUTPUT_NOTIFICATION_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
+pub(crate) const MAX_OUTPUT_NOTIFICATION_BYTES: usize = 16 * 1024;
 
 /// Spawn a background task that continuously reads from the PTY, appends to the
 /// shared transcript, and emits ExecCommandOutputDelta events on UTF‑8
@@ -63,8 +65,10 @@ pub(crate) fn start_streaming_output(
 
         let mut pending = Vec::<u8>::new();
         let mut emitted_deltas: usize = 0;
+        let mut output_notification_aggregator = OutputNotificationAggregator::default();
 
         let mut grace_sleep: Option<Pin<Box<Sleep>>> = None;
+        let mut output_notification_flush_sleep: Option<Pin<Box<Sleep>>> = None;
 
         loop {
             tokio::select! {
@@ -78,8 +82,30 @@ pub(crate) fn start_streaming_output(
                         sleep.as_mut().await;
                     }
                 }, if grace_sleep.is_some() => {
+                    flush_output_notification(
+                        &mut output_notification_aggregator,
+                        &exit_notification_output,
+                        &call_id,
+                        &session_ref,
+                        &notification_state,
+                    ).await;
                     output_drained.notify_one();
                     break;
+                }
+
+                _ = async {
+                    if let Some(sleep) = output_notification_flush_sleep.as_mut() {
+                        sleep.as_mut().await;
+                    }
+                }, if output_notification_flush_sleep.is_some() => {
+                    flush_output_notification(
+                        &mut output_notification_aggregator,
+                        &exit_notification_output,
+                        &call_id,
+                        &session_ref,
+                        &notification_state,
+                    ).await;
+                    output_notification_flush_sleep = None;
                 }
 
                 received = receiver.recv() => {
@@ -89,6 +115,13 @@ pub(crate) fn start_streaming_output(
                             continue;
                         },
                         Err(RecvError::Closed) => {
+                            flush_output_notification(
+                                &mut output_notification_aggregator,
+                                &exit_notification_output,
+                                &call_id,
+                                &session_ref,
+                                &notification_state,
+                            ).await;
                             output_drained.notify_one();
                             break;
                         }
@@ -104,6 +137,8 @@ pub(crate) fn start_streaming_output(
                         &mut emitted_deltas,
                         notify_on,
                         &notification_state,
+                        &mut output_notification_aggregator,
+                        &mut output_notification_flush_sleep,
                         chunk,
                     ).await;
                 }
@@ -323,6 +358,8 @@ async fn process_chunk(
     emitted_deltas: &mut usize,
     notify_on: CommandNotificationFilter,
     notification_state: &Arc<CommandNotificationState>,
+    output_notification_aggregator: &mut OutputNotificationAggregator,
+    output_notification_flush_sleep: &mut Option<Pin<Box<Sleep>>>,
     chunk: Vec<u8>,
 ) {
     pending.extend_from_slice(&chunk);
@@ -358,25 +395,104 @@ async fn process_chunk(
         *emitted_deltas += 1;
         if generates_notification {
             let output = String::from_utf8_lossy(&prefix).to_string();
-            let item = ResponseItem::CommandExecutionNotification {
-                id: Some(format!("{call_id}:notification:output:{sequence}")),
-                command_item_id: call_id.to_string(),
-                kind: CommandExecutionNotificationKind::Output,
-                message: command_output_notification_message(&call_id),
-                output: Some(output),
-                exit_code: None,
-                created_at_ms: now_unix_timestamp_ms(),
-            };
-            let _ = session_ref.append_conversation_item(item).await;
-            {
-                let mut guard = exit_notification_output.lock().await;
-                let _ = guard.drain_chunks();
-            }
-            notification_state
-                .notify(CommandNotificationKind::Output)
+            output_notification_aggregator.push(sequence, output);
+            if output_notification_aggregator.should_flush_for_size() {
+                flush_output_notification(
+                    output_notification_aggregator,
+                    exit_notification_output,
+                    call_id,
+                    session_ref,
+                    notification_state,
+                )
                 .await;
+                *output_notification_flush_sleep = None;
+            } else if output_notification_flush_sleep.is_none() {
+                output_notification_flush_sleep.replace(Box::pin(tokio::time::sleep(
+                    OUTPUT_NOTIFICATION_FLUSH_INTERVAL,
+                )));
+            }
         }
     }
+}
+
+#[derive(Default)]
+struct OutputNotificationAggregator {
+    pending: Option<PendingOutputNotification>,
+}
+
+struct PendingOutputNotification {
+    first_sequence: u64,
+    last_sequence: u64,
+    bytes: usize,
+    output: String,
+}
+
+impl OutputNotificationAggregator {
+    fn push(&mut self, sequence: u64, output: String) {
+        let bytes = output.len();
+        match self.pending.as_mut() {
+            Some(pending) => {
+                pending.last_sequence = sequence;
+                pending.bytes += bytes;
+                pending.output.push_str(&output);
+            }
+            None => {
+                self.pending = Some(PendingOutputNotification {
+                    first_sequence: sequence,
+                    last_sequence: sequence,
+                    bytes,
+                    output,
+                });
+            }
+        }
+    }
+
+    fn should_flush_for_size(&self) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.bytes >= MAX_OUTPUT_NOTIFICATION_BYTES)
+    }
+
+    fn take_item(&mut self, call_id: &str) -> Option<ResponseItem> {
+        let pending = self.pending.take()?;
+        let id = if pending.first_sequence == pending.last_sequence {
+            format!("{call_id}:notification:output:{}", pending.first_sequence)
+        } else {
+            format!(
+                "{call_id}:notification:output:{}-{}",
+                pending.first_sequence, pending.last_sequence
+            )
+        };
+        Some(ResponseItem::CommandExecutionNotification {
+            id: Some(id),
+            command_item_id: call_id.to_string(),
+            kind: CommandExecutionNotificationKind::Output,
+            message: command_output_notification_message(call_id),
+            output: Some(pending.output),
+            exit_code: None,
+            created_at_ms: now_unix_timestamp_ms(),
+        })
+    }
+}
+
+async fn flush_output_notification(
+    output_notification_aggregator: &mut OutputNotificationAggregator,
+    exit_notification_output: &Arc<Mutex<HeadTailBuffer>>,
+    call_id: &str,
+    session_ref: &Arc<dyn ThreadSessionCapability>,
+    notification_state: &Arc<CommandNotificationState>,
+) {
+    let Some(item) = output_notification_aggregator.take_item(call_id) else {
+        return;
+    };
+    let _ = session_ref.append_conversation_item(item).await;
+    {
+        let mut guard = exit_notification_output.lock().await;
+        let _ = guard.drain_chunks();
+    }
+    notification_state
+        .notify(CommandNotificationKind::Output)
+        .await;
 }
 
 /// Emit an ExecCommandEnd event for a unified exec session, using the transcript

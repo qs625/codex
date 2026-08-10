@@ -4,6 +4,82 @@ use tokio::sync::Mutex;
 
 use super::CommandNotificationFilter;
 use super::HeadTailBuffer;
+use super::MAX_OUTPUT_NOTIFICATION_BYTES;
+use super::OutputNotificationAggregator;
+use protocol::models::CommandExecutionNotificationKind;
+use protocol::models::ResponseItem;
+
+#[test]
+fn output_notification_aggregator_combines_fast_chunks() {
+    let mut aggregator = OutputNotificationAggregator::default();
+
+    aggregator.push(1, "first".to_string());
+    aggregator.push(2, "second".to_string());
+
+    let item = aggregator
+        .take_item("call-1")
+        .expect("pending output should flush");
+    let ResponseItem::CommandExecutionNotification {
+        id,
+        command_item_id,
+        kind,
+        message,
+        output,
+        exit_code,
+        ..
+    } = item
+    else {
+        panic!("expected output notification item");
+    };
+    assert_eq!(id, Some("call-1:notification:output:1-2".to_string()));
+    assert_eq!(command_item_id, "call-1");
+    assert_eq!(kind, CommandExecutionNotificationKind::Output);
+    assert_eq!(message, "Command call-1 produced new output.");
+    assert_eq!(output, Some("firstsecond".to_string()));
+    assert_eq!(exit_code, None);
+    assert!(
+        aggregator.take_item("call-1").is_none(),
+        "flush should clear pending output"
+    );
+}
+
+#[test]
+fn output_notification_aggregator_keeps_single_sequence_ids() {
+    let mut aggregator = OutputNotificationAggregator::default();
+
+    aggregator.push(7, "only".to_string());
+
+    let item = aggregator
+        .take_item("call-1")
+        .expect("pending output should flush");
+    let ResponseItem::CommandExecutionNotification { id, output, .. } = item else {
+        panic!("expected output notification item");
+    };
+    assert_eq!(id, Some("call-1:notification:output:7".to_string()));
+    assert_eq!(output, Some("only".to_string()));
+}
+
+#[test]
+fn output_notification_aggregator_flushes_at_size_limit() {
+    let mut aggregator = OutputNotificationAggregator::default();
+
+    aggregator.push(1, "a".repeat(MAX_OUTPUT_NOTIFICATION_BYTES - 1));
+    assert!(!aggregator.should_flush_for_size());
+    aggregator.push(2, "b".to_string());
+
+    assert!(aggregator.should_flush_for_size());
+    let item = aggregator
+        .take_item("call-1")
+        .expect("size-capped output should flush");
+    let ResponseItem::CommandExecutionNotification { id, output, .. } = item else {
+        panic!("expected output notification item");
+    };
+    assert_eq!(id, Some("call-1:notification:output:1-2".to_string()));
+    assert_eq!(
+        output.as_deref().map(str::len),
+        Some(MAX_OUTPUT_NOTIFICATION_BYTES)
+    );
+}
 
 #[tokio::test]
 async fn output_notify_exit_uses_only_unnotified_residual_output() {
