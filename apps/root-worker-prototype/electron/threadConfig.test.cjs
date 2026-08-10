@@ -16,6 +16,7 @@ test("withRealtimeConversationFeature enables realtime conversation by default",
       features: {
         goals: true,
         realtime_conversation: true,
+        unified_exec: true,
       },
       realtime: {
         version: "v2",
@@ -48,6 +49,7 @@ test("withRealtimeConversationFeature preserves existing config entries", () => 
           goals: true,
           plugins: true,
           realtime_conversation: true,
+          unified_exec: true,
         },
         realtime: {
           voice: "cedar",
@@ -72,6 +74,7 @@ test("withRealtimeConversationFeature replaces non-object features values", () =
         features: {
           goals: true,
           realtime_conversation: true,
+          unified_exec: true,
         },
         realtime: {
           version: "v2",
@@ -95,6 +98,7 @@ test("withRealtimeConversationFeature replaces non-object realtime values", () =
         features: {
           goals: true,
           realtime_conversation: true,
+          unified_exec: true,
         },
         realtime: {
           version: "v2",
@@ -136,6 +140,7 @@ test("buildCreateThreadStartParams creates read-only chat thread params", () => 
   assert.equal(params.model, "gpt-5");
   assert.equal(params.serviceTier, null);
   assert.equal(params.config.features.realtime_conversation, true);
+  assert.equal(params.config.features.unified_exec, true);
 });
 
 test("buildCreateThreadStartParams preserves project thread sandbox behavior", () => {
@@ -150,6 +155,7 @@ test("buildCreateThreadStartParams preserves project thread sandbox behavior", (
   assert.equal(params.permissions, undefined);
   assert.equal(params.approvalPolicy, "never");
   assert.equal(params.taskName, "owner_dev");
+  assert.equal(params.config.features.unified_exec, true);
 });
 
 test("buildThreadListParams requests all providers for root-worker navigation", () => {
@@ -179,6 +185,7 @@ test("buildSubscribeThreadResumeParams resumes with realtime conversation config
       features: {
         goals: true,
         realtime_conversation: true,
+        unified_exec: true,
       },
       realtime: {
         version: "v2",
