@@ -11,6 +11,7 @@ function withRealtimeConversationFeature(params = {}) {
         ...readObject(params.config?.features),
         goals: true,
         realtime_conversation: true,
+        unified_exec: true,
       },
       realtime: {
         ...readObject(params.config?.realtime),
