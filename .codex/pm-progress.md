@@ -8,10 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Aggregate frequent command output notifications without reducing live command output streaming.
 
 ## Active Work
-None
+- id: aggregate-command-output-notifications
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/aggregate-command-output-notifications
+  task_type: bugfix
+  depends_on: unified exec output notifications (`644bc253b1`; `018dd26d4e`)
+  files: codex-rs/command-service/src/unified_exec/async_watcher.rs; codex-rs/command-service/src/unified_exec/async_watcher_tests.rs; codex-rs/command-service/src/unified_exec/output.rs; codex-rs/command-service-api/src/process_exec_contracts.rs; codex-rs/thread-service/src/session/tests/context_and_history.rs; apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/threadAnalysis.ts as needed
+  base_commit: b1c4e47bd8aea4eca65517057d39f034be28bda4
+  pending_sync_from_main: false
+  status: in_progress
+  objective: User reports some command output notifications are too frequent; aggregate `notify_on: output` command execution notification items so the model/user is woken less often while preserving live UI output deltas.
+  last_update: 2026-08-11 assigned to owner_dev_3 after PM confirmed current implementation emits `ExecCommandOutputDelta` per UTF-8-safe chunk and, when `notify_on=Output` plus background session active, appends a `CommandExecutionNotification` for each emitted delta. Bottom PTY/pipe reads are 8KiB and are not line-buffered. User accepted PM design: aggregate only `CommandExecutionNotification(kind=output)`, keep live `item/commandExecution/outputDelta` granular, flush by short interval (~500ms), size cap (~16KiB), and before exit notification.
+  next_action: owner_dev_3 implement bounded time/size/exit flush aggregation for output notifications at the unified exec async watcher layer, with tests proving live deltas remain per chunk, output notifications are coalesced, `notify_on=Exit` remains unchanged, and pending output flushes before exit.
+  blockers: none
+  validation: pending
+  commit:
 
 ## Completed
 - commit: a84ccb04d4
