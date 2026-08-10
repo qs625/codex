@@ -809,6 +809,12 @@ impl ThreadRequestProcessor {
                     &config_snapshot,
                     session_configured.rollout_path,
                 );
+                if let Some(history) = stored_thread.history.as_ref() {
+                    restore_persisted_display_turns_from_rollout_items(
+                        &mut loaded_thread,
+                        history.items.as_slice(),
+                    );
+                }
                 apply_stored_agent_metadata_to_loaded_thread(
                     &mut loaded_thread,
                     stored_agent_path,
@@ -878,6 +884,14 @@ fn apply_stored_agent_metadata_to_loaded_thread(
 fn restore_persisted_display_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
     restore_persisted_injected_context_turns(thread, persisted_turns);
     restore_persisted_subscription_snapshot_turns(thread, persisted_turns);
+}
+
+fn restore_persisted_display_turns_from_rollout_items(
+    thread: &mut Thread,
+    rollout_items: &[RolloutItem],
+) {
+    let persisted_turns = thread_history::build_turns_from_rollout_items(rollout_items);
+    restore_persisted_display_turns(thread, &persisted_turns);
 }
 
 fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
@@ -1217,6 +1231,44 @@ mod restore_persisted_injected_context_turns_tests {
                 "active-subscription:sub-schedule",
                 "sub-schedule",
                 "standup"
+            )]
+        );
+    }
+
+    #[test]
+    fn restore_persisted_display_turns_from_rollout_items_restores_active_schedule() {
+        use protocol::protocol::RolloutItem;
+        use protocol::protocol::SessionMeta;
+        use protocol::protocol::SessionMetaLine;
+        use protocol::subscriptions::PersistedSubscription;
+        use protocol::subscriptions::ScheduleSpec;
+
+        let mut thread = thread_with_turns(Vec::new());
+        let rollout_items = vec![RolloutItem::SessionMeta(SessionMetaLine {
+            meta: SessionMeta {
+                subscriptions: Some(vec![PersistedSubscription::Schedule {
+                    subscription_id: "sub-schedule".to_string(),
+                    schedule: ScheduleSpec::EveryInterval {
+                        interval_ms: 60_000,
+                    },
+                    label: Some("standup".to_string()),
+                    message: None,
+                }]),
+                ..SessionMeta::default()
+            },
+            git: None,
+        })];
+
+        restore_persisted_display_turns_from_rollout_items(&mut thread, &rollout_items);
+
+        assert_eq!(thread.turns.len(), 1);
+        assert_eq!(thread.turns[0].id, "active-subscriptions");
+        assert_eq!(
+            thread.turns[0].items,
+            vec![schedule_subscribe_item(
+                "active-subscription:sub-schedule",
+                "sub-schedule",
+                "standup",
             )]
         );
     }
