@@ -8,27 +8,16 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Aggregate frequent command output notifications without reducing live command output streaming.
+None
 
 ## Active Work
-- id: aggregate-command-output-notifications
-  owner: /my_codex/owner_dev_3
-  checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: bugfix/aggregate-command-output-notifications
-  task_type: bugfix
-  depends_on: unified exec output notifications (`644bc253b1`; `018dd26d4e`)
-  files: codex-rs/command-service/src/unified_exec/async_watcher.rs; codex-rs/command-service/src/unified_exec/async_watcher_tests.rs; codex-rs/command-service/src/unified_exec/output.rs; codex-rs/command-service-api/src/process_exec_contracts.rs; codex-rs/thread-service/src/session/tests/context_and_history.rs; apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/threadAnalysis.ts as needed
-  base_commit: b1c4e47bd8aea4eca65517057d39f034be28bda4
-  pending_sync_from_main: false
-  status: in_progress
-  objective: User reports some command output notifications are too frequent; aggregate `notify_on: output` command execution notification items so the model/user is woken less often while preserving live UI output deltas.
-  last_update: 2026-08-11 assigned to owner_dev_3 after PM confirmed current implementation emits `ExecCommandOutputDelta` per UTF-8-safe chunk and, when `notify_on=Output` plus background session active, appends a `CommandExecutionNotification` for each emitted delta. Bottom PTY/pipe reads are 8KiB and are not line-buffered. User accepted PM design: aggregate only `CommandExecutionNotification(kind=output)`, keep live `item/commandExecution/outputDelta` granular, flush by short interval (~500ms), size cap (~16KiB), and before exit notification.
-  next_action: owner_dev_3 implement bounded time/size/exit flush aggregation for output notifications at the unified exec async watcher layer, with tests proving live deltas remain per chunk, output notifications are coalesced, `notify_on=Exit` remains unchanged, and pending output flushes before exit.
-  blockers: none
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: aa722417eb
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `79cd40c2940bff6f858e06e7632db6b63cda1ebd` (`Aggregate command output notifications`). `notify_on: "output"` no longer appends one `CommandExecutionNotification(Output)` per UTF-8 output prefix. Unified exec now keeps live `ExecCommandOutputDelta` emission unchanged, but aggregates model-visible output notifications with a 500ms flush timer, 16KiB size cap, receiver-close flush, and exit-grace flush before `output_drained` lets the exit notification proceed. Flushing drains `exit_notification_output` so exit notifications do not repeat already-notified output.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after two rounds. PM inspected the diff and confirmed it changes only `codex-rs/command-service/src/unified_exec/async_watcher.rs` and `async_watcher_tests.rs`, does not change bottom PTY read size, Root Worker UI, standalone `command/exec`, or default `notify_on=Exit`. PM reran on merged main: `rtk cargo test -p command-service async_watcher` -> 8 passed; `rtk cargo test -p thread-service poll_event_returns_immediately_for_existing_pending_command_output` -> 1 passed; `rtk cargo test -p thread-service poll_event_wakes_for_command_exit_notification` -> 1 passed after rerun to get an explicit exit payload; `rtk cargo test -p command-service` -> 22 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
+  residual_risk: Focused tests cover the aggregation state machine and adjacent poll_event behavior, but there is no full async watcher mock-session test proving timer and exit ordering end to end. The designed user-visible tradeoff is that output notifications can be delayed up to about 500ms while live UI deltas remain immediate.
 - commit: a84ccb04d4
   summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `ea03b3b37c0acf33e320e15635f8b607dbb30085` (`Restore schedule display on startup`). Root cause was in app-server startup restore, not live notifications or frontend display: persisted active subscription threads were resumed and silently upserted with an empty loaded thread snapshot, while explicit `thread/read(includeTurns)` already restored persisted display turns. Startup restore now builds turns from stored rollout items and reuses `restore_persisted_display_turns()` before `thread_watch_manager` upsert, so the synthetic `active-subscriptions` turn and completed `schedule_subscribe` item are present after restart.
   validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after rejecting an earlier wrong JSONL-shape/root-cause attempt. PM inspected the diff and confirmed it is limited to `codex-rs/app-server/src/request_processors/thread_processor/listing.rs`, with no frontend schedule guessing, no live notification resend dependency, and no broad rollout policy change. PM reran on merged main: `rtk cargo test -p app-server restore_persisted_display_turns_from_rollout_items_restores_active_schedule` -> 1 passed; `rtk cargo test -p thread-history active_schedule_subscription_metadata_rebuilds_builtin_monitor_item` -> 1 passed; `rtk cargo test -p app-server startup_restores_threads_with_persisted_event_subscriptions` -> 1 passed; `rtk cargo test -p app-server active_schedule_subscription` -> 2 passed; `rtk pnpm --dir apps/root-worker-prototype test -- src/lib/thread.test.ts src/lib/threadAnalysis.test.ts` -> 146 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed; full Electron startup smoke with `CODEX_APP_SERVER_CMD=\"/Users/bytedance/Projects/my-codex/codex-rs/target/debug/app-server --listen stdio://\"` -> passed (`hasDesktop: true`, `typed: true`, one app window, screenshot `/tmp/root-worker-electron-playwright-app.png`).
