@@ -1133,6 +1133,7 @@ function normalizeItem(item, options = {}) {
     case "mcpToolCall":
     case "dynamicToolCall":
     case "eventDrivenToolCall":
+    case "builtinToolCall":
       return {
         ...item,
         status: normalizeStatusValue(item.status),

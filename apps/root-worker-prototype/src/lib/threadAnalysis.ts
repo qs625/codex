@@ -144,7 +144,7 @@ function buildMonitorSections(
         if (isMonitorToolCall(item)) {
           const monitor = buildMonitorSummary(item);
           if (monitor) {
-            monitors.push(monitor);
+            upsertMonitorSummary(monitors, monitor);
           }
           continue;
         }
@@ -391,6 +391,20 @@ function removeUnsubscribedMonitor(
   if (monitorIndex !== -1) {
     monitors.splice(monitorIndex, 1);
   }
+}
+
+function upsertMonitorSummary(
+  monitors: InternalMonitorSummary[],
+  monitor: InternalMonitorSummary,
+) {
+  const existingIndex = monitors.findIndex(
+    (existing) => existing.subscriptionId === monitor.subscriptionId,
+  );
+  if (existingIndex === -1) {
+    monitors.push(monitor);
+    return;
+  }
+  monitors[existingIndex] = monitor;
 }
 
 function toPublicMonitorSummary(monitor: InternalMonitorSummary): MonitorSummary {

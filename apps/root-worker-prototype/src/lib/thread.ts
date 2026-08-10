@@ -1193,6 +1193,29 @@ export function applyInitializedThreadUpdate(
   return foundThread ? next : threads;
 }
 
+export function applyOrQueueInitializedThreadUpdate(
+  threads: Thread[],
+  initializedThreadIds: ReadonlySet<string>,
+  pendingUpdates: Map<string, ThreadUpdate[]>,
+  threadId: string,
+  update: ThreadUpdate,
+) {
+  const canApply =
+    initializedThreadIds.has(threadId) &&
+    threads.some((thread) => thread.id === threadId);
+  if (!canApply) {
+    queuePendingThreadUpdate(pendingUpdates, threadId, update);
+    return threads;
+  }
+
+  return applyInitializedThreadUpdate(
+    threads,
+    initializedThreadIds,
+    threadId,
+    update,
+  );
+}
+
 export function isTurnInFlight(turn: Turn) {
   return turn.status === "running" || turn.status === "inProgress";
 }
