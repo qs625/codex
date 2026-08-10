@@ -229,15 +229,25 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "commandExecutionNotification") {
+    const commandLabel =
+      commandLookup.get(item.commandItemId) ?? item.commandItemId;
     return [
       {
         id: item.id,
-        kind: "event" as const,
+        kind: "tool" as const,
         author,
         role: "system" as const,
         text: summarizeCommandExecutionNotification(item, commandLookup),
         timestamp,
         attachments: [],
+        toolName: "Command notification",
+        toolStatus: statusForCommandExecutionNotification(item),
+        toolDetails: formatCommandExecutionNotificationDetails(
+          item,
+          commandLabel,
+        ),
+        toolOutput: formatCommandExecutionNotificationOutput(item),
+        toolCategory: "commandNotification",
       },
     ];
   }
@@ -1504,11 +1514,9 @@ function summarizeCommandExecutionNotification(
   commandLookup: Map<string, string>,
 ) {
   const commandLabel = commandLookup.get(item.commandItemId) ?? item.commandItemId;
+  const kind = item.kind || "notification";
   if (item.kind === "output") {
-    const output = stringOrNull(item.output);
-    return output
-      ? `Command output notification received for ${commandLabel}: ${output}`
-      : `Command output notification received for ${commandLabel}.`;
+    return `Command notification • output • ${commandLabel}`;
   }
 
   if (item.kind === "exit") {
@@ -1516,12 +1524,51 @@ function summarizeCommandExecutionNotification(
       item.exitCode === null || item.exitCode === undefined
         ? "unknown exit"
         : `exit ${item.exitCode}`;
-    const summary = `Command exit notification received for ${commandLabel}: ${exitCode}.`;
-    const output = stringOrNull(item.output);
-    return output ? `${summary}\n${output}` : summary;
+    return `Command notification • ${exitCode} • ${commandLabel}`;
   }
 
-  return item.message || `Command notification received for ${commandLabel}.`;
+  return `Command notification • ${kind} • ${commandLabel}`;
+}
+
+function statusForCommandExecutionNotification(
+  item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
+) {
+  if (item.kind === "exit" && item.exitCode !== null && item.exitCode !== undefined) {
+    return item.exitCode === 0 ? "completed" : "failed";
+  }
+  return "completed";
+}
+
+function formatCommandExecutionNotificationDetails(
+  item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
+  commandLabel: string,
+) {
+  const sections = [
+    `Kind\n${item.kind || "notification"}`,
+    `Command\n${commandLabel}`,
+    `Command ID\n${item.commandItemId}`,
+  ];
+
+  if (item.exitCode !== null && item.exitCode !== undefined) {
+    sections.push(`Exit Code\n${item.exitCode}`);
+  }
+
+  if (item.message) {
+    sections.push(`Message\n${item.message}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+function formatCommandExecutionNotificationOutput(
+  item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
+) {
+  const output = typeof item.output === "string" ? item.output : null;
+  return {
+    label: "Output",
+    text: output !== null && output.length > 0 ? output : "No output",
+    isEmpty: output === null || output.length === 0,
+  };
 }
 
 function buildCommandLookup(thread: Thread) {

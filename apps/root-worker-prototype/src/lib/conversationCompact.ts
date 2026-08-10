@@ -245,6 +245,7 @@ function shouldMergeConversationEntry(
 
 function isStandaloneNotificationEntry(entry: ConversationEntry) {
   return (
+    entry.toolCategory === "commandNotification" ||
     entry.toolCategory === "childCompletion" ||
     entry.toolCategory === "subagentNotification"
   );
