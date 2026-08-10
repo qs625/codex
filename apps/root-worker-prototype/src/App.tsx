@@ -69,7 +69,7 @@ import {
 import {
   appendAgentDelta,
   appendCommandExecutionDelta,
-  applyInitializedThreadUpdate,
+  applyOrQueueInitializedThreadUpdate,
   applyPendingThreadUpdates,
   buildCurrentThreadTodoItems,
   buildProjectAgentSidebar,
@@ -932,9 +932,10 @@ function App() {
     update: (thread: Thread) => Thread,
   ) {
     setThreads((current) =>
-      applyInitializedThreadUpdate(
+      applyOrQueueInitializedThreadUpdate(
         current,
         loadedThreadIdsRef.current,
+        pendingThreadUpdatesRef.current,
         threadId,
         update,
       ),

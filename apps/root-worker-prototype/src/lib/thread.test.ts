@@ -7,6 +7,7 @@ import {
   appendAgentDelta,
   appendCommandExecutionDelta,
   applyInitializedThreadUpdate,
+  applyOrQueueInitializedThreadUpdate,
   applyPendingThreadUpdates,
   buildProjectAgentSidebar,
   buildCurrentThreadTodoItems,
@@ -2898,6 +2899,253 @@ test("pending thread updates replay when the thread snapshot arrives", () => {
       durationMs: null,
     },
   ]);
+});
+
+test("uninitialized live command notifications replay after the thread snapshot arrives", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  let threads = [makeThread()];
+  const initializedThreadIds = new Set<string>();
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk printf hello",
+    cwd: "/tmp",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "output",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const commandEnd: ThreadItem = {
+    ...commandStart,
+    status: "completed",
+    aggregatedOutput: "hello",
+    exitCode: 0,
+    durationMs: 10,
+  };
+  const expectedCommandEnd: ThreadItem = {
+    ...commandEnd,
+    completedAtMs: 2_000,
+  };
+
+  threads = applyOrQueueInitializedThreadUpdate(
+    threads,
+    initializedThreadIds,
+    pendingUpdates,
+    "thread-1",
+    (thread) => updateThreadItem(thread, "turn-command", commandStart),
+  );
+  threads = applyOrQueueInitializedThreadUpdate(
+    threads,
+    initializedThreadIds,
+    pendingUpdates,
+    "thread-1",
+    (thread) =>
+      appendCommandExecutionDelta(thread, "turn-command", "cmd-1", "hello"),
+  );
+  threads = applyOrQueueInitializedThreadUpdate(
+    threads,
+    initializedThreadIds,
+    pendingUpdates,
+    "thread-1",
+    (thread) =>
+      updateThreadItem(thread, "turn-command", commandEnd, {
+        completedAtMs: 2_000,
+      }),
+  );
+
+  assert.equal(threads[0]?.turns.length, 0);
+  assert.equal(pendingUpdates.get("thread-1")?.length, 3);
+
+  const updated = applyPendingThreadUpdates(makeThread(), pendingUpdates);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(updated.turns[0]?.items, [expectedCommandEnd]);
+  assert.deepEqual(
+    buildConversationEntries(updated).map((entry) => ({
+      id: entry.id,
+      role: entry.role,
+      text: entry.text,
+    })),
+    [
+      {
+        id: "cmd-1",
+        role: "system",
+        text: "/tmp • exit 0",
+      },
+    ],
+  );
+});
+
+test("initialized live thread updates apply immediately without pending queue", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk pwd",
+    cwd: "/tmp",
+    status: "running",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+
+  const threads = applyOrQueueInitializedThreadUpdate(
+    [makeThread()],
+    new Set(["thread-1"]),
+    pendingUpdates,
+    "thread-1",
+    (thread) => updateThreadItem(thread, "turn-command", commandStart),
+  );
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(threads[0]?.turns[0]?.items, [commandStart]);
+});
+
+test("uninitialized live schedule notifications update monitors after the snapshot arrives", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  let threads = [makeThread()];
+  const initializedThreadIds = new Set<string>();
+  const scheduleSubscribe: ThreadItem = {
+    type: "builtinToolCall",
+    id: "schedule-1",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const scheduleUnsubscribe: ThreadItem = {
+    type: "builtinToolCall",
+    id: "schedule-unsubscribe-1",
+    tool: "schedule_unsubscribe",
+    arguments: {
+      subscription_id: "sub-schedule",
+    },
+    status: "completed",
+    output: {
+      unsubscribed: true,
+      subscription_id: "sub-schedule",
+    },
+  };
+
+  threads = applyOrQueueInitializedThreadUpdate(
+    threads,
+    initializedThreadIds,
+    pendingUpdates,
+    "thread-1",
+    (thread) => updateThreadItem(thread, "turn-schedule", scheduleSubscribe),
+  );
+
+  assert.equal(threads[0]?.turns.length, 0);
+  let updated = applyPendingThreadUpdates(makeThread(), pendingUpdates);
+  let analysis = buildThreadAnalysis(updated);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [
+      {
+        id: "schedule-1",
+        subscriptionId: "sub-schedule",
+        kind: "schedule",
+        label: "daily digest",
+        detail: "every_interval 6h",
+        status: "Listening",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
+  );
+
+  threads = [updated];
+  threads = applyOrQueueInitializedThreadUpdate(
+    threads,
+    initializedThreadIds,
+    pendingUpdates,
+    "thread-1",
+    (thread) =>
+      updateThreadItem(thread, "turn-schedule-unsubscribe", scheduleUnsubscribe),
+  );
+  updated = applyPendingThreadUpdates(updated, pendingUpdates);
+  analysis = buildThreadAnalysis(updated);
+
+  assert.equal(threads[0]?.turns.length, 1);
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [],
+  );
+});
+
+test("pending live schedule subscribe does not duplicate restored active subscription monitor", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  const restoredSchedule: ThreadItem = {
+    type: "builtinToolCall",
+    id: "schedule-restored",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const liveSchedule: ThreadItem = {
+    ...restoredSchedule,
+    id: "schedule-live",
+  };
+  const snapshot: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "active-subscriptions",
+        items: [restoredSchedule],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadItem(thread, "turn-schedule", liveSchedule),
+  );
+
+  const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
+  const analysis = buildThreadAnalysis(updated);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [
+      {
+        id: "schedule-live",
+        subscriptionId: "sub-schedule",
+        kind: "schedule",
+        label: "daily digest",
+        detail: "every_interval 6h",
+        status: "Listening",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
+  );
 });
 
 for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
