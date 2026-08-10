@@ -286,7 +286,7 @@ test("includes command session parameters in command details", () => {
   assert.equal(entries[0]?.toolDetails?.includes("Notify On\noutput"), true);
 });
 
-test("renders command notifications as standalone event entries", () => {
+test("renders command notifications as structured command tool entries", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -325,7 +325,7 @@ test("renders command notifications as standalone event entries", () => {
         commandItemId: "cmd-1",
         kind: "exit",
         message: "Command exit notification received.",
-        output: "go test failure\n",
+        output: "  go test failure\n",
         exitCode: 1,
         createdAtMs: 3,
       },
@@ -333,18 +333,82 @@ test("renders command notifications as standalone event entries", () => {
   );
 
   assert.deepEqual(
-    entries.map((entry) => [entry.kind, entry.text]),
+    entries.map((entry) => ({
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolStatus: entry.toolStatus,
+      toolCategory: entry.toolCategory,
+      toolDetails: entry.toolDetails,
+      toolOutput: entry.toolOutput,
+    })),
     [
-      ["tool", "tmp/project • exit 0"],
-      [
-        "event",
-        "Command output notification received for npm test: changed",
-      ],
-      ["event", "Command exit notification received for npm test: exit 0."],
-      [
-        "event",
-        "Command exit notification received for npm test: exit 1.\ngo test failure",
-      ],
+      {
+        kind: "tool",
+        text: "tmp/project • exit 0",
+        toolName: "npm test",
+        toolStatus: "completed",
+        toolCategory: "command",
+        toolDetails:
+          "Command\nnpm test\n\nCwd\n/tmp/project\n\nStatus\ncompleted\n\nDuration\n10 ms\n\nExit Code\n0",
+        toolOutput: undefined,
+      },
+      {
+        kind: "tool",
+        text: "Command notification • output • npm test",
+        toolName: "Command notification",
+        toolStatus: "completed",
+        toolCategory: "commandNotification",
+        toolDetails:
+          "Kind\noutput\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nMessage\nCommand output notification received.",
+        toolOutput: {
+          label: "Output",
+          text: "changed",
+          isEmpty: false,
+        },
+      },
+      {
+        kind: "tool",
+        text: "Command notification • exit 0 • npm test",
+        toolName: "Command notification",
+        toolStatus: "completed",
+        toolCategory: "commandNotification",
+        toolDetails:
+          "Kind\nexit\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nExit Code\n0\n\nMessage\nCommand exit notification received.",
+        toolOutput: {
+          label: "Output",
+          text: "No output",
+          isEmpty: true,
+        },
+      },
+      {
+        kind: "tool",
+        text: "Command notification • exit 1 • npm test",
+        toolName: "Command notification",
+        toolStatus: "failed",
+        toolCategory: "commandNotification",
+        toolDetails:
+          "Kind\nexit\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nExit Code\n1\n\nMessage\nCommand exit notification received.",
+        toolOutput: {
+          label: "Output",
+          text: "  go test failure\n",
+          isEmpty: false,
+        },
+      },
+    ],
+  );
+
+  const cells = buildConversationCells(entries);
+  assert.deepEqual(
+    cells.map((cell) => ({
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      { kind: "tool", entries: ["cmd-1"] },
+      { kind: "tool", entries: ["cmd-1:notification:output:1"] },
+      { kind: "tool", entries: ["cmd-1:notification:exit"] },
+      { kind: "tool", entries: ["cmd-1:notification:exit:failure"] },
     ],
   );
 });

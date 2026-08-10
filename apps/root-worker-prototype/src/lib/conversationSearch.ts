@@ -80,6 +80,7 @@ function collectEntrySearchSources(
   pushTextSource(sources, "toolName", "Tool", entry.toolName);
   pushTextSource(sources, "toolStatus", "Status", entry.toolStatus);
   pushTextSource(sources, "toolDetails", "Details", entry.toolDetails);
+  pushTextSource(sources, "toolOutput", "Output", entry.toolOutput?.text);
 
   entry.attachments.forEach((attachment, index) => {
     const prefix = `attachment-${index}`;

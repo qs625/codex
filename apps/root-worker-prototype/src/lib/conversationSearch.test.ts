@@ -97,6 +97,34 @@ test("searches tool details and attachment text", () => {
   );
 });
 
+test("searches collapsed tool output text", () => {
+  const cells = [
+    makeCell(
+      "tool-cell",
+      [
+        makeEntry("tool-1", "summary", {
+          kind: "tool",
+          toolName: "Command notification",
+          toolStatus: "failed",
+          toolOutput: {
+            label: "Output",
+            text: "unexpected failure line",
+          },
+        }),
+      ],
+      "tool",
+    ),
+  ];
+
+  assert.deepEqual(
+    buildConversationSearchResults(cells, "failure").map((result) => ({
+      source: result.source,
+      sourceLabel: result.sourceLabel,
+    })),
+    [{ source: "toolOutput", sourceLabel: "Output" }],
+  );
+});
+
 test("keeps same text in different thread item entries as separate results", () => {
   const cells = [
     makeCell("cell-1", [makeEntry("entry-1", "repeat")]),

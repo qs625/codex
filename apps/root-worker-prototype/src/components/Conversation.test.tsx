@@ -292,6 +292,42 @@ test("single tool rows render a single inline item and auto-expand details with 
   assert.equal(expandedMarkup.match(/first summary/g)?.length ?? 0, 1);
 });
 
+test("command notification tool rows keep output collapsed inside expanded cards", () => {
+  const markup = renderToStaticMarkup(
+    <ToolRow
+      entries={[
+        {
+          id: "cmd-1:notification:exit",
+          kind: "tool",
+          author: "root",
+          role: "system",
+          text: "Command notification • exit 1 • npm test",
+          timestamp: "09:41",
+          attachments: [],
+          toolName: "Command notification",
+          toolStatus: "failed",
+          toolDetails:
+            "Kind\nexit\n\nCommand\nnpm test\n\nCommand ID\ncmd-1\n\nExit Code\n1",
+          toolOutput: {
+            label: "Output",
+            text: "line one\nline two",
+            isEmpty: false,
+          },
+          toolCategory: "commandNotification",
+        },
+      ]}
+      isOpen
+    />,
+  );
+
+  assert.match(markup, /tool-card-commandNotification/);
+  assert.match(markup, /Command notification[\s\S]*Exit Code[\s\S]*1/);
+  assert.match(markup, /<details class="tool-output-block">/);
+  assert.doesNotMatch(markup, /<details class="tool-output-block" open/);
+  assert.match(markup, /<summary>Output<\/summary>/);
+  assert.match(markup, /line one[\s\S]*line two/);
+});
+
 test("expanded poll_event tool rows render current wait progress", () => {
   const markup = renderToStaticMarkup(
     <ToolRow

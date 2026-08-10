@@ -114,6 +114,9 @@ function estimateToolCellHeight(entries: ConversationEntry[]) {
       height += estimateWrappedTextHeight(entry.toolDetails, TOOL_CHARS_PER_LINE, 3);
       height += 24;
     }
+    if (entry.toolOutput) {
+      height += 52;
+    }
   }
   if (entries.length > 1) {
     height += (entries.length - 1) * 24;

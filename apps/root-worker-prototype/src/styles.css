@@ -2636,7 +2636,8 @@ svg {
   overflow: hidden;
 }
 
-.tool-icon-command {
+.tool-icon-command,
+.tool-icon-commandNotification {
   color: #0f766e;
   background: linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%);
 }
@@ -2663,7 +2664,8 @@ svg {
   color: #44403c;
 }
 
-.tool-card-command {
+.tool-card-command,
+.tool-card-commandNotification {
   border-color: rgba(13, 148, 136, 0.18);
   background: linear-gradient(
     180deg,
@@ -2705,7 +2707,8 @@ svg {
   background: rgba(255, 255, 255, 0.78);
 }
 
-.tool-card-command[open] {
+.tool-card-command[open],
+.tool-card-commandNotification[open] {
   background: linear-gradient(
     180deg,
     rgba(240, 253, 250, 0.96),
@@ -2822,6 +2825,38 @@ svg {
 .tool-card-body {
   padding: 0 16px 16px;
   border-top: 1px solid rgba(16, 24, 40, 0.06);
+}
+
+.tool-output-block {
+  margin-top: 12px;
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+  overflow: hidden;
+}
+
+.tool-output-block summary {
+  padding: 10px 12px;
+  color: #134e4a;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.tool-output-block pre {
+  margin: 0;
+  padding: 12px;
+  border-top: 1px solid rgba(15, 118, 110, 0.12);
+  color: #292524;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tool-output-block-empty pre {
+  color: #78716c;
+  font-style: italic;
 }
 
 .tool-card-list {

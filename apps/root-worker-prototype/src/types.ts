@@ -795,12 +795,18 @@ export type ConversationEntry = {
   toolName?: string;
   toolStatus?: string;
   toolDetails?: string;
+  toolOutput?: {
+    label: string;
+    text: string;
+    isEmpty?: boolean;
+  };
   pollEventProgress?: {
     startedAtMs: number;
     currentTimeoutMs: number;
   };
   toolCategory?:
     | "command"
+    | "commandNotification"
     | "eventDrivenSubscription"
     | "eventDrivenEvent"
     | "multiAgent"

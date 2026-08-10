@@ -873,12 +873,9 @@ export const ToolRow = memo(function ToolRow({
           </div>
         </summary>
         {hasSingleEntry ? (
-          isOpen && firstEntry.toolDetails ? (
+          isOpen && hasToolBody(firstEntry) ? (
             <div className="tool-card-body tool-card-item-body">
-              {firstEntry.pollEventProgress ? (
-                <PollEventProgress progress={firstEntry.pollEventProgress} />
-              ) : null}
-              <pre>{firstEntry.toolDetails}</pre>
+              <ToolEntryBody entry={firstEntry} />
             </div>
           ) : null
         ) : (
@@ -907,12 +904,9 @@ export const ToolRow = memo(function ToolRow({
                       <time>{entry.timestamp}</time>
                     </div>
                   </button>
-                  {isSelected && entry.toolDetails ? (
+                  {isSelected && hasToolBody(entry) ? (
                     <div className="tool-card-body tool-card-item-body">
-                      {entry.pollEventProgress ? (
-                        <PollEventProgress progress={entry.pollEventProgress} />
-                      ) : null}
-                      <pre>{entry.toolDetails}</pre>
+                      <ToolEntryBody entry={entry} />
                     </div>
                   ) : null}
                 </section>
@@ -924,6 +918,35 @@ export const ToolRow = memo(function ToolRow({
     </article>
   );
 }, areToolRowPropsEqual);
+
+function hasToolBody(entry: ConversationEntry) {
+  return Boolean(entry.toolDetails || entry.toolOutput || entry.pollEventProgress);
+}
+
+function ToolEntryBody({ entry }: { entry: ConversationEntry }) {
+  return (
+    <>
+      {entry.pollEventProgress ? (
+        <PollEventProgress progress={entry.pollEventProgress} />
+      ) : null}
+      {entry.toolDetails ? <pre>{entry.toolDetails}</pre> : null}
+      {entry.toolOutput ? (
+        <details className={toolOutputClassName(entry.toolOutput)}>
+          <summary>{entry.toolOutput.label}</summary>
+          <pre>{entry.toolOutput.text}</pre>
+        </details>
+      ) : null}
+    </>
+  );
+}
+
+function toolOutputClassName(
+  toolOutput: NonNullable<ConversationEntry["toolOutput"]>,
+) {
+  return toolOutput.isEmpty
+    ? "tool-output-block tool-output-block-empty"
+    : "tool-output-block";
+}
 
 function PollEventProgress({
   progress,
@@ -1245,6 +1268,7 @@ function areArchivedHistoryRowPropsEqual(
 function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {
   switch (category) {
     case "command":
+    case "commandNotification":
       return <TerminalIcon />;
     case "eventDrivenSubscription":
     case "eventDrivenEvent":
