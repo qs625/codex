@@ -8,10 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Fix schedule subscriptions not being shown after restarting Root Worker.
 
 ## Active Work
-None
+- id: reload-schedule-display
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/reload-schedule-display
+  task_type: bugfix
+  depends_on: live schedule preservation (`449168d369`)
+  files: codex-rs/rollout/src/policy.rs; codex-rs/app-server/src/request_processors.rs; codex-rs/app-server/src/request_processors/thread_processor/*; codex-rs/thread-history/*; codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/app-server-protocol/src/protocol/tests/thread_and_turn.rs; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/threadAnalysis.ts; apps/root-worker-prototype/src/App.tsx
+  base_commit: 654bcb7df55315c11e5eb1a029f8ac6de40334ad
+  pending_sync_from_main: false
+  status: in_progress
+  objective: User reports schedules still do not display after restarting; find and fix the reload/read recovery path for active schedule subscriptions so restored threads show schedule monitors without relying on live notifications.
+  last_update: 2026-08-11 assigned to owner_dev_3 after syncing dev-3 to main `654bcb7df5` and creating branch `bugfix/reload-schedule-display`. PM light read found app-server-protocol has `ThreadHistoryBuilder::append_subscription_snapshot_items()` and tests for `active-subscriptions`, but the actual failing path may be rollout persistence, app-server thread/read, thread-history crate drift, SessionMeta snapshot writing, or renderer snapshot normalization.
+  next_action: owner_dev_3 reproduce/trace restart reload, identify earliest missing/stale fact, implement minimal recovery fix in the correct persistence/replay layer, run focused backend + Root Worker tests and attempt Electron/restart validation.
+  blockers: none
+  validation: pending
+  commit:
 
 ## Completed
 - commit: 03e73c9436
