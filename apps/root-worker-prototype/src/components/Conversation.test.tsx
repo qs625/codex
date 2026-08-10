@@ -13,6 +13,8 @@ import {
 } from "./Conversation";
 import {
   buildConversationRowClassName,
+  planConversationCellMeasurement,
+  planFocusedItemScrollAttempt,
   shouldHandleFocusedItemRequest,
 } from "./ConversationVirtualList";
 import type { ConversationEntry } from "../types";
@@ -427,6 +429,86 @@ test("focused conversation jumps only consume each focus token once", () => {
       lastHandledRequest: { itemId: "cmd-1", token: 1 },
     }),
     true,
+  );
+});
+
+test("focused conversation jumps retry until the target row is measured", () => {
+  assert.deepEqual(
+    planFocusedItemScrollAttempt({
+      attempts: 0,
+      targetMeasured: false,
+    }),
+    {
+      behavior: "smooth",
+      nextAttempts: 1,
+      shouldComplete: false,
+    },
+  );
+  assert.deepEqual(
+    planFocusedItemScrollAttempt({
+      attempts: 1,
+      targetMeasured: true,
+    }),
+    {
+      behavior: "auto",
+      nextAttempts: 2,
+      shouldComplete: true,
+    },
+  );
+});
+
+test("focused conversation jumps complete immediately for measured target rows", () => {
+  assert.deepEqual(
+    planFocusedItemScrollAttempt({
+      attempts: 0,
+      targetMeasured: true,
+    }),
+    {
+      behavior: "smooth",
+      nextAttempts: 1,
+      shouldComplete: true,
+    },
+  );
+});
+
+test("focused conversation jumps stop retrying after a bounded number of attempts", () => {
+  assert.deepEqual(
+    planFocusedItemScrollAttempt({
+      attempts: 2,
+      targetMeasured: false,
+    }),
+    {
+      behavior: "auto",
+      nextAttempts: 3,
+      shouldComplete: true,
+    },
+  );
+});
+
+test("conversation measurements mark rows measured even when height matches the estimate", () => {
+  assert.deepEqual(
+    planConversationCellMeasurement({
+      measuredHeight: 112,
+      previousHeight: 112,
+      wasMeasured: false,
+    }),
+    {
+      roundedHeight: 112,
+      heightChanged: false,
+      shouldBumpHeightVersion: true,
+    },
+  );
+  assert.deepEqual(
+    planConversationCellMeasurement({
+      measuredHeight: 112,
+      previousHeight: 112,
+      wasMeasured: true,
+    }),
+    {
+      roundedHeight: 112,
+      heightChanged: false,
+      shouldBumpHeightVersion: false,
+    },
   );
 });
 
