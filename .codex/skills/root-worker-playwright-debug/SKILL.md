@@ -1,6 +1,6 @@
 ---
 name: root-worker-playwright-debug
-description: "在 my-codex 项目中使用 Playwright 调试 root-worker prototype 的完整 Electron 客户端。适用于 Electron window、renderer DOM/console/network、preload IPC、app-server stdio、随机 Vite dev port、专用共享 CODEX_HOME、CODEX_APP_SERVER_CMD 与 ROOT_WORKER_WORKSPACE 配置。"
+description: "在 my-codex 项目中使用 Playwright 调试 root-worker prototype 的完整 Electron 客户端。适用于 Electron window、renderer DOM/console/network、preload IPC、app-server stdio、随机 Vite dev port、专用共享 MORPHEUS_HOME、CODEX_APP_SERVER_CMD 与 ROOT_WORKER_WORKSPACE 配置。"
 ---
 
 # Root Worker Playwright 调试
@@ -71,12 +71,12 @@ rtk env ROOT_WORKER_OPEN_DEVTOOLS=1 \
   scripts/launch-electron-dev.sh
 ```
 
-## Codex 状态
+## Morpheus 状态
 
-调试实例不要混用当前正在运行客户端的 `CODEX_HOME`。默认使用专用共享目录：
+调试实例不要混用当前正在运行客户端的 `MORPHEUS_HOME`。默认使用专用共享目录：
 
 ```text
-/tmp/my-codex-root-worker-debug/codex-home
+/tmp/my-codex-root-worker-debug/morpheus-home
 ```
 
 主 checkout 和固定开发 checkout 的调试实例可以共享这个目录，方便复现同一批线程和配置；它和当前正在运行的 Codex 客户端状态隔离。
@@ -84,7 +84,7 @@ rtk env ROOT_WORKER_OPEN_DEVTOOLS=1 \
 相关默认路径：
 
 ```text
-CODEX_HOME=/tmp/my-codex-root-worker-debug/codex-home
+MORPHEUS_HOME=/tmp/my-codex-root-worker-debug/morpheus-home
 ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-debug/workspace
 ```
 
@@ -92,7 +92,7 @@ ROOT_WORKER_WORKSPACE=/tmp/my-codex-root-worker-debug/workspace
 
 ```bash
 rtk env \
-  ROOT_WORKER_DEBUG_CODEX_HOME=/tmp/root-worker-oneoff/codex-home \
+  ROOT_WORKER_DEBUG_MORPHEUS_HOME=/tmp/root-worker-oneoff/morpheus-home \
   ROOT_WORKER_DEBUG_WORKSPACE=/tmp/root-worker-oneoff/workspace \
   scripts/run-electron-smoke.sh
 ```
@@ -153,4 +153,4 @@ rtk env CODEX_APP_SERVER_CMD="/path/to/codex-app-server --listen stdio://" \
 - `apps/root-worker-prototype/vite.config.ts`：固定 `127.0.0.1:5173` 且 `strictPort: true`。
 - `apps/root-worker-prototype/electron/main.cjs`：Electron 主进程入口；支持 `ROOT_WORKER_DEV_SERVER_URL` 和 `ROOT_WORKER_OPEN_DEVTOOLS`。
 - `apps/root-worker-prototype/electron/preload.cjs`：暴露 `window.codexDesktop`。
-- `apps/root-worker-prototype/electron/appServerClient.cjs`：app-server command、`CODEX_HOME` 和 stdio client。
+- `apps/root-worker-prototype/electron/appServerClient.cjs`：app-server command、`MORPHEUS_HOME` 和 stdio client。
