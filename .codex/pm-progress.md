@@ -8,27 +8,16 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix schedule subscriptions not being shown after restarting Root Worker.
+None
 
 ## Active Work
-- id: reload-schedule-display
-  owner: /my_codex/owner_dev_3
-  checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: bugfix/reload-schedule-display
-  task_type: bugfix
-  depends_on: live schedule preservation (`449168d369`)
-  files: codex-rs/rollout/src/policy.rs; codex-rs/app-server/src/request_processors.rs; codex-rs/app-server/src/request_processors/thread_processor/*; codex-rs/thread-history/*; codex-rs/app-server-protocol/src/protocol/thread_history.rs; codex-rs/app-server-protocol/src/protocol/tests/thread_and_turn.rs; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/threadAnalysis.ts; apps/root-worker-prototype/src/App.tsx
-  base_commit: 654bcb7df55315c11e5eb1a029f8ac6de40334ad
-  pending_sync_from_main: false
-  status: in_progress
-  objective: User reports schedules still do not display after restarting; find and fix the reload/read recovery path for active schedule subscriptions so restored threads show schedule monitors without relying on live notifications.
-  last_update: 2026-08-11 assigned to owner_dev_3 after syncing dev-3 to main `654bcb7df5` and creating branch `bugfix/reload-schedule-display`. PM light read found app-server-protocol has `ThreadHistoryBuilder::append_subscription_snapshot_items()` and tests for `active-subscriptions`, but the actual failing path may be rollout persistence, app-server thread/read, thread-history crate drift, SessionMeta snapshot writing, or renderer snapshot normalization.
-  next_action: owner_dev_3 reproduce/trace restart reload, identify earliest missing/stale fact, implement minimal recovery fix in the correct persistence/replay layer, run focused backend + Root Worker tests and attempt Electron/restart validation.
-  blockers: none
-  validation: pending
-  commit:
+None
 
 ## Completed
+- commit: a84ccb04d4
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `ea03b3b37c0acf33e320e15635f8b607dbb30085` (`Restore schedule display on startup`). Root cause was in app-server startup restore, not live notifications or frontend display: persisted active subscription threads were resumed and silently upserted with an empty loaded thread snapshot, while explicit `thread/read(includeTurns)` already restored persisted display turns. Startup restore now builds turns from stored rollout items and reuses `restore_persisted_display_turns()` before `thread_watch_manager` upsert, so the synthetic `active-subscriptions` turn and completed `schedule_subscribe` item are present after restart.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after rejecting an earlier wrong JSONL-shape/root-cause attempt. PM inspected the diff and confirmed it is limited to `codex-rs/app-server/src/request_processors/thread_processor/listing.rs`, with no frontend schedule guessing, no live notification resend dependency, and no broad rollout policy change. PM reran on merged main: `rtk cargo test -p app-server restore_persisted_display_turns_from_rollout_items_restores_active_schedule` -> 1 passed; `rtk cargo test -p thread-history active_schedule_subscription_metadata_rebuilds_builtin_monitor_item` -> 1 passed; `rtk cargo test -p app-server startup_restores_threads_with_persisted_event_subscriptions` -> 1 passed; `rtk cargo test -p app-server active_schedule_subscription` -> 2 passed; `rtk pnpm --dir apps/root-worker-prototype test -- src/lib/thread.test.ts src/lib/threadAnalysis.test.ts` -> 146 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed; full Electron startup smoke with `CODEX_APP_SERVER_CMD=\"/Users/bytedance/Projects/my-codex/codex-rs/target/debug/app-server --listen stdio://\"` -> passed (`hasDesktop: true`, `typed: true`, one app window, screenshot `/tmp/root-worker-electron-playwright-app.png`).
+  residual_risk: Electron validation was startup/preload/app-server smoke, not a scripted schedule subscribe + app restart E2E. The critical backend startup restore path now has focused test coverage, and Root Worker analysis coverage confirms restored schedule items are consumed.
 - commit: 03e73c9436
   summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `784aea318a04199168a242ae3756d6a9aa4df1df` (`Retry conversation monitor focus after measurement`). Root Worker live command monitor first-click navigation now keeps a bounded pending focused-item request in `ConversationVirtualList`: the first click scrolls to the estimated offset and highlights the command cell, then row measurement / `heightVersion` updates can trigger corrected scrolls before the token is marked handled. Equal-height first measurements are recorded as layout-relevant so a target row can become measured even when its measured height matches the estimate. The fix is intentionally in the frontend virtualized focus/measurement path, not backend command lifecycle, event mapping, or `poll_event`.
   validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after three rounds per owner report. PM inspected the diff and confirmed it is limited to `apps/root-worker-prototype/src/components/ConversationVirtualList.tsx` and `apps/root-worker-prototype/src/components/Conversation.test.tsx`, with no stale lifecycle/completion workaround. PM reran on merged main: `rtk pnpm --dir apps/root-worker-prototype test -- src/components/Conversation.test.tsx src/lib/conversationVirtualization.test.ts src/lib/conversationScroll.test.ts src/lib/thread.test.ts src/lib/threadAnalysis.test.ts` -> 178 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed; full Electron startup smoke with `CODEX_APP_SERVER_CMD=\"/Users/bytedance/Projects/my-codex/codex-rs/target/debug/app-server --listen stdio://\"` -> passed (`hasDesktop: true`, `typed: true`, one app window, screenshot `/tmp/root-worker-electron-playwright-app.png`).
