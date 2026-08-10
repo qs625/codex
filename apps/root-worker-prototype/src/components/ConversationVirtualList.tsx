@@ -41,12 +41,20 @@ type ViewportState = {
   viewportHeight: number;
 };
 
+type FocusedItemRequest = { itemId: string; token: number };
+
+type PendingFocusRequest = FocusedItemRequest & {
+  attempts: number;
+};
+
+export const MAX_FOCUSED_ITEM_SCROLL_ATTEMPTS = 3;
+
 export function shouldHandleFocusedItemRequest({
   focusedItem,
   lastHandledRequest,
 }: {
-  focusedItem: { itemId: string; token: number } | null;
-  lastHandledRequest: { itemId: string; token: number } | null;
+  focusedItem: FocusedItemRequest | null;
+  lastHandledRequest: FocusedItemRequest | null;
 }) {
   return (
     focusedItem !== null &&
@@ -54,6 +62,44 @@ export function shouldHandleFocusedItemRequest({
       lastHandledRequest.itemId !== focusedItem.itemId ||
       lastHandledRequest.token !== focusedItem.token)
   );
+}
+
+export function planFocusedItemScrollAttempt({
+  attempts,
+  targetMeasured,
+  maxAttempts = MAX_FOCUSED_ITEM_SCROLL_ATTEMPTS,
+}: {
+  attempts: number;
+  targetMeasured: boolean;
+  maxAttempts?: number;
+}) {
+  const nextAttempts = attempts + 1;
+  return {
+    behavior: attempts === 0 ? "smooth" : "auto",
+    nextAttempts,
+    shouldComplete: targetMeasured || nextAttempts >= maxAttempts,
+  } satisfies {
+    behavior: ScrollBehavior;
+    nextAttempts: number;
+    shouldComplete: boolean;
+  };
+}
+
+export function planConversationCellMeasurement({
+  measuredHeight,
+  previousHeight,
+  wasMeasured,
+}: {
+  measuredHeight: number;
+  previousHeight: number;
+  wasMeasured: boolean;
+}) {
+  const roundedHeight = Math.ceil(measuredHeight);
+  return {
+    roundedHeight,
+    heightChanged: roundedHeight !== previousHeight,
+    shouldBumpHeightVersion: !wasMeasured || roundedHeight !== previousHeight,
+  };
 }
 
 export function ConversationVirtualList({
@@ -67,6 +113,7 @@ export function ConversationVirtualList({
   searchMatchCellIds,
 }: ConversationVirtualListProps) {
   const measuredHeightsRef = useRef<Map<string, number>>(new Map());
+  const measuredCellIdsRef = useRef<Set<string>>(new Set());
   const layoutRef = useRef<ReturnType<
     typeof buildConversationVirtualLayout
   > | null>(null);
@@ -88,6 +135,7 @@ export function ConversationVirtualList({
     itemId: string;
     token: number;
   } | null>(null);
+  const pendingFocusRequestRef = useRef<PendingFocusRequest | null>(null);
 
   useEffect(() => {
     const liveCellIds = new Set(cells.map((cell) => cell.id));
@@ -102,6 +150,12 @@ export function ConversationVirtualList({
     for (const cellId of measuredHeightsRef.current.keys()) {
       if (!liveCellIds.has(cellId)) {
         measuredHeightsRef.current.delete(cellId);
+        removedMeasuredHeights = true;
+      }
+    }
+    for (const cellId of measuredCellIdsRef.current.keys()) {
+      if (!liveCellIds.has(cellId)) {
+        measuredCellIdsRef.current.delete(cellId);
         removedMeasuredHeights = true;
       }
     }
@@ -198,21 +252,43 @@ export function ConversationVirtualList({
   const focusedItemToken = focusedItem?.token ?? null;
 
   useEffect(() => {
+    const nextFocusedItem =
+      focusedItemId && focusedItemToken !== null
+        ? { itemId: focusedItemId, token: focusedItemToken }
+        : null;
+
+    if (!nextFocusedItem) {
+      pendingFocusRequestRef.current = null;
+      return;
+    }
+
     if (
-      !shouldHandleFocusedItemRequest({
-        focusedItem,
+      shouldHandleFocusedItemRequest({
+        focusedItem: nextFocusedItem,
         lastHandledRequest: lastHandledFocusRequestRef.current,
       })
     ) {
-      return;
+      const pending = pendingFocusRequestRef.current;
+      if (
+        !pending ||
+        pending.itemId !== nextFocusedItem.itemId ||
+        pending.token !== nextFocusedItem.token
+      ) {
+        pendingFocusRequestRef.current = {
+          ...nextFocusedItem,
+          attempts: 0,
+        };
+      }
     }
 
-    if (!focusedItemId || focusedItemToken == null) {
+    const pendingRequest = pendingFocusRequestRef.current;
+    if (!pendingRequest) {
       return;
     }
-
     const index = cells.findIndex((cell) =>
-      cell.entries.some((entry) => conversationEntryContainsId(entry, focusedItemId)),
+      cell.entries.some((entry) =>
+        conversationEntryContainsId(entry, pendingRequest.itemId),
+      ),
     );
     if (index === -1) {
       return;
@@ -222,21 +298,33 @@ export function ConversationVirtualList({
     const container = containerRef.current;
     const top = layoutRef.current?.offsets[index] ?? 0;
     if (container) {
+      const plan = planFocusedItemScrollAttempt({
+        attempts: pendingRequest.attempts,
+        targetMeasured: measuredCellIdsRef.current.has(cell.id),
+      });
       container.scrollTo({
         top: Math.max(0, top - 24),
-        behavior: "smooth",
+        behavior: plan.behavior,
       });
+      pendingFocusRequestRef.current = plan.shouldComplete
+        ? null
+        : {
+            ...pendingRequest,
+            attempts: plan.nextAttempts,
+          };
+      if (plan.shouldComplete) {
+        lastHandledFocusRequestRef.current = {
+          itemId: pendingRequest.itemId,
+          token: pendingRequest.token,
+        };
+      }
     }
-    lastHandledFocusRequestRef.current = {
-      itemId: focusedItemId,
-      token: focusedItemToken,
-    };
     setHighlightedCellId(cell.id);
     const timeout = window.setTimeout(() => {
       setHighlightedCellId((current) => (current === cell.id ? null : current));
     }, 2000);
     return () => window.clearTimeout(timeout);
-  }, [cells, containerRef, focusedItem, focusedItemId, focusedItemToken]);
+  }, [cells, containerRef, focusedItemId, focusedItemToken, heightVersion]);
 
   const visibleWindow = useMemo(
     () =>
@@ -253,22 +341,31 @@ export function ConversationVirtualList({
     index: number,
     measuredHeight: number,
   ) {
-    const roundedHeight = Math.ceil(measuredHeight);
     const previousHeight =
       measuredHeightsRef.current.get(cell.id) ??
       estimateConversationCellHeight(cell);
-    if (roundedHeight === previousHeight) {
+    const measurementPlan = planConversationCellMeasurement({
+      measuredHeight,
+      previousHeight,
+      wasMeasured: measuredCellIdsRef.current.has(cell.id),
+    });
+    measuredCellIdsRef.current.add(cell.id);
+    if (!measurementPlan.shouldBumpHeightVersion) {
+      return;
+    }
+    if (!measurementPlan.heightChanged) {
+      setHeightVersion((version) => version + 1);
       return;
     }
 
-    measuredHeightsRef.current.set(cell.id, roundedHeight);
+    measuredHeightsRef.current.set(cell.id, measurementPlan.roundedHeight);
 
     const container = containerRef.current;
     const currentTop = layoutRef.current?.offsets[index] ?? 0;
     const scrollPlan = container
       ? planConversationHeightChangeScroll({
           cellTop: currentTop,
-          heightDelta: roundedHeight - previousHeight,
+          heightDelta: measurementPlan.roundedHeight - previousHeight,
           metrics: {
             scrollHeight: container.scrollHeight,
             clientHeight: container.clientHeight,
