@@ -1,9 +1,6 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use transport_client::HttpTransport;
-use transport_client::RequestCompression;
-use transport_client_types::RequestTelemetry;
 use http::HeaderMap;
 use http::HeaderValue;
 use http::Method;
@@ -17,12 +14,16 @@ use model_service_api::SharedAuthProvider;
 use model_service_api::SseTelemetry;
 use serde_json::Value;
 use tracing::instrument;
+use transport_client::HttpTransport;
+use transport_client::RequestCompression;
+use transport_client_types::RequestTelemetry;
 
 use crate::endpoint_session::EndpointSession;
 use crate::request_headers::build_session_headers;
 use crate::request_headers::insert_header;
 use crate::request_headers::subagent_header;
 use crate::responses_requests::attach_item_ids;
+use crate::responses_requests::strip_unsupported_responses_input_items;
 use crate::responses_sse::spawn_response_stream;
 
 pub struct ResponsesClient<T: HttpTransport> {
@@ -57,7 +58,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
     )]
     pub async fn stream_request(
         &self,
-        request: ResponsesApiRequest,
+        mut request: ResponsesApiRequest,
         options: ResponsesOptions,
     ) -> Result<ResponseStream, ApiError> {
         let ResponsesOptions {
@@ -69,6 +70,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
             turn_state,
         } = options;
 
+        strip_unsupported_responses_input_items(&mut request.input);
         let mut body = serde_json::to_value(&request).map_err(|error| {
             ApiError::Stream(format!("failed to encode responses request: {error}"))
         })?;

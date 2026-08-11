@@ -2,9 +2,6 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use transport_client::TransportError;
-use transport_client::maybe_build_rustls_client_config_with_custom_ca;
-use transport_client_identity::default_headers as default_client_headers;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use futures::SinkExt;
 use futures::StreamExt;
@@ -49,11 +46,15 @@ use tracing::error;
 use tracing::info;
 use tracing::instrument;
 use tracing::trace;
+use transport_client::TransportError;
+use transport_client::maybe_build_rustls_client_config_with_custom_ca;
+use transport_client_identity::default_headers as default_client_headers;
 use tungstenite::extensions::ExtensionsConfig;
 use tungstenite::extensions::compression::deflate::DeflateConfig;
 use tungstenite::protocol::WebSocketConfig;
 use url::Url;
 
+use crate::responses_requests::strip_unsupported_responses_ws_input_items;
 use crate::responses_sse::ResponsesStreamEvent;
 use crate::responses_sse::process_responses_event;
 use crate::responses_sse::response_stream_from_receiver;
@@ -280,7 +281,7 @@ impl ResponsesWebsocketConnection {
     )]
     pub async fn stream_request(
         &self,
-        request: ResponsesWsRequest,
+        mut request: ResponsesWsRequest,
         connection_reused: bool,
     ) -> Result<ResponseStream, ApiError> {
         let (tx_event, rx_event) =
@@ -291,6 +292,7 @@ impl ResponsesWebsocketConnection {
         let models_etag = self.models_etag.clone();
         let server_model = self.server_model.clone();
         let telemetry = self.telemetry.clone();
+        strip_unsupported_responses_ws_input_items(&mut request);
         let request_body = serde_json::to_value(&request).map_err(|err| {
             ApiError::Stream(format!("failed to encode websocket request: {err}"))
         })?;
@@ -838,9 +840,7 @@ async fn send_websocket_request(
     )
     .await
     .map_err(|_| ApiError::Stream("idle timeout sending websocket request".into()))
-    .and_then(|result| {
-        result.map_err(map_websocket_send_error)
-    });
+    .and_then(|result| result.map_err(map_websocket_send_error));
 
     if let Some(t) = telemetry.as_ref() {
         t.on_ws_request(
@@ -1043,9 +1043,8 @@ mod tests {
 
     #[test]
     fn websocket_mid_stream_close_is_not_request_send_retry_marker() {
-        let err = ApiError::Stream(
-            "websocket closed by server before response.completed".to_string(),
-        );
+        let err =
+            ApiError::Stream("websocket closed by server before response.completed".to_string());
 
         assert!(!is_websocket_request_send_closed_error(&err));
     }

@@ -5,12 +5,6 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
-use transport_client::HttpTransport;
-use transport_client::Request;
-use transport_client::RequestBody;
-use transport_client::Response;
-use transport_client::StreamResponse;
-use transport_client::TransportError;
 use http::HeaderMap;
 use http::HeaderValue;
 use http::StatusCode;
@@ -32,6 +26,12 @@ use protocol::models::ResponseItem;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
 use serde_json::json;
+use transport_client::HttpTransport;
+use transport_client::Request;
+use transport_client::RequestBody;
+use transport_client::Response;
+use transport_client::StreamResponse;
+use transport_client::TransportError;
 
 fn assert_path_ends_with(requests: &[Request], suffix: &str) {
     assert_eq!(requests.len(), 1);
@@ -654,6 +654,90 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
         .and_then(|item| item.get("id"))
         .and_then(|id| id.as_str());
     assert_eq!(input_id, Some("msg_1"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn responses_client_strips_context_compaction_from_request_input() -> Result<()> {
+    let state = RecordingState::default();
+    let transport = RecordingTransport::new(state.clone());
+    let client = ResponsesClient::new(transport, provider("azure"), Arc::new(NoAuth));
+
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
+        input: vec![
+            ResponseItem::Message {
+                id: Some("msg_1".into()),
+                role: "user".into(),
+                content: vec![ContentItem::InputText {
+                    text: "before".into(),
+                }],
+                phase: None,
+            },
+            ResponseItem::ContextCompaction {
+                encrypted_content: None,
+            },
+            ResponseItem::Message {
+                id: Some("msg_2".into()),
+                role: "user".into(),
+                content: vec![ContentItem::InputText {
+                    text: "after".into(),
+                }],
+                phase: None,
+            },
+        ],
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: true,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        client_metadata: None,
+        chat_completions_max_tokens: None,
+    };
+
+    let _stream = client
+        .stream_request(
+            request,
+            ResponsesOptions {
+                compression: Compression::None,
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    let requests = state.take_stream_requests();
+    assert_eq!(requests.len(), 1);
+    let input = requests[0]
+        .body
+        .as_ref()
+        .and_then(RequestBody::json)
+        .and_then(|body| body.get("input"))
+        .and_then(|input| input.as_array())
+        .expect("input array");
+    assert_eq!(input.len(), 2);
+    assert_eq!(
+        input[0].get("type").and_then(|value| value.as_str()),
+        Some("message")
+    );
+    assert_eq!(
+        input[0].get("id").and_then(|value| value.as_str()),
+        Some("msg_1")
+    );
+    assert_eq!(
+        input[1].get("type").and_then(|value| value.as_str()),
+        Some("message")
+    );
+    assert_eq!(
+        input[1].get("id").and_then(|value| value.as_str()),
+        Some("msg_2")
+    );
 
     Ok(())
 }

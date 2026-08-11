@@ -1,5 +1,17 @@
+use model_service_api::ResponsesWsRequest;
 use protocol::models::ResponseItem;
 use serde_json::Value;
+
+pub(crate) fn strip_unsupported_responses_input_items(input: &mut Vec<ResponseItem>) {
+    input.retain(|item| !matches!(item, ResponseItem::ContextCompaction { .. }));
+}
+
+pub(crate) fn strip_unsupported_responses_ws_input_items(request: &mut ResponsesWsRequest) {
+    let ResponsesWsRequest::ResponseCreate(payload) = request else {
+        return;
+    };
+    strip_unsupported_responses_input_items(&mut payload.input);
+}
 
 pub(crate) fn attach_item_ids(payload_json: &mut Value, original_items: &[ResponseItem]) {
     let Some(input_value) = payload_json.get_mut("input") else {
