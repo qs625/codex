@@ -758,6 +758,55 @@ fn thread_history_projects_active_schedule_subscription_metadata() {
 }
 
 #[test]
+fn thread_history_projects_active_schedule_subscription_after_compact() {
+    let items = vec![
+        protocol::protocol::RolloutItem::Compacted(protocol::protocol::CompactedItem {
+            message: "old display history compacted".into(),
+            replacement_history: Some(Vec::new()),
+        }),
+        protocol::protocol::RolloutItem::SessionMeta(protocol::protocol::SessionMetaLine {
+            meta: protocol::protocol::SessionMeta {
+                subscriptions: Some(vec![
+                    protocol::subscriptions::PersistedSubscription::Schedule {
+                        subscription_id: "sub-schedule".into(),
+                        schedule: protocol::subscriptions::ScheduleSpec::EveryInterval {
+                            interval_ms: 60_000,
+                        },
+                        label: Some("standup".into()),
+                        message: None,
+                    },
+                ]),
+                ..Default::default()
+            },
+            git: None,
+        }),
+    ];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+    let active_subscriptions = turns.last().expect("active subscriptions turn");
+
+    assert_eq!(active_subscriptions.id, "active-subscriptions");
+    assert_eq!(
+        active_subscriptions.items,
+        vec![ThreadItem::BuiltinToolCall {
+            id: "active-subscription:sub-schedule".into(),
+            tool: "schedule_subscribe".into(),
+            arguments: json!({
+                "schedule": {
+                    "kind": "every_interval",
+                    "interval_ms": 60000,
+                },
+                "label": "standup",
+            }),
+            status: DynamicToolCallStatus::Completed,
+            output: Some(json!({
+                "subscription_id": "sub-schedule",
+            })),
+        }]
+    );
+}
+
+#[test]
 fn thread_history_does_not_duplicate_existing_schedule_monitor_from_subscription_snapshot() {
     let items = vec![
         protocol::protocol::RolloutItem::EventMsg(protocol::protocol::EventMsg::TurnStarted(

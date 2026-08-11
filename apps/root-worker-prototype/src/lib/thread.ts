@@ -1087,8 +1087,14 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
     return thread;
   }
 
-  const turns = thread.turns
-    .slice(latestCompact.turnIndex)
+  const preCompactActiveSubscriptionTurns = thread.turns
+    .slice(0, latestCompact.turnIndex)
+    .filter(isActiveSubscriptionsTurn);
+  const postCompactTurns = thread.turns.slice(latestCompact.turnIndex);
+  const hasPostCompactActiveSubscriptions = postCompactTurns.some(
+    isActiveSubscriptionsTurn,
+  );
+  const turns = postCompactTurns
     .map((turn, index) => {
       if (index !== 0) {
         return turn;
@@ -1097,6 +1103,11 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
       return items.length === turn.items.length ? turn : { ...turn, items };
     })
     .filter((turn) => turn.items.length > 0 || isTurnInFlight(turn));
+  for (const activeSubscriptionsTurn of preCompactActiveSubscriptionTurns) {
+    if (!hasPostCompactActiveSubscriptions) {
+      turns.push(activeSubscriptionsTurn);
+    }
+  }
 
   if (
     turns.length === thread.turns.length &&
@@ -1106,6 +1117,10 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
   }
 
   return { ...thread, turns };
+}
+
+function isActiveSubscriptionsTurn(turn: Turn) {
+  return turn.id === "active-subscriptions";
 }
 
 function findLatestCompactItemPosition(turns: Turn[]) {

@@ -1613,6 +1613,154 @@ test("upsertThread prunes items before the latest compact boundary", () => {
   );
 });
 
+test("upsertThread preserves active subscriptions across compact pruning", () => {
+  const scheduleMonitor: ThreadItem = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const thread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [
+        makeUserMessage("old-user", "old request"),
+        makeAgentMessage("old-agent", "old answer"),
+      ]),
+      makeTurn("active-subscriptions", [scheduleMonitor]),
+      makeTurn("turn-compact", [
+        makeCompactItem("compact-1"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+    ],
+  })[0]!;
+  const analysis = buildThreadAnalysis(thread);
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "after-compact", "active-subscription:sub-schedule"],
+  );
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [
+      {
+        id: "active-subscription:sub-schedule",
+        subscriptionId: "sub-schedule",
+        kind: "schedule",
+        label: "daily digest",
+        detail: "every_interval 6h",
+        status: "Listening",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
+  );
+});
+
+test("upsertThread does not revive pre-compact subscriptions after compact cleanup", () => {
+  const scheduleMonitor: ThreadItem = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const scheduleCleanup: ThreadItem = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule:inactive",
+    tool: "schedule_unsubscribe",
+    arguments: {
+      subscription_id: "sub-schedule",
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      unsubscribed: true,
+    },
+  };
+  const thread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("active-subscriptions", [scheduleMonitor]),
+      makeTurn("turn-compact", [
+        makeCompactItem("compact-1"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+      makeTurn("active-subscriptions", [scheduleCleanup]),
+    ],
+  })[0]!;
+  const analysis = buildThreadAnalysis(thread);
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    [
+      "compact-1",
+      "after-compact",
+      "active-subscription:sub-schedule:inactive",
+    ],
+  );
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [],
+  );
+});
+
+test("upsertThread does not revive pre-compact subscriptions after empty compact snapshot", () => {
+  const scheduleMonitor: ThreadItem = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const thread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("active-subscriptions", [scheduleMonitor]),
+      makeTurn("turn-compact", [
+        makeCompactItem("compact-1"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+      makeTurn("active-subscriptions", []),
+    ],
+  })[0]!;
+  const analysis = buildThreadAnalysis(thread);
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "after-compact"],
+  );
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [],
+  );
+});
+
 test("upsertThread prunes compact-turn items before the compact marker", () => {
   const thread = upsertThread([], {
     ...makeThread(),
@@ -1687,6 +1835,62 @@ test("updateThreadItem prunes live state when a compact notification arrives", (
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
     ["compact-1"],
+  );
+});
+
+test("updateThreadItem preserves active subscriptions when a compact notification arrives", () => {
+  const scheduleMonitor: ThreadItem = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const thread = updateThreadItem(
+    {
+      ...makeThread(),
+      turns: [
+        makeTurn("turn-old", [
+          makeUserMessage("old-user", "old request"),
+          makeAgentMessage("old-agent", "old answer"),
+        ]),
+        makeTurn("active-subscriptions", [scheduleMonitor]),
+        makeTurn("turn-compact", [
+          makeAgentMessage("compact-summary", "summarizing old context"),
+        ]),
+      ],
+    },
+    "turn-compact",
+    makeCompactItem("compact-1"),
+  );
+  const analysis = buildThreadAnalysis(thread);
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "active-subscription:sub-schedule"],
+  );
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [
+      {
+        id: "active-subscription:sub-schedule",
+        subscriptionId: "sub-schedule",
+        kind: "schedule",
+        label: "daily digest",
+        detail: "every_interval 6h",
+        status: "Listening",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
   );
 });
 

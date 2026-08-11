@@ -70,6 +70,7 @@ use protocol::models::BaseInstructions;
 use protocol::openai_models::ReasoningEffort;
 use protocol::protocol::AgentMessageEvent;
 use protocol::protocol::AskForApproval;
+use protocol::protocol::CompactedItem;
 use protocol::protocol::EventMsg;
 use protocol::protocol::ExternalProviderSessionIdentity;
 use protocol::protocol::ExternalReconnectDescriptor;
@@ -78,6 +79,7 @@ use protocol::protocol::ExternalRestorePlan;
 use protocol::protocol::ExternalTerminalStatus;
 use protocol::protocol::ExternalTerminalStatusEvent;
 use protocol::protocol::RolloutItem;
+use protocol::protocol::RolloutLine;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionMeta;
 use protocol::protocol::SessionMetaLine;
@@ -893,7 +895,8 @@ async fn thread_read_can_include_turns() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_read_restores_active_schedule_after_startup_subscription_restore() -> Result<()> {
+async fn thread_read_restores_active_schedule_after_compact_and_startup_subscription_restore()
+-> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri())?;
@@ -908,6 +911,12 @@ async fn thread_read_restores_active_schedule_after_startup_subscription_restore
         Vec::new(),
         Some("mock_provider"),
         /*git_info*/ None,
+    )?;
+    append_compacted_item(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        &conversation_id,
     )?;
     append_schedule_subscription_snapshot(
         codex_home.path(),
@@ -3538,6 +3547,26 @@ fn append_schedule_subscription_snapshot(
         "payload": serde_json::to_value(SessionMetaLine { meta, git: None })?,
     })
     .to_string();
+    let mut file = std::fs::OpenOptions::new().append(true).open(file_path)?;
+    writeln!(file, "{line}")?;
+    Ok(())
+}
+
+fn append_compacted_item(
+    codex_home: &Path,
+    filename_ts: &str,
+    meta_rfc3339: &str,
+    thread_id: &str,
+) -> Result<()> {
+    let thread_id = protocol::ThreadId::from_string(thread_id)?;
+    let file_path = rollout_path(codex_home, filename_ts, &thread_id.to_string());
+    let line = serde_json::to_string(&RolloutLine {
+        timestamp: meta_rfc3339.to_string(),
+        item: RolloutItem::Compacted(CompactedItem {
+            message: "old display history compacted".to_string(),
+            replacement_history: Some(Vec::new()),
+        }),
+    })?;
     let mut file = std::fs::OpenOptions::new().append(true).open(file_path)?;
     writeln!(file, "{line}")?;
     Ok(())
