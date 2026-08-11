@@ -920,14 +920,19 @@ async fn thread_read_restores_active_schedule_after_startup_subscription_restore
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
 
     let listed = list_threads(&mut mcp).await?;
-    assert!(
-        listed.iter().any(|thread| thread.id == conversation_id),
-        "thread/list should include the scheduled thread"
+    let listed_thread = listed
+        .iter()
+        .find(|thread| thread.id == conversation_id)
+        .expect("thread/list should include the scheduled thread metadata");
+    assert_eq!(
+        listed_thread.lifecycle_status,
+        ThreadLifecycleStatus::NotLoaded,
+        "thread/list should not synchronously restore scheduled threads"
     );
     let loaded = list_loaded_threads(&mut mcp).await?;
     assert!(
         loaded.iter().any(|thread_id| thread_id == &conversation_id),
-        "thread/list should restore the scheduled thread into the live loaded set"
+        "thread/loaded/list should wait for startup restore before reporting loaded threads"
     );
 
     let thread = read_thread(&mut mcp, &conversation_id, /*include_turns*/ true).await?;

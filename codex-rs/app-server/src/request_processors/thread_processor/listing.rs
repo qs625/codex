@@ -27,7 +27,6 @@ impl ThreadRequestProcessor {
         &self,
         params: ThreadListParams,
     ) -> Result<ThreadListResponse, JSONRPCErrorError> {
-        self.restore_persisted_active_threads_on_startup().await;
         let ThreadListParams {
             cursor,
             limit,
@@ -109,6 +108,8 @@ impl ThreadRequestProcessor {
                 thread
             })
             .collect();
+        self.schedule_persisted_active_threads_restore_on_startup()
+            .await;
         Ok(ThreadListResponse {
             data,
             next_cursor,
@@ -621,6 +622,20 @@ impl ThreadRequestProcessor {
 
     pub(crate) fn subscribe_running_assistant_turn_count(&self) -> watch::Receiver<usize> {
         self.thread_watch_manager.subscribe_running_turn_count()
+    }
+
+    pub(super) async fn schedule_persisted_active_threads_restore_on_startup(&self) {
+        let processor = self.clone();
+        let background_tasks = self.background_tasks.clone();
+        self.startup_active_threads_restore_scheduled
+            .get_or_init(|| async move {
+                background_tasks.spawn(async move {
+                    processor
+                        .restore_persisted_active_threads_on_startup()
+                        .await;
+                });
+            })
+            .await;
     }
 
     pub(super) async fn restore_persisted_active_threads_on_startup(&self) {

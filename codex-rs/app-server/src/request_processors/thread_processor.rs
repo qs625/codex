@@ -462,6 +462,7 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) state_db: Option<StateDbHandle>,
     pub(super) background_tasks: TaskTracker,
     pub(super) skills_watcher: Arc<SkillsWatcher>,
+    pub(super) startup_active_threads_restore_scheduled: Arc<OnceCell<()>>,
     pub(super) startup_active_threads_restored: Arc<OnceCell<()>>,
 }
 
@@ -512,6 +513,7 @@ impl ThreadRequestProcessor {
             state_db,
             background_tasks: TaskTracker::new(),
             skills_watcher,
+            startup_active_threads_restore_scheduled: Arc::new(OnceCell::new()),
             startup_active_threads_restored: Arc::new(OnceCell::new()),
         }
     }
