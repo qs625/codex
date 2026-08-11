@@ -4,11 +4,11 @@ use app_server_protocol::RequestId;
 use app_server_protocol::ThreadArchiveParams;
 use app_server_protocol::ThreadArchiveResponse;
 use app_server_protocol::ThreadArchivedNotification;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadResumeParams;
 use app_server_protocol::ThreadResumeResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadUnarchiveParams;
 use app_server_protocol::ThreadUnarchiveResponse;
 use app_server_protocol::TurnStartParams;
@@ -189,6 +189,7 @@ async fn thread_archive_missing_rollout_file_with_metadata_is_idempotent_success
             git_sha: None,
             git_branch: None,
             git_origin_url: None,
+            subscriptions: None,
         })
         .await?;
     assert!(
@@ -221,7 +222,10 @@ async fn thread_archive_missing_rollout_file_with_metadata_is_idempotent_success
             .params
             .expect("thread/archived notification params"),
     )?;
-    assert_eq!(archived_notification.thread_id, missing_thread_id.to_string());
+    assert_eq!(
+        archived_notification.thread_id,
+        missing_thread_id.to_string()
+    );
 
     Ok(())
 }
@@ -647,7 +651,10 @@ async fn thread_archive_clears_stale_subscriptions_before_resume() -> Result<()>
     )
     .await??;
     let resume: ThreadResumeResponse = to_response::<ThreadResumeResponse>(resume_resp)?;
-    assert_eq!(resume.thread.lifecycle_status, ThreadLifecycleStatus::completed(None));
+    assert_eq!(
+        resume.thread.lifecycle_status,
+        ThreadLifecycleStatus::completed(None)
+    );
     primary.clear_message_buffer();
     secondary.clear_message_buffer();
 

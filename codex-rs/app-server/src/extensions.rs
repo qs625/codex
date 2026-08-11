@@ -9,13 +9,11 @@ use protocol::ThreadId;
 use protocol::event_command::EventCommandEvent;
 use protocol::event_driven_tool::EventDrivenToolTrigger;
 use protocol::models::ResponseItem;
-use protocol::protocol::RolloutItem;
 use protocol::subscriptions::PersistedSubscription;
 use thread_service::ThreadService;
 use thread_service::config::Config;
 use thread_service_api::ActiveEventSubscriptionTracker;
 use thread_service_api::LiveThreadConversationRuntime;
-use thread_store_api::ReadThreadParams;
 use thread_store_api::ThreadMetadataPatch;
 
 use crate::thread_status::ThreadWatchManager;
@@ -118,23 +116,10 @@ impl FileSubscriptionThreadHost for ThreadService {
         thread_id: ThreadId,
     ) -> BoxFuture<'a, Result<Vec<PersistedSubscription>, String>> {
         Box::pin(async move {
-            let stored = self
-                .read_thread(ReadThreadParams {
-                    thread_id,
-                    include_archived: true,
-                    include_history: true,
-                })
+            self.read_thread_subscriptions(thread_id, /*include_archived*/ true)
                 .await
-                .map_err(|err| err.to_string())?;
-            Ok(stored
-                .history
-                .and_then(|history| {
-                    history.items.iter().rev().find_map(|item| match item {
-                        RolloutItem::SessionMeta(meta_line) => meta_line.meta.subscriptions.clone(),
-                        _ => None,
-                    })
-                })
-                .unwrap_or_default())
+                .map(|subscriptions| subscriptions.unwrap_or_default())
+                .map_err(|err| err.to_string())
         })
     }
 }

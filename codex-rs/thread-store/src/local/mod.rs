@@ -11,6 +11,7 @@ mod update_thread_metadata;
 mod test_support;
 
 use protocol::ThreadId;
+use protocol::subscriptions::PersistedSubscription;
 use rollout::RolloutRecorder;
 use rollout::StateDbHandle;
 use std::collections::HashMap;
@@ -286,6 +287,22 @@ impl ThreadStore for LocalThreadStore {
         Box::pin(async move { update_thread_metadata::update_thread_metadata(self, params).await })
     }
 
+    fn read_thread_subscriptions(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<Option<Vec<PersistedSubscription>>>> {
+        Box::pin(async move {
+            read_thread::read_thread_subscriptions(self, thread_id, include_archived).await
+        })
+    }
+
+    fn list_thread_ids_with_active_subscriptions(
+        &self,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<Vec<ThreadId>>> {
+        Box::pin(async move { list_threads::list_thread_ids_with_active_subscriptions(self).await })
+    }
+
     fn archive_thread(
         &self,
         params: ArchiveThreadParams,
@@ -392,10 +409,7 @@ mod tests {
             .persist()
             .await
             .expect("persist session meta only live thread");
-        live_thread
-            .shutdown()
-            .await
-            .expect("shutdown live thread");
+        live_thread.shutdown().await.expect("shutdown live thread");
         drop(live_thread);
         drop(store);
 
@@ -421,7 +435,10 @@ mod tests {
 
         let history = thread.history.expect("history should load");
         assert_eq!(history.thread_id, thread_id);
-        assert!(matches!(history.items.as_slice(), [RolloutItem::SessionMeta(_)]));
+        assert!(matches!(
+            history.items.as_slice(),
+            [RolloutItem::SessionMeta(_)]
+        ));
     }
 
     #[tokio::test]

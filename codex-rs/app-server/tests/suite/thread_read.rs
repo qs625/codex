@@ -100,6 +100,8 @@ use protocol::user_input::TextElement;
 use rollout::ARCHIVED_SESSIONS_SUBDIR;
 use serde_json::Value;
 use serde_json::json;
+use state::StateRuntime;
+use state::ThreadMetadataBuilder;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::Write;
@@ -968,6 +970,73 @@ async fn thread_read_restores_active_schedule_after_compact_and_startup_subscrip
     assert!(
         schedule_item.is_some(),
         "thread/read should include the restored schedule_subscribe monitor after startup restore"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_empty_subscription_state_overrides_legacy_rollout_active_schedule()
+-> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-10-00";
+    let meta_rfc3339 = "2025-01-05T12:10:00Z";
+    let conversation_id = create_fake_rollout_with_text_elements(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        "Schedule was cleared",
+        Vec::new(),
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    append_schedule_subscription_snapshot(
+        codex_home.path(),
+        filename_ts,
+        meta_rfc3339,
+        &conversation_id,
+    )?;
+    let thread_id = protocol::ThreadId::from_string(&conversation_id)?;
+    let rollout_path = rollout_path(codex_home.path(), filename_ts, &conversation_id);
+    let state_db =
+        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".to_string()).await?;
+    let mut builder = ThreadMetadataBuilder::new(
+        thread_id,
+        rollout_path,
+        chrono::DateTime::parse_from_rfc3339(meta_rfc3339)?.with_timezone(&chrono::Utc),
+        ProtocolSessionSource::Cli,
+    );
+    builder.model_provider = Some("mock_provider".to_string());
+    builder.cwd = PathBuf::from("/");
+    let mut metadata = builder.build("mock_provider");
+    metadata.subscriptions = Some(Vec::new());
+    state_db.upsert_thread(&metadata).await?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let loaded = list_loaded_threads(&mut mcp).await?;
+    assert!(
+        !loaded.iter().any(|thread_id| thread_id == &conversation_id),
+        "empty current-state subscriptions should not trigger startup restore"
+    );
+    let thread = read_thread(&mut mcp, &conversation_id, /*include_turns*/ true).await?;
+    let schedule_item = thread
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .find(|item| {
+            matches!(
+                item,
+                ThreadItem::BuiltinToolCall { tool, .. } if tool == "schedule_subscribe"
+            )
+        });
+    assert!(
+        schedule_item.is_none(),
+        "empty current-state subscriptions should suppress legacy rollout active monitor"
     );
 
     Ok(())

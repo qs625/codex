@@ -311,6 +311,8 @@ impl ThreadRequestProcessor {
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
                 if include_turns && let Some(history) = history {
                     thread.turns = build_api_turns_from_rollout_items(&history.items);
+                    self.apply_current_subscription_snapshot_turns(thread_id, &mut thread)
+                        .await?;
                 }
                 Ok(Some(thread))
             }
@@ -375,8 +377,35 @@ impl ThreadRequestProcessor {
         };
         if include_turns {
             restore_persisted_display_turns(&mut thread, &persisted_turns);
+            self.apply_current_subscription_snapshot_turns(thread_id, &mut thread)
+                .await?;
         }
         Ok((thread, has_live_in_progress_turn))
+    }
+
+    async fn apply_current_subscription_snapshot_turns(
+        &self,
+        thread_id: ThreadId,
+        thread: &mut Thread,
+    ) -> Result<(), ThreadReadViewError> {
+        let subscriptions = self
+            .thread_store
+            .read_thread_subscriptions(thread_id, /*include_archived*/ true)
+            .await
+            .map_err(|err| {
+                ThreadReadViewError::Internal(format!(
+                    "failed to read current subscription snapshot for {thread_id}: {err}"
+                ))
+            })?;
+        let Some(subscriptions) = subscriptions else {
+            return Ok(());
+        };
+        thread
+            .turns
+            .retain(|turn| turn.id != "active-subscriptions");
+        let snapshot_turns = subscription_snapshot_turns(subscriptions);
+        restore_persisted_display_turns(thread, &snapshot_turns);
+        Ok(())
     }
 
     pub(super) async fn apply_thread_read_store_fields(
@@ -671,48 +700,10 @@ impl ThreadRequestProcessor {
     pub(super) async fn list_threads_with_persisted_subscriptions(
         &self,
     ) -> Result<Vec<ThreadId>, JSONRPCErrorError> {
-        let Some(_local_thread_store) = self
-            .thread_store
-            .as_any()
-            .downcast_ref::<LocalThreadStore>()
-        else {
-            return Ok(Vec::new());
-        };
-        let mut cursor = None;
-        let mut thread_ids = Vec::new();
-
-        loop {
-            let page = self
-                .thread_store
-                .list_threads(thread_store::ListThreadsParams {
-                    page_size: THREAD_LIST_MAX_LIMIT,
-                    cursor,
-                    sort_key: thread_store::ThreadSortKey::UpdatedAt,
-                    sort_direction: thread_store::SortDirection::Desc,
-                    allowed_sources: Vec::new(),
-                    model_providers: Some(Vec::new()),
-                    cwd_filters: None,
-                    archived: false,
-                    search_term: None,
-                    use_state_db_only: false,
-                })
-                .await
-                .map_err(thread_store_list_error)?;
-
-            for thread in page.items {
-                if persisted_subscription_count_from_rollout(thread.rollout_path.as_deref()) > 0 {
-                    thread_ids.push(thread.thread_id);
-                }
-            }
-
-            if let Some(next_cursor) = page.next_cursor {
-                cursor = Some(next_cursor);
-            } else {
-                break;
-            }
-        }
-
-        Ok(thread_ids)
+        self.thread_store
+            .list_thread_ids_with_active_subscriptions()
+            .await
+            .map_err(thread_store_list_error)
     }
 
     pub(super) async fn restore_persisted_active_thread(&self, thread_id: ThreadId) {
@@ -728,7 +719,16 @@ impl ThreadRequestProcessor {
             }
         };
 
-        let persisted_subscription_count = persisted_subscription_count(&stored_thread);
+        let persisted_subscription_count = self
+            .thread_store
+            .read_thread_subscriptions(thread_id, /*include_archived*/ true)
+            .await
+            .ok()
+            .flatten()
+            .map_or_else(
+                || persisted_subscription_count(&stored_thread),
+                |subscriptions| subscriptions.len(),
+            );
         if persisted_subscription_count == 0 {
             return;
         }
@@ -830,6 +830,17 @@ impl ThreadRequestProcessor {
                         history.items.as_slice(),
                     );
                 }
+                if let Ok(Some(subscriptions)) = self
+                    .thread_store
+                    .read_thread_subscriptions(thread_id, /*include_archived*/ true)
+                    .await
+                {
+                    loaded_thread
+                        .turns
+                        .retain(|turn| turn.id != "active-subscriptions");
+                    let snapshot_turns = subscription_snapshot_turns(subscriptions);
+                    restore_persisted_display_turns(&mut loaded_thread, &snapshot_turns);
+                }
                 apply_stored_agent_metadata_to_loaded_thread(
                     &mut loaded_thread,
                     stored_agent_path,
@@ -907,6 +918,21 @@ fn restore_persisted_display_turns_from_rollout_items(
 ) {
     let persisted_turns = thread_history::build_turns_from_rollout_items(rollout_items);
     restore_persisted_display_turns(thread, &persisted_turns);
+}
+
+fn subscription_snapshot_turns(
+    subscriptions: Vec<protocol::subscriptions::PersistedSubscription>,
+) -> Vec<Turn> {
+    let rollout_items = [RolloutItem::SessionMeta(
+        protocol::protocol::SessionMetaLine {
+            meta: protocol::protocol::SessionMeta {
+                subscriptions: Some(subscriptions),
+                ..protocol::protocol::SessionMeta::default()
+            },
+            git: None,
+        },
+    )];
+    thread_history::build_turns_from_rollout_items(&rollout_items)
 }
 
 fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns: &[Turn]) {

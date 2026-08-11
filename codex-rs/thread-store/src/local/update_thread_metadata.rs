@@ -293,6 +293,9 @@ async fn apply_metadata_update(
             if let Some(first_user_message) = patch.first_user_message {
                 metadata.first_user_message = Some(first_user_message);
             }
+            if let Some(subscriptions) = patch.subscriptions {
+                metadata.subscriptions = Some(subscriptions);
+            }
             if let Some(git_info) = patch.git_info {
                 let existing_git_info = git_info_from_parts(
                     metadata.git_sha.clone(),
@@ -772,7 +775,7 @@ mod tests {
         )
         .await
         .expect("state db should initialize");
-        let store = LocalThreadStore::new(config, Some(runtime));
+        let store = LocalThreadStore::new(config, Some(runtime.clone()));
         let subscriptions = vec![
             PersistedSubscription::EventCommand {
                 subscription_id: "sub_command".to_string(),
@@ -808,8 +811,18 @@ mod tests {
         assert_eq!(appended["payload"]["id"], thread_id.to_string());
         assert_eq!(
             appended["payload"]["subscriptions"],
-            serde_json::to_value(subscriptions).expect("serialize subscriptions")
+            serde_json::to_value(&subscriptions).expect("serialize subscriptions")
         );
+        let state_subscriptions = runtime
+            .get_thread_subscriptions(thread_id)
+            .await
+            .expect("subscriptions state should be readable");
+        assert_eq!(state_subscriptions, Some(subscriptions));
+        let active_subscription_threads = store
+            .list_thread_ids_with_active_subscriptions()
+            .await
+            .expect("active subscription threads should be listed");
+        assert_eq!(active_subscription_threads, vec![thread_id]);
     }
 
     #[tokio::test]
@@ -826,7 +839,7 @@ mod tests {
         )
         .await
         .expect("state db should initialize");
-        let store = LocalThreadStore::new(config, Some(runtime));
+        let store = LocalThreadStore::new(config, Some(runtime.clone()));
 
         store
             .update_thread_metadata(UpdateThreadMetadataParams {
@@ -861,6 +874,66 @@ mod tests {
         assert_eq!(appended["type"], "session_meta");
         assert_eq!(appended["payload"]["id"], thread_id.to_string());
         assert_eq!(appended["payload"]["subscriptions"], serde_json::json!([]));
+        let state_subscriptions = runtime
+            .get_thread_subscriptions(thread_id)
+            .await
+            .expect("subscriptions state should be readable");
+        assert_eq!(state_subscriptions, Some(Vec::new()));
+        let loaded_subscriptions = store
+            .read_thread_subscriptions(thread_id, /*include_archived*/ false)
+            .await
+            .expect("subscriptions should load");
+        assert_eq!(loaded_subscriptions, Some(Vec::new()));
+        let active_subscription_threads = store
+            .list_thread_ids_with_active_subscriptions()
+            .await
+            .expect("active subscription threads should be listed");
+        assert_eq!(active_subscription_threads, Vec::new());
+    }
+
+    #[tokio::test]
+    async fn read_thread_subscriptions_falls_back_to_legacy_rollout_snapshot() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let uuid = Uuid::from_u128(315);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let path =
+            write_session_file(home.path(), "2025-01-03T18-55-00", uuid).expect("session file");
+        let runtime = state::StateRuntime::init(
+            home.path().to_path_buf(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let store = LocalThreadStore::new(config, Some(runtime.clone()));
+        let subscriptions = vec![PersistedSubscription::Schedule {
+            subscription_id: "sub_schedule".to_string(),
+            schedule: ScheduleSpec::EveryInterval {
+                interval_ms: 60_000,
+            },
+            label: Some("poll".to_string()),
+            message: None,
+        }];
+
+        apply_thread_subscriptions_to_rollout(path.as_path(), thread_id, subscriptions.as_slice())
+            .await
+            .expect("legacy rollout subscription snapshot should be written");
+
+        let state_subscriptions = runtime
+            .get_thread_subscriptions(thread_id)
+            .await
+            .expect("subscriptions state should be readable");
+        assert_eq!(state_subscriptions, None);
+        let loaded_subscriptions = store
+            .read_thread_subscriptions(thread_id, /*include_archived*/ false)
+            .await
+            .expect("subscriptions should load from rollout fallback");
+        assert_eq!(loaded_subscriptions, Some(subscriptions));
+        let active_subscription_threads = store
+            .list_thread_ids_with_active_subscriptions()
+            .await
+            .expect("active subscription threads should be listed from fallback");
+        assert_eq!(active_subscription_threads, vec![thread_id]);
     }
 
     #[tokio::test]

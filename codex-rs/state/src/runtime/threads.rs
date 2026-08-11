@@ -3,6 +3,7 @@ use crate::SortDirection;
 use protocol::protocol::EventMsg;
 use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadSkill;
+use protocol::subscriptions::PersistedSubscription;
 use std::sync::atomic::Ordering;
 
 impl StateRuntime {
@@ -33,7 +34,8 @@ SELECT
     threads.archived_at,
     threads.git_sha,
     threads.git_branch,
-    threads.git_origin_url
+    threads.git_origin_url,
+    threads.subscriptions
 FROM threads
 WHERE threads.id = ?
             "#,
@@ -51,6 +53,44 @@ WHERE threads.id = ?
             .fetch_optional(self.pool.as_ref())
             .await?;
         Ok(row.and_then(|row| row.try_get("memory_mode").ok()))
+    }
+
+    pub async fn get_thread_subscriptions(
+        &self,
+        id: ThreadId,
+    ) -> anyhow::Result<Option<Vec<PersistedSubscription>>> {
+        let row = sqlx::query("SELECT subscriptions FROM threads WHERE id = ?")
+            .bind(id.to_string())
+            .fetch_optional(self.pool.as_ref())
+            .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let subscriptions: Option<String> = row.try_get("subscriptions")?;
+        subscriptions
+            .map(|subscriptions| serde_json::from_str(&subscriptions).map_err(anyhow::Error::from))
+            .transpose()
+    }
+
+    pub async fn list_thread_ids_with_active_subscriptions(&self) -> anyhow::Result<Vec<ThreadId>> {
+        let rows = sqlx::query(
+            r#"
+SELECT id
+FROM threads
+WHERE archived = 0
+  AND subscriptions IS NOT NULL
+  AND json_array_length(subscriptions) > 0
+ORDER BY updated_at_ms DESC
+            "#,
+        )
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                let id: String = row.try_get("id")?;
+                Ok(ThreadId::try_from(id)?)
+            })
+            .collect()
     }
 
     /// Get dynamic tools for a thread, if present.
@@ -241,9 +281,9 @@ LIMIT 1
         let Some(row) = rows.into_iter().next() else {
             return Ok(None);
         };
-        Ok(Some(ThreadId::try_from(row.try_get::<String, _>(
-            "parent_thread_id",
-        )?)?))
+        Ok(Some(ThreadId::try_from(
+            row.try_get::<String, _>("parent_thread_id")?,
+        )?))
     }
 
     /// Find a direct spawned child of `parent_thread_id` by canonical agent path.
@@ -589,8 +629,9 @@ INSERT INTO threads (
     git_sha,
     git_branch,
     git_origin_url,
-    memory_mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    memory_mode,
+    subscriptions
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO NOTHING
             "#,
         )
@@ -631,6 +672,7 @@ ON CONFLICT(id) DO NOTHING
         .bind(metadata.git_branch.as_deref())
         .bind(metadata.git_origin_url.as_deref())
         .bind("enabled")
+        .bind(serialize_subscriptions(metadata.subscriptions.as_ref())?)
         .execute(self.pool.as_ref())
         .await?;
         self.insert_thread_spawn_edge_from_source_if_absent(metadata.id, metadata.source.as_str())
@@ -795,8 +837,9 @@ INSERT INTO threads (
     git_sha,
     git_branch,
     git_origin_url,
-    memory_mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    memory_mode,
+    subscriptions
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     rollout_path = excluded.rollout_path,
     created_at = excluded.created_at,
@@ -823,7 +866,8 @@ ON CONFLICT(id) DO UPDATE SET
     archived_at = excluded.archived_at,
     git_sha = COALESCE(threads.git_sha, excluded.git_sha),
     git_branch = COALESCE(threads.git_branch, excluded.git_branch),
-    git_origin_url = COALESCE(threads.git_origin_url, excluded.git_origin_url)
+    git_origin_url = COALESCE(threads.git_origin_url, excluded.git_origin_url),
+    subscriptions = COALESCE(excluded.subscriptions, threads.subscriptions)
             "#,
         )
         .bind(metadata.id.to_string())
@@ -863,6 +907,7 @@ ON CONFLICT(id) DO UPDATE SET
         .bind(metadata.git_branch.as_deref())
         .bind(metadata.git_origin_url.as_deref())
         .bind(creation_memory_mode.unwrap_or("enabled"))
+        .bind(serialize_subscriptions(metadata.subscriptions.as_ref())?)
         .execute(self.pool.as_ref())
         .await?;
         self.insert_thread_spawn_edge_from_source_if_absent(metadata.id, metadata.source.as_str())
@@ -981,6 +1026,9 @@ INSERT INTO thread_skills (
         metadata.rollout_path = builder.rollout_path.clone();
         for item in items {
             apply_rollout_item(&mut metadata, item, &self.default_provider);
+        }
+        if let Some(subscriptions) = extract_thread_subscriptions(items) {
+            metadata.subscriptions = Some(subscriptions);
         }
         if let Some(existing_metadata) = existing_metadata.as_ref() {
             metadata.prefer_existing_git_info(existing_metadata);
@@ -1131,7 +1179,8 @@ SELECT
     threads.archived_at,
     threads.git_sha,
     threads.git_branch,
-    threads.git_origin_url
+    threads.git_origin_url,
+    threads.subscriptions
 "#,
     );
 }
@@ -1167,6 +1216,27 @@ pub(super) fn extract_memory_mode(items: &[RolloutItem]) -> Option<String> {
         | RolloutItem::TurnContext(_)
         | RolloutItem::EventMsg(_) => None,
     })
+}
+
+pub(super) fn extract_thread_subscriptions(
+    items: &[RolloutItem],
+) -> Option<Vec<PersistedSubscription>> {
+    items.iter().rev().find_map(|item| match item {
+        RolloutItem::SessionMeta(meta_line) => meta_line.meta.subscriptions.clone(),
+        RolloutItem::ResponseItem(_)
+        | RolloutItem::Compacted(_)
+        | RolloutItem::TurnContext(_)
+        | RolloutItem::EventMsg(_) => None,
+    })
+}
+
+fn serialize_subscriptions(
+    subscriptions: Option<&Vec<PersistedSubscription>>,
+) -> anyhow::Result<Option<String>> {
+    subscriptions
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(anyhow::Error::from)
 }
 
 fn thread_spawn_parent_thread_id_from_source_str(source: &str) -> Option<ThreadId> {
@@ -1315,6 +1385,8 @@ mod tests {
     use protocol::protocol::SessionMeta;
     use protocol::protocol::SessionMetaLine;
     use protocol::protocol::SessionSource;
+    use protocol::subscriptions::PersistedSubscription;
+    use protocol::subscriptions::ScheduleSpec;
     use std::path::PathBuf;
 
     #[tokio::test]
@@ -1353,6 +1425,99 @@ mod tests {
                 .await
                 .expect("memory mode should remain readable");
         assert_eq!(memory_mode, "disabled");
+    }
+
+    #[tokio::test]
+    async fn upsert_thread_persists_subscription_current_state() {
+        let codex_home = unique_temp_dir();
+        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+            .await
+            .expect("state db should initialize");
+        let active_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000124").expect("valid thread id");
+        let cleared_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000125").expect("valid thread id");
+        let subscriptions = vec![PersistedSubscription::Schedule {
+            subscription_id: "sub_schedule".to_string(),
+            schedule: ScheduleSpec::EveryInterval {
+                interval_ms: 60_000,
+            },
+            label: Some("poll".to_string()),
+            message: None,
+        }];
+        let mut active = test_thread_metadata(&codex_home, active_id, codex_home.clone());
+        active.subscriptions = Some(subscriptions.clone());
+        runtime
+            .upsert_thread(&active)
+            .await
+            .expect("active thread insert should succeed");
+        let mut cleared = test_thread_metadata(&codex_home, cleared_id, codex_home.clone());
+        cleared.subscriptions = Some(Vec::new());
+        runtime
+            .upsert_thread(&cleared)
+            .await
+            .expect("cleared thread insert should succeed");
+
+        assert_eq!(
+            runtime
+                .get_thread_subscriptions(active_id)
+                .await
+                .expect("active subscriptions should load"),
+            Some(subscriptions)
+        );
+        assert_eq!(
+            runtime
+                .get_thread_subscriptions(cleared_id)
+                .await
+                .expect("cleared subscriptions should load"),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            runtime
+                .list_thread_ids_with_active_subscriptions()
+                .await
+                .expect("active subscription thread ids should list"),
+            vec![active_id]
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_thread_preserves_existing_subscription_snapshot_when_omitted() {
+        let codex_home = unique_temp_dir();
+        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+            .await
+            .expect("state db should initialize");
+        let thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000126").expect("valid thread id");
+        let subscriptions = vec![PersistedSubscription::Schedule {
+            subscription_id: "sub_schedule".to_string(),
+            schedule: ScheduleSpec::EveryInterval {
+                interval_ms: 60_000,
+            },
+            label: Some("poll".to_string()),
+            message: None,
+        }];
+        let mut metadata = test_thread_metadata(&codex_home, thread_id, codex_home.clone());
+        metadata.subscriptions = Some(subscriptions.clone());
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("initial thread insert should succeed");
+
+        metadata.title = "rollout repair without subscription state".to_string();
+        metadata.subscriptions = None;
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("omitted subscription update should succeed");
+
+        assert_eq!(
+            runtime
+                .get_thread_subscriptions(thread_id)
+                .await
+                .expect("subscriptions should load"),
+            Some(subscriptions)
+        );
     }
 
     #[tokio::test]

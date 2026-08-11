@@ -3,6 +3,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use protocol::ThreadId;
 use protocol::openai_models::ReasoningEffort;
+use protocol::subscriptions::PersistedSubscription;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 use std::path::PathBuf;
@@ -42,6 +43,7 @@ pub(crate) struct ThreadRow {
     git_sha: Option<String>,
     git_branch: Option<String>,
     git_origin_url: Option<String>,
+    subscriptions: Option<String>,
 }
 
 impl ThreadRow {
@@ -71,6 +73,7 @@ impl ThreadRow {
             git_sha: row.try_get("git_sha")?,
             git_branch: row.try_get("git_branch")?,
             git_origin_url: row.try_get("git_origin_url")?,
+            subscriptions: row.try_get("subscriptions")?,
         })
     }
 }
@@ -104,11 +107,15 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             git_sha,
             git_branch,
             git_origin_url,
+            subscriptions,
         } = row;
         let thread_source = thread_source
             .map(|thread_source| thread_source.parse())
             .transpose()
             .map_err(anyhow::Error::msg)?;
+        let subscriptions = subscriptions
+            .map(|subscriptions| serde_json::from_str::<Vec<PersistedSubscription>>(&subscriptions))
+            .transpose()?;
         Ok(Self {
             id: ThreadId::try_from(id)?,
             rollout_path: PathBuf::from(rollout_path),
@@ -135,6 +142,7 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
             git_sha,
             git_branch,
             git_origin_url,
+            subscriptions,
         })
     }
 }
@@ -210,6 +218,7 @@ mod tests {
             git_sha: None,
             git_branch: None,
             git_origin_url: None,
+            subscriptions: None,
         }
     }
 
@@ -240,6 +249,7 @@ mod tests {
             git_sha: None,
             git_branch: None,
             git_origin_url: None,
+            subscriptions: None,
         }
     }
 

@@ -11,6 +11,7 @@ use super::LocalThreadStore;
 use super::helpers::distinct_thread_metadata_title;
 use super::helpers::set_thread_name_from_title;
 use super::helpers::stored_thread_from_rollout_item;
+use super::read_thread;
 use crate::ListThreadsParams;
 use crate::SortDirection;
 use crate::ThreadPage;
@@ -138,6 +139,89 @@ pub(super) async fn list_threads(
     }
 
     Ok(ThreadPage { items, next_cursor })
+}
+
+pub(super) async fn list_thread_ids_with_active_subscriptions(
+    store: &LocalThreadStore,
+) -> ThreadStoreResult<Vec<ThreadId>> {
+    let mut thread_ids = Vec::new();
+    let mut seen = HashSet::<ThreadId>::new();
+    if let Some(state_db_ctx) = store.state_db().await {
+        let state_thread_ids = state_db_ctx
+            .list_thread_ids_with_active_subscriptions()
+            .await
+            .map_err(|err| ThreadStoreError::Internal {
+                message: format!("failed to list active subscription threads from state db: {err}"),
+            })?;
+        for thread_id in state_thread_ids {
+            if seen.insert(thread_id) {
+                thread_ids.push(thread_id);
+            }
+        }
+    }
+
+    let mut cursor = None;
+    loop {
+        let page = list_threads(
+            store,
+            ListThreadsParams {
+                page_size: 100,
+                cursor,
+                sort_key: crate::ThreadSortKey::UpdatedAt,
+                sort_direction: crate::SortDirection::Desc,
+                allowed_sources: Vec::new(),
+                model_providers: Some(Vec::new()),
+                cwd_filters: None,
+                archived: false,
+                search_term: None,
+                use_state_db_only: false,
+            },
+        )
+        .await?;
+
+        for thread in page.items {
+            if seen.contains(&thread.thread_id) {
+                continue;
+            }
+            if let Some(state_db_ctx) = store.state_db().await {
+                let subscriptions = state_db_ctx
+                    .get_thread_subscriptions(thread.thread_id)
+                    .await
+                    .map_err(|err| ThreadStoreError::Internal {
+                        message: format!(
+                            "failed to read active subscription state for {}: {err}",
+                            thread.thread_id
+                        ),
+                    })?;
+                if let Some(subscriptions) = subscriptions {
+                    if !subscriptions.is_empty() && seen.insert(thread.thread_id) {
+                        thread_ids.push(thread.thread_id);
+                    }
+                    continue;
+                }
+            }
+            let Some(rollout_path) = thread.rollout_path.as_deref() else {
+                continue;
+            };
+            let subscriptions =
+                read_thread::latest_thread_subscriptions_from_rollout_path(rollout_path).await?;
+            if subscriptions
+                .as_ref()
+                .is_some_and(|subscriptions| !subscriptions.is_empty())
+                && seen.insert(thread.thread_id)
+            {
+                thread_ids.push(thread.thread_id);
+            }
+        }
+
+        if let Some(next_cursor) = page.next_cursor {
+            cursor = Some(next_cursor);
+        } else {
+            break;
+        }
+    }
+
+    Ok(thread_ids)
 }
 
 async fn list_rollout_threads(

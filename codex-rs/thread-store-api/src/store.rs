@@ -1,4 +1,5 @@
 use protocol::ThreadId;
+use protocol::subscriptions::PersistedSubscription;
 use std::any::Any;
 
 use crate::AppendThreadItemsParams;
@@ -122,6 +123,34 @@ pub trait ThreadStore: Any + Send + Sync {
         &self,
         params: UpdateThreadMetadataParams,
     ) -> ThreadStoreFuture<'_, ThreadStoreResult<StoredThread>>;
+
+    /// Reads the latest persisted subscription snapshot for a thread.
+    ///
+    /// `Some(vec)` means a current-state snapshot exists, including `Some(Vec::new())`
+    /// for an explicitly cleared subscription set. `None` means the store has no
+    /// current-state snapshot and callers may choose a legacy fallback.
+    fn read_thread_subscriptions(
+        &self,
+        _thread_id: ThreadId,
+        _include_archived: bool,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<Option<Vec<PersistedSubscription>>>> {
+        Box::pin(async move {
+            Err(ThreadStoreError::Unsupported {
+                operation: "read_thread_subscriptions",
+            })
+        })
+    }
+
+    /// Lists active threads whose current-state subscription snapshot is non-empty.
+    fn list_thread_ids_with_active_subscriptions(
+        &self,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<Vec<ThreadId>>> {
+        Box::pin(async move {
+            Err(ThreadStoreError::Unsupported {
+                operation: "list_thread_ids_with_active_subscriptions",
+            })
+        })
+    }
 
     /// Archives a thread.
     fn archive_thread(

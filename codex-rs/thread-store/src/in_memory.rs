@@ -10,6 +10,7 @@ use protocol::ThreadId;
 use protocol::protocol::AskForApproval;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SandboxPolicy;
+use protocol::subscriptions::PersistedSubscription;
 
 use crate::AppendThreadItemsParams;
 use crate::ArchiveThreadParams;
@@ -322,6 +323,41 @@ impl ThreadStore for InMemoryThreadStore {
                 .or_default()
                 .merge(params.patch);
             stored_thread_from_state(&state, params.thread_id, /*include_history*/ false)
+        })
+    }
+
+    fn read_thread_subscriptions(
+        &self,
+        thread_id: ThreadId,
+        _include_archived: bool,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<Option<Vec<PersistedSubscription>>>> {
+        Box::pin(async move {
+            let state = self.state.lock().await;
+            Ok(state
+                .metadata_updates
+                .get(&thread_id)
+                .and_then(|metadata| metadata.subscriptions.clone()))
+        })
+    }
+
+    fn list_thread_ids_with_active_subscriptions(
+        &self,
+    ) -> ThreadStoreFuture<'_, ThreadStoreResult<Vec<ThreadId>>> {
+        Box::pin(async move {
+            let state = self.state.lock().await;
+            let mut thread_ids = state
+                .metadata_updates
+                .iter()
+                .filter_map(|(thread_id, metadata)| {
+                    metadata
+                        .subscriptions
+                        .as_ref()
+                        .is_some_and(|subscriptions| !subscriptions.is_empty())
+                        .then_some(*thread_id)
+                })
+                .collect::<Vec<_>>();
+            thread_ids.sort_by_key(|thread_id| thread_id.to_string());
+            Ok(thread_ids)
         })
     }
 

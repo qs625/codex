@@ -409,7 +409,6 @@ use thread_service_api::ThreadCreatedEvent;
 use thread_store::ArchiveThreadParams as StoreArchiveThreadParams;
 use thread_store::GitInfoPatch as StoreGitInfoPatch;
 use thread_store::ListThreadsParams as StoreListThreadsParams;
-use thread_store::LocalThreadStore;
 use thread_store::ReadThreadByRolloutPathParams as StoreReadThreadByRolloutPathParams;
 use thread_store::ReadThreadParams as StoreReadThreadParams;
 use thread_store::SortDirection as StoreSortDirection;

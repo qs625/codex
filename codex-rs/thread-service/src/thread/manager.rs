@@ -888,6 +888,25 @@ impl ThreadService {
         self.state.read_stored_thread(params).await
     }
 
+    pub async fn read_thread_subscriptions(
+        &self,
+        thread_id: ThreadId,
+        include_archived: bool,
+    ) -> CodexResult<Option<Vec<protocol::subscriptions::PersistedSubscription>>> {
+        self.state
+            .thread_store
+            .read_thread_subscriptions(thread_id, include_archived)
+            .await
+            .map_err(|err| match err {
+                ThreadStoreError::ThreadNotFound { thread_id } => {
+                    CodexErr::ThreadNotFound(thread_id)
+                }
+                err => CodexErr::Fatal(format!(
+                    "failed to read thread subscriptions for {thread_id}: {err}"
+                )),
+            })
+    }
+
     pub async fn persisted_external_root_thread_facts(
         &self,
         selector: PersistedThreadProviderFactsSelector,

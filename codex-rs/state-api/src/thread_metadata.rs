@@ -7,6 +7,7 @@ use protocol::protocol::AskForApproval;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadSource;
+use protocol::subscriptions::PersistedSubscription;
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -106,6 +107,8 @@ pub struct ThreadMetadata {
     pub git_branch: Option<String>,
     /// The git origin URL, if known.
     pub git_origin_url: Option<String>,
+    /// Persisted event subscriptions for runtime restore, if a current-state snapshot exists.
+    pub subscriptions: Option<Vec<PersistedSubscription>>,
 }
 
 /// Builder data required to construct [`ThreadMetadata`] without parsing filenames.
@@ -220,6 +223,7 @@ impl ThreadMetadataBuilder {
             git_sha: self.git_sha.clone(),
             git_branch: self.git_branch.clone(),
             git_origin_url: self.git_origin_url.clone(),
+            subscriptions: None,
         }
     }
 }
@@ -235,6 +239,9 @@ impl ThreadMetadata {
         }
         if existing.git_origin_url.is_some() {
             self.git_origin_url = existing.git_origin_url.clone();
+        }
+        if existing.subscriptions.is_some() {
+            self.subscriptions = existing.subscriptions.clone();
         }
     }
 
@@ -309,6 +316,9 @@ impl ThreadMetadata {
         }
         if self.git_origin_url != other.git_origin_url {
             diffs.push("git_origin_url");
+        }
+        if self.subscriptions != other.subscriptions {
+            diffs.push("subscriptions");
         }
         diffs
     }

@@ -1,10 +1,12 @@
 use chrono::DateTime;
 use chrono::Utc;
 use protocol::protocol::AskForApproval;
+use protocol::protocol::RolloutItem;
 use protocol::protocol::SandboxPolicy;
 use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource;
 use protocol::protocol::ThreadSkill;
+use protocol::subscriptions::PersistedSubscription;
 use rollout::RolloutRecorder;
 use rollout::find_archived_thread_path_by_id_str;
 use rollout::find_thread_name_by_id;
@@ -266,6 +268,42 @@ async fn load_history_items(
             message: format!("failed to load thread history {}: {err}", path.display()),
         })?;
     Ok(items)
+}
+
+pub(super) async fn read_thread_subscriptions(
+    store: &LocalThreadStore,
+    thread_id: protocol::ThreadId,
+    include_archived: bool,
+) -> ThreadStoreResult<Option<Vec<PersistedSubscription>>> {
+    if let Some(runtime) = store.state_db().await {
+        let subscriptions = runtime
+            .get_thread_subscriptions(thread_id)
+            .await
+            .map_err(|err| ThreadStoreError::Internal {
+                message: format!("failed to read thread subscriptions for {thread_id}: {err}"),
+            })?;
+        if subscriptions.is_some() {
+            return Ok(subscriptions);
+        }
+    }
+
+    let Some(path) = resolve_rollout_path(store, thread_id, include_archived).await? else {
+        return Ok(None);
+    };
+    latest_thread_subscriptions_from_rollout_path(path.as_path()).await
+}
+
+pub(super) async fn latest_thread_subscriptions_from_rollout_path(
+    path: &std::path::Path,
+) -> ThreadStoreResult<Option<Vec<PersistedSubscription>>> {
+    let items = load_history_items(path).await?;
+    Ok(items.iter().rev().find_map(|item| match item {
+        RolloutItem::SessionMeta(meta_line) => meta_line.meta.subscriptions.clone(),
+        RolloutItem::TurnContext(_)
+        | RolloutItem::ResponseItem(_)
+        | RolloutItem::Compacted(_)
+        | RolloutItem::EventMsg(_) => None,
+    }))
 }
 
 async fn read_sqlite_metadata(

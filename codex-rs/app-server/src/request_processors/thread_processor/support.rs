@@ -728,33 +728,6 @@ pub(super) fn persisted_subscription_count(thread: &StoredThread) -> usize {
         .unwrap_or_default()
 }
 
-pub(super) fn persisted_subscription_count_from_rollout(path: Option<&Path>) -> usize {
-    let Some(path) = path else {
-        return 0;
-    };
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return 0;
-    };
-    contents
-        .lines()
-        .rev()
-        .find_map(|line| {
-            let value: serde_json::Value = serde_json::from_str(line).ok()?;
-            let item_type = value.get("type")?.as_str()?;
-            if item_type != "session_meta" {
-                return None;
-            }
-            Some(
-                value
-                    .get("payload")
-                    .and_then(|payload| payload.get("subscriptions"))
-                    .and_then(|subscriptions| subscriptions.as_array())
-                    .map_or(0, std::vec::Vec::len),
-            )
-        })
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 pub(super) fn summary_from_stored_thread(
     thread: StoredThread,

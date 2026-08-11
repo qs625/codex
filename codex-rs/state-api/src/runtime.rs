@@ -28,6 +28,7 @@ use protocol::ThreadId;
 use protocol::dynamic_tools::DynamicToolSpec;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::ThreadSkill;
+use protocol::subscriptions::PersistedSubscription;
 use serde_json::Value;
 use std::future::Future;
 use std::path::Path;
@@ -53,6 +54,13 @@ pub trait ThreadStateRuntime: Send + Sync {
     ) -> StateApiFuture<'_, Option<Vec<DynamicToolSpec>>>;
 
     fn get_thread_memory_mode(&self, thread_id: ThreadId) -> StateApiFuture<'_, Option<String>>;
+
+    fn get_thread_subscriptions(
+        &self,
+        thread_id: ThreadId,
+    ) -> StateApiFuture<'_, Option<Vec<PersistedSubscription>>>;
+
+    fn list_thread_ids_with_active_subscriptions(&self) -> StateApiFuture<'_, Vec<ThreadId>>;
 
     fn mark_thread_memory_mode_polluted(&self, thread_id: ThreadId) -> StateApiFuture<'_, ()>;
 

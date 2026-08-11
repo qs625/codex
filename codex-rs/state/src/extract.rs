@@ -66,6 +66,9 @@ fn apply_session_meta_from_item(metadata: &mut ThreadMetadata, meta_line: &Sessi
     if !meta_line.meta.cwd.as_os_str().is_empty() {
         metadata.cwd = meta_line.meta.cwd.clone();
     }
+    if let Some(subscriptions) = meta_line.meta.subscriptions.clone() {
+        metadata.subscriptions = Some(subscriptions);
+    }
     if let Some(git) = meta_line.git.as_ref() {
         metadata.git_sha = git.commit_hash.as_ref().map(|sha| sha.0.clone());
         metadata.git_branch = git.branch.clone();
@@ -507,6 +510,7 @@ mod tests {
             git_sha: None,
             git_branch: None,
             git_origin_url: None,
+            subscriptions: None,
         }
     }
 

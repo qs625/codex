@@ -142,6 +142,17 @@ impl ThreadStateRuntime for StateRuntime {
         Box::pin(async move { StateRuntime::get_thread_memory_mode(self, thread_id).await })
     }
 
+    fn get_thread_subscriptions(
+        &self,
+        thread_id: ThreadId,
+    ) -> StateApiFuture<'_, Option<Vec<protocol::subscriptions::PersistedSubscription>>> {
+        Box::pin(async move { StateRuntime::get_thread_subscriptions(self, thread_id).await })
+    }
+
+    fn list_thread_ids_with_active_subscriptions(&self) -> StateApiFuture<'_, Vec<ThreadId>> {
+        Box::pin(async move { StateRuntime::list_thread_ids_with_active_subscriptions(self).await })
+    }
+
     fn mark_thread_memory_mode_polluted(&self, thread_id: ThreadId) -> StateApiFuture<'_, ()> {
         Box::pin(async move {
             StateRuntime::mark_thread_memory_mode_polluted(self, thread_id)
