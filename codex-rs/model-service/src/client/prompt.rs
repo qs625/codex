@@ -113,7 +113,6 @@ fn format_typed_response_item_for_provider(item: ResponseItem) -> Option<Respons
     match item {
         ResponseItem::CommandWait { .. }
         | ResponseItem::CommandWriteStdin { .. }
-        | ResponseItem::CommandExecutionNotification { .. }
         | ResponseItem::WorkflowRunProgress { .. }
         | ResponseItem::ThreadGoalUpdate { .. } => None,
         ResponseItem::EventCommandEvent { event, .. } => Some(event.to_response_item()),

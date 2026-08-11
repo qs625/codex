@@ -565,6 +565,40 @@ impl SessionTask for NeverEndingTask {
     }
 }
 
+#[derive(Clone)]
+struct CommandExitNotificationOnFinishTask {
+    notification: ResponseItem,
+    observed_event: EventMsg,
+}
+
+impl SessionTask for CommandExitNotificationOnFinishTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Regular
+    }
+
+    fn span_name(&self) -> &'static str {
+        "session_task.command_exit_notification_on_finish"
+    }
+
+    async fn run(
+        self: Arc<Self>,
+        session: Arc<SessionTaskContext>,
+        _ctx: Arc<TurnContext>,
+        _input: Vec<UserInput>,
+        _cancellation_token: CancellationToken,
+    ) -> Option<String> {
+        let session = session.clone_session();
+        thread_service_api::ThreadSessionCapability::append_conversation_item_with_observed_event(
+            session.as_ref(),
+            self.notification.clone(),
+            self.observed_event.clone(),
+        )
+        .await
+        .expect("append command exit notification");
+        Some("command still finishing".to_string())
+    }
+}
+
 #[derive(Clone, Copy)]
 struct GuardianDeniedApprovalTask;
 
@@ -3133,6 +3167,136 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
     .expect("notification display should be emitted");
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn leftover_command_exit_display_is_followed_by_provider_request_with_notification() -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let responses = mount_sse_sequence(
+        &server,
+        vec![sse(vec![
+            ev_assistant_message("msg-followup", "Saw the command exit."),
+            ev_completed("resp-followup"),
+        ])],
+    )
+    .await;
+    let (sess, rx) = make_session_with_config_and_rx(|config| {
+        config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
+        config.model_provider.supports_websockets = false;
+        config.model_providers.insert(
+            config.model_provider_id.clone(),
+            config.model_provider.clone(),
+        );
+    })
+    .await?;
+    let tc = sess.new_default_turn().await;
+
+    let command = vec!["sh".to_string(), "-c".to_string(), "echo done".to_string()];
+    let notification = ResponseItem::CommandExecutionNotification {
+        id: Some("cmd-1:notification:exit".to_string()),
+        command_item_id: "cmd-1".to_string(),
+        kind: protocol::models::CommandExecutionNotificationKind::Exit,
+        message: "Command exit notification received.".to_string(),
+        output: Some("done\n".to_string()),
+        exit_code: Some(0),
+        created_at_ms: 1234,
+    };
+    let exec_end = EventMsg::ExecCommandEnd(protocol::protocol::ExecCommandEndEvent {
+        call_id: "cmd-1".to_string(),
+        process_id: Some("1".to_string()),
+        turn_id: tc.sub_id.clone(),
+        completed_at_ms: 1235,
+        command: command.clone(),
+        #[allow(deprecated)]
+        cwd: tc.cwd.clone(),
+        parsed_cmd: codex_shell_utils::parse_command::parse_command(&command),
+        source: protocol::protocol::ExecCommandSource::UnifiedExecStartup,
+        interaction_input: None,
+        initial_wait_ms: Some(0),
+        notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+        stdout: "done\n".to_string(),
+        stderr: String::new(),
+        aggregated_output: "done\n".to_string(),
+        exit_code: 0,
+        duration: Duration::from_millis(10),
+        formatted_output: "done\n".to_string(),
+        status: protocol::protocol::ExecCommandStatus::Completed,
+    });
+
+    sess.spawn_task(
+        Arc::clone(&tc),
+        Vec::new(),
+        CommandExitNotificationOnFinishTask {
+            notification,
+            observed_event: exec_end,
+        },
+    )
+    .await;
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let event = rx.recv().await.expect("event channel open");
+            if matches!(
+                event.msg,
+                EventMsg::CommandExecutionNotificationCompleted(_)
+            ) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("command notification display should be emitted before follow-up assertion");
+
+    let followup_request = {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut observed_events = Vec::new();
+        loop {
+            if let Some(request) = responses.last_request() {
+                break request;
+            }
+            while let Ok(event) = rx.try_recv() {
+                observed_events.push(format!("{:?}", event.msg));
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "follow-up provider request did not start; observed events after display: {observed_events:#?}"
+            );
+            tokio::task::yield_now().await;
+        }
+    };
+    let body = followup_request.body_json();
+    let notification_item = body["input"]
+        .as_array()
+        .expect("provider request input should be an array")
+        .iter()
+        .find(|item| {
+            item.get("command_item_id")
+                .and_then(serde_json::Value::as_str)
+                == Some("cmd-1")
+        })
+        .unwrap_or_else(|| {
+            panic!("provider request input should include command notification: {body}")
+        });
+    assert_eq!(
+        notification_item
+            .get("kind")
+            .and_then(serde_json::Value::as_str),
+        Some("exit")
+    );
+    assert_eq!(
+        notification_item
+            .get("message")
+            .and_then(serde_json::Value::as_str),
+        Some("Command exit notification received.")
+    );
+    assert_eq!(
+        notification_item
+            .get("exit_code")
+            .and_then(serde_json::Value::as_i64),
+        Some(0)
+    );
+
+    Ok(())
 }
 
 #[tokio::test]
