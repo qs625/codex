@@ -879,6 +879,21 @@ export function appendCommandExecutionDelta(
   itemId: string,
   delta: string,
 ) {
+  const createDeltaPlaceholder = (): Extract<
+    ThreadItem,
+    { type: "commandExecution" }
+  > => ({
+    type: "commandExecution",
+    id: itemId,
+    command: "Command output",
+    cwd: "cwd pending",
+    status: "inProgress",
+    initialWaitMs: null,
+    notifyOn: null,
+    aggregatedOutput: delta,
+    exitCode: null,
+    durationMs: null,
+  });
   const appendDelta = (
     item: Extract<ThreadItem, { type: "commandExecution" }>,
   ): ThreadItem => ({
@@ -892,14 +907,32 @@ export function appendCommandExecutionDelta(
         }
         return {
           ...turn,
-          items: turn.items.map((item) =>
-            item.id === itemId && item.type === "commandExecution"
-              ? appendDelta(item)
-              : item,
-          ),
+          items: turn.items.some(
+            (item) => item.id === itemId && item.type === "commandExecution",
+          )
+            ? turn.items.map((item) =>
+                item.id === itemId && item.type === "commandExecution"
+                  ? appendDelta(item)
+                  : item,
+              )
+            : [...turn.items, createDeltaPlaceholder()],
         };
       })
-    : thread.turns;
+    : threadHasCompactItem(thread)
+      ? thread.turns
+      : [
+        ...thread.turns,
+        {
+          id: turnId,
+          items: [createDeltaPlaceholder()],
+          itemsView: "full" as const,
+          status: "running" as const,
+          error: null,
+          startedAt: null,
+          completedAt: null,
+          durationMs: null,
+        } satisfies Turn,
+      ];
   return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
 }
 
@@ -1252,6 +1285,19 @@ function mergeThreadItem(existing: ThreadItem, next: ThreadItem): ThreadItem {
       ...next,
       ...timestamps,
       text: preferMoreCompleteText(existing.text, next.text),
+    };
+  }
+
+  if (
+    existing.type === "commandExecution" &&
+    next.type === "commandExecution"
+  ) {
+    return {
+      ...existing,
+      ...next,
+      ...timestamps,
+      aggregatedOutput:
+        next.aggregatedOutput ?? existing.aggregatedOutput ?? null,
     };
   }
 

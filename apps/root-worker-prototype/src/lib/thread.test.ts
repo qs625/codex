@@ -768,6 +768,109 @@ test("command item notifications create a visible running command and complete t
   });
 });
 
+test("command output delta creates a visible placeholder when start was missed", () => {
+  const withOutput = appendCommandExecutionDelta(
+    makeThread(),
+    "turn-1",
+    "cmd-1",
+    "running\n",
+  );
+
+  assert.equal(withOutput.turns.length, 1);
+  assert.deepEqual(withOutput.turns[0]?.items, [
+    {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "Command output",
+      cwd: "cwd pending",
+      status: "inProgress",
+      initialWaitMs: null,
+      notifyOn: null,
+      aggregatedOutput: "running\n",
+      exitCode: null,
+      durationMs: null,
+    },
+  ]);
+  assert.deepEqual(
+    buildConversationEntries(withOutput).map((entry) => [
+      entry.id,
+      entry.kind,
+      entry.toolCategory,
+      entry.toolStatus,
+    ]),
+    [["cmd-1", "tool", "command", "inProgress"]],
+  );
+
+  const started = updateThreadItem(
+    withOutput,
+    "turn-1",
+    {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "rtk printf running",
+      cwd: "/tmp/project",
+      status: "inProgress",
+      initialWaitMs: 1000,
+      notifyOn: "output",
+      aggregatedOutput: null,
+      exitCode: null,
+      durationMs: null,
+    },
+    { startedAtMs: 2_000 },
+  );
+
+  assert.deepEqual(started.turns[0]?.items, [
+    {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "rtk printf running",
+      cwd: "/tmp/project",
+      status: "inProgress",
+      initialWaitMs: 1000,
+      notifyOn: "output",
+      aggregatedOutput: "running\n",
+      exitCode: null,
+      durationMs: null,
+      startedAtMs: 2_000,
+    },
+  ]);
+
+  const completed = updateThreadItem(
+    started,
+    "turn-1",
+    {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "rtk printf running",
+      cwd: "/tmp/project",
+      status: "completed",
+      initialWaitMs: 1000,
+      notifyOn: "output",
+      aggregatedOutput: "running\n",
+      exitCode: 0,
+      durationMs: 1000,
+    },
+    { completedAtMs: 3_000 },
+  );
+
+  assert.deepEqual(completed.turns[0]?.items, [
+    {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "rtk printf running",
+      cwd: "/tmp/project",
+      status: "completed",
+      initialWaitMs: 1000,
+      notifyOn: "output",
+      aggregatedOutput: "running\n",
+      exitCode: 0,
+      durationMs: 1000,
+      startedAtMs: 2_000,
+      completedAtMs: 3_000,
+    },
+  ]);
+});
+
 test("updateThreadItem preserves started time when completion updates the same item", () => {
   const thread = updateThreadItem(
     makeThread(),
@@ -3136,6 +3239,69 @@ test("pending live schedule subscribe does not duplicate restored active subscri
     [
       {
         id: "schedule-live",
+        subscriptionId: "sub-schedule",
+        kind: "schedule",
+        label: "daily digest",
+        detail: "every_interval 6h",
+        status: "Listening",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
+  );
+});
+
+test("lazy list and subscribe metadata hydrate restored active subscription turns", () => {
+  const listedThread = {
+    ...makeThread(),
+    turns: [],
+  };
+  const subscribedThread = {
+    ...makeThread(),
+    preview: "subscribed metadata",
+    turns: [],
+  };
+  const restoredSchedule: ThreadItem = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const readSnapshot: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "active-subscriptions",
+        items: [restoredSchedule],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+
+  let threads = upsertThread([], listedThread);
+  threads = upsertThreadMetadataPreservingTurns(threads, subscribedThread);
+  threads = upsertThread(threads, readSnapshot);
+  const analysis = buildThreadAnalysis(threads[0]!);
+
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [
+      {
+        id: "active-subscription:sub-schedule",
         subscriptionId: "sub-schedule",
         kind: "schedule",
         label: "daily digest",
