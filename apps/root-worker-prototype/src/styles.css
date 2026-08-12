@@ -1178,13 +1178,14 @@ svg {
 }
 
 .approval-request-metadata dd {
+  min-width: 0;
   margin: 0;
   color: #292524;
   font-family: "SFMono-Regular", "Consolas", monospace;
   font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .approval-request-error {
@@ -2321,6 +2322,7 @@ svg {
   display: flex;
   align-items: flex-start;
   gap: 14px;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
 }
@@ -2542,14 +2544,21 @@ svg {
   color: #44403c;
   font-family: "SF Mono", "Menlo", monospace;
   font-size: 0.92em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-code-block {
-  overflow: auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   padding: 12px 14px;
   border: 1px solid rgba(16, 24, 40, 0.08);
   border-radius: 12px;
   background: #fafaf9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-code-block code {
@@ -2557,12 +2566,16 @@ svg {
   background: transparent;
   font-size: 13px;
   line-height: 1.6;
+  white-space: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
   margin-top: 12px;
 }
 
@@ -2594,6 +2607,9 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   padding: 8px 10px;
   border: 1px solid rgba(16, 24, 40, 0.08);
   border-radius: 12px;
@@ -2605,6 +2621,13 @@ svg {
 .attachment-chip svg {
   width: 16px;
   height: 16px;
+  flex: 0 0 auto;
+}
+
+.attachment-chip span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .event-pill {
@@ -2612,8 +2635,10 @@ svg {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  width: 100%;
+  width: auto;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   padding: 14px 16px;
   border: 1px solid rgba(16, 24, 40, 0.08);
   border-radius: 16px;
@@ -2627,8 +2652,10 @@ svg {
 }
 
 .tool-card {
-  width: 100%;
+  width: auto;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   border: 1px solid rgba(16, 24, 40, 0.08);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.68);
@@ -2747,6 +2774,7 @@ svg {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
   padding: 14px 16px;
   list-style: none;
   cursor: pointer;
@@ -2757,7 +2785,9 @@ svg {
 }
 
 .tool-card-copy {
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 
 .tool-card-copy strong {
@@ -2765,6 +2795,8 @@ svg {
   color: #18181b;
   font-size: 14px;
   font-weight: 700;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tool-card-copy span {
@@ -2789,10 +2821,14 @@ svg {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .tool-status-badge {
+  max-width: 100%;
   padding: 4px 10px;
   border-radius: 999px;
   background: #f5f5f4;
@@ -2800,6 +2836,12 @@ svg {
   font-size: 12px;
   font-weight: 600;
   text-transform: capitalize;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tool-card-meta time {
+  flex: 0 0 auto;
 }
 
 .tool-status-badge.todo {
@@ -2823,11 +2865,15 @@ svg {
 }
 
 .tool-card-body {
+  min-width: 0;
+  max-width: 100%;
   padding: 0 16px 16px;
   border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
 .tool-output-block {
+  min-width: 0;
+  max-width: 100%;
   margin-top: 12px;
   border: 1px solid rgba(15, 118, 110, 0.16);
   border-radius: 8px;
@@ -2842,10 +2888,14 @@ svg {
   font-weight: 700;
   cursor: pointer;
   list-style-position: inside;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tool-output-block pre {
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
   padding: 12px;
   border-top: 1px solid rgba(15, 118, 110, 0.12);
   color: #292524;
@@ -2862,10 +2912,15 @@ svg {
 .tool-card-list {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .tool-card-item + .tool-card-item {
   border-top: 1px solid rgba(16, 24, 40, 0.06);
+}
+
+.tool-card-item {
+  min-width: 0;
 }
 
 .tool-card-item-single {
@@ -2878,6 +2933,7 @@ svg {
   justify-content: space-between;
   gap: 16px;
   width: 100%;
+  min-width: 0;
   padding: 14px 16px;
   border: 0;
   background: transparent;
@@ -2910,16 +2966,19 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   padding-top: 14px;
 }
 
 .poll-event-progress-labels {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   color: #57534e;
   font-size: 12px;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .poll-event-progress-track {
@@ -2939,9 +2998,12 @@ svg {
 
 .tool-card-body pre {
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
   padding-top: 14px;
   color: #44403c;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
   font-family: "SF Mono", "Menlo", monospace;
   font-size: 12px;
@@ -2976,8 +3038,10 @@ svg {
 
 .compact-card,
 .archive-card {
-  width: 100%;
+  width: auto;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   border: 1px solid rgba(75, 85, 99, 0.18);
   border-radius: 14px;
   background: linear-gradient(
@@ -2995,6 +3059,7 @@ svg {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
   padding: 14px 16px;
   list-style: none;
 }
@@ -3017,7 +3082,9 @@ svg {
 
 .compact-copy,
 .archive-copy {
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 
 .compact-copy strong,
@@ -3055,24 +3122,36 @@ svg {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
   color: #78716c;
   font-size: 12px;
 }
 
 .compact-meta span,
 .archive-meta span {
+  max-width: 100%;
   padding: 4px 10px;
   border-radius: 999px;
   background: #f3f4f6;
   color: #4b5563;
   font-weight: 600;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.compact-meta time,
+.archive-meta time {
+  flex: 0 0 auto;
 }
 
 .compact-body {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
   padding: 12px 16px 16px;
   border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
@@ -3080,6 +3159,7 @@ svg {
 .compact-body-note {
   color: #57534e;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .compact-body-error {
@@ -3090,6 +3170,7 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .compact-group-header {
@@ -3110,17 +3191,20 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
 
 .archive-body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
   padding: 12px 16px 16px;
   border-top: 1px solid rgba(16, 24, 40, 0.06);
 }
 
 .archive-cell {
+  min-width: 0;
   border-left: 2px solid rgba(120, 113, 108, 0.18);
   padding-left: 12px;
 }
@@ -3141,12 +3225,14 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .compact-nested-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
   padding: 10px 12px;
   border: 1px solid rgba(75, 85, 99, 0.12);
   border-radius: 10px;
@@ -3156,6 +3242,7 @@ svg {
 .compact-nested-item strong {
   color: #18181b;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .composer-shell {
