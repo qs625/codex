@@ -170,6 +170,10 @@ test("message rows expose role classes for chat alignment", () => {
 test("conversation text surfaces keep long urls inside measured cells", () => {
   const longUrl =
     "https://example.com/search?q=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const longPath =
+    "/aio_sandbox/sandboxes/123456789012345678901234567890/sessions/987654321098765432109876543210/bash_server/run_bash_with_a_very_long_route";
+  const longMethod =
+    "AIOSandbox_runBashCommandWithVeryLongUnderscoreFreeMethodName";
   const messageMarkup = renderToStaticMarkup(
     <MessageRow
       entries={[
@@ -180,7 +184,12 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
           role: "agent",
           text: `[result](${longUrl})`,
           timestamp: "09:41",
-          attachments: [],
+          attachments: [
+            {
+              kind: "file",
+              label: `modified ${longPath}`,
+            },
+          ],
         },
       ]}
     />,
@@ -193,29 +202,123 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
           kind: "tool",
           author: "root",
           role: "system",
-          text: longUrl,
+          text: `session schema: ${longPath}`,
           timestamp: "09:42",
           attachments: [],
-          toolName: "web_search",
-          toolStatus: "completed",
-          toolDetails: null,
+          toolName: longMethod,
+          toolStatus: "completed_with_extremely_long_status_identifier",
+          toolDetails: `Route\n${longPath}\n\nMethod\n${longMethod}\n\nSession ID\n1234567890123456789012345678901234567890`,
+          toolOutput: {
+            label: `Output ${longPath}`,
+            text: longUrl,
+            isEmpty: false,
+          },
           toolCategory: "external",
         },
       ]}
+      isOpen
+    />,
+  );
+  const compactMarkup = renderToStaticMarkup(
+    <CompactRow
+      entry={{
+        id: "compact-long-text",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: longPath,
+        timestamp: "09:43",
+        attachments: [],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 1,
+        replacementHistoryEntries: [],
+        archivedEntryCount: 1,
+        archivedCells: [
+          {
+            id: "archived-tool",
+            kind: "tool",
+            entries: [
+              {
+                id: "archived-tool-entry",
+                kind: "tool",
+                author: "root",
+                role: "system",
+                text: `archived ${longPath}`,
+                timestamp: "09:41",
+                attachments: [],
+                toolName: longMethod,
+                toolStatus: "completed",
+                toolDetails: longPath,
+                toolCategory: "external",
+              },
+            ],
+          },
+        ],
+        replacementHistoryCells: [],
+      }}
+      isExpanded
+    />,
+  );
+  const approvalMarkup = renderToStaticMarkup(
+    <ApprovalRequestsPanel
+      requests={[
+        {
+          requestId: "long-approval",
+          kind: "permissions",
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "permissions-1",
+          startedAtMs: 1_725_000_000_000,
+          reason: `needs ${longPath}`,
+          title: "Permissions request",
+          detail: `Grant access for ${longMethod}`,
+          metadata: [{ label: "write paths", value: longPath }],
+          permissions: { fileSystem: { write: [longPath] } },
+          status: "pending",
+          error: null,
+          availableDecisions: ["accept", "decline"],
+        },
+      ]}
+      onRespond={() => {}}
     />,
   );
   const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 
   assert.match(messageMarkup, /class="message-bubble"/);
   assert.match(messageMarkup, /class="markdown-content"/);
+  assert.match(messageMarkup, /class="attachment-chip"/);
   assert.match(toolMarkup, /class="tool-card-copy"/);
+  assert.match(toolMarkup, new RegExp(longMethod));
+  assert.match(toolMarkup, /completed_with_extremely_long_status_identifier/);
+  assert.match(toolMarkup, /Session ID/);
+  assert.match(compactMarkup, /archive-tool-stack/);
+  assert.match(compactMarkup, new RegExp(longMethod));
+  assert.match(approvalMarkup, /class="approval-request-metadata"/);
+  assert.match(approvalMarkup, new RegExp(longMethod));
   assert.match(
     styles,
     /\.conversation-virtual-row[\s\S]*max-width: 100%;/,
   );
+  assert.match(
+    styles,
+    /\.message-row,[\s\S]*\.archive-row \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/,
+  );
+  assert.match(styles, /\.tool-card \{[\s\S]*flex: 1 1 auto;/);
+  assert.match(styles, /\.tool-card \{[\s\S]*max-width: 100%;/);
   assert.match(styles, /\.markdown-content p[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.markdown-content a[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.markdown-content code[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-card-copy span[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.tool-card-copy strong[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.tool-status-badge \{[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.tool-card-body pre[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.tool-output-block summary[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.compact-card,[\s\S]*\.archive-card \{[\s\S]*flex: 1 1 auto;/);
+  assert.match(styles, /\.archive-cell \{[\s\S]*min-width: 0;/);
+  assert.match(styles, /\.approval-request-metadata dd[\s\S]*white-space: normal;/);
+  assert.match(styles, /\.approval-request-metadata dd[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.attachment-chip \{[\s\S]*max-width: 100%;/);
+  assert.match(styles, /\.attachment-chip span[\s\S]*overflow-wrap: anywhere;/);
 });
 
 test("grouped agent message rows render one bubble with multiple segments", () => {
