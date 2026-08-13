@@ -1804,11 +1804,6 @@ impl Session {
         state.clone_history()
     }
 
-    pub(crate) async fn remove_oldest_history_item(&self) {
-        let mut state = self.state.lock().await;
-        state.history.remove_first_item();
-    }
-
     pub(crate) async fn compact_window_items(&self) -> Vec<ResponseItem> {
         let state = self.state.lock().await;
         state.compact_window_items()

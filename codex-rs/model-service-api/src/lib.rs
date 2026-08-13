@@ -25,6 +25,7 @@ use protocol::config_types::Verbosity;
 use protocol::config_types::Personality;
 use protocol::models::BaseInstructions;
 use protocol::models::ResponseItem;
+use protocol::error::CodexErr;
 use protocol::openai_models::ModelInfo;
 use protocol::openai_models::ModelPreset;
 use protocol::openai_models::ModelsResponse;
@@ -535,12 +536,44 @@ impl std::error::Error for ModelServiceError {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRequestError {
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ModelRequestErrorKind>,
+}
+
+/// Machine-readable request error category preserved across model-service adapters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelRequestErrorKind {
+    ContextWindowExceeded,
 }
 
 impl ModelRequestError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            kind: None,
+        }
+    }
+
+    pub fn context_window_exceeded() -> Self {
+        Self {
+            message: "context window exceeded".to_string(),
+            kind: Some(ModelRequestErrorKind::ContextWindowExceeded),
+        }
+    }
+
+    pub fn from_codex_err(err: CodexErr) -> Self {
+        if matches!(err, CodexErr::ContextWindowExceeded) {
+            Self::context_window_exceeded()
+        } else {
+            Self::new(err.to_string())
+        }
+    }
+
+    pub fn into_codex_err(self) -> CodexErr {
+        match self.kind {
+            Some(ModelRequestErrorKind::ContextWindowExceeded) => CodexErr::ContextWindowExceeded,
+            None => CodexErr::Stream(self.message, None),
         }
     }
 }

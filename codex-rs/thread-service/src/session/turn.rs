@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::LazyLock;
 use std::sync::atomic::Ordering;
 
 use codex_approval_service_api::is_guardian_reviewer_source;
@@ -56,6 +58,7 @@ use codex_async_utils::OrCancelExt;
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::SkillInstructions;
 use codex_git_info::get_git_repo_root;
+use codex_utils_output_truncation::approx_token_count;
 use codex_turn_items::AssistantMessageStreamParsers;
 use codex_turn_items::ParsedAssistantTextDelta;
 use codex_turn_items::PlanModeStreamAction;
@@ -65,6 +68,7 @@ use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::FuturesOrdered;
 use hooks::PendingInputHookDisposition;
+use hooks::PendingInputRecord;
 use hooks::emit_hook_completed_events;
 use hooks::inspect_pending_input;
 use hooks::record_additional_contexts;
@@ -119,6 +123,43 @@ use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
 
+pub(crate) const CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE: &str =
+    "The current input is too large for this model's context window. Shorten the latest message or attach less content, then try again.";
+pub(crate) const AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str =
+    "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
+
+#[cfg(test)]
+type AutoCompactTestHook = Arc<
+    dyn Fn(&TurnContext, CompactionReason, CompactionPhase) -> Option<CodexResult<bool>>
+        + Send
+        + Sync
+        + 'static,
+>;
+
+#[cfg(test)]
+static AUTO_COMPACT_TEST_HOOK: LazyLock<std::sync::Mutex<Option<AutoCompactTestHook>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+
+#[cfg(test)]
+pub(crate) struct AutoCompactTestHookGuard;
+
+#[cfg(test)]
+impl Drop for AutoCompactTestHookGuard {
+    fn drop(&mut self) {
+        *AUTO_COMPACT_TEST_HOOK
+            .lock()
+            .expect("auto compact test hook mutex poisoned") = None;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn set_auto_compact_test_hook(hook: AutoCompactTestHook) -> AutoCompactTestHookGuard {
+    *AUTO_COMPACT_TEST_HOOK
+        .lock()
+        .expect("auto compact test hook mutex poisoned") = Some(hook);
+    AutoCompactTestHookGuard
+}
+
 /// Takes a user message as input and runs a loop where, at each sampling request, the model
 /// replies with either:
 ///
@@ -155,6 +196,8 @@ pub(crate) async fn run_turn(
 
     let model_info = turn_context.model_info.clone();
     let auto_compact_limit = model_info.auto_compact_token_limit().unwrap_or(i64::MAX);
+    let mut current_turn_input_exceeds_context_window =
+        user_input_exceeds_context_window(&input, turn_context.as_ref());
     let turn_provider_id = Some(turn_context.config.model_provider_id.as_str());
     let prewarmed_client_session = if turn_provider_id.is_none() {
         prewarmed_client_session
@@ -182,14 +225,19 @@ pub(crate) async fn run_turn(
     // new user message are recorded. Estimate pending incoming items (context
     // diffs/full reinjection + user input) and trigger compaction preemptively
     // when they would push the thread over the compaction threshold.
-    let pre_sampling_compact =
+    let pre_sampling_compact = if current_turn_input_exceeds_context_window {
+        PreSamplingCompactResult {
+            reset_client_session: false,
+        }
+    } else {
         match run_pre_sampling_compact(&sess, &turn_context, &mut *client_session).await {
             Ok(pre_sampling_compact) => pre_sampling_compact,
             Err(_) => {
                 error!("Failed to run pre-sampling compact");
                 return None;
             }
-        };
+        }
+    };
     if pre_sampling_compact.reset_client_session {
         client_session.reset_websocket_session();
     }
@@ -420,12 +468,18 @@ pub(crate) async fn run_turn(
         sess.record_conversation_items(&turn_context, &plugin_items)
             .await;
     }
+    let turn_scoped_injections = skill_items
+        .iter()
+        .chain(plugin_items.iter())
+        .cloned()
+        .collect::<Vec<_>>();
 
     track_turn_resolved_config_analytics(&sess, &turn_context, &input).await;
 
     let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
     let mut last_agent_message: Option<String> = None;
     let mut stop_hook_active = false;
+    let mut context_window_compact_retry_used = false;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
     // many turns, from the perspective of the user, it is a single turn.
     #[allow(deprecated)]
@@ -492,6 +546,9 @@ pub(crate) async fn run_turn(
 
         let has_accepted_pending_input = !accepted_pending_input.is_empty();
         for pending_input in accepted_pending_input {
+            if pending_input_exceeds_context_window(&pending_input, turn_context.as_ref()) {
+                current_turn_input_exceeds_context_window = true;
+            }
             record_pending_input(sess.as_ref(), turn_context.as_ref(), pending_input).await;
         }
         record_additional_contexts(
@@ -506,6 +563,38 @@ pub(crate) async fn run_turn(
                 continue;
             }
             break;
+        }
+
+        if current_turn_input_exceeds_context_window {
+            send_controlled_context_window_error(
+                sess.as_ref(),
+                turn_context.as_ref(),
+                CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE,
+            )
+            .await;
+            break;
+        }
+
+        match run_pre_request_context_compact_guard(&sess, &turn_context, &mut *client_session)
+            .await
+        {
+            Ok(pre_request_compact) => {
+                if pre_request_compact.reset_client_session {
+                    client_session.reset_websocket_session();
+                    if !turn_scoped_injections.is_empty() {
+                        replay_turn_scoped_injections_after_auto_compact(
+                            sess.as_ref(),
+                            turn_context.as_ref(),
+                            &turn_scoped_injections,
+                        )
+                        .await;
+                    }
+                }
+            }
+            Err(_) => {
+                error!("Failed to run pre-request context compact");
+                return None;
+            }
         }
 
         // Construct the input that we will send to the model.
@@ -583,6 +672,12 @@ pub(crate) async fn run_turn(
                     if reset_client_session {
                         client_session.reset_websocket_session();
                     }
+                    replay_turn_scoped_injections_after_auto_compact(
+                        sess.as_ref(),
+                        turn_context.as_ref(),
+                        &turn_scoped_injections,
+                    )
+                    .await;
                     can_drain_pending_input = !model_needs_follow_up;
                     continue;
                 }
@@ -715,6 +810,54 @@ pub(crate) async fn run_turn(
             }
             Err(CodexErr::TurnAborted) => {
                 // Aborted turn is reported via a different event.
+                break;
+            }
+            Err(CodexErr::ContextWindowExceeded) if !context_window_compact_retry_used => {
+                context_window_compact_retry_used = true;
+                let reset_client_session = match run_auto_compact(
+                    &sess,
+                    &turn_context,
+                    &mut *client_session,
+                    InitialContextInjection::BeforeLastUserMessage,
+                    CompactionReason::ContextLimit,
+                    CompactionPhase::MidTurn,
+                )
+                .await
+                {
+                    Ok(reset_client_session) => reset_client_session,
+                    Err(err) => {
+                        info!("Turn error after context-window compact retry failed: {err:#}");
+                        if !matches!(err, CodexErr::ContextWindowExceeded) {
+                            let event =
+                                EventMsg::Error(err.to_error_event(/*message_prefix*/ None));
+                            sess.send_event(&turn_context, event).await;
+                        }
+                        break;
+                    }
+                };
+                if reset_client_session {
+                    client_session.reset_websocket_session();
+                }
+                replay_turn_scoped_injections_after_auto_compact(
+                    sess.as_ref(),
+                    turn_context.as_ref(),
+                    &turn_scoped_injections,
+                )
+                .await;
+                can_drain_pending_input = false;
+                continue;
+            }
+            Err(CodexErr::ContextWindowExceeded) => {
+                send_controlled_context_window_error(
+                    sess.as_ref(),
+                    turn_context.as_ref(),
+                    if current_turn_input_exceeds_context_window {
+                        CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE
+                    } else {
+                        AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE
+                    },
+                )
+                .await;
                 break;
             }
             Err(CodexErr::InvalidImageRequest()) => {
@@ -884,6 +1027,126 @@ async fn run_pre_sampling_compact(
     })
 }
 
+async fn run_pre_request_context_compact_guard(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
+) -> CodexResult<PreSamplingCompactResult> {
+    let auto_compact_limit = turn_context
+        .model_info
+        .auto_compact_token_limit()
+        .unwrap_or(i64::MAX);
+    let estimated_token_count = sess
+        .get_estimated_token_count(turn_context.as_ref())
+        .await
+        .unwrap_or_else(|| {
+            tracing::debug!(
+                turn_id = %turn_context.sub_id,
+                "history token estimate unavailable; falling back to cached total usage"
+            );
+            0
+        });
+    let cached_total_usage_tokens = sess.get_total_token_usage().await;
+    let projected_tokens = estimated_token_count.max(cached_total_usage_tokens);
+    let should_compact =
+        should_compact_for_projected_request(projected_tokens, auto_compact_limit)
+            || {
+                crate::compact::should_auto_compact_in_soft_window(
+                    sess,
+                    turn_context,
+                    projected_tokens,
+                    auto_compact_limit,
+                )
+                .await?
+            };
+    if !should_compact {
+        return Ok(PreSamplingCompactResult {
+            reset_client_session: false,
+        });
+    }
+
+    let reset_client_session = run_auto_compact(
+        sess,
+        turn_context,
+        client_session,
+        InitialContextInjection::BeforeLastUserMessage,
+        CompactionReason::ContextLimit,
+        CompactionPhase::PreTurn,
+    )
+    .await?;
+    Ok(PreSamplingCompactResult {
+        reset_client_session,
+    })
+}
+
+pub(crate) fn should_compact_for_projected_request(
+    projected_tokens: i64,
+    auto_compact_limit: i64,
+) -> bool {
+    projected_tokens >= auto_compact_limit
+}
+
+fn pending_input_exceeds_context_window(
+    pending_input: &PendingInputRecord,
+    turn_context: &TurnContext,
+) -> bool {
+    match pending_input {
+        PendingInputRecord::UserMessage { content, .. } => {
+            user_input_exceeds_context_window(content, turn_context)
+        }
+        PendingInputRecord::ConversationItem { .. }
+        | PendingInputRecord::InterAgentCommunication { .. } => false,
+    }
+}
+
+pub(crate) fn user_input_exceeds_context_window(
+    input: &[UserInput],
+    turn_context: &TurnContext,
+) -> bool {
+    let Some(context_window) = turn_context.model_context_window() else {
+        return false;
+    };
+    estimate_user_input_tokens(input).is_some_and(|tokens| tokens > context_window)
+}
+
+fn estimate_user_input_tokens(input: &[UserInput]) -> Option<i64> {
+    if input.is_empty() {
+        return Some(0);
+    }
+    let input_item: ResponseInputItem =
+        codex_model_input::response_input_item_from_user_input(input.to_vec());
+    let response_item: ResponseItem = input_item.into();
+    let serialized = serde_json::to_string(&response_item).ok()?;
+    Some(i64::try_from(approx_token_count(&serialized)).unwrap_or(i64::MAX))
+}
+
+pub(crate) async fn send_controlled_context_window_error(
+    sess: &Session,
+    turn_context: &TurnContext,
+    message: &str,
+) {
+    sess.send_event(
+        turn_context,
+        EventMsg::Error(ErrorEvent {
+            message: message.to_string(),
+            codex_error_info: Some(CodexErrorInfo::ContextWindowExceeded),
+        }),
+    )
+    .await;
+}
+
+pub(crate) async fn replay_turn_scoped_injections_after_auto_compact(
+    sess: &Session,
+    turn_context: &TurnContext,
+    turn_scoped_injections: &[ResponseItem],
+) {
+    if turn_scoped_injections.is_empty() {
+        return;
+    }
+    sess.record_conversation_items(turn_context, turn_scoped_injections)
+        .await;
+}
+
 /// Runs pre-sampling compaction against the previous model when switching to a smaller
 /// context-window model.
 ///
@@ -941,6 +1204,20 @@ async fn run_auto_compact(
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<bool> {
+    #[cfg(test)]
+    if let Some(hook) = AUTO_COMPACT_TEST_HOOK
+        .lock()
+        .expect("auto compact test hook mutex poisoned")
+        .clone()
+        && let Some(result) = hook(turn_context.as_ref(), reason, phase)
+    {
+        let reset_client_session = result?;
+        if reset_client_session {
+            client_session.reset_websocket_session();
+        }
+        return Ok(reset_client_session);
+    }
+
     run_inline_auto_compact_task(
         Arc::clone(sess),
         Arc::clone(turn_context),
@@ -1691,7 +1968,7 @@ async fn try_run_sampling_request(
         .or_cancel(&cancellation_token)
         .await
         .map_err(|_| CodexErr::TurnAborted)?
-        .map_err(|err| CodexErr::Stream(err.to_string(), None))?;
+        .map_err(|err| err.into_codex_err())?;
     let mut in_flight: FuturesOrdered<BoxFuture<'static, CodexResult<ResponseItem>>> =
         FuturesOrdered::new();
     let mut needs_follow_up = false;
@@ -1739,7 +2016,7 @@ async fn try_run_sampling_request(
 
         let event = match event {
             Some(Ok(event)) => map_model_response_event(event),
-            Some(Err(err)) => break Err(CodexErr::Stream(err.to_string(), None)),
+            Some(Err(err)) => break Err(err.into_codex_err()),
             None => {
                 break Err(CodexErr::Stream(
                     "stream closed before response.completed".into(),

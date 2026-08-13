@@ -38,16 +38,19 @@ use protocol::items::context_compaction_replacement_items_from_response_items;
 use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::CompactedItem;
+use protocol::protocol::CodexErrorInfo;
+use protocol::protocol::ErrorEvent;
 use protocol::protocol::EventMsg;
 use protocol::protocol::TurnStartedEvent;
 use protocol::protocol::WarningEvent;
 use protocol::user_input::UserInput;
-use tracing::error;
 use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
+pub(crate) const COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str =
+    "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
 
 /// Controls whether compaction replacement history must include initial context.
 ///
@@ -211,7 +214,6 @@ async fn run_compact_task_inner_impl(
             .clone_history()
             .await
             .for_prompt(&turn_context.model_info.input_modalities);
-        let turn_input_len = turn_input.len();
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
         let attempt_result =
             crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
@@ -240,18 +242,8 @@ async fn run_compact_task_inner_impl(
                 return Err(CodexErr::Interrupted);
             }
             Err(e @ CodexErr::ContextWindowExceeded) => {
-                if turn_input_len > 1 {
-                    // Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact.
-                    error!(
-                        "Context window exceeded while compacting; removing oldest history item. Error: {e}"
-                    );
-                    sess.remove_oldest_history_item().await;
-                    retries = 0;
-                    continue;
-                }
                 sess.set_total_tokens_full(turn_context.as_ref()).await;
-                let event = EventMsg::Error(e.to_error_event(/*message_prefix*/ None));
-                sess.send_event(&turn_context, event).await;
+                send_compact_context_window_error(sess.as_ref(), turn_context.as_ref()).await;
                 return Err(e);
             }
             Err(e) => {
@@ -346,6 +338,14 @@ async fn run_compact_task_inner_impl(
     });
     sess.send_event(&turn_context, warning).await;
     Ok(compacted_message)
+}
+
+pub(crate) async fn send_compact_context_window_error(sess: &Session, turn_context: &TurnContext) {
+    let event = EventMsg::Error(ErrorEvent {
+        message: COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE.to_string(),
+        codex_error_info: Some(CodexErrorInfo::ContextWindowExceeded),
+    });
+    sess.send_event(turn_context, event).await;
 }
 
 fn compact_turn_final_output(
