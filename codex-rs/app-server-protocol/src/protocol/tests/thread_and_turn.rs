@@ -763,6 +763,7 @@ fn thread_history_projects_active_schedule_subscription_after_compact() {
         protocol::protocol::RolloutItem::Compacted(protocol::protocol::CompactedItem {
             message: "old display history compacted".into(),
             replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
         }),
         protocol::protocol::RolloutItem::SessionMeta(protocol::protocol::SessionMetaLine {
             meta: protocol::protocol::SessionMeta {

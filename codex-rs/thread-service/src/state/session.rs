@@ -39,6 +39,13 @@ pub(crate) struct SessionState {
     next_turn_is_first: bool,
 }
 
+#[derive(Clone)]
+pub(crate) struct InMemoryHistorySnapshot {
+    pub(crate) items: Vec<ResponseItem>,
+    pub(crate) reference_context_item: Option<TurnContextItem>,
+    pub(crate) compact_window_start: Option<usize>,
+}
+
 impl SessionState {
     /// Create a new session state mirroring previous `State::default()` semantics.
     pub(crate) fn new(session_configuration: SessionConfiguration) -> Self {
@@ -92,6 +99,32 @@ impl SessionState {
 
     pub(crate) fn clone_history(&self) -> ContextManager {
         self.history.clone()
+    }
+
+    pub(crate) fn clone_in_memory_history_snapshot(&self) -> InMemoryHistorySnapshot {
+        InMemoryHistorySnapshot {
+            items: self.history.raw_items().to_vec(),
+            reference_context_item: self.history.reference_context_item(),
+            compact_window_start: self.compact_window_start,
+        }
+    }
+
+    pub(crate) fn restore_in_memory_history_snapshot(&mut self, snapshot: InMemoryHistorySnapshot) {
+        self.history.replace(snapshot.items);
+        self.history
+            .set_reference_context_item(snapshot.reference_context_item);
+        self.compact_window_start = snapshot.compact_window_start;
+    }
+
+    pub(crate) fn replace_in_memory_history_for_compact_prefix(
+        &mut self,
+        items: Vec<ResponseItem>,
+    ) {
+        let compact_window_start = self
+            .compact_window_start
+            .map(|start| start.min(items.len()));
+        self.history.replace(items);
+        self.compact_window_start = compact_window_start;
     }
 
     #[allow(dead_code)]

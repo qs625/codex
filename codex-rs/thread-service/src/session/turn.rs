@@ -27,6 +27,7 @@ use crate::client_common::build_prompt;
 use crate::compact::InitialContextInjection;
 use crate::compact::collect_user_messages;
 use crate::compact::run_inline_auto_compact_task;
+use crate::compact::run_inline_auto_compact_task_with_retained_suffix;
 use crate::emit_thread_skills_update;
 use crate::feedback_tags;
 use crate::mentions::build_connector_slug_counts;
@@ -127,10 +128,11 @@ pub(crate) const CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE: &str =
     "The current input is too large for this model's context window. Shorten the latest message or attach less content, then try again.";
 pub(crate) const AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str =
     "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
+const MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS: usize = 64;
 
 #[cfg(test)]
 type AutoCompactTestHook = Arc<
-    dyn Fn(&TurnContext, CompactionReason, CompactionPhase) -> Option<CodexResult<bool>>
+    dyn Fn(&Session, &TurnContext, CompactionReason, CompactionPhase) -> Option<CodexResult<bool>>
         + Send
         + Sync
         + 'static,
@@ -575,28 +577,6 @@ pub(crate) async fn run_turn(
             break;
         }
 
-        match run_pre_request_context_compact_guard(&sess, &turn_context, &mut *client_session)
-            .await
-        {
-            Ok(pre_request_compact) => {
-                if pre_request_compact.reset_client_session {
-                    client_session.reset_websocket_session();
-                    if !turn_scoped_injections.is_empty() {
-                        replay_turn_scoped_injections_after_auto_compact(
-                            sess.as_ref(),
-                            turn_context.as_ref(),
-                            &turn_scoped_injections,
-                        )
-                        .await;
-                    }
-                }
-            }
-            Err(_) => {
-                error!("Failed to run pre-request context compact");
-                return None;
-            }
-        }
-
         // Construct the input that we will send to the model.
         let sampling_request_input: Vec<ResponseItem> = {
             sess.clone_history()
@@ -814,13 +794,10 @@ pub(crate) async fn run_turn(
             }
             Err(CodexErr::ContextWindowExceeded) if !context_window_compact_retry_used => {
                 context_window_compact_retry_used = true;
-                let reset_client_session = match run_auto_compact(
+                let reset_client_session = match run_suffix_staged_context_limit_compact(
                     &sess,
                     &turn_context,
                     &mut *client_session,
-                    InitialContextInjection::BeforeLastUserMessage,
-                    CompactionReason::ContextLimit,
-                    CompactionPhase::MidTurn,
                 )
                 .await
                 {
@@ -1027,65 +1004,6 @@ async fn run_pre_sampling_compact(
     })
 }
 
-async fn run_pre_request_context_compact_guard(
-    sess: &Arc<Session>,
-    turn_context: &Arc<TurnContext>,
-    client_session: &mut dyn model_service_api::ModelTurnClientApi,
-) -> CodexResult<PreSamplingCompactResult> {
-    let auto_compact_limit = turn_context
-        .model_info
-        .auto_compact_token_limit()
-        .unwrap_or(i64::MAX);
-    let estimated_token_count = sess
-        .get_estimated_token_count(turn_context.as_ref())
-        .await
-        .unwrap_or_else(|| {
-            tracing::debug!(
-                turn_id = %turn_context.sub_id,
-                "history token estimate unavailable; falling back to cached total usage"
-            );
-            0
-        });
-    let cached_total_usage_tokens = sess.get_total_token_usage().await;
-    let projected_tokens = estimated_token_count.max(cached_total_usage_tokens);
-    let should_compact =
-        should_compact_for_projected_request(projected_tokens, auto_compact_limit)
-            || {
-                crate::compact::should_auto_compact_in_soft_window(
-                    sess,
-                    turn_context,
-                    projected_tokens,
-                    auto_compact_limit,
-                )
-                .await?
-            };
-    if !should_compact {
-        return Ok(PreSamplingCompactResult {
-            reset_client_session: false,
-        });
-    }
-
-    let reset_client_session = run_auto_compact(
-        sess,
-        turn_context,
-        client_session,
-        InitialContextInjection::BeforeLastUserMessage,
-        CompactionReason::ContextLimit,
-        CompactionPhase::PreTurn,
-    )
-    .await?;
-    Ok(PreSamplingCompactResult {
-        reset_client_session,
-    })
-}
-
-pub(crate) fn should_compact_for_projected_request(
-    projected_tokens: i64,
-    auto_compact_limit: i64,
-) -> bool {
-    projected_tokens >= auto_compact_limit
-}
-
 fn pending_input_exceeds_context_window(
     pending_input: &PendingInputRecord,
     turn_context: &TurnContext,
@@ -1143,7 +1061,16 @@ pub(crate) async fn replay_turn_scoped_injections_after_auto_compact(
     if turn_scoped_injections.is_empty() {
         return;
     }
-    sess.record_conversation_items(turn_context, turn_scoped_injections)
+    let history = sess.clone_history().await;
+    let missing_injections: Vec<ResponseItem> = turn_scoped_injections
+        .iter()
+        .filter(|item| !history.raw_items().contains(item))
+        .cloned()
+        .collect();
+    if missing_injections.is_empty() {
+        return;
+    }
+    sess.record_conversation_items(turn_context, &missing_injections)
         .await;
 }
 
@@ -1205,12 +1132,13 @@ async fn run_auto_compact(
     phase: CompactionPhase,
 ) -> CodexResult<bool> {
     #[cfg(test)]
-    if let Some(hook) = AUTO_COMPACT_TEST_HOOK
-        .lock()
-        .expect("auto compact test hook mutex poisoned")
-        .clone()
-        && let Some(result) = hook(turn_context.as_ref(), reason, phase)
-    {
+    if let Some(result) = {
+        let hook = AUTO_COMPACT_TEST_HOOK
+            .lock()
+            .expect("auto compact test hook mutex poisoned")
+            .clone();
+        hook.and_then(|hook| hook(sess.as_ref(), turn_context.as_ref(), reason, phase))
+    } {
         let reset_client_session = result?;
         if reset_client_session {
             client_session.reset_websocket_session();
@@ -1228,6 +1156,96 @@ async fn run_auto_compact(
     .await?;
     client_session.reset_websocket_session();
     Ok(true)
+}
+
+async fn run_auto_compact_with_retained_suffix(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
+    initial_context_injection: InitialContextInjection,
+    reason: CompactionReason,
+    phase: CompactionPhase,
+    retained_suffix: Vec<ResponseItem>,
+) -> CodexResult<bool> {
+    #[cfg(test)]
+    if let Some(result) = {
+        let hook = AUTO_COMPACT_TEST_HOOK
+            .lock()
+            .expect("auto compact test hook mutex poisoned")
+            .clone();
+        hook.and_then(|hook| hook(sess.as_ref(), turn_context.as_ref(), reason, phase))
+    } {
+        let reset_client_session = result?;
+        if !retained_suffix.is_empty() {
+            let mut items = sess.clone_history().await.raw_items().to_vec();
+            items.extend(retained_suffix);
+            sess.replace_in_memory_history_for_compact_prefix(items).await;
+        }
+        if reset_client_session {
+            client_session.reset_websocket_session();
+        }
+        return Ok(reset_client_session);
+    }
+
+    run_inline_auto_compact_task_with_retained_suffix(
+        Arc::clone(sess),
+        Arc::clone(turn_context),
+        initial_context_injection,
+        reason,
+        phase,
+        retained_suffix,
+    )
+    .await?;
+    client_session.reset_websocket_session();
+    Ok(true)
+}
+
+async fn run_suffix_staged_context_limit_compact(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
+) -> CodexResult<bool> {
+    let original_history = sess.clone_in_memory_history_snapshot().await;
+    let total_items = original_history.items.len();
+    let max_suffix_len = total_items
+        .saturating_sub(1)
+        .min(MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS);
+    if max_suffix_len == 0 {
+        return Err(CodexErr::ContextWindowExceeded);
+    }
+
+    for suffix_len in 1..=max_suffix_len {
+        let prefix_len = total_items - suffix_len;
+        let prefix = original_history.items[..prefix_len].to_vec();
+        let suffix = original_history.items[prefix_len..].to_vec();
+        sess.replace_in_memory_history_for_compact_prefix(prefix).await;
+
+        match run_auto_compact_with_retained_suffix(
+            sess,
+            turn_context,
+            client_session,
+            InitialContextInjection::BeforeLastUserMessage,
+            CompactionReason::ContextLimit,
+            CompactionPhase::MidTurn,
+            suffix,
+        )
+        .await
+        {
+            Ok(reset_client_session) => return Ok(reset_client_session),
+            Err(CodexErr::ContextWindowExceeded) => {
+                sess.restore_in_memory_history_snapshot(original_history.clone())
+                    .await;
+                continue;
+            }
+            Err(err) => {
+                sess.restore_in_memory_history_snapshot(original_history).await;
+                return Err(err);
+            }
+        }
+    }
+
+    sess.restore_in_memory_history_snapshot(original_history).await;
+    Err(CodexErr::ContextWindowExceeded)
 }
 
 #[allow(deprecated)]

@@ -273,6 +273,7 @@ use super::*;
             RolloutItem::Compacted(CompactedItem {
                 message: String::new(),
                 replacement_history: None,
+                visible_replacement_history_len: None,
             }),
             RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: "turn-compact".into(),
@@ -331,6 +332,7 @@ use super::*;
             RolloutItem::Compacted(CompactedItem {
                 message: "summary".into(),
                 replacement_history: Some(replacement_history.clone()),
+                visible_replacement_history_len: None,
             }),
         ];
 
@@ -372,6 +374,7 @@ use super::*;
             RolloutItem::Compacted(CompactedItem {
                 message: "summary".into(),
                 replacement_history: Some(replacement_history.clone()),
+                visible_replacement_history_len: None,
             }),
             RolloutItem::EventMsg(EventMsg::ContextCompacted(ContextCompactedEvent {})),
             RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {

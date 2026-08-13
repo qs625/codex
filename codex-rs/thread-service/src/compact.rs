@@ -2,6 +2,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::event_mapping::injected_context_item_from_response_items;
+use crate::client_common::PromptBuildParams;
+use crate::client_common::build_prompt;
 #[cfg(test)]
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
@@ -15,10 +17,12 @@ use codex_analytics_api::CompactionStatus;
 use codex_analytics_api::CompactionStrategy;
 use codex_analytics_api::CompactionTrigger;
 use codex_analytics_api::now_unix_seconds;
+use codex_features::Feature;
 use codex_config_types::CompactReplacementFileRole as ConfigCompactReplacementFileRole;
 use codex_turn_items::last_assistant_message_from_turn;
 #[cfg(test)]
 use codex_turn_items::process_remote_compacted_history;
+use codex_turn_items::raw_assistant_output_text_from_item;
 use compact_service::FsCompactService;
 use compact_service_api::CompactMemoryRole;
 use compact_service_api::CompactReplacementFile;
@@ -44,11 +48,12 @@ use protocol::protocol::EventMsg;
 use protocol::protocol::TurnStartedEvent;
 use protocol::protocol::WarningEvent;
 use protocol::user_input::UserInput;
+use futures::StreamExt;
 use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
-const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
+pub(crate) const DEFAULT_COMPACTED_MESSAGE: &str = "Memory-backed checkpoint recorded.";
 pub(crate) const COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str =
     "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
 
@@ -73,6 +78,25 @@ pub(crate) async fn run_inline_auto_compact_task(
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<()> {
+    run_inline_auto_compact_task_with_retained_suffix(
+        sess,
+        turn_context,
+        initial_context_injection,
+        reason,
+        phase,
+        Vec::new(),
+    )
+    .await
+}
+
+pub(crate) async fn run_inline_auto_compact_task_with_retained_suffix(
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    initial_context_injection: InitialContextInjection,
+    reason: CompactionReason,
+    phase: CompactionPhase,
+    retained_suffix: Vec<ResponseItem>,
+) -> CodexResult<()> {
     run_compact_task_inner(
         sess,
         turn_context,
@@ -81,6 +105,7 @@ pub(crate) async fn run_inline_auto_compact_task(
         CompactionTrigger::Auto,
         reason,
         phase,
+        retained_suffix,
     )
     .await?;
     Ok(())
@@ -106,6 +131,7 @@ pub(crate) async fn run_compact_task(
         CompactionTrigger::Manual,
         CompactionReason::UserRequested,
         CompactionPhase::StandaloneTurn,
+        Vec::new(),
     )
     .await?;
     Ok(())
@@ -119,6 +145,7 @@ async fn run_compact_task_inner(
     trigger: CompactionTrigger,
     reason: CompactionReason,
     phase: CompactionPhase,
+    retained_suffix: Vec<ResponseItem>,
 ) -> CodexResult<()> {
     let attempt = CompactionAnalyticsAttempt::begin(
         sess.as_ref(),
@@ -146,6 +173,7 @@ async fn run_compact_task_inner(
         Arc::clone(&turn_context),
         input,
         initial_context_injection,
+        retained_suffix,
     )
     .await;
     let status = compaction_status_from_result(&result);
@@ -167,17 +195,21 @@ async fn run_compact_task_inner_impl(
     turn_context: Arc<TurnContext>,
     _input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
+    retained_suffix: Vec<ResponseItem>,
 ) -> CodexResult<String> {
     let compact_service = FsCompactService::new();
     let replacement_files = compact_replacement_files(turn_context.as_ref());
+    let staged_recovery = !retained_suffix.is_empty();
 
     let compaction_item = ContextCompactionItem::new();
-    let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
-    sess.emit_turn_item_started(&turn_context, &started_compaction_item)
-        .await;
     let initial_input_for_turn = compact_prompt_control_item(turn_context.compact_prompt());
-    sess.record_conversation_items(&turn_context, std::slice::from_ref(&initial_input_for_turn))
-        .await;
+    if !staged_recovery {
+        let started_compaction_item = TurnItem::ContextCompaction(compaction_item.clone());
+        sess.emit_turn_item_started(&turn_context, &started_compaction_item)
+            .await;
+        sess.record_conversation_items(&turn_context, std::slice::from_ref(&initial_input_for_turn))
+            .await;
+    }
 
     let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
@@ -209,13 +241,36 @@ async fn run_compact_task_inner_impl(
         expose_model_visible_tools: false,
     });
     let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
+    let mut isolated_compacted_message = None;
     loop {
-        let turn_input = sess
+        let mut turn_input = sess
             .clone_history()
             .await
             .for_prompt(&turn_context.model_info.input_modalities);
+        if staged_recovery {
+            turn_input.push(initial_input_for_turn.clone());
+        }
         let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
-        let attempt_result =
+        let attempt_result = if staged_recovery {
+            match run_isolated_compact_sampling(
+                sess.as_ref(),
+                turn_context.as_ref(),
+                &mut *client_session,
+                turn_metadata_header.as_deref(),
+                turn_input,
+            )
+            .await
+            {
+                Ok(compacted_message) => {
+                    isolated_compacted_message = Some(compacted_message);
+                    Ok(crate::session::turn::SamplingRequestResult {
+                        needs_follow_up: false,
+                        last_agent_message: None,
+                    })
+                }
+                Err(err) => Err(err),
+            }
+        } else {
             crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
                 tool_inputs_override: Some(Arc::clone(&compact_tool_inputs)),
                 sess: Arc::clone(&sess),
@@ -229,7 +284,8 @@ async fn run_compact_task_inner_impl(
                 skills_outcome,
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
             })
-            .await;
+            .await
+        };
 
         match attempt_result {
             Ok(result) => {
@@ -243,10 +299,21 @@ async fn run_compact_task_inner_impl(
             }
             Err(e @ CodexErr::ContextWindowExceeded) => {
                 sess.set_total_tokens_full(turn_context.as_ref()).await;
-                send_compact_context_window_error(sess.as_ref(), turn_context.as_ref()).await;
+                if !staged_recovery {
+                    send_compact_context_window_error(sess.as_ref(), turn_context.as_ref()).await;
+                }
                 return Err(e);
             }
             Err(e) => {
+                if retries >= max_retries
+                    && client_session.try_switch_fallback_transport(
+                        turn_context.session_telemetry.clone(),
+                        turn_context.model_info.clone(),
+                    )
+                {
+                    retries = 0;
+                    continue;
+                }
                 if retries < max_retries {
                     retries += 1;
                     let delay = backoff(retries);
@@ -277,8 +344,10 @@ async fn run_compact_task_inner_impl(
         })?;
     let compact_window_summary =
         compact_service.summarize_compact_window(history_items, SUMMARY_PREFIX);
-    let compacted_message = compact_turn_final_output(history_items, turn_context.compact_prompt())
-        .unwrap_or_else(|| DEFAULT_COMPACTED_MESSAGE.to_string());
+    let compacted_message = isolated_compacted_message.unwrap_or_else(|| {
+        compact_turn_final_output(history_items, turn_context.compact_prompt())
+            .unwrap_or_else(|| DEFAULT_COMPACTED_MESSAGE.to_string())
+    });
     let mut new_history = compact_service.build_replacement_history(ReplacementHistoryInput {
         initial_context: Vec::new(),
         memory_bundle: memory_bundle.clone(),
@@ -305,10 +374,16 @@ async fn run_compact_task_inner_impl(
                 .await,
         ),
     };
-    let replacement_history = Some(new_history.clone());
+    let visible_replacement_history_len = new_history.len();
+    let mut persisted_replacement_history = new_history.clone();
+    persisted_replacement_history.extend(retained_suffix);
+    let replacement_history = Some(persisted_replacement_history.clone());
     let compacted_item = CompactedItem {
         message: compacted_message.clone(),
         replacement_history: replacement_history.clone(),
+        visible_replacement_history_len: (visible_replacement_history_len
+            != persisted_replacement_history.len())
+        .then_some(visible_replacement_history_len),
     };
     let replacement_history_tail = new_history
         .iter()
@@ -326,7 +401,11 @@ async fn run_compact_task_inner_impl(
         replacement_history: replacement_history_items,
         ..compaction_item
     };
-    sess.replace_compacted_history(new_history, reference_context_item, compacted_item)
+    sess.replace_compacted_history(
+        persisted_replacement_history,
+        reference_context_item,
+        compacted_item,
+    )
         .await;
     client_session.reset_websocket_session();
     sess.recompute_token_usage(&turn_context).await;
@@ -338,6 +417,102 @@ async fn run_compact_task_inner_impl(
     });
     sess.send_event(&turn_context, warning).await;
     Ok(compacted_message)
+}
+
+pub(crate) async fn run_isolated_compact_sampling(
+    sess: &Session,
+    turn_context: &TurnContext,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
+    turn_metadata_header: Option<&str>,
+    input: Vec<ResponseItem>,
+) -> CodexResult<String> {
+    let base_instructions = sess.get_base_instructions().await;
+    let prompt = build_prompt(PromptBuildParams {
+        input,
+        tools: Vec::new(),
+        parallel_tool_calls: false,
+        base_instructions,
+        personality: turn_context.personality,
+        output_schema: turn_context.final_output_json_schema.clone(),
+        output_schema_strict: false,
+    });
+    let inference_trace = sess.services.rollout_thread_trace.inference_trace_context(
+        turn_context.sub_id.as_str(),
+        turn_context.model_info.slug.as_str(),
+        turn_context.provider.info().name.as_str(),
+    );
+    let mut stream = client_session
+        .stream_responses(model_service_api::TurnModelRequest {
+            request: model_service_api::ResponsesModelRequest {
+                input: prompt.input,
+                tools: prompt.tools,
+                parallel_tool_calls: prompt.parallel_tool_calls,
+                base_instructions: prompt.base_instructions,
+                personality: prompt.personality,
+                output_schema: prompt.output_schema,
+                output_schema_strict: prompt.output_schema_strict,
+                model: Some(turn_context.model_info.slug.clone()),
+                reasoning_effort: turn_context.reasoning_effort,
+                reasoning_summary: turn_context.reasoning_summary,
+                service_tier: crate::session::turn::model_service_tier(
+                    turn_context.config.service_tier.as_deref(),
+                ),
+                verbosity: None,
+                turn_metadata_header: turn_metadata_header.map(ToOwned::to_owned),
+            },
+            model_info: turn_context.model_info.clone(),
+            session_telemetry: turn_context.session_telemetry.clone(),
+            turn_metadata_header: turn_metadata_header.map(ToOwned::to_owned),
+            inference_trace,
+        })
+        .await
+        .map_err(|err| err.into_codex_err())?;
+
+    let mut assistant_output = String::new();
+    while let Some(event) = stream.next().await {
+        match event.map_err(|err| err.into_codex_err())? {
+            model_service_api::ModelResponseEvent::ItemDone { item }
+            | model_service_api::ModelResponseEvent::ItemAdded { item } => {
+                if let Some(text) = raw_assistant_output_text_from_item(&item) {
+                    assistant_output = text;
+                }
+            }
+            model_service_api::ModelResponseEvent::OutputTextDelta { delta } => {
+                assistant_output.push_str(&delta);
+            }
+            model_service_api::ModelResponseEvent::Completed {
+                response_id,
+                token_usage,
+                ..
+            } => {
+                sess.record_token_usage_info(turn_context, token_usage.as_ref())
+                    .await;
+                if sess.enabled(Feature::ResponsesWebsocketResponseProcessed) {
+                    client_session.send_response_processed(&response_id).await;
+                }
+                return Ok(if assistant_output.is_empty() {
+                    DEFAULT_COMPACTED_MESSAGE.to_string()
+                } else {
+                    assistant_output
+                });
+            }
+            model_service_api::ModelResponseEvent::Created
+            | model_service_api::ModelResponseEvent::ServerModel { .. }
+            | model_service_api::ModelResponseEvent::ModelVerifications { .. }
+            | model_service_api::ModelResponseEvent::ServerReasoningIncluded { .. }
+            | model_service_api::ModelResponseEvent::ToolCallInputDelta { .. }
+            | model_service_api::ModelResponseEvent::ReasoningSummaryDelta { .. }
+            | model_service_api::ModelResponseEvent::ReasoningContentDelta { .. }
+            | model_service_api::ModelResponseEvent::ReasoningSummaryPartAdded { .. }
+            | model_service_api::ModelResponseEvent::RateLimits { .. }
+            | model_service_api::ModelResponseEvent::ModelsEtag { .. } => {}
+        }
+    }
+
+    Err(CodexErr::Stream(
+        "compact stream closed before response.completed".to_string(),
+        None,
+    ))
 }
 
 pub(crate) async fn send_compact_context_window_error(sess: &Session, turn_context: &TurnContext) {

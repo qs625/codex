@@ -237,7 +237,13 @@ impl ThreadHistoryBuilder {
             .replacement_history
             .as_ref()
             .map(|history| {
-                context_compaction_replacement_items_from_response_items(history.clone())
+                let visible_len = payload
+                    .visible_replacement_history_len
+                    .unwrap_or(history.len())
+                    .min(history.len());
+                context_compaction_replacement_items_from_response_items(
+                    history[..visible_len].to_vec(),
+                )
                     .into_iter()
                     .map(context_compaction_replacement_item_from_core)
                     .collect()

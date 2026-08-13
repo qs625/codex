@@ -127,6 +127,7 @@ async fn record_initial_history_resumed_turn_context_after_compaction_reestablis
         RolloutItem::Compacted(CompactedItem {
             message: String::new(),
             replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
         }),
         RolloutItem::TurnContext(previous_context_item.clone()),
         turn_complete(&previous_turn_id),
@@ -174,6 +175,7 @@ async fn record_initial_history_resumed_hydrates_materialized_instructions_for_l
         RolloutItem::Compacted(CompactedItem {
             message: String::new(),
             replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
         }),
         RolloutItem::TurnContext(previous_context_item),
         turn_complete(&previous_turn_id),
@@ -223,6 +225,7 @@ async fn record_initial_history_resumed_trailing_incomplete_turn_compaction_clea
         RolloutItem::Compacted(CompactedItem {
             message: String::new(),
             replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
         }),
     ];
 

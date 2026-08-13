@@ -13,6 +13,8 @@ pub struct CompactedItem {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_history: Option<Vec<ResponseItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_replacement_history_len: Option<usize>,
 }
 
 impl From<CompactedItem> for ResponseItem {

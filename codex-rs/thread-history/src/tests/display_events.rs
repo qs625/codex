@@ -739,6 +739,7 @@ use super::*;
             RolloutItem::Compacted(CompactedItem {
                 message: String::new(),
                 replacement_history: None,
+                visible_replacement_history_len: None,
             }),
         ];
 
