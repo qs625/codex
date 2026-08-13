@@ -1,3 +1,36 @@
+use protocol::error::CodexErr;
+use protocol::items::TurnItem;
+use protocol::openai_models::ModelInfo;
+use protocol::protocol::Event;
+use protocol::protocol::ErrorEvent;
+use protocol::user_input::UserInput;
+use codex_analytics_api::CompactionPhase;
+use codex_analytics_api::CompactionReason;
+use std::collections::VecDeque;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering as AtomicOrdering;
+
+const OLD_CONTEXT_WINDOW_FATAL_PREFIX: &str = "Codex ran out of room in the model's context window";
+const OLD_CONTEXT_WINDOW_FATAL_ACTION: &str =
+    "Start a new thread or clear earlier history before retrying";
+
+async fn recv_error_event(rx: &async_channel::Receiver<Event>) -> ErrorEvent {
+    loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("expected error event")
+            .expect("event channel should remain open");
+        if let EventMsg::Error(error) = event.msg {
+            return error;
+        }
+    }
+}
+
+fn assert_not_old_context_window_fatal(message: &str) {
+    assert!(!message.contains(OLD_CONTEXT_WINDOW_FATAL_PREFIX));
+    assert!(!message.contains(OLD_CONTEXT_WINDOW_FATAL_ACTION));
+}
+
 #[tokio::test]
 async fn regular_turn_emits_turn_started_without_waiting_for_startup_prewarm() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
@@ -320,6 +353,370 @@ pub(crate) fn test_tool_inputs(
     };
     let _ = (session, turn_context);
     Arc::new(result)
+}
+
+#[test]
+fn projected_request_tokens_trigger_hard_compact_guard_even_with_low_cached_usage() {
+    assert!(crate::session::turn::should_compact_for_projected_request(
+        1_200, 1_000,
+    ));
+    assert!(!crate::session::turn::should_compact_for_projected_request(
+        999, 1_000,
+    ));
+}
+
+#[tokio::test]
+async fn current_user_input_exceeding_window_is_classified_locally() {
+    let (_session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.model_context_window = Some(32);
+        },
+    )
+    .await;
+
+    let input = vec![UserInput::Text {
+        text: "current input ".repeat(500),
+        text_elements: Vec::new(),
+    }];
+
+    assert!(crate::session::turn::user_input_exceeds_context_window(
+        &input,
+        turn_context.as_ref(),
+    ));
+}
+
+#[tokio::test]
+async fn oversized_current_input_emits_controlled_error_without_compacting() {
+    let (session, turn_context, rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.model_context_window = Some(32);
+        },
+    )
+    .await;
+    let input = vec![UserInput::Text {
+        text: "current input ".repeat(500),
+        text_elements: Vec::new(),
+    }];
+
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        input,
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ContextWindowExceededTurnClient {
+            fail_before_stream: true,
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    let mut saw_compaction = false;
+    let mut error = None;
+    while let Ok(event) = rx.try_recv() {
+        match event.msg {
+            EventMsg::ItemStarted(item) => {
+                if matches!(item.item, TurnItem::ContextCompaction(_)) {
+                    saw_compaction = true;
+                }
+            }
+            EventMsg::ItemCompleted(item) => {
+                if matches!(item.item, TurnItem::ContextCompaction(_)) {
+                    saw_compaction = true;
+                }
+            }
+            EventMsg::Error(event) => {
+                error = Some(event);
+            }
+            _ => {}
+        }
+    }
+    assert!(!saw_compaction, "oversized current input should not compact");
+    let error = error.expect("oversized input should emit an error");
+    assert_eq!(
+        error.message,
+        crate::session::turn::CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE
+    );
+    assert_not_old_context_window_fatal(&error.message);
+}
+
+#[tokio::test]
+async fn provider_context_window_retry_failure_emits_controlled_error() {
+    let (session, turn_context, rx) = make_session_and_context_with_rx().await;
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    let compact_request_count = Arc::new(AtomicUsize::new(0));
+    let compact_request_count_for_hook = Arc::clone(&compact_request_count);
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id {
+                return None;
+            }
+            if matches!(reason, CompactionReason::ContextLimit)
+                && matches!(phase, CompactionPhase::MidTurn)
+            {
+                compact_request_count_for_hook.fetch_add(1, AtomicOrdering::SeqCst);
+                Some(Ok(true))
+            } else {
+                Some(Ok(false))
+            }
+        },
+    ));
+
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::ContextWindowExceeded,
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    let error = recv_error_event(&rx).await;
+    assert_eq!(
+        error.message,
+        crate::session::turn::AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE
+    );
+    assert_not_old_context_window_fatal(&error.message);
+    assert_eq!(
+        regular_request_count.load(AtomicOrdering::SeqCst),
+        2,
+        "regular turn should retry exactly once after context-window overflow"
+    );
+    assert_eq!(
+        compact_request_count.load(AtomicOrdering::SeqCst),
+        1,
+        "context-window recovery should run one compact attempt"
+    );
+}
+
+#[tokio::test]
+async fn compact_context_window_failure_emits_controlled_error() {
+    let (session, turn_context, rx) = make_session_and_context_with_rx().await;
+
+    crate::compact::send_compact_context_window_error(session.as_ref(), turn_context.as_ref()).await;
+
+    let error = recv_error_event(&rx).await;
+    assert_eq!(
+        error.message,
+        crate::compact::COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE
+    );
+    assert_not_old_context_window_fatal(&error.message);
+}
+
+#[tokio::test]
+async fn auto_compact_replays_turn_scoped_injections() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let injection = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "turn scoped skill instructions".to_string(),
+        }],
+        phase: None,
+    };
+
+    session
+        .replace_history(Vec::new(), /*reference_context_item*/ None)
+        .await;
+    crate::session::turn::replay_turn_scoped_injections_after_auto_compact(
+        session.as_ref(),
+        turn_context.as_ref(),
+        std::slice::from_ref(&injection),
+    )
+    .await;
+
+    assert!(
+        user_input_texts(session.clone_history().await.raw_items())
+            .contains(&"turn scoped skill instructions")
+    );
+}
+
+struct ContextWindowExceededTurnClient {
+    fail_before_stream: bool,
+}
+
+enum ScriptedTurnResponse {
+    ContextWindowExceeded,
+}
+
+struct ScriptedTurnClient {
+    responses: VecDeque<ScriptedTurnResponse>,
+    request_count: Arc<AtomicUsize>,
+    provider: Option<String>,
+}
+
+impl model_service_api::ModelTurnClientApi for ScriptedTurnClient {
+    fn provider(&self) -> Option<&str> {
+        self.provider.as_deref()
+    }
+
+    fn reset_websocket_session(&mut self) {}
+
+    fn send_response_processed<'a>(
+        &'a self,
+        _response_id: &'a str,
+    ) -> model_service_api::ModelFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn prewarm_websocket(
+        &mut self,
+        _request: model_service_api::TurnModelRequest,
+    ) -> model_service_api::ModelFuture<'_, Result<(), model_service_api::ModelRequestError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn stream_responses(
+        &mut self,
+        _request: model_service_api::TurnModelRequest,
+    ) -> model_service_api::ModelFuture<
+        '_,
+        Result<model_service_api::ModelResponseStream, model_service_api::ModelRequestError>,
+    > {
+        self.request_count.fetch_add(1, AtomicOrdering::SeqCst);
+        let response = self
+            .responses
+            .pop_front()
+            .expect("scripted turn response should be available");
+        Box::pin(async move {
+            match response {
+                ScriptedTurnResponse::ContextWindowExceeded => {
+                    Err(model_service_api::ModelRequestError::context_window_exceeded())
+                }
+            }
+        })
+    }
+
+    fn try_switch_fallback_transport(
+        &mut self,
+        _session_telemetry: session_telemetry_api::SharedSessionTelemetry,
+        _model_info: ModelInfo,
+    ) -> bool {
+        false
+    }
+}
+
+impl model_service_api::ModelTurnClientApi for ContextWindowExceededTurnClient {
+    fn provider(&self) -> Option<&str> {
+        None
+    }
+
+    fn reset_websocket_session(&mut self) {}
+
+    fn send_response_processed<'a>(
+        &'a self,
+        _response_id: &'a str,
+    ) -> model_service_api::ModelFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn prewarm_websocket(
+        &mut self,
+        _request: model_service_api::TurnModelRequest,
+    ) -> model_service_api::ModelFuture<'_, Result<(), model_service_api::ModelRequestError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn stream_responses(
+        &mut self,
+        _request: model_service_api::TurnModelRequest,
+    ) -> model_service_api::ModelFuture<
+        '_,
+        Result<model_service_api::ModelResponseStream, model_service_api::ModelRequestError>,
+    > {
+        let fail_before_stream = self.fail_before_stream;
+        Box::pin(async move {
+            if fail_before_stream {
+                return Err(model_service_api::ModelRequestError::context_window_exceeded());
+            }
+            Ok(Box::pin(futures::stream::iter(vec![Err(
+                model_service_api::ModelRequestError::context_window_exceeded(),
+            )])) as model_service_api::ModelResponseStream)
+        })
+    }
+
+    fn try_switch_fallback_transport(
+        &mut self,
+        _session_telemetry: session_telemetry_api::SharedSessionTelemetry,
+        _model_info: ModelInfo,
+    ) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn sampling_request_preserves_context_window_error_from_stream_start() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let mut client = ContextWindowExceededTurnClient {
+        fail_before_stream: true,
+    };
+
+    let result = crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
+        tool_inputs_override: Some(test_tool_inputs(
+            Arc::clone(&session),
+            Arc::clone(&turn_context),
+        )),
+        sess: Arc::clone(&session),
+        turn_context: Arc::clone(&turn_context),
+        turn_store: Arc::clone(&turn_context.extension_data),
+        turn_diff_tracker,
+        client_session: &mut client,
+        turn_metadata_header: None,
+        input: Vec::new(),
+        explicitly_enabled_connectors: &std::collections::HashSet::new(),
+        skills_outcome: Some(turn_context.turn_skills.outcome.as_ref()),
+        cancellation_token: CancellationToken::new(),
+    })
+    .await;
+
+    assert!(matches!(result, Err(CodexErr::ContextWindowExceeded)));
+}
+
+#[tokio::test]
+async fn sampling_request_preserves_context_window_error_from_stream_event() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let mut client = ContextWindowExceededTurnClient {
+        fail_before_stream: false,
+    };
+
+    let result = crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
+        tool_inputs_override: Some(test_tool_inputs(
+            Arc::clone(&session),
+            Arc::clone(&turn_context),
+        )),
+        sess: Arc::clone(&session),
+        turn_context: Arc::clone(&turn_context),
+        turn_store: Arc::clone(&turn_context.extension_data),
+        turn_diff_tracker,
+        client_session: &mut client,
+        turn_metadata_header: None,
+        input: Vec::new(),
+        explicitly_enabled_connectors: &std::collections::HashSet::new(),
+        skills_outcome: Some(turn_context.turn_skills.outcome.as_ref()),
+        cancellation_token: CancellationToken::new(),
+    })
+    .await;
+
+    assert!(matches!(result, Err(CodexErr::ContextWindowExceeded)));
 }
 
 #[tokio::test]
