@@ -3803,6 +3803,7 @@ async fn sample_rollout(
     rollout_items.push(RolloutItem::Compacted(CompactedItem {
         message: summary1.to_string(),
         replacement_history: None,
+                visible_replacement_history_len: None,
     }));
 
     let user2 = ResponseItem::Message {
@@ -3843,6 +3844,7 @@ async fn sample_rollout(
     rollout_items.push(RolloutItem::Compacted(CompactedItem {
         message: summary2.to_string(),
         replacement_history: None,
+                visible_replacement_history_len: None,
     }));
 
     let user3 = ResponseItem::Message {

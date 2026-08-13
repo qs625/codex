@@ -1804,6 +1804,29 @@ impl Session {
         state.clone_history()
     }
 
+    pub(crate) async fn clone_in_memory_history_snapshot(
+        &self,
+    ) -> crate::state::InMemoryHistorySnapshot {
+        let state = self.state.lock().await;
+        state.clone_in_memory_history_snapshot()
+    }
+
+    pub(crate) async fn restore_in_memory_history_snapshot(
+        &self,
+        snapshot: crate::state::InMemoryHistorySnapshot,
+    ) {
+        let mut state = self.state.lock().await;
+        state.restore_in_memory_history_snapshot(snapshot);
+    }
+
+    pub(crate) async fn replace_in_memory_history_for_compact_prefix(
+        &self,
+        items: Vec<ResponseItem>,
+    ) {
+        let mut state = self.state.lock().await;
+        state.replace_in_memory_history_for_compact_prefix(items);
+    }
+
     pub(crate) async fn compact_window_items(&self) -> Vec<ResponseItem> {
         let state = self.state.lock().await;
         state.compact_window_items()

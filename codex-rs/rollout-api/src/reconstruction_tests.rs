@@ -283,6 +283,7 @@ fn replacement_history_checkpoint_seeds_replay_suffix() {
         RolloutItem::Compacted(CompactedItem {
             message: "summary".to_string(),
             replacement_history: Some(vec![replacement_user.clone()]),
+                visible_replacement_history_len: None,
         }),
         RolloutItem::ResponseItem(suffix_assistant.clone()),
         turn_complete("turn-1"),
@@ -327,6 +328,7 @@ fn legacy_compaction_without_replacement_history_filters_context_and_warning_mes
         RolloutItem::Compacted(CompactedItem {
             message: "legacy summary".to_string(),
             replacement_history: None,
+                visible_replacement_history_len: None,
         }),
     ];
 
@@ -350,6 +352,7 @@ fn legacy_compaction_without_replacement_history_clears_later_reference_context_
         RolloutItem::Compacted(CompactedItem {
             message: "legacy summary".to_string(),
             replacement_history: None,
+                visible_replacement_history_len: None,
         }),
         turn_started("current-turn"),
         user_event("after legacy compact"),

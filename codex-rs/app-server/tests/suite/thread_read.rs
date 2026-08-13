@@ -3634,6 +3634,7 @@ fn append_compacted_item(
         item: RolloutItem::Compacted(CompactedItem {
             message: "old display history compacted".to_string(),
             replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
         }),
     })?;
     let mut file = std::fs::OpenOptions::new().append(true).open(file_path)?;

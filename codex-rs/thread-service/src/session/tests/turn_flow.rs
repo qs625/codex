@@ -9,6 +9,8 @@ use codex_analytics_api::CompactionReason;
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering as AtomicOrdering;
+use std::sync::Mutex as StdMutex;
+use serial_test::serial;
 
 const OLD_CONTEXT_WINDOW_FATAL_PREFIX: &str = "Codex ran out of room in the model's context window";
 const OLD_CONTEXT_WINDOW_FATAL_ACTION: &str =
@@ -264,6 +266,21 @@ fn user_input_texts(items: &[ResponseItem]) -> Vec<&str> {
         .collect()
 }
 
+fn test_user_message(text: &str) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+    }
+}
+
+fn count_text(texts: &[&str], needle: &str) -> usize {
+    texts.iter().filter(|&&text| text == needle).count()
+}
+
 fn write_project_hooks(dot_codex: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dot_codex)?;
     std::fs::write(
@@ -355,16 +372,6 @@ pub(crate) fn test_tool_inputs(
     Arc::new(result)
 }
 
-#[test]
-fn projected_request_tokens_trigger_hard_compact_guard_even_with_low_cached_usage() {
-    assert!(crate::session::turn::should_compact_for_projected_request(
-        1_200, 1_000,
-    ));
-    assert!(!crate::session::turn::should_compact_for_projected_request(
-        999, 1_000,
-    ));
-}
-
 #[tokio::test]
 async fn current_user_input_exceeding_window_is_classified_locally() {
     let (_session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
@@ -445,6 +452,383 @@ async fn oversized_current_input_emits_controlled_error_without_compacting() {
 }
 
 #[tokio::test]
+#[serial(auto_compact_test_hook)]
+async fn provider_context_window_compacts_prefix_with_one_item_suffix_then_retries() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let reference_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    session
+        .replace_history(
+            vec![
+                test_user_message("prefix before compact"),
+                test_user_message("tail before current"),
+            ],
+            Some(reference_context_item),
+        )
+        .await;
+
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    let regular_request_inputs: Arc<StdMutex<Vec<Vec<ResponseItem>>>> =
+        Arc::new(StdMutex::new(Vec::new()));
+    let staged_prefix_texts: Arc<StdMutex<Vec<Vec<String>>>> = Arc::new(StdMutex::new(Vec::new()));
+    let staged_prefix_texts_for_hook = Arc::clone(&staged_prefix_texts);
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |session, turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id {
+                return None;
+            }
+            if matches!(reason, CompactionReason::ContextLimit)
+                && matches!(phase, CompactionPhase::MidTurn)
+            {
+                let history = session
+                    .state
+                    .try_lock()
+                    .expect("session state should be available")
+                    .clone_history();
+                staged_prefix_texts_for_hook
+                    .lock()
+                    .expect("staged prefix mutex poisoned")
+                    .push(
+                        user_input_texts(history.raw_items())
+                            .into_iter()
+                            .map(str::to_string)
+                            .collect(),
+                    );
+                session
+                    .state
+                    .try_lock()
+                    .expect("session state should be available")
+                    .replace_history(vec![test_user_message("compacted prefix")], None);
+                Some(Ok(true))
+            } else {
+                Some(Ok(false))
+            }
+        },
+    ));
+
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "current request".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::Completed,
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: Some(Arc::clone(&regular_request_inputs)),
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 2);
+    let staged = staged_prefix_texts
+        .lock()
+        .expect("staged prefix mutex poisoned");
+    assert_eq!(staged.len(), 1);
+    assert!(
+        !staged[0].contains(&"current request".to_string()),
+        "compact prefix should temporarily exclude the latest current input"
+    );
+    assert!(
+        staged[0].contains(&"tail before current".to_string()),
+        "one-item suffix should retain older prefix items for compact"
+    );
+    drop(staged);
+
+    let request_inputs = regular_request_inputs
+        .lock()
+        .expect("request inputs mutex poisoned");
+    let retry_texts = user_input_texts(&request_inputs[1]);
+    assert_eq!(count_text(&retry_texts, "current request"), 1);
+}
+
+#[tokio::test]
+#[serial(auto_compact_test_hook)]
+async fn provider_context_window_expands_suffix_when_compact_prefix_overflows() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let reference_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    session
+        .replace_history(
+            vec![
+                test_user_message("prefix before compact"),
+                test_user_message("tail before current"),
+            ],
+            Some(reference_context_item),
+        )
+        .await;
+
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    let regular_request_inputs: Arc<StdMutex<Vec<Vec<ResponseItem>>>> =
+        Arc::new(StdMutex::new(Vec::new()));
+    let compact_attempt_count = Arc::new(AtomicUsize::new(0));
+    let compact_attempt_count_for_hook = Arc::clone(&compact_attempt_count);
+    let staged_prefix_texts: Arc<StdMutex<Vec<Vec<String>>>> = Arc::new(StdMutex::new(Vec::new()));
+    let staged_prefix_texts_for_hook = Arc::clone(&staged_prefix_texts);
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |session, turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id {
+                return None;
+            }
+            if matches!(reason, CompactionReason::ContextLimit)
+                && matches!(phase, CompactionPhase::MidTurn)
+            {
+                let history = session
+                    .state
+                    .try_lock()
+                    .expect("session state should be available")
+                    .clone_history();
+                staged_prefix_texts_for_hook
+                    .lock()
+                    .expect("staged prefix mutex poisoned")
+                    .push(
+                        user_input_texts(history.raw_items())
+                            .into_iter()
+                            .map(str::to_string)
+                            .collect(),
+                    );
+                let attempt = compact_attempt_count_for_hook
+                    .fetch_add(1, AtomicOrdering::SeqCst)
+                    + 1;
+                if attempt == 1 {
+                    Some(Err(CodexErr::ContextWindowExceeded))
+                } else {
+                    session
+                        .state
+                        .try_lock()
+                        .expect("session state should be available")
+                        .replace_history(vec![test_user_message("compacted prefix")], None);
+                    Some(Ok(true))
+                }
+            } else {
+                Some(Ok(false))
+            }
+        },
+    ));
+
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "current request".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::Completed,
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: Some(Arc::clone(&regular_request_inputs)),
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 2);
+    assert_eq!(compact_attempt_count.load(AtomicOrdering::SeqCst), 2);
+    let staged = staged_prefix_texts
+        .lock()
+        .expect("staged prefix mutex poisoned");
+    assert_eq!(staged.len(), 2);
+    assert!(
+        staged[0].contains(&"tail before current".to_string()),
+        "first compact attempt should stage only the latest item"
+    );
+    assert!(
+        !staged[1].contains(&"tail before current".to_string()),
+        "second compact attempt should expand the staged suffix"
+    );
+    assert!(!staged[1].contains(&"current request".to_string()));
+    drop(staged);
+
+    let request_inputs = regular_request_inputs
+        .lock()
+        .expect("request inputs mutex poisoned");
+    let retry_texts = user_input_texts(&request_inputs[1]);
+    assert_eq!(count_text(&retry_texts, "tail before current"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn staged_compact_uses_isolated_sampling_without_agent_message_pollution(
+) -> anyhow::Result<()> {
+    let server = start_mock_server().await;
+    let _compact_response = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-compact"),
+            ev_assistant_message("msg-compact", "real compact summary"),
+            ev_completed("resp-compact"),
+        ]),
+    )
+    .await;
+    let (session, turn_context, rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
+            config.model_provider.supports_websockets = false;
+            config.model_providers.insert(
+                config.model_provider_id.clone(),
+                config.model_provider.clone(),
+            );
+        },
+    )
+    .await;
+    let reference_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    session
+        .replace_history(
+            vec![
+                test_user_message("prefix before compact"),
+                test_user_message("tail before current"),
+            ],
+            Some(reference_context_item),
+        )
+        .await;
+
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "current request".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::Completed,
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: None,
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 2);
+    let mut saw_agent_message_pollution = false;
+    let mut saw_compaction_summary = false;
+    while let Ok(event) = rx.try_recv() {
+        let turn_item = match event.msg {
+            EventMsg::ItemStarted(item) => Some(item.item),
+            EventMsg::ItemCompleted(item) => Some(item.item),
+            _ => None,
+        };
+        if let Some(turn_item) = turn_item {
+            match turn_item {
+                TurnItem::AgentMessage(message) => {
+                    saw_agent_message_pollution |= message.content.iter().any(|content| {
+                        matches!(
+                            content,
+                            protocol::items::AgentMessageContent::Text { text }
+                                if text == "real compact summary"
+                        )
+                    });
+                }
+                TurnItem::ContextCompaction(compaction) => {
+                    saw_compaction_summary |= compaction.replacement_history.iter().any(|item| {
+                        matches!(
+                            item,
+                            protocol::items::ContextCompactionReplacementItem::AgentMessage(message)
+                                if message.content.iter().any(|content| matches!(
+                                    content,
+                                    protocol::items::AgentMessageContent::Text { text }
+                                        if text == "real compact summary"
+                                ))
+                        )
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        !saw_agent_message_pollution,
+        "staged compact summary should not be emitted as a regular agent message"
+    );
+    assert!(
+        saw_compaction_summary,
+        "staged compact summary should appear in the compaction replacement item"
+    );
+
+    let history = session.clone_history().await;
+    let history_texts = user_input_texts(history.raw_items());
+    assert_eq!(count_text(&history_texts, "current request"), 1);
+    assert_eq!(count_text(&history_texts, "tail before current"), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn isolated_staged_compact_acknowledges_processed_response_when_enabled() {
+    let (session, turn_context, _rx) = make_session_and_context_with_auth_and_config_and_rx(
+        CodexAuth::from_api_key("Test API Key"),
+        Vec::new(),
+        |config| {
+            config
+                .features
+                .enable(Feature::ResponsesWebsocketResponseProcessed)
+                .expect("feature should be enableable in tests");
+        },
+    )
+    .await;
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let response_processed_ids: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+    let mut client = ScriptedTurnClient {
+        responses: VecDeque::from([ScriptedTurnResponse::Completed]),
+        request_count: Arc::clone(&request_count),
+        request_inputs: None,
+        response_processed_ids: Some(Arc::clone(&response_processed_ids)),
+        provider: Some(turn_context.config.model_provider_id.clone()),
+    };
+
+    let summary = crate::compact::run_isolated_compact_sampling(
+        session.as_ref(),
+        turn_context.as_ref(),
+        &mut client,
+        None,
+        vec![test_user_message("prefix before compact")],
+    )
+    .await
+    .expect("isolated compact should succeed");
+
+    assert_eq!(summary, crate::compact::DEFAULT_COMPACTED_MESSAGE);
+    assert_eq!(request_count.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(
+        response_processed_ids
+            .lock()
+            .expect("response processed ids mutex poisoned")
+            .as_slice(),
+        &["response-id".to_string()]
+    );
+}
+
+#[tokio::test]
+#[serial(auto_compact_test_hook)]
 async fn provider_context_window_retry_failure_emits_controlled_error() {
     let (session, turn_context, rx) = make_session_and_context_with_rx().await;
     let regular_request_count = Arc::new(AtomicUsize::new(0));
@@ -452,7 +836,7 @@ async fn provider_context_window_retry_failure_emits_controlled_error() {
     let compact_request_count_for_hook = Arc::clone(&compact_request_count);
     let target_turn_id = turn_context.sub_id.clone();
     let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
-        move |turn_context, reason, phase| {
+        move |_session, turn_context, reason, phase| {
             if turn_context.sub_id != target_turn_id {
                 return None;
             }
@@ -482,6 +866,8 @@ async fn provider_context_window_retry_failure_emits_controlled_error() {
                 ScriptedTurnResponse::ContextWindowExceeded,
             ]),
             request_count: Arc::clone(&regular_request_count),
+            request_inputs: None,
+            response_processed_ids: None,
             provider: Some(turn_context.config.model_provider_id.clone()),
         })),
         CancellationToken::new(),
@@ -502,7 +888,7 @@ async fn provider_context_window_retry_failure_emits_controlled_error() {
     assert_eq!(
         compact_request_count.load(AtomicOrdering::SeqCst),
         1,
-        "context-window recovery should run one compact attempt"
+        "context-window recovery should run one staged compact attempt for this minimal history"
     );
 }
 
@@ -554,11 +940,14 @@ struct ContextWindowExceededTurnClient {
 
 enum ScriptedTurnResponse {
     ContextWindowExceeded,
+    Completed,
 }
 
 struct ScriptedTurnClient {
     responses: VecDeque<ScriptedTurnResponse>,
     request_count: Arc<AtomicUsize>,
+    request_inputs: Option<Arc<StdMutex<Vec<Vec<ResponseItem>>>>>,
+    response_processed_ids: Option<Arc<StdMutex<Vec<String>>>>,
     provider: Option<String>,
 }
 
@@ -571,8 +960,14 @@ impl model_service_api::ModelTurnClientApi for ScriptedTurnClient {
 
     fn send_response_processed<'a>(
         &'a self,
-        _response_id: &'a str,
+        response_id: &'a str,
     ) -> model_service_api::ModelFuture<'a, ()> {
+        if let Some(response_processed_ids) = &self.response_processed_ids {
+            response_processed_ids
+                .lock()
+                .expect("response processed ids mutex poisoned")
+                .push(response_id.to_string());
+        }
         Box::pin(async {})
     }
 
@@ -585,12 +980,18 @@ impl model_service_api::ModelTurnClientApi for ScriptedTurnClient {
 
     fn stream_responses(
         &mut self,
-        _request: model_service_api::TurnModelRequest,
+        request: model_service_api::TurnModelRequest,
     ) -> model_service_api::ModelFuture<
         '_,
         Result<model_service_api::ModelResponseStream, model_service_api::ModelRequestError>,
     > {
         self.request_count.fetch_add(1, AtomicOrdering::SeqCst);
+        if let Some(request_inputs) = &self.request_inputs {
+            request_inputs
+                .lock()
+                .expect("request inputs mutex poisoned")
+                .push(request.request.input.clone());
+        }
         let response = self
             .responses
             .pop_front()
@@ -600,6 +1001,13 @@ impl model_service_api::ModelTurnClientApi for ScriptedTurnClient {
                 ScriptedTurnResponse::ContextWindowExceeded => {
                     Err(model_service_api::ModelRequestError::context_window_exceeded())
                 }
+                ScriptedTurnResponse::Completed => Ok(Box::pin(futures::stream::iter(vec![
+                    Ok(model_service_api::ModelResponseEvent::Completed {
+                        response_id: "response-id".to_string(),
+                        token_usage: None,
+                        end_turn: Some(true),
+                    }),
+                ])) as model_service_api::ModelResponseStream),
             }
         })
     }
@@ -1938,6 +2346,7 @@ async fn reconstruct_history_uses_replacement_history_verbatim() {
     let rollout_items = vec![RolloutItem::Compacted(CompactedItem {
         message: String::new(),
         replacement_history: Some(replacement_history.clone()),
+                visible_replacement_history_len: None,
     })];
 
     let reconstructed = session
@@ -2209,6 +2618,7 @@ async fn thread_context_usage_counts_compaction_replacement_seed_as_compact() {
             history: vec![RolloutItem::Compacted(CompactedItem {
                 message: "compact final output seed".to_string(),
                 replacement_history: Some(replacement_history),
+                visible_replacement_history_len: None,
             })],
             rollout_path: Some(PathBuf::from("/tmp/resume.jsonl")),
         }))
