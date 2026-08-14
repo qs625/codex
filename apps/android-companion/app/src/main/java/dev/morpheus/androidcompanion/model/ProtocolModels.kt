@@ -192,10 +192,28 @@ private fun JsonElement.jsonArrayOrNull(): JsonArray? = this as? JsonArray
 
 private fun JsonElement.jsonPrimitiveOrNull(): JsonPrimitive? = this as? JsonPrimitive
 
-private fun lifecycleStatusLabel(value: JsonElement?): String {
+fun lifecycleStatusLabel(value: JsonElement?): String {
     val primitive = value?.jsonPrimitiveOrNull()?.contentOrNull
     if (primitive != null) return primitive
     val obj = value?.jsonObjectOrNull() ?: return "unknown"
+    when (obj.string("type")) {
+        "notLoaded" -> return "notLoaded"
+        "initializing" -> return "initializing"
+        "active" -> return "active"
+        "waiting" -> {
+            return when (obj.string("reason")) {
+                "command" -> "Waiting on Event Tool"
+                "child" -> "Waiting on Subagent"
+                "eventSubscription" -> "Waiting on Subscription"
+                else -> "waiting"
+            }
+        }
+        "final" -> {
+            val result = obj["result"]?.jsonObjectOrNull()
+            return result?.string("type") ?: "completed"
+        }
+        "systemError" -> return obj.string("message") ?: "systemError"
+    }
     return obj["status"]?.jsonPrimitiveOrNull()?.contentOrNull
         ?: obj["finalStatus"]?.jsonPrimitiveOrNull()?.contentOrNull
         ?: "active"

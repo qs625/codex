@@ -1030,11 +1030,22 @@ export function mergeThreadSnapshot(
   return pruneThreadSnapshotToLatestCompact({
     ...existing,
     ...normalizedNext,
+    lifecycleStatus: preserveFinalLifecycleStatus(existing, normalizedNext),
     threadUsage,
     tokenUsage,
     contextUsage,
     turns,
   });
+}
+
+function preserveFinalLifecycleStatus(existing: Thread, next: Thread) {
+  if (
+    existing.lifecycleStatus.type === "final" &&
+    next.lifecycleStatus.type !== "final"
+  ) {
+    return existing.lifecycleStatus;
+  }
+  return next.lifecycleStatus;
 }
 
 export function normalizeThreadSnapshot(thread: Thread): Thread {
@@ -1187,8 +1198,18 @@ export function upsertThreadMetadataPreservingTurns(
   if (!existing) {
     return [...threads, normalizeThreadSnapshot(next)];
   }
+  const normalizedNext = normalizeThreadSnapshot(next);
   return threads.map((thread) =>
-    thread.id === next.id ? { ...next, turns: existing.turns } : thread,
+    thread.id === next.id
+      ? {
+          ...normalizedNext,
+          lifecycleStatus: preserveFinalLifecycleStatus(
+            existing,
+            normalizedNext,
+          ),
+          turns: existing.turns,
+        }
+      : thread,
   );
 }
 
