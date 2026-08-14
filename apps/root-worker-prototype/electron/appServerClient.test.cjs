@@ -102,8 +102,9 @@ test("default app-server launch adds authenticated same-runtime mobile websocket
   );
 });
 
-test("default app-server launch disables mobile listener when the bind is unavailable", async () => {
+test("default app-server launch falls back when the mobile bind is unavailable", async () => {
   const writes = [];
+  const checks = [];
   const mobileLaunch = await buildMobileConnectionLaunch(
     {
       ROOT_WORKER_MOBILE_LISTEN: "ws://0.0.0.0:8910",
@@ -112,15 +113,84 @@ test("default app-server launch disables mobile listener when the bind is unavai
     {
       morpheusHome: "/tmp/morpheus-home",
       writeTokenFile: (tokenFile, token) => writes.push({ tokenFile, token }),
-      checkListenAvailable: async () => false,
+      checkListenAvailable: async (listenUrl) => {
+        checks.push(listenUrl);
+        return listenUrl === "ws://0.0.0.0:8911";
+      },
+    },
+  );
+
+  assert.equal(mobileLaunch.enabled, true);
+  assert.deepEqual(checks, ["ws://0.0.0.0:8910", "ws://0.0.0.0:8911"]);
+  assert.deepEqual(writes, [
+    {
+      tokenFile: "/tmp/morpheus-home/root-worker-mobile-ws-token",
+      token: "test-token",
+    },
+  ]);
+  assert.deepEqual(mobileLaunch.info, {
+    enabled: true,
+    bindEndpoint: "ws://0.0.0.0:8911",
+    endpoint: resolveLanEndpoint("ws://0.0.0.0:8911"),
+    token: "test-token",
+    auth: "capability-token",
+  });
+  assert.equal(
+    buildDefaultAppServerCommand({
+      appServerBinary: "/app-server",
+      mobileLaunch,
+    }),
+    '/app-server --listen stdio:// --mobile-listen "ws://0.0.0.0:8911" --ws-auth capability-token --ws-token-file "/tmp/morpheus-home/root-worker-mobile-ws-token"',
+  );
+});
+
+test("default app-server launch fallback resolves IPv6 wildcard endpoints to a reachable host", async () => {
+  const mobileLaunch = await buildMobileConnectionLaunch(
+    {
+      ROOT_WORKER_MOBILE_LISTEN: "ws://[::]:8910",
+      ROOT_WORKER_MOBILE_TOKEN: "test-token",
+    },
+    {
+      morpheusHome: "/tmp/morpheus-home",
+      writeTokenFile: () => {},
+      checkListenAvailable: async (listenUrl) => listenUrl === "ws://[::]:8911",
+    },
+  );
+
+  assert.equal(mobileLaunch.enabled, true);
+  assert.equal(mobileLaunch.listenUrl, "ws://[::]:8911");
+  assert.equal(mobileLaunch.info.bindEndpoint, "ws://[::]:8911");
+  assert.equal(mobileLaunch.info.endpoint, resolveLanEndpoint("ws://[::]:8911"));
+  assert.notEqual(mobileLaunch.info.endpoint, "ws://[::]:8911/");
+});
+
+test("default app-server launch disables mobile listener when no fallback port is available", async () => {
+  const writes = [];
+  const checks = [];
+  const mobileLaunch = await buildMobileConnectionLaunch(
+    {
+      ROOT_WORKER_MOBILE_LISTEN: "ws://0.0.0.0:8910",
+      ROOT_WORKER_MOBILE_TOKEN: "test-token",
+    },
+    {
+      morpheusHome: "/tmp/morpheus-home",
+      writeTokenFile: (tokenFile, token) => writes.push({ tokenFile, token }),
+      checkListenAvailable: async (listenUrl) => {
+        checks.push(listenUrl);
+        return false;
+      },
     },
   );
 
   assert.equal(mobileLaunch.enabled, false);
+  assert.equal(checks.length, 21);
+  assert.equal(checks[0], "ws://0.0.0.0:8910");
+  assert.equal(checks.at(-1), "ws://0.0.0.0:8930");
   assert.deepEqual(writes, []);
   assert.deepEqual(mobileLaunch.info, {
     enabled: false,
-    reason: "Mobile listener bind address is unavailable: ws://0.0.0.0:8910.",
+    reason:
+      "Mobile listener bind address is unavailable: ws://0.0.0.0:8910. No fallback port was available.",
   });
   assert.equal(
     buildDefaultAppServerCommand({
@@ -129,6 +199,35 @@ test("default app-server launch disables mobile listener when the bind is unavai
     }),
     "/app-server --listen stdio://",
   );
+});
+
+test("default app-server launch does not fake endpoint overrides when the bind is unavailable", async () => {
+  const writes = [];
+  const checks = [];
+  const mobileLaunch = await buildMobileConnectionLaunch(
+    {
+      ROOT_WORKER_MOBILE_LISTEN: "ws://0.0.0.0:8910",
+      ROOT_WORKER_MOBILE_ENDPOINT: "wss://tunnel.example/root-worker",
+      ROOT_WORKER_MOBILE_TOKEN: "test-token",
+    },
+    {
+      morpheusHome: "/tmp/morpheus-home",
+      writeTokenFile: (tokenFile, token) => writes.push({ tokenFile, token }),
+      checkListenAvailable: async (listenUrl) => {
+        checks.push(listenUrl);
+        return false;
+      },
+    },
+  );
+
+  assert.equal(mobileLaunch.enabled, false);
+  assert.deepEqual(checks, ["ws://0.0.0.0:8910"]);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(mobileLaunch.info, {
+    enabled: false,
+    reason:
+      "Mobile listener bind address is unavailable: ws://0.0.0.0:8910. Automatic port fallback is disabled because ROOT_WORKER_MOBILE_ENDPOINT is set.",
+  });
 });
 
 test("default app-server launch disables mobile listener for non-socket-address listen URLs", async () => {
