@@ -33,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -49,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.morpheus.androidcompanion.model.ConversationItem
@@ -56,6 +58,10 @@ import dev.morpheus.androidcompanion.model.ThreadSummary
 import dev.morpheus.androidcompanion.state.CompanionUiState
 import dev.morpheus.androidcompanion.state.CompanionViewModel
 import dev.morpheus.androidcompanion.state.ConnectionState
+import dev.morpheus.androidcompanion.state.ConnectionPayloadParseResult
+import dev.morpheus.androidcompanion.state.parseConnectionPayload
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 @Composable
 fun CompanionApp(viewModel: CompanionViewModel = viewModel()) {
@@ -89,6 +95,25 @@ private fun ConnectionScreen(
 ) {
     var endpoint by remember { mutableStateOf("ws://192.168.1.2:8910") }
     var token by remember { mutableStateOf("") }
+    var scanError by remember { mutableStateOf<String?>(null) }
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val contents = result.contents
+        if (contents.isNullOrBlank()) {
+            scanError = "No QR code scanned."
+            return@rememberLauncherForActivityResult
+        }
+        when (val parsed = parseConnectionPayload(contents)) {
+            is ConnectionPayloadParseResult.Success -> {
+                endpoint = parsed.payload.endpoint
+                token = parsed.payload.token.orEmpty()
+                scanError = null
+                onConnect(parsed.payload.endpoint, parsed.payload.token)
+            }
+            is ConnectionPayloadParseResult.Failure -> {
+                scanError = parsed.message
+            }
+        }
+    }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -117,12 +142,38 @@ private fun ConnectionScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = { onConnect(endpoint, token.takeIf { it.isNotBlank() }) },
-            enabled = state.connection != ConnectionState.Connecting,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (state.connection == ConnectionState.Connecting) "Connecting" else "Connect")
+            OutlinedButton(
+                onClick = {
+                    scanLauncher.launch(
+                        ScanOptions()
+                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            .setPrompt("Scan the Android Companion QR from Settings")
+                            .setBeepEnabled(false),
+                    )
+                },
+                enabled = state.connection != ConnectionState.Connecting,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Scan QR")
+            }
+            Button(
+                onClick = {
+                    scanError = null
+                    onConnect(endpoint, token.takeIf { it.isNotBlank() })
+                },
+                enabled = state.connection != ConnectionState.Connecting,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (state.connection == ConnectionState.Connecting) "Connecting" else "Connect")
+            }
+        }
+        scanError?.let {
+            Spacer(Modifier.height(12.dp))
+            Text(it, color = MaterialTheme.colorScheme.error)
         }
         state.error?.let {
             Spacer(Modifier.height(12.dp))

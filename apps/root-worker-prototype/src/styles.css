@@ -1826,6 +1826,90 @@ svg {
   outline: none;
 }
 
+.android-connect-card {
+  gap: 10px;
+}
+
+.android-connect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 214px;
+  gap: 12px;
+  min-width: 0;
+  align-items: start;
+}
+
+.android-connect-fields {
+  align-content: start;
+}
+
+.android-connect-qr-panel {
+  display: grid;
+  place-items: center;
+  min-height: 214px;
+  padding: 10px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 8px;
+  background: rgba(16, 24, 40, 0.03);
+}
+
+.android-connect-qr {
+  width: 192px;
+  height: 192px;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.android-connect-qr-placeholder {
+  max-width: 18ch;
+  color: #78716c;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.android-connect-payload-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+  align-items: start;
+}
+
+.android-connect-payload-row code {
+  min-width: 0;
+  max-height: 92px;
+  overflow: auto;
+  padding: 7px 8px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 7px;
+  background: rgba(16, 24, 40, 0.04);
+  color: #44403c;
+  font-family: "SFMono-Regular", "Consolas", monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.android-connect-payload-row button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #292524;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.android-connect-payload-row button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .settings-auth-pending {
   display: flex;
   align-items: center;
@@ -2188,6 +2272,15 @@ svg {
 
   .settings-api-key-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .android-connect-grid,
+  .android-connect-payload-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .android-connect-qr-panel {
+    min-height: 180px;
   }
 
   .settings-form-grid {

@@ -395,6 +395,7 @@ pub async fn run_main(
         strict_config,
         default_analytics_enabled,
         AppServerTransport::Stdio,
+        Vec::new(),
         SessionSource::VSCode,
         AppServerWebsocketAuthSettings::default(),
         AppServerRuntimeOptions::default(),
@@ -431,6 +432,7 @@ pub async fn run_main_with_transport_options(
     strict_config: bool,
     default_analytics_enabled: bool,
     transport: AppServerTransport,
+    additional_transports: Vec<AppServerTransport>,
     session_source: SessionSource,
     auth: AppServerWebsocketAuthSettings,
     runtime_options: AppServerRuntimeOptions,
@@ -664,7 +666,8 @@ pub async fn run_main_with_transport_options(
     let transport_shutdown_token = CancellationToken::new();
     let mut transport_accept_handles = Vec::<JoinHandle<()>>::new();
 
-    let single_client_mode = matches!(&transport, AppServerTransport::Stdio);
+    let single_client_mode =
+        matches!(&transport, AppServerTransport::Stdio) && additional_transports.is_empty();
     let shutdown_when_no_connections = single_client_mode;
     let graceful_signal_restart_enabled = !single_client_mode;
     let mut app_server_client_name_rx = None;
@@ -700,6 +703,29 @@ pub async fn run_main_with_transport_options(
             transport_accept_handles.push(accept_handle);
         }
         AppServerTransport::Off => {}
+    }
+
+    for additional_transport in &additional_transports {
+        match additional_transport {
+            AppServerTransport::WebSocket { bind_address } => {
+                let accept_handle = start_websocket_acceptor(
+                    *bind_address,
+                    transport_event_tx.clone(),
+                    transport_shutdown_token.clone(),
+                    policy_from_settings(&auth)?,
+                )
+                .await?;
+                transport_accept_handles.push(accept_handle);
+            }
+            AppServerTransport::Stdio
+            | AppServerTransport::UnixSocket { .. }
+            | AppServerTransport::Off => {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "additional app-server transports only support websocket listeners",
+                ));
+            }
+        }
     }
 
     let auth_manager =
