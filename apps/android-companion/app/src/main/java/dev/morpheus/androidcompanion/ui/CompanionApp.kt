@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -39,10 +41,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,9 +58,11 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.morpheus.androidcompanion.model.ConversationCell
 import dev.morpheus.androidcompanion.model.ConversationItem
 import dev.morpheus.androidcompanion.model.ToolPresentation
 import dev.morpheus.androidcompanion.model.ThreadSummary
+import dev.morpheus.androidcompanion.model.buildConversationCells
 import dev.morpheus.androidcompanion.state.CompanionUiState
 import dev.morpheus.androidcompanion.state.CompanionViewModel
 import dev.morpheus.androidcompanion.state.ConnectionState
@@ -358,9 +364,29 @@ private fun ThreadSummary.agentDepth(): Int {
 private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) {
     var draft by remember(state.selectedThreadId) { mutableStateOf("") }
     var expandedToolItems by remember(state.selectedThreadId) { mutableStateOf(setOf<String>()) }
+    var expandedMessageItems by remember(state.selectedThreadId) { mutableStateOf(setOf<String>()) }
     val selectedThread = state.selectedThread
-    val items = remember(selectedThread) {
-        selectedThread?.turns.orEmpty().flatMap { turn -> turn.items }
+    val cells = remember(selectedThread) {
+        selectedThread?.turns.orEmpty().buildConversationCells()
+    }
+    val listState = rememberLazyListState()
+    var followBottom by remember(state.selectedThreadId) { mutableStateOf(true) }
+    val scrollTarget = remember(cells) { conversationScrollTarget(cells) }
+    LaunchedEffect(listState, state.selectedThreadId) {
+        snapshotFlow {
+            listState.isScrollInProgress to isConversationNearBottom(listState)
+        }.collect { (isScrolling, isNearBottom) ->
+            if (isScrolling) {
+                followBottom = isNearBottom
+            } else if (isNearBottom) {
+                followBottom = true
+            }
+        }
+    }
+    LaunchedEffect(scrollTarget) {
+        if (followBottom && cells.isNotEmpty()) {
+            listState.animateScrollToItem(cells.lastIndex)
+        }
     }
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
@@ -370,23 +396,32 @@ private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) 
                 EmptyMessage("Select or create a thread.")
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(
-                        items = items,
+                        items = cells,
                         key = { it.id },
-                        contentType = { it.type },
-                    ) { item ->
-                        ConversationRow(
-                            item = item,
-                            expanded = item.id in expandedToolItems,
+                        contentType = { it.kind },
+                    ) { cell ->
+                        ConversationCellRow(
+                            cell = cell,
+                            expandedToolItems = expandedToolItems,
+                            expandedMessageItems = expandedMessageItems,
                             onToggleExpanded = {
-                                expandedToolItems = if (item.id in expandedToolItems) {
-                                    expandedToolItems - item.id
+                                expandedToolItems = if (it in expandedToolItems) {
+                                    expandedToolItems - it
                                 } else {
-                                    expandedToolItems + item.id
+                                    expandedToolItems + it
+                                }
+                            },
+                            onToggleMessageExpanded = {
+                                expandedMessageItems = if (it in expandedMessageItems) {
+                                    expandedMessageItems - it
+                                } else {
+                                    expandedMessageItems + it
                                 }
                             },
                         )
@@ -424,6 +459,71 @@ private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) 
     }
 }
 
+internal data class ConversationScrollTarget(
+    val cellCount: Int,
+    val lastCellId: String?,
+    val lastContentSize: Int,
+)
+
+internal fun conversationScrollTarget(cells: List<ConversationCell>): ConversationScrollTarget {
+    val lastCell = cells.lastOrNull()
+    val contentSize = lastCell?.entries.orEmpty().sumOf { item ->
+        item.body.length +
+            item.toolPresentation?.details.orEmpty().length +
+            item.toolPresentation?.output.orEmpty().length
+    }
+    return ConversationScrollTarget(
+        cellCount = cells.size,
+        lastCellId = lastCell?.id,
+        lastContentSize = contentSize,
+    )
+}
+
+internal fun isConversationNearBottom(
+    lastVisibleIndex: Int?,
+    totalItemsCount: Int,
+    thresholdItems: Int = 1,
+): Boolean {
+    if (totalItemsCount <= 0) return true
+    val lastVisible = lastVisibleIndex ?: return false
+    return lastVisible >= totalItemsCount - 1 - thresholdItems
+}
+
+private fun isConversationNearBottom(listState: LazyListState): Boolean {
+    val layoutInfo = listState.layoutInfo
+    return isConversationNearBottom(
+        lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index,
+        totalItemsCount = layoutInfo.totalItemsCount,
+    )
+}
+
+@Composable
+private fun ConversationCellRow(
+    cell: ConversationCell,
+    expandedToolItems: Set<String>,
+    expandedMessageItems: Set<String>,
+    onToggleExpanded: (String) -> Unit,
+    onToggleMessageExpanded: (String) -> Unit,
+) {
+    if (cell.kind == "tool") {
+        ToolConversationCell(
+            cell = cell,
+            expandedToolItems = expandedToolItems,
+            onToggleExpanded = onToggleExpanded,
+        )
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        cell.entries.forEach { item ->
+            ConversationRow(
+                item = item,
+                expanded = item.id in expandedMessageItems,
+                onToggleExpanded = { onToggleMessageExpanded(item.id) },
+            )
+        }
+    }
+}
+
 @Composable
 private fun ConversationRow(
     item: ConversationItem,
@@ -454,23 +554,45 @@ private fun ConversationRow(
             Column(Modifier.padding(12.dp)) {
                 Text(item.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
-                BoundedMessageBody(item.body.ifBlank { item.type })
+                BoundedMessageBody(
+                    item.body.ifBlank { item.type },
+                    contentIsTruncated = item.bodyIsTruncated,
+                    expanded = expanded,
+                    onToggleExpanded = onToggleExpanded,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun BoundedMessageBody(text: String) {
+private fun BoundedMessageBody(
+    text: String,
+    contentIsTruncated: Boolean = false,
+    expanded: Boolean = false,
+    onToggleExpanded: () -> Unit = { },
+) {
     val preview = remember(text) { messageBodyPreview(text) }
-    Text(preview.text, style = MaterialTheme.typography.bodyMedium)
-    if (preview.isTruncated) {
+    Text(visibleMessageBodyText(text, expanded), style = MaterialTheme.typography.bodyMedium)
+    if (preview.isTruncated || contentIsTruncated) {
         Spacer(Modifier.height(3.dp))
-        Text(
-            "Preview truncated for performance.",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    preview.isTruncated && !expanded -> "Showing preview only."
+                    contentIsTruncated -> "Showing available body only."
+                    else -> "Full body is shown."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            if (preview.isTruncated) {
+                TextButton(onClick = onToggleExpanded) {
+                    Text(if (expanded) "Show Less" else "Show All")
+                }
+            }
+        }
     }
 }
 
@@ -484,11 +606,14 @@ internal fun messageBodyPreview(text: String): MessageBodyPreview {
         MessageBodyPreview(text = text, isTruncated = false)
     } else {
         MessageBodyPreview(
-            text = "[truncated ${text.length - MessageBodyTextLimit} chars; showing latest text]\n" +
-                text.takeLast(MessageBodyTextLimit),
+            text = text.takeLast(MessageBodyTextLimit),
             isTruncated = true,
         )
     }
+}
+
+internal fun visibleMessageBodyText(text: String, expanded: Boolean): String {
+    return if (expanded) text else messageBodyPreview(text).text
 }
 
 @Composable
@@ -559,6 +684,91 @@ private fun ToolConversationRow(
 }
 
 @Composable
+private fun ToolConversationCell(
+    cell: ConversationCell,
+    expandedToolItems: Set<String>,
+    onToggleExpanded: (String) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start,
+    ) {
+        Surface(
+            tonalElevation = 1.dp,
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.fillMaxWidth(0.96f),
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                cell.entries.forEachIndexed { index, item ->
+                    val presentation = item.toolPresentation ?: return@forEachIndexed
+                    if (index > 0) {
+                        Divider()
+                    }
+                    ToolEntryContent(
+                        item = item,
+                        presentation = presentation,
+                        expanded = item.id in expandedToolItems,
+                        onToggleExpanded = { onToggleExpanded(item.id) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolEntryContent(
+    item: ConversationItem,
+    presentation: ToolPresentation,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    Column(Modifier.clickable(onClick = onToggleExpanded)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    item.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    presentation.summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            presentation.status?.let { status ->
+                StatusPill(status)
+            }
+            TextButton(onClick = onToggleExpanded) {
+                Text(if (expanded) "Hide" else "Details")
+            }
+        }
+        if (expanded) {
+            Spacer(Modifier.height(10.dp))
+            DetailBlock(
+                "Details",
+                presentation.details,
+                truncated = presentation.detailsIsTruncated,
+            )
+            if (presentation.outputLabel != null) {
+                Spacer(Modifier.height(10.dp))
+                DetailBlock(
+                    presentation.outputLabel,
+                    if (presentation.outputIsEmpty) "No output" else presentation.output.orEmpty(),
+                    monospace = true,
+                    truncated = presentation.outputIsTruncated,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun StatusPill(status: String) {
     Surface(
         shape = MaterialTheme.shapes.small,
@@ -586,10 +796,9 @@ private fun DetailBlock(
         if (text.length <= ExpandedTextLimit) {
             text
         } else if (monospace) {
-            "[truncated ${text.length - ExpandedTextLimit} chars; showing latest output]\n" +
-                text.takeLast(ExpandedTextLimit)
+            text.takeLast(ExpandedTextLimit)
         } else {
-            text.take(ExpandedTextLimit) + "\n[truncated]"
+            text.take(ExpandedTextLimit)
         }
     }
     Column {
@@ -607,7 +816,7 @@ private fun DetailBlock(
         if (truncated || boundedText.length < text.length) {
             Spacer(Modifier.height(3.dp))
             Text(
-                "Preview truncated for performance.",
+                if (monospace) "Showing latest portion only." else "Showing preview only.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

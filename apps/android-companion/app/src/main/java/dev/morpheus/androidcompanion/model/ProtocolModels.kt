@@ -2,8 +2,10 @@ package dev.morpheus.androidcompanion.model
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -37,6 +39,7 @@ data class ConversationItem(
     val type: String,
     val title: String,
     val body: String,
+    val bodyIsTruncated: Boolean = false,
     val toolPresentation: ToolPresentation? = null,
 )
 
@@ -45,6 +48,7 @@ data class ToolPresentation(
     val status: String?,
     val details: String,
     val detailsIsTruncated: Boolean = false,
+    val toolCategory: String = "external",
     val outputLabel: String? = null,
     val output: String? = null,
     val outputIsEmpty: Boolean = true,
@@ -52,7 +56,6 @@ data class ToolPresentation(
 )
 
 private const val SummaryTextLimit = 240
-private const val BodyTextLimit = 12_000
 private const val DetailsTextLimit = 8_000
 private const val OutputTextLimit = 12_000
 private const val UnknownFallbackLimit = 400
@@ -107,65 +110,133 @@ fun JsonObject.toConversationItem(): ConversationItem {
     val id = string("id") ?: "$type-${hashCode()}"
     val title: String
     val body: String
+    val bodyIsTruncated: Boolean
     val toolPresentation: ToolPresentation?
     when (type) {
         "userMessage" -> {
             title = "You"
-            body = boundedBody(formatUserMessage(this["content"]))
+            body = formatUserMessage(this["content"])
+            bodyIsTruncated = false
             toolPresentation = null
         }
         "agentMessage" -> {
             title = "Assistant"
-            body = boundedBody(string("text").orEmpty())
+            body = string("text").orEmpty()
+            bodyIsTruncated = false
             toolPresentation = null
         }
         "reasoning" -> {
             title = "Reasoning"
-            body = boundedBody(
-                formatStringArray(this["summary"])
-                    .ifBlank { formatStringArray(this["content"]) }
-                    .ifBlank { "Reasoning updated" },
-            )
+            body = formatStringArray(this["summary"])
+                .ifBlank { formatStringArray(this["content"]) }
+                .ifBlank { "Reasoning updated" }
+            bodyIsTruncated = false
             toolPresentation = null
         }
         "plan" -> {
             title = "Plan"
-            body = boundedBody(string("text").orEmpty())
+            body = string("text").orEmpty()
+            bodyIsTruncated = false
             toolPresentation = null
         }
         "commandExecution" -> {
             title = "Command"
             toolPresentation = commandExecutionPresentation()
             body = toolPresentation.summary
+            bodyIsTruncated = false
         }
         "commandExecutionNotification" -> {
             title = "Command"
             toolPresentation = commandExecutionNotificationPresentation()
             body = toolPresentation.summary
+            bodyIsTruncated = false
         }
         "builtinToolCall" -> {
             title = string("tool") ?: string("toolName") ?: "Tool"
             toolPresentation = builtinToolCallPresentation()
             body = toolPresentation.summary
+            bodyIsTruncated = false
+        }
+        "dynamicToolCall" -> {
+            title = string("tool") ?: string("toolName") ?: "Tool"
+            toolPresentation = dynamicToolCallPresentation()
+            body = toolPresentation.summary
+            bodyIsTruncated = false
+        }
+        "mcpToolCall" -> {
+            title = string("tool") ?: string("toolName") ?: "Tool"
+            toolPresentation = mcpToolCallPresentation()
+            body = toolPresentation.summary
+            bodyIsTruncated = false
+        }
+        "eventCommandCall" -> {
+            title = string("label") ?: string("command") ?: "Event subscription"
+            toolPresentation = eventCommandCallPresentation()
+            body = toolPresentation.summary
+            bodyIsTruncated = false
+        }
+        "eventCommandEvent" -> {
+            title = string("label") ?: "Event"
+            body = listOfNotNull(
+                string("message"),
+                string("line"),
+                string("command"),
+            ).joinToString("\n").ifBlank { "Event received" }
+            bodyIsTruncated = bool("truncated") == true
+            toolPresentation = null
+        }
+        "eventDrivenToolCall" -> {
+            title = string("tool") ?: "Event subscription"
+            toolPresentation = builtinToolCallPresentation(toolCategory = "eventDrivenSubscription")
+            body = toolPresentation.summary
+            bodyIsTruncated = false
+        }
+        "eventDrivenTool" -> {
+            title = string("title") ?: string("tool") ?: "Event"
+            toolPresentation = eventDrivenToolPresentation()
+            body = toolPresentation.summary
+            bodyIsTruncated = false
+        }
+        "collabAgentToolCall" -> {
+            title = string("tool") ?: "Agent"
+            toolPresentation = builtinToolCallPresentation(toolCategory = "multiAgent")
+            body = toolPresentation.summary
+            bodyIsTruncated = false
+        }
+        "collabAgentMessage" -> {
+            title = collabAgentMessageTitle()
+            toolPresentation = collabAgentMessagePresentation()
+            body = toolPresentation.summary
+            bodyIsTruncated = false
+        }
+        "collabAgentStatusUpdate" -> {
+            title = collabAgentStatusUpdateTitle()
+            toolPresentation = collabAgentStatusUpdatePresentation()
+            body = toolPresentation.summary
+            bodyIsTruncated = false
         }
         "contextCompaction" -> {
             title = "Context compaction"
             body = "Conversation history was compacted."
+            bodyIsTruncated = false
             toolPresentation = null
         }
         "injectedContext" -> {
             title = string("title") ?: "Context"
-            body = boundedBody(string("preview").orEmpty())
-            toolPresentation = null
+            toolPresentation = injectedContextPresentation()
+            body = toolPresentation.summary
+            bodyIsTruncated = false
         }
         "fileChange" -> {
             title = "File changes"
             body = formatFileChanges(this["changes"])
+            bodyIsTruncated = false
             toolPresentation = null
         }
         else -> {
             title = type
             body = compactJson(this)
+            bodyIsTruncated = false
             toolPresentation = null
         }
     }
@@ -174,17 +245,20 @@ fun JsonObject.toConversationItem(): ConversationItem {
         type = type,
         title = title,
         body = body,
+        bodyIsTruncated = bodyIsTruncated,
         toolPresentation = toolPresentation,
     )
 }
 
-fun appendBodyDeltaBounded(current: String, delta: String): String {
-    return boundedTail(current + delta, BodyTextLimit, "text").text
+fun appendBodyDelta(current: String, delta: String): String {
+    return current + delta
 }
 
 fun JsonObject.string(name: String): String? = this[name]?.jsonPrimitiveOrNull()?.contentOrNull
 
 fun JsonObject.long(name: String): Long? = this[name]?.jsonPrimitiveOrNull()?.longOrNull
+
+private fun JsonObject.bool(name: String): Boolean? = this[name]?.jsonPrimitiveOrNull()?.booleanOrNull
 
 fun JsonElement?.jsonObjectOrNull(): JsonObject? = this as? JsonObject
 
@@ -281,6 +355,7 @@ private fun JsonObject.commandExecutionPresentation(): ToolPresentation {
         status = status ?: exitCode?.let { "exit $it" },
         details = details.text.ifBlank { "Command execution" },
         detailsIsTruncated = details.truncated,
+        toolCategory = "command",
         outputLabel = "Output",
         output = output.text.takeIf { it.isNotEmpty() },
         outputIsEmpty = output.text.isEmpty(),
@@ -317,6 +392,7 @@ private fun JsonObject.commandExecutionNotificationPresentation(): ToolPresentat
         status = status,
         details = details.text.ifBlank { "Command notification" },
         detailsIsTruncated = details.truncated,
+        toolCategory = "commandNotification",
         outputLabel = "Output",
         output = output.text.takeIf { it.isNotEmpty() },
         outputIsEmpty = output.text.isEmpty(),
@@ -324,7 +400,9 @@ private fun JsonObject.commandExecutionNotificationPresentation(): ToolPresentat
     )
 }
 
-private fun JsonObject.builtinToolCallPresentation(): ToolPresentation {
+private fun JsonObject.builtinToolCallPresentation(
+    toolCategory: String? = null,
+): ToolPresentation {
     val tool = string("tool") ?: string("toolName") ?: "Tool"
     val status = string("status")
     val summary = string("summary")?.let { boundedInline(it, SummaryTextLimit) }
@@ -341,7 +419,244 @@ private fun JsonObject.builtinToolCallPresentation(): ToolPresentation {
         status = status,
         details = details.text.ifBlank { "Tool call" },
         detailsIsTruncated = details.truncated,
+        toolCategory = toolCategory ?: toolCategoryForName(tool),
     )
+}
+
+private fun JsonObject.dynamicToolCallPresentation(): ToolPresentation {
+    val tool = string("tool") ?: string("toolName") ?: "Tool"
+    val status = string("status")
+    val contentItems = nonNull("contentItems")
+    val output = contentItems?.let { boundedJsonText(it, OutputTextLimit) }
+        ?: BoundedText("", false)
+    val details = boundedSections(
+        DetailsTextLimit,
+        section("Tool", tool),
+        section("Status", status),
+        section("Success", fieldText("success")),
+        section("Duration", fieldText("durationMs")?.let { "$it ms" }),
+        section("Arguments", this["arguments"]?.let { boundedJson(it, DetailsTextLimit) }),
+        section("Content", contentItems?.let { boundedJson(it, DetailsTextLimit) }),
+    )
+    return ToolPresentation(
+        summary = listOfNotNull(tool, status).joinToString(" • ").ifBlank { "Tool call" },
+        status = status,
+        details = details.text.ifBlank { "Tool call" },
+        detailsIsTruncated = details.truncated,
+        toolCategory = toolCategoryForName(tool),
+        outputLabel = "Output",
+        output = output.text.takeIf { it.isNotEmpty() },
+        outputIsEmpty = output.text.isEmpty(),
+        outputIsTruncated = output.truncated,
+    )
+}
+
+private fun JsonObject.mcpToolCallPresentation(): ToolPresentation {
+    val tool = string("tool") ?: string("toolName") ?: "Tool"
+    val status = string("status")
+    val error = nonNull("error")
+    val result = nonNull("result") ?: error
+    val output = result?.let { boundedJsonText(it, OutputTextLimit) } ?: BoundedText("", false)
+    val details = boundedSections(
+        DetailsTextLimit,
+        section("Tool", tool),
+        section("Status", status),
+        section("Duration", fieldText("durationMs")?.let { "$it ms" }),
+        section("Arguments", this["arguments"]?.let { boundedJson(it, DetailsTextLimit) }),
+        section("Result", result?.let { boundedJson(it, DetailsTextLimit) }),
+    )
+    return ToolPresentation(
+        summary = listOfNotNull(tool, status).joinToString(" • ").ifBlank { "MCP tool call" },
+        status = status,
+        details = details.text.ifBlank { "MCP tool call" },
+        detailsIsTruncated = details.truncated,
+        toolCategory = "external",
+        outputLabel = if (error != null) "Error" else "Result",
+        output = output.text.takeIf { it.isNotEmpty() },
+        outputIsEmpty = output.text.isEmpty(),
+        outputIsTruncated = output.truncated,
+    )
+}
+
+private fun JsonObject.eventDrivenToolPresentation(): ToolPresentation {
+    val title = string("title") ?: string("tool") ?: "Event"
+    val summary = string("text")?.let { boundedInline(it, SummaryTextLimit) } ?: title
+    val details = boundedSections(
+        DetailsTextLimit,
+        section("Tool", string("tool")),
+        section("Title", title),
+        section("Text", string("text")),
+    )
+    return ToolPresentation(
+        summary = summary,
+        status = "completed",
+        details = details.text.ifBlank { title },
+        detailsIsTruncated = details.truncated,
+        toolCategory = "eventDrivenEvent",
+    )
+}
+
+private fun JsonObject.eventCommandCallPresentation(): ToolPresentation {
+    val command = string("command").orEmpty()
+    val label = string("label") ?: command.ifBlank { "Event subscription" }
+    val status = string("status")
+    val details = boundedSections(
+        DetailsTextLimit,
+        section("Label", label),
+        section("Command", command),
+        section("Cwd", string("cwd")),
+        section("Status", status),
+        section("Output", this["output"]?.let { boundedJson(it, DetailsTextLimit) }),
+    )
+    return ToolPresentation(
+        summary = listOfNotNull(label, status).joinToString(" • "),
+        status = status,
+        details = details.text.ifBlank { label },
+        detailsIsTruncated = details.truncated,
+        toolCategory = "eventDrivenSubscription",
+    )
+}
+
+private fun JsonObject.injectedContextPresentation(): ToolPresentation {
+    val title = string("title") ?: "Context"
+    val preview = string("preview").orEmpty()
+    val details = boundedSections(
+        DetailsTextLimit,
+        section(title, preview),
+    )
+    return ToolPresentation(
+        summary = boundedInline(preview.ifBlank { title }, SummaryTextLimit),
+        status = "completed",
+        details = details.text.ifBlank { title },
+        detailsIsTruncated = details.truncated,
+        toolCategory = "context",
+    )
+}
+
+private fun JsonObject.collabAgentMessageTitle(): String {
+    return if (string("operation") == "childCompletion") {
+        "${string("senderPath") ?: "unknown"} subagent completion"
+    } else {
+        "received from ${string("senderPath") ?: "unknown"}"
+    }
+}
+
+private fun JsonObject.collabAgentMessagePresentation(): ToolPresentation {
+    val operation = string("operation") ?: "message"
+    val sender = string("senderPath") ?: "unknown"
+    val recipient = string("recipientPath") ?: "unknown"
+    val content = string("content").orEmpty()
+    val summary = if (operation == "childCompletion") {
+        listOf("Received child completion from $sender", boundedInline(content, SummaryTextLimit).takeIf { it.isNotBlank() })
+            .filterNotNull()
+            .joinToString(": ")
+    } else {
+        "Received agent message from $sender"
+    }
+    val details = boundedSections(
+        DetailsTextLimit,
+        section("Operation", if (operation == "sendMessage" || operation == "send_message") "followupTask" else operation),
+        section("From", sender),
+        section("To", recipient),
+        section("Message", content.ifBlank { null }),
+        section("Trigger Turn", fieldText("triggerTurn")),
+        section("Other Recipients", this["otherRecipientPaths"]?.let { boundedJson(it, DetailsTextLimit) }),
+    )
+    return ToolPresentation(
+        summary = summary,
+        status = "completed",
+        details = details.text.ifBlank { summary },
+        detailsIsTruncated = details.truncated,
+        toolCategory = if (operation == "childCompletion") "childCompletion" else "multiAgent",
+    )
+}
+
+private fun JsonObject.collabAgentStatusUpdateTitle(): String {
+    val status = this["lifecycleStatus"]?.jsonObjectOrNull()
+    val path = status?.string("path") ?: string("senderPath") ?: "unknown"
+    val label = collabAgentLabel(path, status)
+    val lifecycleStatus = status?.get("lifecycleStatus")?.jsonObjectOrNull()
+    return if (lifecycleStatus?.string("type") == "final") {
+        "$label subagent completion"
+    } else {
+        "status from $label"
+    }
+}
+
+private fun JsonObject.collabAgentStatusUpdatePresentation(): ToolPresentation {
+    val status = this["lifecycleStatus"]?.jsonObjectOrNull()
+    val path = status?.string("path") ?: string("senderPath") ?: "unknown"
+    val label = collabAgentLabel(path, status)
+    val lifecycleLabel = lifecycleStatusLabel(status?.get("lifecycleStatus"))
+    val message = status?.string("message")
+    val summary = listOfNotNull(
+        label,
+        lifecycleLabel,
+        message?.let { boundedInline(it, SummaryTextLimit) },
+    ).joinToString(" • ")
+    val details = boundedSections(
+        DetailsTextLimit,
+        section("From", string("senderPath")),
+        section("To", string("recipientPath")),
+        section("Status", lifecycleLabel),
+        section("Agent", label),
+        section("Provider", collabExternalProviderLabel(status)),
+        section("Message", message),
+    )
+    return ToolPresentation(
+        summary = summary.ifBlank { "Subagent status updated" },
+        status = "completed",
+        details = details.text.ifBlank { summary },
+        detailsIsTruncated = details.truncated,
+        toolCategory = "subagentNotification",
+    )
+}
+
+private fun collabAgentLabel(path: String, status: JsonObject?): String {
+    val provider = collabExternalProviderLabel(status)
+    return if (provider == null) path else "$provider $path"
+}
+
+private fun collabExternalProviderLabel(status: JsonObject?): String? {
+    val providerId = listOf(status?.string("agentRole"), status?.string("agentNickname"))
+        .mapNotNull { it?.trim()?.takeIf { value -> value.isNotEmpty() } }
+        .firstOrNull { it in externalProviderLabels }
+    return providerId?.let { externalProviderLabels[it] }
+}
+
+private val externalProviderLabels = mapOf(
+    "codex_cli" to "Codex CLI",
+    "claude_cli" to "Claude Code",
+    "opencode" to "OpenCode",
+)
+
+private fun toolCategoryForName(tool: String): String {
+    return when (tool) {
+        "read_agent" -> "multiAgent"
+        "process_exit_subscribe",
+        "fs_subscribe",
+        "schedule_subscribe",
+        "process_exit_unsubscribe",
+        "fs_unsubscribe",
+        "schedule_unsubscribe" -> "eventDrivenSubscription"
+        else -> "external"
+    }
+}
+
+fun commandOutputDeltaFallbackPresentation(): ToolPresentation {
+    return ToolPresentation(
+        summary = "Command execution",
+        status = "inProgress",
+        details = "Command execution",
+        toolCategory = "command",
+        outputLabel = "Output",
+        output = null,
+        outputIsEmpty = true,
+    )
+}
+
+private fun JsonObject.nonNull(name: String): JsonElement? {
+    return this[name]?.takeUnless { it is JsonNull }
 }
 
 fun ConversationItem.appendToolOutputDelta(delta: String): ConversationItem {
@@ -375,18 +690,10 @@ private fun compactJson(value: JsonElement): String {
 
 private data class BoundedText(val text: String, val truncated: Boolean)
 
-private fun boundedBody(value: String): String {
-    return boundedTail(value, BodyTextLimit, "text").text
-}
-
-private fun boundedTail(value: String?, maxChars: Int, label: String = "output"): BoundedText {
+private fun boundedTail(value: String?, maxChars: Int): BoundedText {
     if (value == null) return BoundedText("", false)
     if (value.length <= maxChars) return BoundedText(value, false)
-    val omitted = value.length - maxChars
-    return BoundedText(
-        "[truncated $omitted chars; showing latest $label]\n" + value.takeLast(maxChars),
-        true,
-    )
+    return BoundedText(value.takeLast(maxChars), true)
 }
 
 private fun boundedInline(value: String, maxChars: Int): String {
@@ -414,19 +721,17 @@ private fun boundedSections(maxChars: Int, vararg sections: String?): BoundedTex
             break
         }
     }
-    if (truncated) {
-        appendTruncatedMarker(builder, maxChars)
-    }
     return BoundedText(builder.toString(), truncated)
 }
 
 private fun boundedJson(value: JsonElement, maxChars: Int): String {
+    return boundedJsonText(value, maxChars).text
+}
+
+private fun boundedJsonText(value: JsonElement, maxChars: Int): BoundedText {
     val builder = StringBuilder()
     val truncated = !appendJsonWithinLimit(builder, value, maxChars)
-    if (truncated) {
-        appendTruncatedMarker(builder, maxChars)
-    }
-    return builder.toString()
+    return BoundedText(builder.toString(), truncated)
 }
 
 private fun appendJsonWithinLimit(
@@ -501,11 +806,4 @@ private fun appendWithinLimit(builder: StringBuilder, text: String, maxChars: In
     }
     builder.append(text.take(remaining))
     return false
-}
-
-private fun appendTruncatedMarker(builder: StringBuilder, maxChars: Int) {
-    val marker = "\n[truncated]"
-    if (builder.length + marker.length <= maxChars + marker.length) {
-        builder.append(marker)
-    }
 }

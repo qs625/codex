@@ -4,8 +4,9 @@ import dev.morpheus.androidcompanion.model.ConversationItem
 import dev.morpheus.androidcompanion.model.ConversationThread
 import dev.morpheus.androidcompanion.model.ConversationTurn
 import dev.morpheus.androidcompanion.model.ThreadSummary
-import dev.morpheus.androidcompanion.model.appendBodyDeltaBounded
+import dev.morpheus.androidcompanion.model.appendBodyDelta
 import dev.morpheus.androidcompanion.model.appendToolOutputDelta
+import dev.morpheus.androidcompanion.model.commandOutputDeltaFallbackPresentation
 import dev.morpheus.androidcompanion.model.jsonObjectOrNull
 import dev.morpheus.androidcompanion.model.lifecycleStatusLabel
 import dev.morpheus.androidcompanion.model.string
@@ -38,7 +39,7 @@ fun applySelectedThreadRead(
 ): CompanionUiState {
     return if (current.selectedThreadId == requestedThreadId) {
         val selectedThread = if (thread != null) {
-            thread.withTerminalLifecycleLabelPreserved(
+            thread.mergeLiveConversationItems(current.selectedThread).withTerminalLifecycleLabelPreserved(
                 listOfNotNull(
                     current.selectedThread
                         ?.takeIf { it.id == thread.id }
@@ -224,8 +225,74 @@ private fun ConversationThread.replaceTurn(
 ): ConversationThread {
     if (threadId != id || turn == null) return this
     val replaced = turns.any { it.id == turn.id }
-    val nextTurns = if (replaced) turns.map { if (it.id == turn.id) turn else it } else turns + turn
+    val nextTurns = if (replaced) {
+        turns.map { existing -> if (existing.id == turn.id) turn.mergeLiveItems(existing) else existing }
+    } else {
+        turns + turn
+    }
     return copy(turns = nextTurns)
+}
+
+private fun ConversationThread.mergeLiveConversationItems(
+    liveThread: ConversationThread?,
+): ConversationThread {
+    if (liveThread == null || liveThread.id != id) return this
+    val mergedTurns = turns.toMutableList()
+    val canAppendMissingLiveTurns = !turns.containsContextCompaction()
+    for (liveTurn in liveThread.turns) {
+        val index = mergedTurns.indexOfFirst { it.id == liveTurn.id }
+        if (index == -1) {
+            if (canAppendMissingLiveTurns) {
+                mergedTurns += liveTurn
+            }
+        } else {
+            mergedTurns[index] = mergedTurns[index].mergeLiveItems(liveTurn)
+        }
+    }
+    return copy(turns = mergedTurns)
+}
+
+private fun List<ConversationTurn>.containsContextCompaction(): Boolean {
+    return any { turn -> turn.items.any { item -> item.type == "contextCompaction" } }
+}
+
+private fun ConversationTurn.mergeLiveItems(liveTurn: ConversationTurn): ConversationTurn {
+    val mergedItems = items.toMutableList()
+    for (liveItem in liveTurn.items) {
+        val index = mergedItems.indexOfFirst { it.id == liveItem.id }
+        if (index == -1) {
+            mergedItems += liveItem
+        } else {
+            mergedItems[index] = mergedItems[index].mergeLiveItem(liveItem)
+        }
+    }
+    return copy(items = mergedItems)
+}
+
+private fun ConversationItem.mergeLiveItem(liveItem: ConversationItem): ConversationItem {
+    if (liveItem.id != id) return this
+    val mergedPresentation = toolPresentation?.mergeLivePresentation(liveItem.toolPresentation)
+        ?: liveItem.toolPresentation
+    return copy(
+        body = if (liveItem.body.length > body.length) liveItem.body else body,
+        bodyIsTruncated = bodyIsTruncated || liveItem.bodyIsTruncated,
+        toolPresentation = mergedPresentation,
+    )
+}
+
+private fun dev.morpheus.androidcompanion.model.ToolPresentation.mergeLivePresentation(
+    livePresentation: dev.morpheus.androidcompanion.model.ToolPresentation?,
+): dev.morpheus.androidcompanion.model.ToolPresentation {
+    if (livePresentation == null) return this
+    val liveOutput = livePresentation.output.orEmpty()
+    val currentOutput = output.orEmpty()
+    return copy(
+        details = if (livePresentation.details.length > details.length) livePresentation.details else details,
+        detailsIsTruncated = detailsIsTruncated || livePresentation.detailsIsTruncated,
+        output = if (liveOutput.length > currentOutput.length) livePresentation.output else output,
+        outputIsEmpty = outputIsEmpty && livePresentation.outputIsEmpty,
+        outputIsTruncated = outputIsTruncated || livePresentation.outputIsTruncated,
+    )
 }
 
 private fun ConversationThread.withLifecycleLabel(
@@ -295,7 +362,7 @@ private fun ConversationThread.appendBodyDelta(
         body = "",
     )
     return copy(turns = turns.upsertItem(turnId, fallback) { item ->
-        item.copy(body = appendBodyDeltaBounded(item.body, delta))
+        item.copy(body = appendBodyDelta(item.body, delta))
     })
 }
 
@@ -310,7 +377,8 @@ private fun ConversationThread.appendCommandOutputDelta(
         id = itemId,
         type = "commandExecution",
         title = "Command",
-        body = "",
+        body = "Command execution",
+        toolPresentation = commandOutputDeltaFallbackPresentation(),
     )
     return copy(turns = turns.upsertItem(turnId, fallback) { item ->
         item.appendToolOutputDelta(delta)
@@ -320,7 +388,7 @@ private fun ConversationThread.appendCommandOutputDelta(
 private fun List<ConversationTurn>.upsertItem(
     turnId: String,
     item: ConversationItem,
-    transformExisting: (ConversationItem) -> ConversationItem = { item },
+    transformExisting: (ConversationItem) -> ConversationItem = { existing -> item.mergeLiveItem(existing) },
 ): List<ConversationTurn> {
     val turnIndex = indexOfFirst { it.id == turnId }
     if (turnIndex == -1) {
