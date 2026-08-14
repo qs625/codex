@@ -79,6 +79,8 @@ mod thread_processor_behavior_tests {
     use protocol::permissions::FileSystemSandboxEntry;
     use protocol::permissions::NetworkSandboxPolicy;
     use protocol::protocol::AskForApproval;
+    use protocol::protocol::AgentMessageEvent;
+    use protocol::protocol::CompactedItem;
     use protocol::protocol::EventMsg;
     use protocol::protocol::SandboxPolicy;
     use protocol::protocol::SessionSource;
@@ -535,6 +537,142 @@ mod thread_processor_behavior_tests {
                 exit_code: Some(0),
                 duration_ms: Some(12),
             }]
+        );
+    }
+
+    fn compacted_display_history_items() -> Vec<RolloutItem> {
+        vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
+                turn_id: "old-turn".to_string(),
+                started_at: Some(1),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "old answer".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(protocol::protocol::TurnCompleteEvent {
+                turn_id: "old-turn".to_string(),
+                last_agent_message: None,
+                completed_at: Some(2),
+                duration_ms: Some(1),
+                time_to_first_token_ms: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
+                turn_id: "compact-turn".to_string(),
+                started_at: Some(3),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "pre compact".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".to_string(),
+                replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "after compact suffix".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(protocol::protocol::TurnCompleteEvent {
+                turn_id: "compact-turn".to_string(),
+                last_agent_message: None,
+                completed_at: Some(4),
+                duration_ms: Some(1),
+                time_to_first_token_ms: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
+                turn_id: "new-turn".to_string(),
+                started_at: Some(5),
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "new answer".to_string(),
+                phase: None,
+                memory_citation: None,
+            })),
+        ]
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_prunes_compact_prefix() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            turns: Vec::new(),
+        };
+
+        populate_thread_turns_from_history(&mut thread, &compacted_display_history_items(), None);
+
+        assert_eq!(
+            thread
+                .turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["compact-turn", "new-turn"]
+        );
+        assert_eq!(
+            thread
+                .turns
+                .iter()
+                .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
+                .collect::<Vec<_>>(),
+            vec!["item-3", "item-4", "item-5"]
+        );
+        assert!(matches!(
+            &thread.turns[0].items[0],
+            ThreadItem::ContextCompaction { .. }
+        ));
+    }
+
+    #[test]
+    fn thread_turns_list_reconstruction_prunes_compact_prefix() {
+        let turns = reconstruct_thread_turns_for_turns_list(
+            &compacted_display_history_items(),
+            ThreadLifecycleStatus::completed(None),
+            /*has_live_running_thread*/ false,
+            None,
+        );
+
+        assert_eq!(
+            turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
+            vec!["compact-turn", "new-turn"]
+        );
+        assert_eq!(
+            turns
+                .iter()
+                .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
+                .collect::<Vec<_>>(),
+            vec!["item-3", "item-4", "item-5"]
         );
     }
 

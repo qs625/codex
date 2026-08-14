@@ -158,6 +158,7 @@ pub(super) fn reconstruct_thread_turns_for_turns_list(
     if let Some(active_turn) = active_turn {
         merge_turn_history_with_active_turn(&mut turns, active_turn);
     }
+    prune_turns_to_latest_compaction_boundary(&mut turns);
     turns
 }
 

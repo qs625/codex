@@ -313,6 +313,7 @@ impl ThreadRequestProcessor {
                     thread.turns = build_api_turns_from_rollout_items(&history.items);
                     self.apply_current_subscription_snapshot_turns(thread_id, &mut thread)
                         .await?;
+                    prune_turns_to_latest_compaction_boundary(&mut thread.turns);
                 }
                 Ok(Some(thread))
             }
@@ -348,10 +349,11 @@ impl ThreadRequestProcessor {
             ));
         }
         let fallback_thread = build_thread_from_live_snapshot(thread_id, live_snapshot);
-        let persisted_turns = persisted_thread
+        let mut persisted_turns = persisted_thread
             .as_ref()
             .map(|thread| thread.turns.clone())
             .unwrap_or_default();
+        prune_turns_to_latest_compaction_boundary(&mut persisted_turns);
         let mut thread = if let Some(mut thread) = persisted_thread {
             if thread.path.is_none() {
                 thread.path = fallback_thread.path.clone();
@@ -379,6 +381,7 @@ impl ThreadRequestProcessor {
             restore_persisted_display_turns(&mut thread, &persisted_turns);
             self.apply_current_subscription_snapshot_turns(thread_id, &mut thread)
                 .await?;
+            prune_turns_to_latest_compaction_boundary(&mut thread.turns);
         }
         Ok((thread, has_live_in_progress_turn))
     }
