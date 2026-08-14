@@ -6,6 +6,7 @@ import dev.morpheus.androidcompanion.model.ConversationTurn
 import dev.morpheus.androidcompanion.model.ThreadSummary
 import dev.morpheus.androidcompanion.model.appendToolOutputDelta
 import dev.morpheus.androidcompanion.model.jsonObjectOrNull
+import dev.morpheus.androidcompanion.model.lifecycleStatusLabel
 import dev.morpheus.androidcompanion.model.string
 import dev.morpheus.androidcompanion.model.toConversationItem
 import dev.morpheus.androidcompanion.model.toConversationThread
@@ -35,7 +36,22 @@ fun applySelectedThreadRead(
     thread: ConversationThread?,
 ): CompanionUiState {
     return if (current.selectedThreadId == requestedThreadId) {
-        current.copy(selectedThread = thread, isReadingThread = false)
+        val selectedThread = if (thread != null) {
+            thread.withTerminalLifecycleLabelPreserved(
+                listOfNotNull(
+                    current.selectedThread
+                        ?.takeIf { it.id == thread.id }
+                        ?.summary
+                        ?.lifecycleLabel,
+                    current.threads
+                        .firstOrNull { it.id == thread.id }
+                        ?.lifecycleLabel,
+                ).firstOrNull { it.isTerminalLifecycleLabel() },
+            )
+        } else {
+            thread
+        }
+        current.copy(selectedThread = selectedThread, isReadingThread = false)
     } else {
         current
     }
@@ -65,7 +81,7 @@ fun projectNotification(notification: RpcNotification): ProjectedNotification? {
         }
         "thread/status/changed" -> {
             val threadId = params.string("threadId") ?: return null
-            val status = params["lifecycleStatus"]?.toString()?.trim('"') ?: "unknown"
+            val status = lifecycleStatusLabel(params["lifecycleStatus"])
             ProjectedNotification.ThreadStatusChanged(threadId, status)
         }
         "thread/archived" -> {
@@ -130,7 +146,7 @@ fun applyProjectedNotification(
                 } else {
                     summary
                 }
-            } to selected
+            } to selected?.withLifecycleLabel(notification.threadId, notification.status)
         is ProjectedNotification.ThreadArchived ->
             threads.filterNot { it.id == notification.threadId } to
                 selected?.takeUnless { it.id == notification.threadId }
@@ -209,6 +225,38 @@ private fun ConversationThread.replaceTurn(
     val replaced = turns.any { it.id == turn.id }
     val nextTurns = if (replaced) turns.map { if (it.id == turn.id) turn else it } else turns + turn
     return copy(turns = nextTurns)
+}
+
+private fun ConversationThread.withLifecycleLabel(
+    threadId: String,
+    status: String,
+): ConversationThread {
+    return if (id == threadId) {
+        copy(summary = summary.copy(lifecycleLabel = status))
+    } else {
+        this
+    }
+}
+
+private fun ConversationThread.withTerminalLifecycleLabelPreserved(
+    currentLabel: String?,
+): ConversationThread {
+    return if (
+        currentLabel != null &&
+        currentLabel.isTerminalLifecycleLabel() &&
+        !summary.lifecycleLabel.isTerminalLifecycleLabel()
+    ) {
+        copy(summary = summary.copy(lifecycleLabel = currentLabel))
+    } else {
+        this
+    }
+}
+
+private fun String.isTerminalLifecycleLabel(): Boolean {
+    return when (this) {
+        "complete", "completed", "errored", "shutdown", "interrupted" -> true
+        else -> false
+    }
 }
 
 private fun ConversationThread.replaceItem(

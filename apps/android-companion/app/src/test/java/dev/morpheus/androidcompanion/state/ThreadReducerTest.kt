@@ -92,6 +92,113 @@ class ThreadReducerTest {
     }
 
     @Test
+    fun structuredLifecycleStatusProjectsReadableLabels() {
+        val waitingThread = reduceThreadRead(
+            json.parseToJsonElement(
+                """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":{"type":"waiting","reason":"command"},"path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
+            ),
+        )
+        val completedThread = reduceThreadRead(
+            json.parseToJsonElement(
+                """{"thread":{"id":"t2","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":{"type":"final","result":{"type":"completed","lastAgentMessage":null}},"path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root/worker","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
+            ),
+        )
+
+        assertEquals("Waiting on Event Tool", waitingThread?.summary?.lifecycleLabel)
+        assertEquals("completed", completedThread?.summary?.lifecycleLabel)
+    }
+
+    @Test
+    fun threadStatusChangedUpdatesListAndSelectedThreadLifecycle() {
+        val selected = reduceThreadRead(
+            json.parseToJsonElement(
+                """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":{"type":"waiting","reason":"command"},"path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
+            ),
+        )
+        val notification = RpcNotification(
+            "thread/status/changed",
+            json.parseToJsonElement(
+                """{"threadId":"t1","lifecycleStatus":{"type":"final","result":{"type":"completed","lastAgentMessage":null}}}""",
+            ),
+        )
+
+        val (threads, thread) = applyNotification(listOf(selected!!.summary), selected, notification)
+
+        assertEquals("completed", threads.first().lifecycleLabel)
+        assertEquals("completed", thread?.summary?.lifecycleLabel)
+    }
+
+    @Test
+    fun staleThreadReadCannotDowngradeCompletedLifecycleStatus() {
+        val completedThread = reduceThreadRead(
+            json.parseToJsonElement(
+                """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":2,"lifecycleStatus":{"type":"final","result":{"type":"completed","lastAgentMessage":null}},"path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
+            ),
+        )
+        val staleWaitingThread = reduceThreadRead(
+            json.parseToJsonElement(
+                """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":{"type":"waiting","reason":"command"},"path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
+            ),
+        )
+        val state = CompanionUiState(
+            selectedThreadId = "t1",
+            selectedThread = completedThread,
+            isReadingThread = true,
+        )
+
+        val next = applySelectedThreadRead(state, "t1", staleWaitingThread)
+
+        assertEquals("completed", next.selectedThread?.summary?.lifecycleLabel)
+        assertEquals(false, next.isReadingThread)
+    }
+
+    @Test
+    fun staleThreadReadUsesCompletedListLifecycleWhenSelectingThread() {
+        val completedSummary = reduceThreadRead(
+            json.parseToJsonElement(
+                """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":2,"lifecycleStatus":{"type":"final","result":{"type":"completed","lastAgentMessage":null}},"path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
+            ),
+        )!!.summary
+        val staleWaitingThread = reduceThreadRead(
+            json.parseToJsonElement(
+                """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":{"type":"waiting","reason":"command"},"path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
+            ),
+        )
+        val state = CompanionUiState(
+            threads = listOf(completedSummary),
+            selectedThreadId = "t1",
+            selectedThread = null,
+            isReadingThread = true,
+        )
+
+        val next = applySelectedThreadRead(state, "t1", staleWaitingThread)
+
+        assertEquals("completed", next.selectedThread?.summary?.lifecycleLabel)
+        assertEquals(false, next.isReadingThread)
+    }
+
+    @Test
+    fun staleThreadReadUsesCompletedListLifecycleOverWaitingSelectedThread() {
+        val waitingThread = reduceThreadRead(
+            json.parseToJsonElement(
+                """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":{"type":"waiting","reason":"command"},"path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
+            ),
+        )
+        val completedSummary = waitingThread!!.summary.copy(lifecycleLabel = "completed")
+        val state = CompanionUiState(
+            threads = listOf(completedSummary),
+            selectedThreadId = "t1",
+            selectedThread = waitingThread,
+            isReadingThread = true,
+        )
+
+        val next = applySelectedThreadRead(state, "t1", waitingThread)
+
+        assertEquals("completed", next.selectedThread?.summary?.lifecycleLabel)
+        assertEquals(false, next.isReadingThread)
+    }
+
+    @Test
     fun unknownItemHasReadableFallback() {
         val item = json.parseToJsonElement("""{"type":"futureItem","id":"x1","payload":{"ok":true,"large":"${"x".repeat(800)}"}}""")
             .jsonObject

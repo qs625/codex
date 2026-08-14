@@ -645,6 +645,60 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
 
+test("mergeThreadSnapshot does not downgrade completed lifecycle from stale metadata", () => {
+  const existing = {
+    ...makeThread(),
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
+  } satisfies Thread;
+  const staleWaiting = {
+    ...makeThread(),
+    lifecycleStatus: { type: "waiting", reason: "command" },
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, staleWaiting);
+
+  assert.deepEqual(merged.lifecycleStatus, {
+    type: "final",
+    result: { type: "completed" },
+  });
+});
+
+test("upsertThreadMetadataPreservingTurns does not downgrade completed lifecycle", () => {
+  const existing = {
+    ...makeThread(),
+    lifecycleStatus: { type: "final", result: { type: "completed" } },
+  } satisfies Thread;
+  const staleWaiting = {
+    ...makeThread(),
+    lifecycleStatus: { type: "waiting", reason: "command" },
+  } satisfies Thread;
+
+  const threads = upsertThreadMetadataPreservingTurns([existing], staleWaiting);
+
+  assert.deepEqual(threads[0]?.lifecycleStatus, {
+    type: "final",
+    result: { type: "completed" },
+  });
+});
+
+test("mergeThreadSnapshot does not downgrade non-completed final lifecycle", () => {
+  const existing = {
+    ...makeThread(),
+    lifecycleStatus: { type: "final", result: { type: "interrupted" } },
+  } satisfies Thread;
+  const staleWaiting = {
+    ...makeThread(),
+    lifecycleStatus: { type: "waiting", reason: "command" },
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, staleWaiting);
+
+  assert.deepEqual(merged.lifecycleStatus, {
+    type: "final",
+    result: { type: "interrupted" },
+  });
+});
+
 test("updateThreadItem creates a running turn when item notifications arrive first", () => {
   const thread = makeThread();
 
