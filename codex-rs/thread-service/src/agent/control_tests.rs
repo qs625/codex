@@ -36,6 +36,7 @@ use protocol::protocol::RolloutItem;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
 use protocol::protocol::ThreadLifecycleStatus;
+use protocol::protocol::ThreadLifecycleWaitReason;
 use protocol::protocol::ThreadSource;
 use protocol::protocol::TurnAbortReason;
 use protocol::protocol::TurnAbortedEvent;
@@ -6527,14 +6528,17 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         .control
         .list_agents(root_thread_id, &SessionSource::Exec, None)
         .await;
-    assert_eq!(
-        listed_agents
-            .expect("list agents should succeed")
-            .into_iter()
-            .find(|agent| agent.agent_name == worker_path.to_string())
-            .expect("worker should be listed")
-            .lifecycle_status,
-        ThreadLifecycleStatus::completed(Some("done".to_string())),
+    assert!(
+        matches!(
+            listed_agents
+                .expect("list agents should succeed")
+                .into_iter()
+                .find(|agent| agent.agent_name == worker_path.to_string())
+                .expect("worker should be listed")
+                .lifecycle_status,
+            ThreadLifecycleStatus::Final { .. }
+        ),
+        "status/list reads should observe terminal child lifecycle without delivering notification"
     );
     let captured_ops = harness.manager.captured_ops();
     assert_eq!(
@@ -6546,6 +6550,24 @@ async fn multi_agent_v2_completion_waits_for_pending_mailbox_input() {
         ),
         0,
         "status/list reads should not deliver child completion"
+    );
+
+    let _ = worker_thread.codex.session.get_pending_input().await;
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    let notification = captured_child_completion_communication(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    )
+    .expect("child should notify parent after pending input drains");
+    assert_eq!(
+        notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::completed(Some("done".to_string())))
     );
 }
 
@@ -7964,7 +7986,7 @@ async fn followup_task_to_completed_child_does_not_emit_old_completion() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_completion_allows_active_event_subscription() {
+async fn multi_agent_v2_child_notification_reports_event_subscription_then_final_status() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
     let mut config = harness.config.clone();
@@ -8024,21 +8046,86 @@ async fn multi_agent_v2_completion_allows_active_event_subscription() {
         .await;
     let captured_ops = harness.manager.captured_ops();
 
-    let completion = captured_child_completion_communication(
+    let waiting_notification = captured_child_completion_communication(
         &captured_ops[baseline_op_count..],
         root_thread_id,
         &worker_path,
         &AgentPath::root(),
     )
-    .expect("child completion should be delivered");
-    assert_eq!(completion.content, "done");
+    .expect("event subscription should notify parent with waiting-event-subscription lifecycle");
+    assert_eq!(
+        waiting_notification.content,
+        "waiting on event subscription"
+    );
     assert!(
-        !SubagentNotification::matches_text(&completion.content),
-        "new child completion content must not use the legacy raw marker"
+        !SubagentNotification::matches_text(&waiting_notification.content),
+        "new child notification content must not use the legacy raw marker"
     );
     assert_eq!(
-        completion.status,
+        waiting_notification.status,
         Some(AgentStatus::Completed(Some("done".to_string())))
+    );
+    assert_eq!(
+        waiting_notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        })
+    );
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        1,
+        "same waiting-event-subscription lifecycle should not be sent repeatedly"
+    );
+
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(worker_thread_id, 0);
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        2,
+        "waiting-event-subscription followed by final completed should produce one updated notification"
+    );
+    let final_notification = captured_ops[baseline_op_count..]
+        .iter()
+        .rev()
+        .find_map(|(thread_id, op)| {
+            if *thread_id != root_thread_id {
+                return None;
+            }
+            let Op::InterAgentCommunication { communication } = op else {
+                return None;
+            };
+            (communication.author == worker_path
+                && communication.recipient == AgentPath::root()
+                && communication.operation
+                    == protocol::protocol::InterAgentOperation::ChildCompletion)
+                .then(|| communication.clone())
+        })
+        .expect("final child notification should be captured");
+    assert_eq!(
+        final_notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::completed(Some("done".to_string())))
     );
 }
 
@@ -8493,7 +8580,123 @@ async fn multi_agent_v2_restored_event_subscription_allows_completion() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_completion_waits_for_unfinished_subagent() {
+async fn multi_agent_v2_child_notification_reports_wait_command_then_final_status() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .codex
+        .session
+        .force_wait_command_for_tests
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    let worker_turn = emit_turn_complete(&worker_thread, "done").await;
+    worker_thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(worker_turn.as_ref())
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    let waiting_notification = captured_child_completion_communication(
+        &captured_ops[baseline_op_count..],
+        root_thread_id,
+        &worker_path,
+        &AgentPath::root(),
+    )
+    .expect("running command should notify parent with waiting-command lifecycle");
+    assert_eq!(
+        waiting_notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Command,
+        })
+    );
+    assert_eq!(waiting_notification.content, "waiting on command");
+    worker_thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(worker_turn.as_ref())
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        1,
+        "same waiting-command lifecycle should not be sent repeatedly"
+    );
+
+    worker_thread
+        .codex
+        .session
+        .force_wait_command_for_tests
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    worker_thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(worker_turn.as_ref())
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        2,
+        "waiting-command followed by final completed should produce one updated notification"
+    );
+    let final_notification = captured_ops[baseline_op_count..]
+        .iter()
+        .rev()
+        .find_map(|(thread_id, op)| {
+            if *thread_id != root_thread_id {
+                return None;
+            }
+            let Op::InterAgentCommunication { communication } = op else {
+                return None;
+            };
+            (communication.author == worker_path
+                && communication.recipient == AgentPath::root()
+                && communication.operation
+                    == protocol::protocol::InterAgentOperation::ChildCompletion)
+                .then(|| communication.clone())
+        })
+        .expect("final child notification should be captured");
+    assert_eq!(
+        final_notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::completed(Some("done".to_string())))
+    );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_child_notification_reports_unfinished_subagent_then_final_status() {
     let harness = AgentControlHarness::new().await;
     let (root_thread_id, _root_thread) = harness.start_thread().await;
     let mut config = harness.config.clone();
@@ -8558,15 +8761,43 @@ async fn multi_agent_v2_completion_waits_for_unfinished_subagent() {
         )
         .await;
     *worker_thread.codex.session.active_turn.lock().await = None;
-    sleep(Duration::from_millis(100)).await;
+    worker_thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(worker_turn.as_ref())
+        .await;
     let captured_ops = harness.manager.captured_ops();
 
-    assert!(!captured_child_completion(
+    let waiting_notification = captured_child_completion_communication(
         &captured_ops[baseline_op_count..],
         root_thread_id,
         &worker_path,
         &AgentPath::root(),
-    ));
+    )
+    .expect("unfinished child should notify parent with waiting-child lifecycle");
+    assert_eq!(
+        waiting_notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Child,
+        })
+    );
+    assert_eq!(waiting_notification.content, "waiting on child");
+    worker_thread
+        .codex
+        .session
+        .maybe_notify_parent_of_final_status(worker_turn.as_ref())
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        1,
+        "same waiting-child lifecycle should not be sent repeatedly"
+    );
 
     let tester_turn = tester_thread.codex.session.new_default_turn().await;
     tester_thread
@@ -8591,6 +8822,37 @@ async fn multi_agent_v2_completion_waits_for_unfinished_subagent() {
         .await;
     let captured_ops = harness.manager.captured_ops();
 
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        2,
+        "waiting-child followed by final completed should produce one updated notification"
+    );
+    let final_notification = captured_ops[baseline_op_count..]
+        .iter()
+        .rev()
+        .find_map(|(thread_id, op)| {
+            if *thread_id != root_thread_id {
+                return None;
+            }
+            let Op::InterAgentCommunication { communication } = op else {
+                return None;
+            };
+            (communication.author == worker_path
+                && communication.recipient == AgentPath::root()
+                && communication.operation
+                    == protocol::protocol::InterAgentOperation::ChildCompletion)
+                .then(|| communication.clone())
+        })
+        .expect("final child notification should be captured");
+    assert_eq!(
+        final_notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::completed(Some("done".to_string())))
+    );
     assert!(captured_child_completion(
         &captured_ops[baseline_op_count..],
         root_thread_id,

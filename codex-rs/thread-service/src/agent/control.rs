@@ -2430,7 +2430,7 @@ impl AgentControl {
                 .await
             {
                 warn!(
-                    "failed to notify external parent thread {parent_thread_id} of external agent completion: {err}"
+                    "failed to notify external parent thread {parent_thread_id} of external agent status: {err}"
                 );
             }
             return;
@@ -2443,7 +2443,7 @@ impl AgentControl {
             .await
         {
             warn!(
-                "failed to notify parent thread {parent_thread_id} of external agent completion: {err}"
+                "failed to notify parent thread {parent_thread_id} of external agent status: {err}"
             );
         }
     }

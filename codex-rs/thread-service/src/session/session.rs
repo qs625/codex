@@ -42,6 +42,7 @@ use model_service_api::SharedModelServiceApi;
 use plugin_service_api::SharedPluginRuntime;
 use protocol::SessionId;
 use protocol::ThreadId;
+use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadSkill;
 use protocol::protocol::ThreadSource;
 use protocol::protocol::TurnEnvironmentSelection;
@@ -81,8 +82,11 @@ pub struct Session {
     pub(super) mailbox: Mailbox,
     pub(super) mailbox_rx: Mutex<MailboxReceiver>,
     pub(crate) idle_pending_input: Mutex<Vec<crate::PendingInputItem>>,
+    pub(crate) last_parent_child_notification_status: Mutex<Option<ThreadLifecycleStatus>>,
     pub(crate) model_observed_display_events: Mutex<HashMap<String, Vec<EventMsg>>>,
     pub(crate) scheduler: Mutex<()>,
+    #[cfg(test)]
+    pub(crate) force_wait_command_for_tests: AtomicBool,
     #[cfg(test)]
     pub(crate) goal_continuation_before_launch_hook:
         Mutex<Option<Arc<GoalContinuationBeforeLaunchHook>>>,

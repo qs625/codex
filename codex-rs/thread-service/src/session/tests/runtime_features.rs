@@ -497,7 +497,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         RolloutItem::Compacted(CompactedItem {
             message: "summary after compaction".to_string(),
             replacement_history: Some(compacted_history.clone()),
-                visible_replacement_history_len: None,
+            visible_replacement_history_len: None,
         }),
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: compact_turn_id,
@@ -2363,8 +2363,10 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         mailbox,
         mailbox_rx: Mutex::new(mailbox_rx),
         idle_pending_input: Mutex::new(Vec::new()),
+        last_parent_child_notification_status: Mutex::new(None),
         model_observed_display_events: Mutex::new(HashMap::new()),
         scheduler: Mutex::new(()),
+        force_wait_command_for_tests: std::sync::atomic::AtomicBool::new(false),
         goal_continuation_before_launch_hook: Mutex::new(None),
         goal_runtime: codex_agent_runtime::GoalRuntimeState::new(),
         guardian_review_session: crate::session::session::approval_review_session_impl::GuardianReviewSessionManager::default(),
