@@ -66,6 +66,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
 private const val ExpandedTextLimit = 8_000
+private const val MessageBodyTextLimit = 8_000
 
 @Composable
 fun CompanionApp(viewModel: CompanionViewModel = viewModel()) {
@@ -373,7 +374,11 @@ private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) 
                     contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(items, key = { it.id }) { item ->
+                    items(
+                        items = items,
+                        key = { it.id },
+                        contentType = { it.type },
+                    ) { item ->
                         ConversationRow(
                             item = item,
                             expanded = item.id in expandedToolItems,
@@ -449,9 +454,40 @@ private fun ConversationRow(
             Column(Modifier.padding(12.dp)) {
                 Text(item.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
-                Text(item.body.ifBlank { item.type }, style = MaterialTheme.typography.bodyMedium)
+                BoundedMessageBody(item.body.ifBlank { item.type })
             }
         }
+    }
+}
+
+@Composable
+private fun BoundedMessageBody(text: String) {
+    val preview = remember(text) { messageBodyPreview(text) }
+    Text(preview.text, style = MaterialTheme.typography.bodyMedium)
+    if (preview.isTruncated) {
+        Spacer(Modifier.height(3.dp))
+        Text(
+            "Preview truncated for performance.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+internal data class MessageBodyPreview(
+    val text: String,
+    val isTruncated: Boolean,
+)
+
+internal fun messageBodyPreview(text: String): MessageBodyPreview {
+    return if (text.length <= MessageBodyTextLimit) {
+        MessageBodyPreview(text = text, isTruncated = false)
+    } else {
+        MessageBodyPreview(
+            text = "[truncated ${text.length - MessageBodyTextLimit} chars; showing latest text]\n" +
+                text.takeLast(MessageBodyTextLimit),
+            isTruncated = true,
+        )
     }
 }
 

@@ -92,6 +92,52 @@ class ThreadReducerTest {
     }
 
     @Test
+    fun largeAgentMessageSnapshotIsBoundedForDisplay() {
+        val longText = "a".repeat(30_000)
+        val item = json.parseToJsonElement(
+            """{"type":"agentMessage","id":"a1","text":"$longText"}""",
+        ).jsonObject.toConversationItem()
+
+        assertTrueCompat(item.body.length < 13_000)
+        assertTrueCompat(item.body.contains("showing latest text"))
+    }
+
+    @Test
+    fun largeUserAndReasoningSnapshotsAreBoundedForDisplay() {
+        val longText = "u".repeat(30_000)
+        val userItem = json.parseToJsonElement(
+            """{"type":"userMessage","id":"u1","content":[{"type":"text","text":"$longText"}]}""",
+        ).jsonObject.toConversationItem()
+        val reasoningItem = json.parseToJsonElement(
+            """{"type":"reasoning","id":"r1","summary":["${"r".repeat(30_000)}"]}""",
+        ).jsonObject.toConversationItem()
+
+        assertTrueCompat(userItem.body.length < 13_000)
+        assertTrueCompat(userItem.body.contains("showing latest text"))
+        assertTrueCompat(reasoningItem.body.length < 13_000)
+        assertTrueCompat(reasoningItem.body.contains("showing latest text"))
+    }
+
+    @Test
+    fun repeatedAgentMessageDeltaStaysBounded() {
+        val read = json.parseToJsonElement(
+            """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":"active","path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[{"id":"turn-1","items":[{"type":"agentMessage","id":"a1","text":""}],"itemsView":"full","status":"inProgress","error":null,"startedAt":1,"completedAt":null}]}}""",
+        )
+        var selected = reduceThreadRead(read)
+        repeat(40) { index ->
+            val deltaNotification = RpcNotification(
+                "item/agentMessage/delta",
+                json.parseToJsonElement("""{"threadId":"t1","turnId":"turn-1","itemId":"a1","delta":"${index.toString().padStart(2, '0')}-${"x".repeat(500)}\n"}"""),
+            )
+            selected = applyNotification(emptyList(), selected, deltaNotification).second
+        }
+
+        val body = selected?.turns?.first()?.items?.first()?.body.orEmpty()
+        assertTrueCompat(body.length < 13_000)
+        assertTrueCompat(body.contains("39-"))
+    }
+
+    @Test
     fun unknownItemHasReadableFallback() {
         val item = json.parseToJsonElement("""{"type":"futureItem","id":"x1","payload":{"ok":true,"large":"${"x".repeat(800)}"}}""")
             .jsonObject
