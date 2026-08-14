@@ -65,6 +65,8 @@ import dev.morpheus.androidcompanion.state.parseConnectionPayload
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
+private const val ExpandedTextLimit = 8_000
+
 @Composable
 fun CompanionApp(viewModel: CompanionViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -355,8 +357,11 @@ private fun ThreadSummary.agentDepth(): Int {
 private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) {
     var draft by remember(state.selectedThreadId) { mutableStateOf("") }
     var expandedToolItems by remember(state.selectedThreadId) { mutableStateOf(setOf<String>()) }
+    val selectedThread = state.selectedThread
+    val items = remember(selectedThread) {
+        selectedThread?.turns.orEmpty().flatMap { turn -> turn.items }
+    }
     Column(Modifier.fillMaxSize()) {
-        val items = state.selectedThread?.turns.orEmpty().flatMap { turn -> turn.items }
         Box(Modifier.weight(1f)) {
             if (state.isReadingThread) {
                 EmptyMessage("Loading conversation.")
@@ -497,13 +502,18 @@ private fun ToolConversationRow(
                 }
                 if (expanded) {
                     Spacer(Modifier.height(10.dp))
-                    DetailBlock("Details", presentation.details)
+                    DetailBlock(
+                        "Details",
+                        presentation.details,
+                        truncated = presentation.detailsIsTruncated,
+                    )
                     if (presentation.outputLabel != null) {
                         Spacer(Modifier.height(10.dp))
                         DetailBlock(
                             presentation.outputLabel,
                             if (presentation.outputIsEmpty) "No output" else presentation.output.orEmpty(),
                             monospace = true,
+                            truncated = presentation.outputIsTruncated,
                         )
                     }
                 }
@@ -530,7 +540,22 @@ private fun StatusPill(status: String) {
 }
 
 @Composable
-private fun DetailBlock(label: String, text: String, monospace: Boolean = false) {
+private fun DetailBlock(
+    label: String,
+    text: String,
+    monospace: Boolean = false,
+    truncated: Boolean = false,
+) {
+    val boundedText = remember(text) {
+        if (text.length <= ExpandedTextLimit) {
+            text
+        } else if (monospace) {
+            "[truncated ${text.length - ExpandedTextLimit} chars; showing latest output]\n" +
+                text.takeLast(ExpandedTextLimit)
+        } else {
+            text.take(ExpandedTextLimit) + "\n[truncated]"
+        }
+    }
     Column {
         Text(
             label,
@@ -539,10 +564,18 @@ private fun DetailBlock(label: String, text: String, monospace: Boolean = false)
         )
         Spacer(Modifier.height(3.dp))
         Text(
-            text,
+            boundedText,
             style = MaterialTheme.typography.bodySmall,
             fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
         )
+        if (truncated || boundedText.length < text.length) {
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "Preview truncated for performance.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

@@ -18,21 +18,18 @@ data class ThreadSummary(
     val agentRole: String?,
     val lifecycleLabel: String,
     val updatedAt: Long?,
-    val raw: JsonObject,
 )
 
 data class ConversationThread(
     val id: String,
     val summary: ThreadSummary,
     val turns: List<ConversationTurn>,
-    val raw: JsonObject,
 )
 
 data class ConversationTurn(
     val id: String,
     val status: String,
     val items: List<ConversationItem>,
-    val raw: JsonObject,
 )
 
 data class ConversationItem(
@@ -40,7 +37,6 @@ data class ConversationItem(
     val type: String,
     val title: String,
     val body: String,
-    val raw: JsonObject,
     val toolPresentation: ToolPresentation? = null,
 )
 
@@ -48,10 +44,17 @@ data class ToolPresentation(
     val summary: String,
     val status: String?,
     val details: String,
+    val detailsIsTruncated: Boolean = false,
     val outputLabel: String? = null,
     val output: String? = null,
     val outputIsEmpty: Boolean = true,
+    val outputIsTruncated: Boolean = false,
 )
+
+private const val SummaryTextLimit = 240
+private const val DetailsTextLimit = 8_000
+private const val OutputTextLimit = 12_000
+private const val UnknownFallbackLimit = 400
 
 fun JsonObject.toThreadSummary(): ThreadSummary {
     val id = string("id") ?: "unknown"
@@ -71,7 +74,6 @@ fun JsonObject.toThreadSummary(): ThreadSummary {
         agentRole = role,
         lifecycleLabel = lifecycleStatusLabel(this["lifecycleStatus"]),
         updatedAt = long("updatedAt"),
-        raw = this,
     )
 }
 
@@ -84,7 +86,6 @@ fun JsonObject.toConversationThread(): ConversationThread {
         id = string("id") ?: "unknown",
         summary = toThreadSummary(),
         turns = turns,
-        raw = this,
     )
 }
 
@@ -97,7 +98,6 @@ fun JsonObject.toConversationTurn(): ConversationTurn {
         id = string("id") ?: "unknown-turn",
         status = string("status") ?: "unknown",
         items = items,
-        raw = this,
     )
 }
 
@@ -171,7 +171,6 @@ fun JsonObject.toConversationItem(): ConversationItem {
         type = type,
         title = title,
         body = body,
-        raw = this,
         toolPresentation = toolPresentation,
     )
 }
@@ -234,12 +233,13 @@ private fun JsonObject.commandExecutionPresentation(): ToolPresentation {
     val cwd = string("cwd").orEmpty()
     val status = string("status")
     val exitCode = fieldText("exitCode")
-    val output = string("aggregatedOutput")
+    val output = boundedTail(string("aggregatedOutput"), OutputTextLimit)
     val summary = listOfNotNull(
-        command.takeIf { it.isNotBlank() },
+        boundedInline(command, SummaryTextLimit).takeIf { it.isNotBlank() },
         exitCode?.let { "exit $it" } ?: status,
     ).joinToString(" • ").ifBlank { "Command execution" }
-    val details = listOfNotNull(
+    val details = boundedSections(
+        DetailsTextLimit,
         section("Command", command),
         section("Cwd", cwd),
         section("Status", status),
@@ -249,78 +249,88 @@ private fun JsonObject.commandExecutionPresentation(): ToolPresentation {
         section("Notify On", fieldText("notifyOn")),
         section("Duration", fieldText("durationMs")?.let { "$it ms" }),
         section("Exit Code", exitCode),
-        section("Actions", this["commandActions"]?.let { compactJson(it) }),
-    ).joinToString("\n\n")
+        section("Actions", this["commandActions"]?.let { boundedJson(it, DetailsTextLimit) }),
+    )
     return ToolPresentation(
         summary = summary,
         status = status ?: exitCode?.let { "exit $it" },
-        details = details.ifBlank { "Command execution" },
+        details = details.text.ifBlank { "Command execution" },
+        detailsIsTruncated = details.truncated,
         outputLabel = "Output",
-        output = output,
-        outputIsEmpty = output.isNullOrEmpty(),
+        output = output.text.takeIf { it.isNotEmpty() },
+        outputIsEmpty = output.text.isEmpty(),
+        outputIsTruncated = output.truncated,
     )
 }
 
 private fun JsonObject.commandExecutionNotificationPresentation(): ToolPresentation {
     val kind = string("kind") ?: "notification"
     val message = string("message")
-    val output = string("output")
+    val output = boundedTail(string("output"), OutputTextLimit)
     val exitCode = fieldText("exitCode")
     val summary = listOfNotNull(
         "Command notification",
         kind,
         exitCode?.let { "exit $it" },
-        message?.take(120),
+        message?.let { boundedInline(it, SummaryTextLimit) },
     ).joinToString(" • ")
     val status = if (kind == "exit" && exitCode != null) {
         if (exitCode == "0") "completed" else "failed"
     } else {
         "completed"
     }
-    val details = listOfNotNull(
+    val details = boundedSections(
+        DetailsTextLimit,
         section("Kind", kind),
         section("Command ID", string("commandItemId")),
         section("Exit Code", exitCode),
         section("Message", message),
         section("Created", fieldText("createdAtMs")),
-    ).joinToString("\n\n")
+    )
     return ToolPresentation(
         summary = summary.ifBlank { "Command notification" },
         status = status,
-        details = details.ifBlank { "Command notification" },
+        details = details.text.ifBlank { "Command notification" },
+        detailsIsTruncated = details.truncated,
         outputLabel = "Output",
-        output = output,
-        outputIsEmpty = output.isNullOrEmpty(),
+        output = output.text.takeIf { it.isNotEmpty() },
+        outputIsEmpty = output.text.isEmpty(),
+        outputIsTruncated = output.truncated,
     )
 }
 
 private fun JsonObject.builtinToolCallPresentation(): ToolPresentation {
     val tool = string("tool") ?: string("toolName") ?: "Tool"
     val status = string("status")
-    val summary = string("summary")
+    val summary = string("summary")?.let { boundedInline(it, SummaryTextLimit) }
         ?: listOfNotNull(tool, status).joinToString(" • ").ifBlank { "Tool call" }
-    val details = listOfNotNull(
+    val details = boundedSections(
+        DetailsTextLimit,
         section("Tool", tool),
         section("Status", status),
-        section("Arguments", this["arguments"]?.toString()),
-        section("Output", this["output"]?.toString()),
-    ).joinToString("\n\n")
+        section("Arguments", this["arguments"]?.let { boundedJson(it, DetailsTextLimit) }),
+        section("Output", this["output"]?.let { boundedJson(it, DetailsTextLimit) }),
+    )
     return ToolPresentation(
         summary = summary,
         status = status,
-        details = details.ifBlank { "Tool call" },
+        details = details.text.ifBlank { "Tool call" },
+        detailsIsTruncated = details.truncated,
     )
 }
 
 fun ConversationItem.appendToolOutputDelta(delta: String): ConversationItem {
-    val presentation = toolPresentation ?: return copy(body = body + delta)
+    val presentation = toolPresentation
+        ?: return copy(body = boundedTail(body + delta, OutputTextLimit).text)
     val currentOutput = presentation.output.orEmpty()
+    val nextOutput = boundedTail(currentOutput + delta, OutputTextLimit)
     val nextPresentation = presentation.copy(
-        output = currentOutput + delta,
+        output = nextOutput.text,
         outputIsEmpty = false,
+        outputIsTruncated = presentation.outputIsTruncated || nextOutput.truncated,
     )
     return copy(
-        body = if (body.isBlank()) delta else body,
+        body = if (body.isBlank()) boundedInline(delta, SummaryTextLimit) else body,
         toolPresentation = nextPresentation,
     )
 }
@@ -335,6 +345,138 @@ private fun section(label: String, value: String?): String? {
 }
 
 private fun compactJson(value: JsonElement): String {
-    val raw = value.toString()
-    return if (raw.length > 400) raw.take(400) + "..." else raw
+    return boundedJson(value, UnknownFallbackLimit)
+}
+
+private data class BoundedText(val text: String, val truncated: Boolean)
+
+private fun boundedTail(value: String?, maxChars: Int): BoundedText {
+    if (value == null) return BoundedText("", false)
+    if (value.length <= maxChars) return BoundedText(value, false)
+    val omitted = value.length - maxChars
+    return BoundedText(
+        "[truncated $omitted chars; showing latest output]\n" + value.takeLast(maxChars),
+        true,
+    )
+}
+
+private fun boundedInline(value: String, maxChars: Int): String {
+    val normalized = value.replace('\n', ' ').trim()
+    return if (normalized.length <= maxChars) {
+        normalized
+    } else {
+        normalized.take(maxChars) + "..."
+    }
+}
+
+private fun boundedSections(maxChars: Int, vararg sections: String?): BoundedText {
+    val builder = StringBuilder()
+    var truncated = false
+    for (section in sections.filterNotNull()) {
+        if (section.isBlank()) continue
+        if (builder.isNotEmpty()) {
+            if (!appendWithinLimit(builder, "\n\n", maxChars)) {
+                truncated = true
+                break
+            }
+        }
+        if (!appendWithinLimit(builder, section, maxChars)) {
+            truncated = true
+            break
+        }
+    }
+    if (truncated) {
+        appendTruncatedMarker(builder, maxChars)
+    }
+    return BoundedText(builder.toString(), truncated)
+}
+
+private fun boundedJson(value: JsonElement, maxChars: Int): String {
+    val builder = StringBuilder()
+    val truncated = !appendJsonWithinLimit(builder, value, maxChars)
+    if (truncated) {
+        appendTruncatedMarker(builder, maxChars)
+    }
+    return builder.toString()
+}
+
+private fun appendJsonWithinLimit(
+    builder: StringBuilder,
+    value: JsonElement,
+    maxChars: Int,
+): Boolean {
+    return when (value) {
+        is JsonPrimitive -> appendPrimitiveWithinLimit(builder, value, maxChars)
+        is JsonArray -> {
+            if (!appendWithinLimit(builder, "[", maxChars)) return false
+            value.forEachIndexed { index, element ->
+                if (index > 0 && !appendWithinLimit(builder, ",", maxChars)) return false
+                if (!appendJsonWithinLimit(builder, element, maxChars)) return false
+            }
+            appendWithinLimit(builder, "]", maxChars)
+        }
+        is JsonObject -> {
+            if (!appendWithinLimit(builder, "{", maxChars)) return false
+            value.entries.forEachIndexed { index, entry ->
+                if (index > 0 && !appendWithinLimit(builder, ",", maxChars)) return false
+                if (!appendEscapedWithinLimit(builder, entry.key, maxChars)) return false
+                if (!appendWithinLimit(builder, ":", maxChars)) return false
+                if (!appendJsonWithinLimit(builder, entry.value, maxChars)) return false
+            }
+            appendWithinLimit(builder, "}", maxChars)
+        }
+    }
+}
+
+private fun appendPrimitiveWithinLimit(
+    builder: StringBuilder,
+    value: JsonPrimitive,
+    maxChars: Int,
+): Boolean {
+    val content = value.contentOrNull ?: "null"
+    if (content.length <= 64) {
+        val literal = value.toString()
+        if (!literal.startsWith("\"")) {
+            return appendWithinLimit(builder, literal, maxChars)
+        }
+    }
+    return appendEscapedWithinLimit(builder, content, maxChars)
+}
+
+private fun appendEscapedWithinLimit(
+    builder: StringBuilder,
+    text: String,
+    maxChars: Int,
+): Boolean {
+    if (!appendWithinLimit(builder, "\"", maxChars)) return false
+    for (char in text) {
+        val escaped = when (char) {
+            '\\' -> "\\\\"
+            '"' -> "\\\""
+            '\n' -> "\\n"
+            '\r' -> "\\r"
+            '\t' -> "\\t"
+            else -> char.toString()
+        }
+        if (!appendWithinLimit(builder, escaped, maxChars)) return false
+    }
+    return appendWithinLimit(builder, "\"", maxChars)
+}
+
+private fun appendWithinLimit(builder: StringBuilder, text: String, maxChars: Int): Boolean {
+    val remaining = maxChars - builder.length
+    if (remaining <= 0) return false
+    if (text.length <= remaining) {
+        builder.append(text)
+        return true
+    }
+    builder.append(text.take(remaining))
+    return false
+}
+
+private fun appendTruncatedMarker(builder: StringBuilder, maxChars: Int) {
+    val marker = "\n[truncated]"
+    if (builder.length + marker.length <= maxChars + marker.length) {
+        builder.append(marker)
+    }
 }

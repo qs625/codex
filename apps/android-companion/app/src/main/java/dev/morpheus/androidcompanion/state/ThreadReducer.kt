@@ -13,9 +13,6 @@ import dev.morpheus.androidcompanion.model.toConversationTurn
 import dev.morpheus.androidcompanion.model.toThreadSummary
 import dev.morpheus.androidcompanion.rpc.RpcNotification
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 
 fun reduceThreadList(result: JsonElement): List<ThreadSummary> {
     val data = result.jsonObjectOrNull()
@@ -49,64 +46,154 @@ fun applyNotification(
     selected: ConversationThread?,
     notification: RpcNotification,
 ): Pair<List<ThreadSummary>, ConversationThread?> {
-    val params = notification.params?.jsonObjectOrNull() ?: return threads to selected
+    val projected = projectNotification(notification) ?: return threads to selected
+    return applyProjectedNotification(threads, selected, projected)
+}
+
+fun projectNotification(notification: RpcNotification): ProjectedNotification? {
+    val params = notification.params?.jsonObjectOrNull() ?: return null
     return when (notification.method) {
         "thread/started" -> {
             val thread = params["thread"]?.jsonObjectOrNull()?.toThreadSummary()
-                ?: return threads to selected
-            upsertSummary(threads, thread) to selected
+                ?: return null
+            ProjectedNotification.ThreadStarted(thread)
         }
         "thread/name/updated" -> {
-            val threadId = params.string("threadId") ?: return threads to selected
+            val threadId = params.string("threadId") ?: return null
             val name = params.string("threadName")
-            threads.map { summary ->
-                if (summary.id == threadId) summary.copy(title = name ?: summary.preview.ifBlank { summary.id.take(12) }) else summary
-            } to selected
+            ProjectedNotification.ThreadNameUpdated(threadId, name)
         }
         "thread/status/changed" -> {
-            val threadId = params.string("threadId") ?: return threads to selected
+            val threadId = params.string("threadId") ?: return null
             val status = params["lifecycleStatus"]?.toString()?.trim('"') ?: "unknown"
-            threads.map { summary ->
-                if (summary.id == threadId) summary.copy(lifecycleLabel = status) else summary
-            } to selected
+            ProjectedNotification.ThreadStatusChanged(threadId, status)
         }
         "thread/archived" -> {
-            val threadId = params.string("threadId") ?: return threads to selected
-            threads.filterNot { it.id == threadId } to selected?.takeUnless { it.id == threadId }
+            val threadId = params.string("threadId") ?: return null
+            ProjectedNotification.ThreadArchived(threadId)
         }
         "thread/closed" -> {
-            val threadId = params.string("threadId") ?: return threads to selected
-            threads.map { summary ->
-                if (summary.id == threadId) summary.copy(lifecycleLabel = "notLoaded") else summary
-            } to selected
+            val threadId = params.string("threadId") ?: return null
+            ProjectedNotification.ThreadClosed(threadId)
         }
         "turn/started", "turn/completed" -> {
             val updated = params["turn"]?.jsonObjectOrNull()?.toConversationTurn()
             val threadId = params.string("threadId")
-            threads to selected?.replaceTurn(threadId, updated)
+            ProjectedNotification.TurnUpdated(threadId, updated)
         }
         "item/started", "item/completed" -> {
             val threadId = params.string("threadId")
             val turnId = params.string("turnId")
             val item = params["item"]?.jsonObjectOrNull()?.toConversationItem()
-            threads to selected?.replaceItem(threadId, turnId, item)
+            ProjectedNotification.ItemUpdated(threadId, turnId, item)
         }
         "item/agentMessage/delta" -> {
             val threadId = params.string("threadId")
             val turnId = params.string("turnId")
             val itemId = params.string("itemId")
             val delta = params.string("delta").orEmpty()
-            threads to selected?.appendAgentDelta(threadId, turnId, itemId, delta)
+            ProjectedNotification.AgentMessageDelta(threadId, turnId, itemId, delta)
         }
         "item/commandExecution/outputDelta" -> {
             val threadId = params.string("threadId")
             val turnId = params.string("turnId")
             val itemId = params.string("itemId")
             val delta = params.string("delta").orEmpty()
-            threads to selected?.appendCommandOutputDelta(threadId, turnId, itemId, delta)
+            ProjectedNotification.CommandOutputDelta(threadId, turnId, itemId, delta)
         }
-        else -> threads to selected
+        else -> null
     }
+}
+
+fun applyProjectedNotification(
+    threads: List<ThreadSummary>,
+    selected: ConversationThread?,
+    notification: ProjectedNotification,
+): Pair<List<ThreadSummary>, ConversationThread?> {
+    return when (notification) {
+        is ProjectedNotification.ThreadStarted ->
+            upsertSummary(threads, notification.thread) to selected
+        is ProjectedNotification.ThreadNameUpdated ->
+            threads.map { summary ->
+                if (summary.id == notification.threadId) {
+                    summary.copy(
+                        title = notification.name ?: summary.preview.ifBlank { summary.id.take(12) },
+                    )
+                } else {
+                    summary
+                }
+            } to selected
+        is ProjectedNotification.ThreadStatusChanged ->
+            threads.map { summary ->
+                if (summary.id == notification.threadId) {
+                    summary.copy(lifecycleLabel = notification.status)
+                } else {
+                    summary
+                }
+            } to selected
+        is ProjectedNotification.ThreadArchived ->
+            threads.filterNot { it.id == notification.threadId } to
+                selected?.takeUnless { it.id == notification.threadId }
+        is ProjectedNotification.ThreadClosed ->
+            threads.map { summary ->
+                if (summary.id == notification.threadId) {
+                    summary.copy(lifecycleLabel = "notLoaded")
+                } else {
+                    summary
+                }
+            } to selected
+        is ProjectedNotification.TurnUpdated ->
+            threads to selected?.replaceTurn(notification.threadId, notification.turn)
+        is ProjectedNotification.ItemUpdated ->
+            threads to selected?.replaceItem(
+                notification.threadId,
+                notification.turnId,
+                notification.item,
+            )
+        is ProjectedNotification.AgentMessageDelta ->
+            threads to selected?.appendAgentDelta(
+                notification.threadId,
+                notification.turnId,
+                notification.itemId,
+                notification.delta,
+            )
+        is ProjectedNotification.CommandOutputDelta ->
+            threads to selected?.appendCommandOutputDelta(
+                notification.threadId,
+                notification.turnId,
+                notification.itemId,
+                notification.delta,
+            )
+    }
+}
+
+sealed interface ProjectedNotification {
+    data class ThreadStarted(val thread: ThreadSummary) : ProjectedNotification
+    data class ThreadNameUpdated(val threadId: String, val name: String?) : ProjectedNotification
+    data class ThreadStatusChanged(val threadId: String, val status: String) : ProjectedNotification
+    data class ThreadArchived(val threadId: String) : ProjectedNotification
+    data class ThreadClosed(val threadId: String) : ProjectedNotification
+    data class TurnUpdated(
+        val threadId: String?,
+        val turn: ConversationTurn?,
+    ) : ProjectedNotification
+    data class ItemUpdated(
+        val threadId: String?,
+        val turnId: String?,
+        val item: ConversationItem?,
+    ) : ProjectedNotification
+    data class AgentMessageDelta(
+        val threadId: String?,
+        val turnId: String?,
+        val itemId: String?,
+        val delta: String,
+    ) : ProjectedNotification
+    data class CommandOutputDelta(
+        val threadId: String?,
+        val turnId: String?,
+        val itemId: String?,
+        val delta: String,
+    ) : ProjectedNotification
 }
 
 private fun upsertSummary(current: List<ThreadSummary>, next: ThreadSummary): List<ThreadSummary> {
@@ -157,10 +244,6 @@ private fun ConversationThread.appendBodyDelta(
         type = type,
         title = title,
         body = "",
-        raw = buildJsonObject {
-            put("id", JsonPrimitive(itemId))
-            put("type", JsonPrimitive(type))
-        },
     )
     return copy(turns = turns.upsertItem(turnId, fallback) { item ->
         item.copy(body = item.body + delta)
@@ -179,10 +262,6 @@ private fun ConversationThread.appendCommandOutputDelta(
         type = "commandExecution",
         title = "Command",
         body = "",
-        raw = buildJsonObject {
-            put("id", JsonPrimitive(itemId))
-            put("type", JsonPrimitive("commandExecution"))
-        },
     )
     return copy(turns = turns.upsertItem(turnId, fallback) { item ->
         item.appendToolOutputDelta(delta)
@@ -200,7 +279,6 @@ private fun List<ConversationTurn>.upsertItem(
             id = turnId,
             status = "inProgress",
             items = listOf(transformExisting(item)),
-            raw = JsonObject(emptyMap()),
         )
     }
     return map { turn ->
