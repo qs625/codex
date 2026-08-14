@@ -9,6 +9,7 @@ const { EventEmitter } = require("node:events");
 const { buildDesktopEnvironment } = require("./environment.cjs");
 
 const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
+const MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS = 20;
 const DEFAULT_MORPHEUS_HOME = resolvePrototypeMorpheusHome();
 
 class AppServerClient extends EventEmitter {
@@ -305,17 +306,20 @@ async function buildMobileConnectionLaunch(baseEnv = process.env, options = {}) 
       },
     };
   }
-  if (options.checkListenAvailable) {
-    const available = await options.checkListenAvailable(listenUrl);
-    if (!available) {
-      return {
+  const chosenListenUrl = await resolveAvailableMobileListenUrl(
+    listenUrl,
+    parsedListenUrl,
+    baseEnv,
+    options,
+  );
+  if (!chosenListenUrl) {
+    return {
+      enabled: false,
+      info: {
         enabled: false,
-        info: {
-          enabled: false,
-          reason: `Mobile listener bind address is unavailable: ${listenUrl}.`,
-        },
-      };
-    }
+        reason: buildUnavailableMobileListenReason(listenUrl, baseEnv),
+      },
+    };
   }
   const token = baseEnv.ROOT_WORKER_MOBILE_TOKEN ?? options.randomToken?.();
   if (!token) {
@@ -332,20 +336,55 @@ async function buildMobileConnectionLaunch(baseEnv = process.env, options = {}) 
     options.tokenFile ??
     path.join(morpheusHome, "root-worker-mobile-ws-token");
   options.writeTokenFile?.(tokenFile, token);
-  const endpoint = resolveLanEndpoint(listenUrl, baseEnv);
+  const endpoint = resolveLanEndpoint(chosenListenUrl, baseEnv);
   return {
     enabled: true,
-    listenUrl,
+    listenUrl: chosenListenUrl,
     token,
     tokenFile,
     info: {
       enabled: true,
-      bindEndpoint: listenUrl,
+      bindEndpoint: chosenListenUrl,
       endpoint,
       token,
       auth: "capability-token",
     },
   };
+}
+
+async function resolveAvailableMobileListenUrl(
+  listenUrl,
+  parsedListenUrl,
+  baseEnv,
+  options,
+) {
+  if (!options.checkListenAvailable) {
+    return listenUrl;
+  }
+  if (await options.checkListenAvailable(listenUrl)) {
+    return listenUrl;
+  }
+  if (baseEnv.ROOT_WORKER_MOBILE_ENDPOINT) {
+    return null;
+  }
+  for (
+    let port = parsedListenUrl.port + 1, attempts = 0;
+    port <= 65535 && attempts < MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS;
+    port += 1, attempts += 1
+  ) {
+    const candidate = formatMobileWebSocketListenUrl(parsedListenUrl.host, port);
+    if (await options.checkListenAvailable(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function buildUnavailableMobileListenReason(listenUrl, baseEnv) {
+  if (baseEnv.ROOT_WORKER_MOBILE_ENDPOINT) {
+    return `Mobile listener bind address is unavailable: ${listenUrl}. Automatic port fallback is disabled because ROOT_WORKER_MOBILE_ENDPOINT is set.`;
+  }
+  return `Mobile listener bind address is unavailable: ${listenUrl}. No fallback port was available.`;
 }
 
 function resolveLanEndpoint(listenUrl, baseEnv = process.env) {
@@ -359,7 +398,11 @@ function resolveLanEndpoint(listenUrl, baseEnv = process.env) {
   } catch {
     return listenUrl;
   }
-  if (url.hostname === "0.0.0.0" || url.hostname === "::") {
+  if (
+    url.hostname === "0.0.0.0" ||
+    url.hostname === "::" ||
+    url.hostname === "[::]"
+  ) {
     const lanAddress = firstLanIpv4Address() ?? "127.0.0.1";
     url.hostname = lanAddress;
   }
@@ -461,6 +504,11 @@ function parseMobileWebSocketListenUrl(listenUrl) {
   }
 
   return { host, port };
+}
+
+function formatMobileWebSocketListenUrl(host, port) {
+  const formattedHost = host.includes(":") ? `[${host}]` : host;
+  return `ws://${formattedHost}:${port}`;
 }
 
 function resolveWorkspaceAppServerBinary() {
