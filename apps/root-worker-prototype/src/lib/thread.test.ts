@@ -28,6 +28,7 @@ import {
   mergeThreadSnapshot,
   normalizeThreadSnapshot,
   pickInitialProjectThread,
+  preserveTerminalLifecycleStatus,
   queuePendingThreadUpdate,
   threadDisplayStatusClass,
   threadStatusClass,
@@ -680,6 +681,60 @@ test("upsertThreadMetadataPreservingTurns does not downgrade completed lifecycle
     type: "final",
     result: { type: "completed" },
   });
+});
+
+test("preserveTerminalLifecycleStatus ignores stale waiting status notifications", () => {
+  const completed = {
+    type: "final" as const,
+    result: { type: "completed" as const },
+  };
+  const staleWaiting = {
+    type: "waiting" as const,
+    reason: "eventSubscription" as const,
+  };
+
+  assert.deepEqual(
+    preserveTerminalLifecycleStatus(completed, staleWaiting),
+    completed,
+  );
+});
+
+test("agent tree does not show waiting after completed status is preserved", () => {
+  const root = makeSidebarThread({ id: "project-root", cwd: "/work/project" });
+  const completedOwner = makeSubagentThread(
+    "owner",
+    "project-root",
+    "/root/owner",
+    {
+      lifecycleStatus: {
+        type: "final" as const,
+        result: { type: "completed" as const },
+      },
+    },
+  );
+  const staleWaiting = {
+    type: "waiting" as const,
+    reason: "eventSubscription" as const,
+  };
+  const ownerAfterStaleStatus = {
+    ...completedOwner,
+    lifecycleStatus: preserveTerminalLifecycleStatus(
+      completedOwner.lifecycleStatus,
+      staleWaiting,
+    ),
+  };
+
+  const sidebar = buildProjectAgentSidebar([root, ownerAfterStaleStatus]);
+  const child = sidebar.projects[0]?.tree.children[0];
+
+  assert.deepEqual(child?.thread?.lifecycleStatus, {
+    type: "final",
+    result: { type: "completed" },
+  });
+  assert.ok(child);
+  const statusClass = treeThreadLifecycleStatusClass(child);
+  assert.equal(treeThreadLifecycleStatusLabel(statusClass), "Inactive");
+  assert.notEqual(statusClass, "waiting-subscription");
 });
 
 test("mergeThreadSnapshot does not downgrade non-completed final lifecycle", () => {
