@@ -48,12 +48,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.morpheus.androidcompanion.model.ConversationItem
+import dev.morpheus.androidcompanion.model.ToolPresentation
 import dev.morpheus.androidcompanion.model.ThreadSummary
 import dev.morpheus.androidcompanion.state.CompanionUiState
 import dev.morpheus.androidcompanion.state.CompanionViewModel
@@ -352,6 +354,7 @@ private fun ThreadSummary.agentDepth(): Int {
 @Composable
 private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) {
     var draft by remember(state.selectedThreadId) { mutableStateOf("") }
+    var expandedToolItems by remember(state.selectedThreadId) { mutableStateOf(setOf<String>()) }
     Column(Modifier.fillMaxSize()) {
         val items = state.selectedThread?.turns.orEmpty().flatMap { turn -> turn.items }
         Box(Modifier.weight(1f)) {
@@ -366,7 +369,17 @@ private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) 
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(items, key = { it.id }) { item ->
-                        ConversationRow(item)
+                        ConversationRow(
+                            item = item,
+                            expanded = item.id in expandedToolItems,
+                            onToggleExpanded = {
+                                expandedToolItems = if (item.id in expandedToolItems) {
+                                    expandedToolItems - item.id
+                                } else {
+                                    expandedToolItems + item.id
+                                }
+                            },
+                        )
                     }
                 }
             }
@@ -402,7 +415,21 @@ private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) 
 }
 
 @Composable
-private fun ConversationRow(item: ConversationItem) {
+private fun ConversationRow(
+    item: ConversationItem,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    val toolPresentation = item.toolPresentation
+    if (toolPresentation != null) {
+        ToolConversationRow(
+            item = item,
+            presentation = toolPresentation,
+            expanded = expanded,
+            onToggleExpanded = onToggleExpanded,
+        )
+        return
+    }
     val isUser = item.type == "userMessage"
     Row(
         Modifier.fillMaxWidth(),
@@ -420,6 +447,102 @@ private fun ConversationRow(item: ConversationItem) {
                 Text(item.body.ifBlank { item.type }, style = MaterialTheme.typography.bodyMedium)
             }
         }
+    }
+}
+
+@Composable
+private fun ToolConversationRow(
+    item: ConversationItem,
+    presentation: ToolPresentation,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start,
+    ) {
+        Surface(
+            tonalElevation = 1.dp,
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.fillMaxWidth(0.96f),
+        ) {
+            Column(
+                Modifier
+                    .clickable(onClick = onToggleExpanded)
+                    .padding(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            item.title,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            presentation.summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = if (expanded) Int.MAX_VALUE else 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    presentation.status?.let { status ->
+                        StatusPill(status)
+                    }
+                    TextButton(onClick = onToggleExpanded) {
+                        Text(if (expanded) "Hide" else "Details")
+                    }
+                }
+                if (expanded) {
+                    Spacer(Modifier.height(10.dp))
+                    DetailBlock("Details", presentation.details)
+                    if (presentation.outputLabel != null) {
+                        Spacer(Modifier.height(10.dp))
+                        DetailBlock(
+                            presentation.outputLabel,
+                            if (presentation.outputIsEmpty) "No output" else presentation.output.orEmpty(),
+                            monospace = true,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusPill(status: String) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+    ) {
+        Text(
+            text = status,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DetailBlock(label: String, text: String, monospace: Boolean = false) {
+    Column {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
+        )
     }
 }
 

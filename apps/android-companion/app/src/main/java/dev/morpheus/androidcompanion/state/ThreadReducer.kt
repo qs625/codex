@@ -4,6 +4,7 @@ import dev.morpheus.androidcompanion.model.ConversationItem
 import dev.morpheus.androidcompanion.model.ConversationThread
 import dev.morpheus.androidcompanion.model.ConversationTurn
 import dev.morpheus.androidcompanion.model.ThreadSummary
+import dev.morpheus.androidcompanion.model.appendToolOutputDelta
 import dev.morpheus.androidcompanion.model.jsonObjectOrNull
 import dev.morpheus.androidcompanion.model.string
 import dev.morpheus.androidcompanion.model.toConversationItem
@@ -102,7 +103,7 @@ fun applyNotification(
             val turnId = params.string("turnId")
             val itemId = params.string("itemId")
             val delta = params.string("delta").orEmpty()
-            threads to selected?.appendBodyDelta(threadId, turnId, itemId, delta)
+            threads to selected?.appendCommandOutputDelta(threadId, turnId, itemId, delta)
         }
         else -> threads to selected
     }
@@ -163,6 +164,28 @@ private fun ConversationThread.appendBodyDelta(
     )
     return copy(turns = turns.upsertItem(turnId, fallback) { item ->
         item.copy(body = item.body + delta)
+    })
+}
+
+private fun ConversationThread.appendCommandOutputDelta(
+    threadId: String?,
+    turnId: String?,
+    itemId: String?,
+    delta: String,
+): ConversationThread {
+    if (threadId != id || turnId == null || itemId == null || delta.isEmpty()) return this
+    val fallback = ConversationItem(
+        id = itemId,
+        type = "commandExecution",
+        title = "Command",
+        body = "",
+        raw = buildJsonObject {
+            put("id", JsonPrimitive(itemId))
+            put("type", JsonPrimitive("commandExecution"))
+        },
+    )
+    return copy(turns = turns.upsertItem(turnId, fallback) { item ->
+        item.appendToolOutputDelta(delta)
     })
 }
 
