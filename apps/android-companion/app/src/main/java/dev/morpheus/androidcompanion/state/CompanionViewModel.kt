@@ -7,11 +7,13 @@ import dev.morpheus.androidcompanion.model.toThreadSummary
 import dev.morpheus.androidcompanion.rpc.AppServerRpcClient
 import dev.morpheus.androidcompanion.rpc.RpcError
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -43,13 +45,18 @@ class CompanionViewModel : ViewModel() {
                 rpcClient = client
                 notificationJob = launch {
                     client.serverNotifications.collect { notification ->
-                        mutableState.update { current ->
-                            val (threads, selected) = applyNotification(
-                                current.threads,
-                                current.selectedThread,
-                                notification,
-                            )
-                            current.copy(threads = threads, selectedThread = selected)
+                        val projected = withContext(Dispatchers.Default) {
+                            projectNotification(notification)
+                        }
+                        if (projected != null) {
+                            mutableState.update { current ->
+                                val (threads, selected) = applyProjectedNotification(
+                                    current.threads,
+                                    current.selectedThread,
+                                    projected,
+                                )
+                                current.copy(threads = threads, selectedThread = selected)
+                            }
                         }
                     }
                 }
@@ -89,7 +96,9 @@ class CompanionViewModel : ViewModel() {
                         put("sortDirection", JsonPrimitive("desc"))
                     },
                 )
-                val threads = reduceThreadList(result)
+                val threads = withContext(Dispatchers.Default) {
+                    reduceThreadList(result)
+                }
                 val selectedId = mutableState.value.selectedThreadId ?: threads.firstOrNull()?.id
                 mutableState.update {
                     it.copy(
@@ -121,7 +130,9 @@ class CompanionViewModel : ViewModel() {
                         put("includeTurns", JsonPrimitive(true))
                     },
                 )
-                val readThread = reduceThreadRead(readResult)
+                val readThread = withContext(Dispatchers.Default) {
+                    reduceThreadRead(readResult)
+                }
                 mutableState.update { applySelectedThreadRead(it, threadId, readThread) }
                 val resumeResult = client.request(
                     method = "thread/resume",
@@ -130,11 +141,13 @@ class CompanionViewModel : ViewModel() {
                         put("excludeTurns", JsonPrimitive(true))
                     },
                 )
-                val resumedSummary = resumeResult
-                    .let { it as? JsonObject }
-                    ?.get("thread")
-                    ?.let { it as? JsonObject }
-                    ?.toThreadSummary()
+                val resumedSummary = withContext(Dispatchers.Default) {
+                    resumeResult
+                        .let { it as? JsonObject }
+                        ?.get("thread")
+                        ?.let { it as? JsonObject }
+                        ?.toThreadSummary()
+                }
                 if (resumedSummary != null) {
                     mutableState.update { current ->
                         if (current.selectedThreadId == threadId) {
@@ -168,10 +181,12 @@ class CompanionViewModel : ViewModel() {
                     put("threadSource", JsonPrimitive("user"))
                 }
                 val result = client.request("thread/start", params)
-                val thread = (result as? JsonObject)
-                    ?.get("thread")
-                    ?.let { it as? JsonObject }
-                    ?.toConversationThread()
+                val thread = withContext(Dispatchers.Default) {
+                    (result as? JsonObject)
+                        ?.get("thread")
+                        ?.let { it as? JsonObject }
+                        ?.toConversationThread()
+                }
                 if (thread != null) {
                     mutableState.update {
                         it.copy(

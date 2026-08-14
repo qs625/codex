@@ -93,12 +93,13 @@ class ThreadReducerTest {
 
     @Test
     fun unknownItemHasReadableFallback() {
-        val item = json.parseToJsonElement("""{"type":"futureItem","id":"x1","payload":{"ok":true}}""")
+        val item = json.parseToJsonElement("""{"type":"futureItem","id":"x1","payload":{"ok":true,"large":"${"x".repeat(800)}"}}""")
             .jsonObject
             .toConversationItem()
 
         assertEquals("futureItem", item.title)
         assertTrueCompat(item.body.contains("payload"))
+        assertTrueCompat(item.body.length < 430)
         assertNull(item.toolPresentation)
     }
 
@@ -148,6 +149,30 @@ class ThreadReducerTest {
     }
 
     @Test
+    fun commandExecutionLargeOutputIsBounded() {
+        val longOutput = "o".repeat(30_000)
+        val item = json.parseToJsonElement(
+            """
+            {
+              "type": "commandExecution",
+              "id": "cmd-1",
+              "command": "rtk long",
+              "cwd": "/repo",
+              "status": "completed",
+              "aggregatedOutput": "$longOutput",
+              "exitCode": 0
+            }
+            """.trimIndent(),
+        ).jsonObject.toConversationItem()
+
+        val presentation = item.toolPresentation
+        assertNotNull(presentation)
+        assertEquals(true, presentation?.outputIsTruncated)
+        assertTrueCompat(presentation?.output.orEmpty().length < 13_000)
+        assertTrueCompat(presentation?.output.orEmpty().contains("showing latest output"))
+    }
+
+    @Test
     fun commandExecutionOutputDeltaFallbackKeepsBodyVisible() {
         val read = json.parseToJsonElement(
             """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":"active","path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[]}}""",
@@ -163,6 +188,26 @@ class ThreadReducerTest {
 
         assertEquals("late output\n", item?.body)
         assertNull(item?.toolPresentation)
+    }
+
+    @Test
+    fun repeatedCommandOutputDeltaStaysBounded() {
+        val read = json.parseToJsonElement(
+            """{"thread":{"id":"t1","sessionId":"s1","preview":"","ephemeral":false,"modelProvider":"openai","createdAt":1,"updatedAt":1,"lifecycleStatus":"active","path":null,"cwd":"/repo","cliVersion":"0","source":"appServer","threadSource":"user","agentNickname":null,"agentRole":null,"agentPath":"/root","gitInfo":null,"name":null,"skills":[],"tokenUsage":null,"contextUsage":null,"turns":[{"id":"turn-1","items":[{"type":"commandExecution","id":"cmd-1","command":"rtk test","cwd":"/repo","status":"inProgress","aggregatedOutput":"","exitCode":null}],"itemsView":"full","status":"inProgress","error":null,"startedAt":1,"completedAt":null}]}}""",
+        )
+        var selected = reduceThreadRead(read)
+        repeat(40) { index ->
+            val deltaNotification = RpcNotification(
+                "item/commandExecution/outputDelta",
+                json.parseToJsonElement("""{"threadId":"t1","turnId":"turn-1","itemId":"cmd-1","delta":"${index.toString().padStart(2, '0')}-${"x".repeat(500)}\n"}"""),
+            )
+            selected = applyNotification(emptyList(), selected, deltaNotification).second
+        }
+
+        val presentation = selected?.turns?.first()?.items?.first()?.toolPresentation
+        assertEquals(true, presentation?.outputIsTruncated)
+        assertTrueCompat(presentation?.output.orEmpty().length < 13_000)
+        assertTrueCompat(presentation?.output.orEmpty().contains("39-"))
     }
 
     @Test
@@ -198,7 +243,7 @@ class ThreadReducerTest {
               "id": "tool-1",
               "tool": "poll_event",
               "status": "completed",
-              "arguments": {},
+              "arguments": {"n":0,"b":true,"nil":null,"s":"true","q\"key":"a\"b"},
               "output": {"sourceHint":"child_completion"}
             }
             """.trimIndent(),
@@ -209,11 +254,46 @@ class ThreadReducerTest {
         assertEquals("poll_event", item.title)
         assertEquals("completed", presentation?.status)
         assertTrueCompat(presentation?.details?.contains("Arguments") == true)
+        assertTrueCompat(presentation?.details?.contains("\"n\":0") == true)
+        assertTrueCompat(presentation?.details?.contains("\"b\":true") == true)
+        assertTrueCompat(presentation?.details?.contains("\"nil\":null") == true)
+        assertTrueCompat(presentation?.details?.contains("\"s\":\"true\"") == true)
+        assertTrueCompat(presentation?.details?.contains("\"q\\\"key\":\"a\\\"b\"") == true)
     }
 
     @Test
-    fun builtinToolCallDetailsDoNotTruncateLargeOutput() {
-        val longOutput = "x".repeat(520)
+    fun itemNotificationCanBeProjectedBeforeApplyingToLatestState() {
+        val notification = RpcNotification(
+            "item/completed",
+            json.parseToJsonElement(
+                """
+                {
+                  "threadId": "t1",
+                  "turnId": "turn-1",
+                  "item": {
+                    "type": "builtinToolCall",
+                    "id": "tool-1",
+                    "tool": "read_agent",
+                    "status": "completed",
+                    "arguments": {"target":"worker"},
+                    "output": {"message":"${"x".repeat(30_000)}"}
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )
+
+        val projected = projectNotification(notification)
+
+        assertTrueCompat(projected is ProjectedNotification.ItemUpdated)
+        val item = (projected as ProjectedNotification.ItemUpdated).item
+        assertEquals(true, item?.toolPresentation?.detailsIsTruncated)
+        assertTrueCompat(item?.toolPresentation?.details.orEmpty().length < 9_000)
+    }
+
+    @Test
+    fun builtinToolCallLargeDetailsAreBoundedAndMarkedTruncated() {
+        val longOutput = "x".repeat(30_000)
         val item = json.parseToJsonElement(
             """
             {
@@ -227,9 +307,11 @@ class ThreadReducerTest {
             """.trimIndent(),
         ).jsonObject.toConversationItem()
 
-        val details = item.toolPresentation?.details.orEmpty()
-        assertTrueCompat(details.contains(longOutput))
-        assertTrueCompat(!details.contains("..."))
+        val presentation = item.toolPresentation
+        val details = presentation?.details.orEmpty()
+        assertEquals(true, presentation?.detailsIsTruncated)
+        assertTrueCompat(details.length < 9_000)
+        assertTrueCompat(details.contains("[truncated]"))
     }
 
     @Test
