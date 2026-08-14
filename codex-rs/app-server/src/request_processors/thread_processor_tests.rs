@@ -482,6 +482,7 @@ mod thread_processor_behavior_tests {
             token_usage: None,
             context_usage: None,
             turns: Vec::new(),
+            active_subscription_items: None,
         };
         let persisted_items = vec![
             RolloutItem::EventMsg(EventMsg::TurnStarted(protocol::protocol::TurnStartedEvent {
@@ -628,6 +629,7 @@ mod thread_processor_behavior_tests {
             token_usage: None,
             context_usage: None,
             turns: Vec::new(),
+            active_subscription_items: None,
         };
 
         populate_thread_turns_from_history(&mut thread, &compacted_display_history_items(), None);

@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(test)]
 use app_server_protocol::DynamicToolCallStatus;
 use thread_store_api::ExternalLiveRestoreEligibility;
 
@@ -311,6 +312,7 @@ impl ThreadRequestProcessor {
                     thread_from_stored_thread(stored_thread, fallback_provider, &self.config.cwd);
                 if include_turns && let Some(history) = history {
                     thread.turns = build_api_turns_from_rollout_items(&history.items);
+                    apply_subscription_snapshot_items_from_persisted_turns(&mut thread);
                     self.apply_current_subscription_snapshot_turns(thread_id, &mut thread)
                         .await?;
                     prune_turns_to_latest_compaction_boundary(&mut thread.turns);
@@ -379,6 +381,7 @@ impl ThreadRequestProcessor {
         };
         if include_turns {
             restore_persisted_display_turns(&mut thread, &persisted_turns);
+            apply_subscription_snapshot_items_from_persisted_turns(&mut thread);
             self.apply_current_subscription_snapshot_turns(thread_id, &mut thread)
                 .await?;
             prune_turns_to_latest_compaction_boundary(&mut thread.turns);
@@ -403,11 +406,7 @@ impl ThreadRequestProcessor {
         let Some(subscriptions) = subscriptions else {
             return Ok(());
         };
-        thread
-            .turns
-            .retain(|turn| turn.id != "active-subscriptions");
-        let snapshot_turns = subscription_snapshot_turns(subscriptions);
-        restore_persisted_display_turns(thread, &snapshot_turns);
+        apply_subscription_snapshot_items(thread, subscriptions);
         Ok(())
     }
 
@@ -520,6 +519,7 @@ impl ThreadRequestProcessor {
             has_live_running_thread,
             active_turn,
         );
+        turns.retain(|turn| turn.id != "active-subscriptions");
         for turn in &mut turns {
             match items_view {
                 TurnItemsView::NotLoaded => {
@@ -838,11 +838,7 @@ impl ThreadRequestProcessor {
                     .read_thread_subscriptions(thread_id, /*include_archived*/ true)
                     .await
                 {
-                    loaded_thread
-                        .turns
-                        .retain(|turn| turn.id != "active-subscriptions");
-                    let snapshot_turns = subscription_snapshot_turns(subscriptions);
-                    restore_persisted_display_turns(&mut loaded_thread, &snapshot_turns);
+                    apply_subscription_snapshot_items(&mut loaded_thread, subscriptions);
                 }
                 apply_stored_agent_metadata_to_loaded_thread(
                     &mut loaded_thread,
@@ -912,7 +908,6 @@ fn apply_stored_agent_metadata_to_loaded_thread(
 
 fn restore_persisted_display_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
     restore_persisted_injected_context_turns(thread, persisted_turns);
-    restore_persisted_subscription_snapshot_turns(thread, persisted_turns);
 }
 
 fn restore_persisted_display_turns_from_rollout_items(
@@ -921,6 +916,7 @@ fn restore_persisted_display_turns_from_rollout_items(
 ) {
     let persisted_turns = thread_history::build_turns_from_rollout_items(rollout_items);
     restore_persisted_display_turns(thread, &persisted_turns);
+    apply_subscription_snapshot_items_from_turns(thread, &persisted_turns);
 }
 
 fn subscription_snapshot_turns(
@@ -969,74 +965,27 @@ fn restore_persisted_injected_context_turns(thread: &mut Thread, persisted_turns
     }
 }
 
-fn restore_persisted_subscription_snapshot_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
-    for (persisted_index, persisted_turn) in persisted_turns.iter().enumerate() {
-        if persisted_turn.id != "active-subscriptions" {
-            continue;
-        }
-
-        let mut missing_items = persisted_turn
-            .items
-            .iter()
-            .filter(|item| !thread_has_display_item(thread, item))
-            .cloned()
-            .collect::<Vec<_>>();
-        if missing_items.is_empty() {
-            continue;
-        }
-
-        if let Some(live_turn) = thread
-            .turns
-            .iter_mut()
-            .find(|turn| turn.id == persisted_turn.id)
-        {
-            live_turn.items.append(&mut missing_items);
-            live_turn.items_view = TurnItemsView::Full;
-            continue;
-        }
-
-        let mut subscription_turn = persisted_turn.clone();
-        subscription_turn.items = missing_items;
-        subscription_turn.items_view = TurnItemsView::Full;
-        thread
-            .turns
-            .insert(persisted_index.min(thread.turns.len()), subscription_turn);
-    }
+fn apply_subscription_snapshot_items(
+    thread: &mut Thread,
+    subscriptions: Vec<protocol::subscriptions::PersistedSubscription>,
+) {
+    let snapshot_turns = subscription_snapshot_turns(subscriptions);
+    apply_subscription_snapshot_items_from_turns(thread, &snapshot_turns);
 }
 
-fn thread_has_display_item(thread: &Thread, item: &ThreadItem) -> bool {
-    thread
-        .turns
+fn apply_subscription_snapshot_items_from_persisted_turns(thread: &mut Thread) {
+    let persisted_turns = thread.turns.clone();
+    apply_subscription_snapshot_items_from_turns(thread, &persisted_turns);
+}
+
+fn apply_subscription_snapshot_items_from_turns(thread: &mut Thread, persisted_turns: &[Turn]) {
+    let items = persisted_turns
         .iter()
-        .flat_map(|turn| turn.items.iter())
-        .any(|existing| {
-            existing.id() == item.id()
-                || schedule_monitor_subscription_id(existing).is_some_and(|existing_id| {
-                    schedule_monitor_subscription_id(item).as_deref() == Some(existing_id.as_str())
-                })
-        })
-}
-
-fn schedule_monitor_subscription_id(item: &ThreadItem) -> Option<String> {
-    let ThreadItem::BuiltinToolCall {
-        tool,
-        status,
-        output,
-        ..
-    } = item
-    else {
-        return None;
-    };
-    if !matches!(tool.as_str(), "schedule_subscribe" | "schedule_unsubscribe")
-        || *status != DynamicToolCallStatus::Completed
-    {
-        return None;
-    }
-    output
-        .as_ref()
-        .and_then(|output| output.get("subscription_id"))
-        .and_then(|value| value.as_str())
-        .map(ToOwned::to_owned)
+        .filter(|turn| turn.id == "active-subscriptions")
+        .flat_map(|turn| turn.items.iter().cloned())
+        .collect::<Vec<_>>();
+    thread.turns.retain(|turn| turn.id != "active-subscriptions");
+    thread.active_subscription_items = Some(items);
 }
 
 fn restore_persisted_injected_context_items(
@@ -1107,6 +1056,7 @@ mod restore_persisted_injected_context_turns_tests {
             token_usage: None,
             context_usage: None,
             turns,
+            active_subscription_items: None,
         }
     }
 
@@ -1245,7 +1195,7 @@ mod restore_persisted_injected_context_turns_tests {
     }
 
     #[test]
-    fn restore_persisted_display_turns_inserts_active_subscription_snapshot_turn() {
+    fn restore_persisted_display_turns_keeps_active_subscription_out_of_turns() {
         let mut thread = thread_with_turns(vec![turn(
             "turn-1",
             vec![agent_message_item("msg-1", "thread restored live")],
@@ -1267,15 +1217,41 @@ mod restore_persisted_injected_context_turns_tests {
 
         restore_persisted_display_turns(&mut thread, &persisted_turns);
 
-        assert_eq!(thread.turns.len(), 2);
-        assert_eq!(thread.turns[1].id, "active-subscriptions");
+        assert_eq!(thread.turns.len(), 1);
+        assert!(thread.active_subscription_items.is_none());
+    }
+
+    #[test]
+    fn apply_subscription_snapshot_items_from_turns_sets_current_state_items() {
+        let mut thread = thread_with_turns(vec![turn(
+            "turn-1",
+            vec![agent_message_item("msg-1", "thread restored live")],
+        )]);
+        let persisted_turns = vec![
+            turn(
+                "turn-1",
+                vec![agent_message_item("msg-1", "thread restored live")],
+            ),
+            turn(
+                "active-subscriptions",
+                vec![schedule_subscribe_item(
+                    "active-subscription:sub-schedule",
+                    "sub-schedule",
+                    "standup",
+                )],
+            ),
+        ];
+
+        apply_subscription_snapshot_items_from_turns(&mut thread, &persisted_turns);
+
+        assert_eq!(thread.turns.len(), 1);
         assert_eq!(
-            thread.turns[1].items,
-            vec![schedule_subscribe_item(
+            thread.active_subscription_items,
+            Some(vec![schedule_subscribe_item(
                 "active-subscription:sub-schedule",
                 "sub-schedule",
                 "standup"
-            )]
+            )])
         );
     }
 
@@ -1305,15 +1281,14 @@ mod restore_persisted_injected_context_turns_tests {
 
         restore_persisted_display_turns_from_rollout_items(&mut thread, &rollout_items);
 
-        assert_eq!(thread.turns.len(), 1);
-        assert_eq!(thread.turns[0].id, "active-subscriptions");
+        assert!(thread.turns.is_empty());
         assert_eq!(
-            thread.turns[0].items,
-            vec![schedule_subscribe_item(
+            thread.active_subscription_items,
+            Some(vec![schedule_subscribe_item(
                 "active-subscription:sub-schedule",
                 "sub-schedule",
                 "standup",
-            )]
+            )])
         );
     }
 
@@ -1339,6 +1314,7 @@ mod restore_persisted_injected_context_turns_tests {
         restore_persisted_display_turns(&mut thread, &persisted_turns);
 
         assert_eq!(thread.turns.len(), 1);
+        assert!(thread.active_subscription_items.is_none());
         assert_eq!(
             thread.turns[0].items,
             vec![schedule_subscribe_item(
@@ -1365,13 +1341,15 @@ mod restore_persisted_injected_context_turns_tests {
 
         restore_persisted_display_turns(&mut thread, &persisted_turns);
 
-        assert_eq!(thread.turns.len(), 2);
+        assert_eq!(thread.turns.len(), 1);
+        assert!(thread.active_subscription_items.is_none());
+        apply_subscription_snapshot_items_from_turns(&mut thread, &persisted_turns);
         assert_eq!(
-            thread.turns[0].items,
-            vec![schedule_unsubscribe_item(
+            thread.active_subscription_items,
+            Some(vec![schedule_unsubscribe_item(
                 "active-subscription:sub-schedule:inactive",
                 "sub-schedule"
-            )]
+            )])
         );
     }
 
@@ -1395,6 +1373,7 @@ mod restore_persisted_injected_context_turns_tests {
         restore_persisted_display_turns(&mut thread, &persisted_turns);
 
         assert_eq!(thread.turns.len(), 1);
+        assert!(thread.active_subscription_items.is_none());
         assert_eq!(
             thread.turns[0].items,
             vec![schedule_unsubscribe_item(

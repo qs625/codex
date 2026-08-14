@@ -540,6 +540,7 @@ export type Thread = {
   contextUsage?: ThreadContextUsage | null;
   latestPlan?: ThreadPlanUpdate | null;
   turns: Turn[];
+  activeSubscriptionItems?: ThreadItem[];
 };
 
 export type BootstrapResponse = {

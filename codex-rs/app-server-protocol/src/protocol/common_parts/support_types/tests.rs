@@ -577,6 +577,7 @@ fn serialize_client_response() -> Result<()> {
                 token_usage: None,
                 context_usage: None,
                 turns: Vec::new(),
+                active_subscription_items: None,
             },
             model: "gpt-5".to_string(),
             model_provider: "openai".to_string(),

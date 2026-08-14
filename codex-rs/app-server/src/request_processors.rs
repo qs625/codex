@@ -567,23 +567,12 @@ pub(crate) fn prune_turns_to_latest_compaction_boundary(turns: &mut Vec<Turn>) {
         return;
     };
 
-    let pre_compact_active_subscription_turns: Vec<Turn> = turns[..turn_index]
-        .iter()
-        .filter(|turn| turn.id == "active-subscriptions")
-        .cloned()
-        .collect();
-    let has_post_compact_active_subscriptions = turns[turn_index..]
-        .iter()
-        .any(|turn| turn.id == "active-subscriptions");
-
     turns.drain(..turn_index);
     if let Some(first_turn) = turns.first_mut() {
         first_turn.items.drain(..item_index);
     }
+    turns.retain(|turn| turn.id != "active-subscriptions");
     turns.retain(|turn| !turn.items.is_empty() || matches!(turn.status, TurnStatus::InProgress));
-    if !has_post_compact_active_subscriptions {
-        turns.extend(pre_compact_active_subscription_turns);
-    }
 }
 
 #[cfg(test)]
@@ -714,7 +703,7 @@ mod build_api_turns_from_rollout_items_tests {
     }
 
     #[test]
-    fn pruning_preserves_pre_compact_active_subscriptions_when_no_new_snapshot_exists() {
+    fn pruning_removes_active_subscriptions_from_display_turns() {
         let mut turns = vec![
             completed_turn(
                 "active-subscriptions",
@@ -728,7 +717,7 @@ mod build_api_turns_from_rollout_items_tests {
 
         assert_eq!(
             turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
-            vec!["compact-turn", "active-subscriptions"]
+            vec!["compact-turn"]
         );
     }
 

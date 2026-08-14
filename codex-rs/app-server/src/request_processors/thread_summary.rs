@@ -316,6 +316,7 @@ pub(crate) fn summary_to_thread(
         token_usage: None,
         context_usage: None,
         turns: Vec::new(),
+        active_subscription_items: None,
     }
 }
 

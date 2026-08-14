@@ -1194,6 +1194,7 @@ mod tests {
             token_usage: None,
             context_usage: None,
             turns: Vec::new(),
+            active_subscription_items: None,
         }
     }
 }
