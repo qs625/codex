@@ -551,15 +551,54 @@ pub(crate) fn build_api_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<T
     builder.finish()
 }
 
+pub(crate) fn prune_turns_to_latest_compaction_boundary(turns: &mut Vec<Turn>) {
+    let latest_compaction = turns
+        .iter()
+        .enumerate()
+        .flat_map(|(turn_index, turn)| {
+            turn.items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| matches!(item, ThreadItem::ContextCompaction { .. }))
+                .map(move |(item_index, _)| (turn_index, item_index))
+        })
+        .last();
+    let Some((turn_index, item_index)) = latest_compaction else {
+        return;
+    };
+
+    let pre_compact_active_subscription_turns: Vec<Turn> = turns[..turn_index]
+        .iter()
+        .filter(|turn| turn.id == "active-subscriptions")
+        .cloned()
+        .collect();
+    let has_post_compact_active_subscriptions = turns[turn_index..]
+        .iter()
+        .any(|turn| turn.id == "active-subscriptions");
+
+    turns.drain(..turn_index);
+    if let Some(first_turn) = turns.first_mut() {
+        first_turn.items.drain(..item_index);
+    }
+    turns.retain(|turn| !turn.items.is_empty() || matches!(turn.status, TurnStatus::InProgress));
+    if !has_post_compact_active_subscriptions {
+        turns.extend(pre_compact_active_subscription_turns);
+    }
+}
+
 #[cfg(test)]
 mod build_api_turns_from_rollout_items_tests {
     use super::build_api_turns_from_rollout_items;
+    use super::prune_turns_to_latest_compaction_boundary;
     use app_server_protocol::CommandAction;
     use app_server_protocol::CommandExecutionNotifyOn as ApiCommandExecutionNotifyOn;
     use app_server_protocol::CommandExecutionSource;
     use app_server_protocol::CommandExecutionStatus;
+    use app_server_protocol::ContextCompactionReplacementItem;
     use app_server_protocol::DynamicToolCallStatus;
     use app_server_protocol::ThreadItem;
+    use app_server_protocol::Turn;
+    use app_server_protocol::TurnStatus;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
@@ -578,6 +617,120 @@ mod build_api_turns_from_rollout_items_tests {
     use rollout::EventPersistenceMode;
     use rollout::persisted_rollout_items;
     use std::time::Duration;
+
+    fn completed_turn(id: &str, items: Vec<ThreadItem>) -> Turn {
+        Turn {
+            id: id.into(),
+            status: TurnStatus::Completed,
+            error: None,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            items_view: app_server_protocol::TurnItemsView::Full,
+            items,
+        }
+    }
+
+    fn agent_message(id: &str, text: &str) -> ThreadItem {
+        ThreadItem::AgentMessage {
+            id: id.into(),
+            text: text.into(),
+            phase: None,
+            memory_citation: None,
+        }
+    }
+
+    fn context_compaction(id: &str) -> ThreadItem {
+        ThreadItem::ContextCompaction {
+            id: id.into(),
+            replacement_history: vec![ContextCompactionReplacementItem::AgentMessage {
+                id: "replacement-agent".into(),
+                text: "summary".into(),
+                phase: None,
+                memory_citation: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn prunes_display_turns_to_latest_compaction_boundary() {
+        let mut turns = vec![
+            completed_turn("old-turn", vec![agent_message("old-agent", "old answer")]),
+            completed_turn(
+                "compact-turn",
+                vec![
+                    agent_message("pre-compact", "pre compact"),
+                    context_compaction("compact-1"),
+                    agent_message("suffix-agent", "after compact suffix"),
+                ],
+            ),
+            completed_turn("new-turn", vec![agent_message("new-agent", "new answer")]),
+        ];
+
+        prune_turns_to_latest_compaction_boundary(&mut turns);
+
+        assert_eq!(
+            turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
+            vec!["compact-turn", "new-turn"]
+        );
+        assert_eq!(
+            turns
+                .iter()
+                .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
+                .collect::<Vec<_>>(),
+            vec!["compact-1", "suffix-agent", "new-agent"]
+        );
+        assert!(matches!(
+            &turns[0].items[0],
+            ThreadItem::ContextCompaction {
+                replacement_history,
+                ..
+            } if !replacement_history.is_empty()
+        ));
+    }
+
+    #[test]
+    fn prunes_display_turns_to_latest_of_multiple_compactions() {
+        let mut turns = vec![
+            completed_turn("first-compact-turn", vec![context_compaction("compact-old")]),
+            completed_turn("middle-turn", vec![agent_message("middle-agent", "middle")]),
+            completed_turn("latest-compact-turn", vec![context_compaction("compact-new")]),
+            completed_turn("after-turn", vec![agent_message("after-agent", "after")]),
+        ];
+
+        prune_turns_to_latest_compaction_boundary(&mut turns);
+
+        assert_eq!(
+            turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
+            vec!["latest-compact-turn", "after-turn"]
+        );
+        assert_eq!(
+            turns
+                .iter()
+                .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
+                .collect::<Vec<_>>(),
+            vec!["compact-new", "after-agent"]
+        );
+    }
+
+    #[test]
+    fn pruning_preserves_pre_compact_active_subscriptions_when_no_new_snapshot_exists() {
+        let mut turns = vec![
+            completed_turn(
+                "active-subscriptions",
+                vec![agent_message("subscription", "active schedule")],
+            ),
+            completed_turn("old-turn", vec![agent_message("old-agent", "old answer")]),
+            completed_turn("compact-turn", vec![context_compaction("compact-1")]),
+        ];
+
+        prune_turns_to_latest_compaction_boundary(&mut turns);
+
+        assert_eq!(
+            turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
+            vec!["compact-turn", "active-subscriptions"]
+        );
+    }
 
     fn exec_command_begin_event(source: CoreExecCommandSource) -> ExecCommandBeginEvent {
         ExecCommandBeginEvent {

@@ -1009,6 +1009,7 @@ pub(crate) fn populate_thread_turns_from_history(
     if let Some(active_turn) = active_turn {
         merge_turn_history_with_active_turn(&mut turns, active_turn.clone());
     }
+    prune_turns_to_latest_compaction_boundary(&mut turns);
     thread.turns = turns;
 }
 
