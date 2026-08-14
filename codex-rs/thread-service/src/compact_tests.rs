@@ -200,6 +200,27 @@ async fn process_compacted_history_reinjects_full_initial_context() {
     assert_eq!(refreshed, expected);
 }
 
+#[test]
+fn replacement_history_keeps_runtime_activity_initial_context_before_checkpoint() {
+    let runtime_activity = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: "<runtime_activity>\n  <running_commands count=\"1\" />\n</runtime_activity>"
+                .to_string(),
+        }],
+        phase: None,
+    };
+    let checkpoint = user_message("summary");
+
+    let replacement = prepend_initial_context_to_memory_checkpoint_history(
+        vec![checkpoint.clone()],
+        vec![runtime_activity.clone()],
+    );
+
+    assert_eq!(replacement, vec![runtime_activity, checkpoint]);
+}
+
 #[tokio::test]
 async fn process_compacted_history_drops_non_user_content_messages() {
     let compacted_history = vec![

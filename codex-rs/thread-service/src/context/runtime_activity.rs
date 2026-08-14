@@ -6,11 +6,19 @@ use protocol::subscriptions::PersistedSubscription;
 pub(crate) struct RuntimeActivityContext {
     pub(crate) running_commands: Vec<RunningCommandSnapshot>,
     pub(crate) active_subscriptions: Vec<PersistedSubscription>,
+    pub(crate) pending_poll_events: Vec<RuntimePollEventSnapshot>,
+}
+
+pub(crate) struct RuntimePollEventSnapshot {
+    pub(crate) source_hint: String,
+    pub(crate) item_count: usize,
 }
 
 impl RuntimeActivityContext {
     pub(crate) fn is_empty(&self) -> bool {
-        self.running_commands.is_empty() && self.active_subscriptions.is_empty()
+        self.running_commands.is_empty()
+            && self.active_subscriptions.is_empty()
+            && self.pending_poll_events.is_empty()
     }
 }
 
@@ -30,9 +38,20 @@ impl ContextualUserFragment for RuntimeActivityContext {
             .iter()
             .map(render_subscription)
             .collect::<String>();
+        let pending_poll_events = self
+            .pending_poll_events
+            .iter()
+            .map(render_pending_poll_event)
+            .collect::<String>();
+        let command_hint = if self.running_commands.is_empty() {
+            String::new()
+        } else {
+            "\n  <running_commands_hint>These commands are still running. Use poll_event to wait for command_output or command_exit notifications; use command_write_stdin with command_id for interactive input when needed.</running_commands_hint>".to_string()
+        };
         format!(
-            "\n  <running_commands count=\"{}\">{commands}\n  </running_commands>\n  <active_subscriptions count=\"{}\">{subscriptions}\n  </active_subscriptions>\n",
+            "\n  <running_commands count=\"{}\">{commands}\n  </running_commands>{command_hint}\n  <pending_poll_events count=\"{}\">{pending_poll_events}\n  </pending_poll_events>\n  <active_subscriptions count=\"{}\">{subscriptions}\n  </active_subscriptions>\n",
             self.running_commands.len(),
+            self.pending_poll_events.len(),
             self.active_subscriptions.len(),
         )
     }
@@ -44,8 +63,17 @@ fn render_running_command(command: &RunningCommandSnapshot) -> String {
         CommandNotificationFilter::Exit => "exit",
     };
     let label = command_label(&command.command);
+    let latest_output_tail = command.latest_output_tail.as_deref().map_or_else(
+        String::new,
+        |output| {
+            format!(
+                "\n      <latest_output_tail>{}</latest_output_tail>",
+                xml_escape(output)
+            )
+        },
+    );
     format!(
-        "\n    <command>\n      <command_id>{}</command_id>\n      <call_id>{}</call_id>\n      <label>{}</label>\n      <tty>{}</tty>\n      <notify_on>{notify_on}</notify_on>\n      <cwd>{}</cwd>\n      <command_text>{}</command_text>\n    </command>",
+        "\n    <command>\n      <command_id>{}</command_id>\n      <call_id>{}</call_id>\n      <label>{}</label>\n      <tty>{}</tty>\n      <notify_on>{notify_on}</notify_on>\n      <cwd>{}</cwd>\n      <command_text>{}</command_text>{latest_output_tail}\n    </command>",
         command.process_id,
         xml_escape(&command.call_id),
         xml_escape(&label),
@@ -104,6 +132,14 @@ fn render_subscription(subscription: &PersistedSubscription) -> String {
     }
 }
 
+fn render_pending_poll_event(snapshot: &RuntimePollEventSnapshot) -> String {
+    format!(
+        "\n    <pending_event>\n      <source_hint>{}</source_hint>\n      <item_count>{}</item_count>\n    </pending_event>",
+        xml_escape(&snapshot.source_hint),
+        snapshot.item_count,
+    )
+}
+
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -121,4 +157,79 @@ fn command_label(command: &str) -> String {
     let mut out = trimmed.chars().take(MAX_LEN).collect::<String>();
     out.push_str("...");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+    use std::path::PathBuf;
+
+    #[test]
+    fn running_command_context_includes_wait_hint_and_latest_output_tail() {
+        let context = RuntimeActivityContext {
+            running_commands: vec![RunningCommandSnapshot {
+                process_id: 7,
+                call_id: "call_abc".to_string(),
+                command: "rtk long-running".to_string(),
+                cwd: AbsolutePathBuf::try_from(PathBuf::from("/repo")).expect("absolute path"),
+                tty: false,
+                notify_on: CommandNotificationFilter::Output,
+                latest_output_tail: Some("tail <&>".to_string()),
+            }],
+            active_subscriptions: Vec::new(),
+            pending_poll_events: Vec::new(),
+        };
+
+        let rendered = context.render();
+
+        assert!(rendered.contains("<runtime_activity>"));
+        assert!(rendered.contains("<running_commands count=\"1\">"));
+        assert!(rendered.contains("<command_id>7</command_id>"));
+        assert!(rendered.contains("<call_id>call_abc</call_id>"));
+        assert!(rendered.contains("<notify_on>output</notify_on>"));
+        assert!(rendered.contains("<latest_output_tail>tail &lt;&amp;&gt;</latest_output_tail>"));
+        assert!(rendered.contains("Use poll_event to wait for command_output or command_exit"));
+        assert!(rendered.contains("command_write_stdin with command_id"));
+    }
+
+    #[test]
+    fn running_command_context_omits_empty_output_tail() {
+        let context = RuntimeActivityContext {
+            running_commands: vec![RunningCommandSnapshot {
+                process_id: 8,
+                call_id: "call_no_output".to_string(),
+                command: "rtk sleep 30".to_string(),
+                cwd: AbsolutePathBuf::try_from(PathBuf::from("/repo")).expect("absolute path"),
+                tty: false,
+                notify_on: CommandNotificationFilter::Exit,
+                latest_output_tail: None,
+            }],
+            active_subscriptions: Vec::new(),
+            pending_poll_events: Vec::new(),
+        };
+
+        let rendered = context.render();
+
+        assert!(rendered.contains("<notify_on>exit</notify_on>"));
+        assert!(!rendered.contains("<latest_output_tail>"));
+    }
+
+    #[test]
+    fn pending_poll_event_context_keeps_source_hint_visible() {
+        let context = RuntimeActivityContext {
+            running_commands: Vec::new(),
+            active_subscriptions: Vec::new(),
+            pending_poll_events: vec![RuntimePollEventSnapshot {
+                source_hint: "command_output".to_string(),
+                item_count: 2,
+            }],
+        };
+
+        let rendered = context.render();
+
+        assert!(rendered.contains("<pending_poll_events count=\"1\">"));
+        assert!(rendered.contains("<source_hint>command_output</source_hint>"));
+        assert!(rendered.contains("<item_count>2</item_count>"));
+    }
 }

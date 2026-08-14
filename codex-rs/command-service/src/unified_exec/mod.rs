@@ -262,6 +262,7 @@ impl Default for UnifiedExecProcessManager {
     }
 }
 
+#[derive(Clone)]
 struct ProcessEntry {
     process: Arc<UnifiedExecProcess>,
     call_id: String,
@@ -281,7 +282,7 @@ struct ProcessEntry {
 }
 
 impl ProcessEntry {
-    fn as_running_snapshot(&self) -> RunningCommandSnapshot {
+    async fn as_running_snapshot(&self) -> RunningCommandSnapshot {
         RunningCommandSnapshot {
             process_id: self.process_id,
             call_id: self.call_id.clone(),
@@ -289,8 +290,32 @@ impl ProcessEntry {
             cwd: self.cwd.clone(),
             tty: self.tty,
             notify_on: self.notify_on,
+            latest_output_tail: latest_output_tail(&self.transcript).await,
         }
     }
+}
+
+const RUNNING_COMMAND_CONTEXT_OUTPUT_TAIL_CHARS: usize = 4096;
+
+async fn latest_output_tail(transcript: &Arc<Mutex<HeadTailBuffer>>) -> Option<String> {
+    let output = {
+        let guard = transcript.lock().await;
+        guard.to_bytes()
+    };
+    if output.is_empty() {
+        return None;
+    }
+    let output = String::from_utf8_lossy(&output);
+    Some(take_last_chars(
+        output.as_ref(),
+        RUNNING_COMMAND_CONTEXT_OUTPUT_TAIL_CHARS,
+    ))
+}
+
+fn take_last_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars().rev().take(max_chars).collect::<Vec<_>>();
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 #[cfg(test)]
