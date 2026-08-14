@@ -1039,13 +1039,23 @@ export function mergeThreadSnapshot(
 }
 
 function preserveFinalLifecycleStatus(existing: Thread, next: Thread) {
+  return preserveTerminalLifecycleStatus(
+    existing.lifecycleStatus,
+    next.lifecycleStatus,
+  );
+}
+
+export function preserveTerminalLifecycleStatus(
+  existing: ThreadLifecycleStatus,
+  next: ThreadLifecycleStatus,
+) {
   if (
-    existing.lifecycleStatus.type === "final" &&
-    next.lifecycleStatus.type !== "final"
+    existing.type === "final" &&
+    next.type !== "final"
   ) {
-    return existing.lifecycleStatus;
+    return existing;
   }
-  return next.lifecycleStatus;
+  return next;
 }
 
 export function normalizeThreadSnapshot(thread: Thread): Thread {

@@ -88,6 +88,7 @@ import {
   normalizeThreadSnapshot,
   pickInitialProjectThread,
   pickInitialThread,
+  preserveTerminalLifecycleStatus,
   queuePendingThreadUpdate,
   updateThreadItem,
   updateThreadSkills,
@@ -1062,7 +1063,13 @@ function App() {
     threadId: string,
     lifecycleStatus: Thread["lifecycleStatus"],
   ) {
-    updateThreadLocally(threadId, (thread) => ({ ...thread, lifecycleStatus }));
+    updateThreadLocally(threadId, (thread) => ({
+      ...thread,
+      lifecycleStatus: preserveTerminalLifecycleStatus(
+        thread.lifecycleStatus,
+        lifecycleStatus,
+      ),
+    }));
   }
 
   function updateThreadNameLocally(threadId: string, name: Thread["name"]) {
