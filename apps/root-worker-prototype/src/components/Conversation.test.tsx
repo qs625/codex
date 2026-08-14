@@ -310,7 +310,17 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   assert.match(styles, /\.markdown-content code[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-card-copy span[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-card-copy strong[\s\S]*overflow-wrap: anywhere;/);
-  assert.match(styles, /\.tool-status-badge \{[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.tool-card-summary \{[^}]*flex-wrap: wrap;/);
+  assert.match(styles, /\.tool-card-item-head \{[^}]*flex-wrap: wrap;/);
+  assert.match(styles, /\.tool-card-copy \{[^}]*flex: 1 1 240px;/);
+  assert.match(styles, /\.tool-card-meta \{[^}]*flex: 0 0 auto;/);
+  assert.match(styles, /\.tool-status-badge \{[^}]*white-space: nowrap;/);
+  assert.match(styles, /\.tool-status-badge \{[^}]*text-overflow: ellipsis;/);
+  assert.match(styles, /\.tool-status-badge \{[^}]*max-width: min\(100%, 22ch\);/);
+  assert.doesNotMatch(
+    styles,
+    /\.tool-status-badge \{[^}]*overflow-wrap: anywhere;/,
+  );
   assert.match(styles, /\.tool-card-body pre[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-output-block summary[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.compact-card,[\s\S]*\.archive-card \{[\s\S]*flex: 1 1 auto;/);
