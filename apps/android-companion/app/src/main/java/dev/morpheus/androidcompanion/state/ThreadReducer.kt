@@ -4,6 +4,7 @@ import dev.morpheus.androidcompanion.model.ConversationItem
 import dev.morpheus.androidcompanion.model.ConversationThread
 import dev.morpheus.androidcompanion.model.ConversationTurn
 import dev.morpheus.androidcompanion.model.ThreadSummary
+import dev.morpheus.androidcompanion.model.appendBodyDeltaBounded
 import dev.morpheus.androidcompanion.model.appendToolOutputDelta
 import dev.morpheus.androidcompanion.model.jsonObjectOrNull
 import dev.morpheus.androidcompanion.model.string
@@ -246,7 +247,7 @@ private fun ConversationThread.appendBodyDelta(
         body = "",
     )
     return copy(turns = turns.upsertItem(turnId, fallback) { item ->
-        item.copy(body = item.body + delta)
+        item.copy(body = appendBodyDeltaBounded(item.body, delta))
     })
 }
 

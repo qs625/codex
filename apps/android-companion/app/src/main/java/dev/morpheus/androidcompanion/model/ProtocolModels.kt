@@ -52,6 +52,7 @@ data class ToolPresentation(
 )
 
 private const val SummaryTextLimit = 240
+private const val BodyTextLimit = 12_000
 private const val DetailsTextLimit = 8_000
 private const val OutputTextLimit = 12_000
 private const val UnknownFallbackLimit = 400
@@ -110,24 +111,26 @@ fun JsonObject.toConversationItem(): ConversationItem {
     when (type) {
         "userMessage" -> {
             title = "You"
-            body = formatUserMessage(this["content"])
+            body = boundedBody(formatUserMessage(this["content"]))
             toolPresentation = null
         }
         "agentMessage" -> {
             title = "Assistant"
-            body = string("text").orEmpty()
+            body = boundedBody(string("text").orEmpty())
             toolPresentation = null
         }
         "reasoning" -> {
             title = "Reasoning"
-            body = formatStringArray(this["summary"])
-            .ifBlank { formatStringArray(this["content"]) }
-            .ifBlank { "Reasoning updated" }
+            body = boundedBody(
+                formatStringArray(this["summary"])
+                    .ifBlank { formatStringArray(this["content"]) }
+                    .ifBlank { "Reasoning updated" },
+            )
             toolPresentation = null
         }
         "plan" -> {
             title = "Plan"
-            body = string("text").orEmpty()
+            body = boundedBody(string("text").orEmpty())
             toolPresentation = null
         }
         "commandExecution" -> {
@@ -152,7 +155,7 @@ fun JsonObject.toConversationItem(): ConversationItem {
         }
         "injectedContext" -> {
             title = string("title") ?: "Context"
-            body = string("preview").orEmpty()
+            body = boundedBody(string("preview").orEmpty())
             toolPresentation = null
         }
         "fileChange" -> {
@@ -173,6 +176,10 @@ fun JsonObject.toConversationItem(): ConversationItem {
         body = body,
         toolPresentation = toolPresentation,
     )
+}
+
+fun appendBodyDeltaBounded(current: String, delta: String): String {
+    return boundedTail(current + delta, BodyTextLimit, "text").text
 }
 
 fun JsonObject.string(name: String): String? = this[name]?.jsonPrimitiveOrNull()?.contentOrNull
@@ -350,12 +357,16 @@ private fun compactJson(value: JsonElement): String {
 
 private data class BoundedText(val text: String, val truncated: Boolean)
 
-private fun boundedTail(value: String?, maxChars: Int): BoundedText {
+private fun boundedBody(value: String): String {
+    return boundedTail(value, BodyTextLimit, "text").text
+}
+
+private fun boundedTail(value: String?, maxChars: Int, label: String = "output"): BoundedText {
     if (value == null) return BoundedText("", false)
     if (value.length <= maxChars) return BoundedText(value, false)
     val omitted = value.length - maxChars
     return BoundedText(
-        "[truncated $omitted chars; showing latest output]\n" + value.takeLast(maxChars),
+        "[truncated $omitted chars; showing latest $label]\n" + value.takeLast(maxChars),
         true,
     )
 }
