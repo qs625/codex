@@ -768,6 +768,9 @@ pub struct InterAgentCommunication {
     #[ts(optional = false, type = "unknown | null")]
     pub status: Option<AgentStatus>,
     #[serde(default)]
+    #[ts(optional = false, type = "unknown | null")]
+    pub lifecycle_status: Option<ThreadLifecycleStatus>,
+    #[serde(default)]
     #[ts(optional = false, type = "string | null")]
     pub agent_nickname: Option<String>,
     #[serde(default)]
@@ -794,6 +797,7 @@ impl InterAgentCommunication {
             sender_thread_id: None,
             recipient_thread_id: None,
             status: None,
+            lifecycle_status: None,
             agent_nickname: None,
             agent_role: None,
         }
@@ -821,6 +825,11 @@ impl InterAgentCommunication {
 
     pub fn with_status(mut self, status: AgentStatus) -> Self {
         self.status = Some(status);
+        self
+    }
+
+    pub fn with_lifecycle_status(mut self, lifecycle_status: ThreadLifecycleStatus) -> Self {
+        self.lifecycle_status = Some(lifecycle_status);
         self
     }
 

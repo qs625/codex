@@ -15,6 +15,8 @@ pub(crate) mod registry {
 
 pub(crate) mod status {
     use protocol::protocol::AgentStatus;
+    use protocol::protocol::ThreadLifecycleFinalStatus;
+    use protocol::protocol::ThreadLifecycleStatus;
 
     pub(crate) use codex_agent_runtime::agent_status_from_event;
     pub(crate) use codex_agent_runtime::is_final;
@@ -34,6 +36,28 @@ pub(crate) mod status {
             AgentStatus::Interrupted => "interrupted",
         };
         truncate_child_completion_content(content)
+    }
+
+    pub(crate) fn child_lifecycle_status_from_agent_status(
+        status: &AgentStatus,
+    ) -> ThreadLifecycleStatus {
+        match status {
+            AgentStatus::Completed(last_agent_message) => {
+                ThreadLifecycleStatus::completed(last_agent_message.clone())
+            }
+            AgentStatus::Errored(message) => ThreadLifecycleStatus::errored(Some(message.clone())),
+            AgentStatus::Interrupted => ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Interrupted,
+            },
+            AgentStatus::Shutdown => ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Shutdown,
+            },
+            AgentStatus::PendingInit => ThreadLifecycleStatus::Initializing,
+            AgentStatus::Running => ThreadLifecycleStatus::Active {
+                active_flags: Vec::new(),
+            },
+            AgentStatus::NotFound => ThreadLifecycleStatus::NotLoaded,
+        }
     }
 
     fn truncate_child_completion_content(content: &str) -> String {

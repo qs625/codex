@@ -582,8 +582,11 @@ impl Session {
                 mailbox,
                 mailbox_rx: Mutex::new(mailbox_rx),
                 idle_pending_input: Mutex::new(Vec::new()),
+                last_parent_child_notification_status: Mutex::new(None),
                 model_observed_display_events: Mutex::new(HashMap::new()),
                 scheduler: Mutex::new(()),
+                #[cfg(test)]
+                force_wait_command_for_tests: AtomicBool::new(false),
                 #[cfg(test)]
                 goal_continuation_before_launch_hook: Mutex::new(None),
                 goal_runtime: GoalRuntimeState::new(),

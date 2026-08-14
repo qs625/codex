@@ -42,9 +42,7 @@ impl Session {
     ];
 
     fn self_arc_for_initial_context(&self) -> Option<Arc<Self>> {
-        self.self_weak
-            .get()
-            .and_then(Weak::upgrade)
+        self.self_weak.get().and_then(Weak::upgrade)
     }
 
     async fn external_agent_tool_specs_for_initial_context(
@@ -56,7 +54,9 @@ impl Session {
             return Vec::new();
         };
         let Some(turn_context) = turn_context.self_weak.get().and_then(Weak::upgrade) else {
-            warn!("skipping external agent tool specs for initial context without turn context Arc");
+            warn!(
+                "skipping external agent tool specs for initial context without turn context Arc"
+            );
             return Vec::new();
         };
         let session_capability: Arc<dyn thread_service_api::ThreadSessionCapability> =
@@ -305,9 +305,9 @@ impl Session {
         }
     }
 
-    /// Forwards finished spawned MultiAgentV2 children to their direct parent once inactive.
+    /// Compatibility wrapper for the child-notification delivery point.
     pub(crate) async fn maybe_notify_parent_of_final_status(&self, turn_context: &TurnContext) {
-        self.maybe_notify_parent_of_final_status_for_source(
+        self.maybe_notify_parent_of_child_status_for_source(
             turn_context.sub_id.as_str(),
             &turn_context.session_source,
         )
@@ -320,11 +320,11 @@ impl Session {
             state.session_configuration.session_source.clone()
         };
         let sub_id = self.next_internal_sub_id();
-        self.maybe_notify_parent_of_final_status_for_source(&sub_id, &session_source)
+        self.maybe_notify_parent_of_child_status_for_source(&sub_id, &session_source)
             .await;
     }
 
-    async fn maybe_notify_parent_of_final_status_for_source(
+    async fn maybe_notify_parent_of_child_status_for_source(
         &self,
         sub_id: &str,
         session_source: &SessionSource,
@@ -339,9 +339,6 @@ impl Session {
         };
 
         let status = self.agent_status.borrow().clone();
-        if !is_final(&status) {
-            return;
-        }
         if self
             .services
             .agent_control
@@ -350,32 +347,44 @@ impl Session {
         {
             return;
         }
-        match Box::pin(self.thread_post_turn_state()).await {
-            ThreadPostTurnState::ThreadCompletion
-            | ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitEventSubscription) => {}
-            ThreadPostTurnState::ThreadActive
-            | ThreadPostTurnState::ThreadIdle(
-                ThreadIdleReason::WaitChild | ThreadIdleReason::WaitCommand,
-            )
-            | ThreadPostTurnState::GoContextContinuation { .. } => return,
+        let post_turn_state = Box::pin(self.thread_post_turn_state()).await;
+        let Some(lifecycle_status) =
+            Self::child_notification_lifecycle_status(&post_turn_state, &status)
+        else {
+            return;
+        };
+        {
+            let last_status = self.last_parent_child_notification_status.lock().await;
+            if last_status.as_ref() == Some(&lifecycle_status) {
+                return;
+            }
         }
 
-        let _ = Box::pin(self.forward_child_completion_to_parent(
+        let delivered = Box::pin(self.forward_child_notification_to_parent(
             sub_id,
             *parent_thread_id,
             child_agent_path,
             status,
+            lifecycle_status.clone(),
         ))
         .await;
+        if delivered {
+            *self.last_parent_child_notification_status.lock().await = Some(lifecycle_status);
+        }
     }
 
-    /// Sends the standard completion envelope from a spawned MultiAgentV2 child to its parent.
-    async fn forward_child_completion_to_parent(
+    /// Sends the child status notification from a spawned MultiAgentV2 child to its parent.
+    ///
+    /// The wire operation remains `ChildCompletion` for persisted-event and client
+    /// compatibility, but the authoritative status for new notifications is the
+    /// lifecycle snapshot carried alongside it.
+    async fn forward_child_notification_to_parent(
         &self,
         turn_id: &str,
         parent_thread_id: ThreadId,
         child_agent_path: &protocol::AgentPath,
         status: AgentStatus,
+        lifecycle_status: ThreadLifecycleStatus,
     ) -> bool {
         let Some(parent_agent_path) = child_agent_path
             .as_str()
@@ -385,7 +394,7 @@ impl Session {
             return false;
         };
 
-        let message = child_completion_content_from_status(&status);
+        let message = Self::child_notification_content(&lifecycle_status, &status);
         // `communication` owns the message. Keep a second copy only when the
         // recorder will actually need it after parent delivery succeeds.
         let trace_message = self
@@ -402,7 +411,8 @@ impl Session {
         )
         .with_trigger_turn(true)
         .with_thread_ids(self.conversation_id, parent_thread_id)
-        .with_status(status.clone());
+        .with_status(status.clone())
+        .with_lifecycle_status(lifecycle_status);
         if let Err(err) = self
             .services
             .agent_control
@@ -428,6 +438,59 @@ impl Session {
         true
     }
 
+    fn child_notification_lifecycle_status(
+        post_turn_state: &ThreadPostTurnState,
+        status: &AgentStatus,
+    ) -> Option<ThreadLifecycleStatus> {
+        match post_turn_state {
+            ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand) => {
+                Some(ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::Command,
+                })
+            }
+            ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitChild) => {
+                Some(ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::Child,
+                })
+            }
+            ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitEventSubscription) => {
+                Some(ThreadLifecycleStatus::Waiting {
+                    reason: ThreadLifecycleWaitReason::EventSubscription,
+                })
+            }
+            ThreadPostTurnState::ThreadCompletion if is_final(status) => {
+                Some(child_lifecycle_status_from_agent_status(status))
+            }
+            ThreadPostTurnState::ThreadActive
+            | ThreadPostTurnState::GoContextContinuation { .. }
+            | ThreadPostTurnState::ThreadCompletion => None,
+        }
+    }
+
+    fn child_notification_content(
+        lifecycle_status: &ThreadLifecycleStatus,
+        status: &AgentStatus,
+    ) -> String {
+        match lifecycle_status {
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::Command,
+            } => "waiting on command".to_string(),
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::Child,
+            } => "waiting on child".to_string(),
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            } => "waiting on event subscription".to_string(),
+            ThreadLifecycleStatus::Final { .. } => child_completion_content_from_status(status),
+            ThreadLifecycleStatus::NotLoaded
+            | ThreadLifecycleStatus::Initializing
+            | ThreadLifecycleStatus::Active { .. }
+            | ThreadLifecycleStatus::SystemError { .. } => {
+                child_completion_content_from_status(status)
+            }
+        }
+    }
+
     pub(crate) async fn has_active_direct_child(&self) -> bool {
         Box::pin(
             self.services
@@ -438,6 +501,13 @@ impl Session {
     }
 
     pub(crate) async fn has_wait_command(&self) -> bool {
+        #[cfg(test)]
+        if self
+            .force_wait_command_for_tests
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return true;
+        }
         self.services
             .command_service_state
             .has_running_process_for_thread(self.conversation_id)
@@ -1750,12 +1820,12 @@ impl Session {
                 active_subscriptions,
                 pending_poll_events: pending_poll_event_counts
                     .into_iter()
-                    .map(|(source_hint, item_count)| {
-                        crate::context::RuntimePollEventSnapshot {
+                    .map(
+                        |(source_hint, item_count)| crate::context::RuntimePollEventSnapshot {
                             source_hint,
                             item_count,
-                        }
-                    })
+                        },
+                    )
                     .collect(),
             };
             if !runtime_activity.is_empty() {

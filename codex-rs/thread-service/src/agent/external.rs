@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crate::agent::child_completion_content_from_status;
+use crate::agent::status::child_lifecycle_status_from_agent_status;
 use crate::session::session::ThreadWaitSource;
 use crate::session::thread_wait::ThreadWaitOutcome;
 use crate::session::thread_wait::ThreadWaitState;
@@ -1764,6 +1765,7 @@ pub(crate) fn completion_communication(run: &ExternalAgentRun) -> Option<InterAg
         .with_trigger_turn(true)
         .with_thread_ids(run.thread_id, run.parent_thread_id)
         .with_status(run.status.clone())
+        .with_lifecycle_status(child_lifecycle_status_from_agent_status(&run.status))
         .with_agent_metadata(
             Some(provider_name(run.provider).to_string()),
             Some(provider_name(run.provider).to_string()),
@@ -2791,6 +2793,12 @@ mod tests {
         assert_eq!(communication.content, "done");
         assert!(!communication.content.contains("<subagent_notification>"));
         assert_eq!(communication.status, Some(run.status));
+        assert_eq!(
+            communication.lifecycle_status,
+            Some(protocol::protocol::ThreadLifecycleStatus::completed(Some(
+                "done".to_string()
+            )))
+        );
         assert_eq!(
             communication.operation,
             InterAgentOperation::ChildCompletion

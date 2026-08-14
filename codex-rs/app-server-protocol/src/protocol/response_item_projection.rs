@@ -75,7 +75,11 @@ pub fn thread_item_from_inter_agent_communication(
     if matches!(
         communication.operation,
         CoreInterAgentOperation::ChildCompletion
-    ) && let Some(mut status) = communication.status.map(CollabAgentState::from)
+    ) && let Some(mut status) = communication
+        .lifecycle_status
+        .clone()
+        .map(CollabAgentState::from)
+        .or_else(|| communication.status.clone().map(CollabAgentState::from))
     {
         status.path = Some(communication.author.to_string());
         status.agent_nickname = communication.agent_nickname.clone();
@@ -119,6 +123,7 @@ pub fn thread_item_from_inter_agent_communication(
 mod projection_tests {
     use super::*;
     use crate::protocol::ThreadLifecycleStatus;
+    use crate::protocol::ThreadLifecycleWaitReason;
     use pretty_assertions::assert_eq;
     use protocol::AgentPath;
     use protocol::ThreadId;
@@ -158,6 +163,49 @@ mod projection_tests {
                     message: Some("done".into()),
                     agent_nickname: Some("claude_cli".into()),
                     agent_role: Some("claude_cli".into()),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn child_notification_projection_prefers_lifecycle_status() {
+        let communication = InterAgentCommunication::new(
+            AgentPath::try_from("/root/worker").expect("agent path"),
+            AgentPath::root(),
+            Vec::new(),
+            "waiting on child".into(),
+            CoreInterAgentOperation::ChildCompletion,
+        )
+        .with_thread_ids(
+            ThreadId::from_string("11111111-1111-1111-1111-111111111111".into())
+                .expect("sender thread id"),
+            ThreadId::from_string("22222222-2222-2222-2222-222222222222".into())
+                .expect("recipient thread id"),
+        )
+        .with_status(AgentStatus::Completed(Some("done".into())))
+        .with_lifecycle_status(ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::Child,
+        });
+
+        let item = thread_item_from_inter_agent_communication("item-1".into(), communication);
+
+        assert_eq!(
+            item,
+            ThreadItem::CollabAgentStatusUpdate {
+                id: "item-1".into(),
+                sender_thread_id: Some("11111111-1111-1111-1111-111111111111".into()),
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: Some("22222222-2222-2222-2222-222222222222".into()),
+                recipient_path: "/root".into(),
+                lifecycle_status: CollabAgentState {
+                    path: Some("/root/worker".into()),
+                    lifecycle_status: ThreadLifecycleStatus::Waiting {
+                        reason: ThreadLifecycleWaitReason::Child,
+                    },
+                    message: None,
+                    agent_nickname: None,
+                    agent_role: None,
                 },
             }
         );
