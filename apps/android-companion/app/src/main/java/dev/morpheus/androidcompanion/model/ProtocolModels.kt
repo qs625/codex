@@ -96,7 +96,7 @@ fun JsonObject.toConversationItem(): ConversationItem {
     val id = string("id") ?: "$type-${hashCode()}"
     val (title, body) = when (type) {
         "userMessage" -> "You" to formatUserMessage(this["content"])
-        "agentMessage" -> "Assistant" to string("text").orEmpty().ifBlank { "..." }
+        "agentMessage" -> "Assistant" to string("text").orEmpty()
         "reasoning" -> "Reasoning" to formatStringArray(this["summary"])
             .ifBlank { formatStringArray(this["content"]) }
             .ifBlank { "Reasoning updated" }
@@ -115,7 +115,7 @@ fun JsonObject.toConversationItem(): ConversationItem {
             string("status")?.let { "status: $it" },
         ).joinToString("\n").ifBlank { "Tool call" }
         "contextCompaction" -> "Context compaction" to "Conversation history was compacted."
-        "injectedContext" -> string("title") ?: "Context" to string("preview").orEmpty()
+        "injectedContext" -> (string("title") ?: "Context") to string("preview").orEmpty()
         "fileChange" -> "File changes" to formatFileChanges(this["changes"])
         else -> type to compactJson(this)
     }

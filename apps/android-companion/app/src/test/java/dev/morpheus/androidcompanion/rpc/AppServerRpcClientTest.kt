@@ -2,7 +2,7 @@ package dev.morpheus.androidcompanion.rpc
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import okhttp3.mockwebserver.MockResponse
@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
 
 class AppServerRpcClientTest {
     @Test
-    fun requestCompletesWhenNotificationArrivesBeforeResponse() = runTest {
+    fun requestCompletesWhenNotificationArrivesBeforeResponse() = runBlocking {
         val messages = LinkedBlockingQueue<String>()
         val server = MockWebServer()
         server.enqueue(
@@ -32,6 +32,7 @@ class AppServerRpcClientTest {
                             text.contains("\"method\":\"thread/list\"") -> {
                                 webSocket.send("""{"method":"thread/status/changed","params":{"threadId":"t1","lifecycleStatus":"active"}}""")
                                 webSocket.send("""{"id":2,"result":{"data":[],"nextCursor":null,"backwardsCursor":null}}""")
+                                webSocket.close(1000, "done")
                             }
                         }
                     }
@@ -41,19 +42,22 @@ class AppServerRpcClientTest {
         server.start()
         val client = AppServerRpcClient(server.url("/").toString().replace("http://", "ws://"), null)
 
-        client.connect()
-        val notification = async { client.serverNotifications.first() }
-        val result = client.request("thread/list", JsonObject(emptyMap()))
+        try {
+            client.connect()
+            val notification = async { client.serverNotifications.first() }
+            val result = client.request("thread/list", JsonObject(emptyMap()))
 
-        assertEquals("[]", result.jsonObject["data"].toString())
-        assertEquals("thread/status/changed", notification.await().method)
-        assertTrue(messages.poll(2, TimeUnit.SECONDS).orEmpty().contains("initialize"))
-        client.close()
-        server.shutdown()
+            assertEquals("[]", result.jsonObject["data"].toString())
+            assertEquals("thread/status/changed", notification.await().method)
+            assertTrue(messages.poll(2, TimeUnit.SECONDS).orEmpty().contains("initialize"))
+        } finally {
+            client.close()
+            server.shutdown()
+        }
     }
 
     @Test
-    fun serverErrorCompletesMatchingRequestExceptionally() = runTest {
+    fun serverErrorCompletesMatchingRequestExceptionally() = runBlocking {
         val server = MockWebServer()
         server.enqueue(
             MockResponse().withWebSocketUpgrade(
@@ -65,6 +69,7 @@ class AppServerRpcClientTest {
                             }
                             text.contains("\"method\":\"thread/list\"") -> {
                                 webSocket.send("""{"id":2,"error":{"code":-32603,"message":"boom"}}""")
+                                webSocket.close(1000, "done")
                             }
                         }
                     }
@@ -75,13 +80,16 @@ class AppServerRpcClientTest {
         )
         server.start()
         val client = AppServerRpcClient(server.url("/").toString().replace("http://", "ws://"), null)
-        client.connect()
+        try {
+            client.connect()
 
-        val error = runCatching { client.request("thread/list") }.exceptionOrNull()
+            val error = runCatching { client.request("thread/list") }.exceptionOrNull()
 
-        assertTrue(error is RpcError)
-        assertEquals("boom", error?.message)
-        client.close()
-        server.shutdown()
+            assertTrue(error is RpcError)
+            assertEquals("boom", error?.message)
+        } finally {
+            client.close()
+            server.shutdown()
+        }
     }
 }
