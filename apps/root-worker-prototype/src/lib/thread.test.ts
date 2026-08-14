@@ -26,6 +26,7 @@ import {
   isThreadThinking,
   mergeDefaultCollapsedProjectIds,
   mergeThreadSnapshot,
+  normalizeThreadSnapshot,
   pickInitialProjectThread,
   queuePendingThreadUpdate,
   threadDisplayStatusClass,
@@ -1696,11 +1697,15 @@ test("upsertThread preserves active subscriptions across compact pruning", () =>
       ]),
     ],
   })[0]!;
-  const analysis = buildThreadAnalysis(thread);
+  const analysis = buildThreadAnalysis(thread, 0);
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "after-compact", "active-subscription:sub-schedule"],
+    ["compact-1", "after-compact"],
+  );
+  assert.deepEqual(
+    thread.activeSubscriptionItems?.map((item) => item.id),
+    ["active-subscription:sub-schedule"],
   );
   assert.deepEqual(
     analysis.monitors.sections.find((section) => section.kind === "schedule")
@@ -1759,15 +1764,15 @@ test("upsertThread does not revive pre-compact subscriptions after compact clean
       makeTurn("active-subscriptions", [scheduleCleanup]),
     ],
   })[0]!;
-  const analysis = buildThreadAnalysis(thread);
+  const analysis = buildThreadAnalysis(thread, 0);
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    [
-      "compact-1",
-      "after-compact",
-      "active-subscription:sub-schedule:inactive",
-    ],
+    ["compact-1", "after-compact"],
+  );
+  assert.deepEqual(
+    thread.activeSubscriptionItems?.map((item) => item.id),
+    ["active-subscription:sub-schedule:inactive"],
   );
   assert.deepEqual(
     analysis.monitors.sections.find((section) => section.kind === "schedule")
@@ -1802,12 +1807,13 @@ test("upsertThread does not revive pre-compact subscriptions after empty compact
       makeTurn("active-subscriptions", []),
     ],
   })[0]!;
-  const analysis = buildThreadAnalysis(thread);
+  const analysis = buildThreadAnalysis(thread, 0);
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
     ["compact-1", "after-compact"],
   );
+  assert.deepEqual(thread.activeSubscriptionItems, []);
   assert.deepEqual(
     analysis.monitors.sections.find((section) => section.kind === "schedule")
       ?.monitors,
@@ -1924,11 +1930,15 @@ test("updateThreadItem preserves active subscriptions when a compact notificatio
     "turn-compact",
     makeCompactItem("compact-1"),
   );
-  const analysis = buildThreadAnalysis(thread);
+  const analysis = buildThreadAnalysis(thread, 0);
 
   assert.deepEqual(
     thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
-    ["compact-1", "active-subscription:sub-schedule"],
+    ["compact-1"],
+  );
+  assert.deepEqual(
+    thread.activeSubscriptionItems?.map((item) => item.id),
+    ["active-subscription:sub-schedule"],
   );
   assert.deepEqual(
     analysis.monitors.sections.find((section) => section.kind === "schedule")
@@ -3406,7 +3416,7 @@ test("uninitialized live schedule notifications update monitors after the snapsh
 
   assert.equal(threads[0]?.turns.length, 0);
   let updated = applyPendingThreadUpdates(makeThread(), pendingUpdates);
-  let analysis = buildThreadAnalysis(updated);
+  let analysis = buildThreadAnalysis(updated, 0);
 
   assert.equal(pendingUpdates.size, 0);
   assert.deepEqual(
@@ -3436,7 +3446,7 @@ test("uninitialized live schedule notifications update monitors after the snapsh
       updateThreadItem(thread, "turn-schedule-unsubscribe", scheduleUnsubscribe),
   );
   updated = applyPendingThreadUpdates(updated, pendingUpdates);
-  analysis = buildThreadAnalysis(updated);
+  analysis = buildThreadAnalysis(updated, 0);
 
   assert.equal(threads[0]?.turns.length, 1);
   assert.equal(pendingUpdates.size, 0);
@@ -3488,7 +3498,7 @@ test("pending live schedule subscribe does not duplicate restored active subscri
   );
 
   const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
-  const analysis = buildThreadAnalysis(updated);
+  const analysis = buildThreadAnalysis(updated, 0);
 
   assert.equal(pendingUpdates.size, 0);
   assert.deepEqual(
@@ -3552,7 +3562,7 @@ test("lazy list and subscribe metadata hydrate restored active subscription turn
   let threads = upsertThread([], listedThread);
   threads = upsertThreadMetadataPreservingTurns(threads, subscribedThread);
   threads = upsertThread(threads, readSnapshot);
-  const analysis = buildThreadAnalysis(threads[0]!);
+  const analysis = buildThreadAnalysis(threads[0]!, 0);
 
   assert.deepEqual(
     analysis.monitors.sections.find((section) => section.kind === "schedule")
@@ -3570,6 +3580,71 @@ test("lazy list and subscribe metadata hydrate restored active subscription turn
       },
     ],
   );
+});
+
+test("metadata-only thread updates preserve active subscription current state", () => {
+  const restoredSchedule: ThreadItem = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const loadedThread = {
+    ...makeThread(),
+    turns: [],
+    activeSubscriptionItems: [restoredSchedule],
+  };
+  const metadataThread = {
+    ...makeThread(),
+    preview: "metadata refresh",
+    turns: [],
+  };
+
+  let threads = upsertThread([], loadedThread);
+  threads = upsertThreadMetadataPreservingTurns(threads, metadataThread);
+
+  assert.deepEqual(threads[0]?.activeSubscriptionItems, [restoredSchedule]);
+});
+
+test("normalizing active subscription current state updates same-length items", () => {
+  const originalSchedule: ThreadItem = {
+    type: "builtinToolCall",
+    id: "active-subscription:sub-schedule",
+    tool: "schedule_subscribe",
+    arguments: {
+      label: "daily digest",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+    status: "completed",
+    output: {
+      subscription_id: "sub-schedule",
+      schedule_summary: "every 21600000 ms",
+    },
+  };
+  const updatedSchedule: ThreadItem = {
+    ...originalSchedule,
+    arguments: {
+      label: "daily cargo clean",
+      schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+    },
+  };
+
+  const thread = normalizeThreadSnapshot({
+    ...makeThread(),
+    turns: [],
+    activeSubscriptionItems: [updatedSchedule],
+  });
+
+  assert.notDeepEqual(thread.activeSubscriptionItems, [originalSchedule]);
+  assert.deepEqual(thread.activeSubscriptionItems, [updatedSchedule]);
 });
 
 for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {

@@ -141,53 +141,21 @@ function buildMonitorSections(
   if (thread) {
     for (const turn of thread.turns) {
       for (const item of turn.items) {
-        if (isMonitorToolCall(item)) {
-          const monitor = buildMonitorSummary(item);
-          if (monitor) {
-            upsertMonitorSummary(monitors, monitor);
-          }
-          continue;
-        }
-
-        if (isUnsubscribeToolCall(item)) {
-          removeUnsubscribedMonitor(monitors, item);
-          continue;
-        }
-
-        if (item.type === "eventDrivenTool" && isMonitorTool(item.tool)) {
-          const events = eventsByTool.get(item.tool) ?? [];
-          events.push(buildMonitorEvent(item));
-          eventsByTool.set(item.tool, events);
-        }
-
-        if (item.type === "commandExecution") {
-          const commandMonitor = buildCommandMonitorSummary(
-            item,
-            commandNotificationsByCommandId.get(item.id) ?? null,
-            allowLiveCommandMonitors,
-          );
-          if (commandMonitor) {
-            monitors.push(commandMonitor);
-          }
-          continue;
-        }
-
-        if (item.type === "commandExecutionNotification") {
-          const summary = summarizeCommandNotification(item);
-          commandNotificationsByCommandId.set(
-            item.commandItemId,
-            summary,
-          );
-          const existingMonitor = monitors.find(
-            (monitor) => monitor.id === item.commandItemId,
-          );
-          if (existingMonitor) {
-            existingMonitor.latestEvent = summary;
-            existingMonitor.eventCount = Math.max(existingMonitor.eventCount, 1);
-          }
-          continue;
-        }
+        applyMonitorItem(item, {
+          monitors,
+          eventsByTool,
+          commandNotificationsByCommandId,
+          allowLiveCommandMonitors,
+        });
       }
+    }
+    for (const item of thread.activeSubscriptionItems ?? []) {
+      applyMonitorItem(item, {
+        monitors,
+        eventsByTool,
+        commandNotificationsByCommandId,
+        allowLiveCommandMonitors,
+      });
     }
   }
 
@@ -234,6 +202,66 @@ function buildMonitorSections(
     sections,
     scheduleAgenda: buildScheduleAgenda(activeMonitors, options),
   };
+}
+
+function applyMonitorItem(
+  item: ThreadItem,
+  state: {
+    monitors: InternalMonitorSummary[];
+    eventsByTool: Map<string, MonitorEvent[]>;
+    commandNotificationsByCommandId: Map<string, string>;
+    allowLiveCommandMonitors: boolean;
+  },
+) {
+  const {
+    monitors,
+    eventsByTool,
+    commandNotificationsByCommandId,
+    allowLiveCommandMonitors,
+  } = state;
+  if (isMonitorToolCall(item)) {
+    const monitor = buildMonitorSummary(item);
+    if (monitor) {
+      upsertMonitorSummary(monitors, monitor);
+    }
+    return;
+  }
+
+  if (isUnsubscribeToolCall(item)) {
+    removeUnsubscribedMonitor(monitors, item);
+    return;
+  }
+
+  if (item.type === "eventDrivenTool" && isMonitorTool(item.tool)) {
+    const events = eventsByTool.get(item.tool) ?? [];
+    events.push(buildMonitorEvent(item));
+    eventsByTool.set(item.tool, events);
+    return;
+  }
+
+  if (item.type === "commandExecution") {
+    const commandMonitor = buildCommandMonitorSummary(
+      item,
+      commandNotificationsByCommandId.get(item.id) ?? null,
+      allowLiveCommandMonitors,
+    );
+    if (commandMonitor) {
+      monitors.push(commandMonitor);
+    }
+    return;
+  }
+
+  if (item.type === "commandExecutionNotification") {
+    const summary = summarizeCommandNotification(item);
+    commandNotificationsByCommandId.set(item.commandItemId, summary);
+    const existingMonitor = monitors.find(
+      (monitor) => monitor.id === item.commandItemId,
+    );
+    if (existingMonitor) {
+      existingMonitor.latestEvent = summary;
+      existingMonitor.eventCount = Math.max(existingMonitor.eventCount, 1);
+    }
+  }
 }
 
 function buildChangedFiles(thread: Thread | null): ChangedFileSummary[] {

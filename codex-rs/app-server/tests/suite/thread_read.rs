@@ -947,10 +947,15 @@ async fn thread_read_restores_active_schedule_after_compact_and_startup_subscrip
     );
 
     let thread = read_thread(&mut mcp, &conversation_id, /*include_turns*/ true).await?;
+    assert!(
+        thread.turns.iter().all(|turn| turn.id != "active-subscriptions"),
+        "thread/read should keep active subscription snapshots out of ordinary turns"
+    );
     let schedule_item = thread
-        .turns
+        .active_subscription_items
+        .as_deref()
+        .unwrap_or_default()
         .iter()
-        .flat_map(|turn| turn.items.iter())
         .find(|item| {
             matches!(
                 item,
@@ -966,10 +971,10 @@ async fn thread_read_restores_active_schedule_after_compact_and_startup_subscrip
                         .and_then(|value| value.as_str())
                         == Some("sub-schedule")
             )
-        });
+    });
     assert!(
         schedule_item.is_some(),
-        "thread/read should include the restored schedule_subscribe monitor after startup restore"
+        "thread/read should include restored schedule_subscribe current-state items after startup restore"
     );
 
     Ok(())

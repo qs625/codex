@@ -5,6 +5,7 @@ import type { AbsolutePathBuf } from "./AbsolutePathBuf";
 import type { GitInfo } from "./GitInfo";
 import type { SessionSource } from "./SessionSource";
 import type { ThreadContextUsage } from "./ThreadContextUsage";
+import type { ThreadItem } from "./ThreadItem";
 import type { ThreadLifecycleStatus } from "./ThreadLifecycleStatus";
 import type { ThreadSkill } from "./ThreadSkill";
 import type { ThreadSource } from "./ThreadSource";
@@ -103,4 +104,10 @@ contextUsage: ThreadContextUsage | null,
  * For `thread/start`, `thread/started`, and other metadata-only Thread payloads,
  * the turns field will be an empty list.
  */
-turns: Array<Turn>, };
+turns: Array<Turn>,
+/**
+ * Current active subscription display facts restored from thread metadata.
+ * These are intentionally kept out of `turns`, which represents ordinary
+ * conversation history.
+ */
+activeSubscriptionItems?: Array<ThreadItem>, };

@@ -223,6 +223,7 @@ mod tests {
                 completed_at: None,
                 duration_ms: None,
             }],
+            active_subscription_items: None,
         }
     }
 }

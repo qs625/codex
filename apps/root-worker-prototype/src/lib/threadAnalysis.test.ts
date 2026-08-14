@@ -69,6 +69,52 @@ test("returns command and schedule monitor sections when no thread is selected",
   );
 });
 
+test("builds schedule monitors from active subscription current state items", () => {
+  const thread = {
+    ...makeThread([]),
+    turns: [] as Thread["turns"],
+    activeSubscriptionItems: [
+      {
+        type: "builtinToolCall",
+        id: "active-subscription:sub-schedule",
+        tool: "schedule_subscribe",
+        arguments: {
+          label: "daily digest",
+          schedule: { kind: "every_interval", interval_ms: 21_600_000 },
+        },
+        status: "completed",
+        output: {
+          subscription_id: "sub-schedule",
+          schedule_summary: "every 21600000 ms",
+        },
+      },
+    ],
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    [],
+  );
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "schedule")
+      ?.monitors,
+    [
+      {
+        id: "active-subscription:sub-schedule",
+        subscriptionId: "sub-schedule",
+        kind: "schedule",
+        label: "daily digest",
+        detail: "every_interval 6h",
+        status: "Listening",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
+  );
+});
+
 test("dedupes changed files and keeps the latest change kind", () => {
   const analysis = buildThreadAnalysis(
     makeThread([

@@ -302,6 +302,7 @@ mod persisted_lifecycle_status_tests {
             token_usage: None,
             context_usage: None,
             turns: Vec::new(),
+            active_subscription_items: None,
         }
     }
 
@@ -689,6 +690,7 @@ pub(crate) fn thread_from_stored_thread(
         token_usage: None,
         context_usage: None,
         turns: Vec::new(),
+        active_subscription_items: None,
     };
     if let Some(history) = history.as_ref() {
         apply_thread_usage_from_rollout_items(&mut thread, history.items.as_slice());
@@ -944,6 +946,7 @@ pub(super) fn build_thread_from_snapshot(
         token_usage: None,
         context_usage: None,
         turns: Vec::new(),
+        active_subscription_items: None,
     }
 }
 
