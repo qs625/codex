@@ -41,6 +41,16 @@ data class ConversationItem(
     val title: String,
     val body: String,
     val raw: JsonObject,
+    val toolPresentation: ToolPresentation? = null,
+)
+
+data class ToolPresentation(
+    val summary: String,
+    val status: String?,
+    val details: String,
+    val outputLabel: String? = null,
+    val output: String? = null,
+    val outputIsEmpty: Boolean = true,
 )
 
 fun JsonObject.toThreadSummary(): ThreadSummary {
@@ -94,32 +104,76 @@ fun JsonObject.toConversationTurn(): ConversationTurn {
 fun JsonObject.toConversationItem(): ConversationItem {
     val type = string("type") ?: "unknown"
     val id = string("id") ?: "$type-${hashCode()}"
-    val (title, body) = when (type) {
-        "userMessage" -> "You" to formatUserMessage(this["content"])
-        "agentMessage" -> "Assistant" to string("text").orEmpty()
-        "reasoning" -> "Reasoning" to formatStringArray(this["summary"])
+    val title: String
+    val body: String
+    val toolPresentation: ToolPresentation?
+    when (type) {
+        "userMessage" -> {
+            title = "You"
+            body = formatUserMessage(this["content"])
+            toolPresentation = null
+        }
+        "agentMessage" -> {
+            title = "Assistant"
+            body = string("text").orEmpty()
+            toolPresentation = null
+        }
+        "reasoning" -> {
+            title = "Reasoning"
+            body = formatStringArray(this["summary"])
             .ifBlank { formatStringArray(this["content"]) }
             .ifBlank { "Reasoning updated" }
-        "plan" -> "Plan" to string("text").orEmpty()
-        "commandExecution" -> "Command" to listOfNotNull(
-            string("command"),
-            string("status")?.let { "status: $it" },
-            string("aggregatedOutput"),
-        ).joinToString("\n").ifBlank { "Command execution" }
-        "commandExecutionNotification" -> "Command" to listOfNotNull(
-            string("message"),
-            string("output"),
-        ).joinToString("\n").ifBlank { "Command notification" }
-        "builtinToolCall" -> (string("toolName") ?: "Tool") to listOfNotNull(
-            string("summary"),
-            string("status")?.let { "status: $it" },
-        ).joinToString("\n").ifBlank { "Tool call" }
-        "contextCompaction" -> "Context compaction" to "Conversation history was compacted."
-        "injectedContext" -> (string("title") ?: "Context") to string("preview").orEmpty()
-        "fileChange" -> "File changes" to formatFileChanges(this["changes"])
-        else -> type to compactJson(this)
+            toolPresentation = null
+        }
+        "plan" -> {
+            title = "Plan"
+            body = string("text").orEmpty()
+            toolPresentation = null
+        }
+        "commandExecution" -> {
+            title = "Command"
+            toolPresentation = commandExecutionPresentation()
+            body = toolPresentation.summary
+        }
+        "commandExecutionNotification" -> {
+            title = "Command"
+            toolPresentation = commandExecutionNotificationPresentation()
+            body = toolPresentation.summary
+        }
+        "builtinToolCall" -> {
+            title = string("tool") ?: string("toolName") ?: "Tool"
+            toolPresentation = builtinToolCallPresentation()
+            body = toolPresentation.summary
+        }
+        "contextCompaction" -> {
+            title = "Context compaction"
+            body = "Conversation history was compacted."
+            toolPresentation = null
+        }
+        "injectedContext" -> {
+            title = string("title") ?: "Context"
+            body = string("preview").orEmpty()
+            toolPresentation = null
+        }
+        "fileChange" -> {
+            title = "File changes"
+            body = formatFileChanges(this["changes"])
+            toolPresentation = null
+        }
+        else -> {
+            title = type
+            body = compactJson(this)
+            toolPresentation = null
+        }
     }
-    return ConversationItem(id = id, type = type, title = title, body = body, raw = this)
+    return ConversationItem(
+        id = id,
+        type = type,
+        title = title,
+        body = body,
+        raw = this,
+        toolPresentation = toolPresentation,
+    )
 }
 
 fun JsonObject.string(name: String): String? = this[name]?.jsonPrimitiveOrNull()?.contentOrNull
@@ -173,6 +227,111 @@ private fun formatFileChanges(value: JsonElement?): String {
         }
         .orEmpty()
         .ifBlank { "Files changed" }
+}
+
+private fun JsonObject.commandExecutionPresentation(): ToolPresentation {
+    val command = string("command").orEmpty()
+    val cwd = string("cwd").orEmpty()
+    val status = string("status")
+    val exitCode = fieldText("exitCode")
+    val output = string("aggregatedOutput")
+    val summary = listOfNotNull(
+        command.takeIf { it.isNotBlank() },
+        exitCode?.let { "exit $it" } ?: status,
+    ).joinToString(" • ").ifBlank { "Command execution" }
+    val details = listOfNotNull(
+        section("Command", command),
+        section("Cwd", cwd),
+        section("Status", status),
+        section("Process ID", string("processId")),
+        section("Source", fieldText("source")),
+        section("Initial Wait", fieldText("initialWaitMs")?.let { "$it ms" }),
+        section("Notify On", fieldText("notifyOn")),
+        section("Duration", fieldText("durationMs")?.let { "$it ms" }),
+        section("Exit Code", exitCode),
+        section("Actions", this["commandActions"]?.let { compactJson(it) }),
+    ).joinToString("\n\n")
+    return ToolPresentation(
+        summary = summary,
+        status = status ?: exitCode?.let { "exit $it" },
+        details = details.ifBlank { "Command execution" },
+        outputLabel = "Output",
+        output = output,
+        outputIsEmpty = output.isNullOrEmpty(),
+    )
+}
+
+private fun JsonObject.commandExecutionNotificationPresentation(): ToolPresentation {
+    val kind = string("kind") ?: "notification"
+    val message = string("message")
+    val output = string("output")
+    val exitCode = fieldText("exitCode")
+    val summary = listOfNotNull(
+        "Command notification",
+        kind,
+        exitCode?.let { "exit $it" },
+        message?.take(120),
+    ).joinToString(" • ")
+    val status = if (kind == "exit" && exitCode != null) {
+        if (exitCode == "0") "completed" else "failed"
+    } else {
+        "completed"
+    }
+    val details = listOfNotNull(
+        section("Kind", kind),
+        section("Command ID", string("commandItemId")),
+        section("Exit Code", exitCode),
+        section("Message", message),
+        section("Created", fieldText("createdAtMs")),
+    ).joinToString("\n\n")
+    return ToolPresentation(
+        summary = summary.ifBlank { "Command notification" },
+        status = status,
+        details = details.ifBlank { "Command notification" },
+        outputLabel = "Output",
+        output = output,
+        outputIsEmpty = output.isNullOrEmpty(),
+    )
+}
+
+private fun JsonObject.builtinToolCallPresentation(): ToolPresentation {
+    val tool = string("tool") ?: string("toolName") ?: "Tool"
+    val status = string("status")
+    val summary = string("summary")
+        ?: listOfNotNull(tool, status).joinToString(" • ").ifBlank { "Tool call" }
+    val details = listOfNotNull(
+        section("Tool", tool),
+        section("Status", status),
+        section("Arguments", this["arguments"]?.toString()),
+        section("Output", this["output"]?.toString()),
+    ).joinToString("\n\n")
+    return ToolPresentation(
+        summary = summary,
+        status = status,
+        details = details.ifBlank { "Tool call" },
+    )
+}
+
+fun ConversationItem.appendToolOutputDelta(delta: String): ConversationItem {
+    val presentation = toolPresentation ?: return copy(body = body + delta)
+    val currentOutput = presentation.output.orEmpty()
+    val nextPresentation = presentation.copy(
+        output = currentOutput + delta,
+        outputIsEmpty = false,
+    )
+    return copy(
+        body = if (body.isBlank()) delta else body,
+        toolPresentation = nextPresentation,
+    )
+}
+
+private fun JsonObject.fieldText(name: String): String? {
+    return this[name]?.jsonPrimitiveOrNull()?.contentOrNull
+}
+
+private fun section(label: String, value: String?): String? {
+    val text = value?.takeIf { it.isNotBlank() } ?: return null
+    return "$label\n$text"
 }
 
 private fun compactJson(value: JsonElement): String {
