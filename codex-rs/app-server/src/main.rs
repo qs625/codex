@@ -27,6 +27,11 @@ struct AppServerArgs {
     )]
     listen: AppServerTransport,
 
+    /// Additional WebSocket listener for mobile companions. This joins the same
+    /// app-server runtime as the primary `--listen` transport.
+    #[arg(long = "mobile-listen", value_name = "URL")]
+    mobile_listen: Option<AppServerTransport>,
+
     /// Session source used to derive product restrictions and metadata.
     #[arg(
         long = "session-source",
@@ -58,6 +63,7 @@ fn main() -> anyhow::Result<()> {
     arg0_dispatch_or_else(|arg0_paths: Arg0DispatchPaths| async move {
         let AppServerArgs {
             listen,
+            mobile_listen,
             session_source,
             auth,
             strict_config,
@@ -73,6 +79,13 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_default()
         };
         let transport = listen;
+        let additional_transports = match mobile_listen {
+            Some(mobile_transport @ AppServerTransport::WebSocket { .. }) => vec![mobile_transport],
+            Some(other) => {
+                anyhow::bail!("--mobile-listen only supports ws://IP:PORT URLs, got {other:?}");
+            }
+            None => Vec::new(),
+        };
         let auth = auth.try_into_settings()?;
         let mut runtime_options = AppServerRuntimeOptions::default();
         #[cfg(debug_assertions)]
@@ -88,6 +101,7 @@ fn main() -> anyhow::Result<()> {
             strict_config,
             /*default_analytics_enabled*/ false,
             transport,
+            additional_transports,
             session_source,
             auth,
             runtime_options,

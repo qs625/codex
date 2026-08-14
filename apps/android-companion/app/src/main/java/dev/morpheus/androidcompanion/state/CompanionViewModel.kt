@@ -26,17 +26,19 @@ class CompanionViewModel : ViewModel() {
 
     fun connect(endpoint: String, token: String?) {
         val normalizedEndpoint = endpoint.trim()
-        if (normalizedEndpoint.isEmpty()) {
-            mutableState.update { it.copy(error = "Enter a WebSocket URL.") }
+        val endpointError = validateConnectionEndpoint(normalizedEndpoint)
+        if (endpointError != null) {
+            mutableState.update { it.copy(error = endpointError) }
             return
         }
+        val normalizedToken = token?.trim()?.takeIf { it.isNotEmpty() }
         disconnect()
         mutableState.update {
             it.copy(connection = ConnectionState.Connecting, error = null)
         }
         viewModelScope.launch {
             try {
-                val client = AppServerRpcClient(normalizedEndpoint, token)
+                val client = AppServerRpcClient(normalizedEndpoint, normalizedToken)
                 client.connect()
                 rpcClient = client
                 notificationJob = launch {

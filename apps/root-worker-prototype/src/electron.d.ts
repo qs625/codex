@@ -8,6 +8,7 @@ declare global {
         appServer: {
           connected: boolean;
           pid: number | null;
+          mobileConnection?: AndroidConnectionInfo;
         };
         workspace: string;
       }>;
@@ -21,6 +22,7 @@ declare global {
         appServer: {
           connected: boolean;
           pid: number | null;
+          mobileConnection?: AndroidConnectionInfo;
         };
       }>;
       listThreads: (cwd?: string) => Promise<{ data: unknown[] }>;
@@ -49,6 +51,7 @@ declare global {
       readAccount: (payload?: {
         refreshToken?: boolean;
       }) => Promise<unknown>;
+      getAndroidConnectionInfo: () => Promise<AndroidConnectionInfo>;
       startAccountLogin: (payload:
         | { type: "apiKey"; apiKey: string }
         | { type: "chatgpt"; codexStreamlinedLogin?: boolean }
@@ -406,3 +409,16 @@ declare global {
     };
   }
 }
+
+export type AndroidConnectionInfo =
+  | {
+      enabled: true;
+      bindEndpoint: string;
+      endpoint: string;
+      token: string;
+      auth: "capability-token";
+    }
+  | {
+      enabled: false;
+      reason: string;
+    };

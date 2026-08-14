@@ -218,6 +218,12 @@ ipcMain.handle("codex:readAccount", async (_event, payload = {}) => {
   });
 });
 
+ipcMain.handle("codex:androidConnectionInfo", async () => {
+  await ensureDefaultWorkspace();
+  await appServerClient.ready();
+  return appServerClient.getMobileConnectionInfo();
+});
+
 ipcMain.handle("codex:startAccountLogin", async (_event, payload) => {
   await ensureDefaultWorkspace();
   return appServerClient.request("account/login/start", payload);

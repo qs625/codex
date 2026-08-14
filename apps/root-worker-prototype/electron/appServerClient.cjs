@@ -1,12 +1,14 @@
 const { spawn } = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { createInterface } = require("node:readline");
 const { EventEmitter } = require("node:events");
 const { buildDesktopEnvironment } = require("./environment.cjs");
 
-const DEFAULT_APP_SERVER_COMMAND = `${resolveWorkspaceAppServerBinary()} --listen stdio://`;
+const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
 const DEFAULT_MORPHEUS_HOME = resolvePrototypeMorpheusHome();
 
 class AppServerClient extends EventEmitter {
@@ -15,11 +17,17 @@ class AppServerClient extends EventEmitter {
     this.child = null;
     this.pending = new Map();
     this.nextRequestId = 1;
+    this.mobileConnection = {
+      enabled: false,
+      reason: "app-server is starting",
+    };
     this.readyPromise = new Promise((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
     });
-    this.start();
+    void this.start().catch((error) => {
+      this.readyReject(error instanceof Error ? error : new Error(String(error)));
+    });
   }
 
   async ready() {
@@ -60,14 +68,26 @@ class AppServerClient extends EventEmitter {
     return {
       connected: this.child?.exitCode == null,
       pid: this.child?.pid ?? null,
+      mobileConnection: this.mobileConnection,
     };
   }
 
-  start() {
-    const command = resolveAppServerCommand(process.env);
+  getMobileConnectionInfo() {
+    return this.mobileConnection;
+  }
+
+  async start() {
     const env = buildAppServerEnvironment(process.env);
     const morpheusHome = env.MORPHEUS_HOME;
     fs.mkdirSync(morpheusHome, { recursive: true });
+    const launch = await resolveAppServerLaunch(process.env, {
+      morpheusHome,
+      randomToken: () => crypto.randomBytes(32).toString("base64url"),
+      writeTokenFile,
+      checkListenAvailable: canBindWebSocketListenUrl,
+    });
+    const command = launch.command;
+    this.mobileConnection = launch.mobileConnection;
     this.child = spawn(command, {
       cwd: process.cwd(),
       env,
@@ -205,7 +225,12 @@ class AppServerClient extends EventEmitter {
 module.exports = {
   AppServerClient,
   buildAppServerEnvironment,
+  buildDefaultAppServerCommand,
+  buildMobileConnectionLaunch,
   resolveAppServerCommand,
+  resolveAppServerLaunch,
+  resolveLanEndpoint,
+  writeTokenFile,
 };
 
 function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {}) {
@@ -218,8 +243,224 @@ function resolveAppServerCommand(baseEnv = process.env) {
   return (
     baseEnv.APP_SERVER_CMD ??
     baseEnv.CODEX_APP_SERVER_CMD ??
-    DEFAULT_APP_SERVER_COMMAND
+    `${resolveWorkspaceAppServerBinary()} --listen stdio://`
   );
+}
+
+async function resolveAppServerLaunch(baseEnv = process.env, options = {}) {
+  const customCommand = baseEnv.APP_SERVER_CMD ?? baseEnv.CODEX_APP_SERVER_CMD;
+  if (customCommand) {
+    return {
+      command: customCommand,
+      mobileConnection: {
+        enabled: false,
+        reason:
+          "Mobile listener is unavailable when APP_SERVER_CMD overrides app-server launch.",
+      },
+    };
+  }
+  const mobileLaunch = await buildMobileConnectionLaunch(baseEnv, options);
+  return {
+    command: buildDefaultAppServerCommand({
+      appServerBinary: resolveWorkspaceAppServerBinary(),
+      mobileLaunch,
+    }),
+    mobileConnection: mobileLaunch.info,
+  };
+}
+
+function buildDefaultAppServerCommand({ appServerBinary, mobileLaunch }) {
+  const base = `${appServerBinary} --listen stdio://`;
+  if (!mobileLaunch.enabled) {
+    return base;
+  }
+  return [
+    base,
+    "--mobile-listen",
+    shellQuote(mobileLaunch.listenUrl),
+    "--ws-auth capability-token",
+    "--ws-token-file",
+    shellQuote(mobileLaunch.tokenFile),
+  ].join(" ");
+}
+
+async function buildMobileConnectionLaunch(baseEnv = process.env, options = {}) {
+  const listenUrl = baseEnv.ROOT_WORKER_MOBILE_LISTEN ?? DEFAULT_MOBILE_LISTEN_URL;
+  if (listenUrl === "off") {
+    return {
+      enabled: false,
+      info: {
+        enabled: false,
+        reason: "Mobile listener is disabled by ROOT_WORKER_MOBILE_LISTEN=off.",
+      },
+    };
+  }
+  const parsedListenUrl = parseMobileWebSocketListenUrl(listenUrl);
+  if (!parsedListenUrl) {
+    return {
+      enabled: false,
+      info: {
+        enabled: false,
+        reason: "ROOT_WORKER_MOBILE_LISTEN must be a ws://IP:PORT bind URL.",
+      },
+    };
+  }
+  if (options.checkListenAvailable) {
+    const available = await options.checkListenAvailable(listenUrl);
+    if (!available) {
+      return {
+        enabled: false,
+        info: {
+          enabled: false,
+          reason: `Mobile listener bind address is unavailable: ${listenUrl}.`,
+        },
+      };
+    }
+  }
+  const token = baseEnv.ROOT_WORKER_MOBILE_TOKEN ?? options.randomToken?.();
+  if (!token) {
+    return {
+      enabled: false,
+      info: {
+        enabled: false,
+        reason: "Mobile listener token generation failed.",
+      },
+    };
+  }
+  const morpheusHome = options.morpheusHome ?? DEFAULT_MORPHEUS_HOME;
+  const tokenFile =
+    options.tokenFile ??
+    path.join(morpheusHome, "root-worker-mobile-ws-token");
+  options.writeTokenFile?.(tokenFile, token);
+  const endpoint = resolveLanEndpoint(listenUrl, baseEnv);
+  return {
+    enabled: true,
+    listenUrl,
+    token,
+    tokenFile,
+    info: {
+      enabled: true,
+      bindEndpoint: listenUrl,
+      endpoint,
+      token,
+      auth: "capability-token",
+    },
+  };
+}
+
+function resolveLanEndpoint(listenUrl, baseEnv = process.env) {
+  const override = baseEnv.ROOT_WORKER_MOBILE_ENDPOINT;
+  if (override) {
+    return override;
+  }
+  let url;
+  try {
+    url = new URL(listenUrl);
+  } catch {
+    return listenUrl;
+  }
+  if (url.hostname === "0.0.0.0" || url.hostname === "::") {
+    const lanAddress = firstLanIpv4Address() ?? "127.0.0.1";
+    url.hostname = lanAddress;
+  }
+  return url.toString();
+}
+
+function firstLanIpv4Address() {
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (
+        entry.family === "IPv4" &&
+        !entry.internal &&
+        typeof entry.address === "string"
+      ) {
+        return entry.address;
+      }
+    }
+  }
+  return null;
+}
+
+function writeTokenFile(tokenFile, token) {
+  fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
+  fs.writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 });
+  fs.chmodSync(tokenFile, 0o600);
+}
+
+function canBindWebSocketListenUrl(listenUrl) {
+  const parsed = parseMobileWebSocketListenUrl(listenUrl);
+  if (!parsed) {
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    let settled = false;
+    const settle = (available) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      server.removeAllListeners();
+      if (server.listening) {
+        server.close(() => resolve(available));
+      } else {
+        resolve(available);
+      }
+    };
+    server.once("error", () => settle(false));
+    server.once("listening", () => settle(true));
+    server.listen({
+      host: parsed.host,
+      port: parsed.port,
+      exclusive: true,
+    });
+  });
+}
+
+function parseMobileWebSocketListenUrl(listenUrl) {
+  if (!listenUrl.startsWith("ws://")) {
+    return null;
+  }
+  const socketAddress = listenUrl.slice("ws://".length);
+  if (
+    !socketAddress ||
+    socketAddress.includes("/") ||
+    socketAddress.includes("?") ||
+    socketAddress.includes("#")
+  ) {
+    return null;
+  }
+
+  let host;
+  let portString;
+  if (socketAddress.startsWith("[")) {
+    const closingBracket = socketAddress.indexOf("]");
+    if (closingBracket === -1 || socketAddress[closingBracket + 1] !== ":") {
+      return null;
+    }
+    host = socketAddress.slice(1, closingBracket);
+    portString = socketAddress.slice(closingBracket + 2);
+  } else {
+    const separator = socketAddress.lastIndexOf(":");
+    if (separator === -1 || socketAddress.indexOf(":") !== separator) {
+      return null;
+    }
+    host = socketAddress.slice(0, separator);
+    portString = socketAddress.slice(separator + 1);
+  }
+
+  const port = Number(portString);
+  if (
+    net.isIP(host) === 0 ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535 ||
+    String(port) !== portString
+  ) {
+    return null;
+  }
+
+  return { host, port };
 }
 
 function resolveWorkspaceAppServerBinary() {

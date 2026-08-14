@@ -364,6 +364,11 @@ struct AppServerCommand {
     )]
     listen: app_server::AppServerTransport,
 
+    /// Additional WebSocket listener for mobile companions. This joins the same
+    /// app-server runtime as the primary `--listen` transport.
+    #[arg(long = "mobile-listen", value_name = "URL")]
+    mobile_listen: Option<app_server::AppServerTransport>,
+
     /// Enable remote control for this app-server process.
     #[arg(long = "remote-control", hide = true)]
     remote_control: bool,
@@ -880,6 +885,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 subcommand,
                 strict_config: app_server_strict_config,
                 listen,
+                mobile_listen,
                 remote_control,
                 analytics_default_enabled,
                 auth,
@@ -894,6 +900,17 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             match subcommand {
                 None => {
                     let transport = listen;
+                    let additional_transports = match mobile_listen {
+                        Some(mobile_transport @ app_server::AppServerTransport::WebSocket { .. }) => {
+                            vec![mobile_transport]
+                        }
+                        Some(other) => {
+                            anyhow::bail!(
+                                "--mobile-listen only supports ws://IP:PORT URLs, got {other:?}"
+                            );
+                        }
+                        None => Vec::new(),
+                    };
                     let auth = auth.try_into_settings()?;
                     let runtime_options = app_server::AppServerRuntimeOptions {
                         remote_control_enabled: remote_control,
@@ -906,6 +923,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         strict_config,
                         analytics_default_enabled,
                         transport,
+                        additional_transports,
                         protocol::protocol::SessionSource::VSCode,
                         auth,
                         runtime_options,

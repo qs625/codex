@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
+import QRCode from "qrcode";
 
 import {
   pendingLoginFromResponse,
   resolveOpenAiAuthState,
   type PendingOpenAiLogin,
 } from "../lib/accountSettings";
+import {
+  buildAndroidConnectionPayload,
+  validateAndroidConnectionEndpoint,
+} from "../lib/androidConnectionPayload";
 import {
   buildConfigSaveParams,
   buildGlobalSettingsSections,
@@ -40,6 +45,9 @@ import type {
 
 type SettingsPanelStatus = "loading" | "ready" | "saving";
 type AccountPanelStatus = "loading" | "ready" | "saving";
+type AndroidConnectionInfo = Awaited<
+  ReturnType<Window["codexDesktop"]["getAndroidConnectionInfo"]>
+>;
 
 export function SettingsPanel({
   onClose,
@@ -73,6 +81,10 @@ export function SettingsPanel({
   const [authError, setAuthError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [androidEndpoint, setAndroidEndpoint] = useState("");
+  const [androidToken, setAndroidToken] = useState("");
+  const [androidConnectionInfo, setAndroidConnectionInfo] =
+    useState<AndroidConnectionInfo | null>(null);
   const dirty = useMemo(
     () =>
       isSettingsDirty(fields) ||
@@ -158,6 +170,34 @@ export function SettingsPanel({
 
   useEffect(() => {
     void loadAccount();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAndroidConnectionInfo() {
+      try {
+        const response = await window.codexDesktop.getAndroidConnectionInfo();
+        if (cancelled) {
+          return;
+        }
+        setAndroidConnectionInfo(response);
+        if (response.enabled) {
+          setAndroidEndpoint(response.endpoint);
+          setAndroidToken(response.token);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setAndroidConnectionInfo({
+            enabled: false,
+            reason: toErrorMessage(loadError),
+          });
+        }
+      }
+    }
+    void loadAndroidConnectionInfo();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function loadAccount() {
@@ -369,6 +409,7 @@ export function SettingsPanel({
 
         <div className="settings-body">
           <nav className="settings-nav" aria-label="Settings sections">
+            <a href="#settings-android-companion">Android Companion</a>
             <a href="#settings-providers">Providers</a>
             <a href="#settings-models">Models</a>
             <a href="#settings-editable">Editable Config</a>
@@ -391,6 +432,14 @@ export function SettingsPanel({
             ) : null}
 
             {notice ? <div className="settings-notice">{notice}</div> : null}
+
+            <AndroidConnectionSection
+              connectionInfo={androidConnectionInfo}
+              endpoint={androidEndpoint}
+              onEndpointChange={setAndroidEndpoint}
+              onTokenChange={setAndroidToken}
+              token={androidToken}
+            />
 
             <div className="settings-section" id="settings-providers">
               <div className="settings-section-heading">
@@ -541,6 +590,153 @@ export function SettingsPanel({
   );
 
   return createPortal(panel, document.body);
+}
+
+export function AndroidConnectionSection({
+  connectionInfo,
+  endpoint,
+  onEndpointChange,
+  onTokenChange,
+  token,
+}: {
+  connectionInfo?: AndroidConnectionInfo | null;
+  endpoint: string;
+  onEndpointChange: (value: string) => void;
+  onTokenChange: (value: string) => void;
+  token: string;
+}) {
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrError, setQrError] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
+  const endpointError = validateAndroidConnectionEndpoint(endpoint);
+  const payload = useMemo(
+    () =>
+      endpointError
+        ? ""
+        : buildAndroidConnectionPayload({
+            endpoint,
+            token,
+          }),
+    [endpoint, endpointError, token],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setCopyState("idle");
+    setQrError(null);
+    if (!payload) {
+      setQrDataUrl(null);
+      return;
+    }
+    void QRCode.toDataURL(payload, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 192,
+    })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setQrDataUrl(dataUrl);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setQrDataUrl(null);
+          setQrError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payload]);
+
+  async function copyPayload() {
+    if (!payload || !navigator.clipboard) {
+      setCopyState("failed");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(payload);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
+  return (
+    <div className="settings-section" id="settings-android-companion">
+      <div className="settings-section-heading">
+        <h3>Android Companion</h3>
+      </div>
+      <section className="settings-provider-card android-connect-card">
+        <header className="settings-provider-header">
+          <div className="settings-provider-title">
+            <strong>Mobile connect QR</strong>
+            <span>Pair the Android companion with this desktop app-server runtime.</span>
+          </div>
+        </header>
+        {connectionInfo?.enabled ? (
+          <div className="settings-auth-status authenticated">
+            <span>Same-runtime listener ready</span>
+            <small>
+              Bound at {connectionInfo.bindEndpoint}; QR uses {connectionInfo.endpoint}
+            </small>
+          </div>
+        ) : connectionInfo ? (
+          <div className="settings-auth-error">
+            Mobile listener unavailable: {connectionInfo.reason}
+          </div>
+        ) : (
+          <div className="settings-state compact">Checking mobile listener...</div>
+        )}
+        <div className="android-connect-grid">
+          <div className="settings-form-grid android-connect-fields">
+            <TextInput
+              label="WebSocket endpoint"
+              onChange={onEndpointChange}
+              value={endpoint}
+            />
+            <TextInput
+              label="Bearer token"
+              onChange={onTokenChange}
+              type="password"
+              value={token}
+            />
+          </div>
+          <div className="android-connect-qr-panel">
+            {payload && qrDataUrl ? (
+              <img
+                alt="Android companion connection QR"
+                className="android-connect-qr"
+                src={qrDataUrl}
+              />
+            ) : (
+              <div className="android-connect-qr-placeholder">
+                {endpointError ?? qrError ?? "Generating QR..."}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="android-connect-payload-row">
+          <code>{payload || "Enter a ws:// or wss:// endpoint to generate a typed payload."}</code>
+          <button type="button" onClick={() => void copyPayload()} disabled={!payload}>
+            {copyState === "copied" ? "Copied" : "Copy Payload"}
+          </button>
+        </div>
+        {copyState === "failed" ? (
+          <div className="settings-auth-error">
+            Could not copy the payload. Select the text and copy it manually.
+          </div>
+        ) : null}
+        <div className="settings-provider-note">
+          This QR uses the WebSocket listener on the same app-server process as
+          the desktop client. Replace the endpoint with your tunnel URL when
+          exposing that listener outside the local network.
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function buildSaveNotice(status: ConfigWriteResponse["status"], reloaded: boolean) {
@@ -700,11 +896,13 @@ function TextInput({
   inputMode,
   label,
   onChange,
+  type = "text",
   value,
 }: {
   inputMode?: "numeric";
   label: string;
   onChange: (value: string) => void;
+  type?: "password" | "text";
   value: string;
 }) {
   return (
@@ -712,6 +910,7 @@ function TextInput({
       <span>{label}</span>
       <input
         inputMode={inputMode}
+        type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />

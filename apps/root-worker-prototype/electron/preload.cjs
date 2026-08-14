@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   batchWriteConfig: (payload) =>
     ipcRenderer.invoke("codex:batchWriteConfig", payload),
   readAccount: (payload) => ipcRenderer.invoke("codex:readAccount", payload),
+  getAndroidConnectionInfo: () =>
+    ipcRenderer.invoke("codex:androidConnectionInfo"),
   startAccountLogin: (payload) =>
     ipcRenderer.invoke("codex:startAccountLogin", payload),
   cancelAccountLogin: (payload) =>
