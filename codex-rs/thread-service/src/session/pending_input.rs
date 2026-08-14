@@ -669,7 +669,7 @@ fn thread_wait_source_hint_for_pending_input(item: &PendingInputItem) -> Option<
 
 #[derive(Debug)]
 pub(crate) struct PendingThreadPollEventSnapshot {
-    source_hint: String,
+    pub(crate) source_hint: String,
     event: Option<thread_service_api::ThreadPollEvent>,
 }
 

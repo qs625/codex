@@ -712,19 +712,25 @@ impl UnifiedExecProcessManager {
         &self,
         thread_id: ThreadId,
     ) -> Vec<RunningCommandSnapshot> {
-        let store = self.process_store.lock().await;
-        let mut processes = store
-            .processes
-            .values()
-            .filter(|entry| {
-                !entry.process.has_exited()
-                    && entry
-                        .session
-                        .upgrade()
-                        .is_some_and(|session| session.conversation_id() == thread_id)
-            })
-            .map(ProcessEntry::as_running_snapshot)
-            .collect::<Vec<_>>();
+        let entries = {
+            let store = self.process_store.lock().await;
+            store
+                .processes
+                .values()
+                .filter(|entry| {
+                    !entry.process.has_exited()
+                        && entry
+                            .session
+                            .upgrade()
+                            .is_some_and(|session| session.conversation_id() == thread_id)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let mut processes = Vec::with_capacity(entries.len());
+        for entry in entries {
+            processes.push(entry.as_running_snapshot().await);
+        }
         processes.sort_by_key(|entry| entry.process_id);
         processes
     }

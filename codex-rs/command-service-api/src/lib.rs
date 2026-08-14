@@ -87,6 +87,7 @@ pub struct RunningCommandSnapshot {
     pub cwd: codex_utils_absolute_path::AbsolutePathBuf,
     pub tty: bool,
     pub notify_on: CommandNotificationFilter,
+    pub latest_output_tail: Option<String>,
 }
 
 /// Session-owned command interaction capability consumed by command-wait tools.

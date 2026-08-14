@@ -1738,9 +1738,25 @@ impl Session {
                 )
                 .await
                 .unwrap_or_default();
+            let pending_poll_events = self.pending_thread_poll_event_snapshots().await;
+            let mut pending_poll_event_counts = std::collections::BTreeMap::<String, usize>::new();
+            for snapshot in pending_poll_events {
+                *pending_poll_event_counts
+                    .entry(snapshot.source_hint)
+                    .or_default() += 1;
+            }
             let runtime_activity = crate::context::RuntimeActivityContext {
                 running_commands,
                 active_subscriptions,
+                pending_poll_events: pending_poll_event_counts
+                    .into_iter()
+                    .map(|(source_hint, item_count)| {
+                        crate::context::RuntimePollEventSnapshot {
+                            source_hint,
+                            item_count,
+                        }
+                    })
+                    .collect(),
             };
             if !runtime_activity.is_empty() {
                 contextual_user_sections.push(runtime_activity.render());
