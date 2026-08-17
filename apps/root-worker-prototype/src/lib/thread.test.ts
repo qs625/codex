@@ -25,6 +25,7 @@ import {
   shouldNotifyProjectThreadCompleted,
   isThreadThinking,
   mergeDefaultCollapsedProjectIds,
+  mergeThreadLifecycleStatus,
   mergeThreadSnapshot,
   normalizeThreadSnapshot,
   pickInitialProjectThread,
@@ -696,6 +697,60 @@ test("preserveTerminalLifecycleStatus ignores stale waiting status notifications
   assert.deepEqual(
     preserveTerminalLifecycleStatus(completed, staleWaiting),
     completed,
+  );
+});
+
+test("authoritative poll_event waiting status notification overrides stale completed lifecycle", () => {
+  const completed = {
+    type: "final" as const,
+    result: { type: "completed" as const },
+  };
+  const livePollEventWaiting = {
+    type: "waiting" as const,
+    reason: "eventSubscription" as const,
+  };
+
+  assert.deepEqual(
+    mergeThreadLifecycleStatus(completed, livePollEventWaiting, {
+      authoritative: true,
+    }),
+    livePollEventWaiting,
+  );
+});
+
+test("authoritative weak status notifications do not clear strong terminal lifecycle", () => {
+  const shutdown = {
+    type: "final" as const,
+    result: { type: "shutdown" as const },
+  };
+  const errored = {
+    type: "final" as const,
+    result: { type: "errored" as const, message: "failed" },
+  };
+
+  assert.deepEqual(
+    mergeThreadLifecycleStatus(
+      shutdown,
+      { type: "notLoaded" as const },
+      { authoritative: true },
+    ),
+    shutdown,
+  );
+  assert.deepEqual(
+    mergeThreadLifecycleStatus(
+      errored,
+      { type: "waiting" as const, reason: "eventSubscription" as const },
+      { authoritative: true },
+    ),
+    errored,
+  );
+  assert.deepEqual(
+    mergeThreadLifecycleStatus(
+      shutdown,
+      { type: "final" as const, result: { type: "completed" as const } },
+      { authoritative: true },
+    ),
+    shutdown,
   );
 });
 

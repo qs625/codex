@@ -98,13 +98,13 @@ fn external_root_agent_metadata(
     provider: thread_service_api::ExternalRootThreadProvider,
 ) -> Option<thread_service_api::ExternalRootAgentMetadata> {
     thread_start_agent.and_then(|agent| {
-        agent.agent_path.map(|agent_path| {
-            thread_service_api::ExternalRootAgentMetadata {
+        agent
+            .agent_path
+            .map(|agent_path| thread_service_api::ExternalRootAgentMetadata {
                 agent_path,
                 agent_nickname: Some(provider.provider_id().to_string()),
                 agent_role: Some(provider.provider_id().to_string()),
-            }
-        })
+            })
     })
 }
 
@@ -133,10 +133,35 @@ fn thread_status_changed_lifecycle_status(
     live_agent_status: Option<&AgentStatus>,
     watch_status: ThreadLifecycleStatus,
 ) -> ThreadLifecycleStatus {
+    if let Some(status) = authoritative_status.filter(|status| is_strong_terminal_status(status)) {
+        return thread_lifecycle_status_from_agent_status(status);
+    }
+    if let Some(status) = live_agent_status.filter(|status| is_strong_terminal_status(status)) {
+        return thread_lifecycle_status_from_agent_status(status);
+    }
+
+    let resolved_watch_status =
+        resolve_thread_status(watch_status, /*has_in_progress_turn*/ false);
+    if matches!(
+        resolved_watch_status,
+        ThreadLifecycleStatus::Active { .. }
+            | ThreadLifecycleStatus::Waiting { .. }
+            | ThreadLifecycleStatus::SystemError { .. }
+    ) {
+        return resolved_watch_status;
+    }
+
     authoritative_status
         .or(live_agent_status)
         .map(thread_lifecycle_status_from_agent_status)
-        .unwrap_or_else(|| resolve_thread_status(watch_status, /*has_in_progress_turn*/ false))
+        .unwrap_or(resolved_watch_status)
+}
+
+fn is_strong_terminal_status(status: &AgentStatus) -> bool {
+    matches!(
+        status,
+        AgentStatus::Errored(_) | AgentStatus::Interrupted | AgentStatus::Shutdown
+    )
 }
 
 impl ThreadRequestProcessor {
@@ -365,12 +390,8 @@ impl ThreadRequestProcessor {
             .live_thread_agent_status(thread_id)
             .await
             .ok();
-        loaded_thread.lifecycle_status = agent_status
-            .as_ref()
-            .map(thread_lifecycle_status_from_agent_status)
-            .unwrap_or_else(|| {
-                resolve_thread_status(watch_status, /*has_in_progress_turn*/ false)
-            });
+        loaded_thread.lifecycle_status =
+            thread_status_changed_lifecycle_status(None, agent_status.as_ref(), watch_status);
         let notif = thread_started_notification(loaded_thread);
         self.outgoing
             .send_server_notification_to_connections(
@@ -477,11 +498,7 @@ impl ThreadRequestProcessor {
                 if !payload.message.trim().is_empty() {
                     content.push(UserInput::Text {
                         text: payload.message,
-                        text_elements: payload
-                            .text_elements
-                            .into_iter()
-                            .map(Into::into)
-                            .collect(),
+                        text_elements: payload.text_elements.into_iter().map(Into::into).collect(),
                     });
                 }
                 if let Some(images) = payload.images {
@@ -569,20 +586,23 @@ impl ThreadRequestProcessor {
             return;
         }
         let thread_id_string = thread_id.to_string();
-        let lifecycle_status = if let Some(authoritative_status) = authoritative_status.as_ref() {
-            thread_lifecycle_status_from_agent_status(authoritative_status)
+        let watch_status = self
+            .thread_watch_manager
+            .loaded_status_for_thread(&thread_id_string)
+            .await;
+        let live_agent_status = if authoritative_status.is_some() {
+            None
         } else {
-            let watch_status = self
-                .thread_watch_manager
-                .loaded_status_for_thread(&thread_id_string)
-                .await;
-            let live_agent_status = self
-                .thread_lifecycle_runtime
+            self.thread_lifecycle_runtime
                 .live_thread_agent_status(thread_id)
                 .await
-                .ok();
-            thread_status_changed_lifecycle_status(None, live_agent_status.as_ref(), watch_status)
+                .ok()
         };
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            authoritative_status.as_ref(),
+            live_agent_status.as_ref(),
+            watch_status,
+        );
         self.outgoing
             .send_server_notification_to_connections(
                 connection_ids,
@@ -1077,12 +1097,8 @@ impl ThreadRequestProcessor {
             .live_thread_agent_status(thread_id)
             .await
             .ok();
-        thread.lifecycle_status = agent_status
-            .as_ref()
-            .map(thread_lifecycle_status_from_agent_status)
-            .unwrap_or_else(|| {
-                resolve_thread_status(watch_status, /*has_in_progress_turn*/ false)
-            });
+        thread.lifecycle_status =
+            thread_status_changed_lifecycle_status(None, agent_status.as_ref(), watch_status);
         if !config_snapshot.ephemeral {
             let history_items = match read_thread_history_items(thread_store.as_ref(), thread_id)
                 .instrument(tracing::info_span!(
@@ -1769,6 +1785,7 @@ fn thread_start_create_error(err: CodexErr) -> JSONRPCErrorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use app_server_protocol::ThreadLifecycleWaitReason;
 
     #[test]
     fn parse_thread_start_agent_derives_path_from_task_name() {
@@ -1898,5 +1915,68 @@ mod tests {
             thread_status_changed_lifecycle_status(None, None, watch_status.clone());
 
         assert_eq!(lifecycle_status, watch_status);
+    }
+
+    #[test]
+    fn poll_event_waiting_watch_status_overrides_completed_agent_status() {
+        let watch_status = ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        };
+
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            None,
+            watch_status.clone(),
+        );
+
+        assert_eq!(lifecycle_status, watch_status);
+    }
+
+    #[test]
+    fn terminal_payload_is_used_when_no_live_waiting_status_exists() {
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            None,
+            ThreadLifecycleStatus::completed(None),
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::completed(Some("done".to_string()))
+        );
+    }
+
+    #[test]
+    fn shutdown_status_payload_overrides_stale_waiting_watch_status() {
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            Some(&AgentStatus::Shutdown),
+            None,
+            ThreadLifecycleStatus::Waiting {
+                reason: ThreadLifecycleWaitReason::EventSubscription,
+            },
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::Final {
+                result: ThreadLifecycleFinalStatus::Shutdown,
+            }
+        );
+    }
+
+    #[test]
+    fn errored_status_payload_overrides_stale_active_watch_status() {
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            Some(&AgentStatus::Errored("failed".to_string())),
+            None,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            },
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::errored(Some("failed".to_string()))
+        );
     }
 }

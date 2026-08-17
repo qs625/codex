@@ -838,6 +838,9 @@ impl TurnRequestProcessor {
                 self.track_error_response(&request_id, &error, /*error_type*/ None);
                 error
             })?;
+        self.thread_watch_manager
+            .note_turn_started(&thread_id.to_string())
+            .await;
 
         if turn_has_input {
             let config_snapshot = self

@@ -1039,9 +1039,40 @@ export function mergeThreadSnapshot(
 }
 
 function preserveFinalLifecycleStatus(existing: Thread, next: Thread) {
-  return preserveTerminalLifecycleStatus(
+  return mergeThreadLifecycleStatus(
     existing.lifecycleStatus,
     next.lifecycleStatus,
+  );
+}
+
+export function mergeThreadLifecycleStatus(
+  existing: ThreadLifecycleStatus,
+  next: ThreadLifecycleStatus,
+  options: { authoritative?: boolean } = {},
+) {
+  if (options.authoritative) {
+    if (
+      isStrongTerminalLifecycleStatus(existing) &&
+      !isStrongTerminalLifecycleStatus(next)
+    ) {
+      return existing;
+    }
+    if (
+      existing.type === "final" &&
+      next.type !== "final" &&
+      next.type === "notLoaded"
+    ) {
+      return existing;
+    }
+    return next;
+  }
+  return preserveTerminalLifecycleStatus(existing, next);
+}
+
+function isStrongTerminalLifecycleStatus(status: ThreadLifecycleStatus) {
+  return (
+    status.type === "final" &&
+    status.result.type !== "completed"
   );
 }
 

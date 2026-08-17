@@ -7,16 +7,16 @@ use app_server_protocol::JSONRPCResponse;
 use app_server_protocol::RequestId;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
+use app_server_protocol::ThreadLifecycleWaitReason;
 use app_server_protocol::ThreadListParams;
 use app_server_protocol::ThreadListResponse;
 use app_server_protocol::ThreadLoadedListParams;
 use app_server_protocol::ThreadLoadedListResponse;
-use app_server_protocol::ThreadLifecycleWaitReason;
 use app_server_protocol::ThreadReadParams;
 use app_server_protocol::ThreadReadResponse;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
@@ -334,6 +334,178 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
     assert!(
         schedule_item.is_some(),
         "schedule_subscribe should be replayed as a builtin tool thread item"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn poll_event_waiting_thread_becomes_active_when_new_message_is_sent() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let schedule_args = serde_json::to_string(&json!({
+        "schedule": {
+            "kind": "once_after",
+            "delay_ms": 60_000u64
+        }
+    }))?;
+    let responses = vec![
+        responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_function_call("call-schedule", "schedule_subscribe", &schedule_args),
+            responses::ev_completed("resp-1"),
+        ]),
+        create_final_assistant_message_sse_response("scheduled")?,
+        create_final_assistant_message_sse_response("finished")?,
+    ];
+    let server = create_mock_responses_server_sequence(responses).await;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("RUST_LOG", Some("info"))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response(thread_start_resp)?;
+
+    let turn_start_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "schedule a reminder".to_string(),
+                text_elements: Vec::new(),
+            }],
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let turn_start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
+    )
+    .await??;
+    let _: TurnStartResponse = to_response(turn_start_resp)?;
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let thread_read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let thread_read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread } = to_response(thread_read_resp)?;
+    assert_eq!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        },
+    );
+
+    mcp.clear_message_buffer();
+    let second_turn_start_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "continue after waiting".to_string(),
+                text_elements: Vec::new(),
+            }],
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+
+    let mut saw_second_turn_response = false;
+    let mut saw_active_after_second_input = false;
+    let mut saw_second_turn_completed = false;
+    let deadline = tokio::time::Instant::now() + DEFAULT_READ_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let message = timeout(remaining, mcp.read_next_message()).await??;
+        match message {
+            JSONRPCMessage::Response(response)
+                if response.id == RequestId::Integer(second_turn_start_id) =>
+            {
+                let _: TurnStartResponse = to_response(response)?;
+                saw_second_turn_response = true;
+            }
+            JSONRPCMessage::Notification(JSONRPCNotification {
+                method,
+                params: Some(params),
+            }) if method == "thread/status/changed" => {
+                let notification: ThreadStatusChangedNotification = serde_json::from_value(params)?;
+                if notification.thread_id == thread.id
+                    && matches!(
+                        notification.lifecycle_status,
+                        ThreadLifecycleStatus::Active { .. }
+                    )
+                {
+                    saw_active_after_second_input = true;
+                }
+            }
+            JSONRPCMessage::Notification(JSONRPCNotification { method, .. })
+                if method == "turn/completed" =>
+            {
+                saw_second_turn_completed = true;
+            }
+            _ => {}
+        }
+        if saw_second_turn_response && saw_active_after_second_input {
+            break;
+        }
+    }
+    assert!(
+        saw_second_turn_response,
+        "expected second turn/start response"
+    );
+    assert!(
+        saw_active_after_second_input,
+        "expected active status after sending a new message to a waiting poll_event thread"
+    );
+
+    if !saw_second_turn_completed {
+        timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("turn/completed"),
+        )
+        .await??;
+    }
+
+    let thread_read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let thread_read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread } = to_response(thread_read_resp)?;
+    assert_eq!(
+        thread.lifecycle_status,
+        ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        },
     );
 
     Ok(())
