@@ -132,6 +132,7 @@ fn thread_status_changed_lifecycle_status(
     authoritative_status: Option<&AgentStatus>,
     live_agent_status: Option<&AgentStatus>,
     watch_status: ThreadLifecycleStatus,
+    has_in_progress_turn: bool,
 ) -> ThreadLifecycleStatus {
     if let Some(status) = authoritative_status.filter(|status| is_strong_terminal_status(status)) {
         return thread_lifecycle_status_from_agent_status(status);
@@ -140,8 +141,10 @@ fn thread_status_changed_lifecycle_status(
         return thread_lifecycle_status_from_agent_status(status);
     }
 
+    let has_in_progress_turn =
+        has_in_progress_turn || matches!(live_agent_status, Some(AgentStatus::Running));
     let resolved_watch_status =
-        resolve_thread_status(watch_status, /*has_in_progress_turn*/ false);
+        resolve_thread_status(watch_status, has_in_progress_turn);
     if matches!(
         resolved_watch_status,
         ThreadLifecycleStatus::Active { .. }
@@ -390,8 +393,17 @@ impl ThreadRequestProcessor {
             .live_thread_agent_status(thread_id)
             .await
             .ok();
-        loaded_thread.lifecycle_status =
-            thread_status_changed_lifecycle_status(None, agent_status.as_ref(), watch_status);
+        let has_in_progress_turn = matches!(agent_status, Some(AgentStatus::Running))
+            || self
+                .active_in_progress_turn_snapshot(thread_id)
+                .await
+                .is_some();
+        loaded_thread.lifecycle_status = thread_status_changed_lifecycle_status(
+            None,
+            agent_status.as_ref(),
+            watch_status,
+            has_in_progress_turn,
+        );
         let notif = thread_started_notification(loaded_thread);
         self.outgoing
             .send_server_notification_to_connections(
@@ -590,7 +602,10 @@ impl ThreadRequestProcessor {
             .thread_watch_manager
             .loaded_status_for_thread(&thread_id_string)
             .await;
-        let live_agent_status = if authoritative_status.is_some() {
+        let live_agent_status = if authoritative_status
+            .as_ref()
+            .is_some_and(is_strong_terminal_status)
+        {
             None
         } else {
             self.thread_lifecycle_runtime
@@ -598,10 +613,16 @@ impl ThreadRequestProcessor {
                 .await
                 .ok()
         };
+        let has_in_progress_turn = self
+            .active_in_progress_turn_snapshot(thread_id)
+            .await
+            .is_some()
+            || matches!(live_agent_status, Some(AgentStatus::Running));
         let lifecycle_status = thread_status_changed_lifecycle_status(
             authoritative_status.as_ref(),
             live_agent_status.as_ref(),
             watch_status,
+            has_in_progress_turn,
         );
         self.outgoing
             .send_server_notification_to_connections(
@@ -1097,8 +1118,12 @@ impl ThreadRequestProcessor {
             .live_thread_agent_status(thread_id)
             .await
             .ok();
-        thread.lifecycle_status =
-            thread_status_changed_lifecycle_status(None, agent_status.as_ref(), watch_status);
+        thread.lifecycle_status = thread_status_changed_lifecycle_status(
+            None,
+            agent_status.as_ref(),
+            watch_status,
+            matches!(agent_status, Some(AgentStatus::Running)),
+        );
         if !config_snapshot.ephemeral {
             let history_items = match read_thread_history_items(thread_store.as_ref(), thread_id)
                 .instrument(tracing::info_span!(
@@ -1853,6 +1878,7 @@ mod tests {
             Some(&AgentStatus::Shutdown),
             None,
             ThreadLifecycleStatus::NotLoaded,
+            false,
         );
 
         assert_eq!(
@@ -1898,6 +1924,7 @@ mod tests {
             None,
             Some(&AgentStatus::Completed(Some("done".to_string()))),
             ThreadLifecycleStatus::NotLoaded,
+            false,
         );
 
         assert_eq!(
@@ -1912,13 +1939,51 @@ mod tests {
             active_flags: vec![ThreadLifecycleActiveFlag::Running],
         };
         let lifecycle_status =
-            thread_status_changed_lifecycle_status(None, None, watch_status.clone());
+            thread_status_changed_lifecycle_status(None, None, watch_status.clone(), false);
 
         assert_eq!(lifecycle_status, watch_status);
     }
 
     #[test]
-    fn poll_event_waiting_watch_status_overrides_completed_agent_status() {
+    fn in_progress_turn_status_overrides_stale_completed_agent_status() {
+        let watch_status = ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        };
+
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            None,
+            watch_status,
+            true,
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            }
+        );
+    }
+
+    #[test]
+    fn live_running_status_overrides_stale_completed_payload() {
+        let lifecycle_status = thread_status_changed_lifecycle_status(
+            Some(&AgentStatus::Completed(Some("done".to_string()))),
+            Some(&AgentStatus::Running),
+            ThreadLifecycleStatus::completed(None),
+            false,
+        );
+
+        assert_eq!(
+            lifecycle_status,
+            ThreadLifecycleStatus::Active {
+                active_flags: vec![ThreadLifecycleActiveFlag::Running],
+            }
+        );
+    }
+
+    #[test]
+    fn after_turn_event_subscription_status_overrides_completed_agent_status() {
         let watch_status = ThreadLifecycleStatus::Waiting {
             reason: ThreadLifecycleWaitReason::EventSubscription,
         };
@@ -1927,6 +1992,7 @@ mod tests {
             Some(&AgentStatus::Completed(Some("done".to_string()))),
             None,
             watch_status.clone(),
+            false,
         );
 
         assert_eq!(lifecycle_status, watch_status);
@@ -1938,6 +2004,7 @@ mod tests {
             Some(&AgentStatus::Completed(Some("done".to_string()))),
             None,
             ThreadLifecycleStatus::completed(None),
+            false,
         );
 
         assert_eq!(
@@ -1954,6 +2021,7 @@ mod tests {
             ThreadLifecycleStatus::Waiting {
                 reason: ThreadLifecycleWaitReason::EventSubscription,
             },
+            true,
         );
 
         assert_eq!(
@@ -1972,6 +2040,7 @@ mod tests {
             ThreadLifecycleStatus::Active {
                 active_flags: vec![ThreadLifecycleActiveFlag::Running],
             },
+            true,
         );
 
         assert_eq!(

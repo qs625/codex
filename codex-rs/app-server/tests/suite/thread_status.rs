@@ -1,5 +1,6 @@
 use anyhow::Result;
 use app_server_protocol::ClientInfo;
+use app_server_protocol::DynamicToolCallStatus;
 use app_server_protocol::InitializeCapabilities;
 use app_server_protocol::JSONRPCMessage;
 use app_server_protocol::JSONRPCNotification;
@@ -20,6 +21,8 @@ use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStatusChangedNotification;
 use app_server_protocol::TurnStartParams;
 use app_server_protocol::TurnStartResponse;
+use app_server_protocol::TurnSteerParams;
+use app_server_protocol::TurnSteerResponse;
 use app_server_protocol::UserInput as V2UserInput;
 use app_test_support::McpProcess;
 use app_test_support::create_final_assistant_message_sse_response;
@@ -340,7 +343,124 @@ async fn thread_read_stays_active_while_event_subscription_is_pending() -> Resul
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn poll_event_waiting_thread_becomes_active_when_new_message_is_sent() -> Result<()> {
+async fn in_progress_poll_event_turn_reads_active_status() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let responses = vec![
+        responses::sse(vec![
+            responses::ev_response_created("resp-1"),
+            responses::ev_function_call("call-poll", "poll_event", "{}"),
+            responses::ev_completed("resp-1"),
+        ]),
+        create_final_assistant_message_sse_response("woke")?,
+    ];
+    let server = create_mock_responses_server_sequence(responses).await;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let mut mcp =
+        McpProcess::new_with_env(codex_home.path(), &[("RUST_LOG", Some("info"))]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let thread_start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(thread_start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response(thread_start_resp)?;
+
+    let turn_start_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "wait for the next event".to_string(),
+                text_elements: Vec::new(),
+            }],
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let turn_start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
+    )
+    .await??;
+    let turn: TurnStartResponse = to_response(turn_start_resp)?;
+
+    let deadline = tokio::time::Instant::now() + DEFAULT_READ_TIMEOUT;
+    let mut saw_in_progress_poll_event = false;
+    while tokio::time::Instant::now() < deadline {
+        let thread_read_id = mcp
+            .send_thread_read_request(ThreadReadParams {
+                thread_id: thread.id.clone(),
+                include_turns: true,
+            })
+            .await?;
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let thread_read_resp: JSONRPCResponse = timeout(
+            remaining,
+            mcp.read_stream_until_response_message(RequestId::Integer(thread_read_id)),
+        )
+        .await??;
+        let ThreadReadResponse { thread } = to_response(thread_read_resp)?;
+        saw_in_progress_poll_event = thread.turns.iter().flat_map(|turn| &turn.items).any(|item| {
+            matches!(
+                item,
+                ThreadItem::BuiltinToolCall {
+                    tool,
+                    status,
+                    ..
+                } if tool == "poll_event" && *status == DynamicToolCallStatus::InProgress
+            )
+        });
+        if saw_in_progress_poll_event {
+            assert!(
+                matches!(thread.lifecycle_status, ThreadLifecycleStatus::Active { .. }),
+                "in-progress turn must stay active, got {:?}",
+                thread.lifecycle_status
+            );
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(
+        saw_in_progress_poll_event,
+        "expected poll_event builtin call to be in progress"
+    );
+
+    let steer_id = mcp
+        .send_turn_steer_request(TurnSteerParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "wake".to_string(),
+                text_elements: Vec::new(),
+            }],
+            responsesapi_client_metadata: None,
+            expected_turn_id: turn.turn.id,
+        })
+        .await?;
+    let steer_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(steer_id)),
+    )
+    .await??;
+    let _: TurnSteerResponse = to_response(steer_resp)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn after_turn_event_subscription_waiting_thread_becomes_active_when_new_message_is_sent()
+-> Result<()> {
     let codex_home = TempDir::new()?;
     let schedule_args = serde_json::to_string(&json!({
         "schedule": {
@@ -478,7 +598,7 @@ async fn poll_event_waiting_thread_becomes_active_when_new_message_is_sent() -> 
     );
     assert!(
         saw_active_after_second_input,
-        "expected active status after sending a new message to a waiting poll_event thread"
+        "expected active status after sending a new message to a waiting event subscription thread"
     );
 
     if !saw_second_turn_completed {
@@ -642,6 +762,10 @@ model_provider = "mock_provider"
 
 [features]
 collaboration_modes = true
+
+[features.multi_agent_v2]
+default_wait_timeout_ms = 60000
+max_wait_timeout_ms = 60000
 
 [model_providers.mock_provider]
 name = "Mock provider for test"
