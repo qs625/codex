@@ -83,6 +83,7 @@ import {
   isCompletedFinalLifecycleStatus,
   isRootThread,
   isSubagentThread,
+  markThreadCommandExecutionRunning,
   mergeThreadLifecycleStatus,
   mergeDefaultCollapsedProjectIds,
   normalizeProjectCwd,
@@ -2430,15 +2431,23 @@ function App() {
           )) {
             markThreadLive(threadId);
             updateInitializedThreadLocally(threadId, (thread) =>
-              updateThreadItem(thread, notification.turnId, notification.item, {
-                startedAtMs: notification.startedAtMs,
-                completedAtMs: notification.completedAtMs,
-                syntheticTurnStatus:
-                  getThreadItemNotificationSyntheticTurnStatus(
-                    method,
-                    notification.item,
-                  ),
-              }),
+              updateThreadItem(
+                method === "item/started" &&
+                  notification.item.type === "commandExecution"
+                  ? markThreadCommandExecutionRunning(thread)
+                  : thread,
+                notification.turnId,
+                notification.item,
+                {
+                  startedAtMs: notification.startedAtMs,
+                  completedAtMs: notification.completedAtMs,
+                  syntheticTurnStatus:
+                    getThreadItemNotificationSyntheticTurnStatus(
+                      method,
+                      notification.item,
+                    ),
+                },
+              ),
             );
           }
           break;
@@ -2471,7 +2480,7 @@ function App() {
           markThreadLive(notification.threadId);
           updateInitializedThreadLocally(notification.threadId, (thread) =>
             appendCommandExecutionDelta(
-              thread,
+              markThreadCommandExecutionRunning(thread),
               notification.turnId,
               notification.itemId,
               notification.delta,

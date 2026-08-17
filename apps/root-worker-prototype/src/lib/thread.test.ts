@@ -24,6 +24,7 @@ import {
   getThreadSubtreeIdsChildrenFirst,
   shouldNotifyProjectThreadCompleted,
   isThreadThinking,
+  markThreadCommandExecutionRunning,
   mergeDefaultCollapsedProjectIds,
   mergeThreadLifecycleStatus,
   mergeThreadSnapshot,
@@ -3482,6 +3483,89 @@ test("initialized live thread updates apply immediately without pending queue", 
 
   assert.equal(pendingUpdates.size, 0);
   assert.deepEqual(threads[0]?.turns[0]?.items, [commandStart]);
+});
+
+test("live command start marks stale completed snapshot active for monitors", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk tail -f /tmp/build.log",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "output",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const updated = updateThreadItem(
+    markThreadCommandExecutionRunning(makeThread()),
+    "turn-command",
+    commandStart,
+    { startedAtMs: 1_000 },
+  );
+  const analysis = buildThreadAnalysis(updated, 0);
+
+  assert.deepEqual(updated.lifecycleStatus, {
+    type: "active",
+    activeFlags: ["running"],
+  });
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
+    {
+      id: "cmd-1",
+      subscriptionId: "cmd-1",
+      kind: "command",
+      label: "rtk tail -f /tmp/build.log",
+      detail: "/repo",
+      status: "Running",
+      eventCount: 0,
+      latestEvent: null,
+    },
+  ]);
+});
+
+test("live command delta before start creates one monitor and merges start", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk printf hello",
+    cwd: "/tmp",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "output",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+
+  const withDelta = appendCommandExecutionDelta(
+    markThreadCommandExecutionRunning(makeThread()),
+    "turn-command",
+    "cmd-1",
+    "hello\n",
+  );
+  const withStart = updateThreadItem(withDelta, "turn-command", commandStart, {
+    startedAtMs: 1_000,
+  });
+  const commandItems =
+    withStart.turns[0]?.items.filter(
+      (item) => item.type === "commandExecution",
+    ) ?? [];
+  const analysis = buildThreadAnalysis(withStart, 0);
+
+  assert.equal(commandItems.length, 1);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, [
+    {
+      id: "cmd-1",
+      subscriptionId: "cmd-1",
+      kind: "command",
+      label: "rtk printf hello",
+      detail: "/tmp",
+      status: "Running",
+      eventCount: 1,
+      latestEvent: "hello",
+    },
+  ]);
 });
 
 test("uninitialized live schedule notifications update monitors after the snapshot arrives", () => {
