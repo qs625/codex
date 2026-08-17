@@ -403,7 +403,12 @@ declare global {
           type: "notification" | "request" | "status";
           notification?: { method: string; params?: unknown };
           request?: { id: string | number; method: string; params?: unknown };
-          status?: { connected: boolean; pid?: number | null; reason?: string };
+          status?: {
+            connected: boolean;
+            pid?: number | null;
+            reason?: string;
+            mobileConnection?: AndroidConnectionInfo;
+          };
         }) => void,
       ) => () => void;
     };

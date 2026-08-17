@@ -3,17 +3,31 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { EventEmitter } = require("node:events");
 
 const {
   AppServerClient,
   buildDefaultAppServerCommand,
   buildAppServerEnvironment,
   buildMobileConnectionLaunch,
+  refreshMobileConnectionInfo,
   resolveAppServerCommand,
   resolveAppServerLaunch,
   resolveLanEndpoint,
   writeTokenFile,
 } = require("./appServerClient.cjs");
+
+function networkInterfaces(address) {
+  return {
+    en0: [
+      {
+        family: "IPv4",
+        internal: false,
+        address,
+      },
+    ],
+  };
+}
 
 test("app-server environment includes enhanced PATH and MORPHEUS_HOME", () => {
   const env = buildAppServerEnvironment(
@@ -296,6 +310,112 @@ test("mobile websocket endpoint resolves wildcard binds to a reachable host", ()
     "wss://tunnel.example/root-worker",
   );
   assert.match(resolveLanEndpoint("ws://127.0.0.1:8910"), /^ws:\/\/127\.0\.0\.1:8910\/$/);
+});
+
+test("mobile websocket endpoint refresh follows wildcard LAN address changes", () => {
+  const first = refreshMobileConnectionInfo(
+    {
+      enabled: true,
+      bindEndpoint: "ws://0.0.0.0:8910",
+      endpoint: "ws://192.168.1.10:8910/",
+      token: "test-token",
+      auth: "capability-token",
+    },
+    {},
+    { networkInterfaces: () => networkInterfaces("192.168.1.44") },
+  );
+
+  assert.deepEqual(first, {
+    enabled: true,
+    bindEndpoint: "ws://0.0.0.0:8910",
+    endpoint: "ws://192.168.1.44:8910/",
+    token: "test-token",
+    auth: "capability-token",
+  });
+});
+
+test("mobile websocket endpoint refresh keeps explicit endpoint overrides stable", () => {
+  const info = {
+    enabled: true,
+    bindEndpoint: "ws://0.0.0.0:8910",
+    endpoint: "wss://tunnel.example/root-worker",
+    token: "test-token",
+    auth: "capability-token",
+  };
+
+  assert.equal(
+    refreshMobileConnectionInfo(
+      info,
+      { ROOT_WORKER_MOBILE_ENDPOINT: "wss://tunnel.example/root-worker" },
+      { networkInterfaces: () => networkInterfaces("192.168.1.44") },
+    ),
+    info,
+  );
+});
+
+test("mobile websocket endpoint refresh keeps concrete listen hosts stable", () => {
+  const info = {
+    enabled: true,
+    bindEndpoint: "ws://192.168.1.10:8910",
+    endpoint: "ws://192.168.1.10:8910/",
+    token: "test-token",
+    auth: "capability-token",
+  };
+
+  assert.equal(
+    refreshMobileConnectionInfo(
+      info,
+      {},
+      { networkInterfaces: () => networkInterfaces("192.168.1.44") },
+    ),
+    info,
+  );
+});
+
+test("mobile websocket endpoint refresh leaves unavailable listener state unchanged", () => {
+  const info = {
+    enabled: false,
+    reason: "Mobile listener is disabled by ROOT_WORKER_MOBILE_LISTEN=off.",
+  };
+
+  assert.equal(
+    refreshMobileConnectionInfo(
+      info,
+      {},
+      { networkInterfaces: () => networkInterfaces("192.168.1.44") },
+    ),
+    info,
+  );
+});
+
+test("app-server client refresh updates mobile connection and broadcasts status", () => {
+  const client = new EventEmitter();
+  Object.setPrototypeOf(client, AppServerClient.prototype);
+  client.child = { exitCode: null, pid: 1234 };
+  client.mobileConnectionRefreshEnv = {};
+  client.mobileConnection = {
+    enabled: true,
+    bindEndpoint: "ws://0.0.0.0:8910",
+    endpoint: "ws://192.168.1.10:8910/",
+    token: "test-token",
+    auth: "capability-token",
+  };
+  const statuses = [];
+  client.on("status", (status) => statuses.push(status));
+
+  assert.equal(
+    client.refreshMobileConnectionInfo({
+      networkInterfaces: () => networkInterfaces("192.168.1.44"),
+    }),
+    true,
+  );
+
+  assert.equal(client.mobileConnection.endpoint, "ws://192.168.1.44:8910/");
+  assert.equal(statuses.length, 1);
+  assert.equal(
+    statuses[0].mobileConnection.endpoint,
+    "ws://192.168.1.44:8910/",
+  );
 });
 
 test("app-server client emits server requests for renderer approval handling", () => {
