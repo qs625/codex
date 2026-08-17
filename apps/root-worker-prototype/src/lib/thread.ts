@@ -1069,6 +1069,17 @@ export function mergeThreadLifecycleStatus(
   return preserveTerminalLifecycleStatus(existing, next);
 }
 
+export function markThreadCommandExecutionRunning(thread: Thread): Thread {
+  return {
+    ...thread,
+    lifecycleStatus: mergeThreadLifecycleStatus(
+      thread.lifecycleStatus,
+      { type: "active", activeFlags: ["running"] },
+      { authoritative: true },
+    ),
+  };
+}
+
 function isStrongTerminalLifecycleStatus(status: ThreadLifecycleStatus) {
   return (
     status.type === "final" &&
