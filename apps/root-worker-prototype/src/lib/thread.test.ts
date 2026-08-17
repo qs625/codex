@@ -700,21 +700,21 @@ test("preserveTerminalLifecycleStatus ignores stale waiting status notifications
   );
 });
 
-test("authoritative poll_event waiting status notification overrides stale completed lifecycle", () => {
+test("authoritative active status notification overrides stale completed lifecycle", () => {
   const completed = {
     type: "final" as const,
     result: { type: "completed" as const },
   };
-  const livePollEventWaiting = {
-    type: "waiting" as const,
-    reason: "eventSubscription" as const,
+  const liveActive = {
+    type: "active" as const,
+    activeFlags: ["running" as const],
   };
 
   assert.deepEqual(
-    mergeThreadLifecycleStatus(completed, livePollEventWaiting, {
+    mergeThreadLifecycleStatus(completed, liveActive, {
       authoritative: true,
     }),
-    livePollEventWaiting,
+    liveActive,
   );
 });
 
