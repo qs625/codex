@@ -1,5 +1,6 @@
 package dev.morpheus.androidcompanion.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,35 +9,35 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -74,27 +75,148 @@ import com.journeyapps.barcodescanner.ScanOptions
 private const val ExpandedTextLimit = 8_000
 private const val MessageBodyTextLimit = 8_000
 
+internal enum class CompanionPage {
+    Threads,
+    Conversation,
+}
+
+internal fun resolveConnectedPage(
+    requested: CompanionPage,
+    selectedThreadId: String?,
+): CompanionPage {
+    return if (requested == CompanionPage.Conversation && selectedThreadId == null) {
+        CompanionPage.Threads
+    } else {
+        requested
+    }
+}
+
+internal fun connectedBackTarget(page: CompanionPage): CompanionPage? {
+    return if (page == CompanionPage.Conversation) CompanionPage.Threads else null
+}
+
 @Composable
 fun CompanionApp(viewModel: CompanionViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    Scaffold { padding ->
+    var connectedPage by remember { mutableStateOf(CompanionPage.Threads) }
+    val currentPage = resolveConnectedPage(connectedPage, state.selectedThreadId)
+    LaunchedEffect(state.connection) {
         if (state.connection !is ConnectionState.Connected) {
-            ConnectionScreen(
-                state = state,
-                modifier = Modifier.padding(padding),
-                onConnect = viewModel::connect,
-            )
-        } else {
-            WorkspaceScreen(
-                state = state,
-                modifier = Modifier.padding(padding),
-                onRefresh = viewModel::refreshThreads,
-                onSelectThread = viewModel::selectThread,
-                onStartThread = viewModel::startThread,
-                onSend = viewModel::sendMessage,
-                onDisconnect = viewModel::disconnect,
-            )
+            connectedPage = CompanionPage.Threads
         }
+    }
+    BackHandler(enabled = state.connection is ConnectionState.Connected && connectedBackTarget(currentPage) != null) {
+        connectedBackTarget(currentPage)?.let { connectedPage = it }
+    }
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                .windowInsetsPadding(WindowInsets.safeDrawing),
+        ) {
+            if (state.connection !is ConnectionState.Connected) {
+                ConnectionScreen(
+                    state = state,
+                    modifier = Modifier.fillMaxSize(),
+                    onConnect = viewModel::connect,
+                )
+            } else {
+                WorkspaceScreen(
+                    state = state,
+                    page = currentPage,
+                    modifier = Modifier.fillMaxSize(),
+                    onNavigateBack = {
+                        connectedBackTarget(currentPage)?.let { connectedPage = it }
+                    },
+                    onRefresh = viewModel::refreshThreads,
+                    onSelectThread = {
+                        viewModel.selectThread(it)
+                        connectedPage = CompanionPage.Conversation
+                    },
+                    onStartThread = {
+                        viewModel.startThread(it)
+                        connectedPage = CompanionPage.Conversation
+                    },
+                    onSend = viewModel::sendMessage,
+                    onDisconnect = viewModel::disconnect,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppChrome(
+    title: String,
+    subtitle: String?,
+    showBack: Boolean,
+    onBack: () -> Unit,
+    onRefresh: (() -> Unit)?,
+    onDisconnect: (() -> Unit)?,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (showBack) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+        } else {
+            Box(
+                Modifier
+                    .padding(horizontal = 8.dp)
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("M", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let {
+                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        onRefresh?.let {
+            IconButton(onClick = it) {
+                Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+            }
+        }
+        onDisconnect?.let {
+            IconButton(onClick = it) {
+                Icon(Icons.Default.CloudOff, contentDescription = "Disconnect")
+            }
+        }
+    }
+    Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+}
+
+@Composable
+private fun ConnectionStatusLine(text: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -125,70 +247,93 @@ private fun ConnectionScreen(
             }
         }
     }
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text("Morpheus", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text(
-            "Connect to an app-server WebSocket listener.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Column(modifier = modifier.fillMaxSize()) {
+        AppChrome(
+            title = "Morpheus",
+            subtitle = "Android Companion",
+            showBack = false,
+            onBack = { },
+            onRefresh = null,
+            onDisconnect = null,
         )
-        Spacer(Modifier.height(24.dp))
-        OutlinedTextField(
-            value = endpoint,
-            onValueChange = { endpoint = it },
-            label = { Text("WebSocket URL") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = token,
-            onValueChange = { token = it },
-            label = { Text("Bearer token") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(16.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth(),
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.Center,
         ) {
-            OutlinedButton(
-                onClick = {
-                    scanLauncher.launch(
-                        ScanOptions()
-                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                            .setPrompt("Scan the Android Companion QR from Settings")
-                            .setBeepEnabled(false),
+            Text("Connect to Runtime", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Pair this device with your Morpheus runtime.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(20.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                tonalElevation = 1.dp,
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("1. Scan QR code", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    OutlinedButton(
+                        onClick = {
+                            scanLauncher.launch(
+                                ScanOptions()
+                                    .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                    .setPrompt("Scan the Android Companion QR from Settings")
+                                    .setBeepEnabled(false),
+                            )
+                        },
+                        enabled = state.connection != ConnectionState.Connecting,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Scan QR")
+                    }
+                    Text("2. Enter connection details", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = endpoint,
+                        onValueChange = { endpoint = it },
+                        label = { Text("Endpoint") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                },
-                enabled = state.connection != ConnectionState.Connecting,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Scan QR")
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it },
+                        label = { Text("Access token") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = {
+                            scanError = null
+                            onConnect(endpoint, token.takeIf { it.isNotBlank() })
+                        },
+                        enabled = state.connection != ConnectionState.Connecting,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text(if (state.connection == ConnectionState.Connecting) "Connecting" else "Connect")
+                    }
+                }
             }
-            Button(
-                onClick = {
-                    scanError = null
-                    onConnect(endpoint, token.takeIf { it.isNotBlank() })
-                },
-                enabled = state.connection != ConnectionState.Connecting,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(if (state.connection == ConnectionState.Connecting) "Connecting" else "Connect")
+            Spacer(Modifier.height(16.dp))
+            when (val connection = state.connection) {
+                is ConnectionState.Failed -> ConnectionStatusLine("Connection failed", MaterialTheme.colorScheme.error)
+                ConnectionState.Connecting -> ConnectionStatusLine("Connecting", MaterialTheme.colorScheme.tertiary)
+                ConnectionState.Disconnected -> ConnectionStatusLine("Not connected", MaterialTheme.colorScheme.onSurfaceVariant)
+                is ConnectionState.Connected -> ConnectionStatusLine("Connected to ${connection.endpoint}", MaterialTheme.colorScheme.primary)
             }
-        }
-        scanError?.let {
-            Spacer(Modifier.height(12.dp))
-            Text(it, color = MaterialTheme.colorScheme.error)
-        }
-        state.error?.let {
-            Spacer(Modifier.height(12.dp))
-            Text(it, color = MaterialTheme.colorScheme.error)
+            scanError?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            state.error?.let {
+                Spacer(Modifier.height(10.dp))
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -196,87 +341,57 @@ private fun ConnectionScreen(
 @Composable
 private fun WorkspaceScreen(
     state: CompanionUiState,
+    page: CompanionPage,
     modifier: Modifier,
+    onNavigateBack: () -> Unit,
     onRefresh: () -> Unit,
     onSelectThread: (String) -> Unit,
     onStartThread: (String?) -> Unit,
     onSend: (String) -> Unit,
     onDisconnect: () -> Unit,
 ) {
-    var tab by remember { mutableStateOf(0) }
     var cwd by remember { mutableStateOf("") }
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = {}, label = { Text("Threads") })
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = {}, label = { Text("Conversation") })
-            }
-        },
-    ) { inner ->
-        Column(Modifier.padding(inner).fillMaxSize()) {
-            Header(state, onRefresh, onDisconnect)
-            state.error?.let {
-                Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
-            if (tab == 0) {
-                ThreadPane(
-                    state = state,
-                    cwd = cwd,
-                    onCwdChange = { cwd = it },
-                    onSelectThread = {
-                        onSelectThread(it)
-                        tab = 1
-                    },
-                    onStartThread = {
-                        onStartThread(cwd.takeIf { value -> value.isNotBlank() })
-                        tab = 1
-                    },
-                )
+    val selectedTitle = state.selectedThread?.summary?.title
+        ?: state.threads.firstOrNull { it.id == state.selectedThreadId }?.title
+    Column(modifier = modifier.fillMaxSize()) {
+        AppChrome(
+            title = if (page == CompanionPage.Conversation) selectedTitle ?: "Conversation" else "Morpheus",
+            subtitle = if (page == CompanionPage.Conversation) {
+                state.selectedThreadId ?: "Loading thread"
             } else {
-                ConversationPane(state = state, onSend = onSend)
-            }
+                (state.connection as? ConnectionState.Connected)?.endpoint ?: "Connected"
+            },
+            showBack = page == CompanionPage.Conversation,
+            onBack = onNavigateBack,
+            onRefresh = if (page == CompanionPage.Threads) onRefresh else null,
+            onDisconnect = if (page == CompanionPage.Threads) onDisconnect else null,
+        )
+        state.error?.let {
+            Text(
+                text = it,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (page == CompanionPage.Threads) {
+            ThreadPane(
+                state = state,
+                cwd = cwd,
+                onCwdChange = { cwd = it },
+                onSelectThread = onSelectThread,
+                onStartThread = {
+                    onStartThread(cwd.takeIf { value -> value.isNotBlank() })
+                },
+            )
+        } else {
+            ConversationPane(
+                state = state,
+                modifier = Modifier.weight(1f),
+                onSend = onSend,
+            )
         }
     }
-}
-
-@Composable
-private fun Header(
-    state: CompanionUiState,
-    onRefresh: () -> Unit,
-    onDisconnect: () -> Unit,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier
-                .size(10.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF1B8F5A)),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = (state.connection as? ConnectionState.Connected)?.endpoint ?: "Disconnected",
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        IconButton(onClick = onRefresh) {
-            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
-        }
-        IconButton(onClick = onDisconnect) {
-            Icon(Icons.Default.CloudOff, contentDescription = "Disconnect")
-        }
-    }
-    Divider()
 }
 
 @Composable
@@ -291,7 +406,7 @@ private fun ThreadPane(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedTextField(
@@ -306,15 +421,23 @@ private fun ThreadPane(
                 Icon(Icons.Default.Add, contentDescription = "New thread")
             }
         }
-        Text(
-            "Agent tree",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Threads", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(8.dp))
+            StatusPill("${state.threads.size}")
+        }
         if (state.threads.isEmpty() && !state.isLoadingThreads) {
             EmptyMessage("No threads found.")
         } else {
-            LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(
+                contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 items(state.threads.agentTreeOrder(), key = { it.id }) { thread ->
                     ThreadRow(
                         thread = thread,
@@ -329,25 +452,44 @@ private fun ThreadPane(
 
 @Composable
 private fun ThreadRow(thread: ThreadSummary, selected: Boolean, onClick: () -> Unit) {
-    Card(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-        ),
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = if (selected) 2.dp else 0.dp,
     ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.width((thread.agentDepth() * 14).dp))
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(thread.title.take(1).ifBlank { "T" }, style = MaterialTheme.typography.labelLarge)
+            }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(thread.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(thread.agentPath ?: thread.id, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(thread.lifecycleLabel, style = MaterialTheme.typography.labelMedium)
+                    Text(thread.lifecycleLabel, style = MaterialTheme.typography.labelMedium, color = statusColor(thread.lifecycleLabel))
                     thread.agentRole?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
                 }
             }
         }
+    }
+}
+
+private fun statusColor(status: String): Color {
+    return when (status.lowercase()) {
+        "active", "running", "completed", "complete" -> Color(0xFF5ED37A)
+        "waiting" -> Color(0xFFFFCA67)
+        "failed", "errored", "error", "interrupted" -> Color(0xFFFF6B6B)
+        else -> Color(0xFFAEB8C2)
     }
 }
 
@@ -361,7 +503,11 @@ private fun ThreadSummary.agentDepth(): Int {
 }
 
 @Composable
-private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) {
+private fun ConversationPane(
+    state: CompanionUiState,
+    modifier: Modifier = Modifier,
+    onSend: (String) -> Unit,
+) {
     var draft by remember(state.selectedThreadId) { mutableStateOf("") }
     var expandedToolItems by remember(state.selectedThreadId) { mutableStateOf(setOf<String>()) }
     var expandedMessageItems by remember(state.selectedThreadId) { mutableStateOf(setOf<String>()) }
@@ -388,7 +534,7 @@ private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) 
             listState.animateScrollToItem(cells.lastIndex)
         }
     }
-    Column(Modifier.fillMaxSize()) {
+    Column(modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             if (state.isReadingThread) {
                 EmptyMessage("Loading conversation.")
@@ -398,8 +544,8 @@ private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) 
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(
                         items = cells,
@@ -433,13 +579,14 @@ private fun ConversationPane(state: CompanionUiState, onSend: (String) -> Unit) 
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .imePadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
-                label = { Text("Message") },
+                placeholder = { Text("Message Morpheus...") },
                 modifier = Modifier.weight(1f),
                 minLines = 1,
                 maxLines = 5,
@@ -547,7 +694,7 @@ private fun ConversationRow(
     ) {
         Surface(
             tonalElevation = 1.dp,
-            shape = MaterialTheme.shapes.medium,
+            shape = RoundedCornerShape(8.dp),
             color = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth(if (isUser) 0.86f else 0.94f),
         ) {
@@ -629,7 +776,7 @@ private fun ToolConversationRow(
     ) {
         Surface(
             tonalElevation = 1.dp,
-            shape = MaterialTheme.shapes.medium,
+            shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth(0.96f),
         ) {
@@ -695,8 +842,8 @@ private fun ToolConversationCell(
     ) {
         Surface(
             tonalElevation = 1.dp,
-            shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(8.dp),
+            color = Color(0xFF161F28),
             modifier = Modifier.fillMaxWidth(0.96f),
         ) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -771,13 +918,13 @@ private fun ToolEntryContent(
 @Composable
 private fun StatusPill(status: String) {
     Surface(
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = RoundedCornerShape(6.dp),
+        color = statusColor(status).copy(alpha = 0.18f),
     ) {
         Text(
             text = status,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            color = statusColor(status),
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
