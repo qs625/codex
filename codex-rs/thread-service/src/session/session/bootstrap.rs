@@ -583,6 +583,7 @@ impl Session {
                 mailbox_rx: Mutex::new(mailbox_rx),
                 idle_pending_input: Mutex::new(Vec::new()),
                 last_parent_child_notification_status: Mutex::new(None),
+                last_system_error_message: Mutex::new(None),
                 model_observed_display_events: Mutex::new(HashMap::new()),
                 scheduler: Mutex::new(()),
                 #[cfg(test)]

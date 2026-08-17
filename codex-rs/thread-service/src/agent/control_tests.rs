@@ -35,6 +35,7 @@ use protocol::protocol::InterAgentContentPart;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SessionSource;
 use protocol::protocol::SubAgentSource;
+use protocol::protocol::ThreadLifecycleFinalStatus;
 use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::ThreadLifecycleWaitReason;
 use protocol::protocol::ThreadSource;
@@ -573,6 +574,37 @@ async fn emit_turn_complete(
                 time_to_first_token_ms: None,
             }),
         )
+        .await;
+    *thread.codex.session.active_turn.lock().await = None;
+    turn
+}
+
+async fn emit_system_error(thread: &Arc<CodexThread>, message: &str) -> Arc<TurnContext> {
+    let turn = thread.codex.session.new_default_turn().await;
+    thread
+        .codex
+        .session
+        .send_event(
+            turn.as_ref(),
+            EventMsg::Error(ErrorEvent {
+                message: message.to_string(),
+                codex_error_info: None,
+            }),
+        )
+        .await;
+    *thread.codex.session.active_turn.lock().await = None;
+    turn
+}
+
+async fn emit_shutdown_complete(thread: &Arc<CodexThread>) -> Arc<TurnContext> {
+    let turn = thread.codex.session.new_default_turn().await;
+    thread
+        .codex
+        .session
+        .send_event_raw(Event {
+            id: turn.sub_id.clone(),
+            msg: EventMsg::ShutdownComplete,
+        })
         .await;
     *thread.codex.session.active_turn.lock().await = None;
     turn
@@ -8126,6 +8158,154 @@ async fn multi_agent_v2_child_notification_reports_event_subscription_then_final
     assert_eq!(
         final_notification.lifecycle_status,
         Some(ThreadLifecycleStatus::completed(Some("done".to_string())))
+    );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_child_notification_reports_system_error_after_waiting_status() {
+    let harness = AgentControlHarness::new().await;
+    let (root_thread_id, _root_thread) = harness.start_thread().await;
+    let mut config = harness.config.clone();
+    let _ = config.features.enable(Feature::MultiAgentV2);
+    let worker_path = AgentPath::root().join("worker").expect("worker path");
+    let worker_thread_id = harness
+        .control
+        .spawn_agent(
+            config,
+            text_input("hello worker"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_thread_id,
+                depth: 1,
+                agent_path: Some(worker_path.clone()),
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("worker spawn should succeed");
+    let worker_thread = harness
+        .manager
+        .get_thread(worker_thread_id)
+        .await
+        .expect("worker thread should exist");
+    worker_thread
+        .codex
+        .session
+        .abort_all_tasks(TurnAbortReason::Replaced)
+        .await;
+    sleep(Duration::from_millis(100)).await;
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(worker_thread_id, 1);
+    let baseline_op_count = harness.manager.captured_ops().len();
+
+    emit_turn_complete(&worker_thread, "done").await;
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    assert_eq!(
+        captured_child_completion_communication(
+            &harness.manager.captured_ops()[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        )
+        .expect("waiting notification should be captured")
+        .lifecycle_status,
+        Some(ThreadLifecycleStatus::Waiting {
+            reason: ThreadLifecycleWaitReason::EventSubscription,
+        })
+    );
+
+    emit_system_error(&worker_thread, "model stream failed").await;
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        2,
+        "system error should update the existing waiting child notification"
+    );
+    let system_error_notification = captured_ops[baseline_op_count..]
+        .iter()
+        .rev()
+        .find_map(|(thread_id, op)| {
+            if *thread_id != root_thread_id {
+                return None;
+            }
+            let Op::InterAgentCommunication { communication } = op else {
+                return None;
+            };
+            (communication.author == worker_path
+                && communication.recipient == AgentPath::root()
+                && communication.operation
+                    == protocol::protocol::InterAgentOperation::ChildCompletion)
+                .then(|| communication.clone())
+        })
+        .expect("system error child notification should be captured");
+    assert_eq!(
+        system_error_notification.status,
+        Some(AgentStatus::Errored("model stream failed".to_string()))
+    );
+    assert_eq!(
+        system_error_notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::system_error(Some(
+            "model stream failed".to_string()
+        )))
+    );
+
+    harness
+        .manager
+        .active_event_subscriptions()
+        .set_active_count(worker_thread_id, 0);
+    emit_shutdown_complete(&worker_thread).await;
+    harness
+        .manager
+        .maybe_notify_parent_of_final_status(worker_thread_id)
+        .await;
+    let captured_ops = harness.manager.captured_ops();
+    assert_eq!(
+        count_captured_child_completions(
+            &captured_ops[baseline_op_count..],
+            root_thread_id,
+            &worker_path,
+            &AgentPath::root(),
+        ),
+        3,
+        "shutdown should clear stale system error and notify parent"
+    );
+    let shutdown_notification = captured_ops[baseline_op_count..]
+        .iter()
+        .rev()
+        .find_map(|(thread_id, op)| {
+            if *thread_id != root_thread_id {
+                return None;
+            }
+            let Op::InterAgentCommunication { communication } = op else {
+                return None;
+            };
+            (communication.author == worker_path
+                && communication.recipient == AgentPath::root()
+                && communication.operation
+                    == protocol::protocol::InterAgentOperation::ChildCompletion)
+                .then(|| communication.clone())
+        })
+        .expect("shutdown child notification should be captured");
+    assert_eq!(shutdown_notification.status, Some(AgentStatus::Shutdown));
+    assert_eq!(
+        shutdown_notification.lifecycle_status,
+        Some(ThreadLifecycleStatus::Final {
+            result: ThreadLifecycleFinalStatus::Shutdown,
+        })
     );
 }
 

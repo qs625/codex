@@ -348,8 +348,14 @@ impl Session {
             return;
         }
         let post_turn_state = Box::pin(self.thread_post_turn_state()).await;
+        let system_error = self
+            .last_system_error_message
+            .lock()
+            .await
+            .clone()
+            .map(Some);
         let Some(lifecycle_status) =
-            Self::child_notification_lifecycle_status(&post_turn_state, &status)
+            Self::child_notification_lifecycle_status(&post_turn_state, &status, system_error)
         else {
             return;
         };
@@ -441,7 +447,11 @@ impl Session {
     fn child_notification_lifecycle_status(
         post_turn_state: &ThreadPostTurnState,
         status: &AgentStatus,
+        system_error: Option<Option<String>>,
     ) -> Option<ThreadLifecycleStatus> {
+        if let Some(message) = system_error {
+            return Some(ThreadLifecycleStatus::system_error(message));
+        }
         match post_turn_state {
             ThreadPostTurnState::ThreadIdle(ThreadIdleReason::WaitCommand) => {
                 Some(ThreadLifecycleStatus::Waiting {
@@ -556,12 +566,25 @@ impl Session {
     }
 
     pub(crate) async fn deliver_event_raw(&self, event: Event) {
+        self.update_last_system_error_from_event(&event.msg).await;
         // Record the last known agent status.
         if let Some(status) = agent_status_from_event(&event.msg) {
             self.agent_status.send_replace(status);
         }
         if let Err(e) = self.tx_event.send(event).await {
             debug!("dropping event because channel is closed: {e}");
+        }
+    }
+
+    async fn update_last_system_error_from_event(&self, event: &EventMsg) {
+        match event {
+            EventMsg::Error(error) if error.affects_turn_status() => {
+                *self.last_system_error_message.lock().await = Some(error.message.clone());
+            }
+            EventMsg::TurnStarted(_) | EventMsg::ShutdownComplete => {
+                *self.last_system_error_message.lock().await = None;
+            }
+            _ => {}
         }
     }
 
