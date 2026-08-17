@@ -10,6 +10,7 @@ const { buildDesktopEnvironment } = require("./environment.cjs");
 
 const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
 const MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS = 20;
+const MOBILE_CONNECTION_REFRESH_INTERVAL_MS = 5_000;
 const DEFAULT_MORPHEUS_HOME = resolvePrototypeMorpheusHome();
 
 class AppServerClient extends EventEmitter {
@@ -22,6 +23,8 @@ class AppServerClient extends EventEmitter {
       enabled: false,
       reason: "app-server is starting",
     };
+    this.mobileConnectionRefreshEnv = {};
+    this.mobileConnectionRefreshTimer = null;
     this.readyPromise = new Promise((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
@@ -29,6 +32,43 @@ class AppServerClient extends EventEmitter {
     void this.start().catch((error) => {
       this.readyReject(error instanceof Error ? error : new Error(String(error)));
     });
+  }
+
+  stopMobileConnectionRefresh() {
+    if (this.mobileConnectionRefreshTimer) {
+      clearInterval(this.mobileConnectionRefreshTimer);
+      this.mobileConnectionRefreshTimer = null;
+    }
+  }
+
+  startMobileConnectionRefresh() {
+    this.stopMobileConnectionRefresh();
+    if (!this.mobileConnection.enabled) {
+      return;
+    }
+    if (this.mobileConnectionRefreshEnv.ROOT_WORKER_MOBILE_ENDPOINT) {
+      return;
+    }
+    const tick = () => this.refreshMobileConnectionInfo();
+    this.mobileConnectionRefreshTimer = setInterval(
+      tick,
+      MOBILE_CONNECTION_REFRESH_INTERVAL_MS,
+    );
+    this.mobileConnectionRefreshTimer.unref?.();
+  }
+
+  refreshMobileConnectionInfo(options = {}) {
+    const next = refreshMobileConnectionInfo(
+      this.mobileConnection,
+      this.mobileConnectionRefreshEnv,
+      options,
+    );
+    if (mobileConnectionInfoEqual(next, this.mobileConnection)) {
+      return false;
+    }
+    this.mobileConnection = next;
+    this.emit("status", this.status);
+    return true;
   }
 
   async ready() {
@@ -89,6 +129,7 @@ class AppServerClient extends EventEmitter {
     });
     const command = launch.command;
     this.mobileConnection = launch.mobileConnection;
+    this.mobileConnectionRefreshEnv = launch.mobileConnectionEnv ?? {};
     this.child = spawn(command, {
       cwd: process.cwd(),
       env,
@@ -101,6 +142,7 @@ class AppServerClient extends EventEmitter {
     });
 
     this.child.on("exit", (code, signal) => {
+      this.stopMobileConnectionRefresh();
       const reason = `app-server exited (${code ?? "null"} / ${signal ?? "null"})`;
       const error = new Error(reason);
       for (const pending of this.pending.values()) {
@@ -123,6 +165,7 @@ class AppServerClient extends EventEmitter {
     });
 
     void this.initialize();
+    this.startMobileConnectionRefresh();
   }
 
   async initialize() {
@@ -139,11 +182,7 @@ class AppServerClient extends EventEmitter {
       });
       await this.notify("initialized", {});
       this.readyResolve();
-      this.emit("status", {
-        connected: true,
-        initializeResult,
-        pid: this.child?.pid ?? null,
-      });
+      this.emit("status", { ...this.status, initializeResult });
     } catch (error) {
       this.readyReject(
         error instanceof Error ? error : new Error(String(error)),
@@ -230,6 +269,7 @@ module.exports = {
   buildMobileConnectionLaunch,
   resolveAppServerCommand,
   resolveAppServerLaunch,
+  refreshMobileConnectionInfo,
   resolveLanEndpoint,
   writeTokenFile,
 };
@@ -258,6 +298,7 @@ async function resolveAppServerLaunch(baseEnv = process.env, options = {}) {
         reason:
           "Mobile listener is unavailable when APP_SERVER_CMD overrides app-server launch.",
       },
+      mobileConnectionEnv: captureMobileConnectionEnv(baseEnv),
     };
   }
   const mobileLaunch = await buildMobileConnectionLaunch(baseEnv, options);
@@ -267,6 +308,7 @@ async function resolveAppServerLaunch(baseEnv = process.env, options = {}) {
       mobileLaunch,
     }),
     mobileConnection: mobileLaunch.info,
+    mobileConnectionEnv: captureMobileConnectionEnv(baseEnv),
   };
 }
 
@@ -336,7 +378,7 @@ async function buildMobileConnectionLaunch(baseEnv = process.env, options = {}) 
     options.tokenFile ??
     path.join(morpheusHome, "root-worker-mobile-ws-token");
   options.writeTokenFile?.(tokenFile, token);
-  const endpoint = resolveLanEndpoint(chosenListenUrl, baseEnv);
+  const endpoint = resolveLanEndpoint(chosenListenUrl, baseEnv, options);
   return {
     enabled: true,
     listenUrl: chosenListenUrl,
@@ -387,7 +429,27 @@ function buildUnavailableMobileListenReason(listenUrl, baseEnv) {
   return `Mobile listener bind address is unavailable: ${listenUrl}. No fallback port was available.`;
 }
 
-function resolveLanEndpoint(listenUrl, baseEnv = process.env) {
+function captureMobileConnectionEnv(baseEnv = process.env) {
+  return {
+    ROOT_WORKER_MOBILE_ENDPOINT: baseEnv.ROOT_WORKER_MOBILE_ENDPOINT,
+  };
+}
+
+function refreshMobileConnectionInfo(info, baseEnv = process.env, options = {}) {
+  if (!info?.enabled) {
+    return info;
+  }
+  const endpoint = resolveLanEndpoint(info.bindEndpoint, baseEnv, options);
+  if (endpoint === info.endpoint) {
+    return info;
+  }
+  return {
+    ...info,
+    endpoint,
+  };
+}
+
+function resolveLanEndpoint(listenUrl, baseEnv = process.env, options = {}) {
   const override = baseEnv.ROOT_WORKER_MOBILE_ENDPOINT;
   if (override) {
     return override;
@@ -403,14 +465,18 @@ function resolveLanEndpoint(listenUrl, baseEnv = process.env) {
     url.hostname === "::" ||
     url.hostname === "[::]"
   ) {
-    const lanAddress = firstLanIpv4Address() ?? "127.0.0.1";
+    const lanAddress = firstLanIpv4Address(
+      typeof options.networkInterfaces === "function"
+        ? options.networkInterfaces()
+        : options.networkInterfaces,
+    ) ?? "127.0.0.1";
     url.hostname = lanAddress;
   }
   return url.toString();
 }
 
-function firstLanIpv4Address() {
-  for (const entries of Object.values(os.networkInterfaces())) {
+function firstLanIpv4Address(networkInterfaces = os.networkInterfaces()) {
+  for (const entries of Object.values(networkInterfaces)) {
     for (const entry of entries ?? []) {
       if (
         entry.family === "IPv4" &&
@@ -422,6 +488,13 @@ function firstLanIpv4Address() {
     }
   }
   return null;
+}
+
+function mobileConnectionInfoEqual(left, right) {
+  if (left === right) {
+    return true;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function writeTokenFile(tokenFile, token) {

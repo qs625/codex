@@ -48,6 +48,12 @@ type AccountPanelStatus = "loading" | "ready" | "saving";
 type AndroidConnectionInfo = Awaited<
   ReturnType<Window["codexDesktop"]["getAndroidConnectionInfo"]>
 >;
+type AndroidConnectionDraft = {
+  endpoint: string;
+  token: string;
+  autoEndpoint: string | null;
+  autoToken: string | null;
+};
 
 export function SettingsPanel({
   onClose,
@@ -81,8 +87,12 @@ export function SettingsPanel({
   const [authError, setAuthError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [androidEndpoint, setAndroidEndpoint] = useState("");
-  const [androidToken, setAndroidToken] = useState("");
+  const [androidDraft, setAndroidDraft] = useState<AndroidConnectionDraft>({
+    endpoint: "",
+    token: "",
+    autoEndpoint: null,
+    autoToken: null,
+  });
   const [androidConnectionInfo, setAndroidConnectionInfo] =
     useState<AndroidConnectionInfo | null>(null);
   const dirty = useMemo(
@@ -115,6 +125,10 @@ export function SettingsPanel({
 
   useEffect(() => {
     return window.codexDesktop.subscribe((payload) => {
+      if (payload.type === "status" && payload.status?.mobileConnection) {
+        applyAndroidConnectionInfo(payload.status.mobileConnection);
+        return;
+      }
       if (payload.type !== "notification" || !payload.notification) {
         return;
       }
@@ -180,11 +194,7 @@ export function SettingsPanel({
         if (cancelled) {
           return;
         }
-        setAndroidConnectionInfo(response);
-        if (response.enabled) {
-          setAndroidEndpoint(response.endpoint);
-          setAndroidToken(response.token);
-        }
+        applyAndroidConnectionInfo(response);
       } catch (loadError) {
         if (!cancelled) {
           setAndroidConnectionInfo({
@@ -199,6 +209,13 @@ export function SettingsPanel({
       cancelled = true;
     };
   }, []);
+
+  function applyAndroidConnectionInfo(response: AndroidConnectionInfo) {
+    setAndroidConnectionInfo(response);
+    setAndroidDraft((current) =>
+      applyAndroidConnectionInfoDraft(current, response),
+    );
+  }
 
   async function loadAccount() {
     setAccountStatus("loading");
@@ -435,10 +452,14 @@ export function SettingsPanel({
 
             <AndroidConnectionSection
               connectionInfo={androidConnectionInfo}
-              endpoint={androidEndpoint}
-              onEndpointChange={setAndroidEndpoint}
-              onTokenChange={setAndroidToken}
-              token={androidToken}
+              endpoint={androidDraft.endpoint}
+              onEndpointChange={(value) =>
+                setAndroidDraft((current) => ({ ...current, endpoint: value }))
+              }
+              onTokenChange={(value) =>
+                setAndroidDraft((current) => ({ ...current, token: value }))
+              }
+              token={androidDraft.token}
             />
 
             <div className="settings-section" id="settings-providers">
@@ -590,6 +611,24 @@ export function SettingsPanel({
   );
 
   return createPortal(panel, document.body);
+}
+
+export function applyAndroidConnectionInfoDraft(
+  draft: AndroidConnectionDraft,
+  connectionInfo: AndroidConnectionInfo,
+): AndroidConnectionDraft {
+  if (!connectionInfo.enabled) {
+    return draft;
+  }
+  const followsEndpoint =
+    draft.endpoint === "" || draft.endpoint === draft.autoEndpoint;
+  const followsToken = draft.token === "" || draft.token === draft.autoToken;
+  return {
+    endpoint: followsEndpoint ? connectionInfo.endpoint : draft.endpoint,
+    token: followsToken ? connectionInfo.token : draft.token,
+    autoEndpoint: connectionInfo.endpoint,
+    autoToken: connectionInfo.token,
+  };
 }
 
 export function AndroidConnectionSection({
