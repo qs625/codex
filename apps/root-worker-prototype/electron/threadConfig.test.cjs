@@ -162,6 +162,7 @@ test("buildThreadListParams requests all providers for root-worker navigation", 
   assert.deepEqual(buildThreadListParams(), {
     limit: 200,
     modelProviders: [],
+    useStateDbOnly: true,
     sourceKinds: [
       "appServer",
       "cli",

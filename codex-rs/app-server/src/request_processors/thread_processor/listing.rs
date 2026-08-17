@@ -81,7 +81,8 @@ impl ThreadRequestProcessor {
                 fallback_provider.as_str(),
                 &self.config.cwd,
             );
-            if history.is_none()
+            if !use_state_db_only
+                && history.is_none()
                 && let Ok(history_items) =
                     read_thread_history_items(self.thread_store.as_ref(), thread_id).await
             {

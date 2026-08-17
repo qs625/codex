@@ -71,6 +71,7 @@ function buildThreadListParams() {
   return {
     limit: 200,
     modelProviders: [],
+    useStateDbOnly: true,
     sourceKinds: [
       "appServer",
       "cli",

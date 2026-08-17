@@ -141,6 +141,7 @@ fn thread_start_with_non_local_thread_store_does_not_create_local_persistence() 
         })
         .await??;
 
+        let calls_before_list = thread_store.calls().await;
         let response = client
             .request(ClientRequest::ThreadList {
                 request_id: RequestId::Integer(3),
@@ -153,7 +154,7 @@ fn thread_start_with_non_local_thread_store_does_not_create_local_persistence() 
                     source_kinds: None,
                     archived: None,
                     cwd: None,
-                    use_state_db_only: false,
+                    use_state_db_only: true,
                     search_term: None,
                 },
             })
@@ -164,6 +165,15 @@ fn thread_start_with_non_local_thread_store_does_not_create_local_persistence() 
         assert_eq!(data.len(), 1);
         assert_eq!(data[0].id, thread.id);
         assert_eq!(data[0].path, None);
+        let calls_after_list = thread_store.calls().await;
+        assert_eq!(
+            calls_after_list.load_history, calls_before_list.load_history,
+            "thread/list should build metadata without loading rollout history"
+        );
+        assert_eq!(
+            calls_after_list.read_thread, calls_before_list.read_thread,
+            "thread/list should not issue per-thread reads to hydrate metadata"
+        );
 
         client.shutdown().await?;
 
