@@ -829,7 +829,94 @@ async fn isolated_staged_compact_acknowledges_processed_response_when_enabled() 
 
 #[tokio::test]
 #[serial(auto_compact_test_hook)]
-async fn provider_context_window_retry_failure_emits_controlled_error() {
+async fn provider_context_window_recovery_handles_second_overflow_in_same_turn() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let reference_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    session
+        .replace_history(
+            vec![
+                test_user_message("prefix before compact"),
+                test_user_message("tail before current"),
+            ],
+            Some(reference_context_item),
+        )
+        .await;
+
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    let regular_request_inputs: Arc<StdMutex<Vec<Vec<ResponseItem>>>> =
+        Arc::new(StdMutex::new(Vec::new()));
+    let compact_request_count = Arc::new(AtomicUsize::new(0));
+    let compact_request_count_for_hook = Arc::clone(&compact_request_count);
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |session, turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id {
+                return None;
+            }
+            if matches!(reason, CompactionReason::ContextLimit)
+                && matches!(phase, CompactionPhase::MidTurn)
+            {
+                let attempt = compact_request_count_for_hook
+                    .fetch_add(1, AtomicOrdering::SeqCst)
+                    + 1;
+                session
+                    .state
+                    .try_lock()
+                    .expect("session state should be available")
+                    .replace_history(
+                        vec![test_user_message(&format!("compacted prefix {attempt}"))],
+                        None,
+                    );
+                Some(Ok(true))
+            } else {
+                Some(Ok(false))
+            }
+        },
+    ));
+
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "current request".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::Completed,
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: Some(Arc::clone(&regular_request_inputs)),
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 3);
+    assert_eq!(
+        compact_request_count.load(AtomicOrdering::SeqCst),
+        2,
+        "second provider overflow should run another bounded staged compact"
+    );
+
+    let request_inputs = regular_request_inputs
+        .lock()
+        .expect("request inputs mutex poisoned");
+    let final_retry_texts = user_input_texts(&request_inputs[2]);
+    assert_eq!(count_text(&final_retry_texts, "current request"), 1);
+}
+
+#[tokio::test]
+#[serial(auto_compact_test_hook)]
+async fn provider_context_window_bounded_recovery_failure_emits_controlled_error() {
     let (session, turn_context, rx) = make_session_and_context_with_rx().await;
     let regular_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count = Arc::new(AtomicUsize::new(0));
@@ -864,6 +951,9 @@ async fn provider_context_window_retry_failure_emits_controlled_error() {
             responses: VecDeque::from([
                 ScriptedTurnResponse::ContextWindowExceeded,
                 ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::ContextWindowExceeded,
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: None,
@@ -882,13 +972,13 @@ async fn provider_context_window_retry_failure_emits_controlled_error() {
     assert_not_old_context_window_fatal(&error.message);
     assert_eq!(
         regular_request_count.load(AtomicOrdering::SeqCst),
-        2,
-        "regular turn should retry exactly once after context-window overflow"
+        5,
+        "regular turn should stop after the bounded context-window recovery budget"
     );
     assert_eq!(
         compact_request_count.load(AtomicOrdering::SeqCst),
-        1,
-        "context-window recovery should run one staged compact attempt for this minimal history"
+        4,
+        "context-window recovery should run once per bounded recovery attempt"
     );
 }
 
