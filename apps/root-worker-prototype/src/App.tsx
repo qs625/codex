@@ -83,6 +83,7 @@ import {
   isCompletedFinalLifecycleStatus,
   isRootThread,
   isSubagentThread,
+  mergeThreadLifecycleStatus,
   mergeDefaultCollapsedProjectIds,
   normalizeProjectCwd,
   normalizeThreadSnapshot,
@@ -1065,9 +1066,10 @@ function App() {
   ) {
     updateThreadLocally(threadId, (thread) => ({
       ...thread,
-      lifecycleStatus: preserveTerminalLifecycleStatus(
+      lifecycleStatus: mergeThreadLifecycleStatus(
         thread.lifecycleStatus,
         lifecycleStatus,
+        { authoritative: true },
       ),
     }));
   }
