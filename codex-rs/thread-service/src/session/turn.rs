@@ -128,6 +128,7 @@ pub(crate) const CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE: &str =
     "The current input is too large for this model's context window. Shorten the latest message or attach less content, then try again.";
 pub(crate) const AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str =
     "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
+const MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES: usize = 4;
 const MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS: usize = 64;
 
 #[cfg(test)]
@@ -481,7 +482,7 @@ pub(crate) async fn run_turn(
     let skills_outcome = Some(turn_context.turn_skills.outcome.as_ref());
     let mut last_agent_message: Option<String> = None;
     let mut stop_hook_active = false;
-    let mut context_window_compact_retry_used = false;
+    let mut context_window_compact_recovery_attempts = 0;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
     // many turns, from the perspective of the user, it is a single turn.
     #[allow(deprecated)]
@@ -792,8 +793,11 @@ pub(crate) async fn run_turn(
                 // Aborted turn is reported via a different event.
                 break;
             }
-            Err(CodexErr::ContextWindowExceeded) if !context_window_compact_retry_used => {
-                context_window_compact_retry_used = true;
+            Err(CodexErr::ContextWindowExceeded)
+                if context_window_compact_recovery_attempts
+                    < MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES =>
+            {
+                context_window_compact_recovery_attempts += 1;
                 let reset_client_session = match run_suffix_staged_context_limit_compact(
                     &sess,
                     &turn_context,
@@ -804,9 +808,15 @@ pub(crate) async fn run_turn(
                     Ok(reset_client_session) => reset_client_session,
                     Err(err) => {
                         info!("Turn error after context-window compact retry failed: {err:#}");
-                        if !matches!(err, CodexErr::ContextWindowExceeded) {
-                            let event =
-                                EventMsg::Error(err.to_error_event(/*message_prefix*/ None));
+                        if matches!(err, CodexErr::ContextWindowExceeded) {
+                            send_controlled_context_window_error(
+                                sess.as_ref(),
+                                turn_context.as_ref(),
+                                AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE,
+                            )
+                            .await;
+                        } else {
+                            let event = EventMsg::Error(err.to_error_event(None));
                             sess.send_event(&turn_context, event).await;
                         }
                         break;
