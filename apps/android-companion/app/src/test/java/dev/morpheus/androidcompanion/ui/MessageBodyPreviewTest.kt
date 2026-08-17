@@ -6,6 +6,24 @@ import org.junit.Test
 
 class MessageBodyPreviewTest {
     @Test
+    fun conversationPageRequiresSelectedThread() {
+        assertEquals(
+            CompanionPage.Threads,
+            resolveConnectedPage(CompanionPage.Conversation, selectedThreadId = null),
+        )
+        assertEquals(
+            CompanionPage.Conversation,
+            resolveConnectedPage(CompanionPage.Conversation, selectedThreadId = "thread-1"),
+        )
+    }
+
+    @Test
+    fun connectedBackOnlyConsumesConversationDetail() {
+        assertEquals(CompanionPage.Threads, connectedBackTarget(CompanionPage.Conversation))
+        assertEquals(null, connectedBackTarget(CompanionPage.Threads))
+    }
+
+    @Test
     fun textAtLimitIsNotTruncated() {
         val text = "x".repeat(8_000)
 
