@@ -76,6 +76,7 @@ use protocol::protocol::ThreadLifecycleStatus;
 use protocol::protocol::TokenUsage;
 use protocol::protocol::TurnAbortReason;
 use protocol::protocol::W3cTraceContext;
+use protocol::subscriptions::PersistedSubscription;
 use serde::Deserialize;
 use serde::Serialize;
 use session_telemetry_api::SharedSessionTelemetry;
@@ -1228,6 +1229,13 @@ pub trait ThreadSessionCapability: Send + Sync + 'static {
 
     /// Thread identifier owned by this session runtime.
     fn conversation_id(&self) -> ThreadId;
+
+    /// Return currently active subscriptions for this thread.
+    fn active_subscriptions<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, Vec<PersistedSubscription>> {
+        Box::pin(async { Vec::new() })
+    }
 
     /// Return the persisted state DB for this thread, materializing any
     /// required thread metadata first.

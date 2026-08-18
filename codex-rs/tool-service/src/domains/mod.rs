@@ -8,6 +8,7 @@ pub(crate) mod extension;
 pub(crate) mod function;
 pub(crate) mod goal;
 pub(crate) mod mcp;
+pub(crate) mod runtime_state;
 pub(crate) mod workflow;
 
 use crate::planning::merge_tool_specs_into_namespaces;
@@ -38,6 +39,7 @@ pub(crate) enum ToolDomain {
     Function,
     Goal,
     Mcp,
+    RuntimeState,
     Workflow,
     Legacy,
 }
@@ -61,6 +63,8 @@ pub(crate) fn classify_tool_name(
         ToolDomain::Agent
     } else if exec_command::owns_tool_name(request, tool_name) {
         ToolDomain::ExecCommand
+    } else if runtime_state::owns_tool_name(request, tool_name) {
+        ToolDomain::RuntimeState
     } else if command_interaction::owns_tool_name(request, tool_name) {
         ToolDomain::CommandInteraction
     } else if apply_patch::owns_tool_name(request, tool_name) {
@@ -99,6 +103,7 @@ pub(crate) fn model_visible_specs(
     specs.extend(command_interaction::specs(&request));
     specs.extend(discovery::specs(&request));
     specs.extend(exec_command::specs(&request));
+    specs.extend(runtime_state::specs(&request));
     specs.extend(extension::specs(&request));
     specs.extend(function::specs(&request));
     specs.extend(goal::specs(&request));
@@ -129,6 +134,7 @@ pub(crate) fn create_diff_consumer(
         ToolDomain::Function => function::create_diff_consumer(&request, tool_name),
         ToolDomain::Goal => goal::create_diff_consumer(&request, tool_name),
         ToolDomain::Mcp => mcp::create_diff_consumer(&request, tool_name),
+        ToolDomain::RuntimeState => runtime_state::create_diff_consumer(&request, tool_name),
         ToolDomain::Workflow => workflow::create_diff_consumer(tool_name),
         ToolDomain::Legacy => None,
     }
@@ -150,6 +156,7 @@ pub(crate) fn supports_parallel(
         ToolDomain::Function => function::supports_parallel(&request, call),
         ToolDomain::Goal => goal::supports_parallel(&request, call),
         ToolDomain::Mcp => mcp::supports_parallel(&request, call),
+        ToolDomain::RuntimeState => runtime_state::supports_parallel(&request, call),
         ToolDomain::Workflow => workflow::supports_parallel(call),
         ToolDomain::Legacy => false,
     }
