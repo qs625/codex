@@ -78,6 +78,43 @@ pub(crate) async fn run_inline_auto_compact_task(
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<()> {
+    run_inline_auto_compact_task_inner(
+        sess,
+        turn_context,
+        initial_context_injection,
+        reason,
+        phase,
+        /*emit_context_window_error*/ true,
+    )
+    .await
+}
+
+pub(crate) async fn run_inline_auto_compact_task_without_context_window_error_event(
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    initial_context_injection: InitialContextInjection,
+    reason: CompactionReason,
+    phase: CompactionPhase,
+) -> CodexResult<()> {
+    run_inline_auto_compact_task_inner(
+        sess,
+        turn_context,
+        initial_context_injection,
+        reason,
+        phase,
+        /*emit_context_window_error*/ false,
+    )
+    .await
+}
+
+async fn run_inline_auto_compact_task_inner(
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    initial_context_injection: InitialContextInjection,
+    reason: CompactionReason,
+    phase: CompactionPhase,
+    emit_context_window_error: bool,
+) -> CodexResult<()> {
     run_inline_auto_compact_task_with_retained_suffix(
         sess,
         turn_context,
@@ -85,6 +122,7 @@ pub(crate) async fn run_inline_auto_compact_task(
         reason,
         phase,
         Vec::new(),
+        emit_context_window_error,
     )
     .await
 }
@@ -96,6 +134,7 @@ pub(crate) async fn run_inline_auto_compact_task_with_retained_suffix(
     reason: CompactionReason,
     phase: CompactionPhase,
     retained_suffix: Vec<ResponseItem>,
+    emit_context_window_error: bool,
 ) -> CodexResult<()> {
     run_compact_task_inner(
         sess,
@@ -106,6 +145,7 @@ pub(crate) async fn run_inline_auto_compact_task_with_retained_suffix(
         reason,
         phase,
         retained_suffix,
+        emit_context_window_error,
     )
     .await?;
     Ok(())
@@ -132,6 +172,7 @@ pub(crate) async fn run_compact_task(
         CompactionReason::UserRequested,
         CompactionPhase::StandaloneTurn,
         Vec::new(),
+        /*emit_context_window_error*/ true,
     )
     .await?;
     Ok(())
@@ -146,6 +187,7 @@ async fn run_compact_task_inner(
     reason: CompactionReason,
     phase: CompactionPhase,
     retained_suffix: Vec<ResponseItem>,
+    emit_context_window_error: bool,
 ) -> CodexResult<()> {
     let attempt = CompactionAnalyticsAttempt::begin(
         sess.as_ref(),
@@ -174,6 +216,7 @@ async fn run_compact_task_inner(
         input,
         initial_context_injection,
         retained_suffix,
+        emit_context_window_error,
     )
     .await;
     let status = compaction_status_from_result(&result);
@@ -196,6 +239,7 @@ async fn run_compact_task_inner_impl(
     _input: Vec<UserInput>,
     initial_context_injection: InitialContextInjection,
     retained_suffix: Vec<ResponseItem>,
+    emit_context_window_error: bool,
 ) -> CodexResult<String> {
     let compact_service = FsCompactService::new();
     let replacement_files = compact_replacement_files(turn_context.as_ref());
@@ -299,7 +343,7 @@ async fn run_compact_task_inner_impl(
             }
             Err(e @ CodexErr::ContextWindowExceeded) => {
                 sess.set_total_tokens_full(turn_context.as_ref()).await;
-                if !staged_recovery {
+                if emit_context_window_error && !staged_recovery {
                     send_compact_context_window_error(sess.as_ref(), turn_context.as_ref()).await;
                 }
                 return Err(e);

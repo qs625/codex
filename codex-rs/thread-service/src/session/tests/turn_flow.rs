@@ -28,6 +28,16 @@ async fn recv_error_event(rx: &async_channel::Receiver<Event>) -> ErrorEvent {
     }
 }
 
+fn drain_error_events(rx: &async_channel::Receiver<Event>) -> Vec<ErrorEvent> {
+    let mut errors = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let EventMsg::Error(error) = event.msg {
+            errors.push(error);
+        }
+    }
+    errors
+}
+
 fn assert_not_old_context_window_fatal(message: &str) {
     assert!(!message.contains(OLD_CONTEXT_WINDOW_FATAL_PREFIX));
     assert!(!message.contains(OLD_CONTEXT_WINDOW_FATAL_ACTION));
@@ -829,7 +839,7 @@ async fn isolated_staged_compact_acknowledges_processed_response_when_enabled() 
 
 #[tokio::test]
 #[serial(auto_compact_test_hook)]
-async fn provider_context_window_recovery_handles_second_overflow_in_same_turn() {
+async fn provider_context_window_recovery_full_compacts_retained_suffix_after_second_overflow() {
     let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
     let reference_context_item = session
         .reference_context_item_for_turn(turn_context.as_ref())
@@ -861,14 +871,25 @@ async fn provider_context_window_recovery_handles_second_overflow_in_same_turn()
                 let attempt = compact_request_count_for_hook
                     .fetch_add(1, AtomicOrdering::SeqCst)
                     + 1;
+                let current_request_present = user_input_texts(
+                    session
+                        .state
+                        .try_lock()
+                        .expect("session state should be available")
+                        .history
+                        .raw_items(),
+                )
+                .contains(&"current request");
+                let mut replacement =
+                    vec![test_user_message(&format!("compacted prefix {attempt}"))];
+                if current_request_present {
+                    replacement.push(test_user_message("current request"));
+                }
                 session
                     .state
                     .try_lock()
                     .expect("session state should be available")
-                    .replace_history(
-                        vec![test_user_message(&format!("compacted prefix {attempt}"))],
-                        None,
-                    );
+                    .replace_history(replacement, None);
                 Some(Ok(true))
             } else {
                 Some(Ok(false))
@@ -904,14 +925,98 @@ async fn provider_context_window_recovery_handles_second_overflow_in_same_turn()
     assert_eq!(
         compact_request_count.load(AtomicOrdering::SeqCst),
         2,
-        "second provider overflow should run another bounded staged compact"
+        "second provider overflow should compact the current replacement history"
     );
 
     let request_inputs = regular_request_inputs
         .lock()
         .expect("request inputs mutex poisoned");
+    let first_retry_texts = user_input_texts(&request_inputs[1]);
+    assert_eq!(
+        count_text(&first_retry_texts, "current request"),
+        1,
+        "first recovery keeps the latest item for continuation"
+    );
+    assert_eq!(
+        count_text(&first_retry_texts, "tail before current"),
+        0,
+        "first recovery compacts older prefix items before retrying"
+    );
     let final_retry_texts = user_input_texts(&request_inputs[2]);
     assert_eq!(count_text(&final_retry_texts, "current request"), 1);
+    assert_eq!(
+        count_text(&final_retry_texts, "tail before current"),
+        0,
+        "second recovery must not keep resending the same rejected suffix"
+    );
+    assert_eq!(
+        count_text(&final_retry_texts, "compacted prefix 2"),
+        1,
+        "second recovery should send the freshly compacted snapshot"
+    );
+}
+
+#[tokio::test]
+#[serial(auto_compact_test_hook)]
+async fn provider_context_window_full_compact_failure_emits_one_controlled_error() {
+    let (session, turn_context, rx) = make_session_and_context_with_rx().await;
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    let compact_request_count = Arc::new(AtomicUsize::new(0));
+    let compact_request_count_for_hook = Arc::clone(&compact_request_count);
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |_session, turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id {
+                return None;
+            }
+            if matches!(reason, CompactionReason::ContextLimit)
+                && matches!(phase, CompactionPhase::MidTurn)
+            {
+                let attempt = compact_request_count_for_hook
+                    .fetch_add(1, AtomicOrdering::SeqCst)
+                    + 1;
+                if attempt == 1 {
+                    Some(Ok(true))
+                } else {
+                    Some(Err(CodexErr::ContextWindowExceeded))
+                }
+            } else {
+                Some(Ok(false))
+            }
+        },
+    ));
+
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::ContextWindowExceeded,
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: None,
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    let errors = drain_error_events(&rx);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        errors[0].message.as_str(),
+        crate::session::turn::AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE
+    );
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 2);
+    assert_eq!(compact_request_count.load(AtomicOrdering::SeqCst), 2);
 }
 
 #[tokio::test]
