@@ -487,6 +487,18 @@ impl ThreadSessionCapability for Session {
         self.conversation_id
     }
 
+    fn active_subscriptions<'a>(
+        &'a self,
+    ) -> SessionCapabilityFuture<'a, Vec<protocol::subscriptions::PersistedSubscription>> {
+        Box::pin(async move {
+            codex_file_subscription::active_subscriptions_from_thread_store(
+                &self.services.thread_extension_data,
+            )
+            .await
+            .unwrap_or_default()
+        })
+    }
+
     fn require_persisted_state_db<'a>(
         &'a self,
     ) -> SessionCapabilityFuture<'a, Result<SharedStateDbRuntime, String>> {

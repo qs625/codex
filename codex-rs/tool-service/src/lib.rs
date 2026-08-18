@@ -188,6 +188,14 @@ impl ToolServiceApi for ToolService {
                     )
                     .await
                 }
+                domains::ToolDomain::RuntimeState => {
+                    domains::runtime_state::dispatch(
+                        Arc::clone(&tool_request.session_command_state),
+                        Arc::clone(&session),
+                        call,
+                    )
+                    .await
+                }
                 domains::ToolDomain::Discovery => {
                     domains::discovery::dispatch(
                         Arc::clone(&session)
