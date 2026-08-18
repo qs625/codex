@@ -37,7 +37,7 @@ class AppServerRpcClient(
         ignoreUnknownKeys = true
         explicitNulls = false
     },
-) : AutoCloseable {
+) : AppServerConnection {
     private val nextId = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
     private val notifications = MutableSharedFlow<RpcNotification>(
@@ -45,12 +45,22 @@ class AppServerRpcClient(
         extraBufferCapacity = 128,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+    private val events = MutableSharedFlow<RpcConnectionEvent>(
+        replay = 0,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     private val opened = CompletableDeferred<Unit>()
     private var webSocket: WebSocket? = null
 
-    val serverNotifications: SharedFlow<RpcNotification> = notifications.asSharedFlow()
+    override val serverNotifications: SharedFlow<RpcNotification> = notifications.asSharedFlow()
+    override val connectionEvents: SharedFlow<RpcConnectionEvent> = events.asSharedFlow()
 
-    suspend fun connect(timeoutMs: Long = 10_000) {
+    suspend fun connect() {
+        connect(timeoutMs = 10_000)
+    }
+
+    override suspend fun connect(timeoutMs: Long) {
         val requestBuilder = Request.Builder().url(endpoint)
         bearerToken?.trim()?.takeIf { it.isNotEmpty() }?.let {
             requestBuilder.header("Authorization", "Bearer $it")
@@ -85,10 +95,18 @@ class AppServerRpcClient(
         }
     }
 
-    suspend fun request(
+    suspend fun request(method: String): JsonElement {
+        return request(method, JsonObject(emptyMap()), 30_000)
+    }
+
+    suspend fun request(method: String, params: JsonElement): JsonElement {
+        return request(method, params, 30_000)
+    }
+
+    override suspend fun request(
         method: String,
-        params: JsonElement = JsonObject(emptyMap()),
-        timeoutMs: Long = 30_000,
+        params: JsonElement,
+        timeoutMs: Long,
     ): JsonElement {
         val socket = webSocket ?: throw RpcConnectionException("WebSocket is not connected")
         val id = nextId.getAndIncrement()
@@ -110,7 +128,11 @@ class AppServerRpcClient(
         }
     }
 
-    fun notify(method: String, params: JsonElement? = null) {
+    fun notify(method: String) {
+        notify(method, null)
+    }
+
+    override fun notify(method: String, params: JsonElement?) {
         val socket = webSocket ?: throw RpcConnectionException("WebSocket is not connected")
         val payload = buildJsonObject {
             put("method", JsonPrimitive(method))
@@ -170,13 +192,36 @@ class AppServerRpcClient(
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             failPending(RpcConnectionException("WebSocket closed: $reason"))
+            events.tryEmit(RpcConnectionEvent.Closed(code, reason))
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             opened.completeExceptionally(t)
-            failPending(RpcConnectionException("WebSocket failed", t))
+            val error = RpcConnectionException("WebSocket failed", t)
+            failPending(error)
+            events.tryEmit(RpcConnectionEvent.Failed(error))
         }
     }
+}
+
+interface AppServerConnection : AutoCloseable {
+    val serverNotifications: SharedFlow<RpcNotification>
+    val connectionEvents: SharedFlow<RpcConnectionEvent>
+
+    suspend fun connect(timeoutMs: Long = 10_000)
+
+    suspend fun request(
+        method: String,
+        params: JsonElement = JsonObject(emptyMap()),
+        timeoutMs: Long = 30_000,
+    ): JsonElement
+
+    fun notify(method: String, params: JsonElement? = null)
+}
+
+sealed interface RpcConnectionEvent {
+    data class Closed(val code: Int, val reason: String) : RpcConnectionEvent
+    data class Failed(val error: Throwable) : RpcConnectionEvent
 }
 
 data class ClientInfo(
