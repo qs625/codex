@@ -5,6 +5,8 @@ import dev.morpheus.androidcompanion.model.ThreadSummary
 
 data class CompanionUiState(
     val connection: ConnectionState = ConnectionState.Disconnected,
+    val connectionEndpoint: String = "",
+    val connectionToken: String = "",
     val threads: List<ThreadSummary> = emptyList(),
     val selectedThreadId: String? = null,
     val selectedThread: ConversationThread? = null,
@@ -22,6 +24,7 @@ data class CompanionUiState(
 sealed interface ConnectionState {
     data object Disconnected : ConnectionState
     data object Connecting : ConnectionState
+    data class Reconnecting(val endpoint: String, val attempt: Int) : ConnectionState
     data class Connected(val endpoint: String) : ConnectionState
     data class Failed(val message: String) : ConnectionState
 }

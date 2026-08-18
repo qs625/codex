@@ -123,6 +123,8 @@ fun CompanionApp(viewModel: CompanionViewModel = viewModel()) {
                     state = state,
                     modifier = Modifier.fillMaxSize(),
                     onConnect = viewModel::connect,
+                    onEndpointChange = viewModel::updateConnectionEndpoint,
+                    onTokenChange = viewModel::updateConnectionToken,
                 )
             } else {
                 WorkspaceScreen(
@@ -225,10 +227,14 @@ private fun ConnectionScreen(
     state: CompanionUiState,
     modifier: Modifier,
     onConnect: (String, String?) -> Unit,
+    onEndpointChange: (String) -> Unit,
+    onTokenChange: (String) -> Unit,
 ) {
-    var endpoint by remember { mutableStateOf("ws://192.168.1.2:8910") }
-    var token by remember { mutableStateOf("") }
     var scanError by remember { mutableStateOf<String?>(null) }
+    val endpoint = state.connectionEndpoint
+    val token = state.connectionToken
+    val isConnecting = state.connection == ConnectionState.Connecting ||
+        state.connection is ConnectionState.Reconnecting
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val contents = result.contents
         if (contents.isNullOrBlank()) {
@@ -237,8 +243,8 @@ private fun ConnectionScreen(
         }
         when (val parsed = parseConnectionPayload(contents)) {
             is ConnectionPayloadParseResult.Success -> {
-                endpoint = parsed.payload.endpoint
-                token = parsed.payload.token.orEmpty()
+                onEndpointChange(parsed.payload.endpoint)
+                onTokenChange(parsed.payload.token.orEmpty())
                 scanError = null
                 onConnect(parsed.payload.endpoint, parsed.payload.token)
             }
@@ -286,7 +292,7 @@ private fun ConnectionScreen(
                                     .setBeepEnabled(false),
                             )
                         },
-                        enabled = state.connection != ConnectionState.Connecting,
+                        enabled = !isConnecting,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Scan QR")
@@ -294,14 +300,14 @@ private fun ConnectionScreen(
                     Text("2. Enter connection details", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     OutlinedTextField(
                         value = endpoint,
-                        onValueChange = { endpoint = it },
+                        onValueChange = onEndpointChange,
                         label = { Text("Endpoint") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = token,
-                        onValueChange = { token = it },
+                        onValueChange = onTokenChange,
                         label = { Text("Access token") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -311,11 +317,11 @@ private fun ConnectionScreen(
                             scanError = null
                             onConnect(endpoint, token.takeIf { it.isNotBlank() })
                         },
-                        enabled = state.connection != ConnectionState.Connecting,
+                        enabled = !isConnecting,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                     ) {
-                        Text(if (state.connection == ConnectionState.Connecting) "Connecting" else "Connect")
+                        Text(if (isConnecting) "Connecting" else "Connect")
                     }
                 }
             }
@@ -324,6 +330,7 @@ private fun ConnectionScreen(
                 is ConnectionState.Failed -> ConnectionStatusLine("Connection failed", MaterialTheme.colorScheme.error)
                 ConnectionState.Connecting -> ConnectionStatusLine("Connecting", MaterialTheme.colorScheme.tertiary)
                 ConnectionState.Disconnected -> ConnectionStatusLine("Not connected", MaterialTheme.colorScheme.onSurfaceVariant)
+                is ConnectionState.Reconnecting -> ConnectionStatusLine("Reconnecting to ${connection.endpoint}", MaterialTheme.colorScheme.tertiary)
                 is ConnectionState.Connected -> ConnectionStatusLine("Connected to ${connection.endpoint}", MaterialTheme.colorScheme.primary)
             }
             scanError?.let {

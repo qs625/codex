@@ -1,13 +1,17 @@
 package dev.morpheus.androidcompanion.state
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.morpheus.androidcompanion.model.toConversationThread
 import dev.morpheus.androidcompanion.model.toThreadSummary
+import dev.morpheus.androidcompanion.rpc.AppServerConnection
 import dev.morpheus.androidcompanion.rpc.AppServerRpcClient
 import dev.morpheus.androidcompanion.rpc.RpcError
+import dev.morpheus.androidcompanion.rpc.RpcConnectionEvent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,12 +23,31 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 
-class CompanionViewModel : ViewModel() {
-    private val mutableState = MutableStateFlow(CompanionUiState())
+typealias AppServerConnectionFactory = (endpoint: String, token: String?) -> AppServerConnection
+
+class CompanionViewModel(
+    private val settingsStore: ConnectionSettingsStore = EmptyConnectionSettingsStore,
+    private val clientFactory: AppServerConnectionFactory = { endpoint, token ->
+        AppServerRpcClient(endpoint, token)
+    },
+) : ViewModel() {
+    private val savedSettings = settingsStore.load()
+    private val mutableState = MutableStateFlow(
+        CompanionUiState(
+            connectionEndpoint = savedSettings?.endpoint.orEmpty(),
+            connectionToken = savedSettings?.token.orEmpty(),
+        ),
+    )
     val state: StateFlow<CompanionUiState> = mutableState.asStateFlow()
 
-    private var rpcClient: AppServerRpcClient? = null
+    private var rpcClient: AppServerConnection? = null
     private var notificationJob: Job? = null
+    private var connectionEventJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var allowReconnect = false
+    private var connectionGeneration = 0
+    private var reconnectAttempt = 0
+    private var lastSuccessfulSettings = savedSettings
 
     fun connect(endpoint: String, token: String?) {
         val normalizedEndpoint = endpoint.trim()
@@ -34,56 +57,165 @@ class CompanionViewModel : ViewModel() {
             return
         }
         val normalizedToken = token?.trim()?.takeIf { it.isNotEmpty() }
-        disconnect()
+        connectInternal(normalizedEndpoint, normalizedToken, isReconnect = false, attempt = 0)
+    }
+
+    fun updateConnectionEndpoint(endpoint: String) {
+        mutableState.update { it.copy(connectionEndpoint = endpoint) }
+    }
+
+    fun updateConnectionToken(token: String) {
+        mutableState.update { it.copy(connectionToken = token) }
+    }
+
+    fun disconnect() {
+        allowReconnect = false
+        reconnectJob?.cancel()
+        reconnectJob = null
+        reconnectAttempt = 0
+        connectionGeneration += 1
+        closeCurrentClient()
         mutableState.update {
-            it.copy(connection = ConnectionState.Connecting, error = null)
+            CompanionUiState(
+                connectionEndpoint = it.connectionEndpoint,
+                connectionToken = it.connectionToken,
+            )
         }
+    }
+
+    private fun connectInternal(
+        endpoint: String,
+        token: String?,
+        isReconnect: Boolean,
+        attempt: Int,
+    ) {
+        if (!isReconnect) {
+            allowReconnect = false
+            reconnectJob?.cancel()
+            reconnectJob = null
+            reconnectAttempt = 0
+        }
+        closeCurrentClient()
+        mutableState.update {
+            it.copy(
+                connection = if (isReconnect) {
+                    ConnectionState.Reconnecting(endpoint, attempt)
+                } else {
+                    ConnectionState.Connecting
+                },
+                connectionEndpoint = endpoint,
+                connectionToken = token.orEmpty(),
+                error = null,
+            )
+        }
+        val generation = ++connectionGeneration
         viewModelScope.launch {
+            val client = clientFactory(endpoint, token)
             try {
-                val client = AppServerRpcClient(normalizedEndpoint, normalizedToken)
                 client.connect()
+                if (generation != connectionGeneration) {
+                    client.close()
+                    return@launch
+                }
                 rpcClient = client
-                notificationJob = launch {
-                    client.serverNotifications.collect { notification ->
-                        val projected = withContext(Dispatchers.Default) {
-                            projectNotification(notification)
-                        }
-                        if (projected != null) {
-                            mutableState.update { current ->
-                                val (threads, selected) = applyProjectedNotification(
-                                    current.threads,
-                                    current.selectedThread,
-                                    projected,
-                                )
-                                current.copy(threads = threads, selectedThread = selected)
-                            }
-                        }
-                    }
-                }
-                mutableState.update {
-                    it.copy(connection = ConnectionState.Connected(normalizedEndpoint))
-                }
-                refreshThreads()
-            } catch (error: Throwable) {
+                allowReconnect = true
+                reconnectAttempt = 0
+                val settings = ConnectionSettings(endpoint, token)
+                lastSuccessfulSettings = settings
+                settingsStore.save(settings)
+                launchClientCollectors(client, generation)
                 mutableState.update {
                     it.copy(
-                        connection = ConnectionState.Failed(error.toUserMessage()),
-                        error = error.toUserMessage(),
+                        connection = ConnectionState.Connected(endpoint),
+                        connectionEndpoint = endpoint,
+                        connectionToken = token.orEmpty(),
+                        error = null,
                     )
+                }
+                refreshThreads(generation)
+            } catch (error: Throwable) {
+                client.close()
+                if (generation != connectionGeneration) {
+                    return@launch
+                }
+                if (isReconnect && allowReconnect) {
+                    mutableState.update { it.copy(error = reconnectMessage(error)) }
+                    scheduleReconnect(error)
+                } else {
+                    allowReconnect = false
+                    mutableState.update {
+                        it.copy(
+                            connection = ConnectionState.Failed(error.toUserMessage()),
+                            error = error.toUserMessage(),
+                        )
+                    }
                 }
             }
         }
     }
 
-    fun disconnect() {
+    private fun closeCurrentClient() {
         notificationJob?.cancel()
         notificationJob = null
+        connectionEventJob?.cancel()
+        connectionEventJob = null
         rpcClient?.close()
         rpcClient = null
-        mutableState.update { CompanionUiState() }
+    }
+
+    private fun launchClientCollectors(client: AppServerConnection, generation: Int) {
+        notificationJob = viewModelScope.launch {
+            client.serverNotifications.collect { notification ->
+                val projected = withContext(Dispatchers.Default) {
+                    projectNotification(notification)
+                }
+                if (projected != null) {
+                    mutableState.update { current ->
+                        val (threads, selected) = applyProjectedNotification(
+                            current.threads,
+                            current.selectedThread,
+                            projected,
+                        )
+                        current.copy(threads = threads, selectedThread = selected)
+                    }
+                }
+            }
+        }
+        connectionEventJob = viewModelScope.launch {
+            client.connectionEvents.collect { event ->
+                if (generation == connectionGeneration && allowReconnect) {
+                    scheduleReconnect(event.toThrowable())
+                }
+            }
+        }
+    }
+
+    private fun scheduleReconnect(error: Throwable) {
+        val settings = lastSuccessfulSettings ?: return
+        if (!allowReconnect || reconnectJob?.isActive == true) return
+        connectionGeneration += 1
+        closeCurrentClient()
+        reconnectAttempt += 1
+        val attempt = reconnectAttempt
+        mutableState.update {
+            it.copy(
+                connection = ConnectionState.Reconnecting(settings.endpoint, attempt),
+                connectionEndpoint = settings.endpoint,
+                connectionToken = settings.token.orEmpty(),
+                error = reconnectMessage(error),
+            )
+        }
+        reconnectJob = viewModelScope.launch {
+            delay(reconnectDelayMillis(attempt))
+            connectInternal(settings.endpoint, settings.token, isReconnect = true, attempt = attempt)
+        }
     }
 
     fun refreshThreads() {
+        refreshThreads(connectionGeneration)
+    }
+
+    private fun refreshThreads(generation: Int) {
         val client = rpcClient ?: return
         mutableState.update { it.copy(isLoadingThreads = true, error = null) }
         viewModelScope.launch {
@@ -99,6 +231,9 @@ class CompanionViewModel : ViewModel() {
                 val threads = withContext(Dispatchers.Default) {
                     reduceThreadList(result)
                 }
+                if (!isCurrentConnection(generation, client)) {
+                    return@launch
+                }
                 val selectedId = mutableState.value.selectedThreadId ?: threads.firstOrNull()?.id
                 mutableState.update {
                     it.copy(
@@ -107,8 +242,11 @@ class CompanionViewModel : ViewModel() {
                         isLoadingThreads = false,
                     )
                 }
-                selectedId?.let { selectThread(it) }
+                selectedId?.let { selectThread(it, generation) }
             } catch (error: Throwable) {
+                if (!isCurrentConnection(generation, client)) {
+                    return@launch
+                }
                 mutableState.update {
                     it.copy(isLoadingThreads = false, error = error.toUserMessage())
                 }
@@ -117,6 +255,10 @@ class CompanionViewModel : ViewModel() {
     }
 
     fun selectThread(threadId: String) {
+        selectThread(threadId, connectionGeneration)
+    }
+
+    private fun selectThread(threadId: String, generation: Int) {
         val client = rpcClient ?: return
         mutableState.update {
             it.copy(selectedThreadId = threadId, isReadingThread = true, error = null)
@@ -133,6 +275,9 @@ class CompanionViewModel : ViewModel() {
                 val readThread = withContext(Dispatchers.Default) {
                     reduceThreadRead(readResult)
                 }
+                if (!isCurrentConnection(generation, client)) {
+                    return@launch
+                }
                 mutableState.update { applySelectedThreadRead(it, threadId, readThread) }
                 val resumeResult = client.request(
                     method = "thread/resume",
@@ -148,6 +293,9 @@ class CompanionViewModel : ViewModel() {
                         ?.let { it as? JsonObject }
                         ?.toThreadSummary()
                 }
+                if (!isCurrentConnection(generation, client)) {
+                    return@launch
+                }
                 if (resumedSummary != null) {
                     mutableState.update { current ->
                         if (current.selectedThreadId == threadId) {
@@ -158,6 +306,9 @@ class CompanionViewModel : ViewModel() {
                     }
                 }
             } catch (error: Throwable) {
+                if (!isCurrentConnection(generation, client)) {
+                    return@launch
+                }
                 mutableState.update {
                     if (it.selectedThreadId == threadId) {
                         it.copy(isReadingThread = false, error = error.toUserMessage())
@@ -167,6 +318,10 @@ class CompanionViewModel : ViewModel() {
                 }
             }
         }
+    }
+
+    private fun isCurrentConnection(generation: Int, client: AppServerConnection): Boolean {
+        return generation == connectionGeneration && rpcClient === client
     }
 
     fun startThread(cwd: String?) {
@@ -239,6 +394,18 @@ class CompanionViewModel : ViewModel() {
     override fun onCleared() {
         disconnect()
     }
+
+    class Factory(
+        private val settingsStore: ConnectionSettingsStore,
+    ) : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            if (modelClass.isAssignableFrom(CompanionViewModel::class.java)) {
+                return CompanionViewModel(settingsStore) as T
+            }
+            throw IllegalArgumentException("Unknown ViewModel class")
+        }
+    }
 }
 
 private fun upsert(current: List<dev.morpheus.androidcompanion.model.ThreadSummary>, next: dev.morpheus.androidcompanion.model.ThreadSummary): List<dev.morpheus.androidcompanion.model.ThreadSummary> {
@@ -250,4 +417,20 @@ private fun Throwable.toUserMessage(): String {
         is RpcError -> "Server error $code: $message"
         else -> message ?: "Unexpected error"
     }
+}
+
+private fun reconnectMessage(error: Throwable): String {
+    return "Connection lost. Reconnecting: ${error.toUserMessage()}"
+}
+
+private fun RpcConnectionEvent.toThrowable(): Throwable {
+    return when (this) {
+        is RpcConnectionEvent.Closed -> dev.morpheus.androidcompanion.rpc.RpcConnectionException("WebSocket closed")
+        is RpcConnectionEvent.Failed -> error
+    }
+}
+
+private fun reconnectDelayMillis(attempt: Int): Long {
+    val clamped = attempt.coerceIn(1, 6)
+    return 1_000L shl (clamped - 1)
 }
