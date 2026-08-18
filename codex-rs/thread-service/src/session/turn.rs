@@ -27,6 +27,7 @@ use crate::client_common::build_prompt;
 use crate::compact::InitialContextInjection;
 use crate::compact::collect_user_messages;
 use crate::compact::run_inline_auto_compact_task;
+use crate::compact::run_inline_auto_compact_task_without_context_window_error_event;
 use crate::compact::run_inline_auto_compact_task_with_retained_suffix;
 use crate::emit_thread_skills_update;
 use crate::feedback_tags;
@@ -798,13 +799,25 @@ pub(crate) async fn run_turn(
                     < MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES =>
             {
                 context_window_compact_recovery_attempts += 1;
-                let reset_client_session = match run_suffix_staged_context_limit_compact(
-                    &sess,
-                    &turn_context,
-                    &mut *client_session,
-                )
-                .await
-                {
+                let recovery_result = if context_window_compact_recovery_attempts == 1 {
+                    run_suffix_staged_context_limit_compact(
+                        &sess,
+                        &turn_context,
+                        &mut *client_session,
+                    )
+                    .await
+                } else {
+                    run_auto_compact_without_context_window_error_event(
+                        &sess,
+                        &turn_context,
+                        &mut *client_session,
+                        InitialContextInjection::BeforeLastUserMessage,
+                        CompactionReason::ContextLimit,
+                        CompactionPhase::MidTurn,
+                    )
+                    .await
+                };
+                let reset_client_session = match recovery_result {
                     Ok(reset_client_session) => reset_client_session,
                     Err(err) => {
                         info!("Turn error after context-window compact retry failed: {err:#}");
@@ -1141,6 +1154,47 @@ async fn run_auto_compact(
     reason: CompactionReason,
     phase: CompactionPhase,
 ) -> CodexResult<bool> {
+    run_auto_compact_inner(
+        sess,
+        turn_context,
+        client_session,
+        initial_context_injection,
+        reason,
+        phase,
+        /*emit_context_window_error*/ true,
+    )
+    .await
+}
+
+async fn run_auto_compact_without_context_window_error_event(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
+    initial_context_injection: InitialContextInjection,
+    reason: CompactionReason,
+    phase: CompactionPhase,
+) -> CodexResult<bool> {
+    run_auto_compact_inner(
+        sess,
+        turn_context,
+        client_session,
+        initial_context_injection,
+        reason,
+        phase,
+        /*emit_context_window_error*/ false,
+    )
+    .await
+}
+
+async fn run_auto_compact_inner(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    client_session: &mut dyn model_service_api::ModelTurnClientApi,
+    initial_context_injection: InitialContextInjection,
+    reason: CompactionReason,
+    phase: CompactionPhase,
+    emit_context_window_error: bool,
+) -> CodexResult<bool> {
     #[cfg(test)]
     if let Some(result) = {
         let hook = AUTO_COMPACT_TEST_HOOK
@@ -1156,14 +1210,25 @@ async fn run_auto_compact(
         return Ok(reset_client_session);
     }
 
-    run_inline_auto_compact_task(
-        Arc::clone(sess),
-        Arc::clone(turn_context),
-        initial_context_injection,
-        reason,
-        phase,
-    )
-    .await?;
+    if emit_context_window_error {
+        run_inline_auto_compact_task(
+            Arc::clone(sess),
+            Arc::clone(turn_context),
+            initial_context_injection,
+            reason,
+            phase,
+        )
+        .await?;
+    } else {
+        run_inline_auto_compact_task_without_context_window_error_event(
+            Arc::clone(sess),
+            Arc::clone(turn_context),
+            initial_context_injection,
+            reason,
+            phase,
+        )
+        .await?;
+    }
     client_session.reset_websocket_session();
     Ok(true)
 }
@@ -1204,6 +1269,7 @@ async fn run_auto_compact_with_retained_suffix(
         reason,
         phase,
         retained_suffix,
+        /*emit_context_window_error*/ true,
     )
     .await?;
     client_session.reset_websocket_session();
