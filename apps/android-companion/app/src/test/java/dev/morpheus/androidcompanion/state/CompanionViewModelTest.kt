@@ -7,16 +7,20 @@ import dev.morpheus.androidcompanion.rpc.RpcNotification
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -45,24 +49,29 @@ class CompanionViewModelTest {
     }
 
     @Test
-    fun successfulConnectPersistsLastKnownGoodConnection() = runTest {
+    fun successfulConnectPersistsLastKnownGoodConnection() = runTest(mainDispatcherRule.scheduler) {
         val store = InMemoryConnectionSettingsStore()
         val clients = mutableListOf<FakeConnection>()
         val viewModel = CompanionViewModel(
             settingsStore = store,
             clientFactory = { _, _ -> FakeConnection().also { clients.add(it) } },
         )
+        try {
+            viewModel.connect(" wss://public.example/root-worker ", " token ")
+            advanceUntilIdle()
 
-        viewModel.connect(" wss://public.example/root-worker ", " token ")
-        advanceUntilIdle()
-
-        assertEquals(ConnectionSettings("wss://public.example/root-worker", "token"), store.saved)
-        assertTrue(viewModel.state.value.connection is ConnectionState.Connected)
-        assertEquals(listOf("thread/list", "thread/read", "thread/resume"), clients.single().requests)
+            assertEquals(ConnectionSettings("wss://public.example/root-worker", "token"), store.saved)
+            assertTrue(viewModel.state.value.connection is ConnectionState.Connected)
+            clients.single().awaitRequests("thread/list", "thread/read", "thread/resume")
+            assertEquals(listOf("thread/list", "thread/read", "thread/resume"), clients.single().requests)
+        } finally {
+            viewModel.disconnect()
+            advanceUntilIdle()
+        }
     }
 
     @Test
-    fun failedConnectDoesNotOverwritePreviousSavedConnection() = runTest {
+    fun failedConnectDoesNotOverwritePreviousSavedConnection() = runTest(mainDispatcherRule.scheduler) {
         val store = InMemoryConnectionSettingsStore(
             ConnectionSettings("wss://public.example/root-worker", "secret"),
         )
@@ -79,7 +88,7 @@ class CompanionViewModelTest {
     }
 
     @Test
-    fun manualDisconnectDoesNotReconnectClosedSocket() = runTest {
+    fun manualDisconnectDoesNotReconnectClosedSocket() = runTest(mainDispatcherRule.scheduler) {
         val store = InMemoryConnectionSettingsStore()
         val clients = mutableListOf<FakeConnection>()
         val viewModel = CompanionViewModel(
@@ -100,7 +109,7 @@ class CompanionViewModelTest {
     }
 
     @Test
-    fun socketFailureReconnectsWithSavedConnectionAndRestoresSelectedThread() = runTest {
+    fun socketFailureReconnectsWithSavedConnectionAndRestoresSelectedThread() = runTest(mainDispatcherRule.scheduler) {
         val store = InMemoryConnectionSettingsStore()
         val clients = mutableListOf<FakeConnection>()
         val viewModel = CompanionViewModel(
@@ -109,26 +118,33 @@ class CompanionViewModelTest {
                 FakeConnection(endpoint = endpoint, token = token).also { clients.add(it) }
             },
         )
-        viewModel.connect("wss://public.example/root-worker", "token")
-        advanceUntilIdle()
-        assertEquals("t1", viewModel.state.value.selectedThreadId)
+        try {
+            viewModel.connect("wss://public.example/root-worker", "token")
+            advanceUntilIdle()
+            clients.first().awaitRequests("thread/list", "thread/read", "thread/resume")
+            clients.first().awaitEventSubscriber()
+            assertEquals("t1", viewModel.state.value.selectedThreadId)
 
-        clients.first().emitFailure()
-        advanceUntilIdle()
-        assertTrue(viewModel.state.value.connection is ConnectionState.Reconnecting)
-        advanceTimeBy(1_000)
-        advanceUntilIdle()
+            clients.first().emitFailure()
+            viewModel.awaitConnection<ConnectionState.Reconnecting>()
+            advanceTimeBy(1_000)
+            advanceUntilIdle()
 
-        assertEquals(2, clients.size)
-        assertEquals("wss://public.example/root-worker", clients.last().endpoint)
-        assertEquals("token", clients.last().token)
-        assertTrue(viewModel.state.value.connection is ConnectionState.Connected)
-        assertEquals("t1", viewModel.state.value.selectedThreadId)
-        assertEquals(listOf("thread/list", "thread/read", "thread/resume"), clients.last().requests)
+            assertEquals(2, clients.size)
+            assertEquals("wss://public.example/root-worker", clients.last().endpoint)
+            assertEquals("token", clients.last().token)
+            clients.last().awaitRequests("thread/list", "thread/read", "thread/resume")
+            assertTrue(viewModel.state.value.connection is ConnectionState.Connected)
+            assertEquals("t1", viewModel.state.value.selectedThreadId)
+            assertEquals(listOf("thread/list", "thread/read", "thread/resume"), clients.last().requests)
+        } finally {
+            viewModel.disconnect()
+            advanceUntilIdle()
+        }
     }
 
     @Test
-    fun staleSlowConnectCannotOverwriteNewerSuccessfulConnection() = runTest {
+    fun staleSlowConnectCannotOverwriteNewerSuccessfulConnection() = runTest(mainDispatcherRule.scheduler) {
         val store = InMemoryConnectionSettingsStore()
         val firstConnectGate = CompletableDeferred<Unit>()
         val first = FakeConnection(
@@ -145,21 +161,25 @@ class CompanionViewModelTest {
             settingsStore = store,
             clientFactory = { _, _ -> clients.removeFirst() },
         )
+        try {
+            viewModel.connect("wss://old.example/root-worker", "old-token")
+            advanceUntilIdle()
+            viewModel.connect("wss://new.example/root-worker", "new-token")
+            advanceUntilIdle()
+            firstConnectGate.complete(Unit)
+            advanceUntilIdle()
 
-        viewModel.connect("wss://old.example/root-worker", "old-token")
-        advanceUntilIdle()
-        viewModel.connect("wss://new.example/root-worker", "new-token")
-        advanceUntilIdle()
-        firstConnectGate.complete(Unit)
-        advanceUntilIdle()
-
-        assertEquals(ConnectionSettings("wss://new.example/root-worker", "new-token"), store.saved)
-        assertEquals(ConnectionState.Connected("wss://new.example/root-worker"), viewModel.state.value.connection)
-        assertTrue(first.closed)
+            assertEquals(ConnectionSettings("wss://new.example/root-worker", "new-token"), store.saved)
+            assertEquals(ConnectionState.Connected("wss://new.example/root-worker"), viewModel.state.value.connection)
+            assertTrue(first.closed)
+        } finally {
+            viewModel.disconnect()
+            advanceUntilIdle()
+        }
     }
 
     @Test
-    fun disconnectWhileConnectIsInFlightCannotRestoreConnection() = runTest {
+    fun disconnectWhileConnectIsInFlightCannotRestoreConnection() = runTest(mainDispatcherRule.scheduler) {
         val store = InMemoryConnectionSettingsStore()
         val connectGate = CompletableDeferred<Unit>()
         val client = FakeConnection(connectGate = connectGate)
@@ -181,8 +201,9 @@ class CompanionViewModelTest {
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
-private class MainDispatcherRule(
-    private val dispatcher: TestDispatcher = StandardTestDispatcher(),
+class MainDispatcherRule(
+    val scheduler: TestCoroutineScheduler = TestCoroutineScheduler(),
+    private val dispatcher: TestDispatcher = StandardTestDispatcher(scheduler),
 ) : TestWatcher() {
     override fun starting(description: Description) {
         Dispatchers.setMain(dispatcher)
@@ -190,6 +211,31 @@ private class MainDispatcherRule(
 
     override fun finished(description: Description) {
         Dispatchers.resetMain()
+    }
+}
+
+private suspend fun FakeConnection.awaitRequests(vararg methods: String) {
+    val expected = methods.toList()
+    try {
+        withTimeout(1_000) {
+            while (requests != expected) {
+                delay(1)
+            }
+        }
+    } catch (error: TimeoutCancellationException) {
+        assertEquals(expected, requests)
+    }
+}
+
+private suspend inline fun <reified T : ConnectionState> CompanionViewModel.awaitConnection() {
+    try {
+        withTimeout(1_000) {
+            while (state.value.connection !is T) {
+                delay(1)
+            }
+        }
+    } catch (error: TimeoutCancellationException) {
+        assertTrue("Expected ${T::class.simpleName}, got ${state.value.connection}", state.value.connection is T)
     }
 }
 
@@ -252,6 +298,18 @@ private class FakeConnection(
 
     fun emitFailure() {
         events.tryEmit(RpcConnectionEvent.Failed(RpcConnectionException("network changed")))
+    }
+
+    suspend fun awaitEventSubscriber() {
+        try {
+            withTimeout(1_000) {
+                while (events.subscriptionCount.value == 0) {
+                    delay(1)
+                }
+            }
+        } catch (error: TimeoutCancellationException) {
+            assertTrue("No connection event subscriber", events.subscriptionCount.value > 0)
+        }
     }
 
     private companion object {
