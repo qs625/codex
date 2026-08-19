@@ -81,6 +81,47 @@ fn output_notification_aggregator_flushes_at_size_limit() {
     );
 }
 
+#[test]
+fn output_notification_aggregator_bounds_oversized_flushes() {
+    let mut aggregator = OutputNotificationAggregator::default();
+
+    aggregator.push(1, "a".repeat(MAX_OUTPUT_NOTIFICATION_BYTES - 1));
+    aggregator.push(2, "bcdef".to_string());
+
+    let item = aggregator
+        .take_item("call-1")
+        .expect("oversized output should flush");
+    let ResponseItem::CommandExecutionNotification { output, .. } = item else {
+        panic!("expected output notification item");
+    };
+    let output = output.expect("output should be present");
+
+    assert!(output.len() <= MAX_OUTPUT_NOTIFICATION_BYTES);
+    assert!(output.starts_with('a'));
+    assert!(output.ends_with("bcdef"));
+}
+
+#[test]
+fn exit_notification_item_uses_terminal_fallback_exit_code() {
+    let item =
+        super::command_exit_notification_item("call-1", Some("finished".to_string()), -1, 1234);
+    let ResponseItem::CommandExecutionNotification {
+        kind,
+        message,
+        output,
+        exit_code,
+        ..
+    } = item
+    else {
+        panic!("expected exit notification item");
+    };
+
+    assert_eq!(kind, CommandExecutionNotificationKind::Exit);
+    assert_eq!(message, "Command call-1 has exited with code -1.");
+    assert_eq!(output, Some("finished".to_string()));
+    assert_eq!(exit_code, Some(-1));
+}
+
 #[tokio::test]
 async fn output_notify_exit_uses_only_unnotified_residual_output() {
     let transcript = Arc::new(Mutex::new(HeadTailBuffer::new(10)));
@@ -129,6 +170,40 @@ async fn exit_notify_exit_uses_bounded_full_transcript() {
     assert_eq!(output.len(), 10);
     assert!(output.starts_with("01234"));
     assert!(output.ends_with("bcdef"));
+}
+
+#[tokio::test]
+async fn exit_notification_output_is_bounded_for_large_transcript() {
+    let transcript = Arc::new(Mutex::new(HeadTailBuffer::new(
+        MAX_OUTPUT_NOTIFICATION_BYTES * 2,
+    )));
+    let exit_notification_output = Arc::new(Mutex::new(HeadTailBuffer::default()));
+    {
+        let mut guard = transcript.lock().await;
+        guard.push_chunk("a".repeat(MAX_OUTPUT_NOTIFICATION_BYTES * 2).into_bytes());
+        guard.push_chunk(b"tail-marker".to_vec());
+    }
+
+    let output = super::resolve_exit_notification_output(
+        &transcript,
+        &exit_notification_output,
+        CommandNotificationFilter::Exit,
+        None,
+    )
+    .await
+    .expect("large transcript should produce bounded notification output");
+
+    assert!(output.len() <= MAX_OUTPUT_NOTIFICATION_BYTES);
+    assert!(output.ends_with("tail-marker"));
+}
+
+#[test]
+fn command_notification_output_bounding_handles_multibyte_boundaries() {
+    let output =
+        super::bound_command_notification_output("é".repeat(MAX_OUTPUT_NOTIFICATION_BYTES));
+
+    assert!(output.len() <= MAX_OUTPUT_NOTIFICATION_BYTES);
+    assert!(!output.is_empty());
 }
 
 #[tokio::test]

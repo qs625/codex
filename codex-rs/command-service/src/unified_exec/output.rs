@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use command_service_api::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 
 pub const DEFAULT_COMMAND_OUTPUT_DELTA_MAX_BYTES: usize = 8192;
+pub(crate) const MAX_COMMAND_NOTIFICATION_OUTPUT_BYTES: usize = 16 * 1024;
 const DEFAULT_COMMAND_OUTPUT_BROADCAST_CAPACITY: usize = 64;
 
 /// A capped buffer that preserves a stable prefix ("head") and suffix ("tail"),
@@ -452,4 +453,38 @@ pub async fn resolve_aggregated_output(
     }
 
     String::from_utf8_lossy(&guard.to_bytes()).to_string()
+}
+
+pub(crate) fn bound_command_notification_output(output: String) -> String {
+    if output.len() <= MAX_COMMAND_NOTIFICATION_OUTPUT_BYTES {
+        return output;
+    }
+
+    let head_budget = MAX_COMMAND_NOTIFICATION_OUTPUT_BYTES / 2;
+    let tail_budget = MAX_COMMAND_NOTIFICATION_OUTPUT_BYTES.saturating_sub(head_budget);
+    let head = prefix_at_char_boundary(&output, head_budget);
+    let tail = suffix_at_char_boundary(&output, tail_budget);
+    format!("{head}{tail}")
+}
+
+fn prefix_at_char_boundary(output: &str, max_bytes: usize) -> &str {
+    if output.len() <= max_bytes {
+        return output;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !output.is_char_boundary(end) {
+        end -= 1;
+    }
+    &output[..end]
+}
+
+fn suffix_at_char_boundary(output: &str, max_bytes: usize) -> &str {
+    if output.len() <= max_bytes {
+        return output;
+    }
+    let mut start = output.len().saturating_sub(max_bytes);
+    while start < output.len() && !output.is_char_boundary(start) {
+        start += 1;
+    }
+    &output[start..]
 }

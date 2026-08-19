@@ -38,6 +38,7 @@ use crate::unified_exec::ProcessStore;
 use crate::unified_exec::SpawnLifecycleHandle;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
+use crate::unified_exec::UnifiedExecManagerHandle;
 use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::unified_exec::WriteStdinOutput;
@@ -123,6 +124,32 @@ pub(crate) struct UnifiedExecCommandSessionController {
 impl UnifiedExecCommandSessionController {
     pub(crate) fn new(manager: Arc<UnifiedExecProcessManager>) -> Self {
         Self { manager }
+    }
+}
+
+impl UnifiedExecManagerHandle {
+    pub(crate) async fn release_if_current_process_exited(
+        &self,
+        process_id: i32,
+        expected_process: &Arc<UnifiedExecProcess>,
+    ) {
+        let Some(manager) = self.upgrade() else {
+            return;
+        };
+        let removed = {
+            let mut store = manager.process_store.lock().await;
+            let should_remove = store.processes.get(&process_id).is_some_and(|entry| {
+                Arc::ptr_eq(&entry.process, expected_process) && entry.process.has_exited()
+            });
+            if should_remove {
+                store.remove(process_id)
+            } else {
+                None
+            }
+        };
+        if let Some(entry) = removed {
+            unregister_network_approval_for_entry(&entry).await;
+        }
     }
 }
 
@@ -766,9 +793,7 @@ impl UnifiedExecProcessManager {
             )
         };
         let (initial_wait_timeout, process, notification_state, snapshot) = pending;
-        if process.has_exited()
-            && notification_state.peek_after(snapshot).await.is_none()
-        {
+        if process.has_exited() && notification_state.peek_after(snapshot).await.is_none() {
             return Ok(CommandWaitBegin {
                 process_id,
                 initial_wait_timeout,
@@ -826,7 +851,7 @@ impl UnifiedExecProcessManager {
     }
 
     pub(crate) async fn exec_command(
-        &self,
+        self: &Arc<Self>,
         request: ExecCommandRequest,
         context: &UnifiedExecContext,
     ) -> Result<ExecCommandRunOutput, UnifiedExecError> {
@@ -849,8 +874,7 @@ impl UnifiedExecProcessManager {
         }
 
         let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
-        let exit_notification_output =
-            Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
+        let exit_notification_output = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
         emit_unified_exec_begin(
             Arc::clone(&context.session),
             Arc::clone(&context.turn),
@@ -1136,7 +1160,7 @@ impl UnifiedExecProcessManager {
 
     #[allow(clippy::too_many_arguments)]
     async fn store_process(
-        &self,
+        self: &Arc<Self>,
         process: Arc<UnifiedExecProcess>,
         context: &UnifiedExecContext,
         command: &[String],
@@ -1194,6 +1218,7 @@ impl UnifiedExecProcessManager {
             notification_state,
             initial_wait_ms,
             notify_on,
+            UnifiedExecManagerHandle::new(Arc::downgrade(self)),
         );
     }
 
@@ -1317,17 +1342,14 @@ impl UnifiedExecProcessManager {
             } => (process, notification_state, *snapshot),
         };
 
-        let notification = notification_state
-            .peek_after(snapshot)
-            .await
-            .or_else(|| {
-                process.has_exited().then(|| {
-                    (
-                        CommandNotificationKind::Exit,
-                        CommandNotificationSnapshot::default(),
-                    )
-                })
-            });
+        let notification = notification_state.peek_after(snapshot).await.or_else(|| {
+            process.has_exited().then(|| {
+                (
+                    CommandNotificationKind::Exit,
+                    CommandNotificationSnapshot::default(),
+                )
+            })
+        });
         let Some((notification, consumed_snapshot)) = notification else {
             return Ok(None);
         };
