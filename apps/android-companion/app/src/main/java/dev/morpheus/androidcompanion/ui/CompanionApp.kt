@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -727,7 +729,10 @@ private fun BoundedMessageBody(
     onToggleExpanded: () -> Unit = { },
 ) {
     val preview = remember(text) { messageBodyPreview(text) }
-    Text(visibleMessageBodyText(text, expanded), style = MaterialTheme.typography.bodyMedium)
+    SelectableTextBlock(
+        text = visibleMessageBodyText(text, expanded),
+        style = MaterialTheme.typography.bodyMedium,
+    )
     if (preview.isTruncated || contentIsTruncated) {
         Spacer(Modifier.height(3.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -787,12 +792,11 @@ private fun ToolConversationRow(
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth(0.96f),
         ) {
-            Column(
-                Modifier
-                    .clickable(onClick = onToggleExpanded)
-                    .padding(12.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.clickable(onClick = onToggleExpanded),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             item.title,
@@ -801,8 +805,8 @@ private fun ToolConversationRow(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Text(
-                            presentation.summary,
+                        SelectableTextBlock(
+                            text = presentation.summary,
                             style = MaterialTheme.typography.bodyMedium,
                             maxLines = if (expanded) Int.MAX_VALUE else 2,
                             overflow = TextOverflow.Ellipsis,
@@ -878,8 +882,11 @@ private fun ToolEntryContent(
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
 ) {
-    Column(Modifier.clickable(onClick = onToggleExpanded)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    Column {
+        Row(
+            modifier = Modifier.clickable(onClick = onToggleExpanded),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Column(Modifier.weight(1f)) {
                 Text(
                     item.title,
@@ -888,8 +895,8 @@ private fun ToolEntryContent(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    presentation.summary,
+                SelectableTextBlock(
+                    text = presentation.summary,
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = if (expanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
@@ -962,8 +969,8 @@ private fun DetailBlock(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(3.dp))
-        Text(
-            boundedText,
+        SelectableTextBlock(
+            text = boundedText,
             style = MaterialTheme.typography.bodySmall,
             fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
         )
@@ -975,6 +982,29 @@ private fun DetailBlock(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun SelectableTextBlock(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle,
+    color: Color = Color.Unspecified,
+    fontFamily: FontFamily? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    SelectionContainer {
+        Text(
+            text = text,
+            modifier = modifier,
+            style = style,
+            color = color,
+            fontFamily = fontFamily,
+            maxLines = maxLines,
+            overflow = overflow,
+        )
     }
 }
 
