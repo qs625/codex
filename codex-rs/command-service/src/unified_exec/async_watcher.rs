@@ -14,7 +14,9 @@ use super::CommandNotificationKind;
 use super::CommandNotificationState;
 use super::HeadTailBuffer;
 use super::UnifiedExecContext;
+use super::UnifiedExecManagerHandle;
 use super::UnifiedExecProcess;
+use super::bound_command_notification_output;
 use super::command_notification_filter_to_protocol;
 use super::events::command_exit_notification_message;
 use super::events::command_output_notification_message;
@@ -164,6 +166,7 @@ pub(crate) fn spawn_exit_watcher(
     notification_state: Arc<CommandNotificationState>,
     initial_wait_ms: u64,
     notify_on: CommandNotificationFilter,
+    manager_handle: UnifiedExecManagerHandle,
 ) {
     let exit_token = process.cancellation_token();
     let output_drained = process.output_drained_notify();
@@ -174,7 +177,7 @@ pub(crate) fn spawn_exit_watcher(
 
         let duration = Instant::now().saturating_duration_since(started_at);
         let background_session_active = notification_state.is_background_session_active();
-        let process_id = background_session_active.then(|| process_id.to_string());
+        let process_id_for_event = background_session_active.then(|| process_id.to_string());
         let failure_message = process.failure_message();
         if background_session_active {
             let status = if failure_message.is_some() {
@@ -196,7 +199,7 @@ pub(crate) fn spawn_exit_watcher(
                 turn_ref.runtime_turn_id_str().to_string(),
                 command.clone(),
                 cwd.clone(),
-                process_id,
+                process_id_for_event.clone(),
                 output.clone(),
                 duration,
                 initial_wait_ms,
@@ -211,24 +214,20 @@ pub(crate) fn spawn_exit_watcher(
                 failure_message.as_deref(),
             )
             .await;
-            let item = ResponseItem::CommandExecutionNotification {
-                id: Some(format!("{call_id}:notification:exit")),
-                command_item_id: call_id.clone(),
-                kind: CommandExecutionNotificationKind::Exit,
-                message: command_exit_notification_message(
-                    &call_id,
-                    notification_output.as_deref(),
-                    process.exit_code(),
-                ),
-                output: notification_output,
-                exit_code: process.exit_code(),
-                created_at_ms: completed_at_ms,
-            };
+            let item = command_exit_notification_item(
+                &call_id,
+                notification_output,
+                output.exit_code,
+                completed_at_ms,
+            );
             let _ = session_ref
                 .append_conversation_item_with_observed_event(item, event)
                 .await;
             notification_state
                 .notify(CommandNotificationKind::Exit)
+                .await;
+            manager_handle
+                .release_if_current_process_exited(process_id, &process)
                 .await;
             return;
         }
@@ -239,7 +238,7 @@ pub(crate) fn spawn_exit_watcher(
                 call_id.clone(),
                 command.clone(),
                 cwd.clone(),
-                process_id,
+                process_id_for_event.clone(),
                 Arc::clone(&transcript),
                 String::new(),
                 message,
@@ -256,7 +255,7 @@ pub(crate) fn spawn_exit_watcher(
                 call_id.clone(),
                 command.clone(),
                 cwd.clone(),
-                process_id,
+                process_id_for_event.clone(),
                 Arc::clone(&transcript),
                 String::new(),
                 exit_code,
@@ -266,7 +265,27 @@ pub(crate) fn spawn_exit_watcher(
             )
             .await;
         }
+        manager_handle
+            .release_if_current_process_exited(process_id, &process)
+            .await;
     });
+}
+
+fn command_exit_notification_item(
+    call_id: &str,
+    output: Option<String>,
+    exit_code: i32,
+    created_at_ms: i64,
+) -> ResponseItem {
+    ResponseItem::CommandExecutionNotification {
+        id: Some(format!("{call_id}:notification:exit")),
+        command_item_id: call_id.to_string(),
+        kind: CommandExecutionNotificationKind::Exit,
+        message: command_exit_notification_message(call_id, output.as_deref(), Some(exit_code)),
+        output,
+        exit_code: Some(exit_code),
+        created_at_ms,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -344,7 +363,7 @@ async fn resolve_exit_notification_output(
         Some(message) => format!("{stdout}\n{message}"),
         None => stdout,
     };
-    (!output.is_empty()).then_some(output)
+    (!output.is_empty()).then(|| bound_command_notification_output(output))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -468,7 +487,7 @@ impl OutputNotificationAggregator {
             command_item_id: call_id.to_string(),
             kind: CommandExecutionNotificationKind::Output,
             message: command_output_notification_message(call_id),
-            output: Some(pending.output),
+            output: Some(bound_command_notification_output(pending.output)),
             exit_code: None,
             created_at_ms: now_unix_timestamp_ms(),
         })

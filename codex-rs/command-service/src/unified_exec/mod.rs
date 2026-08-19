@@ -73,6 +73,7 @@ pub(crate) use exec_server_env::ExecServerSpawnRequest;
 pub(crate) use exec_server_env::apply_unified_exec_env;
 pub(crate) use exec_server_env::exec_env_policy_from_shell_policy;
 pub(crate) use exec_server_env::exec_server_spawn_params;
+pub(crate) use output::bound_command_notification_output;
 pub(crate) use output::collect_output_until_deadline;
 pub(crate) use output::resolve_aggregated_output;
 pub(crate) use output::split_valid_utf8_prefix;
