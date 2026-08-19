@@ -27,8 +27,8 @@ use crate::client_common::build_prompt;
 use crate::compact::InitialContextInjection;
 use crate::compact::collect_user_messages;
 use crate::compact::run_inline_auto_compact_task;
-use crate::compact::run_inline_auto_compact_task_without_context_window_error_event;
 use crate::compact::run_inline_auto_compact_task_with_retained_suffix;
+use crate::compact::run_inline_auto_compact_task_without_context_window_error_event;
 use crate::emit_thread_skills_update;
 use crate::feedback_tags;
 use crate::mentions::build_connector_slug_counts;
@@ -39,6 +39,7 @@ use crate::resolve_skill_dependencies_for_turn;
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::state::InMemoryHistorySnapshot;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::TurnItemContributorPolicy;
 use crate::stream_events_utils::finalize_non_tool_response_item;
@@ -60,12 +61,12 @@ use codex_async_utils::OrCancelExt;
 use codex_context_manager::ContextualUserFragment;
 use codex_context_manager::SkillInstructions;
 use codex_git_info::get_git_repo_root;
-use codex_utils_output_truncation::approx_token_count;
 use codex_turn_items::AssistantMessageStreamParsers;
 use codex_turn_items::ParsedAssistantTextDelta;
 use codex_turn_items::PlanModeStreamAction;
 use codex_turn_items::PlanModeStreamState;
 use codex_turn_items::raw_assistant_output_text_from_item;
+use codex_utils_output_truncation::approx_token_count;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::FuturesOrdered;
@@ -125,12 +126,10 @@ use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
 
-pub(crate) const CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE: &str =
-    "The current input is too large for this model's context window. Shorten the latest message or attach less content, then try again.";
-pub(crate) const AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str =
-    "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
-const MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES: usize = 4;
+pub(crate) const CURRENT_INPUT_CONTEXT_WINDOW_ERROR_MESSAGE: &str = "The current input is too large for this model's context window. Shorten the latest message or attach less content, then try again.";
+pub(crate) const AUTO_COMPACT_CONTEXT_WINDOW_RECOVERY_FAILED_MESSAGE: &str = "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again.";
 const MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS: usize = 64;
+const MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES: usize = MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS + 1;
 
 #[cfg(test)]
 type AutoCompactTestHook = Arc<
@@ -191,10 +190,7 @@ pub(crate) async fn run_turn(
     prewarmed_client_session: Option<OwnedModelTurnClientApi>,
     cancellation_token: CancellationToken,
 ) -> Option<String> {
-    if input.is_empty()
-        && !allow_empty_input_without_pending
-        && !sess.has_pending_input().await
-    {
+    if input.is_empty() && !allow_empty_input_without_pending && !sess.has_pending_input().await {
         return None;
     }
 
@@ -418,6 +414,8 @@ pub(crate) async fn run_turn(
     if run_pending_session_start_hooks(sess.as_ref(), turn_context.as_ref()).await {
         return None;
     }
+    let mut current_input_history_start = None;
+    let mut current_input_history_range = None;
     let additional_contexts = if input.is_empty() {
         Vec::new()
     } else {
@@ -439,8 +437,10 @@ pub(crate) async fn run_turn(
             .await;
             return None;
         }
+        let current_input_start = sess.clone_history().await.raw_items().len();
         sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), &input, response_item)
             .await;
+        current_input_history_start = Some(current_input_start);
         user_prompt_submit_outcome.additional_contexts
     };
     sess.services
@@ -454,6 +454,10 @@ pub(crate) async fn run_turn(
     sess.merge_connector_selection(explicitly_enabled_connectors.clone())
         .await;
     record_additional_contexts(sess.as_ref(), turn_context.as_ref(), additional_contexts).await;
+    if let Some(current_input_start) = current_input_history_start {
+        let current_input_end = sess.clone_history().await.raw_items().len();
+        current_input_history_range = Some((current_input_start, current_input_end));
+    }
     if !input.is_empty() {
         // Track the previous-turn baseline from the regular user-turn path only so
         // standalone tasks (compact/shell/review) cannot suppress future
@@ -484,6 +488,8 @@ pub(crate) async fn run_turn(
     let mut last_agent_message: Option<String> = None;
     let mut stop_hook_active = false;
     let mut context_window_compact_recovery_attempts = 0;
+    let mut context_window_recovery_history = None;
+    let mut context_window_recovery_protected_range = current_input_history_range;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
     // many turns, from the perspective of the user, it is a single turn.
     #[allow(deprecated)]
@@ -549,6 +555,11 @@ pub(crate) async fn run_turn(
         }
 
         let has_accepted_pending_input = !accepted_pending_input.is_empty();
+        let accepted_pending_input_start = if has_accepted_pending_input {
+            Some(sess.clone_history().await.raw_items().len())
+        } else {
+            None
+        };
         for pending_input in accepted_pending_input {
             if pending_input_exceeds_context_window(&pending_input, turn_context.as_ref()) {
                 current_turn_input_exceeds_context_window = true;
@@ -561,6 +572,13 @@ pub(crate) async fn run_turn(
             blocked_pending_input_contexts,
         )
         .await;
+        if let Some(accepted_pending_input_start) = accepted_pending_input_start {
+            let accepted_pending_input_end = sess.clone_history().await.raw_items().len();
+            context_window_recovery_protected_range =
+                Some((accepted_pending_input_start, accepted_pending_input_end));
+            context_window_recovery_history = None;
+            context_window_compact_recovery_attempts = 0;
+        }
 
         if blocked_pending_input && !has_accepted_pending_input {
             if requeued_pending_input {
@@ -798,25 +816,32 @@ pub(crate) async fn run_turn(
                 if context_window_compact_recovery_attempts
                     < MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES =>
             {
-                context_window_compact_recovery_attempts += 1;
-                let recovery_result = if context_window_compact_recovery_attempts == 1 {
-                    run_suffix_staged_context_limit_compact(
+                if context_window_recovery_history.is_none() {
+                    context_window_recovery_history =
+                        Some(sess.clone_in_memory_history_snapshot().await);
+                }
+
+                let mut recovery_result = Err(CodexErr::ContextWindowExceeded);
+                while context_window_compact_recovery_attempts
+                    < MAX_CONTEXT_WINDOW_COMPACT_RECOVERIES
+                {
+                    let trim_suffix_items = context_window_compact_recovery_attempts;
+                    context_window_compact_recovery_attempts += 1;
+                    recovery_result = run_suffix_trimmed_context_limit_compact(
                         &sess,
                         &turn_context,
                         &mut *client_session,
+                        context_window_recovery_history
+                            .as_ref()
+                            .expect("recovery history is initialized"),
+                        context_window_recovery_protected_range,
+                        trim_suffix_items,
                     )
-                    .await
-                } else {
-                    run_auto_compact_without_context_window_error_event(
-                        &sess,
-                        &turn_context,
-                        &mut *client_session,
-                        InitialContextInjection::BeforeLastUserMessage,
-                        CompactionReason::ContextLimit,
-                        CompactionPhase::MidTurn,
-                    )
-                    .await
-                };
+                    .await;
+                    if !matches!(recovery_result, Err(CodexErr::ContextWindowExceeded)) {
+                        break;
+                    }
+                }
                 let reset_client_session = match recovery_result {
                     Ok(reset_client_session) => reset_client_session,
                     Err(err) => {
@@ -1166,26 +1191,6 @@ async fn run_auto_compact(
     .await
 }
 
-async fn run_auto_compact_without_context_window_error_event(
-    sess: &Arc<Session>,
-    turn_context: &Arc<TurnContext>,
-    client_session: &mut dyn model_service_api::ModelTurnClientApi,
-    initial_context_injection: InitialContextInjection,
-    reason: CompactionReason,
-    phase: CompactionPhase,
-) -> CodexResult<bool> {
-    run_auto_compact_inner(
-        sess,
-        turn_context,
-        client_session,
-        initial_context_injection,
-        reason,
-        phase,
-        /*emit_context_window_error*/ false,
-    )
-    .await
-}
-
 async fn run_auto_compact_inner(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -1233,6 +1238,46 @@ async fn run_auto_compact_inner(
     Ok(true)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SuffixTrimPlan {
+    pub(crate) prefix_len: usize,
+    pub(crate) suffix_end: usize,
+    pub(crate) protected_start: usize,
+    pub(crate) protected_end: usize,
+}
+
+pub(crate) fn suffix_trim_plan(
+    total_items: usize,
+    protected_range: Option<(usize, usize)>,
+    trim_suffix_items: usize,
+) -> Option<SuffixTrimPlan> {
+    if total_items == 0 {
+        return None;
+    }
+
+    let (protected_start, protected_end) =
+        protected_range.unwrap_or((total_items - 1, total_items));
+    if protected_start >= protected_end || protected_end > total_items {
+        return None;
+    }
+
+    let base_suffix_len = total_items
+        .saturating_sub(total_items - protected_start + 1)
+        .min(MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS);
+    if base_suffix_len < trim_suffix_items {
+        return None;
+    }
+
+    let retained_suffix_len = base_suffix_len - trim_suffix_items;
+    let prefix_len = protected_start - base_suffix_len;
+    Some(SuffixTrimPlan {
+        prefix_len,
+        suffix_end: prefix_len + retained_suffix_len,
+        protected_start,
+        protected_end,
+    })
+}
+
 async fn run_auto_compact_with_retained_suffix(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -1254,7 +1299,8 @@ async fn run_auto_compact_with_retained_suffix(
         if !retained_suffix.is_empty() {
             let mut items = sess.clone_history().await.raw_items().to_vec();
             items.extend(retained_suffix);
-            sess.replace_in_memory_history_for_compact_prefix(items).await;
+            sess.replace_in_memory_history_for_compact_prefix(items)
+                .await;
         }
         if reset_client_session {
             client_session.reset_websocket_session();
@@ -1269,59 +1315,54 @@ async fn run_auto_compact_with_retained_suffix(
         reason,
         phase,
         retained_suffix,
-        /*emit_context_window_error*/ true,
+        /*emit_context_window_error*/ false,
     )
     .await?;
     client_session.reset_websocket_session();
     Ok(true)
 }
 
-async fn run_suffix_staged_context_limit_compact(
+async fn run_suffix_trimmed_context_limit_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     client_session: &mut dyn model_service_api::ModelTurnClientApi,
+    original_history: &InMemoryHistorySnapshot,
+    protected_range: Option<(usize, usize)>,
+    trim_suffix_items: usize,
 ) -> CodexResult<bool> {
-    let original_history = sess.clone_in_memory_history_snapshot().await;
     let total_items = original_history.items.len();
-    let max_suffix_len = total_items
-        .saturating_sub(1)
-        .min(MAX_SUFFIX_STAGED_COMPACT_ATTEMPTS);
-    if max_suffix_len == 0 {
+    let Some(plan) = suffix_trim_plan(total_items, protected_range, trim_suffix_items) else {
         return Err(CodexErr::ContextWindowExceeded);
-    }
+    };
 
-    for suffix_len in 1..=max_suffix_len {
-        let prefix_len = total_items - suffix_len;
-        let prefix = original_history.items[..prefix_len].to_vec();
-        let suffix = original_history.items[prefix_len..].to_vec();
-        sess.replace_in_memory_history_for_compact_prefix(prefix).await;
+    let prefix = original_history.items[..plan.prefix_len].to_vec();
+    let mut suffix = original_history.items[plan.prefix_len..plan.suffix_end].to_vec();
+    suffix.extend(
+        original_history.items[plan.protected_start..plan.protected_end]
+            .iter()
+            .cloned(),
+    );
+    sess.replace_in_memory_history_for_compact_prefix(prefix)
+        .await;
 
-        match run_auto_compact_with_retained_suffix(
-            sess,
-            turn_context,
-            client_session,
-            InitialContextInjection::BeforeLastUserMessage,
-            CompactionReason::ContextLimit,
-            CompactionPhase::MidTurn,
-            suffix,
-        )
-        .await
-        {
-            Ok(reset_client_session) => return Ok(reset_client_session),
-            Err(CodexErr::ContextWindowExceeded) => {
-                sess.restore_in_memory_history_snapshot(original_history.clone())
-                    .await;
-                continue;
-            }
-            Err(err) => {
-                sess.restore_in_memory_history_snapshot(original_history).await;
-                return Err(err);
-            }
+    match run_auto_compact_with_retained_suffix(
+        sess,
+        turn_context,
+        client_session,
+        InitialContextInjection::BeforeLastUserMessage,
+        CompactionReason::ContextLimit,
+        CompactionPhase::MidTurn,
+        suffix,
+    )
+    .await
+    {
+        Ok(reset_client_session) => Ok(reset_client_session),
+        Err(err) => {
+            sess.restore_in_memory_history_snapshot(original_history.clone())
+                .await;
+            Err(err)
         }
     }
-
-    sess.restore_in_memory_history_snapshot(original_history).await;
-    Err(CodexErr::ContextWindowExceeded)
 }
 
 #[allow(deprecated)]

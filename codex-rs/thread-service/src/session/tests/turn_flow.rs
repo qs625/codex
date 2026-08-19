@@ -1,16 +1,16 @@
+use codex_analytics_api::CompactionPhase;
+use codex_analytics_api::CompactionReason;
 use protocol::error::CodexErr;
 use protocol::items::TurnItem;
 use protocol::openai_models::ModelInfo;
-use protocol::protocol::Event;
 use protocol::protocol::ErrorEvent;
+use protocol::protocol::Event;
 use protocol::user_input::UserInput;
-use codex_analytics_api::CompactionPhase;
-use codex_analytics_api::CompactionReason;
+use serial_test::serial;
 use std::collections::VecDeque;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering as AtomicOrdering;
-use std::sync::Mutex as StdMutex;
-use serial_test::serial;
 
 const OLD_CONTEXT_WINDOW_FATAL_PREFIX: &str = "Codex ran out of room in the model's context window";
 const OLD_CONTEXT_WINDOW_FATAL_ACTION: &str =
@@ -291,6 +291,34 @@ fn count_text(texts: &[&str], needle: &str) -> usize {
     texts.iter().filter(|&&text| text == needle).count()
 }
 
+#[test]
+fn suffix_trim_plan_protects_current_input_when_followed_by_injections() {
+    let untrimmed = crate::session::turn::suffix_trim_plan(
+        /*total_items*/ 5,
+        /*protected_range*/ Some((2, 4)),
+        /*trim_suffix_items*/ 0,
+    )
+    .expect("untrimmed plan should be available");
+    assert_eq!(untrimmed.prefix_len, 1);
+    assert_eq!(untrimmed.suffix_end, 2);
+    assert_eq!(untrimmed.protected_start, 2);
+    assert_eq!(untrimmed.protected_end, 4);
+
+    let trimmed = crate::session::turn::suffix_trim_plan(
+        /*total_items*/ 5,
+        /*protected_range*/ Some((2, 4)),
+        /*trim_suffix_items*/ 1,
+    )
+    .expect("trimmed plan should be available");
+    assert_eq!(trimmed.prefix_len, 1);
+    assert_eq!(
+        trimmed.suffix_end, 1,
+        "trimming should remove the suffix tail before the protected current input"
+    );
+    assert_eq!(trimmed.protected_start, 2);
+    assert_eq!(trimmed.protected_end, 4);
+}
+
 fn write_project_hooks(dot_codex: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dot_codex)?;
     std::fs::write(
@@ -452,7 +480,10 @@ async fn oversized_current_input_emits_controlled_error_without_compacting() {
             _ => {}
         }
     }
-    assert!(!saw_compaction, "oversized current input should not compact");
+    assert!(
+        !saw_compaction,
+        "oversized current input should not compact"
+    );
     let error = error.expect("oversized input should emit an error");
     assert_eq!(
         error.message,
@@ -547,12 +578,12 @@ async fn provider_context_window_compacts_prefix_with_one_item_suffix_then_retri
         .expect("staged prefix mutex poisoned");
     assert_eq!(staged.len(), 1);
     assert!(
-        !staged[0].contains(&"current request".to_string()),
-        "compact prefix should temporarily exclude the latest current input"
+        !staged[0].contains(&"tail before current".to_string()),
+        "compact prefix should temporarily exclude retained suffix items"
     );
     assert!(
-        staged[0].contains(&"tail before current".to_string()),
-        "one-item suffix should retain older prefix items for compact"
+        !staged[0].contains(&"current request".to_string()),
+        "compact prefix should temporarily exclude the latest current input"
     );
     drop(staged);
 
@@ -560,12 +591,13 @@ async fn provider_context_window_compacts_prefix_with_one_item_suffix_then_retri
         .lock()
         .expect("request inputs mutex poisoned");
     let retry_texts = user_input_texts(&request_inputs[1]);
+    assert_eq!(count_text(&retry_texts, "tail before current"), 1);
     assert_eq!(count_text(&retry_texts, "current request"), 1);
 }
 
 #[tokio::test]
 #[serial(auto_compact_test_hook)]
-async fn provider_context_window_expands_suffix_when_compact_prefix_overflows() {
+async fn provider_context_window_trims_suffix_when_compact_attempt_overflows() {
     let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
     let reference_context_item = session
         .reference_context_item_for_turn(turn_context.as_ref())
@@ -610,9 +642,8 @@ async fn provider_context_window_expands_suffix_when_compact_prefix_overflows() 
                             .map(str::to_string)
                             .collect(),
                     );
-                let attempt = compact_attempt_count_for_hook
-                    .fetch_add(1, AtomicOrdering::SeqCst)
-                    + 1;
+                let attempt =
+                    compact_attempt_count_for_hook.fetch_add(1, AtomicOrdering::SeqCst) + 1;
                 if attempt == 1 {
                     Some(Err(CodexErr::ContextWindowExceeded))
                 } else {
@@ -659,12 +690,12 @@ async fn provider_context_window_expands_suffix_when_compact_prefix_overflows() 
         .expect("staged prefix mutex poisoned");
     assert_eq!(staged.len(), 2);
     assert!(
-        staged[0].contains(&"tail before current".to_string()),
-        "first compact attempt should stage only the latest item"
+        !staged[0].contains(&"tail before current".to_string()),
+        "first compact attempt should exclude the full retained suffix"
     );
     assert!(
         !staged[1].contains(&"tail before current".to_string()),
-        "second compact attempt should expand the staged suffix"
+        "second compact attempt should keep the suffix tail trimmed"
     );
     assert!(!staged[1].contains(&"current request".to_string()));
     drop(staged);
@@ -673,12 +704,103 @@ async fn provider_context_window_expands_suffix_when_compact_prefix_overflows() 
         .lock()
         .expect("request inputs mutex poisoned");
     let retry_texts = user_input_texts(&request_inputs[1]);
-    assert_eq!(count_text(&retry_texts, "tail before current"), 1);
+    assert_eq!(
+        count_text(&retry_texts, "tail before current"),
+        0,
+        "retry should omit the trimmed suffix tail"
+    );
+    assert_eq!(count_text(&retry_texts, "current request"), 1);
+}
+
+#[tokio::test]
+#[serial(auto_compact_test_hook)]
+async fn provider_context_window_trims_suffix_tail_until_compact_succeeds() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let reference_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    session
+        .replace_history(
+            vec![
+                test_user_message("prefix before compact"),
+                test_user_message("suffix oldest"),
+                test_user_message("suffix middle"),
+                test_user_message("suffix newest"),
+            ],
+            Some(reference_context_item),
+        )
+        .await;
+
+    let regular_request_count = Arc::new(AtomicUsize::new(0));
+    let regular_request_inputs: Arc<StdMutex<Vec<Vec<ResponseItem>>>> =
+        Arc::new(StdMutex::new(Vec::new()));
+    let compact_attempt_count = Arc::new(AtomicUsize::new(0));
+    let compact_attempt_count_for_hook = Arc::clone(&compact_attempt_count);
+    let target_turn_id = turn_context.sub_id.clone();
+    let _compact_hook_guard = crate::session::turn::set_auto_compact_test_hook(Arc::new(
+        move |session, turn_context, reason, phase| {
+            if turn_context.sub_id != target_turn_id {
+                return None;
+            }
+            if matches!(reason, CompactionReason::ContextLimit)
+                && matches!(phase, CompactionPhase::MidTurn)
+            {
+                let attempt =
+                    compact_attempt_count_for_hook.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                if attempt < 3 {
+                    Some(Err(CodexErr::ContextWindowExceeded))
+                } else {
+                    session
+                        .state
+                        .try_lock()
+                        .expect("session state should be available")
+                        .replace_history(vec![test_user_message("compacted prefix")], None);
+                    Some(Ok(true))
+                }
+            } else {
+                Some(Ok(false))
+            }
+        },
+    ));
+
+    crate::session::turn::run_turn(
+        Arc::clone(&session),
+        Arc::clone(&turn_context),
+        Arc::clone(&turn_context.extension_data),
+        vec![UserInput::Text {
+            text: "current request".to_string(),
+            text_elements: Vec::new(),
+        }],
+        /*allow_empty_input_without_pending*/ false,
+        Some(Box::new(ScriptedTurnClient {
+            responses: VecDeque::from([
+                ScriptedTurnResponse::ContextWindowExceeded,
+                ScriptedTurnResponse::Completed,
+            ]),
+            request_count: Arc::clone(&regular_request_count),
+            request_inputs: Some(Arc::clone(&regular_request_inputs)),
+            response_processed_ids: None,
+            provider: Some(turn_context.config.model_provider_id.clone()),
+        })),
+        CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(regular_request_count.load(AtomicOrdering::SeqCst), 2);
+    assert_eq!(compact_attempt_count.load(AtomicOrdering::SeqCst), 3);
+    let request_inputs = regular_request_inputs
+        .lock()
+        .expect("request inputs mutex poisoned");
+    let retry_texts = user_input_texts(&request_inputs[1]);
+    assert_eq!(count_text(&retry_texts, "suffix oldest"), 1);
+    assert_eq!(count_text(&retry_texts, "suffix middle"), 0);
+    assert_eq!(count_text(&retry_texts, "suffix newest"), 0);
+    assert_eq!(count_text(&retry_texts, "current request"), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn staged_compact_uses_isolated_sampling_without_agent_message_pollution(
-) -> anyhow::Result<()> {
+async fn staged_compact_uses_isolated_sampling_without_agent_message_pollution()
+-> anyhow::Result<()> {
     let server = start_mock_server().await;
     let _compact_response = mount_sse_once(
         &server,
@@ -839,7 +961,7 @@ async fn isolated_staged_compact_acknowledges_processed_response_when_enabled() 
 
 #[tokio::test]
 #[serial(auto_compact_test_hook)]
-async fn provider_context_window_recovery_full_compacts_retained_suffix_after_second_overflow() {
+async fn provider_context_window_recovery_trims_retained_suffix_after_second_overflow() {
     let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
     let reference_context_item = session
         .reference_context_item_for_turn(turn_context.as_ref())
@@ -868,9 +990,8 @@ async fn provider_context_window_recovery_full_compacts_retained_suffix_after_se
             if matches!(reason, CompactionReason::ContextLimit)
                 && matches!(phase, CompactionPhase::MidTurn)
             {
-                let attempt = compact_request_count_for_hook
-                    .fetch_add(1, AtomicOrdering::SeqCst)
-                    + 1;
+                let attempt =
+                    compact_request_count_for_hook.fetch_add(1, AtomicOrdering::SeqCst) + 1;
                 let current_request_present = user_input_texts(
                     session
                         .state
@@ -925,7 +1046,7 @@ async fn provider_context_window_recovery_full_compacts_retained_suffix_after_se
     assert_eq!(
         compact_request_count.load(AtomicOrdering::SeqCst),
         2,
-        "second provider overflow should compact the current replacement history"
+        "second provider overflow should retry compact with a trimmed retained suffix"
     );
 
     let request_inputs = regular_request_inputs
@@ -939,20 +1060,20 @@ async fn provider_context_window_recovery_full_compacts_retained_suffix_after_se
     );
     assert_eq!(
         count_text(&first_retry_texts, "tail before current"),
-        0,
-        "first recovery compacts older prefix items before retrying"
+        1,
+        "first recovery keeps the retained suffix before retrying"
     );
     let final_retry_texts = user_input_texts(&request_inputs[2]);
     assert_eq!(count_text(&final_retry_texts, "current request"), 1);
     assert_eq!(
         count_text(&final_retry_texts, "tail before current"),
         0,
-        "second recovery must not keep resending the same rejected suffix"
+        "second recovery trims the suffix tail that preceded the current input"
     );
     assert_eq!(
         count_text(&final_retry_texts, "compacted prefix 2"),
         1,
-        "second recovery should send the freshly compacted snapshot"
+        "second recovery should send the freshly compacted prefix"
     );
 }
 
@@ -960,6 +1081,18 @@ async fn provider_context_window_recovery_full_compacts_retained_suffix_after_se
 #[serial(auto_compact_test_hook)]
 async fn provider_context_window_full_compact_failure_emits_one_controlled_error() {
     let (session, turn_context, rx) = make_session_and_context_with_rx().await;
+    let reference_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    session
+        .replace_history(
+            vec![
+                test_user_message("prefix before compact"),
+                test_user_message("tail before current"),
+            ],
+            Some(reference_context_item),
+        )
+        .await;
     let regular_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count_for_hook = Arc::clone(&compact_request_count);
@@ -972,9 +1105,8 @@ async fn provider_context_window_full_compact_failure_emits_one_controlled_error
             if matches!(reason, CompactionReason::ContextLimit)
                 && matches!(phase, CompactionPhase::MidTurn)
             {
-                let attempt = compact_request_count_for_hook
-                    .fetch_add(1, AtomicOrdering::SeqCst)
-                    + 1;
+                let attempt =
+                    compact_request_count_for_hook.fetch_add(1, AtomicOrdering::SeqCst) + 1;
                 if attempt == 1 {
                     Some(Ok(true))
                 } else {
@@ -1023,6 +1155,18 @@ async fn provider_context_window_full_compact_failure_emits_one_controlled_error
 #[serial(auto_compact_test_hook)]
 async fn provider_context_window_bounded_recovery_failure_emits_controlled_error() {
     let (session, turn_context, rx) = make_session_and_context_with_rx().await;
+    let reference_context_item = session
+        .reference_context_item_for_turn(turn_context.as_ref())
+        .await;
+    session
+        .replace_history(
+            vec![
+                test_user_message("prefix before compact"),
+                test_user_message("tail before current"),
+            ],
+            Some(reference_context_item),
+        )
+        .await;
     let regular_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count = Arc::new(AtomicUsize::new(0));
     let compact_request_count_for_hook = Arc::clone(&compact_request_count);
@@ -1057,8 +1201,6 @@ async fn provider_context_window_bounded_recovery_failure_emits_controlled_error
                 ScriptedTurnResponse::ContextWindowExceeded,
                 ScriptedTurnResponse::ContextWindowExceeded,
                 ScriptedTurnResponse::ContextWindowExceeded,
-                ScriptedTurnResponse::ContextWindowExceeded,
-                ScriptedTurnResponse::ContextWindowExceeded,
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: None,
@@ -1077,13 +1219,13 @@ async fn provider_context_window_bounded_recovery_failure_emits_controlled_error
     assert_not_old_context_window_fatal(&error.message);
     assert_eq!(
         regular_request_count.load(AtomicOrdering::SeqCst),
-        5,
-        "regular turn should stop after the bounded context-window recovery budget"
+        3,
+        "regular turn should stop after exhausting the progressive suffix-trim budget"
     );
     assert_eq!(
         compact_request_count.load(AtomicOrdering::SeqCst),
-        4,
-        "context-window recovery should run once per bounded recovery attempt"
+        2,
+        "only available suffix-trim plans should trigger compact recovery attempts"
     );
 }
 
@@ -1091,7 +1233,8 @@ async fn provider_context_window_bounded_recovery_failure_emits_controlled_error
 async fn compact_context_window_failure_emits_controlled_error() {
     let (session, turn_context, rx) = make_session_and_context_with_rx().await;
 
-    crate::compact::send_compact_context_window_error(session.as_ref(), turn_context.as_ref()).await;
+    crate::compact::send_compact_context_window_error(session.as_ref(), turn_context.as_ref())
+        .await;
 
     let error = recv_error_event(&rx).await;
     assert_eq!(
@@ -1196,13 +1339,14 @@ impl model_service_api::ModelTurnClientApi for ScriptedTurnClient {
                 ScriptedTurnResponse::ContextWindowExceeded => {
                     Err(model_service_api::ModelRequestError::context_window_exceeded())
                 }
-                ScriptedTurnResponse::Completed => Ok(Box::pin(futures::stream::iter(vec![
-                    Ok(model_service_api::ModelResponseEvent::Completed {
+                ScriptedTurnResponse::Completed => Ok(Box::pin(futures::stream::iter(vec![Ok(
+                    model_service_api::ModelResponseEvent::Completed {
                         response_id: "response-id".to_string(),
                         token_usage: None,
                         end_turn: Some(true),
-                    }),
-                ])) as model_service_api::ModelResponseStream),
+                    },
+                )]))
+                    as model_service_api::ModelResponseStream),
             }
         })
     }
@@ -1272,23 +1416,24 @@ async fn sampling_request_preserves_context_window_error_from_stream_start() {
         fail_before_stream: true,
     };
 
-    let result = crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
-        tool_inputs_override: Some(test_tool_inputs(
-            Arc::clone(&session),
-            Arc::clone(&turn_context),
-        )),
-        sess: Arc::clone(&session),
-        turn_context: Arc::clone(&turn_context),
-        turn_store: Arc::clone(&turn_context.extension_data),
-        turn_diff_tracker,
-        client_session: &mut client,
-        turn_metadata_header: None,
-        input: Vec::new(),
-        explicitly_enabled_connectors: &std::collections::HashSet::new(),
-        skills_outcome: Some(turn_context.turn_skills.outcome.as_ref()),
-        cancellation_token: CancellationToken::new(),
-    })
-    .await;
+    let result =
+        crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
+            tool_inputs_override: Some(test_tool_inputs(
+                Arc::clone(&session),
+                Arc::clone(&turn_context),
+            )),
+            sess: Arc::clone(&session),
+            turn_context: Arc::clone(&turn_context),
+            turn_store: Arc::clone(&turn_context.extension_data),
+            turn_diff_tracker,
+            client_session: &mut client,
+            turn_metadata_header: None,
+            input: Vec::new(),
+            explicitly_enabled_connectors: &std::collections::HashSet::new(),
+            skills_outcome: Some(turn_context.turn_skills.outcome.as_ref()),
+            cancellation_token: CancellationToken::new(),
+        })
+        .await;
 
     assert!(matches!(result, Err(CodexErr::ContextWindowExceeded)));
 }
@@ -1301,23 +1446,24 @@ async fn sampling_request_preserves_context_window_error_from_stream_event() {
         fail_before_stream: false,
     };
 
-    let result = crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
-        tool_inputs_override: Some(test_tool_inputs(
-            Arc::clone(&session),
-            Arc::clone(&turn_context),
-        )),
-        sess: Arc::clone(&session),
-        turn_context: Arc::clone(&turn_context),
-        turn_store: Arc::clone(&turn_context.extension_data),
-        turn_diff_tracker,
-        client_session: &mut client,
-        turn_metadata_header: None,
-        input: Vec::new(),
-        explicitly_enabled_connectors: &std::collections::HashSet::new(),
-        skills_outcome: Some(turn_context.turn_skills.outcome.as_ref()),
-        cancellation_token: CancellationToken::new(),
-    })
-    .await;
+    let result =
+        crate::session::turn::run_sampling_request(crate::session::turn::SamplingRequest {
+            tool_inputs_override: Some(test_tool_inputs(
+                Arc::clone(&session),
+                Arc::clone(&turn_context),
+            )),
+            sess: Arc::clone(&session),
+            turn_context: Arc::clone(&turn_context),
+            turn_store: Arc::clone(&turn_context.extension_data),
+            turn_diff_tracker,
+            client_session: &mut client,
+            turn_metadata_header: None,
+            input: Vec::new(),
+            explicitly_enabled_connectors: &std::collections::HashSet::new(),
+            skills_outcome: Some(turn_context.turn_skills.outcome.as_ref()),
+            cancellation_token: CancellationToken::new(),
+        })
+        .await;
 
     assert!(matches!(result, Err(CodexErr::ContextWindowExceeded)));
 }
@@ -2541,7 +2687,7 @@ async fn reconstruct_history_uses_replacement_history_verbatim() {
     let rollout_items = vec![RolloutItem::Compacted(CompactedItem {
         message: String::new(),
         replacement_history: Some(replacement_history.clone()),
-                visible_replacement_history_len: None,
+        visible_replacement_history_len: None,
     })];
 
     let reconstructed = session
