@@ -779,6 +779,17 @@ test("keeps non-markdown file previews on the editor render path", () => {
     ),
     "editor",
   );
+  assert.equal(
+    filePreviewRenderMode(
+      makePreview({
+        path: "/tmp/src/main.go",
+        displayPath: "src/main.go",
+        content: "package main\n\nfunc main() {}\n",
+        language: "go",
+      }),
+    ),
+    "editor",
+  );
 });
 
 test("resolves preview definition clicks to a column inside the current word", () => {
