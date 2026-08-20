@@ -10,7 +10,7 @@ import {
   extractCompactConversationDetails,
 } from "./conversationCompact";
 import { formatClockTime, normalizeThreadSnapshot } from "./thread";
-import type { Thread } from "../types";
+import type { ConversationEntry, Thread } from "../types";
 
 function makeThread(items: Thread["turns"][number]["items"]): Thread {
   return {
@@ -264,6 +264,27 @@ test("keeps consecutive ordinary tools grouped in one visible cell", () => {
   );
 });
 
+function makeToolEntry(
+  id: string,
+  toolCategory: ConversationEntry["toolCategory"],
+  overrides: Partial<ConversationEntry> = {},
+): ConversationEntry {
+  return {
+    id,
+    kind: "tool",
+    author: "root",
+    role: "system",
+    text: id,
+    timestamp: formatClockTime(1),
+    attachments: [],
+    toolName: id,
+    toolStatus: "completed",
+    toolCategory,
+    turnId: "turn-1",
+    ...overrides,
+  };
+}
+
 test("includes command session parameters in command details", () => {
   const entries = buildConversationEntries(
     makeThread([
@@ -401,14 +422,243 @@ test("renders command notifications as structured command tool entries", () => {
   const cells = buildConversationCells(entries);
   assert.deepEqual(
     cells.map((cell) => ({
+      id: cell.id,
       kind: cell.kind,
       entries: cell.entries.map((entry) => entry.id),
     })),
     [
-      { kind: "tool", entries: ["cmd-1"] },
-      { kind: "tool", entries: ["cmd-1:notification:output:1"] },
-      { kind: "tool", entries: ["cmd-1:notification:exit"] },
-      { kind: "tool", entries: ["cmd-1:notification:exit:failure"] },
+      { id: "cmd-1", kind: "tool", entries: ["cmd-1"] },
+      {
+        id: "cmd-1:notification:output:1",
+        kind: "tool",
+        entries: [
+          "cmd-1:notification:output:1",
+          "cmd-1:notification:exit",
+          "cmd-1:notification:exit:failure",
+        ],
+      },
+    ],
+  );
+});
+
+test("keeps consecutive command notifications grouped in one visible tool cell", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:output:1",
+        commandItemId: "cmd-1",
+        kind: "output",
+        message: "Command output notification received.",
+        output: "first",
+        exitCode: null,
+        createdAtMs: 1,
+      },
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:output:2",
+        commandItemId: "cmd-1",
+        kind: "output",
+        message: "Command output notification received.",
+        output: "second",
+        exitCode: null,
+        createdAtMs: 2,
+      },
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:exit",
+        commandItemId: "cmd-1",
+        kind: "exit",
+        message: "Command exit notification received.",
+        output: null,
+        exitCode: 0,
+        createdAtMs: 3,
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      {
+        id: "cmd-1:notification:output:1",
+        kind: "tool",
+        entries: [
+          "cmd-1:notification:output:1",
+          "cmd-1:notification:output:2",
+          "cmd-1:notification:exit",
+        ],
+      },
+    ],
+  );
+});
+
+test("keeps command notifications separated from commands and event-driven notifications", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:output:1",
+        commandItemId: "cmd-1",
+        kind: "output",
+        message: "Command output notification received.",
+        output: "first",
+        exitCode: null,
+        createdAtMs: 1,
+      },
+      {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "npm test",
+        cwd: "/tmp/project",
+        status: "completed",
+        aggregatedOutput: null,
+        exitCode: 0,
+        durationMs: 10,
+      },
+      {
+        type: "commandExecutionNotification",
+        id: "cmd-1:notification:exit",
+        commandItemId: "cmd-1",
+        kind: "exit",
+        message: "Command exit notification received.",
+        output: null,
+        exitCode: 0,
+        createdAtMs: 2,
+      },
+      {
+        type: "eventDrivenTool",
+        id: "event-1",
+        tool: "process_exit_subscribe",
+        title: "Process exited",
+        text: "watch build completed",
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      {
+        id: "cmd-1:notification:output:1",
+        kind: "tool",
+        entries: ["cmd-1:notification:output:1"],
+      },
+      { id: "cmd-1", kind: "tool", entries: ["cmd-1"] },
+      {
+        id: "cmd-1:notification:exit",
+        kind: "tool",
+        entries: ["cmd-1:notification:exit"],
+      },
+      { id: "event-1", kind: "tool", entries: ["event-1"] },
+    ],
+  );
+});
+
+test("keeps command notifications separated across turns", () => {
+  const entries = buildConversationEntries(
+    makeThreadWithTurns([
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "commandExecutionNotification",
+            id: "cmd-1:notification:output:1",
+            commandItemId: "cmd-1",
+            kind: "output",
+            message: "Command output notification received.",
+            output: "first",
+            exitCode: null,
+            createdAtMs: 1,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
+      },
+      {
+        id: "turn-2",
+        items: [
+          {
+            type: "commandExecutionNotification",
+            id: "cmd-1:notification:output:2",
+            commandItemId: "cmd-1",
+            kind: "output",
+            message: "Command output notification received.",
+            output: "second",
+            exitCode: null,
+            createdAtMs: 2,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      {
+        id: "cmd-1:notification:output:1",
+        entries: ["cmd-1:notification:output:1"],
+      },
+      {
+        id: "cmd-1:notification:output:2",
+        entries: ["cmd-1:notification:output:2"],
+      },
+    ],
+  );
+});
+
+test("keeps command notifications separated across replacement history boundaries", () => {
+  const entries = [
+    makeToolEntry("cmd-1:notification:output:1", "commandNotification"),
+    makeToolEntry("cmd-1:notification:output:2", "commandNotification", {
+      isReplacementHistory: true,
+    }),
+  ];
+
+  const cells = buildConversationCells(entries);
+
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      {
+        id: "cmd-1:notification:output:1",
+        entries: ["cmd-1:notification:output:1"],
+      },
+      {
+        id: "cmd-1:notification:output:2",
+        entries: ["cmd-1:notification:output:2"],
+      },
     ],
   );
 });
