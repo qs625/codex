@@ -216,11 +216,14 @@ function shouldMergeConversationEntry(
     if (previousEntry.turnId !== nextEntry.turnId) {
       return false;
     }
-    if (isStandaloneNotificationEntry(previousEntry) || isStandaloneNotificationEntry(nextEntry)) {
-      return false;
-    }
     if (previousEntry.isReplacementHistory !== nextEntry.isReplacementHistory) {
       return false;
+    }
+    if (
+      isStandaloneNotificationEntry(previousEntry) ||
+      isStandaloneNotificationEntry(nextEntry)
+    ) {
+      return canMergeStandaloneToolNotifications(previousEntry, nextEntry);
     }
     return previousEntry.toolCategory === nextEntry.toolCategory;
   }
@@ -241,6 +244,20 @@ function shouldMergeConversationEntry(
   }
 
   return false;
+}
+
+function canMergeStandaloneToolNotifications(
+  previousEntry: ConversationEntry,
+  nextEntry: ConversationEntry,
+) {
+  return (
+    isMergeableCommandNotificationEntry(previousEntry) &&
+    isMergeableCommandNotificationEntry(nextEntry)
+  );
+}
+
+function isMergeableCommandNotificationEntry(entry: ConversationEntry) {
+  return entry.toolCategory === "commandNotification";
 }
 
 function isStandaloneNotificationEntry(entry: ConversationEntry) {
