@@ -27,7 +27,6 @@ use protocol::items::ContextCompactionReplacementItem as CoreContextCompactionRe
 use protocol::items::TurnItem as CoreTurnItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::EventMsg;
-use protocol::protocol::InterAgentOperation;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProjectedEventItem {
@@ -75,9 +74,6 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
             else {
                 return None;
             };
-            if matches!(communication.operation, InterAgentOperation::Unknown) {
-                return None;
-            }
             Some(ProjectedEventItem::Completed {
                 turn_id: event.turn_id.clone(),
                 item: thread_item_from_inter_agent_communication(id.clone(), communication.clone()),
@@ -178,9 +174,6 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
             completed_at_ms: event.completed_at_ms,
         }),
         EventMsg::InterAgentCommunicationCompleted(event) => {
-            if matches!(event.communication.operation, InterAgentOperation::Unknown) {
-                return None;
-            }
             Some(ProjectedEventItem::Completed {
                 turn_id: event.turn_id.clone(),
                 item: thread_item_from_inter_agent_communication(

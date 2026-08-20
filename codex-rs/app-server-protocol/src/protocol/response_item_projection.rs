@@ -232,10 +232,7 @@ pub fn is_legacy_structured_assistant_message_text(text: &str) -> bool {
     let Some(object) = value.as_object() else {
         return false;
     };
-    object.contains_key("author")
-        && object.contains_key("recipient")
-        && object.contains_key("content")
-        && object.contains_key("operation")
+    is_inter_agent_communication_envelope(object)
 }
 
 #[doc(hidden)]
@@ -257,6 +254,31 @@ fn is_wrapped_marker(trimmed: &str, start_marker: &str, end_marker: &str) -> boo
     trimmed.starts_with(start_marker) && trimmed.ends_with(end_marker)
 }
 
+fn is_inter_agent_communication_envelope(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    matches!(object.get("author").and_then(serde_json::Value::as_str), Some(author) if author.starts_with('/'))
+        && matches!(object.get("recipient").and_then(serde_json::Value::as_str), Some(recipient) if recipient.starts_with('/'))
+        && object
+            .get("content")
+            .is_some_and(serde_json::Value::is_string)
+        && object
+            .get("other_recipients")
+            .map_or(true, serde_json::Value::is_array)
+        && [
+            "content_parts",
+            "trigger_turn",
+            "sender_thread_id",
+            "recipient_thread_id",
+            "status",
+            "lifecycle_status",
+            "agent_nickname",
+            "agent_role",
+        ]
+        .iter()
+        .any(|key| object.contains_key(*key))
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_legacy_structured_assistant_message_text;
@@ -273,6 +295,8 @@ mod tests {
                 "recipient": "/root",
                 "content": "legacy message",
                 "operation": operation,
+                "content_parts": [],
+                "trigger_turn": false,
             })
             .to_string();
 
@@ -282,14 +306,15 @@ mod tests {
 
     #[test]
     fn legacy_structured_message_filter_preserves_non_envelope_json() {
-        let missing_operation = serde_json::json!({
+        let missing_envelope_fields = serde_json::json!({
             "author": "/root/worker",
             "recipient": "/root",
             "content": "plain assistant json",
+            "operation": "sendMessage",
         })
         .to_string();
         assert!(!is_legacy_structured_assistant_message_text(
-            &missing_operation
+            &missing_envelope_fields
         ));
 
         let ordinary_tool_json = serde_json::json!({
@@ -301,5 +326,27 @@ mod tests {
         assert!(!is_legacy_structured_assistant_message_text(
             &ordinary_tool_json
         ));
+    }
+
+    #[test]
+    fn legacy_structured_message_filter_handles_nullable_inter_agent_envelope() {
+        let message = serde_json::json!({
+            "author": "/cp_http_api/frontend_taskstatus_fix_2",
+            "recipient": "/cp_http_api",
+            "other_recipients": [],
+            "content": "typecheck is available ...",
+            "content_parts": [],
+            "operation": null,
+            "trigger_turn": false,
+            "sender_thread_id": null,
+            "recipient_thread_id": null,
+            "status": null,
+            "lifecycle_status": null,
+            "agent_nickname": null,
+            "agent_role": null,
+        })
+        .to_string();
+
+        assert!(is_legacy_structured_assistant_message_text(&message));
     }
 }

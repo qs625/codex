@@ -4,6 +4,7 @@ use app_server_protocol::ProjectedEventItem;
 use app_server_protocol::MemoryCitation;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::is_legacy_structured_assistant_message_text;
+use app_server_protocol::is_legacy_structured_user_inputs;
 use app_server_protocol::project_event_msg_item;
 use protocol::models::MessagePhase;
 use protocol::protocol::AgentReasoningEvent;
@@ -29,6 +30,11 @@ fn assistant_message_thread_item(
 
 impl ThreadHistoryBuilder {
     pub(super) fn handle_user_message(&mut self, payload: &UserMessageEvent) {
+        let content = self.build_user_inputs(payload);
+        if is_legacy_structured_user_inputs(&content) {
+            return;
+        }
+
         if let Some(turn) = self.current_turn.as_ref()
             && !turn.opened_explicitly
             && !turn.items.is_empty()
@@ -42,7 +48,6 @@ impl ThreadHistoryBuilder {
             .take()
             .unwrap_or_else(|| self.new_turn(/*id*/ None));
         let id = self.next_item_id();
-        let content = self.build_user_inputs(payload);
         turn.items.push(ThreadItem::UserMessage { id, content });
         self.current_turn = Some(turn);
     }
