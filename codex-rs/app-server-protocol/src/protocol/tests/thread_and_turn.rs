@@ -828,7 +828,7 @@ fn thread_history_rebuilds_read_agent_builtin_tool_item() {
 }
 
 #[test]
-fn thread_history_projects_active_schedule_subscription_metadata() {
+fn thread_history_does_not_project_active_schedule_subscription_metadata() {
     let items = vec![protocol::protocol::RolloutItem::SessionMeta(
         protocol::protocol::SessionMetaLine {
             meta: protocol::protocol::SessionMeta {
@@ -850,52 +850,46 @@ fn thread_history_projects_active_schedule_subscription_metadata() {
 
     let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
 
-    assert_eq!(turns.len(), 1);
-    assert_eq!(turns[0].id, "active-subscriptions");
-    assert_eq!(
-        turns[0].items,
-        vec![ThreadItem::BuiltinToolCall {
-            id: "active-subscription:sub-schedule".into(),
-            tool: "schedule_subscribe".into(),
-            arguments: json!({
-                "schedule": {
-                    "kind": "every_interval",
-                    "interval_ms": 60000,
-                },
-                "label": "standup",
-                "message": "Clean worktrees.",
-            }),
-            status: DynamicToolCallStatus::Completed,
-            output: Some(json!({
-                "subscription_id": "sub-schedule",
-            })),
-        }]
-    );
+    assert!(turns.is_empty());
 }
 
 #[test]
-fn thread_history_projects_active_schedule_subscription_after_compact() {
+fn thread_history_projects_active_schedule_subscription_event_after_compact() {
     let items = vec![
+        protocol::protocol::RolloutItem::EventMsg(protocol::protocol::EventMsg::TurnStarted(
+            protocol::protocol::TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            },
+        )),
+        protocol::protocol::RolloutItem::EventMsg(
+            protocol::protocol::EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: protocol::ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "call-schedule".into(),
+                    tool: "schedule_subscribe".into(),
+                    arguments: json!({
+                        "schedule": {
+                            "kind": "every_interval",
+                            "interval_ms": 60000,
+                        },
+                        "label": "standup",
+                    }),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(json!({
+                        "subscription_id": "sub-schedule",
+                    })),
+                    lifecycle_at_ms: 123,
+                },
+            ),
+        ),
         protocol::protocol::RolloutItem::Compacted(protocol::protocol::CompactedItem {
             message: "old display history compacted".into(),
             replacement_history: Some(Vec::new()),
-                visible_replacement_history_len: None,
-        }),
-        protocol::protocol::RolloutItem::SessionMeta(protocol::protocol::SessionMetaLine {
-            meta: protocol::protocol::SessionMeta {
-                subscriptions: Some(vec![
-                    protocol::subscriptions::PersistedSubscription::Schedule {
-                        subscription_id: "sub-schedule".into(),
-                        schedule: protocol::subscriptions::ScheduleSpec::EveryInterval {
-                            interval_ms: 60_000,
-                        },
-                        label: Some("standup".into()),
-                        message: None,
-                    },
-                ]),
-                ..Default::default()
-            },
-            git: None,
+            visible_replacement_history_len: None,
         }),
     ];
 
@@ -906,7 +900,7 @@ fn thread_history_projects_active_schedule_subscription_after_compact() {
     assert_eq!(
         active_subscriptions.items,
         vec![ThreadItem::BuiltinToolCall {
-            id: "active-subscription:sub-schedule".into(),
+            id: "call-schedule".into(),
             tool: "schedule_subscribe".into(),
             arguments: json!({
                 "schedule": {
@@ -996,7 +990,7 @@ fn thread_history_does_not_duplicate_existing_schedule_monitor_from_subscription
 }
 
 #[test]
-fn thread_history_empty_subscription_snapshot_projects_inactive_schedule_cleanup() {
+fn thread_history_empty_subscription_snapshot_does_not_project_inactive_schedule_cleanup() {
     let items = vec![
         protocol::protocol::RolloutItem::EventMsg(
             protocol::protocol::EventMsg::BuiltinToolCallCompleted(
@@ -1024,24 +1018,24 @@ fn thread_history_empty_subscription_snapshot_projects_inactive_schedule_cleanup
     ];
 
     let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
-    let last_turn = turns.last().expect("inactive subscription turn");
+    let inactive_items = turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .filter(|item| {
+            matches!(
+                item,
+                ThreadItem::BuiltinToolCall {
+                    tool,
+                    output: Some(output),
+                    ..
+                } if tool == "schedule_unsubscribe"
+                    && output.get("subscription_id").and_then(|value| value.as_str())
+                        == Some("sub-schedule")
+            )
+        })
+        .count();
 
-    assert_eq!(last_turn.id, "active-subscriptions");
-    assert_eq!(
-        last_turn.items,
-        vec![ThreadItem::BuiltinToolCall {
-            id: "active-subscription:sub-schedule:inactive".into(),
-            tool: "schedule_unsubscribe".into(),
-            arguments: json!({
-                "subscription_id": "sub-schedule",
-            }),
-            status: DynamicToolCallStatus::Completed,
-            output: Some(json!({
-                "subscription_id": "sub-schedule",
-                "unsubscribed": true,
-            })),
-        }]
-    );
+    assert_eq!(inactive_items, 0);
 }
 
 #[test]

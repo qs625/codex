@@ -125,6 +125,35 @@ export function buildConversationState(
       flatItemIndex += 1;
     }
   }
+  for (const item of thread.activeCommandItems ?? []) {
+    const timestamp = formatItemTimestamp(item) ?? formatClockTime(thread.updatedAt);
+    const previousFlatItem = canReusePrevious
+      ? previous.flatItems[flatItemIndex]
+      : undefined;
+    const rebuiltEntries =
+      previousFlatItem &&
+      previousFlatItem.id === item.id &&
+      previousFlatItem.item === item &&
+      previousFlatItem.timestamp === timestamp
+        ? previousFlatItem.entries
+        : buildConversationItemEntries(item, {
+            author,
+            timestamp,
+            commandLookup,
+          }).map((entry) => ({
+            ...entry,
+            turnId: "active-commands",
+          }));
+
+    flatItems.push({
+      id: item.id,
+      item,
+      timestamp,
+      entries: rebuiltEntries,
+    });
+    entries.push(...rebuiltEntries);
+    flatItemIndex += 1;
+  }
   return {
     threadId: thread.id,
     author,

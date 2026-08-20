@@ -541,6 +541,7 @@ export type Thread = {
   latestPlan?: ThreadPlanUpdate | null;
   turns: Turn[];
   activeSubscriptionItems?: ThreadItem[];
+  activeCommandItems?: ThreadItem[];
 };
 
 export type BootstrapResponse = {

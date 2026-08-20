@@ -115,6 +115,49 @@ test("builds schedule monitors from active subscription current state items", ()
   );
 });
 
+test("builds command monitors from active command current state items", () => {
+  const thread = {
+    ...makeThread([], { type: "active", activeFlags: ["running"] }),
+    turns: [] as Thread["turns"],
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "cargo test",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "inProgress",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "cargo test" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "command")
+      ?.monitors,
+    [
+      {
+        id: "exec-1",
+        subscriptionId: "exec-1",
+        kind: "command",
+        label: "cargo test",
+        detail: "/tmp/project",
+        status: "Running",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
+  );
+});
+
 test("dedupes changed files and keeps the latest change kind", () => {
   const analysis = buildThreadAnalysis(
     makeThread([

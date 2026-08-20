@@ -157,6 +157,14 @@ function buildMonitorSections(
         allowLiveCommandMonitors,
       });
     }
+    for (const item of thread.activeCommandItems ?? []) {
+      applyMonitorItem(item, {
+        monitors,
+        eventsByTool,
+        commandNotificationsByCommandId,
+        allowLiveCommandMonitors,
+      });
+    }
   }
 
   const activeMonitors: InternalMonitorSummary[] = [];

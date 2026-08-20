@@ -1,12 +1,12 @@
-use crate::protocol::DynamicToolCallStatus;
 use crate::protocol::ThreadItem;
 use crate::protocol::Turn;
+use crate::protocol::event_item_projection::ProjectedEventItem;
 use crate::protocol::event_item_projection::project_event_msg_item;
 use protocol::protocol::EventMsg;
+use protocol::protocol::ExecCommandSource;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::SessionMetaLine;
-use protocol::subscriptions::PersistedSubscription;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 mod basic_events;
 mod collab;
@@ -38,9 +38,9 @@ pub struct ThreadHistoryBuilder {
     current_rollout_index: usize,
     next_rollout_index: usize,
     pending_agent_message_responses: Vec<PendingAgentMessageResponse>,
-    latest_subscription_snapshot: Option<(usize, Vec<PersistedSubscription>)>,
-    schedule_subscription_rollout_indexes: HashMap<String, usize>,
-    schedule_unsubscription_rollout_indexes: HashMap<String, usize>,
+    latest_compaction_index: Option<usize>,
+    schedule_activities: HashMap<String, ScheduleSubscriptionActivity>,
+    command_activities: HashMap<String, CommandExecutionActivity>,
 }
 
 impl Default for ThreadHistoryBuilder {
@@ -58,9 +58,9 @@ impl ThreadHistoryBuilder {
             current_rollout_index: 0,
             next_rollout_index: 0,
             pending_agent_message_responses: Vec::new(),
-            latest_subscription_snapshot: None,
-            schedule_subscription_rollout_indexes: HashMap::new(),
-            schedule_unsubscription_rollout_indexes: HashMap::new(),
+            latest_compaction_index: None,
+            schedule_activities: HashMap::new(),
+            command_activities: HashMap::new(),
         }
     }
 
@@ -70,7 +70,7 @@ impl ThreadHistoryBuilder {
 
     pub fn finish(mut self) -> Vec<Turn> {
         self.finish_current_turn();
-        self.append_subscription_snapshot_items();
+        self.append_runtime_activity_items();
         self.turns
     }
 
@@ -220,18 +220,19 @@ impl ThreadHistoryBuilder {
                 self.handle_event(event);
                 self.record_schedule_subscription_event(event);
             }
-            RolloutItem::Compacted(payload) => self.handle_compacted(payload),
+            RolloutItem::Compacted(payload) => {
+                self.latest_compaction_index = Some(self.current_rollout_index);
+                self.handle_compacted(payload);
+            }
             RolloutItem::ResponseItem(_) => {}
             RolloutItem::TurnContext(payload) => self.handle_turn_context(payload),
             RolloutItem::SessionMeta(payload) => self.handle_session_meta(payload),
         }
     }
 
-    fn handle_session_meta(&mut self, payload: &SessionMetaLine) {
-        let Some(subscriptions) = payload.meta.subscriptions.clone() else {
-            return;
-        };
-        self.latest_subscription_snapshot = Some((self.current_rollout_index, subscriptions));
+    fn handle_session_meta(&mut self, _payload: &SessionMetaLine) {
+        // Session metadata is retained for legacy storage and restore bookkeeping,
+        // but display recovery is driven by persisted typed activity events.
     }
 
     fn record_schedule_subscription_event(&mut self, event: &EventMsg) {
@@ -247,8 +248,17 @@ impl ThreadHistoryBuilder {
 
         match tool {
             "schedule_subscribe" => {
-                self.schedule_subscription_rollout_indexes
-                    .insert(subscription_id, self.current_rollout_index);
+                let Some(item) = projected_thread_item(event) else {
+                    return;
+                };
+                self.schedule_activities.insert(
+                    subscription_id,
+                    ScheduleSubscriptionActivity {
+                        subscribe_index: self.current_rollout_index,
+                        subscribe_item: item,
+                        unsubscribe: None,
+                    },
+                );
             }
             "schedule_unsubscribe"
                 if output
@@ -257,124 +267,109 @@ impl ThreadHistoryBuilder {
                     .and_then(|value| value.as_bool())
                     == Some(true) =>
             {
-                self.schedule_unsubscription_rollout_indexes
-                    .insert(subscription_id, self.current_rollout_index);
+                let Some(item) = projected_thread_item(event) else {
+                    return;
+                };
+                self.schedule_activities
+                    .entry(subscription_id)
+                    .and_modify(|activity| {
+                        activity.unsubscribe = Some(ActivityItem {
+                            index: self.current_rollout_index,
+                            item: item.clone(),
+                        });
+                    })
+                    .or_insert_with(|| ScheduleSubscriptionActivity {
+                        subscribe_index: 0,
+                        subscribe_item: item.clone(),
+                        unsubscribe: Some(ActivityItem {
+                            index: self.current_rollout_index,
+                            item,
+                        }),
+                    });
             }
             _ => {}
         }
     }
 
-    fn append_subscription_snapshot_items(&mut self) {
-        let Some((snapshot_index, subscriptions)) = self.latest_subscription_snapshot.take() else {
+    fn append_runtime_activity_items(&mut self) {
+        self.append_subscription_activity_items();
+        self.append_command_activity_items();
+    }
+
+    fn append_subscription_activity_items(&mut self) {
+        if self.schedule_activities.is_empty() {
             return;
         };
-        let active_schedule_ids = active_schedule_subscription_ids(&subscriptions);
-        let inactive_items = self.inactive_schedule_items(snapshot_index, &active_schedule_ids);
-        let active_items = subscriptions
-            .iter()
-            .filter_map(|subscription| self.active_schedule_item_if_missing(subscription))
+        let Some(compaction_index) = self.latest_compaction_index else {
+            return;
+        };
+        let eligible_activities = self
+            .schedule_activities
+            .values()
+            .filter(|activity| activity.subscribe_index < compaction_index)
             .collect::<Vec<_>>();
-        let items = inactive_items
-            .into_iter()
-            .chain(active_items)
-            .collect::<Vec<_>>();
-        if items.is_empty() {
+        if eligible_activities.is_empty() {
             return;
         }
+        let items = eligible_activities
+            .into_iter()
+            .filter(|activity| {
+                activity
+                    .unsubscribe
+                    .as_ref()
+                    .is_none_or(|unsubscribe| unsubscribe.index < activity.subscribe_index)
+            })
+            .map(|activity| activity.subscribe_item.clone())
+            .collect::<Vec<_>>();
 
         let mut turn = self.new_turn(Some("active-subscriptions".to_string()));
         turn.items = items;
         self.turns.push(Turn::from(turn));
     }
 
-    fn inactive_schedule_items(
-        &self,
-        snapshot_index: usize,
-        active_schedule_ids: &HashSet<String>,
-    ) -> Vec<ThreadItem> {
-        self.schedule_subscription_rollout_indexes
-            .iter()
-            .filter(|(subscription_id, subscribe_index)| {
-                **subscribe_index < snapshot_index
-                    && !active_schedule_ids.contains(*subscription_id)
-                    && self
-                        .schedule_unsubscription_rollout_indexes
-                        .get(*subscription_id)
-                        .is_none_or(|unsubscribe_index| unsubscribe_index < subscribe_index)
-            })
-            .map(|(subscription_id, _)| ThreadItem::BuiltinToolCall {
-                id: format!("active-subscription:{subscription_id}:inactive"),
-                tool: "schedule_unsubscribe".to_string(),
-                arguments: serde_json::json!({
-                    "subscription_id": subscription_id,
-                }),
-                status: DynamicToolCallStatus::Completed,
-                output: Some(serde_json::json!({
-                    "subscription_id": subscription_id,
-                    "unsubscribed": true,
-                })),
-            })
-            .collect()
-    }
-
-    fn active_schedule_item_if_missing(
-        &self,
-        subscription: &PersistedSubscription,
-    ) -> Option<ThreadItem> {
-        let PersistedSubscription::Schedule {
-            subscription_id,
-            schedule,
-            label,
-            message,
-        } = subscription
-        else {
-            return None;
+    fn append_command_activity_items(&mut self) {
+        let Some(compaction_index) = self.latest_compaction_index else {
+            return;
         };
-        if self.has_schedule_monitor_item(subscription_id) {
-            return None;
+        let eligible_activities = self
+            .command_activities
+            .values()
+            .filter(|activity| activity.begin.index < compaction_index)
+            .collect::<Vec<_>>();
+        if eligible_activities.is_empty() {
+            return;
         }
-        let mut arguments = serde_json::json!({
-            "schedule": schedule,
-            "label": label,
-        });
-        if let Some(message) = message {
-            arguments["message"] = serde_json::Value::String(message.clone());
-        }
-
-        Some(ThreadItem::BuiltinToolCall {
-            id: format!("active-subscription:{subscription_id}"),
-            tool: "schedule_subscribe".to_string(),
-            arguments,
-            status: DynamicToolCallStatus::Completed,
-            output: Some(serde_json::json!({
-                "subscription_id": subscription_id,
-            })),
-        })
-    }
-
-    fn has_schedule_monitor_item(&self, subscription_id: &str) -> bool {
-        self.turns
-            .iter()
-            .flat_map(|turn| turn.items.iter())
-            .chain(self.current_turn.iter().flat_map(|turn| turn.items.iter()))
-            .any(|item| schedule_subscription_id(item).as_deref() == Some(subscription_id))
+        let items = eligible_activities
+            .into_iter()
+            .filter_map(|activity| match &activity.end {
+                Some(end) if end.index > compaction_index => Some(end.item.clone()),
+                Some(_) => None,
+                None => Some(activity.begin.item.clone()),
+            })
+            .collect::<Vec<_>>();
+        let mut turn = self.new_turn(Some("active-commands".to_string()));
+        turn.items = items;
+        self.turns.push(Turn::from(turn));
     }
 }
 
-fn schedule_subscription_id(item: &ThreadItem) -> Option<String> {
-    let ThreadItem::BuiltinToolCall {
-        tool,
-        status,
-        output,
-        ..
-    } = item
-    else {
-        return None;
-    };
-    if tool != "schedule_subscribe" || *status != DynamicToolCallStatus::Completed {
-        return None;
-    }
-    output.as_ref().and_then(subscription_id_from_json)
+#[derive(Clone)]
+struct ActivityItem {
+    index: usize,
+    item: ThreadItem,
+}
+
+#[derive(Clone)]
+struct ScheduleSubscriptionActivity {
+    subscribe_index: usize,
+    subscribe_item: ThreadItem,
+    unsubscribe: Option<ActivityItem>,
+}
+
+#[derive(Clone)]
+struct CommandExecutionActivity {
+    begin: ActivityItem,
+    end: Option<ActivityItem>,
 }
 
 fn builtin_tool_event_parts(
@@ -400,14 +395,17 @@ fn subscription_id_from_json(output: &serde_json::Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn active_schedule_subscription_ids(subscriptions: &[PersistedSubscription]) -> HashSet<String> {
-    subscriptions
-        .iter()
-        .filter_map(|subscription| match subscription {
-            PersistedSubscription::Schedule {
-                subscription_id, ..
-            } => Some(subscription_id.clone()),
-            _ => None,
-        })
-        .collect()
+fn projected_thread_item(event: &EventMsg) -> Option<ThreadItem> {
+    match project_event_msg_item(event)? {
+        ProjectedEventItem::Started { item, .. } | ProjectedEventItem::Completed { item, .. } => {
+            Some(item)
+        }
+    }
+}
+
+fn is_recoverable_command_source(source: ExecCommandSource) -> bool {
+    matches!(
+        source,
+        ExecCommandSource::Agent | ExecCommandSource::UnifiedExecStartup
+    )
 }

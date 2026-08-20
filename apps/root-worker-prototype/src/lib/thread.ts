@@ -1102,9 +1102,14 @@ export function preserveTerminalLifecycleStatus(
 
 export function normalizeThreadSnapshot(thread: Thread): Thread {
   const activeSubscriptionItems = [...(thread.activeSubscriptionItems ?? [])];
+  const activeCommandItems = [...(thread.activeCommandItems ?? [])];
   const turns = thread.turns.reduce<Turn[]>((normalizedTurns, turn) => {
     if (isActiveSubscriptionsTurn(turn)) {
       activeSubscriptionItems.splice(0, activeSubscriptionItems.length, ...turn.items);
+      return normalizedTurns;
+    }
+    if (isActiveCommandsTurn(turn)) {
+      activeCommandItems.splice(0, activeCommandItems.length, ...turn.items);
       return normalizedTurns;
     }
 
@@ -1146,12 +1151,17 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
     activeSubscriptionItems,
     thread.activeSubscriptionItems ?? [],
   );
+  const activeCommandItemsChanged = !threadItemsArrayEqual(
+    activeCommandItems,
+    thread.activeCommandItems ?? [],
+  );
   const normalizedThread =
     turns.length === thread.turns.length &&
     turns.every((turn, index) => turn === thread.turns[index]) &&
-    !activeSubscriptionItemsChanged
+    !activeSubscriptionItemsChanged &&
+    !activeCommandItemsChanged
       ? thread
-      : { ...thread, turns, activeSubscriptionItems };
+      : { ...thread, turns, activeSubscriptionItems, activeCommandItems };
   return pruneThreadSnapshotToLatestCompact(normalizedThread);
 }
 
@@ -1180,6 +1190,9 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
     .at(-1);
   const activeSubscriptionItems =
     latestActiveSubscriptionTurn?.items ?? thread.activeSubscriptionItems;
+  const latestActiveCommandTurn = thread.turns.filter(isActiveCommandsTurn).at(-1);
+  const activeCommandItems =
+    latestActiveCommandTurn?.items ?? thread.activeCommandItems;
   const postCompactTurns = thread.turns.slice(latestCompact.turnIndex);
   const turns = postCompactTurns
     .map((turn, index) => {
@@ -1190,21 +1203,27 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
       return items.length === turn.items.length ? turn : { ...turn, items };
     })
     .filter((turn) => !isActiveSubscriptionsTurn(turn))
+    .filter((turn) => !isActiveCommandsTurn(turn))
     .filter((turn) => turn.items.length > 0 || isTurnInFlight(turn));
 
   if (
     turns.length === thread.turns.length &&
     turns.every((turn, index) => turn === thread.turns[index]) &&
-    activeSubscriptionItems === thread.activeSubscriptionItems
+    activeSubscriptionItems === thread.activeSubscriptionItems &&
+    activeCommandItems === thread.activeCommandItems
   ) {
     return thread;
   }
 
-  return { ...thread, turns, activeSubscriptionItems };
+  return { ...thread, turns, activeSubscriptionItems, activeCommandItems };
 }
 
 function isActiveSubscriptionsTurn(turn: Turn) {
   return turn.id === "active-subscriptions";
+}
+
+function isActiveCommandsTurn(turn: Turn) {
+  return turn.id === "active-commands";
 }
 
 function findLatestCompactItemPosition(turns: Turn[]) {
@@ -1284,6 +1303,8 @@ export function upsertThreadMetadataPreservingTurns(
           activeSubscriptionItems:
             normalizedNext.activeSubscriptionItems ??
             existing.activeSubscriptionItems,
+          activeCommandItems:
+            normalizedNext.activeCommandItems ?? existing.activeCommandItems,
         }
       : thread,
   );

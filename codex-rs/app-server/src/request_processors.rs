@@ -571,7 +571,7 @@ pub(crate) fn prune_turns_to_latest_compaction_boundary(turns: &mut Vec<Turn>) {
     if let Some(first_turn) = turns.first_mut() {
         first_turn.items.drain(..item_index);
     }
-    turns.retain(|turn| turn.id != "active-subscriptions");
+    turns.retain(|turn| turn.id != "active-subscriptions" && turn.id != "active-commands");
     turns.retain(|turn| !turn.items.is_empty() || matches!(turn.status, TurnStatus::InProgress));
 }
 
@@ -598,11 +598,7 @@ mod build_api_turns_from_rollout_items_tests {
     use protocol::protocol::ExecCommandNotifyOn;
     use protocol::protocol::ExecCommandSource as CoreExecCommandSource;
     use protocol::protocol::RolloutItem;
-    use protocol::protocol::SessionMeta;
-    use protocol::protocol::SessionMetaLine;
     use protocol::protocol::TurnStartedEvent;
-    use protocol::subscriptions::PersistedSubscription;
-    use protocol::subscriptions::ScheduleSpec;
     use rollout::EventPersistenceMode;
     use rollout::persisted_rollout_items;
     use std::time::Duration;
@@ -761,6 +757,51 @@ mod build_api_turns_from_rollout_items_tests {
             duration: Duration::from_millis(12),
             formatted_output: "hello world\n".into(),
             status: protocol::protocol::ExecCommandStatus::Completed,
+        }
+    }
+
+    fn schedule_subscribe_event(
+        message: Option<&str>,
+    ) -> protocol::protocol::BuiltinToolCallDisplayEvent {
+        let mut arguments = serde_json::json!({
+            "schedule": {
+                "kind": "every_interval",
+                "interval_ms": 60000,
+            },
+            "label": "standup",
+        });
+        if let Some(message) = message {
+            arguments["message"] = serde_json::Value::String(message.to_string());
+        }
+        protocol::protocol::BuiltinToolCallDisplayEvent {
+            thread_id: protocol::ThreadId::new(),
+            turn_id: "turn-1".into(),
+            id: "builtin-subscribe".into(),
+            tool: "schedule_subscribe".into(),
+            arguments,
+            status: protocol::protocol::BuiltinToolCallStatus::Completed,
+            output: Some(serde_json::json!({
+                "subscription_id": "sub-schedule",
+            })),
+            lifecycle_at_ms: 123,
+        }
+    }
+
+    fn schedule_unsubscribe_event() -> protocol::protocol::BuiltinToolCallDisplayEvent {
+        protocol::protocol::BuiltinToolCallDisplayEvent {
+            thread_id: protocol::ThreadId::new(),
+            turn_id: "turn-2".into(),
+            id: "builtin-unsubscribe".into(),
+            tool: "schedule_unsubscribe".into(),
+            arguments: serde_json::json!({
+                "subscription_id": "sub-schedule",
+            }),
+            status: protocol::protocol::BuiltinToolCallStatus::Completed,
+            output: Some(serde_json::json!({
+                "subscription_id": "sub-schedule",
+                "unsubscribed": true,
+            })),
+            lifecycle_at_ms: 456,
         }
     }
 
@@ -975,32 +1016,34 @@ mod build_api_turns_from_rollout_items_tests {
     }
 
     #[test]
-    fn limited_replay_projects_active_schedule_subscription_metadata() {
+    fn limited_replay_projects_active_schedule_subscription_from_persisted_event_after_compact() {
         let persisted = persisted_rollout_items(
-            &[RolloutItem::SessionMeta(SessionMetaLine {
-                meta: SessionMeta {
-                    subscriptions: Some(vec![PersistedSubscription::Schedule {
-                        subscription_id: "sub-schedule".into(),
-                        schedule: ScheduleSpec::EveryInterval {
-                            interval_ms: 60_000,
-                        },
-                        label: Some("standup".into()),
-                        message: None,
-                    }]),
-                    ..Default::default()
-                },
-                git: None,
-            })],
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                    schedule_subscribe_event(None),
+                )),
+                RolloutItem::Compacted(protocol::protocol::CompactedItem {
+                    message: String::new(),
+                    replacement_history: None,
+                    visible_replacement_history_len: None,
+                }),
+            ],
             EventPersistenceMode::Limited,
         );
 
         let turns = build_api_turns_from_rollout_items(&persisted);
 
-        assert_eq!(turns.len(), 1);
+        assert_eq!(turns.len(), 2);
         assert_eq!(
-            turns[0].items,
+            turns[1].items,
             vec![ThreadItem::BuiltinToolCall {
-                id: "active-subscription:sub-schedule".into(),
+                id: "builtin-subscribe".into(),
                 tool: "schedule_subscribe".into(),
                 arguments: serde_json::json!({
                     "schedule": {
@@ -1018,32 +1061,36 @@ mod build_api_turns_from_rollout_items_tests {
     }
 
     #[test]
-    fn limited_replay_projects_active_schedule_subscription_message() {
+    fn limited_replay_projects_active_schedule_subscription_message_from_persisted_event() {
         let persisted = persisted_rollout_items(
-            &[RolloutItem::SessionMeta(SessionMetaLine {
-                meta: SessionMeta {
-                    subscriptions: Some(vec![PersistedSubscription::Schedule {
-                        subscription_id: "sub-schedule".into(),
-                        schedule: ScheduleSpec::EveryInterval {
-                            interval_ms: 60_000,
-                        },
-                        label: Some("standup".into()),
-                        message: Some("Clean checkout targets and report the result.".into()),
-                    }]),
-                    ..Default::default()
-                },
-                git: None,
-            })],
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                    schedule_subscribe_event(Some(
+                        "Clean checkout targets and report the result.",
+                    )),
+                )),
+                RolloutItem::Compacted(protocol::protocol::CompactedItem {
+                    message: String::new(),
+                    replacement_history: None,
+                    visible_replacement_history_len: None,
+                }),
+            ],
             EventPersistenceMode::Limited,
         );
 
         let turns = build_api_turns_from_rollout_items(&persisted);
 
-        assert_eq!(turns.len(), 1);
+        assert_eq!(turns.len(), 2);
         assert_eq!(
-            turns[0].items,
+            turns[1].items,
             vec![ThreadItem::BuiltinToolCall {
-                id: "active-subscription:sub-schedule".into(),
+                id: "builtin-subscribe".into(),
                 tool: "schedule_subscribe".into(),
                 arguments: serde_json::json!({
                     "schedule": {
@@ -1059,6 +1106,151 @@ mod build_api_turns_from_rollout_items_tests {
                 })),
             }]
         );
+    }
+
+    #[test]
+    fn limited_replay_does_not_revive_session_meta_subscription_display() {
+        let persisted = persisted_rollout_items(
+            &[RolloutItem::SessionMeta(
+                protocol::protocol::SessionMetaLine {
+                    meta: protocol::protocol::SessionMeta {
+                        subscriptions: Some(vec![protocol::subscriptions::PersistedSubscription::Schedule {
+                            subscription_id: "sub-schedule".into(),
+                            schedule: protocol::subscriptions::ScheduleSpec::EveryInterval {
+                                interval_ms: 60_000,
+                            },
+                            label: Some("standup".into()),
+                            message: None,
+                        }]),
+                        ..Default::default()
+                    },
+                    git: None,
+                },
+            )],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert!(turns.is_empty());
+    }
+
+    #[test]
+    fn limited_replay_does_not_restore_unsubscribed_schedule_after_compact() {
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                    schedule_subscribe_event(None),
+                )),
+                RolloutItem::Compacted(protocol::protocol::CompactedItem {
+                    message: String::new(),
+                    replacement_history: None,
+                    visible_replacement_history_len: None,
+                }),
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-2".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                    schedule_unsubscribe_event(),
+                )),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 3);
+        assert_eq!(turns[1].id, "turn-2");
+        assert_eq!(turns[1].items.len(), 1);
+        assert_eq!(turns[2].id, "active-subscriptions");
+        assert!(turns[2].items.is_empty());
+    }
+
+    #[test]
+    fn limited_replay_projects_running_command_activity_after_compact() {
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::ExecCommandBegin(exec_command_begin_event(
+                    CoreExecCommandSource::Agent,
+                ))),
+                RolloutItem::Compacted(protocol::protocol::CompactedItem {
+                    message: String::new(),
+                    replacement_history: None,
+                    visible_replacement_history_len: None,
+                }),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].id, "active-commands");
+        assert!(matches!(
+            turns[1].items.as_slice(),
+            [ThreadItem::CommandExecution {
+                id,
+                status: CommandExecutionStatus::InProgress,
+                source: CommandExecutionSource::Agent,
+                ..
+            }] if id == "exec-1"
+        ));
+    }
+
+    #[test]
+    fn limited_replay_projects_terminal_command_activity_when_end_follows_compact() {
+        let persisted = persisted_rollout_items(
+            &[
+                RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".into(),
+                    started_at: None,
+                    model_context_window: None,
+                    collaboration_mode_kind: Default::default(),
+                })),
+                RolloutItem::EventMsg(EventMsg::ExecCommandBegin(exec_command_begin_event(
+                    CoreExecCommandSource::Agent,
+                ))),
+                RolloutItem::Compacted(protocol::protocol::CompactedItem {
+                    message: String::new(),
+                    replacement_history: None,
+                    visible_replacement_history_len: None,
+                }),
+                RolloutItem::EventMsg(EventMsg::ExecCommandEnd(exec_command_end_event(
+                    CoreExecCommandSource::Agent,
+                ))),
+            ],
+            EventPersistenceMode::Limited,
+        );
+
+        let turns = build_api_turns_from_rollout_items(&persisted);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].id, "active-commands");
+        assert!(matches!(
+            turns[1].items.as_slice(),
+            [ThreadItem::CommandExecution {
+                id,
+                status: CommandExecutionStatus::Completed,
+                aggregated_output: Some(output),
+                exit_code: Some(0),
+                ..
+            }] if id == "exec-1" && output == "hello world\n"
+        ));
     }
 
     #[test]

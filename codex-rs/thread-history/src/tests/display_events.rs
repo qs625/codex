@@ -440,6 +440,121 @@ use super::*;
         );
     }
 
+    fn exec_command_begin_event(source: ExecCommandSource) -> ExecCommandBeginEvent {
+        ExecCommandBeginEvent {
+            call_id: "exec-1".into(),
+            started_at_ms: 123,
+            process_id: Some("pid-1".into()),
+            turn_id: "turn-1".into(),
+            command: vec!["echo".into(), "hello world".into()],
+            cwd: test_path_buf("/tmp").abs(),
+            parsed_cmd: vec![ParsedCommand::Unknown {
+                cmd: "echo hello world".into(),
+            }],
+            source,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+        }
+    }
+
+    fn exec_command_end_event(source: ExecCommandSource) -> ExecCommandEndEvent {
+        ExecCommandEndEvent {
+            call_id: "exec-1".into(),
+            process_id: Some("pid-1".into()),
+            turn_id: "turn-1".into(),
+            completed_at_ms: 456,
+            command: vec!["echo".into(), "hello world".into()],
+            cwd: test_path_buf("/tmp").abs(),
+            parsed_cmd: vec![ParsedCommand::Unknown {
+                cmd: "echo hello world".into(),
+            }],
+            source,
+            interaction_input: None,
+            initial_wait_ms: Some(1_000),
+            notify_on: Some(protocol::protocol::ExecCommandNotifyOn::Exit),
+            stdout: "hello world\n".into(),
+            stderr: String::new(),
+            aggregated_output: "hello world\n".into(),
+            exit_code: 0,
+            duration: Duration::from_millis(12),
+            formatted_output: "hello world\n".into(),
+            status: CoreExecCommandStatus::Completed,
+        }
+    }
+
+    #[test]
+    fn running_command_before_compact_rebuilds_current_activity_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandBegin(exec_command_begin_event(
+                ExecCommandSource::Agent,
+            ))),
+            RolloutItem::Compacted(CompactedItem {
+                message: String::new(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].id, "active-commands");
+        assert!(matches!(
+            turns[1].items.as_slice(),
+            [ThreadItem::CommandExecution {
+                id,
+                status: CommandExecutionStatus::InProgress,
+                source: CommandExecutionSource::Agent,
+                ..
+            }] if id == "exec-1"
+        ));
+    }
+
+    #[test]
+    fn command_end_after_compact_rebuilds_terminal_current_activity_item() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::ExecCommandBegin(exec_command_begin_event(
+                ExecCommandSource::Agent,
+            ))),
+            RolloutItem::Compacted(CompactedItem {
+                message: String::new(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            }),
+            RolloutItem::EventMsg(EventMsg::ExecCommandEnd(exec_command_end_event(
+                ExecCommandSource::Agent,
+            ))),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].id, "active-commands");
+        assert!(matches!(
+            turns[1].items.as_slice(),
+            [ThreadItem::CommandExecution {
+                id,
+                status: CommandExecutionStatus::Completed,
+                aggregated_output: Some(output),
+                exit_code: Some(0),
+                ..
+            }] if id == "exec-1" && output == "hello world\n"
+        ));
+    }
+
     #[test]
     fn dedicated_display_event_ignores_legacy_response_item_fallback() {
         let items = vec![
@@ -628,36 +743,18 @@ use super::*;
     }
 
     #[test]
-    fn active_schedule_subscription_metadata_rebuilds_builtin_monitor_item() {
+    fn active_schedule_subscription_metadata_does_not_rebuild_display_item() {
         let items = vec![RolloutItem::SessionMeta(
             session_meta_with_schedule_subscription("sub-schedule"),
         )];
 
         let turns = build_turns_from_rollout_items(&items);
 
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::BuiltinToolCall {
-                id: "active-subscription:sub-schedule".into(),
-                tool: "schedule_subscribe".into(),
-                arguments: serde_json::json!({
-                    "schedule": {
-                        "kind": "every_interval",
-                        "interval_ms": 60000,
-                    },
-                    "label": "standup",
-                }),
-                status: DynamicToolCallStatus::Completed,
-                output: Some(serde_json::json!({
-                    "subscription_id": "sub-schedule",
-                })),
-            }]
-        );
+        assert!(turns.is_empty());
     }
 
     #[test]
-    fn active_schedule_subscription_metadata_rebuilds_message_argument() {
+    fn active_schedule_subscription_metadata_message_does_not_rebuild_display_item() {
         let items = vec![RolloutItem::SessionMeta(
             session_meta_with_schedule_subscription_message(
                 "sub-schedule",
@@ -667,26 +764,7 @@ use super::*;
 
         let turns = build_turns_from_rollout_items(&items);
 
-        assert_eq!(turns.len(), 1);
-        assert_eq!(
-            turns[0].items,
-            vec![ThreadItem::BuiltinToolCall {
-                id: "active-subscription:sub-schedule".into(),
-                tool: "schedule_subscribe".into(),
-                arguments: serde_json::json!({
-                    "schedule": {
-                        "kind": "every_interval",
-                        "interval_ms": 60000,
-                    },
-                    "label": "standup",
-                    "message": "Clean checkout targets and report the result.",
-                }),
-                status: DynamicToolCallStatus::Completed,
-                output: Some(serde_json::json!({
-                    "subscription_id": "sub-schedule",
-                })),
-            }]
-        );
+        assert!(turns.is_empty());
     }
 
     #[test]
@@ -746,6 +824,67 @@ use super::*;
     }
 
     #[test]
+    fn active_schedule_subscription_event_before_compact_rebuilds_current_activity_item() {
+        let output = serde_json::json!({
+            "subscription_id": "sub-schedule",
+            "next_fire_at": "2026-07-27T10:00:00Z",
+            "schedule_summary": "Every 60 seconds",
+        });
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "builtin-subscribe".into(),
+                    tool: "schedule_subscribe".into(),
+                    arguments: serde_json::json!({
+                        "schedule": {
+                            "kind": "every_interval",
+                            "interval_ms": 60000,
+                        },
+                        "label": "standup",
+                    }),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(output.clone()),
+                    lifecycle_at_ms: 123,
+                },
+            )),
+            RolloutItem::Compacted(CompactedItem {
+                message: String::new(),
+                replacement_history: None,
+                visible_replacement_history_len: None,
+            }),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].id, "active-subscriptions");
+        assert_eq!(
+            turns[1].items,
+            vec![ThreadItem::BuiltinToolCall {
+                id: "builtin-subscribe".into(),
+                tool: "schedule_subscribe".into(),
+                arguments: serde_json::json!({
+                    "schedule": {
+                        "kind": "every_interval",
+                        "interval_ms": 60000,
+                    },
+                    "label": "standup",
+                }),
+                status: DynamicToolCallStatus::Completed,
+                output: Some(output),
+            }]
+        );
+    }
+
+    #[test]
     fn active_schedule_subscription_metadata_before_compact_is_not_revived() {
         let items = vec![
             RolloutItem::SessionMeta(session_meta_with_schedule_subscription("sub-schedule")),
@@ -773,7 +912,7 @@ use super::*;
     }
 
     #[test]
-    fn latest_empty_subscription_metadata_deactivates_historical_schedule_item() {
+    fn latest_empty_subscription_metadata_does_not_deactivate_historical_schedule_item() {
         let subscribe_output = serde_json::json!({
             "subscription_id": "sub-schedule",
             "next_fire_at": "2026-07-27T10:00:00Z",
@@ -803,7 +942,7 @@ use super::*;
 
         let turns = build_turns_from_rollout_items(&items);
 
-        assert_eq!(turns.len(), 2);
+        assert_eq!(turns.len(), 1);
         assert_eq!(
             turns[0].items,
             vec![ThreadItem::BuiltinToolCall {
@@ -812,21 +951,6 @@ use super::*;
                 arguments: serde_json::json!({}),
                 status: DynamicToolCallStatus::Completed,
                 output: Some(subscribe_output),
-            }]
-        );
-        assert_eq!(
-            turns[1].items,
-            vec![ThreadItem::BuiltinToolCall {
-                id: "active-subscription:sub-schedule:inactive".into(),
-                tool: "schedule_unsubscribe".into(),
-                arguments: serde_json::json!({
-                    "subscription_id": "sub-schedule",
-                }),
-                status: DynamicToolCallStatus::Completed,
-                output: Some(serde_json::json!({
-                    "subscription_id": "sub-schedule",
-                    "unsubscribed": true,
-                })),
             }]
         );
     }

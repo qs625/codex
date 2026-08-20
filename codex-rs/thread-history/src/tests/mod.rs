@@ -54,6 +54,7 @@ use protocol::protocol::CompactedItem;
 use protocol::protocol::ContextCompactedEvent;
 use protocol::protocol::DynamicToolCallResponseEvent;
 use protocol::protocol::ErrorEvent;
+use protocol::protocol::ExecCommandBeginEvent;
 use protocol::protocol::ExecCommandEndEvent;
 use protocol::protocol::ExecCommandSource;
 use protocol::protocol::GuardianAssessmentEvent;

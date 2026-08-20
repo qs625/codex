@@ -1,4 +1,7 @@
+use super::ActivityItem;
+use super::CommandExecutionActivity;
 use super::ThreadHistoryBuilder;
+use super::is_recoverable_command_source;
 use super::compat_items::build_command_execution_begin_item;
 use super::compat_items::build_command_execution_end_item;
 use super::compat_items::build_file_change_approval_request_item;
@@ -66,6 +69,18 @@ impl ThreadHistoryBuilder {
 
     pub(super) fn handle_exec_command_begin(&mut self, payload: &ExecCommandBeginEvent) {
         let item = build_command_execution_begin_item(payload);
+        if is_recoverable_command_source(payload.source) {
+            self.command_activities.insert(
+                payload.call_id.clone(),
+                CommandExecutionActivity {
+                    begin: ActivityItem {
+                        index: self.current_rollout_index,
+                        item: item.clone(),
+                    },
+                    end: None,
+                },
+            );
+        }
         self.upsert_item_in_turn_id(&payload.turn_id, item);
     }
 
@@ -77,6 +92,14 @@ impl ThreadHistoryBuilder {
 
     pub(super) fn handle_exec_command_end(&mut self, payload: &ExecCommandEndEvent) {
         let item = build_command_execution_end_item(payload);
+        if is_recoverable_command_source(payload.source)
+            && let Some(activity) = self.command_activities.get_mut(&payload.call_id)
+        {
+            activity.end = Some(ActivityItem {
+                index: self.current_rollout_index,
+                item: item.clone(),
+            });
+        }
         self.upsert_item_in_turn_id(&payload.turn_id, item);
     }
 

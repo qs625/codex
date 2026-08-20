@@ -224,6 +224,7 @@ mod tests {
                 duration_ms: None,
             }],
             active_subscription_items: None,
+            active_command_items: None,
         }
     }
 }
