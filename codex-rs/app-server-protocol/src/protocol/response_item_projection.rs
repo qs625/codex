@@ -233,6 +233,7 @@ pub fn is_legacy_structured_assistant_message_text(text: &str) -> bool {
         return false;
     };
     is_inter_agent_communication_envelope(object)
+        || is_command_execution_notification_envelope(object)
 }
 
 #[doc(hidden)]
@@ -277,6 +278,33 @@ fn is_inter_agent_communication_envelope(
         ]
         .iter()
         .any(|key| object.contains_key(*key))
+}
+
+fn is_command_execution_notification_envelope(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    matches!(
+        object.get("type").and_then(serde_json::Value::as_str),
+        Some("command_execution_notification")
+    ) && object
+        .get("command_item_id")
+        .is_some_and(serde_json::Value::is_string)
+        && matches!(
+            object.get("kind").and_then(serde_json::Value::as_str),
+            Some("output" | "exit")
+        )
+        && object
+            .get("message")
+            .is_some_and(serde_json::Value::is_string)
+        && object
+            .get("created_at_ms")
+            .is_some_and(serde_json::Value::is_number)
+        && object
+            .get("output")
+            .map_or(true, |value| value.is_null() || value.is_string())
+        && object
+            .get("exit_code")
+            .map_or(true, |value| value.is_null() || value.is_number())
 }
 
 #[cfg(test)]
@@ -348,5 +376,45 @@ mod tests {
         .to_string();
 
         assert!(is_legacy_structured_assistant_message_text(&message));
+    }
+
+    #[test]
+    fn legacy_structured_message_filter_handles_command_execution_notification_envelope() {
+        let message = serde_json::json!({
+            "type": "command_execution_notification",
+            "command_item_id": "call_OGVf4iCZPdZ19BGEqkwvD7UM",
+            "kind": "exit",
+            "message": "Command call_OGVf4iCZPdZ19BGEqkwvD7UM has exited with code 0.",
+            "output": "cargo test: 3 passed, 206 filtered out (2 suites, 0.00s)\n",
+            "exit_code": 0,
+            "created_at_ms": 1787215776940_i64,
+        })
+        .to_string();
+
+        assert!(is_legacy_structured_assistant_message_text(&message));
+    }
+
+    #[test]
+    fn legacy_structured_message_filter_preserves_command_notification_like_json() {
+        let documentation = serde_json::json!({
+            "type": "command_execution_notification",
+            "note": "this is documentation",
+        })
+        .to_string();
+        assert!(!is_legacy_structured_assistant_message_text(
+            &documentation
+        ));
+
+        let invalid_kind = serde_json::json!({
+            "type": "command_execution_notification",
+            "command_item_id": "call_1",
+            "kind": "documentation",
+            "message": "documenting the shape",
+            "created_at_ms": 1787215776940_i64,
+        })
+        .to_string();
+        assert!(!is_legacy_structured_assistant_message_text(
+            &invalid_kind
+        ));
     }
 }
