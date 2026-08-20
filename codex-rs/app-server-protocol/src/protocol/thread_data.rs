@@ -368,12 +368,18 @@ pub struct Thread {
     /// For `thread/start`, `thread/started`, and other metadata-only Thread payloads,
     /// the turns field will be an empty list.
     pub turns: Vec<Turn>,
-    /// Current active subscription display facts restored from thread metadata.
+    /// Current active subscription display facts restored from persisted activity events.
     /// These are intentionally kept out of `turns`, which represents ordinary
     /// conversation history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema-export", ts(optional))]
     pub active_subscription_items: Option<Vec<ThreadItem>>,
+    /// Current command display facts restored from persisted activity events.
+    /// These are intentionally kept out of `turns`, which represents ordinary
+    /// conversation history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema-export", ts(optional))]
+    pub active_command_items: Option<Vec<ThreadItem>>,
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]

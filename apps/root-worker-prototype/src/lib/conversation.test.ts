@@ -663,6 +663,45 @@ test("keeps command notifications separated across replacement history boundarie
   );
 });
 
+test("renders active command current state items after conversation turns", () => {
+  const thread = {
+    ...makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+        replacementHistory: [],
+      },
+    ]),
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "cargo test",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "inProgress",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "cargo test" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const entries = buildConversationEntries(thread);
+
+  assert.deepEqual(
+    entries.map((entry) => [entry.id, entry.kind, entry.toolName, entry.turnId]),
+    [
+      ["compact-1", "compact", undefined, "turn-1"],
+      ["exec-1", "tool", "cargo test", "active-commands"],
+    ],
+  );
+});
+
 test("renders command wait and stdin actions as standalone event entries", () => {
   const entries = buildConversationEntries(
     makeThread([

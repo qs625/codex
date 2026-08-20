@@ -1836,6 +1836,44 @@ test("upsertThread preserves active subscriptions across compact pruning", () =>
   );
 });
 
+test("upsertThread preserves active commands across compact pruning", () => {
+  const command: ThreadItem = {
+    type: "commandExecution",
+    id: "exec-1",
+    command: "cargo test",
+    cwd: "/tmp",
+    processId: "process-1",
+    source: "agent",
+    status: "inProgress",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    commandActions: [{ type: "unknown", command: "cargo test" }],
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const thread = upsertThread([], {
+    ...makeThread(),
+    turns: [
+      makeTurn("turn-old", [
+        makeUserMessage("old-user", "old request"),
+        makeAgentMessage("old-agent", "old answer"),
+      ]),
+      makeTurn("active-commands", [command]),
+      makeTurn("turn-compact", [
+        makeCompactItem("compact-1"),
+        makeAgentMessage("after-compact", "continued"),
+      ]),
+    ],
+  })[0]!;
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "after-compact"],
+  );
+  assert.deepEqual(thread.activeCommandItems, [command]);
+});
+
 test("upsertThread does not revive pre-compact subscriptions after compact cleanup", () => {
   const scheduleMonitor: ThreadItem = {
     type: "builtinToolCall",

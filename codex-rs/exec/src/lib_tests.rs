@@ -320,6 +320,7 @@ fn turn_items_for_thread_returns_matching_turn_items() {
         thread_source: None,
         agent_nickname: None,
         agent_role: None,
+        agent_path: None,
         git_info: None,
         name: None,
         skills: Vec::new(),
@@ -355,6 +356,8 @@ fn turn_items_for_thread_returns_matching_turn_items() {
                 duration_ms: None,
             },
         ],
+        active_subscription_items: None,
+        active_command_items: None,
     };
 
     assert_eq!(
@@ -568,12 +571,15 @@ fn sample_thread_start_response() -> ThreadStartResponse {
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
+            agent_path: None,
             git_info: None,
             name: Some("thread".to_string()),
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
             turns: vec![],
+            active_subscription_items: None,
+            active_command_items: None,
         },
         model: "gpt-5.4".to_string(),
         model_provider: "openai".to_string(),

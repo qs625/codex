@@ -106,8 +106,14 @@ contextUsage: ThreadContextUsage | null,
  */
 turns: Array<Turn>,
 /**
- * Current active subscription display facts restored from thread metadata.
+ * Current active subscription display facts restored from persisted activity events.
  * These are intentionally kept out of `turns`, which represents ordinary
  * conversation history.
  */
-activeSubscriptionItems?: Array<ThreadItem>, };
+activeSubscriptionItems?: Array<ThreadItem>,
+/**
+ * Current command display facts restored from persisted activity events.
+ * These are intentionally kept out of `turns`, which represents ordinary
+ * conversation history.
+ */
+activeCommandItems?: Array<ThreadItem>, };

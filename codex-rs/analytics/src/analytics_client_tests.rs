@@ -179,12 +179,15 @@ fn sample_thread_with_metadata(
         thread_source,
         agent_nickname: None,
         agent_role: None,
+        agent_path: None,
         git_info: None,
         name: None,
         skills: Vec::new(),
         token_usage: None,
         context_usage: None,
         turns: Vec::new(),
+        active_subscription_items: None,
+        active_command_items: None,
     }
 }
 

@@ -338,11 +338,14 @@ mod tests {
             thread_source: None,
             agent_nickname: None,
             agent_role: None,
+            agent_path: None,
             git_info: None,
             name: Some("read thread".to_string()),
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
+            active_subscription_items: None,
+            active_command_items: None,
             turns: Vec::new(),
         };
 
