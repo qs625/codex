@@ -330,7 +330,7 @@ use super::*;
     }
 
     #[test]
-    fn typed_unknown_inter_agent_history_is_ignored() {
+    fn typed_unknown_inter_agent_history_rebuilds_generic_collab_message() {
         let communication = InterAgentCommunication::new(
             AgentPath::try_from("/root/worker").expect("agent path"),
             AgentPath::root(),
@@ -359,7 +359,20 @@ use super::*;
         let turns = build_turns_from_rollout_items(&items);
 
         assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].items, Vec::<ThreadItem>::new());
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::CollabAgentMessage {
+                id: "typed-unknown-collab".into(),
+                sender_thread_id: None,
+                sender_path: "/root/worker".into(),
+                recipient_thread_id: None,
+                recipient_path: "/root".into(),
+                other_recipient_paths: Vec::new(),
+                operation: CollabAgentOperation::Unknown,
+                content: "raw json should not leak".into(),
+                trigger_turn: true,
+            }]
+        );
     }
 
     #[test]

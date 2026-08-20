@@ -553,6 +553,25 @@ fn raw_subagent_notification_message() -> String {
     .to_string()
 }
 
+fn nullable_inter_agent_envelope_message() -> String {
+    serde_json::json!({
+        "author": "/cp_http_api/frontend_taskstatus_fix_2",
+        "recipient": "/cp_http_api",
+        "other_recipients": [],
+        "content": "typecheck is available ...",
+        "content_parts": [],
+        "operation": null,
+        "trigger_turn": false,
+        "sender_thread_id": null,
+        "recipient_thread_id": null,
+        "status": null,
+        "lifecycle_status": null,
+        "agent_nickname": null,
+        "agent_role": null,
+    })
+    .to_string()
+}
+
 #[test]
 fn thread_history_filters_raw_subagent_notification_user_message() {
     let items = vec![protocol::protocol::RolloutItem::EventMsg(
@@ -632,6 +651,103 @@ fn thread_history_preserves_raw_marker_text_with_user_message_metadata() {
                 },
             ],
         }
+    );
+}
+
+#[test]
+fn thread_history_filters_nullable_raw_inter_agent_envelope_agent_message() {
+    let items = vec![protocol::protocol::RolloutItem::EventMsg(
+        protocol::protocol::EventMsg::AgentMessage(protocol::protocol::AgentMessageEvent {
+            message: nullable_inter_agent_envelope_message(),
+            phase: None,
+            memory_citation: None,
+        }),
+    )];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert!(turns.is_empty());
+}
+
+#[test]
+fn thread_history_filters_nullable_raw_inter_agent_envelope_user_message() {
+    let items = vec![protocol::protocol::RolloutItem::EventMsg(
+        protocol::protocol::EventMsg::UserMessage(protocol::protocol::UserMessageEvent {
+            message: nullable_inter_agent_envelope_message(),
+            images: None,
+            local_images: Vec::new(),
+            skills: Vec::new(),
+            text_elements: Vec::new(),
+        }),
+    )];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert!(turns.is_empty());
+}
+
+#[test]
+fn thread_history_preserves_ordinary_agent_json_with_operation_field() {
+    let message = serde_json::json!({
+        "author": "/root/worker",
+        "recipient": "/root",
+        "content": "plain assistant json",
+        "operation": "sendMessage",
+    })
+    .to_string();
+    let items = vec![protocol::protocol::RolloutItem::EventMsg(
+        protocol::protocol::EventMsg::AgentMessage(protocol::protocol::AgentMessageEvent {
+            message: message.clone(),
+            phase: None,
+            memory_citation: None,
+        }),
+    )];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        turns[0].items,
+        vec![ThreadItem::AgentMessage {
+            id: "item-1".into(),
+            text: message,
+            phase: None,
+            memory_citation: None,
+        }]
+    );
+}
+
+#[test]
+fn thread_history_preserves_ordinary_user_json_with_operation_field() {
+    let message = serde_json::json!({
+        "author": "/root/worker",
+        "recipient": "/root",
+        "content": "plain user json",
+        "operation": "sendMessage",
+    })
+    .to_string();
+    let items = vec![protocol::protocol::RolloutItem::EventMsg(
+        protocol::protocol::EventMsg::UserMessage(protocol::protocol::UserMessageEvent {
+            message: message.clone(),
+            images: None,
+            local_images: Vec::new(),
+            skills: Vec::new(),
+            text_elements: Vec::new(),
+        }),
+    )];
+
+    let turns = crate::protocol::thread_history::build_turns_from_rollout_items(&items);
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        turns[0].items,
+        vec![ThreadItem::UserMessage {
+            id: "item-1".into(),
+            content: vec![UserInput::Text {
+                text: message,
+                text_elements: Vec::new(),
+            }],
+        }]
     );
 }
 
@@ -983,6 +1099,69 @@ fn live_projection_filters_raw_subagent_notification_user_item() {
         });
 
     assert!(crate::protocol::event_item_projection::project_event_msg_item(&event).is_none());
+}
+
+#[test]
+fn live_projection_filters_nullable_raw_inter_agent_envelope_agent_item() {
+    let event =
+        protocol::protocol::EventMsg::ItemCompleted(protocol::protocol::ItemCompletedEvent {
+            thread_id: protocol::ThreadId::new(),
+            turn_id: "turn-1".into(),
+            item: protocol::items::TurnItem::AgentMessage(protocol::items::AgentMessageItem {
+                id: "agent-1".into(),
+                content: vec![protocol::items::AgentMessageContent::Text {
+                    text: nullable_inter_agent_envelope_message(),
+                }],
+                phase: None,
+                memory_citation: None,
+            }),
+            completed_at_ms: 1,
+        });
+
+    assert!(crate::protocol::event_item_projection::project_event_msg_item(&event).is_none());
+}
+
+#[test]
+fn live_projection_preserves_ordinary_agent_json_with_operation_field() {
+    let message = serde_json::json!({
+        "author": "/root/worker",
+        "recipient": "/root",
+        "content": "plain assistant json",
+        "operation": "sendMessage",
+    })
+    .to_string();
+    let event =
+        protocol::protocol::EventMsg::ItemCompleted(protocol::protocol::ItemCompletedEvent {
+            thread_id: protocol::ThreadId::new(),
+            turn_id: "turn-1".into(),
+            item: protocol::items::TurnItem::AgentMessage(protocol::items::AgentMessageItem {
+                id: "agent-1".into(),
+                content: vec![protocol::items::AgentMessageContent::Text {
+                    text: message.clone(),
+                }],
+                phase: None,
+                memory_citation: None,
+            }),
+            completed_at_ms: 1,
+        });
+
+    let projected =
+        crate::protocol::event_item_projection::project_event_msg_item(&event).expect("projected");
+    let crate::protocol::event_item_projection::ProjectedEventItem::Completed { item, .. } =
+        projected
+    else {
+        panic!("expected completed item");
+    };
+
+    assert_eq!(
+        item,
+        ThreadItem::AgentMessage {
+            id: "agent-1".into(),
+            text: message,
+            phase: None,
+            memory_citation: None,
+        }
+    );
 }
 
 #[test]
