@@ -1378,7 +1378,15 @@ impl Session {
                 item
             })
             .collect();
-        self.record_conversation_items(turn_context, &items).await;
+        let conversation_items = items
+            .iter()
+            .filter(|item| !is_display_only_response_item(item))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !conversation_items.is_empty() {
+            self.record_conversation_items(turn_context, &conversation_items)
+                .await;
+        }
         self.emit_model_observed_display_events(turn_context, &items)
             .await;
         self.emit_completed_model_item_display_events(turn_context, &items)
@@ -2198,6 +2206,10 @@ fn response_item_id(item: &ResponseItem) -> Option<&str> {
         | ResponseItem::InterAgentCommunication { id, .. } => id.as_deref(),
         _ => None,
     }
+}
+
+fn is_display_only_response_item(item: &ResponseItem) -> bool {
+    matches!(item, ResponseItem::CommandExecutionNotification { .. })
 }
 
 fn copy_safe_disabled_workflow_root_for_display(

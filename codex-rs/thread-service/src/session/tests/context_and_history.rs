@@ -1267,6 +1267,52 @@ async fn explicit_record_conversation_items_emits_command_wait_display_event() {
 }
 
 #[tokio::test]
+async fn command_execution_notification_display_is_not_recorded_as_conversation_item() {
+    let (sess, tc, rx) = make_session_and_context_with_rx().await;
+
+    sess.record_model_items_and_emit_display_events(
+        &tc,
+        &[ResponseItem::CommandExecutionNotification {
+            id: Some("cmd-1:notification:exit".to_string()),
+            command_item_id: "cmd-1".to_string(),
+            kind: protocol::models::CommandExecutionNotificationKind::Exit,
+            message: "Command cmd-1 has exited with code 0.".to_string(),
+            output: Some("cargo test: 1 passed\n".to_string()),
+            exit_code: Some(0),
+            created_at_ms: 1234,
+        }],
+    )
+    .await;
+
+    assert!(
+        !sess
+            .clone_history()
+            .await
+            .raw_items()
+            .iter()
+            .any(|item| matches!(item, ResponseItem::CommandExecutionNotification { .. })),
+        "command execution notification should remain display-only"
+    );
+
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = rx.recv().await.expect("event");
+            if let EventMsg::CommandExecutionNotificationCompleted(completed) = event.msg {
+                break completed;
+            }
+        }
+    })
+    .await
+    .expect("expected command notification display event");
+
+    assert_eq!(completed.command_item_id, "cmd-1");
+    assert_eq!(
+        completed.kind,
+        protocol::models::CommandExecutionNotificationKind::Exit
+    );
+}
+
+#[tokio::test]
 async fn record_conversation_items_does_not_emit_item_completed_for_structured_response_item() {
     let (sess, tc, rx) = make_session_and_context_with_rx().await;
     let trigger = EventDrivenToolTrigger {
@@ -3134,6 +3180,15 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
             }
         }
     }
+    assert!(
+        !sess
+            .clone_history()
+            .await
+            .raw_items()
+            .iter()
+            .any(|item| matches!(item, ResponseItem::CommandExecutionNotification { .. })),
+        "poll_event command notification should not be recorded as conversation history"
+    );
 
     timeout(Duration::from_secs(2), async {
         loop {
@@ -3170,7 +3225,7 @@ async fn deferred_command_exit_display_waits_for_request_construction_consumptio
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn leftover_command_exit_display_is_followed_by_provider_request_with_notification() -> anyhow::Result<()> {
+async fn leftover_command_exit_display_does_not_enter_provider_request_history() -> anyhow::Result<()> {
     let server = start_mock_server().await;
     let responses = mount_sse_sequence(
         &server,
@@ -3273,27 +3328,10 @@ async fn leftover_command_exit_display_is_followed_by_provider_request_with_noti
             item.get("command_item_id")
                 .and_then(serde_json::Value::as_str)
                 == Some("cmd-1")
-        })
-        .unwrap_or_else(|| {
-            panic!("provider request input should include command notification: {body}")
         });
-    assert_eq!(
-        notification_item
-            .get("kind")
-            .and_then(serde_json::Value::as_str),
-        Some("exit")
-    );
-    assert_eq!(
-        notification_item
-            .get("message")
-            .and_then(serde_json::Value::as_str),
-        Some("Command exit notification received.")
-    );
-    assert_eq!(
-        notification_item
-            .get("exit_code")
-            .and_then(serde_json::Value::as_i64),
-        Some(0)
+    assert!(
+        notification_item.is_none(),
+        "provider request input should not include display-only command notification: {body}"
     );
 
     Ok(())
