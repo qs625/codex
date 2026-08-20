@@ -21,6 +21,7 @@ const {
   localFilePathFromTarget,
   parseLocalFileTarget,
 } = require("./fileTargets.cjs");
+const { languageForFilePath } = require("./filePreviewLanguages.cjs");
 const { readGitCommitFiles, readGitSnapshot } = require("./gitPanel.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
 const {
@@ -1405,39 +1406,5 @@ function imageMimeForExtension(extension) {
       return "image/heic";
     default:
       return null;
-  }
-}
-
-function languageForFilePath(filePath) {
-  const extension = path.extname(filePath).toLowerCase();
-  switch (extension) {
-    case ".cjs":
-    case ".js":
-    case ".jsx":
-    case ".mjs":
-      return "javascript";
-    case ".ts":
-    case ".tsx":
-      return "typescript";
-    case ".rs":
-      return "rust";
-    case ".json":
-      return "json";
-    case ".md":
-    case ".markdown":
-      return "markdown";
-    case ".css":
-      return "css";
-    case ".html":
-      return "html";
-    case ".yml":
-    case ".yaml":
-      return "yaml";
-    case ".sh":
-    case ".zsh":
-    case ".fish":
-      return "shell";
-    default:
-      return "plaintext";
   }
 }
