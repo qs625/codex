@@ -174,6 +174,7 @@
 - compact 继续复用普通 `run_sampling_request()` / `build_prompt()` 链，但会在 compact 调用点显式覆盖为空的 `TurnToolInputs`，从而对模型隐藏全部 model-visible tools；这条限制只适用于 compact，不应误伤普通 turn 的 tool visibility。
 - memory 文件在 compact 后仍通过 `instruction_files` / init context 注入后续模型上下文；`CompactedItem.replacement_history` / `ContextCompaction.replacementHistory` 负责的是最小模型可见 history 种子与 persisted/UI compact 事实，不承载整份 memory markdown 的重复副本。
 - compact final output 的提取必须限定在“当前 compact turn、最后一次 compact prompt 之后”的 assistant 输出；不能从整段历史扫描最后 assistant message，否则会误吸上一轮普通回复。
+- context usage 的 loaded skills 表示当前 model-visible context 中可信的已加载 skill body 状态，不是“历史上曾经加载过 skill”的永久事实；successful compact 是 loaded-skill current-state 的强边界，compact replacement 前的 skill loads 不应继续让客户端或后续 skill 触发逻辑认为该 skill 当前仍 loaded。
 
 ## Validation Defaults
 - 默认只做最小必要验证，不默认运行全量 `cargo test`、广域 `just fix`、snapshot、schema 或 lockfile workflow。

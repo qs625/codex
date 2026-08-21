@@ -3,7 +3,6 @@ use std::sync::Arc;
 use app_server_protocol::ServerNotification;
 use app_server_protocol::Thread;
 use app_server_protocol::ThreadContextUsageUpdatedNotification;
-use thread_history::ThreadHistoryBuilder;
 use app_server_protocol::ThreadTokenUsage;
 use app_server_protocol::Turn;
 use app_server_protocol::TurnStatus;
@@ -16,6 +15,7 @@ use protocol::protocol::ThreadContextUsageCategoryBreakdown;
 use protocol::protocol::ThreadContextUsageLoadedSkills;
 use protocol::protocol::ThreadContextUsageToolBreakdown;
 use protocol::protocol::TokenUsageInfo;
+use thread_history::ThreadHistoryBuilder;
 
 use crate::live_thread_runtime::AppServerLiveThreadUsageRuntime;
 use crate::outgoing_message::ConnectionId;
@@ -188,15 +188,15 @@ pub(super) fn latest_thread_context_usage_from_rollout_items(
     rollout_items: &[RolloutItem],
 ) -> Option<ThreadContextUsage> {
     rollout_items.iter().rev().find_map(|item| match item {
+        RolloutItem::Compacted(_) => Some(None),
         RolloutItem::EventMsg(EventMsg::ThreadContextUsageUpdated(event)) => {
-            Some(event.usage.clone())
+            Some(Some(event.usage.clone()))
         }
         RolloutItem::ResponseItem(_)
-        | RolloutItem::Compacted(_)
         | RolloutItem::TurnContext(_)
         | RolloutItem::SessionMeta(_)
         | RolloutItem::EventMsg(_) => None,
-    })
+    })?
 }
 
 pub(super) fn latest_nonzero_thread_context_usage_from_rollout_items(
@@ -324,10 +324,11 @@ fn latest_context_usage_turn_id(thread: &Thread) -> String {
 #[cfg(test)]
 mod tests {
     use super::latest_context_usage_turn_id_from_rollout_items;
+    use super::latest_nonzero_thread_context_usage_from_rollout_items;
     use super::latest_thread_context_usage_from_rollout_items;
-    use thread_history::build_turns_from_rollout_items;
     use pretty_assertions::assert_eq;
     use protocol::protocol::AgentMessageEvent;
+    use protocol::protocol::CompactedItem;
     use protocol::protocol::EventMsg;
     use protocol::protocol::RolloutItem;
     use protocol::protocol::ThreadContextUsage;
@@ -336,6 +337,7 @@ mod tests {
     use protocol::protocol::ThreadContextUsageToolBreakdown;
     use protocol::protocol::ThreadContextUsageUpdatedEvent;
     use protocol::protocol::UserMessageEvent;
+    use thread_history::build_turns_from_rollout_items;
 
     #[test]
     fn replay_extracts_latest_context_usage() {
@@ -346,6 +348,41 @@ mod tests {
 
         assert_eq!(usage.total_bytes, 123);
         assert_eq!(usage.budget_used_percent, Some(64));
+    }
+
+    #[test]
+    fn replay_ignores_context_usage_before_latest_compact() {
+        let mut rollout_items = context_usage_history();
+        rollout_items.push(RolloutItem::Compacted(CompactedItem {
+            message: "compact summary".to_string(),
+            replacement_history: Some(Vec::new()),
+            visible_replacement_history_len: None,
+        }));
+
+        assert_eq!(
+            latest_thread_context_usage_from_rollout_items(rollout_items.as_slice()),
+            None
+        );
+        assert_eq!(
+            latest_nonzero_thread_context_usage_from_rollout_items(rollout_items.as_slice()),
+            None
+        );
+    }
+
+    #[test]
+    fn replay_uses_context_usage_after_latest_compact() {
+        let mut rollout_items = context_usage_history();
+        rollout_items.push(RolloutItem::Compacted(CompactedItem {
+            message: "compact summary".to_string(),
+            replacement_history: Some(Vec::new()),
+            visible_replacement_history_len: None,
+        }));
+        rollout_items.push(context_usage_event(456));
+
+        let usage = latest_thread_context_usage_from_rollout_items(rollout_items.as_slice())
+            .expect("post-compact usage");
+
+        assert_eq!(usage.total_bytes, 456);
     }
 
     #[test]
@@ -401,5 +438,32 @@ mod tests {
                 },
             )),
         ]
+    }
+
+    fn context_usage_event(total_bytes: i64) -> RolloutItem {
+        RolloutItem::EventMsg(EventMsg::ThreadContextUsageUpdated(
+            ThreadContextUsageUpdatedEvent {
+                usage: ThreadContextUsage {
+                    total_bytes,
+                    budget_used_percent: Some(64),
+                    categories: ThreadContextUsageCategoryBreakdown {
+                        compact: 10,
+                        skills_metadata: 11,
+                        concrete_skills: 12,
+                        tools_metadata: 13,
+                        tool_calls: 14,
+                        user_messages: 15,
+                        llm_messages: 16,
+                        reasoning: 17,
+                    },
+                    loaded_skills: ThreadContextUsageLoadedSkills {
+                        loaded_count: 0,
+                        total_count: Some(0),
+                        skills: Vec::new(),
+                    },
+                    tool_breakdown: ThreadContextUsageToolBreakdown::default(),
+                },
+            },
+        ))
     }
 }
