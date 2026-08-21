@@ -268,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn inter_agent_communication_response_input_item_preserves_commentary_phase() {
+    fn inter_agent_communication_response_input_item_uses_non_json_commentary_context() {
         let communication = InterAgentCommunication {
             author: AgentPath::root(),
             recipient: AgentPath::root().join("reviewer").expect("recipient path"),
@@ -280,20 +280,32 @@ mod tests {
             sender_thread_id: None,
             recipient_thread_id: None,
             status: None,
+            lifecycle_status: None,
             agent_nickname: None,
             agent_role: None,
         };
 
-        assert_eq!(
-            communication.to_response_input_item(),
-            ResponseInputItem::Message {
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: serde_json::to_string(&communication).expect("serialize communication"),
-                }],
-                phase: Some(MessagePhase::Commentary),
-            }
-        );
+        let ResponseInputItem::Message {
+            role,
+            content,
+            phase,
+        } = communication.to_response_input_item()
+        else {
+            panic!("inter-agent context should format as a model message");
+        };
+
+        assert_eq!(role, "assistant");
+        assert_eq!(phase, Some(MessagePhase::Commentary));
+        let [ContentItem::OutputText { text }] = content.as_slice() else {
+            panic!("inter-agent context should be a single text item");
+        };
+        assert!(text.contains("Inter-agent communication received."));
+        assert!(text.contains("Author: /"));
+        assert!(text.contains("Recipient: /root/reviewer"));
+        assert!(text.contains("Operation: unknown"));
+        assert!(text.contains("Content:\nreview the diff"));
+        assert!(!text.trim_start().starts_with('{'));
+        assert!(!text.contains("\"author\""));
     }
 
     #[test]

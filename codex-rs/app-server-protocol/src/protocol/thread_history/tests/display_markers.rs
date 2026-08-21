@@ -186,6 +186,41 @@ use super::*;
     }
 
     #[test]
+    fn filters_status_message_raw_inter_agent_envelope_without_displaying_json() {
+        let message = serde_json::json!({
+            "author": "/cp_http_api/owner_infra",
+            "recipient": "/cp_http_api",
+            "other_recipients": [],
+            "content": "status update",
+            "content_parts": [],
+            "operation": "message",
+            "trigger_turn": false,
+            "sender_thread_id": null,
+            "recipient_thread_id": null,
+            "status": {
+                "in_progress": true
+            },
+            "lifecycle_status": null,
+            "agent_nickname": null,
+            "agent_role": null,
+        })
+        .to_string();
+        let events = [EventMsg::AgentMessage(AgentMessageEvent {
+            message,
+            phase: None,
+            memory_citation: None,
+        })];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert!(turns.is_empty());
+    }
+
+    #[test]
     fn filters_raw_command_execution_notification_envelope_without_displaying_json() {
         let message = serde_json::json!({
             "type": "command_execution_notification",
