@@ -158,6 +158,237 @@ test("builds command monitors from active command current state items", () => {
   );
 });
 
+test("terminal active command current state clears stale running command monitors", () => {
+  const thread = {
+    ...makeThread(
+      [
+        {
+          type: "commandExecution",
+          id: "exec-1",
+          command: "cargo test",
+          cwd: "/tmp/project",
+          processId: "process-1",
+          source: "agent",
+          status: "inProgress",
+          initialWaitMs: 1000,
+          notifyOn: "exit",
+          commandActions: [{ type: "unknown", command: "cargo test" }],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      ],
+      { type: "active", activeFlags: ["running"] },
+    ),
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "cargo test",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "completed",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "cargo test" }],
+        aggregatedOutput: "done\n",
+        exitCode: 0,
+        durationMs: 250,
+      },
+    ],
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "command")
+      ?.monitors,
+    [],
+  );
+});
+
+test("running active command current state replaces stale running command monitors", () => {
+  const thread = {
+    ...makeThread(
+      [
+        {
+          type: "commandExecution",
+          id: "exec-1",
+          command: "cargo test",
+          cwd: "/tmp/project",
+          processId: "process-1",
+          source: "agent",
+          status: "inProgress",
+          initialWaitMs: 1000,
+          notifyOn: "exit",
+          commandActions: [{ type: "unknown", command: "cargo test" }],
+          aggregatedOutput: "old output\n",
+          exitCode: null,
+          durationMs: null,
+        },
+      ],
+      { type: "active", activeFlags: ["running"] },
+    ),
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "cargo test --watch",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "inProgress",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "cargo test --watch" }],
+        aggregatedOutput: "new output\n",
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "command")
+      ?.monitors,
+    [
+      {
+        id: "exec-1",
+        subscriptionId: "exec-1",
+        kind: "command",
+        label: "cargo test --watch",
+        detail: "/tmp/project",
+        status: "Running",
+        eventCount: 1,
+        latestEvent: "new output",
+      },
+    ],
+  );
+});
+
+test("keeps schedule and command monitors with matching ids separate", () => {
+  const thread = {
+    ...makeThread([], { type: "active", activeFlags: ["running"] }),
+    activeSubscriptionItems: [
+      {
+        type: "builtinToolCall",
+        id: "active-subscription:exec-1",
+        tool: "schedule_subscribe",
+        arguments: {
+          label: "dev loop",
+          schedule: { kind: "every_interval", interval_ms: 60_000 },
+        },
+        status: "completed",
+        output: {
+          subscription_id: "exec-1",
+          schedule_summary: "every 60000 ms",
+        },
+      },
+    ],
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "bun dev",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "inProgress",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "bun dev" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    analysis.monitors.sections.map((section) => [
+      section.kind,
+      section.monitors.map((monitor) => [
+        monitor.id,
+        monitor.subscriptionId,
+        monitor.kind,
+      ]),
+    ]),
+    [
+      ["command", [["exec-1", "exec-1", "command"]]],
+      ["schedule", [["active-subscription:exec-1", "exec-1", "schedule"]]],
+    ],
+  );
+});
+
+test("schedule unsubscribe does not remove command monitor with matching id", () => {
+  const thread = {
+    ...makeThread(
+      [
+        {
+          type: "builtinToolCall",
+          id: "schedule-1",
+          tool: "schedule_subscribe",
+          arguments: {
+            label: "dev loop",
+            schedule: { kind: "every_interval", interval_ms: 60_000 },
+          },
+          status: "completed",
+          output: {
+            subscription_id: "exec-1",
+            schedule_summary: "every 60000 ms",
+          },
+        },
+        {
+          type: "commandExecution",
+          id: "exec-1",
+          command: "bun dev",
+          cwd: "/tmp/project",
+          processId: "process-1",
+          source: "agent",
+          status: "inProgress",
+          initialWaitMs: 1000,
+          notifyOn: "exit",
+          commandActions: [{ type: "unknown", command: "bun dev" }],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+        {
+          type: "builtinToolCall",
+          id: "schedule-unsub-1",
+          tool: "schedule_unsubscribe",
+          arguments: { subscription_id: "exec-1" },
+          status: "completed",
+          output: { subscription_id: "exec-1", unsubscribed: true },
+        },
+      ],
+      { type: "active", activeFlags: ["running"] },
+    ),
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    analysis.monitors.sections.map((section) => [
+      section.kind,
+      section.monitors.map((monitor) => [
+        monitor.id,
+        monitor.subscriptionId,
+        monitor.kind,
+      ]),
+    ]),
+    [
+      ["command", [["exec-1", "exec-1", "command"]]],
+      ["schedule", []],
+    ],
+  );
+});
+
 test("dedupes changed files and keeps the latest change kind", () => {
   const analysis = buildThreadAnalysis(
     makeThread([
