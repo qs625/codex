@@ -248,13 +248,17 @@ function applyMonitorItem(
   }
 
   if (item.type === "commandExecution") {
+    if (!isRunningCommandStatus(item.status)) {
+      removeCommandMonitor(monitors, item.id);
+      return;
+    }
     const commandMonitor = buildCommandMonitorSummary(
       item,
       commandNotificationsByCommandId.get(item.id) ?? null,
       allowLiveCommandMonitors,
     );
     if (commandMonitor) {
-      monitors.push(commandMonitor);
+      upsertMonitorSummary(monitors, commandMonitor);
     }
     return;
   }
@@ -268,6 +272,15 @@ function applyMonitorItem(
     if (existingMonitor) {
       existingMonitor.latestEvent = summary;
       existingMonitor.eventCount = Math.max(existingMonitor.eventCount, 1);
+    }
+  }
+}
+
+function removeCommandMonitor(monitors: InternalMonitorSummary[], commandId: string) {
+  for (let index = monitors.length - 1; index >= 0; index -= 1) {
+    const monitor = monitors[index];
+    if (monitor?.kind === "command" && monitor.id === commandId) {
+      monitors.splice(index, 1);
     }
   }
 }
@@ -422,7 +435,8 @@ function removeUnsubscribedMonitor(
   }
 
   const monitorIndex = monitors.findIndex(
-    (monitor) => monitor.subscriptionId === subscriptionId,
+    (monitor) =>
+      monitor.kind === "schedule" && monitor.subscriptionId === subscriptionId,
   );
   if (monitorIndex !== -1) {
     monitors.splice(monitorIndex, 1);
@@ -434,7 +448,9 @@ function upsertMonitorSummary(
   monitor: InternalMonitorSummary,
 ) {
   const existingIndex = monitors.findIndex(
-    (existing) => existing.subscriptionId === monitor.subscriptionId,
+    (existing) =>
+      existing.kind === monitor.kind &&
+      existing.subscriptionId === monitor.subscriptionId,
   );
   if (existingIndex === -1) {
     monitors.push(monitor);

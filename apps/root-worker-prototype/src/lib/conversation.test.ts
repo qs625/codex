@@ -663,7 +663,7 @@ test("keeps command notifications separated across replacement history boundarie
   );
 });
 
-test("renders active command current state items after conversation turns", () => {
+test("does not render active command current state items as conversation tail", () => {
   const thread = {
     ...makeThread([
       {
@@ -688,16 +688,45 @@ test("renders active command current state items after conversation turns", () =
         exitCode: null,
         durationMs: null,
       },
+      {
+        type: "commandExecution",
+        id: "exec-2",
+        command: "bun dev",
+        cwd: "/tmp/project",
+        processId: "process-2",
+        source: "agent",
+        status: "completed",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "bun dev" }],
+        aggregatedOutput: null,
+        exitCode: 0,
+        durationMs: 250,
+      },
     ],
   } satisfies Thread;
 
   const entries = buildConversationEntries(thread);
+  const cells = buildConversationCells(entries);
 
   assert.deepEqual(
     entries.map((entry) => [entry.id, entry.kind, entry.toolName, entry.turnId]),
     [
       ["compact-1", "compact", undefined, "turn-1"],
-      ["exec-1", "tool", "cargo test", "active-commands"],
+    ],
+  );
+  assert.deepEqual(
+    cells.map((cell) => ({
+      id: cell.id,
+      kind: cell.kind,
+      entries: cell.entries.map((entry) => entry.id),
+    })),
+    [
+      {
+        id: "compact-1",
+        kind: "compact",
+        entries: ["compact-1"],
+      },
     ],
   );
 });
