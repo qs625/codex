@@ -214,6 +214,8 @@ fn build_thread_context_usage_inner(
     skills.seed(thread_skills);
 
     for (index, item) in history.raw_items().iter().enumerate() {
+        let counts_current_loaded_skills =
+            compact_replacement_history_len.is_none_or(|len| index >= len);
         match item {
             ResponseItem::Message { role, content, .. } => {
                 let item_bytes = estimate_response_item_model_visible_bytes(item);
@@ -228,11 +230,13 @@ fn build_thread_context_usage_inner(
                                 categories.concrete_skills = categories
                                     .concrete_skills
                                     .saturating_add(injected_skill.concrete_bytes);
-                                skills.increment(
-                                    injected_skill.name.as_str(),
-                                    injected_skill.path.as_str(),
-                                    ThreadSkillKind::Explicit,
-                                );
+                                if counts_current_loaded_skills {
+                                    skills.increment(
+                                        injected_skill.name.as_str(),
+                                        injected_skill.path.as_str(),
+                                        ThreadSkillKind::Explicit,
+                                    );
+                                }
                             }
                             categories.tools_metadata = categories
                                 .tools_metadata
@@ -306,9 +310,11 @@ fn build_thread_context_usage_inner(
                         skill_detection.cwd,
                     )
                 {
-                    pending_skill_outputs
-                        .insert(call_id.clone(), PendingSkillOutput { path: path.clone() });
-                    skills.increment(name.as_str(), path.as_str(), ThreadSkillKind::Implicit);
+                    if counts_current_loaded_skills {
+                        pending_skill_outputs
+                            .insert(call_id.clone(), PendingSkillOutput { path: path.clone() });
+                        skills.increment(name.as_str(), path.as_str(), ThreadSkillKind::Implicit);
+                    }
                 }
             }
             ResponseItem::FunctionCall {
@@ -337,9 +343,11 @@ fn build_thread_context_usage_inner(
                         )
                     })
                 {
-                    pending_skill_outputs
-                        .insert(call_id.clone(), PendingSkillOutput { path: path.clone() });
-                    skills.increment(name.as_str(), path.as_str(), ThreadSkillKind::Implicit);
+                    if counts_current_loaded_skills {
+                        pending_skill_outputs
+                            .insert(call_id.clone(), PendingSkillOutput { path: path.clone() });
+                        skills.increment(name.as_str(), path.as_str(), ThreadSkillKind::Implicit);
+                    }
                 }
             }
             ResponseItem::FunctionCallOutput { call_id, output } => {
@@ -828,6 +836,7 @@ fn text_bytes_len(text: &str) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::build_thread_context_usage_from_history;
+    use super::build_thread_context_usage_with_compact_replacement_history;
     use super::classify_developer_message;
     use super::parse_explicit_skill_injections;
     use codex_context_manager::ContextManager;
@@ -996,9 +1005,95 @@ mod tests {
         assert_eq!(usage.tool_breakdown.inter_agent.output, 0);
     }
 
+    #[test]
+    fn compact_replacement_prefix_does_not_count_loaded_skills_as_current() {
+        let mut history = ContextManager::new();
+        let items = vec![
+            explicit_skill_item("demo", "/tmp/demo/SKILL.md", "body text"),
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "compact summary".to_string(),
+                }],
+                phase: None,
+            },
+        ];
+        history.record_items(items.iter(), TruncationPolicy::Tokens(10_000));
+
+        let usage = build_thread_context_usage_with_compact_replacement_history(
+            &history,
+            &[],
+            None,
+            |_| false,
+            Some(items.len()),
+        );
+
+        assert_eq!(usage.loaded_skills.loaded_count, 0);
+        assert!(usage.loaded_skills.skills.is_empty());
+        assert!(usage.categories.concrete_skills > 0);
+    }
+
+    #[test]
+    fn skill_load_after_compact_replacement_boundary_is_current_again() {
+        let mut history = ContextManager::new();
+        let compact_prefix = vec![ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "compact summary".to_string(),
+            }],
+            phase: None,
+        }];
+        let mut items = compact_prefix.clone();
+        items.push(explicit_skill_item(
+            "demo",
+            "/tmp/demo/SKILL.md",
+            "fresh body text",
+        ));
+        history.record_items(items.iter(), TruncationPolicy::Tokens(10_000));
+
+        let usage = build_thread_context_usage_with_compact_replacement_history(
+            &history,
+            &[],
+            None,
+            |_| false,
+            Some(compact_prefix.len()),
+        );
+
+        assert_eq!(usage.loaded_skills.loaded_count, 1);
+        assert_eq!(usage.loaded_skills.skills[0].name, "demo");
+        assert_eq!(usage.loaded_skills.skills[0].load_count, 1);
+    }
+
+    #[test]
+    fn no_compact_history_still_counts_loaded_skills() {
+        let usage = usage_for_items(vec![explicit_skill_item(
+            "demo",
+            "/tmp/demo/SKILL.md",
+            "body text",
+        )]);
+
+        assert_eq!(usage.loaded_skills.loaded_count, 1);
+        assert_eq!(usage.loaded_skills.skills[0].name, "demo");
+    }
+
     fn usage_for_items(items: Vec<ResponseItem>) -> ThreadContextUsage {
         let mut history = ContextManager::new();
         history.record_items(items.iter(), TruncationPolicy::Tokens(10_000));
         build_thread_context_usage_from_history(&history, &[], |_| false)
+    }
+
+    fn explicit_skill_item(name: &str, path: &str, body: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: format!(
+                    "<skill>\n<name>{name}</name>\n<path>{path}</path>\n{body}\n</skill>"
+                ),
+            }],
+            phase: None,
+        }
     }
 }
