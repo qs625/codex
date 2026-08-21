@@ -379,6 +379,30 @@ mod tests {
     }
 
     #[test]
+    fn legacy_structured_message_filter_handles_status_inter_agent_message_envelope() {
+        let message = serde_json::json!({
+            "author": "/cp_http_api/owner_infra",
+            "recipient": "/cp_http_api",
+            "other_recipients": [],
+            "content": "status update",
+            "content_parts": [],
+            "operation": "message",
+            "trigger_turn": false,
+            "sender_thread_id": null,
+            "recipient_thread_id": null,
+            "status": {
+                "in_progress": true
+            },
+            "lifecycle_status": null,
+            "agent_nickname": null,
+            "agent_role": null,
+        })
+        .to_string();
+
+        assert!(is_legacy_structured_assistant_message_text(&message));
+    }
+
+    #[test]
     fn legacy_structured_message_filter_handles_command_execution_notification_envelope() {
         let message = serde_json::json!({
             "type": "command_execution_notification",
@@ -401,9 +425,7 @@ mod tests {
             "note": "this is documentation",
         })
         .to_string();
-        assert!(!is_legacy_structured_assistant_message_text(
-            &documentation
-        ));
+        assert!(!is_legacy_structured_assistant_message_text(&documentation));
 
         let invalid_kind = serde_json::json!({
             "type": "command_execution_notification",
@@ -413,8 +435,6 @@ mod tests {
             "created_at_ms": 1787215776940_i64,
         })
         .to_string();
-        assert!(!is_legacy_structured_assistant_message_text(
-            &invalid_kind
-        ));
+        assert!(!is_legacy_structured_assistant_message_text(&invalid_kind));
     }
 }

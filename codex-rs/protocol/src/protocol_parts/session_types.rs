@@ -883,12 +883,48 @@ impl InterAgentCommunication {
                 phase: None,
             };
         }
+        let mut lines = vec![
+            "Inter-agent communication received.".to_string(),
+            format!("Author: {}", self.author),
+            format!("Recipient: {}", self.recipient),
+            format!("Operation: {}", self.operation.model_context_label()),
+        ];
+        if !self.other_recipients.is_empty() {
+            lines.push(format!(
+                "Other recipients: {}",
+                self.other_recipients
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if let Some(status) = &self.status {
+            lines.push(format!("Status: {status:?}"));
+        }
+        if let Some(lifecycle_status) = &self.lifecycle_status {
+            lines.push(format!("Lifecycle status: {lifecycle_status:?}"));
+        }
+        lines.push("Content:".to_string());
+        lines.push(self.content.clone());
         ResponseInputItem::Message {
             role: "assistant".to_string(),
             content: vec![ContentItem::OutputText {
-                text: serde_json::to_string(self).unwrap_or_default(),
+                text: lines.join("\n"),
             }],
             phase: Some(MessagePhase::Commentary),
+        }
+    }
+}
+
+impl InterAgentOperation {
+    fn model_context_label(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::SpawnAgent => "spawn_agent",
+            Self::SendMessage => "send_message",
+            Self::FollowupTask => "followup_task",
+            Self::ChildCompletion => "child_completion",
         }
     }
 }

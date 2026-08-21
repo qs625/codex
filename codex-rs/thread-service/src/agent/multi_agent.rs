@@ -448,26 +448,43 @@ struct VisibleImageAttachment {
 fn visible_image_attachments_from_history(items: &[ResponseItem]) -> Vec<VisibleImageAttachment> {
     let mut attachments = Vec::new();
     for item in items {
-        let ResponseItem::Message { content, .. } = item else {
-            continue;
-        };
-        for (index, content_item) in content.iter().enumerate() {
-            let ContentItem::InputImage { image_url, .. } = content_item else {
-                continue;
-            };
-            let Some(ContentItem::InputText { text }) = index
-                .checked_sub(1)
-                .and_then(|previous| content.get(previous))
-            else {
-                continue;
-            };
-            let Some(attachment_id) = image_attachment_id_from_open_tag_text(text) else {
-                continue;
-            };
-            attachments.push(VisibleImageAttachment {
-                attachment_id: attachment_id.to_string(),
-                image_url: image_url.clone(),
-            });
+        match item {
+            ResponseItem::Message { content, .. } => {
+                for (index, content_item) in content.iter().enumerate() {
+                    let ContentItem::InputImage { image_url, .. } = content_item else {
+                        continue;
+                    };
+                    let Some(ContentItem::InputText { text }) = index
+                        .checked_sub(1)
+                        .and_then(|previous| content.get(previous))
+                    else {
+                        continue;
+                    };
+                    let Some(attachment_id) = image_attachment_id_from_open_tag_text(text) else {
+                        continue;
+                    };
+                    attachments.push(VisibleImageAttachment {
+                        attachment_id: attachment_id.to_string(),
+                        image_url: image_url.clone(),
+                    });
+                }
+            }
+            ResponseItem::InterAgentCommunication { communication, .. } => {
+                attachments.extend(communication.content_parts.iter().filter_map(|part| {
+                    let InterAgentContentPart::ImageRef {
+                        attachment_id,
+                        image_url: Some(image_url),
+                    } = part
+                    else {
+                        return None;
+                    };
+                    Some(VisibleImageAttachment {
+                        attachment_id: attachment_id.clone(),
+                        image_url: image_url.clone(),
+                    })
+                }));
+            }
+            _ => {}
         }
     }
     attachments
@@ -1039,7 +1056,10 @@ mod tests {
             attachment_id: "image-1".to_string(),
             image_url: Some(image_url.clone()),
         }]);
-        let history_item: ResponseItem = communication.to_response_input_item().into();
+        let history_item = ResponseItem::InterAgentCommunication {
+            id: Some("typed-inter-agent-image".to_string()),
+            communication,
+        };
 
         assert_eq!(
             visible_image_attachments_from_history(&[history_item]),
