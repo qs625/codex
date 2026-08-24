@@ -1077,8 +1077,32 @@ export function mergeThreadSnapshot(
     threadUsage,
     tokenUsage,
     contextUsage,
+    stats: mergeThreadStats(existing.stats, normalizedNext.stats),
     turns,
   });
+}
+
+function mergeThreadStats(
+  existing: Thread["stats"] | null | undefined,
+  next: Thread["stats"] | null | undefined,
+): Thread["stats"] | null | undefined {
+  if (!existing) {
+    return next;
+  }
+  if (!next) {
+    return existing;
+  }
+  return {
+    ...next,
+    compactionCount: Math.max(
+      validCompactionCount(existing.compactionCount),
+      validCompactionCount(next.compactionCount),
+    ),
+  };
+}
+
+function validCompactionCount(value: number) {
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
 function preserveFinalLifecycleStatus(existing: Thread, next: Thread) {
@@ -1348,6 +1372,7 @@ export function upsertThreadMetadataPreservingTurns(
             existing.activeSubscriptionItems,
           activeCommandItems:
             normalizedNext.activeCommandItems ?? existing.activeCommandItems,
+          stats: mergeThreadStats(existing.stats, normalizedNext.stats),
         }
       : thread,
   );

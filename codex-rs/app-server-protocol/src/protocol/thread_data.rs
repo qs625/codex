@@ -312,6 +312,15 @@ impl From<CoreThreadContextUsage> for ThreadContextUsage {
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
+pub struct ThreadStats {
+    /// Total number of context compactions observed in the persisted thread history.
+    pub compaction_count: u32,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
@@ -362,6 +371,10 @@ pub struct Thread {
     pub token_usage: Option<ThreadTokenUsage>,
     /// Restored aggregate thread context usage, when available.
     pub context_usage: Option<ThreadContextUsage>,
+    /// Bounded thread-level historical statistics restored from persisted history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema-export", ts(optional))]
+    pub stats: Option<ThreadStats>,
     /// Populated only on responses that explicitly include display history, such as
     /// `thread/resume`, `thread/rollback`, `thread/fork`, and
     /// `thread/read` (when `includeTurns` is true).

@@ -90,6 +90,7 @@ impl ThreadRequestProcessor {
                     read_thread_history_items(self.thread_store.as_ref(), thread_id).await
             {
                 apply_persisted_thread_lifecycle_status(&mut thread, &history_items);
+                apply_thread_stats_from_rollout_items(&mut thread, &history_items);
             }
             status_ids.push(thread.id.clone());
             threads.push(thread);
@@ -401,6 +402,7 @@ impl ThreadRequestProcessor {
             .live_thread_history(thread_id, /*include_archived*/ true)
             .await
             .map_err(|err| thread_read_history_load_error(thread_id, err))?;
+        apply_thread_stats_from_rollout_items(thread, history.items.as_slice());
         if let Some(token_usage) = self
             .live_thread_usage
             .thread_token_usage_info(thread_id)
@@ -886,6 +888,7 @@ fn restore_persisted_display_turns_from_rollout_items(
     thread: &mut Thread,
     rollout_items: &[RolloutItem],
 ) {
+    apply_thread_stats_from_rollout_items(thread, rollout_items);
     let persisted_turns = thread_history::build_turns_from_rollout_items(rollout_items);
     restore_persisted_display_turns(thread, &persisted_turns);
     apply_runtime_activity_items_from_turns(thread, &persisted_turns);
@@ -1026,6 +1029,7 @@ mod restore_persisted_injected_context_turns_tests {
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
+            stats: None,
             turns,
             active_subscription_items: None,
             active_command_items: None,

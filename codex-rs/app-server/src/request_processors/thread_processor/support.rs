@@ -301,6 +301,7 @@ mod persisted_lifecycle_status_tests {
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
+            stats: None,
             turns: Vec::new(),
             active_subscription_items: None,
             active_command_items: None,
@@ -693,10 +694,12 @@ pub(crate) fn thread_from_stored_thread(
         turns: Vec::new(),
         active_subscription_items: None,
         active_command_items: None,
+        stats: None,
     };
     if let Some(history) = history.as_ref() {
         apply_thread_usage_from_rollout_items(&mut thread, history.items.as_slice());
         apply_persisted_thread_lifecycle_status(&mut thread, history.items.as_slice());
+        apply_thread_stats_from_rollout_items(&mut thread, history.items.as_slice());
     }
     (thread, history)
 }
@@ -950,6 +953,7 @@ pub(super) fn build_thread_from_snapshot(
         turns: Vec::new(),
         active_subscription_items: None,
         active_command_items: None,
+        stats: None,
     }
 }
 

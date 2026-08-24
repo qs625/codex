@@ -1193,6 +1193,7 @@ mod tests {
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
+            stats: None,
             turns: Vec::new(),
             active_subscription_items: None,
             active_command_items: None,

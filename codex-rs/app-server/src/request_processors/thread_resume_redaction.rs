@@ -213,6 +213,7 @@ mod tests {
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
+            stats: None,
             turns: vec![Turn {
                 id: "turn-1".to_string(),
                 items,

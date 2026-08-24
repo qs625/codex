@@ -717,6 +717,40 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
 
+test("mergeThreadSnapshot preserves thread stats when later snapshots omit them", () => {
+  const existing = {
+    ...makeThread(),
+    stats: { compactionCount: 3 },
+  } satisfies Thread;
+  const next = {
+    ...makeThread(),
+    preview: "fresh preview",
+  };
+  delete next.stats;
+
+  const merged = mergeThreadSnapshot(existing, next);
+
+  assert.equal(merged.preview, "fresh preview");
+  assert.deepEqual(merged.stats, { compactionCount: 3 });
+});
+
+test("mergeThreadSnapshot keeps the highest compaction count", () => {
+  const existing = {
+    ...makeThread(),
+    stats: { compactionCount: 4 },
+  } satisfies Thread;
+  const staleNext = {
+    ...makeThread(),
+    preview: "stale stats refresh",
+    stats: { compactionCount: 2 },
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, staleNext);
+
+  assert.equal(merged.preview, "stale stats refresh");
+  assert.deepEqual(merged.stats, { compactionCount: 4 });
+});
+
 test("mergeThreadSnapshot does not downgrade completed lifecycle from stale metadata", () => {
   const existing = {
     ...makeThread(),
@@ -751,6 +785,51 @@ test("upsertThreadMetadataPreservingTurns does not downgrade completed lifecycle
     type: "final",
     result: { type: "completed" },
   });
+});
+
+test("upsertThreadMetadataPreservingTurns preserves thread stats when omitted", () => {
+  const existing = {
+    ...makeThread(),
+    stats: { compactionCount: 2 },
+    turns: [
+      {
+        id: "turn-1",
+        items: [],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    ],
+  } satisfies Thread;
+  const next = {
+    ...makeThread(),
+    preview: "metadata refresh",
+  };
+  delete next.stats;
+
+  const threads = upsertThreadMetadataPreservingTurns([existing], next);
+
+  assert.equal(threads[0]?.preview, "metadata refresh");
+  assert.deepEqual(threads[0]?.stats, { compactionCount: 2 });
+  assert.equal(threads[0]?.turns.length, 1);
+});
+
+test("upsertThreadMetadataPreservingTurns keeps the highest compaction count", () => {
+  const existing = {
+    ...makeThread(),
+    stats: { compactionCount: 5 },
+  } satisfies Thread;
+  const staleNext = {
+    ...makeThread(),
+    stats: { compactionCount: 3 },
+  } satisfies Thread;
+
+  const threads = upsertThreadMetadataPreservingTurns([existing], staleNext);
+
+  assert.deepEqual(threads[0]?.stats, { compactionCount: 5 });
 });
 
 test("preserveTerminalLifecycleStatus ignores stale waiting status notifications", () => {
