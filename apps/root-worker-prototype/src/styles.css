@@ -3771,12 +3771,8 @@ svg {
   padding: 10px 12px 0;
 }
 
-.current-plan-card {
-  margin: 10px 12px 0;
-  padding: 10px;
-  border: 1px solid rgba(16, 24, 40, 0.07);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.65);
+.context-section-card.current-plan-card {
+  padding: 10px 12px;
 }
 
 .current-plan-header {
@@ -3790,7 +3786,7 @@ svg {
   display: block;
   margin-top: 2px;
   color: #171717;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -3813,7 +3809,7 @@ svg {
 }
 
 .current-plan-explanation {
-  margin: 6px 0 0;
+  margin: 7px 0 0;
   color: #57534e;
   font-size: 11px;
   line-height: 1.35;
@@ -3822,15 +3818,15 @@ svg {
 .current-plan-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 8px 0 0;
+  gap: 5px;
+  margin: 7px 0 0;
   padding: 0;
   list-style: none;
 }
 
 .current-plan-list li {
   display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) max-content;
+  grid-template-columns: 7px minmax(0, 1fr) max-content;
   align-items: start;
   gap: 6px;
 }
@@ -3891,7 +3887,7 @@ svg {
 }
 
 .current-plan-empty {
-  margin-top: 8px;
+  margin-top: 7px;
   color: #78716c;
   font-size: 11px;
 }
@@ -4465,16 +4461,11 @@ svg {
 .monitor-section-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   margin-top: 10px;
-  border-top: 1px solid rgba(16, 24, 40, 0.06);
-  padding-top: 10px;
 }
 
 .schedule-agenda + .monitor-section-list {
   margin-top: 10px;
-  border-top: 0;
-  padding-top: 0;
 }
 
 .schedule-agenda {
@@ -4623,6 +4614,12 @@ svg {
 
 .monitor-section {
   min-width: 0;
+  border-top: 1px solid rgba(16, 24, 40, 0.06);
+  padding-top: 10px;
+}
+
+.monitor-section + .monitor-section {
+  margin-top: 10px;
 }
 
 .monitor-section-title {
@@ -4645,6 +4642,7 @@ svg {
   background: #0d9488;
 }
 
+.monitor-kind-dot.command,
 .monitor-kind-dot.process {
   background: #4f46e5;
 }
@@ -4734,8 +4732,6 @@ svg {
 
 .monitor-empty {
   margin-top: 6px;
-  border-top: 1px solid rgba(16, 24, 40, 0.06);
-  padding-top: 7px;
   color: #a8a29e;
   font-size: 11px;
 }

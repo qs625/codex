@@ -1353,7 +1353,10 @@ function CurrentPlanCard({
 }) {
   const plan = planUpdate?.plan ?? [];
   return (
-    <section className="current-plan-card" aria-label="Current thread plan">
+    <section
+      className="context-section-card current-plan-card"
+      aria-label="Current thread plan"
+    >
       <div className="current-plan-header">
         <div>
           <span className="current-plan-eyebrow">Current Thread</span>

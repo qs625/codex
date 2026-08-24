@@ -258,9 +258,17 @@ test("renders thread analysis title and monitor empty states", () => {
   const markup = renderRightPanel(null);
 
   assert.match(markup, /Thread Analysis/);
-  assert.match(markup, /current-plan-card/);
+  assert.match(markup, /context-section-card current-plan-card/);
   assert.match(markup, /No plan published yet\./);
   assert.match(markup, /Context Window Used/);
+  assert.match(
+    markup,
+    /<div class="monitor-section-title"><span class="monitor-kind-dot command"><\/span><span>Live Commands<\/span><\/div><div class="monitor-empty">No live commands\.<\/div>/,
+  );
+  assert.match(
+    markup,
+    /<div class="monitor-section-title"><span class="monitor-kind-dot schedule"><\/span><span>Schedules<\/span><\/div><div class="monitor-empty">No scheduled listeners\.<\/div>/,
+  );
   assert.match(markup, /No live commands\./);
   assert.match(markup, /No scheduled listeners\./);
 });
@@ -683,6 +691,7 @@ test("renders the current thread plan in thread analysis", () => {
   );
 
   assert.match(markup, /Thread Analysis/);
+  assert.match(markup, /context-section-card current-plan-card/);
   assert.match(markup, /Keep the change scoped\./);
   assert.match(markup, /Filter direct child tasks/);
   assert.match(markup, /Render current thread plan/);
@@ -691,6 +700,27 @@ test("renders the current thread plan in thread analysis", () => {
   assert.doesNotMatch(markup, /Plan Work/);
   assert.doesNotMatch(markup, /Execution Queue/);
   assert.doesNotMatch(markup, /Todo List/);
+});
+
+test("keeps plan and monitor activity on compact right panel layout rules", () => {
+  const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /className="context-section-card current-plan-card"/,
+  );
+  assert.doesNotMatch(css, /\.current-plan-card\s*\{[^}]*margin:/);
+  assert.match(
+    css,
+    /\.context-section-card\.current-plan-card\s*\{[\s\S]*padding: 10px 12px;/,
+  );
+  assert.match(
+    css,
+    /\.monitor-section\s*\{[\s\S]*border-top: 1px solid rgba\(16, 24, 40, 0\.06\);[\s\S]*padding-top: 10px;/,
+  );
+  assert.match(css, /\.monitor-kind-dot\.command,\s*\.monitor-kind-dot\.process/);
+  assert.doesNotMatch(css, /\.monitor-empty\s*\{[^}]*border-top:/);
 });
 
 test("renders long current plan steps without dropping status labels", () => {
