@@ -12,6 +12,7 @@ import {
   buildProjectAgentSidebar,
   buildCurrentThreadTodoItems,
   formatUpdatedLabel,
+  findProjectByRootIdentity,
   getAgentRoleLabel,
   getPresenceLabel,
   getParentThreadId,
@@ -32,6 +33,7 @@ import {
   pickInitialProjectThread,
   preserveTerminalLifecycleStatus,
   queuePendingThreadUpdate,
+  rootAgentPathFromTaskName,
   threadDisplayStatusClass,
   threadStatusClass,
   treeThreadLifecycleStatusClass,
@@ -535,6 +537,84 @@ test("buildProjectAgentSidebar separates same-cwd roots by project path", () => 
     sidebar.projects.map((project) => project.cwd),
     ["/work/project", "/work/project"],
   );
+});
+
+test("findProjectByRootIdentity matches same-cwd cp_http_api roots by project path", () => {
+  const cpHttpApiRoot = makeSidebarThread({
+    id: "cp-http-api-root",
+    cwd: "/work/project",
+    agentPath: "/cp_http_api",
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    updatedAt: 12,
+  });
+  const otherRoot = makeSidebarThread({
+    id: "other-api-root",
+    cwd: "/work/project/",
+    agentPath: "/other_api",
+    updatedAt: 10,
+  });
+  const sidebar = buildProjectAgentSidebar([cpHttpApiRoot, otherRoot]);
+
+  const cpProject = findProjectByRootIdentity(
+    sidebar.projects,
+    "/work/project/",
+    rootAgentPathFromTaskName("cp_http_api"),
+  );
+  const otherProject = findProjectByRootIdentity(
+    sidebar.projects,
+    "/work/project",
+    rootAgentPathFromTaskName("other_api"),
+  );
+
+  assert.equal(cpProject?.tree.threadId, "cp-http-api-root");
+  assert.equal(otherProject?.tree.threadId, "other-api-root");
+  assert.notEqual(cpProject?.id, otherProject?.id);
+});
+
+test("findProjectByRootIdentity does not route blank project identity to a named same-cwd root", () => {
+  const namedRoot = makeSidebarThread({
+    id: "cp-http-api-root",
+    cwd: "/work/project",
+    agentPath: "/cp_http_api",
+    updatedAt: 12,
+  });
+  const sidebar = buildProjectAgentSidebar([namedRoot]);
+
+  assert.equal(
+    findProjectByRootIdentity(sidebar.projects, "/work/project", null),
+    null,
+  );
+});
+
+test("findProjectByRootIdentity routes workspace blank identity only to cwd-only roots", () => {
+  const namedRoot = makeSidebarThread({
+    id: "cp-http-api-root",
+    cwd: "/work/project",
+    agentPath: "/cp_http_api",
+    updatedAt: 12,
+  });
+  const workspaceRoot = makeSidebarThread({
+    id: "workspace-root",
+    cwd: "/work/project/",
+    agentPath: null,
+    updatedAt: 10,
+  });
+  const sidebar = buildProjectAgentSidebar([namedRoot, workspaceRoot]);
+
+  const workspaceProject = findProjectByRootIdentity(
+    sidebar.projects,
+    "/work/project",
+    null,
+  );
+
+  assert.equal(workspaceProject?.tree.threadId, "workspace-root");
+});
+
+test("rootAgentPathFromTaskName accepts segment and path-form root task names", () => {
+  assert.equal(rootAgentPathFromTaskName("cp_http_api"), "/cp_http_api");
+  assert.equal(rootAgentPathFromTaskName("/cp_http_api"), "/cp_http_api");
+  assert.equal(rootAgentPathFromTaskName("/cp_http_api/"), "/cp_http_api");
+  assert.equal(rootAgentPathFromTaskName("  "), null);
 });
 
 test("buildProjectAgentSidebar keeps same-cwd same-project-path roots together", () => {

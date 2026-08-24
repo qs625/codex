@@ -73,6 +73,7 @@ import {
   applyPendingThreadUpdates,
   buildCurrentThreadTodoItems,
   buildProjectAgentSidebar,
+  findProjectByRootIdentity,
   getThreadAncestorIds,
   getThreadItemNotificationSyntheticTurnStatus,
   getThreadSubtreeIds,
@@ -92,6 +93,7 @@ import {
   pickInitialThread,
   preserveTerminalLifecycleStatus,
   queuePendingThreadUpdate,
+  rootAgentPathFromTaskName,
   updateThreadItem,
   updateThreadSkills,
   updateThreadTurnLifecycle,
@@ -1392,9 +1394,11 @@ function App() {
       setError("Project chat needs a workspace path from the app server.");
       return;
     }
-    const existingProject = projectCwd
-      ? projectSidebar.projects.find((project) => project.cwd === projectCwd)
-      : null;
+    const existingProject = findProjectByRootIdentity(
+      projectSidebar.projects,
+      projectCwd,
+      null,
+    );
     if (existingProject) {
       expandProjectSection(existingProject.id);
       setSelectedThreadId(existingProject.tree.threadId);
@@ -1413,8 +1417,10 @@ function App() {
       setError("Project chat needs a project path.");
       return;
     }
-    const existingProject = projectSidebar.projects.find(
-      (project) => normalizeProjectCwd(project.cwd) === projectCwd,
+    const existingProject = findProjectByRootIdentity(
+      projectSidebar.projects,
+      projectCwd,
+      rootAgentPathFromTaskName(draft.taskName),
     );
     if (existingProject) {
       setError(null);
