@@ -154,7 +154,7 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
         label: projectLabel,
         subtitle: cwd,
         cwd,
-        statusClass: selfTreeThreadLifecycleStatusClass(rootThread),
+        statusClass: aggregateSidebarStatus(projectThreadList),
         updatedAt: Math.max(...projectThreadList.map((thread) => thread.updatedAt)),
         tree: projectTree,
         descendantCount: countDescendants(projectTree),
@@ -1996,7 +1996,7 @@ function collectTreeThreads(node: TreeNode): Thread[] {
 }
 
 function aggregateSidebarStatus(threads: Thread[]): TreeThreadLifecycleStatusClass {
-  const statusClasses = threads.map(selfTreeThreadLifecycleStatusClass);
+  const statusClasses = threads.map(aggregateThreadLifecycleStatusClass);
   if (statusClasses.includes("blocked")) {
     return "blocked";
   }
@@ -2016,6 +2016,15 @@ function aggregateSidebarStatus(threads: Thread[]): TreeThreadLifecycleStatusCla
     return "done";
   }
   return "todo";
+}
+
+function aggregateThreadLifecycleStatusClass(
+  thread: Thread,
+): TreeThreadLifecycleStatusClass {
+  if (isCompletedFinalLifecycleStatus(thread.lifecycleStatus)) {
+    return "done";
+  }
+  return selfTreeThreadLifecycleStatusClass(thread);
 }
 
 function countSidebarStatuses(threads: Thread[]) {
