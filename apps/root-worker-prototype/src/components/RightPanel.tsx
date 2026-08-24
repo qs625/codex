@@ -1065,6 +1065,7 @@ function ThreadAnalysisPanel({
 }
 
 function ScheduleAgenda({ groups }: { groups: ScheduleAgendaGroup[] }) {
+  const [collapsed, setCollapsed] = useState(false);
   const [collapsedDateKeys, setCollapsedDateKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1086,16 +1087,63 @@ function ScheduleAgenda({ groups }: { groups: ScheduleAgendaGroup[] }) {
   };
 
   return (
+    <ScheduleAgendaLayout
+      groups={groups}
+      collapsed={collapsed}
+      collapsedDateKeys={collapsedDateKeys}
+      onToggleCollapsed={() => setCollapsed((current) => !current)}
+      onToggleDateKey={toggleDateKey}
+    />
+  );
+}
+
+export function ScheduleAgendaLayout({
+  groups,
+  collapsed,
+  collapsedDateKeys,
+  onToggleCollapsed,
+  onToggleDateKey,
+}: {
+  groups: ScheduleAgendaGroup[];
+  collapsed: boolean;
+  collapsedDateKeys: Set<string>;
+  onToggleCollapsed: () => void;
+  onToggleDateKey: (dateKey: string) => void;
+}) {
+  if (groups.length === 0) {
+    return null;
+  }
+
+  const itemCount = groups.reduce((total, group) => total + group.items.length, 0);
+  const groupsId = "schedule-agenda-groups";
+
+  return (
     <div className="schedule-agenda" aria-label="Upcoming schedule events">
-      <div className="schedule-agenda-title">Upcoming</div>
-      {groups.map((group) => (
-        <ScheduleAgendaDateGroup
-          key={group.dateKey}
-          group={group}
-          collapsed={collapsedDateKeys.has(group.dateKey)}
-          onToggle={() => toggleDateKey(group.dateKey)}
-        />
-      ))}
+      <button
+        type="button"
+        className="schedule-agenda-header"
+        aria-expanded={!collapsed}
+        aria-controls={groupsId}
+        onClick={onToggleCollapsed}
+      >
+        <span className="schedule-agenda-chevron" aria-hidden="true" />
+        <span className="schedule-agenda-title">Upcoming</span>
+        <span className="schedule-agenda-count">
+          {itemCount} item{itemCount === 1 ? "" : "s"}
+        </span>
+      </button>
+      {collapsed ? null : (
+        <div id={groupsId} className="schedule-agenda-groups">
+          {groups.map((group) => (
+            <ScheduleAgendaDateGroup
+              key={group.dateKey}
+              group={group}
+              collapsed={collapsedDateKeys.has(group.dateKey)}
+              onToggle={() => onToggleDateKey(group.dateKey)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

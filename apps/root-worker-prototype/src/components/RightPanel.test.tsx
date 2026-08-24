@@ -20,6 +20,7 @@ import { CHAT_COMPAT_CWD_BASENAME } from "../lib/chatCompat";
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const {
   RightPanel,
+  ScheduleAgendaLayout,
   ScheduleAgendaDateGroup,
   buildGitGraphVisualModel,
   filePreviewRenderMode,
@@ -193,6 +194,39 @@ function makeGitCommit(
   };
 }
 
+function makeScheduleAgendaGroups() {
+  return [
+    {
+      dateKey: "2026-07-13",
+      dateLabel: "Today",
+      items: [
+        {
+          id: "schedule-1:2026-07-13T09:00:00.000Z",
+          subscriptionId: "schedule-1",
+          label: "standup ping",
+          rule: "Every 6 hours",
+          startsAt: "2026-07-13T09:00:00.000Z",
+          timeLabel: "09:00",
+        },
+      ],
+    },
+    {
+      dateKey: "2026-07-14",
+      dateLabel: "Tomorrow",
+      items: [
+        {
+          id: "schedule-2:2026-07-14T10:00:00.000Z",
+          subscriptionId: "schedule-2",
+          label: "daily digest",
+          rule: "Daily 10:00 UTC",
+          startsAt: "2026-07-14T10:00:00.000Z",
+          timeLabel: "10:00",
+        },
+      ],
+    },
+  ];
+}
+
 test("resolves markdown preview relative links from the current file directory", () => {
   assert.equal(
     resolveMarkdownPreviewLocalFileTarget("/tmp/docs/README.md", "./other.md"),
@@ -224,6 +258,8 @@ test("renders thread analysis title and monitor empty states", () => {
   const markup = renderRightPanel(null);
 
   assert.match(markup, /Thread Analysis/);
+  assert.match(markup, /current-plan-card/);
+  assert.match(markup, /No plan published yet\./);
   assert.match(markup, /Context Window Used/);
   assert.match(markup, /No live commands\./);
   assert.match(markup, /No scheduled listeners\./);
@@ -487,6 +523,70 @@ test("renders schedule agenda groups expanded by default", () => {
   assert.match(markup, /Every 6 hours/);
 });
 
+test("renders schedule agenda with an overall disclosure header", () => {
+  const markup = renderToStaticMarkup(
+    <ScheduleAgendaLayout
+      groups={makeScheduleAgendaGroups()}
+      collapsed={false}
+      collapsedDateKeys={new Set()}
+      onToggleCollapsed={() => {}}
+      onToggleDateKey={() => {}}
+    />,
+  );
+
+  assert.match(markup, /aria-label="Upcoming schedule events"/);
+  assert.match(markup, /aria-expanded="true"/);
+  assert.match(markup, /aria-controls="schedule-agenda-groups"/);
+  assert.match(markup, /Upcoming/);
+  assert.match(markup, /2 items/);
+  assert.match(markup, /Today/);
+  assert.match(markup, /Tomorrow/);
+  assert.match(markup, /standup ping/);
+  assert.match(markup, /daily digest/);
+});
+
+test("collapses the whole schedule agenda without rendering date rows", () => {
+  const markup = renderToStaticMarkup(
+    <ScheduleAgendaLayout
+      groups={makeScheduleAgendaGroups()}
+      collapsed={true}
+      collapsedDateKeys={new Set()}
+      onToggleCollapsed={() => {}}
+      onToggleDateKey={() => {}}
+    />,
+  );
+
+  assert.match(markup, /aria-expanded="false"/);
+  assert.match(markup, /Upcoming/);
+  assert.match(markup, /2 items/);
+  assert.doesNotMatch(markup, /Today/);
+  assert.doesNotMatch(markup, /Tomorrow/);
+  assert.doesNotMatch(markup, /standup ping/);
+  assert.doesNotMatch(markup, /daily digest/);
+});
+
+test("toggles the whole schedule agenda from the agenda header", () => {
+  let clicked = false;
+  const element = ScheduleAgendaLayout({
+    groups: makeScheduleAgendaGroups(),
+    collapsed: false,
+    collapsedDateKeys: new Set(),
+    onToggleCollapsed: () => {
+      clicked = true;
+    },
+    onToggleDateKey: () => {},
+  });
+  if (element === null) {
+    throw new Error("schedule agenda layout should render");
+  }
+  const [button] = React.Children.toArray(
+    (element.props as { children: React.ReactNode }).children,
+  ) as React.ReactElement<{ onClick: () => void }>[];
+
+  button.props.onClick();
+  assert.equal(clicked, true);
+});
+
 test("toggles schedule agenda groups from the date header", () => {
   let clicked = false;
   const element = ScheduleAgendaDateGroup({
@@ -591,6 +691,29 @@ test("renders the current thread plan in thread analysis", () => {
   assert.doesNotMatch(markup, /Plan Work/);
   assert.doesNotMatch(markup, /Execution Queue/);
   assert.doesNotMatch(markup, /Todo List/);
+});
+
+test("renders long current plan steps without dropping status labels", () => {
+  const planUpdate = {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    explanation: "Keep the status summary compact.",
+    plan: [
+      {
+        step: "Audit the right panel monitor activity layout with a deliberately long plan step that should wrap inside the inspector column instead of pushing status labels out of alignment",
+        status: "inProgress",
+      },
+      { step: "Run focused UI validation", status: "pending" },
+    ],
+  } satisfies ThreadPlanUpdate;
+  const markup = renderRightPanel(makeThread([]), "skills", planUpdate);
+
+  assert.match(markup, /2 steps/);
+  assert.match(markup, /current-plan-step/);
+  assert.match(markup, /current-plan-count/);
+  assert.match(markup, /plan-status-label inProgress/);
+  assert.match(markup, /In progress/);
+  assert.match(markup, /Run focused UI validation/);
 });
 
 test("does not render todo items inside thread analysis", () => {
