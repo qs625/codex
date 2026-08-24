@@ -505,6 +505,67 @@ test("buildProjectAgentSidebar keeps duplicate parentless roots visible in the s
   assert.equal(sidebar.projects[0]?.descendantCount, 1);
 });
 
+test("buildProjectAgentSidebar separates same-cwd roots by project path", () => {
+  const alphaRoot = makeSidebarThread({
+    id: "alpha-root",
+    cwd: "/work/project",
+    agentPath: "/alpha",
+    updatedAt: 4,
+  });
+  const betaRoot = makeSidebarThread({
+    id: "beta-root",
+    cwd: "/work/project/",
+    agentPath: "/beta",
+    updatedAt: 8,
+  });
+
+  const sidebar = buildProjectAgentSidebar([alphaRoot, betaRoot]);
+
+  assert.equal(sidebar.projects.length, 2);
+  assert.deepEqual(
+    sidebar.projects.map((project) => project.label),
+    ["/beta", "/alpha"],
+  );
+  assert.deepEqual(
+    sidebar.projects.map((project) => project.tree.threadId),
+    ["beta-root", "alpha-root"],
+  );
+  assert.notEqual(sidebar.projects[0]?.id, sidebar.projects[1]?.id);
+  assert.deepEqual(
+    sidebar.projects.map((project) => project.cwd),
+    ["/work/project", "/work/project"],
+  );
+});
+
+test("buildProjectAgentSidebar keeps same-cwd same-project-path roots together", () => {
+  const olderRoot = makeSidebarThread({
+    id: "older-root",
+    name: "Older chat",
+    cwd: "/work/project",
+    agentPath: "/my_codex",
+    updatedAt: 2,
+  });
+  const activeRoot = makeSidebarThread({
+    id: "active-root",
+    cwd: "/work/project/",
+    agentPath: "/my_codex/",
+    updatedAt: 1,
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+  });
+
+  const sidebar = buildProjectAgentSidebar([olderRoot, activeRoot]);
+
+  assert.equal(sidebar.projects.length, 1);
+  assert.equal(sidebar.projects[0]?.id, "project:/work/project|path:/my_codex");
+  assert.equal(sidebar.projects[0]?.label, "/my_codex");
+  assert.equal(sidebar.projects[0]?.tree.threadId, "active-root");
+  assert.deepEqual(
+    sidebar.projects[0]?.tree.children.map((child) => child.threadId),
+    ["older-root"],
+  );
+  assert.deepEqual(sidebar.projects[0]?.duplicateRootThreadIds, ["older-root"]);
+});
+
 test("pickInitialProjectThread follows sidebar canonical project root selection", () => {
   const olderRoot = makeSidebarThread({
     id: "older-root",

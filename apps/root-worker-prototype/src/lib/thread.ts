@@ -104,7 +104,10 @@ export function buildAgentTree(
 
 export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar {
   const parentlessThreads = threads.filter(isRootThread);
-  const projectRootCandidates = new Map<string, Thread[]>();
+  const projectRootCandidates = new Map<
+    string,
+    { cwd: string; projectPath: string | null; candidates: Thread[] }
+  >();
   const chatThreads: Thread[] = [];
 
   for (const thread of parentlessThreads) {
@@ -113,15 +116,22 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
       chatThreads.push(thread);
       continue;
     }
-    const candidates = projectRootCandidates.get(projectCwd) ?? [];
-    candidates.push(thread);
-    projectRootCandidates.set(projectCwd, candidates);
+    const projectPath = normalizeProjectPathIdentity(thread.agentPath);
+    const projectKey = projectIdentityKey(projectCwd, projectPath);
+    const group = projectRootCandidates.get(projectKey) ?? {
+      cwd: projectCwd,
+      projectPath,
+      candidates: [],
+    };
+    group.candidates.push(thread);
+    projectRootCandidates.set(projectKey, group);
   }
 
-  const projects = [...projectRootCandidates.entries()]
-    .map(([cwd, candidates]) => {
+  const projects = [...projectRootCandidates.values()]
+    .map(({ cwd, projectPath, candidates }) => {
       const sortedCandidates = [...candidates].sort(compareCanonicalProjectRoot);
       const rootThread = sortedCandidates[0];
+      const projectLabel = projectPath ?? projectLabelFromCwd(cwd);
       const duplicateRootThreadIds = sortedCandidates
         .slice(1)
         .map((thread) => thread.id);
@@ -133,15 +143,15 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
       const projectTree = buildSidebarRootTree(
         threads,
         rootThread,
-        (node) => withProjectRootLabel(node, projectLabelFromCwd(cwd)),
+        (node) => withProjectRootLabel(node, projectLabel),
       );
       projectTree.children.push(...duplicateRootTrees);
       const projectThreadList = collectTreeThreads(projectTree);
       const counts = countSidebarStatuses(projectThreadList);
 
       return {
-        id: `project:${cwd}`,
-        label: projectLabelFromCwd(cwd),
+        id: projectNodeId(cwd, projectPath),
+        label: projectLabel,
         subtitle: cwd,
         cwd,
         statusClass: selfTreeThreadLifecycleStatusClass(rootThread),
@@ -1819,6 +1829,23 @@ export function normalizeProjectCwd(cwd: string | null | undefined) {
 
 function projectLabelFromCwd(cwd: string) {
   return cwd.split("/").filter(Boolean).at(-1) ?? cwd;
+}
+
+function normalizeProjectPathIdentity(path: string | null | undefined) {
+  const trimmed = path?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = trimmed.replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function projectIdentityKey(cwd: string, projectPath: string | null) {
+  return projectPath ? `${cwd}\0${projectPath}` : cwd;
+}
+
+function projectNodeId(cwd: string, projectPath: string | null) {
+  return projectPath ? `project:${cwd}|path:${projectPath}` : `project:${cwd}`;
 }
 
 function compareCanonicalProjectRoot(left: Thread, right: Thread) {
