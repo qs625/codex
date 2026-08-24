@@ -39,7 +39,6 @@ use super::list::ThreadSortKey;
 use super::list::ThreadsPage;
 use super::list::get_threads;
 use super::list::get_threads_in_root;
-use super::list::parse_cursor;
 use super::list::parse_timestamp_uuid_from_filename;
 use super::metadata;
 use super::session_index::find_thread_names_by_ids;
@@ -965,15 +964,10 @@ fn truncate_fs_page(
         return page;
     }
     page.items.truncate(page_size);
-    page.next_cursor = page.items.last().and_then(|item| {
-        let file_name = item.path.file_name()?.to_str()?;
-        let (created_at, _id) = parse_timestamp_uuid_from_filename(file_name)?;
-        let cursor_token = match sort_key {
-            ThreadSortKey::CreatedAt => created_at.format(&Rfc3339).ok()?,
-            ThreadSortKey::UpdatedAt => item.updated_at.as_deref()?.to_string(),
-        };
-        parse_cursor(cursor_token.as_str())
-    });
+    page.next_cursor = page
+        .items
+        .last()
+        .and_then(|item| cursor_from_thread_item(item, sort_key));
     page
 }
 
@@ -1260,8 +1254,17 @@ async fn list_threads_from_files_asc(
 
     if let Some(cursor) = cursor {
         let anchor = cursor.timestamp();
+        let anchor_id = cursor.id();
         all_items
-            .retain(|item| thread_item_sort_key(item, sort_key).is_some_and(|key| key.0 > anchor));
+            .retain(|item| {
+                thread_item_sort_key(item, sort_key).is_some_and(|key| {
+                    if let Some(anchor_id) = anchor_id {
+                        key.0 > anchor || (key.0 == anchor && key.1 > anchor_id)
+                    } else {
+                        key.0 > anchor
+                    }
+                })
+            });
     }
 
     let more_matches_available = all_items.len() > page_size || reached_scan_cap;
@@ -1324,9 +1327,8 @@ fn thread_item_sort_key(
 }
 
 fn cursor_from_thread_item(item: &ThreadItem, sort_key: ThreadSortKey) -> Option<Cursor> {
-    let (timestamp, _id) = thread_item_sort_key(item, sort_key)?;
-    let cursor_token = timestamp.format(&Rfc3339).ok()?;
-    parse_cursor(cursor_token.as_str())
+    let (timestamp, id) = thread_item_sort_key(item, sort_key)?;
+    Some(Cursor::new_with_id(timestamp, id))
 }
 
 struct LogFileInfo {

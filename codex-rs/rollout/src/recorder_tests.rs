@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::config::RolloutConfig;
+use crate::session_index::SessionIndexEntry;
+use crate::session_index::append_session_index_entry;
 use chrono::TimeZone;
 use pretty_assertions::assert_eq;
 use protocol::ThreadId;
@@ -920,6 +922,149 @@ async fn list_threads_state_db_only_skips_jsonl_repair_scan() -> std::io::Result
     )
     .await?;
     assert_eq!(repaired_state_db_only_page.items.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_threads_filesystem_asc_paginates_same_timestamp_ties() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let timestamp = "2025-01-03T17-00-00";
+    let ids = [Uuid::from_u128(9021), Uuid::from_u128(9022), Uuid::from_u128(9023)];
+    for id in ids {
+        write_session_file(home.path(), timestamp, id)?;
+    }
+
+    let default_provider = config.model_provider_id.clone();
+    let page1 = RolloutRecorder::list_threads(
+        /*state_db_ctx*/ None,
+        &config,
+        /*page_size*/ 2,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        SortDirection::Asc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        default_provider.as_str(),
+        /*search_term*/ None,
+    )
+    .await?;
+    let page1_ids = page1
+        .items
+        .iter()
+        .map(|item| item.thread_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        page1_ids,
+        vec![
+            Some(ThreadId::from_string(&ids[0].to_string()).expect("thread id")),
+            Some(ThreadId::from_string(&ids[1].to_string()).expect("thread id")),
+        ]
+    );
+
+    let page2 = RolloutRecorder::list_threads(
+        /*state_db_ctx*/ None,
+        &config,
+        /*page_size*/ 2,
+        page1.next_cursor.as_ref(),
+        ThreadSortKey::CreatedAt,
+        SortDirection::Asc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        default_provider.as_str(),
+        /*search_term*/ None,
+    )
+    .await?;
+    let page2_ids = page2
+        .items
+        .iter()
+        .map(|item| item.thread_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        page2_ids,
+        vec![Some(
+            ThreadId::from_string(&ids[2].to_string()).expect("thread id")
+        )]
+    );
+    assert_eq!(page2.next_cursor, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_threads_filesystem_search_paginates_same_timestamp_ties() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let timestamp = "2025-01-03T18-00-00";
+    let ids = [Uuid::from_u128(9031), Uuid::from_u128(9032), Uuid::from_u128(9033)];
+    for id in ids {
+        write_session_file(home.path(), timestamp, id)?;
+        append_session_index_entry(
+            home.path(),
+            &SessionIndexEntry {
+                id: ThreadId::from_string(&id.to_string()).expect("thread id"),
+                thread_name: "Hello matching title".to_string(),
+                updated_at: "2025-01-03T18:00:01Z".to_string(),
+            },
+        )
+        .await?;
+    }
+
+    let default_provider = config.model_provider_id.clone();
+    let page1 = RolloutRecorder::list_threads(
+        /*state_db_ctx*/ None,
+        &config,
+        /*page_size*/ 2,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        SortDirection::Desc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        default_provider.as_str(),
+        Some("Hello"),
+    )
+    .await?;
+    let page1_ids = page1
+        .items
+        .iter()
+        .map(|item| item.thread_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        page1_ids,
+        vec![
+            Some(ThreadId::from_string(&ids[2].to_string()).expect("thread id")),
+            Some(ThreadId::from_string(&ids[1].to_string()).expect("thread id")),
+        ]
+    );
+
+    let page2 = RolloutRecorder::list_threads(
+        /*state_db_ctx*/ None,
+        &config,
+        /*page_size*/ 2,
+        page1.next_cursor.as_ref(),
+        ThreadSortKey::CreatedAt,
+        SortDirection::Desc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        default_provider.as_str(),
+        Some("Hello"),
+    )
+    .await?;
+    let page2_ids = page2
+        .items
+        .iter()
+        .map(|item| item.thread_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        page2_ids,
+        vec![Some(
+            ThreadId::from_string(&ids[0].to_string()).expect("thread id")
+        )]
+    );
+    assert_eq!(page2.next_cursor, None);
     Ok(())
 }
 

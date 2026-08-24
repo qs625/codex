@@ -478,9 +478,10 @@ test("getThreadAncestorIds returns ancestors for selected Chat subagents", () =>
   ]);
 });
 
-test("buildProjectAgentSidebar hides duplicate parentless roots for the same project", () => {
+test("buildProjectAgentSidebar keeps duplicate parentless roots visible in the same project", () => {
   const olderRoot = makeSidebarThread({
     id: "older-root",
+    name: "Older chat",
     cwd: "/work/project",
     updatedAt: 2,
   });
@@ -495,7 +496,13 @@ test("buildProjectAgentSidebar hides duplicate parentless roots for the same pro
 
   assert.equal(sidebar.projects.length, 1);
   assert.equal(sidebar.projects[0]?.tree.threadId, "active-root");
+  assert.deepEqual(
+    sidebar.projects[0]?.tree.children.map((child) => child.threadId),
+    ["older-root"],
+  );
+  assert.equal(sidebar.projects[0]?.tree.children[0]?.label, "Older chat");
   assert.deepEqual(sidebar.projects[0]?.duplicateRootThreadIds, ["older-root"]);
+  assert.equal(sidebar.projects[0]?.descendantCount, 1);
 });
 
 test("pickInitialProjectThread follows sidebar canonical project root selection", () => {
@@ -1756,6 +1763,51 @@ test("mergeThreadSnapshot preserves restored event-driven tool calls with distin
   );
 
   assert.deepEqual(merged.turns, [readTurn, liveTurn]);
+});
+
+test("mergeThreadSnapshot keeps older restored reasoning before newer live tool items", () => {
+  const restoredReasoning: ThreadItem = {
+    type: "reasoning",
+    id: "reasoning-2-09",
+    summary: ["Reasoning item received."],
+    content: [],
+    startedAtMs: 2_000,
+  };
+  const livePollEvent: ThreadItem = {
+    type: "builtinToolCall",
+    id: "poll-event-2-19",
+    tool: "poll_event",
+    arguments: {},
+    status: "inProgress",
+    output: null,
+    startedAtMs: 3_000,
+  };
+  const restoredTurn = {
+    ...makeTurn("turn-1", [restoredReasoning]),
+    status: "running" as const,
+    completedAt: null,
+  };
+  const liveTurn = {
+    ...makeTurn("turn-1", [livePollEvent]),
+    status: "running" as const,
+    completedAt: null,
+  };
+
+  const merged = mergeThreadSnapshot(
+    {
+      ...makeThread(),
+      turns: [restoredTurn],
+    },
+    {
+      ...makeThread(),
+      turns: [liveTurn],
+    },
+  );
+
+  assert.deepEqual(
+    merged.turns[0]?.items.map((item) => item.id),
+    ["reasoning-2-09", "poll-event-2-19"],
+  );
 });
 
 test("upsertThread prunes items before the latest compact boundary", () => {
