@@ -698,6 +698,74 @@ async fn list_threads_db_enabled_drops_missing_rollout_paths() -> std::io::Resul
 }
 
 #[tokio::test]
+async fn list_threads_state_db_only_keeps_metadata_with_missing_rollout_path(
+) -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+
+    let uuid = Uuid::from_u128(9013);
+    let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+    let missing_path = home.path().join(format!(
+        "sessions/2099/01/01/rollout-2099-01-01T00-00-00-{uuid}.jsonl"
+    ));
+
+    let runtime =
+        state::StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
+            .await
+            .expect("state db should initialize");
+    runtime
+        .mark_backfill_complete(/*last_watermark*/ None)
+        .await
+        .expect("backfill should be complete");
+    let created_at = chrono::Utc
+        .with_ymd_and_hms(2025, 1, 3, 13, 30, 0)
+        .single()
+        .expect("valid datetime");
+    let mut builder = state::ThreadMetadataBuilder::new(
+        thread_id,
+        missing_path.clone(),
+        created_at,
+        SessionSource::Cli,
+    );
+    builder.model_provider = Some(config.model_provider_id.clone());
+    builder.cwd = home.path().to_path_buf();
+    builder.agent_path = Some("/my_codex".to_string());
+    let mut metadata = builder.build(config.model_provider_id.as_str());
+    metadata.first_user_message = Some("Hello from db metadata".to_string());
+    metadata.preview = metadata.first_user_message.clone();
+    runtime
+        .upsert_thread(&metadata)
+        .await
+        .expect("state db upsert should succeed");
+
+    let page = RolloutRecorder::list_threads_from_state_db(
+        Some(runtime.clone()),
+        &config,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        SortDirection::Desc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        config.model_provider_id.as_str(),
+        /*search_term*/ None,
+    )
+    .await?;
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].thread_id, Some(thread_id));
+    assert_eq!(page.items[0].path, missing_path);
+    assert_eq!(page.items[0].agent_path.as_deref(), Some("/my_codex"));
+    let stored_path = runtime
+        .find_rollout_path_by_id(thread_id, Some(false))
+        .await
+        .expect("state db lookup should succeed");
+    assert_eq!(stored_path, Some(page.items[0].path.clone()));
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_threads_db_enabled_repairs_stale_rollout_paths() -> std::io::Result<()> {
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());

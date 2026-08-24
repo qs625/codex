@@ -363,6 +363,7 @@ impl RolloutRecorder {
                 cwd_filters,
                 archived,
                 search_term,
+                /*validate_rollout_paths*/ false,
             )
             .await
             .map(Into::into)
@@ -471,6 +472,7 @@ impl RolloutRecorder {
             cwd_filters,
             archived,
             search_term,
+            /*validate_rollout_paths*/ true,
         )
         .await;
         if let Some(db_page) = db_page {
@@ -499,6 +501,7 @@ impl RolloutRecorder {
                     cwd_filters,
                     archived,
                     search_term,
+                    /*validate_rollout_paths*/ true,
                 )
                 .await
                 {
@@ -591,6 +594,7 @@ impl RolloutRecorder {
                     cwd_filter.as_ref().map(std::slice::from_ref),
                     /*archived*/ false,
                     /*search_term*/ None,
+                    /*validate_rollout_paths*/ true,
                 )
                 .await
                 else {
