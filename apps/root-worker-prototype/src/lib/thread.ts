@@ -192,6 +192,39 @@ export function pickInitialProjectThread(threads: Thread[]) {
   return sidebar.projects[0]?.tree.thread ?? pickInitialThread(threads);
 }
 
+export function findProjectByRootIdentity(
+  projects: readonly SidebarProjectNode[],
+  cwd: string | null | undefined,
+  rootAgentPath: string | null | undefined,
+) {
+  const projectCwd = normalizeProjectCwd(cwd);
+  if (!projectCwd) {
+    return null;
+  }
+  const projectPath = normalizeProjectPathIdentity(rootAgentPath);
+  return (
+    projects.find((project) => {
+      if (normalizeProjectCwd(project.cwd) !== projectCwd) {
+        return false;
+      }
+      const existingPath = normalizeProjectPathIdentity(
+        project.tree.thread?.agentPath,
+      );
+      return existingPath === projectPath;
+    }) ?? null
+  );
+}
+
+export function rootAgentPathFromTaskName(taskName: string | null | undefined) {
+  const trimmed = taskName?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return normalizeProjectPathIdentity(
+    trimmed.startsWith("/") ? trimmed : `/${trimmed}`,
+  );
+}
+
 export function mergeDefaultCollapsedProjectIds(
   currentCollapsedProjectIds: string[],
   projectIds: readonly string[],
