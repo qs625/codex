@@ -51,6 +51,9 @@ function makeThread(
 test("returns command and schedule monitor sections when no thread is selected", () => {
   const analysis = buildThreadAnalysis(null, 4);
 
+  assert.equal(analysis.runtime.lifetimeLabel, "Unavailable");
+  assert.equal(analysis.runtime.lifetimeSeconds, null);
+  assert.equal(analysis.runtime.compactionCount, 0);
   assert.equal(analysis.contextUsage.totalSkills, 4);
   assert.equal(analysis.monitors.totalCount, 0);
   assert.equal(analysis.monitors.eventCount, 0);
@@ -67,6 +70,65 @@ test("returns command and schedule monitor sections when no thread is selected",
       ["schedule", "Schedules", "No scheduled listeners.", []],
     ],
   );
+});
+
+test("formats thread lifetime from createdAt seconds and fixed now", () => {
+  const analysis = buildThreadAnalysis(makeThread([]), 4, null, {
+    now: new Date("1970-01-02T03:06:01.000Z"),
+  });
+
+  assert.equal(analysis.runtime.lifetimeLabel, "1d 3h");
+  assert.equal(analysis.runtime.lifetimeSeconds, 97_560);
+});
+
+test("reports unavailable lifetime for invalid createdAt values", () => {
+  const thread = {
+    ...makeThread([]),
+    createdAt: Number.NaN,
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4, null, {
+    now: new Date("1970-01-02T00:00:00.000Z"),
+  });
+
+  assert.equal(analysis.runtime.lifetimeLabel, "Unavailable");
+  assert.equal(analysis.runtime.lifetimeSeconds, null);
+});
+
+test("uses durable compaction count before scanning visible turns", () => {
+  const thread = {
+    ...makeThread([
+      {
+        type: "contextCompaction",
+        id: "compact-latest",
+        replacementHistory: [],
+      },
+    ]),
+    stats: { compactionCount: 3 },
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.equal(analysis.runtime.compactionCount, 3);
+});
+
+test("falls back to visible context compaction items when stats are unavailable", () => {
+  const thread = makeThread([
+    {
+      type: "contextCompaction",
+      id: "compact-1",
+      replacementHistory: [],
+    },
+    {
+      type: "contextCompaction",
+      id: "compact-2",
+      replacementHistory: [],
+    },
+  ]);
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.equal(analysis.runtime.compactionCount, 2);
 });
 
 test("builds schedule monitors from active subscription current state items", () => {

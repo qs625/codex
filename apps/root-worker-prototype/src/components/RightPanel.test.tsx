@@ -417,8 +417,8 @@ test("omits plan work queue from thread analysis", () => {
 });
 
 test("renders live commands and schedule subscriptions", () => {
-  const markup = renderRightPanel(
-    makeThread(
+  const thread = {
+    ...makeThread(
       [
         {
           type: "commandExecution",
@@ -447,9 +447,13 @@ test("renders live commands and schedule subscriptions", () => {
       ],
       { type: "idle", reason: "waitCommand" },
     ),
-  );
+    stats: { compactionCount: 2 },
+  } satisfies Thread;
+  const markup = renderRightPanel(thread);
 
   assert.match(markup, /tail -f \/tmp\/out\.log/);
+  assert.match(markup, /Lifetime/);
+  assert.match(markup, /<span>Compactions<\/span><strong>2<\/strong>/);
   assert.doesNotMatch(markup, /changed:\/tmp\/out\.log/);
   assert.doesNotMatch(markup, /No live commands\./);
   assert.match(markup, /standup ping/);

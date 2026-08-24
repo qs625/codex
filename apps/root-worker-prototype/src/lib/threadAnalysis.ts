@@ -43,6 +43,11 @@ export type ChangedFileSummary = {
 };
 
 export type ThreadAnalysis = {
+  runtime: {
+    lifetimeLabel: string;
+    lifetimeSeconds: number | null;
+    compactionCount: number;
+  };
   contextUsage: ContextUsageAnalysis;
   monitors: {
     totalCount: number;
@@ -119,10 +124,89 @@ export function buildThreadAnalysis(
   const monitors = buildMonitorSections(thread, options);
 
   return {
+    runtime: buildRuntimeSummary(thread, options),
     contextUsage,
     monitors,
     changedFiles: buildChangedFiles(thread),
   };
+}
+
+function buildRuntimeSummary(
+  thread: Thread | null,
+  options: ThreadAnalysisOptions,
+): ThreadAnalysis["runtime"] {
+  return {
+    lifetimeLabel: formatThreadLifetime(thread?.createdAt, options.now),
+    lifetimeSeconds: calculateThreadLifetimeSeconds(thread?.createdAt, options.now),
+    compactionCount: countThreadCompactions(thread),
+  };
+}
+
+export function formatThreadLifetime(
+  createdAt: number | null | undefined,
+  nowValue: Date | string | number | undefined,
+) {
+  const seconds = calculateThreadLifetimeSeconds(createdAt, nowValue);
+  if (seconds === null) {
+    return "Unavailable";
+  }
+  if (seconds >= 86_400) {
+    const days = Math.floor(seconds / 86_400);
+    const hours = Math.floor((seconds % 86_400) / 3_600);
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  }
+  if (seconds >= 3_600) {
+    const hours = Math.floor(seconds / 3_600);
+    const minutes = Math.floor((seconds % 3_600) / 60);
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  if (seconds >= 60) {
+    return `${Math.floor(seconds / 60)}m`;
+  }
+  return `${Math.max(0, Math.floor(seconds))}s`;
+}
+
+function calculateThreadLifetimeSeconds(
+  createdAt: number | null | undefined,
+  nowValue: Date | string | number | undefined,
+) {
+  if (!Number.isFinite(createdAt)) {
+    return null;
+  }
+  const nowMs = coerceTimeMs(nowValue ?? Date.now());
+  if (nowMs === null) {
+    return null;
+  }
+  const elapsedSeconds = Math.floor(nowMs / 1000 - createdAt);
+  if (!Number.isFinite(elapsedSeconds)) {
+    return null;
+  }
+  return Math.max(0, elapsedSeconds);
+}
+
+function coerceTimeMs(value: Date | string | number) {
+  const timeMs =
+    value instanceof Date
+      ? value.getTime()
+      : typeof value === "number"
+        ? value
+        : new Date(value).getTime();
+  return Number.isFinite(timeMs) ? timeMs : null;
+}
+
+function countThreadCompactions(thread: Thread | null) {
+  const durableCount = thread?.stats?.compactionCount;
+  if (Number.isFinite(durableCount) && durableCount >= 0) {
+    return Math.floor(durableCount);
+  }
+  return (
+    thread?.turns.reduce(
+      (count, turn) =>
+        count +
+        turn.items.filter((item) => item.type === "contextCompaction").length,
+      0,
+    ) ?? 0
+  );
 }
 
 export function hasActiveMonitors(thread: Thread | null) {

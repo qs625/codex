@@ -431,6 +431,10 @@ export type ThreadUsage = {
   contextUsage: ThreadContextUsage | null;
 };
 
+export type ThreadStats = {
+  compactionCount: number;
+};
+
 export type ThreadLifecycleActiveFlag =
   | "running"
   | "waitingOnApproval"
@@ -538,6 +542,7 @@ export type Thread = {
   threadUsage?: ThreadUsage | null;
   tokenUsage?: ThreadTokenUsage | null;
   contextUsage?: ThreadContextUsage | null;
+  stats?: ThreadStats | null;
   latestPlan?: ThreadPlanUpdate | null;
   turns: Turn[];
   activeSubscriptionItems?: ThreadItem[];

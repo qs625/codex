@@ -3908,8 +3908,13 @@ svg {
 .overview-metric strong {
   display: block;
   margin-top: 2px;
-  font-size: 20px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 18px;
   font-weight: 600;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .overview-metric.doing strong {
@@ -3965,7 +3970,7 @@ svg {
 
 .thread-analysis-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   gap: 8px;
 }
 

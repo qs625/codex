@@ -481,6 +481,7 @@ mod thread_processor_behavior_tests {
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
+            stats: None,
             turns: Vec::new(),
             active_subscription_items: None,
             active_command_items: None,
@@ -604,6 +605,19 @@ mod thread_processor_behavior_tests {
         ]
     }
 
+    fn repeated_same_turn_compacted_display_history_items() -> Vec<RolloutItem> {
+        let mut items = compacted_display_history_items();
+        items.insert(
+            6,
+            RolloutItem::Compacted(CompactedItem {
+                message: "retry summary".to_string(),
+                replacement_history: Some(Vec::new()),
+                visible_replacement_history_len: None,
+            }),
+        );
+        items
+    }
+
     #[test]
     fn populate_thread_turns_from_history_prunes_compact_prefix() {
         let mut thread = Thread {
@@ -629,6 +643,7 @@ mod thread_processor_behavior_tests {
             skills: Vec::new(),
             token_usage: None,
             context_usage: None,
+            stats: None,
             turns: Vec::new(),
             active_subscription_items: None,
             active_command_items: None,
@@ -656,6 +671,61 @@ mod thread_processor_behavior_tests {
             &thread.turns[0].items[0],
             ThreadItem::ContextCompaction { .. }
         ));
+        assert_eq!(
+            thread.stats.as_ref().map(|stats| stats.compaction_count),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn populate_thread_turns_from_history_counts_same_turn_compactions_before_pruning() {
+        let mut thread = Thread {
+            id: "thread-1".to_string(),
+            session_id: "session-1".to_string(),
+            forked_from_id: None,
+            preview: "preview".to_string(),
+            ephemeral: false,
+            model_provider: "mock_provider".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            lifecycle_status: ThreadLifecycleStatus::completed(None),
+            path: None,
+            cwd: test_path_buf("/tmp").abs(),
+            cli_version: "0.0.0".to_string(),
+            source: ApiSessionSource::Cli,
+            thread_source: None,
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            git_info: None,
+            name: None,
+            skills: Vec::new(),
+            token_usage: None,
+            context_usage: None,
+            stats: None,
+            turns: Vec::new(),
+            active_subscription_items: None,
+            active_command_items: None,
+        };
+
+        populate_thread_turns_from_history(
+            &mut thread,
+            &repeated_same_turn_compacted_display_history_items(),
+            None,
+        );
+
+        assert_eq!(
+            thread.stats.as_ref().map(|stats| stats.compaction_count),
+            Some(2)
+        );
+        assert_eq!(
+            thread
+                .turns
+                .iter()
+                .flat_map(|turn| turn.items.iter().map(ThreadItem::id))
+                .collect::<Vec<_>>(),
+            vec!["item-3", "item-4", "item-5"]
+        );
     }
 
     #[test]

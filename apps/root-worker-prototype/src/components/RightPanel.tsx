@@ -878,7 +878,7 @@ function ThreadAnalysisPanel({
   onSelectCommandMonitor?: (commandItemId: string) => void;
   planUpdate: ThreadPlanUpdate | null;
 }) {
-  const { contextUsage, monitors } = analysis;
+  const { contextUsage, monitors, runtime } = analysis;
 
   return (
     <div className="skills-panel context-usage-panel">
@@ -899,6 +899,16 @@ function ThreadAnalysisPanel({
             label="Context"
             value={contextUsage.hasBudgetData ? contextUsage.budgetUsedPercent : 0}
             tone="open"
+          />
+          <OverviewMetric
+            label="Lifetime"
+            value={runtime.lifetimeLabel}
+            tone="open"
+          />
+          <OverviewMetric
+            label="Compactions"
+            value={runtime.compactionCount}
+            tone="doing"
           />
           <OverviewMetric
             label="Monitors"
@@ -2901,7 +2911,7 @@ function OverviewMetric({
 }: {
   label: string;
   tone: "open" | "doing" | "blocked";
-  value: number;
+  value: number | string;
 }) {
   return (
     <div className={`overview-metric ${tone}`}>

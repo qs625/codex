@@ -210,6 +210,7 @@ use app_server_protocol::ThreadShellCommandParams;
 use app_server_protocol::ThreadShellCommandResponse;
 use app_server_protocol::ThreadSortKey;
 use app_server_protocol::ThreadSourceKind;
+use app_server_protocol::ThreadStats;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
@@ -549,6 +550,22 @@ pub(crate) fn build_api_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<T
         }
     }
     builder.finish()
+}
+
+pub(crate) fn thread_stats_from_rollout_items(items: &[RolloutItem]) -> ThreadStats {
+    ThreadStats {
+        compaction_count: items
+            .iter()
+            .filter(|item| {
+                matches!(*item, RolloutItem::Compacted(_))
+                    && is_persisted_rollout_item(item, EventPersistenceMode::Limited)
+            })
+            .count() as u32,
+    }
+}
+
+pub(crate) fn apply_thread_stats_from_rollout_items(thread: &mut Thread, items: &[RolloutItem]) {
+    thread.stats = Some(thread_stats_from_rollout_items(items));
 }
 
 pub(crate) fn prune_turns_to_latest_compaction_boundary(turns: &mut Vec<Turn>) {
