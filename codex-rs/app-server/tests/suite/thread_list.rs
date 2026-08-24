@@ -861,7 +861,14 @@ sqlite = true
         .await?
         .expect("thread should be repaired into sqlite");
     metadata.cwd = stale_cwd.clone();
+    metadata.agent_path = Some("/my_codex".to_string());
     state_db.upsert_thread(&metadata).await?;
+    let rollout_path = rollout_path(
+        codex_home.path(),
+        "2025-01-02T10-00-00",
+        thread_id.as_str(),
+    );
+    std::fs::remove_file(&rollout_path)?;
 
     let request_id = mcp
         .send_thread_list_request(app_server_protocol::ThreadListParams {
@@ -891,6 +898,17 @@ sqlite = true
         .map(|thread| thread.id.as_str())
         .collect();
     assert_eq!(ids, vec![thread_id.as_str()]);
+    assert_eq!(
+        state_db_only_response.data[0].agent_path.as_deref(),
+        Some("/my_codex")
+    );
+    let stored_path = state_db
+        .find_rollout_path_by_id(thread_uuid, Some(false))
+        .await?;
+    assert!(
+        stored_path.is_some(),
+        "state-db-only listing should not delete metadata when the rollout path is missing"
+    );
 
     let request_id = mcp
         .send_thread_list_request(app_server_protocol::ThreadListParams {
@@ -915,6 +933,10 @@ sqlite = true
     .await??;
     let scanned_response = to_response::<ThreadListResponse>(resp)?;
     assert_eq!(scanned_response.data.len(), 0);
+    let stored_path = state_db
+        .find_rollout_path_by_id(thread_uuid, Some(false))
+        .await?;
+    assert_eq!(stored_path, None);
 
     Ok(())
 }

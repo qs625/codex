@@ -357,6 +357,7 @@ pub async fn list_threads_db(
     cwd_filters: Option<&[PathBuf]>,
     archived: bool,
     search_term: Option<&str>,
+    validate_rollout_paths: bool,
 ) -> Option<ThreadsPage> {
     let ctx = context?;
     let anchor = cursor_to_anchor(cursor);
@@ -396,24 +397,26 @@ pub async fn list_threads_db(
         .await
     {
         Ok(mut page) => {
-            let mut valid_items = Vec::with_capacity(page.items.len());
-            for item in page.items {
-                if tokio::fs::try_exists(&item.rollout_path)
-                    .await
-                    .unwrap_or(false)
-                {
-                    valid_items.push(item);
-                } else {
-                    warn!(
-                        "state db list_threads returned stale rollout path for thread {}: {}",
-                        item.id,
-                        item.rollout_path.display()
-                    );
-                    warn!("state db discrepancy during list_threads_db: stale_db_path_dropped");
-                    let _ = ctx.delete_thread(item.id).await;
+            if validate_rollout_paths {
+                let mut valid_items = Vec::with_capacity(page.items.len());
+                for item in page.items {
+                    if tokio::fs::try_exists(&item.rollout_path)
+                        .await
+                        .unwrap_or(false)
+                    {
+                        valid_items.push(item);
+                    } else {
+                        warn!(
+                            "state db list_threads returned stale rollout path for thread {}: {}",
+                            item.id,
+                            item.rollout_path.display()
+                        );
+                        warn!("state db discrepancy during list_threads_db: stale_db_path_dropped");
+                        let _ = ctx.delete_thread(item.id).await;
+                    }
                 }
+                page.items = valid_items;
             }
-            page.items = valid_items;
             Some(page)
         }
         Err(err) => {
