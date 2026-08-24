@@ -25,6 +25,7 @@
 - external code agents 使用独立 external tool surface（如 `spawn_external_agent`、`followup_external_task`、`list_external_agents`），不通过内部/native `spawn_agent` 的 provider 参数暴露给 native 模型。
 - 命名边界：Morpheus 指本项目自己的 agent/runtime 产品；`codex_cli` 指外部官方 Codex CLI/server provider。不要用 “Codex agent” 泛指 Morpheus/native agent，避免和 external Codex provider 混淆。
 - external CLI agent 的协作协议由后端 bridge 在启动 context 中注入 JSON tool schema/call/result 约定；provider raw stdout/JSON 只在后端 adapter 解析，UI 不解析 raw external JSON。
+- 内置 tool description 是 provider-visible contract 的一部分；不要用无 schema 的用户配置临时覆盖内置描述。若后续需要降低改文案成本，应优先抽成 repo-local typed template/assets，并用测试保证 native/external surface、tool name、schema 和参数语义不漂移。
 - 产品透明性原则：所有实际输入给模型/provider 的内容，以及模型/provider 返回的内容，都应通过 typed history/display 路径可见并可 reload 恢复。external agent initial prompt 中注入的 external tool spec 是 provider-visible 输入，也应作为输入事实展示；不能只展示用户原始 task、也不能只在 UI fake 展示。
 - External tool spec 注入必须由 Morpheus backend bridge 负责，不能依赖 external provider 自己的 init context 或 compact 保留策略。external provider 发生内部 compact 后，我们无法控制其 retained context；因此需要明确的 spec reinjection policy。但不要每次输入都重复完整 spec：应优先采用版本化 protocol context、compact-aware reinjection、parse-failure repair、或有界阈值 reinjection，并按透明性原则把实际 reinjected provider-visible content 进入 typed history/display。
 - external tools 与 internal tools 可共享 AgentControl / InterAgentCommunication / pending input / completion 事实源，但 model-visible tool 名称和 schema 必须分离。

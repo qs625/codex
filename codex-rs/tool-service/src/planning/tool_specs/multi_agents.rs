@@ -10,6 +10,7 @@ const SPAWN_AGENT_INHERITED_MODEL_GUIDANCE: &str = "Spawned agents inherit your 
 const SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION: &str = "Optional model override for the new agent. Leave unset to inherit the same model as the parent, which is the preferred default. Only set this when the user explicitly asks for a different model or the task clearly requires one.";
 const SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION: &str = "Optional service tier override for the new agent. Leave unset unless the user explicitly asks for one.";
 const SPAWN_AGENT_CWD_AGENT_TYPE_DESCRIPTION: &str = "When `cwd` is set, agent types from that cwd or its repository may be used even if they are not listed in your current context.";
+const FOLLOWUP_STATUS_REPORTING_GUIDANCE: &str = "Use this not only for assigning follow-up work, but also when a parent or another existing agent asks you to report status, progress, interim findings, blockers, or a decision request. A normal assistant response only advances or completes your current thread; it does not deliver an interim typed inter-agent update to a chosen target.";
 
 #[derive(Debug, Clone, Default)]
 pub struct SpawnAgentToolOptions {
@@ -117,10 +118,16 @@ pub fn create_followup_external_task_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "followup_external_task".to_string(),
-        description: "Send a follow-up message from the external-agent collaboration surface. This uses the same backend agent bus as native followup_task while keeping the model-visible external protocol separate.".to_string(),
+        description: format!(
+            "Send a follow-up message from the external-agent collaboration surface. This uses the same backend agent bus as native followup_task while keeping the model-visible external protocol separate. External agents must use this external tool surface, not internal Morpheus followup_task. {FOLLOWUP_STATUS_REPORTING_GUIDANCE}"
+        ),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["target".to_string()]),
+            Some(false.into()),
+        ),
         output_schema: None,
     })
 }
@@ -222,11 +229,16 @@ pub fn create_followup_task_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "followup_task".to_string(),
-        description: "Send a message to an existing non-root target agent and trigger a turn in that target. If the target is currently mid-turn, the message is queued and will be used to start the target's next turn, after the current turn completes."
-            .to_string(),
+        description: format!(
+            "Send a message to an existing non-root target agent and trigger a turn in that target. If the target is currently mid-turn, the message is queued and will be used to start the target's next turn, after the current turn completes. {FOLLOWUP_STATUS_REPORTING_GUIDANCE}"
+        ),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["target".to_string()]),
+            Some(false.into()),
+        ),
         output_schema: None,
     })
 }

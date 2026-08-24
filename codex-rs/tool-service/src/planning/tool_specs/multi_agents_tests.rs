@@ -238,6 +238,48 @@ fn external_and_native_followup_tools_share_parameter_shape() {
 }
 
 #[test]
+fn followup_tools_describe_status_reporting_to_parent() {
+    let native = function_tool(create_followup_task_tool(), "followup_task");
+    let external = function_tool(
+        create_followup_external_task_tool(),
+        "followup_external_task",
+    );
+
+    for description in [&native.description, &external.description] {
+        assert!(
+            description.contains("status")
+                && description.contains("progress")
+                && description.contains("blockers")
+                && description.contains("decision request"),
+            "expected status reporting guidance in {description}"
+        );
+        assert!(
+            description.contains("normal assistant response")
+                && description.contains("typed inter-agent update"),
+            "expected assistant-vs-typed-update guidance in {description}"
+        );
+        assert!(
+            description.contains("advances or completes your current thread")
+                && description.contains("interim typed inter-agent update"),
+            "expected current-thread-vs-interim-update guidance in {description}"
+        );
+    }
+    assert!(
+        native.description.contains("parent"),
+        "native followup should describe parent status reporting"
+    );
+    assert!(
+        external
+            .description
+            .contains("External agents must use this external tool surface")
+            && external
+                .description
+                .contains("not internal Morpheus followup_task"),
+        "external followup should keep external/native tool surfaces separate"
+    );
+}
+
+#[test]
 fn external_and_native_list_tools_share_parameter_shape() {
     let native = function_tool(create_list_agents_tool(), "list_agents");
     let external = function_tool(create_list_external_agents_tool(), "list_external_agents");
