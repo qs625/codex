@@ -638,6 +638,48 @@ test("mergeThreadSnapshots preserves distinct in-flight items with matching cont
   assert.deepEqual(merged.turns, [readTurn, liveTurn]);
 });
 
+test("mergeThreadSnapshots keeps older restored reasoning before newer live tool items", () => {
+  const existingTurn = {
+    id: "turn-1",
+    items: [
+      {
+        type: "reasoning",
+        id: "reasoning-2-09",
+        text: "",
+        startedAtMs: 2000,
+      },
+    ],
+    itemsView: "full",
+    status: "running",
+    error: null,
+    startedAt: 10,
+    completedAt: null,
+    durationMs: null,
+  };
+  const nextTurn = {
+    ...existingTurn,
+    items: [
+      {
+        type: "builtinToolCall",
+        id: "poll-event-2-19",
+        tool: "poll_event",
+        status: "inProgress",
+        startedAtMs: 3000,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshots(
+    makeThread({ turns: [existingTurn] }),
+    makeThread({ turns: [nextTurn] }),
+  );
+
+  assert.deepEqual(
+    merged.turns[0].items.map((item) => item.id),
+    ["reasoning-2-09", "poll-event-2-19"],
+  );
+});
+
 test("mergeThreadSnapshots preserves duplicate context compaction markers", () => {
   const restoredTurn = makeCollabMessageTurn({
     id: "restored-turn",

@@ -182,7 +182,7 @@ function mergeTurn(existing, next) {
     );
     for (const item of existingItems) {
       if (!consumeMatchingTurnItem(mergedItemsMatcher, existing, item)) {
-        mergedItems.push(item);
+        insertTurnItemByTimestamp(mergedItems, item);
       }
     }
   }
@@ -192,6 +192,35 @@ function mergeTurn(existing, next) {
     ...next,
     items: mergedItems,
   };
+}
+
+function insertTurnItemByTimestamp(items, item) {
+  const timestampMs = threadItemOrderTimestampMs(item);
+  if (timestampMs === null) {
+    items.push(item);
+    return;
+  }
+
+  const insertIndex = items.findIndex((candidate) => {
+    const candidateTimestampMs = threadItemOrderTimestampMs(candidate);
+    return candidateTimestampMs !== null && candidateTimestampMs > timestampMs;
+  });
+  if (insertIndex === -1) {
+    items.push(item);
+    return;
+  }
+
+  items.splice(insertIndex, 0, item);
+}
+
+function threadItemOrderTimestampMs(item) {
+  const timestampMs =
+    item.startedAtMs ??
+    item.completedAtMs ??
+    ("createdAtMs" in item ? item.createdAtMs : null);
+  return typeof timestampMs === "number" && Number.isFinite(timestampMs)
+    ? timestampMs
+    : null;
 }
 
 function mergeThreadItem(existing, next) {

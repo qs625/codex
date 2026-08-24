@@ -147,14 +147,6 @@ impl TryFrom<ThreadRow> for ThreadMetadata {
     }
 }
 
-pub(crate) fn anchor_from_item(item: &ThreadMetadata, sort_key: SortKey) -> Option<Anchor> {
-    let ts = match sort_key {
-        SortKey::CreatedAt => item.created_at,
-        SortKey::UpdatedAt => item.updated_at,
-    };
-    Some(Anchor { ts })
-}
-
 pub(crate) fn datetime_to_epoch_millis(dt: DateTime<Utc>) -> i64 {
     dt.timestamp_millis()
 }

@@ -290,7 +290,10 @@ fn cursor_to_anchor(cursor: Option<&Cursor>) -> Option<Anchor> {
     let millis = cursor.timestamp().unix_timestamp_nanos() / 1_000_000;
     let millis = i64::try_from(millis).ok()?;
     let ts = chrono::DateTime::<Utc>::from_timestamp_millis(millis)?;
-    Some(Anchor { ts })
+    let id = cursor
+        .id()
+        .and_then(|id| ThreadId::from_string(id.to_string().as_str()).ok());
+    Some(Anchor { ts, id })
 }
 
 pub fn normalize_cwd_for_state_db(cwd: &Path) -> PathBuf {

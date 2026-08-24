@@ -7,6 +7,7 @@ use chrono::NaiveDateTime;
 use chrono::Timelike;
 use chrono::Utc;
 use pretty_assertions::assert_eq;
+use protocol::ThreadId;
 use tempfile::TempDir;
 
 #[test]
@@ -22,6 +23,20 @@ fn cursor_to_anchor_normalizes_timestamp_format() {
         .expect("nanosecond");
 
     assert_eq!(anchor.ts, expected_ts);
+    assert_eq!(anchor.id, None);
+}
+
+#[test]
+fn cursor_to_anchor_preserves_thread_id_tie_breaker() {
+    let thread_id = "00000000-0000-0000-0000-000000000201";
+    let cursor = parse_cursor(&format!("2026-01-27T12-34-56|{thread_id}"))
+        .expect("cursor should parse");
+    let anchor = cursor_to_anchor(Some(&cursor)).expect("anchor should parse");
+
+    assert_eq!(
+        anchor.id,
+        Some(ThreadId::from_string(thread_id).expect("valid thread id"))
+    );
 }
 
 #[tokio::test]

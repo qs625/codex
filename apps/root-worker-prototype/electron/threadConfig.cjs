@@ -67,8 +67,9 @@ function buildCreateThreadStartParams(payload = {}, options = {}) {
   });
 }
 
-function buildThreadListParams() {
+function buildThreadListParams(cursor = null) {
   return {
+    ...(cursor ? { cursor } : {}),
     limit: 200,
     modelProviders: [],
     useStateDbOnly: true,

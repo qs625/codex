@@ -125,11 +125,17 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
       const duplicateRootThreadIds = sortedCandidates
         .slice(1)
         .map((thread) => thread.id);
+      const duplicateRootTrees = sortedCandidates
+        .slice(1)
+        .map((thread) =>
+          buildSidebarRootTree(threads, thread, withProjectConversationLabel),
+        );
       const projectTree = buildSidebarRootTree(
         threads,
         rootThread,
         (node) => withProjectRootLabel(node, projectLabelFromCwd(cwd)),
       );
+      projectTree.children.push(...duplicateRootTrees);
       const projectThreadList = collectTreeThreads(projectTree);
       const counts = countSidebarStatuses(projectThreadList);
 
@@ -973,12 +979,39 @@ function mergeTurnItemsFromSnapshot(
     );
     for (const item of existingItems) {
       if (!consumeMatchingTurnItem(mergedItemsMatcher, existing, item)) {
-        mergedItems.push(item);
+        insertTurnItemByTimestamp(mergedItems, item);
       }
     }
   }
 
   return mergedItems;
+}
+
+function insertTurnItemByTimestamp(items: ThreadItem[], item: ThreadItem) {
+  const timestampMs = threadItemOrderTimestampMs(item);
+  if (timestampMs === null) {
+    items.push(item);
+    return;
+  }
+  const insertIndex = items.findIndex((candidate) => {
+    const candidateTimestampMs = threadItemOrderTimestampMs(candidate);
+    return candidateTimestampMs !== null && candidateTimestampMs > timestampMs;
+  });
+  if (insertIndex === -1) {
+    items.push(item);
+    return;
+  }
+  items.splice(insertIndex, 0, item);
+}
+
+function threadItemOrderTimestampMs(item: ThreadItem) {
+  const timestampMs =
+    item.startedAtMs ??
+    item.completedAtMs ??
+    ("createdAtMs" in item ? item.createdAtMs : null);
+  return typeof timestampMs === "number" && Number.isFinite(timestampMs)
+    ? timestampMs
+    : null;
 }
 
 export function mergeThreadSnapshot(
@@ -1831,6 +1864,10 @@ function withProjectRootLabel(node: TreeNode, projectLabel: string): TreeNode {
         ? `${descendantCount} subagents`
         : getThreadPresenceLabel(node.thread)),
   };
+}
+
+function withProjectConversationLabel(node: TreeNode): TreeNode {
+  return withChatConversationLabel(node);
 }
 
 function withChatConversationLabel(node: TreeNode): TreeNode {

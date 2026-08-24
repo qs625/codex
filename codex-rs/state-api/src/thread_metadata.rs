@@ -32,6 +32,8 @@ pub enum SortDirection {
 pub struct Anchor {
     /// The timestamp component of the anchor.
     pub ts: DateTime<Utc>,
+    /// Stable tie-breaker for items sharing the same timestamp.
+    pub id: Option<ThreadId>,
 }
 
 /// A single page of thread metadata results.

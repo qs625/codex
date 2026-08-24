@@ -178,6 +178,27 @@ test("buildThreadListParams requests all providers for root-worker navigation", 
   });
 });
 
+test("buildThreadListParams carries pagination cursor for root-worker navigation", () => {
+  assert.deepEqual(buildThreadListParams("cursor-2"), {
+    cursor: "cursor-2",
+    limit: 200,
+    modelProviders: [],
+    useStateDbOnly: true,
+    sourceKinds: [
+      "appServer",
+      "cli",
+      "vscode",
+      "exec",
+      "subAgent",
+      "subAgentReview",
+      "subAgentCompact",
+      "subAgentThreadSpawn",
+      "subAgentOther",
+      "unknown",
+    ],
+  });
+});
+
 test("buildSubscribeThreadResumeParams resumes with realtime conversation config", () => {
   assert.deepEqual(buildSubscribeThreadResumeParams("thread-1"), {
     threadId: "thread-1",

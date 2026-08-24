@@ -31,9 +31,9 @@ const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const {
   buildChatCompatCwd,
   buildCreateThreadStartParams,
-  buildThreadListParams,
   buildSubscribeThreadResumeParams,
 } = require("./threadConfig.cjs");
+const { listThreads: listAllThreads } = require("./threadList.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
   buildTurnStartParams,
@@ -817,11 +817,7 @@ function handleStartupError(error) {
 }
 
 async function listThreads(cwd) {
-  const response = await appServerClient.request(
-    "thread/list",
-    buildThreadListParams(),
-  );
-  return response.data.map(normalizeThread);
+  return listAllThreads(appServerClient, normalizeThread);
 }
 
 async function listSkills(cwd) {
