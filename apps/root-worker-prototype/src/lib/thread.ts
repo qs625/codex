@@ -303,6 +303,39 @@ export function getThreadLabel(thread: Thread) {
   return thread.name ?? thread.agentNickname ?? last ?? "root";
 }
 
+const CHAT_FIRST_MESSAGE_LABEL_MAX_LENGTH = 80;
+
+function getChatThreadLabel(thread: Thread) {
+  return getFirstUserMessagePreview(thread) ?? getThreadLabel(thread);
+}
+
+function getFirstUserMessagePreview(thread: Thread) {
+  for (const turn of thread.turns) {
+    for (const item of turn.items) {
+      if (item.type !== "userMessage") {
+        continue;
+      }
+      const text = item.content
+        .map((content) => content.text ?? "")
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (text.length === 0) {
+        continue;
+      }
+      return truncateChatThreadLabel(text);
+    }
+  }
+  return null;
+}
+
+function truncateChatThreadLabel(text: string) {
+  if (text.length <= CHAT_FIRST_MESSAGE_LABEL_MAX_LENGTH) {
+    return text;
+  }
+  return `${text.slice(0, CHAT_FIRST_MESSAGE_LABEL_MAX_LENGTH - 3).trimEnd()}...`;
+}
+
 export function getTreeNodeLabel(thread: Thread) {
   if (isRootThread(thread)) {
     return getThreadPath(thread);
@@ -2157,13 +2190,17 @@ function withProjectRootLabel(node: TreeNode, projectLabel: string): TreeNode {
 }
 
 function withProjectConversationLabel(node: TreeNode): TreeNode {
-  return withChatConversationLabel(node);
+  return {
+    ...node,
+    label: node.thread ? getThreadLabel(node.thread) : node.label,
+    path: node.thread?.preview || getThreadPresenceLabel(node.thread),
+  };
 }
 
 function withChatConversationLabel(node: TreeNode): TreeNode {
   return {
     ...node,
-    label: node.thread ? getThreadLabel(node.thread) : node.label,
+    label: node.thread ? getChatThreadLabel(node.thread) : node.label,
     path: node.thread?.preview || getThreadPresenceLabel(node.thread),
   };
 }

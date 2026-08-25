@@ -597,6 +597,14 @@ test("new thread defaults preserve manual task path edits", () => {
 });
 
 test("SidebarPanel renders Chat group conversations separately", () => {
+  const activeChat = {
+    ...makeThread("chat-1", "", "Explain thread status updates"),
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
+  } satisfies Thread;
+  const waitingChat = {
+    ...makeThread("chat-2", "", "API question"),
+    lifecycleStatus: { type: "waiting", reason: "eventSubscription" },
+  } satisfies Thread;
   const sidebar: ProjectAgentSidebar = {
     projects: [],
     chat: {
@@ -604,8 +612,8 @@ test("SidebarPanel renders Chat group conversations separately", () => {
       statusClass: "todo",
       updatedAt: 2,
       conversations: [
-        makeNode(makeThread("chat-1", "", "General Q&A")),
-        makeNode(makeThread("chat-2", "", "API question")),
+        makeNode(activeChat),
+        makeNode(waitingChat),
       ],
     },
   };
@@ -613,13 +621,21 @@ test("SidebarPanel renders Chat group conversations separately", () => {
   const markup = renderSidebar(sidebar);
 
   assert.match(markup, /Chat/);
-  assert.match(markup, /General Q&amp;A/);
+  assert.match(markup, /Explain thread status updates/);
   assert.match(markup, /API question/);
   assert.match(markup, /class="chat-list-row-shell"/);
-  assert.match(markup, /class="chat-list-row"[\s\S]*General Q&amp;A/);
-  assert.match(markup, /aria-label="Delete chat General Q&amp;A"/);
+  assert.match(
+    markup,
+    /class="chat-list-row"[\s\S]*tree-inline-status chat-inline-status doing/,
+  );
+  assert.match(
+    markup,
+    /class="chat-list-row"[\s\S]*tree-inline-status chat-inline-status waiting-subscription/,
+  );
+  assert.match(markup, /aria-label="Active"/);
+  assert.match(markup, /aria-label="Waiting on subscription"/);
+  assert.match(markup, /aria-label="Delete chat Explain thread status updates"/);
   assert.match(markup, /aria-label="Delete chat API question"/);
-  assert.doesNotMatch(markup, /tree-inline-status/);
   assert.match(markup, /No projects yet/);
 });
 

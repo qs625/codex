@@ -548,6 +548,7 @@ svg {
 .chat-list-row {
   display: flex;
   align-items: center;
+  gap: 7px;
   min-width: 0;
   min-height: 34px;
   flex: 1 1 auto;
@@ -563,11 +564,15 @@ svg {
   cursor: pointer;
 }
 
-.chat-list-row span {
+.chat-row-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-inline-status {
+  margin-left: 1px;
 }
 
 .chat-delete-button {
