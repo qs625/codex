@@ -1432,10 +1432,11 @@ export function applyPendingThreadUpdates(
     return thread;
   }
   pendingUpdates.delete(thread.id);
-  return dropDuplicatePendingAgentTurns(
+  const updated = dropDuplicatePendingAgentTurns(
     thread,
     updates.reduce((updated, update) => update(updated), thread),
   );
+  return dropDuplicatePendingReasoningItems(thread, updated);
 }
 
 export function applyInitializedThreadUpdate(
@@ -1631,7 +1632,9 @@ function syntheticTurnDurationMs(timestamps?: {
 
 type TurnItemIndex = {
   ids: Set<string>;
+  itemsById: Map<string, ThreadItem>;
   initContextKeys: Set<string>;
+  reasoningFragments: Map<string, number>;
 };
 
 type TurnItemMatcher = {
@@ -1645,22 +1648,28 @@ function createTurnItemMatcher(index: TurnItemIndex): TurnItemMatcher {
 }
 
 function buildTurnItemIndex(
-  entries: Array<{ turn: Turn; items: ThreadItem[] }>,
+  entries: Array<{ turn?: Turn; items: ThreadItem[] }>,
 ): TurnItemIndex {
   const ids = new Set<string>();
+  const itemsById = new Map<string, ThreadItem>();
   const initContextKeys = new Set<string>();
+  const reasoningFragments = new Map<string, number>();
 
   for (const { items } of entries) {
     for (const item of items) {
       ids.add(item.id);
+      itemsById.set(item.id, item);
       const key = initContextItemKey(item);
       if (key) {
         initContextKeys.add(key);
       }
+      for (const fragment of reasoningItemFragments(item)) {
+        incrementMapCount(reasoningFragments, fragment);
+      }
     }
   }
 
-  return { ids, initContextKeys };
+  return { ids, itemsById, initContextKeys, reasoningFragments };
 }
 
 function consumeMatchingTurnItem(
@@ -1669,9 +1678,14 @@ function consumeMatchingTurnItem(
   item: ThreadItem,
 ) {
   void turn;
+  const indexedItem = matcher.index.itemsById.get(item.id);
+  if (indexedItem) {
+    consumeMatchingReasoningItem(matcher, indexedItem);
+    return true;
+  }
   return (
-    matcher.index.ids.has(item.id) ||
-    hasMatchingInitContextItem(matcher, item)
+    hasMatchingInitContextItem(matcher, item) ||
+    consumeMatchingReasoningItem(matcher, item)
   );
 }
 
@@ -1689,7 +1703,11 @@ function getRetainedUnmatchedTurn(
   if (
     !isTurnInFlight(turn) &&
     !isLiveDerivedCompletedAgentTurn(turn) &&
-    !normalizedItems.some((item) => hasMatchingInitContextItem(matcher, item))
+    !normalizedItems.some(
+      (item) =>
+        hasMatchingInitContextItem(matcher, item) ||
+        hasMatchingReasoningItem(matcher, item),
+    )
   ) {
     return [normalizedTurn];
   }
@@ -1743,6 +1761,30 @@ function dropDuplicatePendingAgentTurns(snapshot: Thread, updated: Thread) {
   return { ...updated, turns };
 }
 
+function dropDuplicatePendingReasoningItems(snapshot: Thread, updated: Thread) {
+  const snapshotTurnsById = new Map(
+    snapshot.turns.map((turn) => [turn.id, normalizeTurnSnapshot(turn)]),
+  );
+  const turns = updated.turns.map((turn) => {
+    const snapshotTurn = snapshotTurnsById.get(turn.id);
+    if (!snapshotTurn) {
+      return turn;
+    }
+    const snapshotItemIds = new Set(snapshotTurn.items.map((item) => item.id));
+    const matcher = createTurnItemMatcher(
+      buildTurnItemIndex([{ turn: snapshotTurn, items: snapshotTurn.items }]),
+    );
+    const items = turn.items.filter((item) => {
+      if (snapshotItemIds.has(item.id)) {
+        return true;
+      }
+      return !consumeMatchingReasoningItem(matcher, item);
+    });
+    return items.length === turn.items.length ? turn : { ...turn, items };
+  });
+  return { ...updated, turns };
+}
+
 function isLiveDerivedCompletedAgentTurn(turn: Turn) {
   return (
     turn.status === "completed" &&
@@ -1762,6 +1804,78 @@ function hasMatchingInitContextItem(
 ) {
   const key = initContextItemKey(item);
   return key !== null && matcher.index.initContextKeys.has(key);
+}
+
+function consumeMatchingReasoningItem(
+  matcher: TurnItemMatcher,
+  item: ThreadItem,
+) {
+  const fragments = reasoningItemFragments(item);
+  if (fragments.length === 0) {
+    return false;
+  }
+  const available = new Map<string, number>();
+  for (const fragment of fragments) {
+    incrementMapCount(available, fragment);
+  }
+  if (!hasAvailableReasoningFragments(matcher, available)) {
+    return false;
+  }
+  for (const [fragment, count] of available) {
+    decrementMapCount(matcher.index.reasoningFragments, fragment, count);
+  }
+  return true;
+}
+
+function hasMatchingReasoningItem(matcher: TurnItemMatcher, item: ThreadItem) {
+  const fragments = reasoningItemFragments(item);
+  if (fragments.length === 0) {
+    return false;
+  }
+  const available = new Map<string, number>();
+  for (const fragment of fragments) {
+    incrementMapCount(available, fragment);
+  }
+  return hasAvailableReasoningFragments(matcher, available);
+}
+
+function hasAvailableReasoningFragments(
+  matcher: TurnItemMatcher,
+  available: Map<string, number>,
+) {
+  for (const [fragment, count] of available) {
+    if ((matcher.index.reasoningFragments.get(fragment) ?? 0) < count) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function reasoningItemFragments(item: ThreadItem) {
+  if (item.type !== "reasoning") {
+    return [];
+  }
+  return [
+    ...item.summary.map((text) => reasoningFragmentKey("summary", text)),
+    ...item.content.map((text) => reasoningFragmentKey("content", text)),
+  ];
+}
+
+function reasoningFragmentKey(kind: "summary" | "content", text: string) {
+  return `${kind}:${JSON.stringify(text)}`;
+}
+
+function incrementMapCount(map: Map<string, number>, key: string) {
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
+function decrementMapCount(map: Map<string, number>, key: string, count: number) {
+  const next = (map.get(key) ?? 0) - count;
+  if (next <= 0) {
+    map.delete(key);
+    return;
+  }
+  map.set(key, next);
 }
 
 function isEquivalentInitContextItem(left: ThreadItem, right: ThreadItem) {
