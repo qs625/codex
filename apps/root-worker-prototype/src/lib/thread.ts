@@ -535,6 +535,7 @@ export function getThreadReasoningLabel(thread: Thread | null) {
 
 export function updateThreadTurn(thread: Thread, turn: Turn) {
   const normalizedTurn = normalizeTurnSnapshot(turn);
+  const compactItemIds = new Set(collectContextCompactionItemIds(thread));
   const hasExistingTurn = thread.turns.some(
     (existing) => existing.id === normalizedTurn.id,
   );
@@ -544,7 +545,11 @@ export function updateThreadTurn(thread: Thread, turn: Turn) {
         ? mergeTurn(existing, normalizedTurn)
         : existing,
     );
-    return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
+    return updateStatsForNewLiveCompactions(
+      thread,
+      pruneThreadSnapshotToLatestCompact({ ...thread, turns }),
+      compactItemIds,
+    );
   }
 
   const turnMatcher = createTurnItemMatcher(
@@ -556,7 +561,11 @@ export function updateThreadTurn(thread: Thread, turn: Turn) {
     ),
     normalizedTurn,
   ];
-  return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
+  return updateStatsForNewLiveCompactions(
+    thread,
+    pruneThreadSnapshotToLatestCompact({ ...thread, turns }),
+    compactItemIds,
+  );
 }
 
 export function updateThreadTurnLifecycle(thread: Thread, turn: Turn) {
@@ -607,6 +616,7 @@ export function updateThreadItem(
   const nextItem = normalizeThreadItemSnapshot(
     applyItemTimestamps(item, timestamps),
   );
+  const existingCompactItemIds = new Set(collectContextCompactionItemIds(thread));
   const completedCollabSyntheticTurns = thread.turns.filter(
     (turn) =>
       turn.id !== turnId &&
@@ -634,6 +644,9 @@ export function updateThreadItem(
       nextItem.type !== "contextCompaction" &&
       !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
     ) {
+      return turn;
+    }
+    if (shouldRejectAmbiguousCompactItem(thread, turn, nextItem, timestamps)) {
       return turn;
     }
     const items = [...completedCollabSyntheticItems, nextItem].reduce(
@@ -664,10 +677,14 @@ export function updateThreadItem(
     return { ...turn, items };
   }).filter((turn): turn is Turn => turn !== null);
   if (foundTurn) {
-    return pruneThreadSnapshotToLatestCompact({
-      ...thread,
-      turns: updatedTurns,
-    });
+    return updateStatsForNewLiveCompactions(
+      thread,
+      pruneThreadSnapshotToLatestCompact({
+        ...thread,
+        turns: updatedTurns,
+      }),
+      existingCompactItemIds,
+    );
   }
 
   if (initContextItemKey(nextItem) !== null) {
@@ -680,7 +697,11 @@ export function updateThreadItem(
           ? { ...turn, items: appendOrMergeThreadItem(turn.items, nextItem) }
           : turn,
       );
-      return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
+      return updateStatsForNewLiveCompactions(
+        thread,
+        pruneThreadSnapshotToLatestCompact({ ...thread, turns }),
+        existingCompactItemIds,
+      );
     }
   }
 
@@ -696,10 +717,14 @@ export function updateThreadItem(
         ? { ...turn, items: appendOrMergeThreadItem(turn.items, nextItem) }
         : turn,
     );
-    return pruneThreadSnapshotToLatestCompact({
-      ...thread,
-      turns,
-    });
+    return updateStatsForNewLiveCompactions(
+      thread,
+      pruneThreadSnapshotToLatestCompact({
+        ...thread,
+        turns,
+      }),
+      existingCompactItemIds,
+    );
   }
 
   if (
@@ -709,10 +734,76 @@ export function updateThreadItem(
     return thread;
   }
 
-  return pruneThreadSnapshotToLatestCompact({
-    ...thread,
-    turns: [...thread.turns, createSyntheticTurn(turnId, nextItem, timestamps)],
-  });
+  return updateStatsForNewLiveCompactions(
+    thread,
+    pruneThreadSnapshotToLatestCompact({
+      ...thread,
+      turns: [...thread.turns, createSyntheticTurn(turnId, nextItem, timestamps)],
+    }),
+    existingCompactItemIds,
+  );
+}
+
+function updateStatsForNewLiveCompactions(
+  existing: Thread,
+  updated: Thread,
+  existingCompactItemIds: ReadonlySet<string>,
+): Thread {
+  const newCompactCount = collectContextCompactionItemIds(updated).filter(
+    (id) => !existingCompactItemIds.has(id),
+  ).length;
+  if (newCompactCount === 0) {
+    return updated;
+  }
+  const existingCount =
+    existing.stats?.compactionCount !== undefined
+      ? validCompactionCount(existing.stats.compactionCount)
+      : countVisibleContextCompactions(existing);
+  const nextStats = {
+    ...(updated.stats ?? existing.stats ?? {}),
+    compactionCount: Math.max(
+      validCompactionCount(updated.stats?.compactionCount ?? 0),
+      existingCount + newCompactCount,
+    ),
+  };
+  return { ...updated, stats: nextStats };
+}
+
+function collectContextCompactionItemIds(thread: Thread) {
+  return thread.turns.flatMap((turn) =>
+    turn.items.flatMap((item) =>
+      item.type === "contextCompaction" ? [item.id] : [],
+    ),
+  );
+}
+
+function countVisibleContextCompactions(thread: Thread) {
+  return collectContextCompactionItemIds(thread).length;
+}
+
+function shouldRejectAmbiguousCompactItem(
+  thread: Thread,
+  turn: Turn,
+  nextItem: ThreadItem,
+  timestamps?: {
+    startedAtMs?: number | null;
+    completedAtMs?: number | null;
+  },
+) {
+  if (
+    nextItem.type !== "contextCompaction" ||
+    hasMatchingThreadItem(turn.items, nextItem) ||
+    !turnHasCompactItem(turn) ||
+    isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
+  ) {
+    return false;
+  }
+  const durableCompactionCount = thread.stats?.compactionCount;
+  return (
+    durableCompactionCount !== undefined &&
+    validCompactionCount(durableCompactionCount) >
+      countVisibleContextCompactions(thread)
+  );
 }
 
 function hasMatchingThreadItem(items: ThreadItem[], nextItem: ThreadItem) {
