@@ -55,8 +55,8 @@ import { advanceCompactHistoryRequestToken } from "./lib/compactHistoryRequest";
 import type { RunConfigSelection } from "./lib/runConfig";
 import {
   applyRunConfigOverride,
-  buildSendMessagePayload,
 } from "./lib/sendMessagePayload";
+import { submitThreadMessage } from "./lib/sendMessageFlow";
 import type { ComposerSlashCommandId } from "./lib/slashMenu";
 import { isThreadNotFoundError, toErrorMessage } from "./lib/shared";
 import { maybeNotifyProjectThreadCompleted } from "./lib/systemNotification";
@@ -1559,17 +1559,23 @@ function App() {
       runConfigOverride ?? null,
     );
     try {
-      await window.codexDesktop.sendMessage({
-        ...buildSendMessagePayload({
-          draft: draftToSend,
-          thread: threadForSend,
-          threadId,
-        }),
+      await submitThreadMessage({
+        draft: draftToSend,
+        thread: threadForSend,
+        threadId,
+        ensureSubscribed: ensureThreadSubscribed,
+        sendMessage: async (payload) =>
+          (await window.codexDesktop.sendMessage(payload)) as {
+            turn?: Turn | null;
+          },
+        applyTurn: (targetThreadId, turn) => {
+          updateInitializedThreadLocally(targetThreadId, (thread) =>
+            updateThreadTurnLifecycle(thread, turn),
+          );
+        },
+        revokeImage: revokeComposerImage,
+        clearDraft: clearComposerDraftForThread,
       });
-      for (const image of draftToSend.images) {
-        revokeComposerImage(image);
-      }
-      clearComposerDraftForThread(threadId);
     } catch (sendError) {
       setError(toErrorMessage(sendError));
     } finally {
