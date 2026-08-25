@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   decideThreadSelectionAction,
+  isSelectedThreadLoading,
   nextThreadReadRequestId,
   shouldApplyThreadReadSnapshot,
 } from "./threadSelectionPolicy";
@@ -188,4 +189,18 @@ test("thread read request ids are scoped per thread for switch away and back", (
     }),
     true,
   );
+});
+
+test("selected thread loading is derived only from the current selected thread", () => {
+  const loadingThreadIds = new Set(["thread-a"]);
+
+  assert.equal(isSelectedThreadLoading("thread-a", loadingThreadIds), true);
+  assert.equal(isSelectedThreadLoading("thread-b", loadingThreadIds), false);
+  assert.equal(isSelectedThreadLoading(null, loadingThreadIds), false);
+
+  loadingThreadIds.delete("thread-a");
+  loadingThreadIds.add("thread-c");
+
+  assert.equal(isSelectedThreadLoading("thread-c", loadingThreadIds), true);
+  assert.equal(isSelectedThreadLoading("thread-a", loadingThreadIds), false);
 });
