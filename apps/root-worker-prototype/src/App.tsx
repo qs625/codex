@@ -63,6 +63,7 @@ import { maybeNotifyProjectThreadCompleted } from "./lib/systemNotification";
 import { isChatCompatCwd } from "./lib/chatCompat";
 import {
   decideThreadSelectionAction,
+  isSelectedThreadLoading,
   nextThreadReadRequestId,
   shouldApplyThreadReadSnapshot,
 } from "./lib/threadSelectionPolicy";
@@ -337,6 +338,21 @@ function App() {
     };
   }, []);
 
+  function syncSelectedThreadLoading() {
+    setIsLoadingThread(
+      isSelectedThreadLoading(
+        selectedThreadIdRef.current,
+        loadingThreadIdsRef.current,
+      ),
+    );
+  }
+
+  useEffect(() => {
+    selectedThreadIdRef.current = selectedThreadId;
+    selectedThreadCwdRef.current = selectedThread?.cwd ?? null;
+    syncSelectedThreadLoading();
+  }, [selectedThread?.cwd, selectedThreadId]);
+
   useEffect(() => {
     if (!selectedThreadId) {
       return;
@@ -356,15 +372,8 @@ function App() {
     if (action === "subscribeOnly") {
       void ensureThreadSubscribed(selectedThreadId);
     }
+    syncSelectedThreadLoading();
   }, [selectedThreadId, threads]);
-
-  useEffect(() => {
-    selectedThreadIdRef.current = selectedThreadId;
-    selectedThreadCwdRef.current = selectedThread?.cwd ?? null;
-    if (!selectedThreadId) {
-      setIsLoadingThread(false);
-    }
-  }, [selectedThread?.cwd, selectedThreadId]);
 
   useEffect(() => {
     if (!selectedThreadId) {
@@ -1335,7 +1344,7 @@ function App() {
     );
     loadThreadRequestIdsByThreadIdRef.current.set(threadId, requestId);
     loadingThreadIdsRef.current.add(threadId);
-    setIsLoadingThread(true);
+    syncSelectedThreadLoading();
     setError(null);
     try {
       if (!(await ensureThreadSubscribed(threadId))) {
@@ -1375,16 +1384,11 @@ function App() {
     } finally {
       const latestRequestId =
         loadThreadRequestIdsByThreadIdRef.current.get(threadId) ?? null;
-      if (
-        selectedThreadIdRef.current === threadId &&
-        latestRequestId === requestId
-      ) {
-        setIsLoadingThread(false);
-      }
       if (latestRequestId === requestId) {
         loadingThreadIdsRef.current.delete(threadId);
         loadThreadRequestIdsByThreadIdRef.current.delete(threadId);
       }
+      syncSelectedThreadLoading();
     }
   }
 

@@ -79,3 +79,10 @@ export function nextThreadReadRequestId(
 ) {
   return (requestIdsByThreadId.get(threadId) ?? 0) + 1;
 }
+
+export function isSelectedThreadLoading(
+  selectedThreadId: string | null,
+  loadingThreadIds: ReadonlySet<string>,
+) {
+  return selectedThreadId !== null && loadingThreadIds.has(selectedThreadId);
+}
