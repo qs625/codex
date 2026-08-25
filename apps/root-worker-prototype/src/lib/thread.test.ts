@@ -846,6 +846,306 @@ test("mergeThreadSnapshot preserves usage fields when thread/read omits them", (
   assert.equal(merged.contextUsage?.budgetUsedPercent, 12);
 });
 
+test("mergeThreadSnapshot consumes live reasoning fragments represented by thread/read", () => {
+  const existing: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "reasoning",
+            id: "live-reasoning-summary",
+            summary: ["first summary"],
+            content: [],
+            completedAtMs: 2_000,
+          },
+          {
+            type: "reasoning",
+            id: "live-reasoning-content",
+            summary: [],
+            content: ["first content"],
+            completedAtMs: 2_100,
+          },
+          {
+            type: "agentMessage",
+            id: "snapshot-agent",
+            text: "interlude",
+            phase: null,
+            memoryCitation: null,
+            completedAtMs: 2_200,
+          },
+          {
+            type: "reasoning",
+            id: "live-reasoning-second",
+            summary: ["second summary"],
+            content: [],
+            completedAtMs: 2_300,
+          },
+        ],
+        itemsView: "full",
+        status: "running",
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+  const snapshot: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "userMessage",
+            id: "snapshot-user",
+            content: [{ type: "text", text: "Turn start" }],
+          },
+          {
+            type: "reasoning",
+            id: "snapshot-reasoning-first",
+            summary: ["first summary"],
+            content: ["first content"],
+          },
+          {
+            type: "agentMessage",
+            id: "snapshot-agent",
+            text: "interlude",
+            phase: null,
+            memoryCitation: null,
+          },
+          {
+            type: "reasoning",
+            id: "snapshot-reasoning-second",
+            summary: ["second summary"],
+            content: [],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 3,
+        durationMs: 2_000,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(existing, snapshot);
+
+  assert.deepEqual(
+    merged.turns[0]?.items.map((item) => item.id),
+    [
+      "snapshot-user",
+      "snapshot-reasoning-first",
+      "snapshot-agent",
+      "snapshot-reasoning-second",
+    ],
+  );
+});
+
+test("mergeThreadSnapshot preserves unmatched same-content reasoning fragments", () => {
+  const existing: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "reasoning",
+            id: "live-reasoning-first",
+            summary: ["repeat"],
+            content: [],
+            completedAtMs: 2_000,
+          },
+          {
+            type: "reasoning",
+            id: "live-reasoning-second",
+            summary: ["repeat"],
+            content: [],
+            completedAtMs: 2_100,
+          },
+        ],
+        itemsView: "full",
+        status: "running",
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+  const snapshot: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "reasoning",
+            id: "snapshot-reasoning",
+            summary: ["repeat"],
+            content: [],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 3,
+        durationMs: 2_000,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(existing, snapshot);
+
+  assert.deepEqual(
+    merged.turns[0]?.items.map((item) => item.id),
+    ["snapshot-reasoning", "live-reasoning-second"],
+  );
+});
+
+test("mergeThreadSnapshot consumes reasoning fragments for id-matched items", () => {
+  const existing: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "reasoning",
+            id: "snapshot-reasoning",
+            summary: ["repeat"],
+            content: [],
+            completedAtMs: 2_000,
+          },
+          {
+            type: "reasoning",
+            id: "live-reasoning-second",
+            summary: ["repeat"],
+            content: [],
+            completedAtMs: 2_100,
+          },
+        ],
+        itemsView: "full",
+        status: "running",
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ],
+  };
+  const snapshot: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "reasoning",
+            id: "snapshot-reasoning",
+            summary: ["repeat"],
+            content: [],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 3,
+        durationMs: 2_000,
+      },
+    ],
+  };
+
+  const merged = mergeThreadSnapshot(existing, snapshot);
+
+  assert.deepEqual(
+    merged.turns[0]?.items.map((item) => item.id),
+    ["snapshot-reasoning", "live-reasoning-second"],
+  );
+});
+
+test("pending reasoning notifications already represented by thread/read are not replayed at the end", () => {
+  const snapshot: Thread = {
+    ...makeThread(),
+    turns: [
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "userMessage",
+            id: "snapshot-user",
+            content: [{ type: "text", text: "Turn start" }],
+          },
+          {
+            type: "reasoning",
+            id: "snapshot-reasoning",
+            summary: ["first summary"],
+            content: [],
+          },
+          {
+            type: "agentMessage",
+            id: "snapshot-agent",
+            text: "done",
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 3,
+        durationMs: 2_000,
+      },
+    ],
+  };
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadItem(
+      thread,
+      "turn-1",
+      {
+        type: "reasoning",
+        id: "live-reasoning",
+        summary: ["first summary"],
+        content: [],
+      },
+      { completedAtMs: 2_000 },
+    ),
+  );
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadItem(
+      thread,
+      "turn-1",
+      {
+        type: "reasoning",
+        id: "live-reasoning-second",
+        summary: ["first summary"],
+        content: [],
+      },
+      { completedAtMs: 2_100 },
+    ),
+  );
+
+  const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
+
+  assert.deepEqual(
+    updated.turns[0]?.items.map((item) => item.id),
+    [
+      "snapshot-user",
+      "snapshot-reasoning",
+      "snapshot-agent",
+      "live-reasoning-second",
+    ],
+  );
+});
+
 test("mergeThreadSnapshot preserves thread stats when later snapshots omit them", () => {
   const existing = {
     ...makeThread(),
