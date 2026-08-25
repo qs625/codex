@@ -700,7 +700,7 @@ Use only this external-agent JSON protocol to collaborate with other agents. Do 
 
 Available external tools:
 - spawn_external_agent: arguments {{ "task_name": string, "provider": "claude_cli" | "opencode" | "codex_cli", "cwd": string, "message": string }}. Current external session transport support includes claude_cli stream-json, opencode HTTP sessions, and codex_cli app-server stdio sessions.
-- followup_external_task: arguments {{ "target": string, "message"?: string, "content"?: [{{ "type": "text", "text": string }} | {{ "type": "image_ref", "attachment_id": string }}] }}. Use message for legacy text-only followups or content for structured followups. Use this when a parent or another existing agent asks you to report status, progress, interim findings, blockers, or a decision request; emit a followup_external_task JSON tool call so the target receives a typed inter-agent update. A normal final answer completes this external session; it is not an interim typed update delivered to a target via the agent bus. Image references are currently supported only from native Morpheus agents; external agents receive a typed error instead of a silent downgrade.
+- followup_external_task: arguments {{ "target": string, "message"?: string, "content"?: [{{ "type": "text", "text": string }} | {{ "type": "image_ref", "attachment_id": string }}] }}. Use message for legacy text-only followups or content for structured followups. Use this to send work, corrections, extra context, status requests, or decisions to another agent. If a parent or another existing agent asks you to report status, progress, interim findings, blockers, or decision needs to them, emit a followup_external_task JSON tool call targeting that agent; do not answer only in this external session. A normal final answer completes this external session and does not deliver a typed inter-agent update to the requested target. Examples: report progress to your parent; send a blocker to the PM; ask a reviewer to re-review; pass new requirements to a worker. Image references are currently supported only from native Morpheus agents; external agents receive a typed error instead of a silent downgrade.
 - list_external_agents: arguments {{ "path_prefix"?: string }}
 - read_external_agent: arguments {{ "target": string }}. Use after list_external_agents to inspect last task and result details for one agent.
 - poll_external_event: arguments {{}}. Wait for the next new thread input that reaches the external-agent bus, such as user input, child completion or other inter-agent updates, command output or exit notifications, or other queued model-consumable input. Returns wake or timeout metadata plus a best-effort source hint and typed event payload when available.
@@ -2714,11 +2714,21 @@ mod tests {
         assert!(context.contains("external_tool_call"));
         assert!(context.contains("external_tool_result"));
         assert!(context.contains("Do not call internal Morpheus tools"));
+        assert!(
+            context
+                .contains("send work, corrections, extra context, status requests, or decisions")
+        );
         assert!(context.contains("status, progress, interim findings, blockers"));
-        assert!(context.contains("decision request"));
-        assert!(context.contains("typed inter-agent update"));
-        assert!(context.contains("A normal final answer completes this external session"));
-        assert!(context.contains("not an interim typed update delivered to a target"));
+        assert!(context.contains("decision needs"));
+        assert!(
+            context.contains("emit a followup_external_task JSON tool call targeting that agent")
+        );
+        assert!(context.contains("do not answer only in this external session"));
+        assert!(context.contains("typed inter-agent update to the requested target"));
+        assert!(context.contains("report progress to your parent"));
+        assert!(context.contains("send a blocker to the PM"));
+        assert!(context.contains("ask a reviewer to re-review"));
+        assert!(context.contains("pass new requirements to a worker"));
         assert!(!context.contains("unsupported"));
         assert!(context.contains("review this patch"));
     }
