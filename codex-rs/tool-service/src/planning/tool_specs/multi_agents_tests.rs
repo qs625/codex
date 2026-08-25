@@ -247,21 +247,35 @@ fn followup_tools_describe_status_reporting_to_parent() {
 
     for description in [&native.description, &external.description] {
         assert!(
-            description.contains("status")
-                && description.contains("progress")
-                && description.contains("blockers")
-                && description.contains("decision request"),
+            description
+                .contains("send work, corrections, extra context, status requests, or decisions"),
+            "expected scenario-oriented usage guidance in {description}"
+        );
+        assert!(
+            description.contains("asks you to report status, progress, interim findings, blockers")
+                && description.contains("decision needs"),
             "expected status reporting guidance in {description}"
         );
         assert!(
+            description.contains("call this tool targeting that agent")
+                && description.contains("do not answer only in your current thread"),
+            "expected mandatory report-back guidance in {description}"
+        );
+        assert!(
             description.contains("normal assistant response")
-                && description.contains("typed inter-agent update"),
+                && description.contains("does not deliver a typed inter-agent update"),
             "expected assistant-vs-typed-update guidance in {description}"
         );
         assert!(
-            description.contains("advances or completes your current thread")
-                && description.contains("interim typed inter-agent update"),
-            "expected current-thread-vs-interim-update guidance in {description}"
+            description.contains("report progress to your parent")
+                && description.contains("send a blocker to the PM")
+                && description.contains("ask a reviewer to re-review")
+                && description.contains("pass new requirements to a worker"),
+            "expected concrete followup examples in {description}"
+        );
+        assert!(
+            !description.contains("trigger a turn") && !description.contains("queued"),
+            "followup description should not center backend turn mechanics: {description}"
         );
     }
     assert!(
