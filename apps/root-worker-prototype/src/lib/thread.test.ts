@@ -730,7 +730,7 @@ test("getThreadSubtreeIdsChildrenFirst returns only a project subtree deepest fi
   );
 });
 
-test("buildProjectAgentSidebar aggregates project status and project counts", () => {
+test("buildProjectAgentSidebar uses root thread status and aggregates project counts", () => {
   const pm = makeSidebarThread({
     id: "pm",
     cwd: "/work/project",
@@ -759,33 +759,13 @@ test("buildProjectAgentSidebar aggregates project status and project counts", ()
   ]);
   const project = sidebar.projects[0];
 
-  assert.equal(project?.statusClass, "blocked");
+  assert.equal(project?.statusClass, "waiting-subagent");
   assert.equal(project?.activeCount, 1);
   assert.equal(project?.waitingCount, 2);
   assert.equal(project?.failedCount, 1);
 });
 
-test("buildProjectAgentSidebar aggregates completed project trees as done", () => {
-  const root = makeSidebarThread({
-    id: "project-root",
-    cwd: "/work/project",
-    lifecycleStatus: { type: "final" as const, result: { type: "completed" } },
-  });
-  const completedChild = makeSubagentThread(
-    "completed-child",
-    "project-root",
-    "/root/worker",
-    {
-      lifecycleStatus: { type: "final" as const, result: { type: "completed" } },
-    },
-  );
-
-  const sidebar = buildProjectAgentSidebar([root, completedChild]);
-
-  assert.equal(sidebar.projects[0]?.statusClass, "done");
-});
-
-test("buildProjectAgentSidebar shows live status for cp_http_api project children", () => {
+test("buildProjectAgentSidebar keeps project status scoped to cp_http_api root", () => {
   const cpHttpApiRoot = makeSidebarThread({
     id: "cp-http-api-root",
     cwd: "/work/project",
@@ -827,10 +807,10 @@ test("buildProjectAgentSidebar shows live status for cp_http_api project childre
   );
 
   assert.equal(cpProject?.tree.threadId, "cp-http-api-root");
-  assert.equal(cpProject?.statusClass, "doing");
+  assert.equal(cpProject?.statusClass, "todo");
   assert.equal(cpProject?.activeCount, 1);
   assert.equal(otherProject?.tree.threadId, "other-root");
-  assert.equal(otherProject?.statusClass, "done");
+  assert.equal(otherProject?.statusClass, "todo");
   assert.equal(otherProject?.activeCount, 0);
 });
 

@@ -5,6 +5,10 @@ import {
   applyRunConfigOverride,
   buildSendMessagePayload,
 } from "./sendMessagePayload";
+import {
+  buildProjectAgentSidebar,
+  findProjectByRootIdentity,
+} from "./thread";
 import type { ComposerDraft } from "./composerDraft";
 import type { Thread } from "../types";
 
@@ -108,5 +112,47 @@ test("applyRunConfigOverride uses pending config for immediate sends", () => {
       skills: [],
       images: [],
     },
+  );
+});
+
+test("buildSendMessagePayload targets the selected cp_http_api project root", () => {
+  const cpHttpApiRoot = makeThread({
+    id: "cp-http-api-root",
+    cwd: "/work/project",
+    agentPath: "/cp_http_api",
+  });
+  const workspaceRoot = makeThread({
+    id: "workspace-root",
+    cwd: "/work/project",
+    agentPath: null,
+  });
+  const otherRoot = makeThread({
+    id: "other-root",
+    cwd: "/work/project",
+    agentPath: "/other_api",
+  });
+  const sidebar = buildProjectAgentSidebar([
+    cpHttpApiRoot,
+    workspaceRoot,
+    otherRoot,
+  ]);
+  const project = findProjectByRootIdentity(
+    sidebar.projects,
+    "/work/project",
+    "/cp_http_api",
+  );
+
+  assert.equal(project?.tree.threadId, "cp-http-api-root");
+  assert.equal(
+    buildSendMessagePayload({
+      draft: {
+        text: "continue",
+        skills: [],
+        images: [],
+      },
+      thread: cpHttpApiRoot,
+      threadId: project!.tree.threadId,
+    }).threadId,
+    "cp-http-api-root",
   );
 });
