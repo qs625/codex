@@ -391,6 +391,64 @@ test("buildProjectAgentSidebar places no-cwd parentless threads in Chat", () => 
   assert.equal(sidebar.chat.conversations[0]?.label, "General Q&A");
 });
 
+test("buildProjectAgentSidebar labels Chat sessions from the first user message", () => {
+  const chat = makeSidebarThread({
+    id: "chat",
+    name: "Chat",
+    cwd: "",
+    turns: [
+      makeTurn("turn-1", [
+        makeAgentMessage("agent-early", "Welcome"),
+        makeUserMessage("user-1", "  Explain\n\nthread status updates  "),
+      ]),
+      makeTurn("turn-2", [
+        makeUserMessage("user-2", "Do not use the second prompt"),
+      ]),
+    ],
+  });
+
+  const sidebar = buildProjectAgentSidebar([chat]);
+
+  assert.equal(
+    sidebar.chat.conversations[0]?.label,
+    "Explain thread status updates",
+  );
+});
+
+test("buildProjectAgentSidebar truncates long Chat session first-message labels", () => {
+  const longPrompt =
+    "This is a very long first chat message that should be normalized and bounded before it reaches the sidebar row";
+  const chat = makeSidebarThread({
+    id: "chat",
+    name: "Chat",
+    cwd: "",
+    turns: [makeTurn("turn-1", [makeUserMessage("user-1", longPrompt)])],
+  });
+
+  const sidebar = buildProjectAgentSidebar([chat]);
+  const label = sidebar.chat.conversations[0]?.label ?? "";
+
+  assert.ok(label.length <= 80);
+  assert.match(label, /\.\.\.$/);
+});
+
+test("buildProjectAgentSidebar keeps project root labels independent from user messages", () => {
+  const project = makeSidebarThread({
+    id: "pm",
+    name: "Project chat",
+    cwd: "/work/project",
+    turns: [
+      makeTurn("turn-1", [
+        makeUserMessage("user-1", "This prompt should not rename the project root"),
+      ]),
+    ],
+  });
+
+  const sidebar = buildProjectAgentSidebar([project]);
+
+  assert.equal(sidebar.projects[0]?.tree.label, "Project chat");
+});
+
 test("buildProjectAgentSidebar treats chat compat cwd as Chat", () => {
   const project = makeSidebarThread({ id: "pm", cwd: "/work/project" });
   const chat = makeSidebarThread({

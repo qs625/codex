@@ -49,6 +49,8 @@ import {
   isTurnInFlight,
   isRootThread,
   threadDisplayStatusClass,
+  treeThreadLifecycleStatusClass,
+  treeThreadLifecycleStatusLabel,
   trimPath,
 } from "../lib/thread";
 import {
@@ -1088,41 +1090,50 @@ function ChatSection({
       </div>
       <div className="chat-list">
         {chatNodes.length > 0 ? (
-          chatNodes.map((node) => (
-            <div
-              key={node.key}
-              className={`chat-list-row-shell${node.threadId === selectedThreadId ? " selected" : ""}`}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                onOpenMenu({
-                  threadId: node.threadId,
-                  x: event.clientX,
-                  y: event.clientY,
-                });
-              }}
-            >
-              <button
-                type="button"
-                className="chat-list-row"
-                onClick={() => onSelectThread(node.threadId)}
-                title={node.label}
-              >
-                <span>{node.label}</span>
-              </button>
-              <button
-                type="button"
-                className="chat-delete-button"
-                aria-label={`Delete chat ${node.label}`}
-                title={`Delete chat ${node.label}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onArchiveChatThread(node.threadId);
+          chatNodes.map((node) => {
+            const statusClass = treeThreadLifecycleStatusClass(node);
+            const statusLabel = treeThreadLifecycleStatusLabel(statusClass);
+            return (
+              <div
+                key={node.key}
+                className={`chat-list-row-shell${node.threadId === selectedThreadId ? " selected" : ""}`}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  onOpenMenu({
+                    threadId: node.threadId,
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
                 }}
               >
-                <TrashIcon />
-              </button>
-            </div>
-          ))
+                <button
+                  type="button"
+                  className="chat-list-row"
+                  onClick={() => onSelectThread(node.threadId)}
+                  title={node.label}
+                >
+                  <span
+                    className={`tree-inline-status chat-inline-status ${statusClass}`}
+                    title={statusLabel}
+                    aria-label={statusLabel}
+                  />
+                  <span className="chat-row-label">{node.label}</span>
+                </button>
+                <button
+                  type="button"
+                  className="chat-delete-button"
+                  aria-label={`Delete chat ${node.label}`}
+                  title={`Delete chat ${node.label}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onArchiveChatThread(node.threadId);
+                  }}
+                >
+                  <TrashIcon />
+                </button>
+              </div>
+            );
+          })
         ) : (
           <div className="chat-empty">No chat conversations.</div>
         )}
