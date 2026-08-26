@@ -11,6 +11,10 @@ use protocol::models::ContentItem;
 use protocol::models::ResponseItem;
 use protocol::protocol::EventMsg;
 
+use crate::ARTIFACT_MARKER_END;
+use crate::ARTIFACT_MARKER_START_PREFIX;
+use crate::strip_artifact_markers_for_display;
+
 pub use codex_utils_stream_parser::AssistantTextChunk as ParsedAssistantTextDelta;
 pub use codex_utils_stream_parser::ProposedPlanSegment;
 
@@ -18,6 +22,7 @@ pub use codex_utils_stream_parser::ProposedPlanSegment;
 pub struct AssistantMessageStreamParsers {
     plan_mode: bool,
     parsers_by_item: HashMap<String, AssistantTextStreamParser>,
+    artifact_filters_by_item: HashMap<String, ArtifactMarkerStreamFilter>,
 }
 
 impl AssistantMessageStreamParsers {
@@ -25,6 +30,7 @@ impl AssistantMessageStreamParsers {
         Self {
             plan_mode,
             parsers_by_item: HashMap::new(),
+            artifact_filters_by_item: HashMap::new(),
         }
     }
 
@@ -39,14 +45,24 @@ impl AssistantMessageStreamParsers {
         if text.is_empty() {
             return ParsedAssistantTextDelta::default();
         }
-        self.parser_mut(item_id).push_str(text)
+        self.push_visible_text_after_artifact_filter(item_id, text)
     }
 
     pub fn parse_delta(&mut self, item_id: &str, delta: &str) -> ParsedAssistantTextDelta {
-        self.parser_mut(item_id).push_str(delta)
+        self.push_visible_text_after_artifact_filter(item_id, delta)
     }
 
     pub fn finish_item(&mut self, item_id: &str) -> ParsedAssistantTextDelta {
+        if let Some(filter) = self.artifact_filters_by_item.remove(item_id) {
+            let tail = filter.finish();
+            if !tail.is_empty() {
+                let mut parsed_tail = self.parser_mut(item_id).push_str(&tail);
+                if let Some(mut parser) = self.parsers_by_item.remove(item_id) {
+                    merge_text_chunks(&mut parsed_tail, parser.finish());
+                }
+                return parsed_tail;
+            }
+        }
         let Some(mut parser) = self.parsers_by_item.remove(item_id) else {
             return ParsedAssistantTextDelta::default();
         };
@@ -54,12 +70,138 @@ impl AssistantMessageStreamParsers {
     }
 
     pub fn drain_finished(&mut self) -> Vec<(String, ParsedAssistantTextDelta)> {
-        let parsers_by_item = std::mem::take(&mut self.parsers_by_item);
-        parsers_by_item
-            .into_iter()
-            .map(|(item_id, mut parser)| (item_id, parser.finish()))
-            .collect()
+        let mut parsers_by_item = std::mem::take(&mut self.parsers_by_item);
+        let filters_by_item = std::mem::take(&mut self.artifact_filters_by_item);
+        let mut finished = Vec::new();
+
+        for (item_id, filter) in filters_by_item {
+            let tail = filter.finish();
+            let parser = parsers_by_item
+                .entry(item_id.clone())
+                .or_insert_with(|| AssistantTextStreamParser::new(self.plan_mode));
+            if !tail.is_empty() {
+                let parsed_tail = parser.push_str(&tail);
+                finished.push((item_id.clone(), parsed_tail));
+            }
+        }
+
+        for (item_id, mut parser) in parsers_by_item {
+            let tail = parser.finish();
+            if let Some((_, existing)) = finished
+                .iter_mut()
+                .find(|(finished_item_id, _)| finished_item_id == &item_id)
+            {
+                merge_text_chunks(existing, tail);
+            } else {
+                finished.push((item_id, tail));
+            }
+        }
+
+        finished
     }
+
+    fn artifact_filter_mut(&mut self, item_id: &str) -> &mut ArtifactMarkerStreamFilter {
+        self.artifact_filters_by_item
+            .entry(item_id.to_string())
+            .or_default()
+    }
+
+    fn push_visible_text_after_artifact_filter(
+        &mut self,
+        item_id: &str,
+        text: &str,
+    ) -> ParsedAssistantTextDelta {
+        let visible_text = self.artifact_filter_mut(item_id).push_str(text);
+        if visible_text.is_empty() {
+            ParsedAssistantTextDelta::default()
+        } else {
+            self.parser_mut(item_id).push_str(&visible_text)
+        }
+    }
+}
+
+fn merge_text_chunks(target: &mut ParsedAssistantTextDelta, mut source: ParsedAssistantTextDelta) {
+    target.visible_text.push_str(&source.visible_text);
+    target.citations.append(&mut source.citations);
+    target.plan_segments.append(&mut source.plan_segments);
+}
+
+#[derive(Debug)]
+struct ArtifactMarkerStreamFilter {
+    state: ArtifactMarkerStreamState,
+}
+
+#[derive(Debug)]
+enum ArtifactMarkerStreamState {
+    Outside { pending: String },
+    Inside { hidden: String },
+}
+
+impl Default for ArtifactMarkerStreamFilter {
+    fn default() -> Self {
+        Self {
+            state: ArtifactMarkerStreamState::Outside {
+                pending: String::new(),
+            },
+        }
+    }
+}
+
+impl ArtifactMarkerStreamFilter {
+    fn push_str(&mut self, text: &str) -> String {
+        match &mut self.state {
+            ArtifactMarkerStreamState::Outside { pending } => {
+                let combined = format!("{pending}{text}");
+                pending.clear();
+                if let Some(start) = combined.find(ARTIFACT_MARKER_START_PREFIX) {
+                    let mut output = combined[..start].to_string();
+                    let after_start =
+                        combined[start + ARTIFACT_MARKER_START_PREFIX.len()..].to_string();
+                    self.state = ArtifactMarkerStreamState::Inside {
+                        hidden: String::new(),
+                    };
+                    output.push_str(&self.push_str(&after_start));
+                    return output;
+                }
+                let keep = marker_prefix_suffix_len(&combined);
+                let emit_len = combined.len().saturating_sub(keep);
+                pending.push_str(&combined[emit_len..]);
+                combined[..emit_len].to_string()
+            }
+            ArtifactMarkerStreamState::Inside { hidden } => {
+                hidden.push_str(text);
+                if let Some(end) = hidden.find(ARTIFACT_MARKER_END) {
+                    let after_end = hidden[end + ARTIFACT_MARKER_END.len()..].to_string();
+                    self.state = ArtifactMarkerStreamState::Outside {
+                        pending: String::new(),
+                    };
+                    return self.push_str(&after_end);
+                }
+                String::new()
+            }
+        }
+    }
+
+    fn finish(self) -> String {
+        match self.state {
+            ArtifactMarkerStreamState::Outside { pending } => pending,
+            ArtifactMarkerStreamState::Inside { hidden } => {
+                format!("{ARTIFACT_MARKER_START_PREFIX}{hidden}")
+            }
+        }
+    }
+}
+
+fn marker_prefix_suffix_len(text: &str) -> usize {
+    let max_len = text.len().min(ARTIFACT_MARKER_START_PREFIX.len() - 1);
+    for len in (1..=max_len).rev() {
+        let start = text.len() - len;
+        if text.is_char_boundary(start) && ARTIFACT_MARKER_START_PREFIX.starts_with(&text[start..])
+        {
+            return len;
+        }
+    }
+    0
 }
 
 /// Agent messages are text-only today; concatenate all text entries.
@@ -197,6 +339,7 @@ pub fn proposed_plan_text_from_assistant_response_item(item: &ResponseItem) -> O
                 text.push_str(chunk);
             }
         }
+        let text = strip_artifact_markers_for_display(&text);
         return extract_proposed_plan_text(&text).map(|plan_text| {
             let (plan_text, _citations) = strip_citations(&plan_text);
             plan_text
@@ -223,10 +366,11 @@ pub fn raw_assistant_output_text_from_item(item: &ResponseItem) -> Option<String
 
 pub fn strip_hidden_assistant_markup(text: &str, plan_mode: bool) -> String {
     let (without_citations, _) = strip_citations(text);
+    let without_artifacts = strip_artifact_markers_for_display(&without_citations);
     if plan_mode {
-        strip_proposed_plan_blocks(&without_citations)
+        strip_proposed_plan_blocks(&without_artifacts)
     } else {
-        without_citations
+        without_artifacts
     }
 }
 

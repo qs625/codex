@@ -1,4 +1,5 @@
 use super::*;
+use crate::bundled_models_response;
 use model_service_api::ModelsManagerConfig;
 use pretty_assertions::assert_eq;
 
@@ -71,4 +72,55 @@ fn model_context_window_uses_model_value_without_override() {
     let updated = with_config_overrides(model.clone(), &config);
 
     assert_eq!(updated, model);
+}
+
+#[test]
+fn base_instructions_include_inline_artifact_marker_guidance() {
+    let model = model_info_from_slug("unknown-model");
+
+    assert!(BASE_INSTRUCTIONS.contains("<<<MORPHEUS_ARTIFACT "));
+    assert!(BASE_INSTRUCTIONS.contains("Do not use an artifact marker for ordinary Markdown"));
+    assert!(
+        model
+            .base_instructions
+            .contains("<<<END_MORPHEUS_ARTIFACT>>>")
+    );
+}
+
+#[test]
+fn bundled_catalog_models_include_inline_artifact_marker_guidance_after_resolution() {
+    let models_response = bundled_models_response().expect("bundled models should parse");
+    let candidate = models_response
+        .models
+        .iter()
+        .find(|model| model.slug == "gpt-5.4")
+        .cloned()
+        .expect("catalog slug should exist");
+
+    let model = construct_model_info_from_candidates(
+        "gpt-5.4",
+        &[candidate],
+        &ModelsManagerConfig::default(),
+    );
+
+    assert!(model.base_instructions.contains("<<<MORPHEUS_ARTIFACT "));
+    assert!(
+        model
+            .get_model_instructions(None)
+            .contains("Do not use an artifact marker for ordinary Markdown")
+    );
+}
+
+#[test]
+fn config_base_instructions_override_keeps_inline_artifact_marker_guidance() {
+    let model = model_info_from_slug("unknown-model");
+    let config = ModelsManagerConfig {
+        base_instructions: Some("custom instructions".to_string()),
+        ..Default::default()
+    };
+
+    let updated = with_config_overrides(model, &config);
+
+    assert!(updated.base_instructions.starts_with("custom instructions"));
+    assert!(updated.base_instructions.contains("<<<MORPHEUS_ARTIFACT "));
 }

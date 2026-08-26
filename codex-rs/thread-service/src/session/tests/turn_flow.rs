@@ -565,6 +565,7 @@ async fn provider_context_window_compacts_prefix_with_one_item_suffix_then_retri
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: Some(Arc::clone(&regular_request_inputs)),
+            request_base_instructions: None,
             response_processed_ids: None,
             provider: Some(turn_context.config.model_provider_id.clone()),
         })),
@@ -676,6 +677,7 @@ async fn provider_context_window_trims_suffix_when_compact_attempt_overflows() {
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: Some(Arc::clone(&regular_request_inputs)),
+            request_base_instructions: None,
             response_processed_ids: None,
             provider: Some(turn_context.config.model_provider_id.clone()),
         })),
@@ -779,6 +781,7 @@ async fn provider_context_window_trims_suffix_tail_until_compact_succeeds() {
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: Some(Arc::clone(&regular_request_inputs)),
+            request_base_instructions: None,
             response_processed_ids: None,
             provider: Some(turn_context.config.model_provider_id.clone()),
         })),
@@ -854,6 +857,7 @@ async fn staged_compact_uses_isolated_sampling_without_agent_message_pollution()
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: None,
+            request_base_instructions: None,
             response_processed_ids: None,
             provider: Some(turn_context.config.model_provider_id.clone()),
         })),
@@ -934,6 +938,7 @@ async fn isolated_staged_compact_acknowledges_processed_response_when_enabled() 
         responses: VecDeque::from([ScriptedTurnResponse::Completed]),
         request_count: Arc::clone(&request_count),
         request_inputs: None,
+        request_base_instructions: None,
         response_processed_ids: Some(Arc::clone(&response_processed_ids)),
         provider: Some(turn_context.config.model_provider_id.clone()),
     };
@@ -956,6 +961,43 @@ async fn isolated_staged_compact_acknowledges_processed_response_when_enabled() 
             .expect("response processed ids mutex poisoned")
             .as_slice(),
         &["response-id".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn isolated_compact_sampling_sends_inline_artifact_guidance_as_base_instructions() {
+    let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let request_base_instructions: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+    let mut client = ScriptedTurnClient {
+        responses: VecDeque::from([ScriptedTurnResponse::Completed]),
+        request_count: Arc::clone(&request_count),
+        request_inputs: None,
+        request_base_instructions: Some(Arc::clone(&request_base_instructions)),
+        response_processed_ids: None,
+        provider: Some(turn_context.config.model_provider_id.clone()),
+    };
+
+    let summary = crate::compact::run_isolated_compact_sampling(
+        session.as_ref(),
+        turn_context.as_ref(),
+        &mut client,
+        None,
+        vec![test_user_message("prefix before compact")],
+    )
+    .await
+    .expect("isolated compact should succeed");
+
+    assert_eq!(summary, crate::compact::DEFAULT_COMPACTED_MESSAGE);
+    assert_eq!(request_count.load(AtomicOrdering::SeqCst), 1);
+    let base_instructions = request_base_instructions
+        .lock()
+        .expect("request base instructions mutex poisoned");
+    assert_eq!(base_instructions.len(), 1);
+    assert!(base_instructions[0].contains("<<<MORPHEUS_ARTIFACT "));
+    assert!(
+        base_instructions[0].contains("ordinary Markdown"),
+        "compact sampling should rebuild prompts from session base instructions, not rely on a start-time injected message"
     );
 }
 
@@ -1035,6 +1077,7 @@ async fn provider_context_window_recovery_trims_retained_suffix_after_second_ove
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: Some(Arc::clone(&regular_request_inputs)),
+            request_base_instructions: None,
             response_processed_ids: None,
             provider: Some(turn_context.config.model_provider_id.clone()),
         })),
@@ -1134,6 +1177,7 @@ async fn provider_context_window_full_compact_failure_emits_one_controlled_error
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: None,
+            request_base_instructions: None,
             response_processed_ids: None,
             provider: Some(turn_context.config.model_provider_id.clone()),
         })),
@@ -1204,6 +1248,7 @@ async fn provider_context_window_bounded_recovery_failure_emits_controlled_error
             ]),
             request_count: Arc::clone(&regular_request_count),
             request_inputs: None,
+            request_base_instructions: None,
             response_processed_ids: None,
             provider: Some(turn_context.config.model_provider_id.clone()),
         })),
@@ -1285,6 +1330,7 @@ struct ScriptedTurnClient {
     responses: VecDeque<ScriptedTurnResponse>,
     request_count: Arc<AtomicUsize>,
     request_inputs: Option<Arc<StdMutex<Vec<Vec<ResponseItem>>>>>,
+    request_base_instructions: Option<Arc<StdMutex<Vec<String>>>>,
     response_processed_ids: Option<Arc<StdMutex<Vec<String>>>>,
     provider: Option<String>,
 }
@@ -1329,6 +1375,12 @@ impl model_service_api::ModelTurnClientApi for ScriptedTurnClient {
                 .lock()
                 .expect("request inputs mutex poisoned")
                 .push(request.request.input.clone());
+        }
+        if let Some(request_base_instructions) = &self.request_base_instructions {
+            request_base_instructions
+                .lock()
+                .expect("request base instructions mutex poisoned")
+                .push(request.request.base_instructions.text.clone());
         }
         let response = self
             .responses
@@ -2043,6 +2095,12 @@ async fn get_base_instructions_no_user_content() {
 
         let base_instructions = session.get_base_instructions().await;
         assert_eq!(base_instructions.text, model_info.base_instructions);
+        assert!(base_instructions.text.contains("<<<MORPHEUS_ARTIFACT "));
+        assert!(
+            base_instructions
+                .text
+                .contains("Do not use an artifact marker for ordinary Markdown")
+        );
     }
 }
 
