@@ -100,6 +100,7 @@ use protocol::protocol::ExternalToolCallDisplayEvent;
 use protocol::protocol::ExternalToolCallStatus;
 use protocol::protocol::InitialHistory;
 use protocol::protocol::InterAgentCommunication;
+use protocol::protocol::InterAgentCommunicationDisplayEvent;
 use protocol::protocol::InterAgentContentPart;
 use protocol::protocol::InterAgentOperation;
 use protocol::protocol::ItemCompletedEvent;
@@ -1490,6 +1491,31 @@ impl AgentControl {
         .await;
     }
 
+    async fn persist_external_inter_agent_communication(
+        &self,
+        thread_id: ThreadId,
+        communication: &InterAgentCommunication,
+    ) {
+        let turn_id = format!("{thread_id}:inter-agent-input:{}", uuid::Uuid::new_v4());
+        let id = format!("{turn_id}:communication");
+        self.persist_external_items(
+            thread_id,
+            Some(&turn_id),
+            vec![RolloutItem::EventMsg(
+                protocol::protocol::EventMsg::InterAgentCommunicationCompleted(
+                    InterAgentCommunicationDisplayEvent {
+                        thread_id,
+                        turn_id: turn_id.clone(),
+                        id,
+                        communication: communication.clone(),
+                        completed_at_ms: now_unix_timestamp_ms(),
+                    },
+                ),
+            )],
+        )
+        .await;
+    }
+
     async fn persist_external_error(&self, thread_id: ThreadId, message: &str) {
         self.persist_external_error_with_turn_id(thread_id, None, message)
             .await;
@@ -2246,11 +2272,15 @@ impl AgentControl {
             let poll_event = ThreadPollEvent::InterAgentCommunication {
                 communication: communication.clone(),
             };
-            input_sink.send(communication.content).map_err(|err| {
-                CodexErr::UnsupportedOperation(format!(
-                    "failed to deliver followup_task to external agent: {err}"
-                ))
-            })?;
+            input_sink
+                .send(communication.content.clone())
+                .map_err(|err| {
+                    CodexErr::UnsupportedOperation(format!(
+                        "failed to deliver followup_task to external agent: {err}"
+                    ))
+                })?;
+            self.persist_external_inter_agent_communication(agent_id, &communication)
+                .await;
             self.external_agents.note_thread_wait_event_with_events(
                 agent_id,
                 source,

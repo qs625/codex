@@ -649,7 +649,8 @@ export function updateThreadTurnLifecycle(thread: Thread, turn: Turn) {
 
   if (
     threadHasCompactItem(thread) &&
-    !isTurnSnapshotAfterLatestCompact(thread, normalizedTurn)
+    !isTurnSnapshotAfterLatestCompact(thread, normalizedTurn) &&
+    !isActiveInFlightTurnSnapshot(thread, normalizedTurn)
   ) {
     return thread;
   }
@@ -905,7 +906,8 @@ function canMergeTurnSnapshotItems(thread: Thread, nextTurn: Turn) {
   if (
     !existingTurn &&
     threadHasCompactItem(thread) &&
-    !isTurnSnapshotAfterLatestCompact(thread, nextTurn)
+    !isTurnSnapshotAfterLatestCompact(thread, nextTurn) &&
+    !isActiveInFlightTurnSnapshot(thread, nextTurn)
   ) {
     return false;
   }
@@ -1176,6 +1178,10 @@ function isTimestampAfterLatestCompact(
 
 function timestampMsFromSeconds(timestampSeconds?: number | null) {
   return Number.isFinite(timestampSeconds) ? timestampSeconds! * 1000 : null;
+}
+
+function isActiveInFlightTurnSnapshot(thread: Thread, turn: Turn) {
+  return isThreadActive(thread) && isTurnInFlight(turn);
 }
 
 export function appendCommandExecutionDelta(

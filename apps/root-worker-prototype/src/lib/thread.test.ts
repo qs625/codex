@@ -3190,6 +3190,83 @@ test("segment compact head accepts later live assistant delta for a new turn", (
   );
 });
 
+test("active compact head accepts in-flight user turn snapshot as a live landing point", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const segmentLoadedThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
+    turns: [makeTurn("turn-compact", [compact])],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+  const userTurn = {
+    ...makeTurn("turn-live", [makeUserMessage("user-live", "new request")]),
+    status: "running",
+    startedAt: null,
+    completedAt: null,
+  } satisfies Turn;
+
+  const updated = updateThreadTurnSnapshot(segmentLoadedThread, userTurn);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "user-live"],
+  );
+  assert.equal(updated.turns.at(-1)?.id, "turn-live");
+});
+
+test("non-active compact head rejects old user turn snapshots without a timestamp", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const segmentLoadedThread = {
+    ...makeThread(),
+    turns: [makeTurn("turn-compact", [compact])],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+  const oldUserTurn = {
+    ...makeTurn("turn-old", [makeUserMessage("user-old", "old request")]),
+    startedAt: null,
+    completedAt: null,
+  } satisfies Turn;
+
+  const updated = updateThreadTurnSnapshot(segmentLoadedThread, oldUserTurn);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1"],
+  );
+});
+
+test("compact head replays pending live user item when snapshot arrives later", () => {
+  const pendingUpdates = new Map<string, Array<(thread: Thread) => Thread>>();
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadItem(thread, "turn-live", makeUserMessage("user-live", "new request"), {
+      completedAtMs: 3_000,
+    }),
+  );
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const snapshot = {
+    ...makeThread(),
+    turns: [makeTurn("turn-compact", [compact])],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
+
+  assert.equal(pendingUpdates.size, 0);
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "user-live"],
+  );
+});
+
 test("segment compact head rejects late assistant delta for a pruned old turn", () => {
   const compact = {
     ...makeCompactItem("compact-1"),

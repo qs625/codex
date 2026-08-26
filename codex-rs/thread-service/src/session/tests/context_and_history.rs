@@ -2579,6 +2579,26 @@ async fn inter_agent_child_completion_live_item_waits_for_typed_recording() -> a
     assert!(completed.completed_at_ms > 0);
     assert_eq!(completed.communication, communication);
 
+    let history_items = session.clone_history().await.raw_items().to_vec();
+    assert!(
+        history_items
+            .iter()
+            .any(|item| matches!(item, ResponseItem::InterAgentCommunication { communication: stored, .. } if stored == &communication)),
+        "new inter-agent delivery should persist a typed communication item"
+    );
+    assert!(
+        !history_items.iter().any(|item| matches!(
+            item,
+            ResponseItem::Message { content, .. }
+                if content.iter().any(|part| matches!(
+                    part,
+                    protocol::models::ContentItem::InputText { text }
+                        if text.contains("Inter-agent communication received.")
+                ))
+        )),
+        "new inter-agent delivery must not persist the provider-visible envelope as an ordinary message"
+    );
+
     let duplicate_completed = timeout(Duration::from_millis(200), async {
         loop {
             let event = rx_event.recv().await?;
