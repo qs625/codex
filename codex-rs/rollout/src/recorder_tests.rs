@@ -11,6 +11,7 @@ use protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use protocol::models::ResponseItem;
 use protocol::protocol::AgentMessageEvent;
 use protocol::protocol::AskForApproval;
+use protocol::protocol::CompactedItem;
 use protocol::protocol::EventMsg;
 use protocol::protocol::RolloutItem;
 use protocol::protocol::RolloutLine;
@@ -447,7 +448,7 @@ async fn recorder_materializes_on_flush_with_pending_items() -> std::io::Result<
     )
     .await?;
 
-    let rollout_path = recorder.rollout_path().to_path_buf();
+    let rollout_path = recorder.rollout_path();
     assert!(
         !rollout_path.exists(),
         "rollout file should not exist before the first recordable item"
@@ -509,6 +510,127 @@ async fn recorder_materializes_on_flush_with_pending_items() -> std::io::Result<
 }
 
 #[tokio::test]
+async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let thread_id = ThreadId::new();
+    let recorder = RolloutRecorder::new(
+        &config,
+        RolloutRecorderParams::new(
+            thread_id,
+            /*forked_from_id*/ None,
+            SessionSource::Exec,
+            /*thread_source*/ None,
+            /*root_agent_role*/ None,
+            /*root_agent_path*/ None,
+            BaseInstructions::default(),
+            Vec::new(),
+        ),
+    )
+    .await?;
+    let initial_path = recorder.rollout_path();
+
+    recorder
+        .record_canonical_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
+            UserMessageEvent {
+                message: "before compact".to_string(),
+                images: None,
+                local_images: Vec::new(),
+                skills: Vec::new(),
+                text_elements: Vec::new(),
+            },
+        ))])
+        .await?;
+    recorder.flush().await?;
+
+    recorder
+        .record_canonical_items(&[RolloutItem::Compacted(CompactedItem {
+            message: "compacted checkpoint".to_string(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        })])
+        .await?;
+    recorder.flush().await?;
+
+    let head_path = recorder.rollout_path();
+    assert_ne!(head_path, initial_path);
+    assert!(initial_path.exists());
+    assert!(head_path.exists());
+    assert_eq!(
+        resolve_current_segment_path(&initial_path).await?,
+        head_path
+    );
+
+    let manifest_path = segment_manifest_path_for_rollout(&initial_path);
+    let manifest_text = std::fs::read_to_string(manifest_path)?;
+    assert!(manifest_text.contains("\"version\": 1"));
+    assert!(manifest_text.contains("compact-000001.jsonl"));
+
+    let (head_items, parsed_thread_id, _) = RolloutRecorder::load_rollout_items(&head_path).await?;
+    assert_eq!(parsed_thread_id, Some(thread_id));
+    assert!(matches!(
+        head_items.first(),
+        Some(RolloutItem::SessionMeta(_))
+    ));
+    assert!(
+        head_items
+            .iter()
+            .any(|item| matches!(item, RolloutItem::Compacted(_)))
+    );
+    assert!(
+        !std::fs::read_to_string(&head_path)?.contains("before compact"),
+        "head segment should not contain pre-compact events"
+    );
+
+    recorder.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn recorder_copies_latest_session_meta_to_compact_segment() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let thread_id = ThreadId::new();
+    let recorder = RolloutRecorder::new(
+        &config,
+        RolloutRecorderParams::new(
+            thread_id,
+            /*forked_from_id*/ None,
+            SessionSource::Exec,
+            /*thread_source*/ None,
+            /*root_agent_role*/ None,
+            /*root_agent_path*/ None,
+            BaseInstructions::default(),
+            Vec::new(),
+        ),
+    )
+    .await?;
+    let initial_path = recorder.rollout_path();
+    recorder.persist().await?;
+
+    let mut latest_meta = read_latest_session_meta_line(&initial_path).await?;
+    latest_meta.meta.memory_mode = Some("disabled".to_string());
+    append_rollout_item_to_path(&initial_path, &RolloutItem::SessionMeta(latest_meta)).await?;
+
+    recorder
+        .record_canonical_items(&[RolloutItem::Compacted(CompactedItem {
+            message: "compacted checkpoint".to_string(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        })])
+        .await?;
+    recorder.flush().await?;
+
+    let head_path = recorder.rollout_path();
+    let head_meta = read_latest_session_meta_line(&head_path).await?;
+    assert_eq!(head_meta.meta.id, thread_id);
+    assert_eq!(head_meta.meta.memory_mode.as_deref(), Some("disabled"));
+
+    recorder.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn persist_reports_filesystem_error_and_retries_buffered_items() -> std::io::Result<()> {
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
@@ -527,7 +649,7 @@ async fn persist_reports_filesystem_error_and_retries_buffered_items() -> std::i
         ),
     )
     .await?;
-    let rollout_path = recorder.rollout_path().to_path_buf();
+    let rollout_path = recorder.rollout_path();
 
     recorder
         .record_canonical_items(&[RolloutItem::EventMsg(EventMsg::AgentMessage(
@@ -569,12 +691,15 @@ async fn writer_state_retries_write_error_before_reporting_flush_success() -> st
     let rollout_path = home.path().join("rollout.jsonl");
     File::create(&rollout_path)?;
     let read_only_file = std::fs::OpenOptions::new().read(true).open(&rollout_path)?;
+    let thread_id = ThreadId::new();
     let mut state = RolloutWriterState::new(
         Some(tokio::fs::File::from_std(read_only_file)),
         /*deferred_log_file_info*/ None,
         /*meta*/ None,
         home.path().to_path_buf(),
         rollout_path.clone(),
+        std::sync::Arc::new(std::sync::Mutex::new(rollout_path.clone())),
+        SegmentChain::new(rollout_path.clone(), thread_id),
     );
     state.add_items(vec![RolloutItem::EventMsg(EventMsg::AgentMessage(
         AgentMessageEvent {
@@ -700,8 +825,8 @@ async fn list_threads_db_enabled_drops_missing_rollout_paths() -> std::io::Resul
 }
 
 #[tokio::test]
-async fn list_threads_state_db_only_keeps_metadata_with_missing_rollout_path(
-) -> std::io::Result<()> {
+async fn list_threads_state_db_only_keeps_metadata_with_missing_rollout_path() -> std::io::Result<()>
+{
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
 
@@ -930,7 +1055,11 @@ async fn list_threads_filesystem_asc_paginates_same_timestamp_ties() -> std::io:
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
     let timestamp = "2025-01-03T17-00-00";
-    let ids = [Uuid::from_u128(9021), Uuid::from_u128(9022), Uuid::from_u128(9023)];
+    let ids = [
+        Uuid::from_u128(9021),
+        Uuid::from_u128(9022),
+        Uuid::from_u128(9023),
+    ];
     for id in ids {
         write_session_file(home.path(), timestamp, id)?;
     }
@@ -997,7 +1126,11 @@ async fn list_threads_filesystem_search_paginates_same_timestamp_ties() -> std::
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
     let timestamp = "2025-01-03T18-00-00";
-    let ids = [Uuid::from_u128(9031), Uuid::from_u128(9032), Uuid::from_u128(9033)];
+    let ids = [
+        Uuid::from_u128(9031),
+        Uuid::from_u128(9032),
+        Uuid::from_u128(9033),
+    ];
     for id in ids {
         write_session_file(home.path(), timestamp, id)?;
         append_session_index_entry(
