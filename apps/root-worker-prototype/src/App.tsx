@@ -98,6 +98,8 @@ import {
   updateThreadItem,
   updateThreadSkills,
   updateThreadTurnLifecycle,
+  updateThreadTurnNotification,
+  updateThreadTurnSnapshot,
   upsertThread,
   upsertThreadMetadataPreservingTurns,
   type ThreadUpdate,
@@ -1574,7 +1576,7 @@ function App() {
           },
         applyTurn: (targetThreadId, turn) => {
           updateInitializedThreadLocally(targetThreadId, (thread) =>
-            updateThreadTurnLifecycle(thread, turn),
+            updateThreadTurnSnapshot(thread, turn),
           );
         },
         revokeImage: revokeComposerImage,
@@ -2428,7 +2430,7 @@ function App() {
             setIsStoppingTurn(false);
           }
           updateInitializedThreadLocally(notification.threadId, (thread) =>
-            updateThreadTurnLifecycle(thread, notification.turn),
+            updateThreadTurnNotification(thread, method, notification.turn),
           );
           break;
         }

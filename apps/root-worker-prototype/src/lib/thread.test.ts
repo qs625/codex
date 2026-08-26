@@ -40,6 +40,8 @@ import {
   treeThreadLifecycleStatusLabel,
   updateThreadItem,
   updateThreadTurn,
+  updateThreadTurnNotification,
+  updateThreadTurnSnapshot,
   updateThreadTurnLifecycle,
   upsertThread,
   upsertThreadMetadataPreservingTurns,
@@ -2842,6 +2844,205 @@ test("updateThreadTurn updates compact stats for live compact turns", () => {
     ["compact-5"],
   );
   assert.deepEqual(thread.stats, { compactionCount: 5 });
+});
+
+test("turn completed notifications merge compact items and update analysis", () => {
+  const thread = updateThreadTurnNotification(
+    {
+      ...makeThread(),
+      stats: { compactionCount: 2 },
+      turns: [
+        makeTurn("turn-old", [
+          makeUserMessage("old-user", "old request"),
+          makeAgentMessage("old-agent", "old answer"),
+        ]),
+        makeTurn("turn-compact", [
+          makeAgentMessage("compact-summary", "summarizing old context"),
+        ]),
+      ],
+    },
+    "turn/completed",
+    {
+      ...makeTurn("turn-compact", [
+        makeAgentMessage("compact-summary", "summarizing old context"),
+        makeCompactItem("compact-3"),
+      ]),
+      status: "completed",
+    },
+  );
+  const analysis = buildThreadAnalysis(thread, 0);
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-3"],
+  );
+  assert.deepEqual(thread.stats, { compactionCount: 3 });
+  assert.equal(analysis.runtime.compactionCount, 3);
+});
+
+test("turn completed notifications ignore ambiguous stale compact snapshots", () => {
+  const thread = updateThreadTurnNotification(
+    {
+      ...makeThread(),
+      stats: { compactionCount: 2 },
+      turns: [
+        {
+          ...makeTurn("turn-compact", [makeCompactItem("compact-2")]),
+          completedAt: 20,
+        },
+      ],
+    },
+    "turn/completed",
+    {
+      ...makeTurn("turn-compact", [makeCompactItem("compact-1")]),
+      completedAt: 20,
+      status: "completed",
+    },
+  );
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-2"],
+  );
+  assert.deepEqual(thread.stats, { compactionCount: 2 });
+});
+
+test("turn completed notifications accept compact snapshots after latest compact", () => {
+  const thread = updateThreadTurnNotification(
+    {
+      ...makeThread(),
+      stats: { compactionCount: 2 },
+      turns: [
+        {
+          ...makeTurn("turn-compact", [makeCompactItem("compact-2")]),
+          completedAt: 20,
+        },
+      ],
+    },
+    "turn/completed",
+    {
+      ...makeTurn("turn-compact", [makeCompactItem("compact-3")]),
+      startedAt: 10,
+      completedAt: 21,
+      status: "completed",
+    },
+  );
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-3"],
+  );
+  assert.deepEqual(thread.stats, { compactionCount: 3 });
+});
+
+test("turn completed notifications do not restore compact-pruned old turns", () => {
+  const thread = updateThreadTurnNotification(
+    {
+      ...makeThread(),
+      stats: { compactionCount: 1 },
+      turns: [
+        {
+          ...makeTurn("turn-compact", [makeCompactItem("compact-1")]),
+          completedAt: 20,
+        },
+      ],
+    },
+    "turn/completed",
+    {
+      ...makeTurn("turn-old", [
+        makeUserMessage("old-user", "old request"),
+        makeAgentMessage("old-agent", "old answer"),
+      ]),
+      completedAt: 12,
+      status: "completed",
+    },
+  );
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1"],
+  );
+  assert.deepEqual(thread.stats, { compactionCount: 1 });
+});
+
+test("pending turn completed compact notifications update stats after snapshot", () => {
+  const pendingUpdates = new Map<string, ThreadUpdate[]>();
+  queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
+    updateThreadTurnNotification(
+      thread,
+      "turn/completed",
+      {
+        ...makeTurn("turn-compact", [
+          makeAgentMessage("compact-summary", "summarizing old context"),
+          makeCompactItem("compact-3"),
+        ]),
+        status: "completed",
+      },
+    ),
+  );
+  const snapshot = {
+    ...makeThread(),
+    stats: { compactionCount: 2 },
+    turns: [
+      makeTurn("turn-old", [
+        makeUserMessage("old-user", "old request"),
+        makeAgentMessage("old-agent", "old answer"),
+      ]),
+      makeTurn("turn-compact", [
+        makeAgentMessage("compact-summary", "summarizing old context"),
+      ]),
+    ],
+  } satisfies Thread;
+
+  const updated = applyPendingThreadUpdates(snapshot, pendingUpdates);
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-3"],
+  );
+  assert.deepEqual(updated.stats, { compactionCount: 3 });
+  assert.equal(buildThreadAnalysis(updated, 0).runtime.compactionCount, 3);
+});
+
+test("turn started notifications keep lifecycle-only item behavior", () => {
+  const thread = updateThreadTurnNotification(
+    {
+      ...makeThread(),
+      turns: [makeTurn("turn-1", [makeAgentMessage("agent-1", "hello")])],
+    },
+    "turn/started",
+    {
+      ...makeTurn("turn-1", [makeCompactItem("compact-ignored")]),
+      status: "inProgress",
+    },
+  );
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["agent-1"],
+  );
+});
+
+test("send response turn snapshots merge compact items and update stats", () => {
+  const thread = updateThreadTurnSnapshot(
+    {
+      ...makeThread(),
+      stats: { compactionCount: 1 },
+      turns: [
+        makeTurn("turn-old", [
+          makeUserMessage("old-user", "old request"),
+          makeAgentMessage("old-agent", "old answer"),
+        ]),
+      ],
+    },
+    makeTurn("turn-compact", [makeCompactItem("compact-2")]),
+  );
+
+  assert.deepEqual(
+    thread.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-2"],
+  );
+  assert.deepEqual(thread.stats, { compactionCount: 2 });
 });
 
 test("updateThreadItem preserves active subscriptions when a compact notification arrives", () => {
