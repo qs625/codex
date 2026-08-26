@@ -9,6 +9,7 @@ use codex_turn_items::finalized_turn_item_facts;
 use codex_turn_items::raw_assistant_output_text_from_item;
 use codex_turn_items::response_input_to_response_item;
 use codex_turn_items::response_item_may_include_external_context;
+use codex_turn_items::split_agent_message_into_artifact_turn_items;
 use codex_utils_stream_parser::strip_citations;
 use protocol::config_types::ModeKind;
 use protocol::items::TurnItem;
@@ -235,11 +236,18 @@ pub(crate) enum TurnItemContributorPolicy<'a> {
     Run(&'a ExtensionData),
 }
 
+#[cfg(test)]
 pub(crate) struct FinalizedTurnItem {
     pub(crate) turn_item: TurnItem,
     pub(crate) facts: FinalizedTurnItemFacts,
 }
 
+pub(crate) struct FinalizedTurnItems {
+    pub(crate) turn_items: Vec<TurnItem>,
+    pub(crate) facts: FinalizedTurnItemFacts,
+}
+
+#[cfg(test)]
 pub(crate) async fn finalize_non_tool_response_item(
     sess: &Session,
     turn_context: &TurnContext,
@@ -250,8 +258,38 @@ pub(crate) async fn finalize_non_tool_response_item(
     let turn_item =
         handle_non_tool_response_item(sess, turn_context, contributor_policy, item, plan_mode)
             .await?;
+    let mut turn_item = turn_item;
+    if let TurnItem::AgentMessage(agent_message) = &mut turn_item {
+        finalize_agent_message_content(agent_message, plan_mode);
+    }
     let facts = finalized_turn_item_facts(&turn_item);
     Some(FinalizedTurnItem { turn_item, facts })
+}
+
+pub(crate) async fn finalize_non_tool_response_items(
+    sess: &Session,
+    turn_context: &TurnContext,
+    contributor_policy: TurnItemContributorPolicy<'_>,
+    item: &ResponseItem,
+    plan_mode: bool,
+) -> Option<FinalizedTurnItems> {
+    let turn_item =
+        handle_non_tool_response_item(sess, turn_context, contributor_policy, item, plan_mode)
+            .await?;
+    let mut turn_items = match turn_item {
+        TurnItem::AgentMessage(agent_message) => {
+            split_agent_message_into_artifact_turn_items(agent_message)
+        }
+        item => vec![item],
+    };
+    let mut facts = FinalizedTurnItemFacts::default();
+    for turn_item in &mut turn_items {
+        if let TurnItem::AgentMessage(agent_message) = turn_item {
+            finalize_agent_message_content(agent_message, plan_mode);
+        }
+        facts.merge(finalized_turn_item_facts(turn_item));
+    }
+    Some(FinalizedTurnItems { turn_items, facts })
 }
 
 #[instrument(level = "trace", skip_all)]
@@ -298,7 +336,7 @@ pub(crate) async fn handle_output_item_done(
         }
         // No tool call: convert messages/reasoning into turn items and mark them as complete.
         Ok(None) => {
-            let finalized_turn_item = finalize_non_tool_response_item(
+            let finalized_turn_items = finalize_non_tool_response_items(
                 ctx.sess.as_ref(),
                 ctx.turn_context.as_ref(),
                 TurnItemContributorPolicy::Run(ctx.turn_store.as_ref()),
@@ -306,26 +344,36 @@ pub(crate) async fn handle_output_item_done(
                 plan_mode,
             )
             .await;
-            let finalized_facts = finalized_turn_item
+            let finalized_facts = finalized_turn_items
                 .as_ref()
                 .map(|finalized| finalized.facts.clone());
-            if let Some(finalized_turn_item) = finalized_turn_item {
-                if previously_active_item.is_none() {
-                    let mut started_item = finalized_turn_item.turn_item.clone();
-                    if let TurnItem::ImageGeneration(item) = &mut started_item {
-                        item.status = "in_progress".to_string();
-                        item.revised_prompt = None;
-                        item.result.clear();
-                        item.saved_path = None;
+            if let Some(finalized_turn_items) = finalized_turn_items {
+                for (index, turn_item) in finalized_turn_items.turn_items.into_iter().enumerate() {
+                    let should_emit_started = if index > 0 {
+                        true
+                    } else {
+                        match previously_active_item.as_ref() {
+                            Some(active) => !same_turn_item_display_slot(active, &turn_item),
+                            None => true,
+                        }
+                    };
+                    if should_emit_started {
+                        let mut started_item = turn_item.clone();
+                        if let TurnItem::ImageGeneration(item) = &mut started_item {
+                            item.status = "in_progress".to_string();
+                            item.revised_prompt = None;
+                            item.result.clear();
+                            item.saved_path = None;
+                        }
+                        ctx.sess
+                            .emit_turn_item_started(&ctx.turn_context, &started_item)
+                            .await;
                     }
+
                     ctx.sess
-                        .emit_turn_item_started(&ctx.turn_context, &started_item)
+                        .emit_turn_item_completed(&ctx.turn_context, turn_item)
                         .await;
                 }
-
-                ctx.sess
-                    .emit_turn_item_completed(&ctx.turn_context, finalized_turn_item.turn_item)
-                    .await;
             }
             record_completed_response_item_with_finalized_facts(
                 ctx.sess.as_ref(),
@@ -368,12 +416,17 @@ pub(crate) async fn handle_output_item_done(
     Ok(output)
 }
 
+fn same_turn_item_display_slot(active: &TurnItem, completed: &TurnItem) -> bool {
+    active.id() == completed.id()
+        && std::mem::discriminant(active) == std::mem::discriminant(completed)
+}
+
 pub(crate) async fn handle_non_tool_response_item(
     sess: &Session,
     turn_context: &TurnContext,
     contributor_policy: TurnItemContributorPolicy<'_>,
     item: &ResponseItem,
-    plan_mode: bool,
+    _plan_mode: bool,
 ) -> Option<TurnItem> {
     debug!(?item, "Output item");
 
@@ -385,9 +438,6 @@ pub(crate) async fn handle_non_tool_response_item(
             let mut turn_item = parse_turn_item(item)?;
             if let TurnItemContributorPolicy::Run(turn_store) = contributor_policy {
                 apply_turn_item_contributors(sess, turn_store, &mut turn_item).await;
-            }
-            if let TurnItem::AgentMessage(agent_message) = &mut turn_item {
-                finalize_agent_message_content(agent_message, plan_mode);
             }
             if let TurnItem::ImageGeneration(image_item) = &mut turn_item {
                 let session_id = sess.conversation_id.to_string();

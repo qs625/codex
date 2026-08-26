@@ -14,6 +14,22 @@ use model_service_api::ModelsManagerConfig;
 use tracing::warn;
 
 pub const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
+const INLINE_ARTIFACT_MARKER: &str = "<<<MORPHEUS_ARTIFACT ";
+const INLINE_ARTIFACT_INSTRUCTIONS: &str = r#"
+# Inline artifacts
+
+Default assistant replies are Markdown. Do not use an artifact marker for ordinary Markdown prose, lists, or fenced code blocks.
+
+Use an inline artifact only when the user needs a distinct previewable or copyable block, such as self-contained `text/html`, `image/svg+xml`, `text/markdown`, `text/mermaid`, `application/json`, `text/csv`, or source/code content. HTML and SVG artifacts are rendered in a sandbox; Mermaid and unsupported types may be shown as source. Artifact content must be self-contained and must not rely on network scripts or remote resources.
+
+When you create an artifact, emit this exact marker format, outside of Markdown fences:
+
+<<<MORPHEUS_ARTIFACT {"title":"Short title","mime_type":"text/html","language":"html"}>>>
+...artifact content...
+<<<END_MORPHEUS_ARTIFACT>>>
+
+`title` and `mime_type` are required. `language` is optional. You may include normal assistant text before and after artifact markers; it will remain ordinary conversation text.
+"#;
 const DEFAULT_PERSONALITY_HEADER: &str = "You are Codex, a coding agent based on GPT-5. You and the user share the same workspace and collaborate to achieve the user's goals.";
 const LOCAL_FRIENDLY_TEMPLATE: &str =
     "You optimize for team morale and being a supportive teammate as much as code quality.";
@@ -74,13 +90,30 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
     }
 
     if let Some(base_instructions) = &config.base_instructions {
-        model.base_instructions = base_instructions.clone();
+        model.base_instructions = ensure_inline_artifact_instructions(base_instructions.clone());
         model.model_messages = None;
     } else if !config.personality_enabled {
         model.model_messages = None;
     }
+    model.base_instructions = ensure_inline_artifact_instructions(model.base_instructions);
+    if let Some(model_messages) = &mut model.model_messages
+        && let Some(template) = &mut model_messages.instructions_template
+    {
+        *template = ensure_inline_artifact_instructions(std::mem::take(template));
+    }
 
     model
+}
+
+pub fn ensure_inline_artifact_instructions(mut instructions: String) -> String {
+    if instructions.contains(INLINE_ARTIFACT_MARKER) {
+        return instructions;
+    }
+    if !instructions.ends_with('\n') {
+        instructions.push('\n');
+    }
+    instructions.push_str(INLINE_ARTIFACT_INSTRUCTIONS);
+    instructions
 }
 
 /// Build a minimal fallback model descriptor for missing/unknown slugs.

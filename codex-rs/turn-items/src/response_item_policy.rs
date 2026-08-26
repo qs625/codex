@@ -84,6 +84,21 @@ pub struct FinalizedTurnItemFacts {
     pub defers_mailbox_delivery_to_next_turn: bool,
 }
 
+impl FinalizedTurnItemFacts {
+    pub fn merge(&mut self, other: Self) {
+        if self.memory_citation.is_none() {
+            self.memory_citation = other.memory_citation;
+        }
+        if let Some(message) = other.last_agent_message {
+            match &mut self.last_agent_message {
+                Some(existing) => existing.push_str(&message),
+                None => self.last_agent_message = Some(message),
+            }
+        }
+        self.defers_mailbox_delivery_to_next_turn |= other.defers_mailbox_delivery_to_next_turn;
+    }
+}
+
 pub fn finalize_agent_message_content(agent_message: &mut AgentMessageItem, plan_mode: bool) {
     let combined = agent_message_text(agent_message);
     let (stripped, memory_citation) =
@@ -112,10 +127,12 @@ pub fn finalized_turn_item_facts(turn_item: &TurnItem) -> FinalizedTurnItemFacts
                 defers_mailbox_delivery_to_next_turn,
             }
         }
-        TurnItem::ImageGeneration(_) => FinalizedTurnItemFacts {
-            defers_mailbox_delivery_to_next_turn: true,
-            ..Default::default()
-        },
+        TurnItem::ConversationArtifact(_) | TurnItem::ImageGeneration(_) => {
+            FinalizedTurnItemFacts {
+                defers_mailbox_delivery_to_next_turn: true,
+                ..Default::default()
+            }
+        }
         _ => FinalizedTurnItemFacts::default(),
     }
 }
@@ -147,6 +164,7 @@ fn strip_hidden_assistant_markup_and_parse_memory_citation(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use protocol::items::ConversationArtifactItem;
     use protocol::items::ImageGenerationItem;
     use protocol::models::ContentItem;
     use protocol::models::FunctionCallOutputPayload;
@@ -387,6 +405,24 @@ mod tests {
             revised_prompt: None,
             result: "Zm9v".to_string(),
             saved_path: None,
+        });
+
+        let facts = finalized_turn_item_facts(&turn_item);
+
+        assert!(facts.last_agent_message.is_none());
+        assert!(facts.memory_citation.is_none());
+        assert!(facts.defers_mailbox_delivery_to_next_turn);
+    }
+
+    #[test]
+    fn finalized_turn_item_facts_defer_conversation_artifact() {
+        let turn_item = TurnItem::ConversationArtifact(ConversationArtifactItem {
+            id: "artifact-1".to_string(),
+            title: "Demo".to_string(),
+            mime_type: "text/html".to_string(),
+            content: "<p>Hello</p>".to_string(),
+            language: Some("html".to_string()),
+            truncated: false,
         });
 
         let facts = finalized_turn_item_facts(&turn_item);

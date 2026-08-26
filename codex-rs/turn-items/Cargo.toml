@@ -17,9 +17,9 @@ codex-context-manager = { workspace = true }
 memory-service-api = { workspace = true }
 protocol = { workspace = true }
 codex-utils-stream-parser = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-serde_json = { workspace = true }

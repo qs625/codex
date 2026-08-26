@@ -42,7 +42,7 @@ use crate::session::turn_context::TurnContext;
 use crate::state::InMemoryHistorySnapshot;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::TurnItemContributorPolicy;
-use crate::stream_events_utils::finalize_non_tool_response_item;
+use crate::stream_events_utils::finalize_non_tool_response_items;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
 use crate::stream_events_utils::mark_thread_memory_mode_polluted_if_external_context;
@@ -1982,7 +1982,7 @@ async fn handle_assistant_item_done_in_plan_mode(
         emit_plan_mode_stream_actions(sess, turn_context, actions).await;
 
         let mut finalized_facts = None;
-        if let Some(finalized_turn_item) = finalize_non_tool_response_item(
+        if let Some(finalized_turn_items) = finalize_non_tool_response_items(
             sess,
             turn_context,
             TurnItemContributorPolicy::Run(turn_store),
@@ -1991,10 +1991,20 @@ async fn handle_assistant_item_done_in_plan_mode(
         )
         .await
         {
-            finalized_facts = Some(finalized_turn_item.facts.clone());
-            let actions =
-                state.complete_turn_item(finalized_turn_item.turn_item, previously_active_item);
-            emit_plan_mode_stream_actions(sess, turn_context, actions).await;
+            finalized_facts = Some(finalized_turn_items.facts.clone());
+            for (index, turn_item) in finalized_turn_items.turn_items.into_iter().enumerate() {
+                let previous = if index == 0
+                    && let Some(active) = previously_active_item
+                    && active.id() == turn_item.id()
+                    && std::mem::discriminant(active) == std::mem::discriminant(&turn_item)
+                {
+                    Some(active)
+                } else {
+                    None
+                };
+                let actions = state.complete_turn_item(turn_item, previous);
+                emit_plan_mode_stream_actions(sess, turn_context, actions).await;
+            }
         }
         let final_last_agent_message = finalized_facts
             .as_ref()
