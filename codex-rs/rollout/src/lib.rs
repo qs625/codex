@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use protocol::protocol::SessionSource;
 
 pub(crate) mod config;
+pub(crate) mod layout;
 pub(crate) mod list;
 pub(crate) mod metadata;
 pub(crate) mod policy;
@@ -33,6 +34,8 @@ pub static INTERACTIVE_SESSION_SOURCES: LazyLock<Vec<SessionSource>> = LazyLock:
 pub use config::Config;
 pub use config::RolloutConfig;
 pub use config::RolloutConfigView;
+pub use layout::rollout_container_path;
+pub use layout::rollout_path_after_moving_container;
 pub use list::Cursor;
 pub use list::SortDirection;
 pub use list::ThreadItem;

@@ -109,6 +109,15 @@ pub(super) async fn read_thread_by_rollout_path(
     include_history: bool,
 ) -> ThreadStoreResult<StoredThread> {
     let path = resolve_requested_rollout_path(store, rollout_path)?;
+    let path = if path.is_dir() {
+        resolve_current_segment_path(path.as_path())
+            .await
+            .map_err(|err| ThreadStoreError::InvalidRequest {
+                message: format!("failed to resolve rollout path `{}`: {err}", path.display()),
+            })?
+    } else {
+        path
+    };
     let mut thread = read_thread_from_rollout_path(store, path).await?;
     if !include_archived && thread.archived_at.is_some() {
         return Err(ThreadStoreError::InvalidRequest {
@@ -529,6 +538,7 @@ mod tests {
     use crate::local::LocalThreadStore;
     use crate::local::test_support::test_config;
     use crate::local::test_support::write_archived_session_file;
+    use crate::local::test_support::write_directory_session_file;
     use crate::local::test_support::write_session_file;
     use crate::local::test_support::write_session_file_with_fork;
 
@@ -588,6 +598,49 @@ mod tests {
             Some(std::fs::canonicalize(active_path).expect("canonical path"))
         );
         assert_eq!(thread.preview, "Hello from user");
+    }
+
+    #[tokio::test]
+    async fn read_thread_by_rollout_path_resolves_directory_container_to_head() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let uuid = Uuid::from_u128(212);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let base_path = write_directory_session_file(
+            home.path(),
+            home.path().join("sessions/2025/01/03"),
+            "2025-01-03T12-00-00",
+            uuid,
+            "Directory direct read",
+        )
+        .expect("directory session");
+        let container_path = base_path.parent().expect("container").to_path_buf();
+        let relative_container = container_path
+            .strip_prefix(home.path())
+            .expect("path should be under codex home")
+            .to_path_buf();
+
+        let thread = store
+            .read_thread_by_rollout_path(
+                relative_container,
+                /*include_archived*/ false,
+                /*include_history*/ false,
+            )
+            .await
+            .expect("read thread by directory rollout path");
+
+        assert_eq!(thread.thread_id, thread_id);
+        let canonical_container =
+            std::fs::canonicalize(container_path).expect("canonical container");
+        assert_eq!(
+            thread.rollout_path,
+            Some(canonical_container.join("compact-000001.jsonl"))
+        );
+        assert_eq!(thread.preview, "Directory direct read");
+        assert_eq!(
+            thread.first_user_message.as_deref(),
+            Some("Directory direct read")
+        );
     }
 
     #[tokio::test]

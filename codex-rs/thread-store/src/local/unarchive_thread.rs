@@ -4,6 +4,7 @@ use rollout::rollout_date_parts;
 
 use super::LocalThreadStore;
 use super::helpers::matching_rollout_file_name;
+use super::helpers::move_rollout_collection;
 use super::helpers::scoped_rollout_path;
 use super::helpers::stored_thread_from_rollout_item;
 use super::helpers::touch_modified_time;
@@ -63,12 +64,11 @@ pub(super) async fn unarchive_thread(
     std::fs::create_dir_all(&dest_dir).map_err(|err| ThreadStoreError::Internal {
         message: format!("failed to unarchive thread: {err}"),
     })?;
-    let restored_path = dest_dir.join(&file_name);
-    std::fs::rename(&canonical_archived_path, &restored_path).map_err(|err| {
-        ThreadStoreError::Internal {
-            message: format!("failed to unarchive thread: {err}"),
-        }
-    })?;
+    let restored_path = move_rollout_collection(
+        canonical_archived_path.as_path(),
+        dest_dir.as_path(),
+        thread_id,
+    )?;
     touch_modified_time(restored_path.as_path()).map_err(|err| ThreadStoreError::Internal {
         message: format!("failed to update unarchived thread timestamp: {err}"),
     })?;
@@ -114,6 +114,8 @@ mod tests {
     use crate::local::LocalThreadStore;
     use crate::local::test_support::test_config;
     use crate::local::test_support::write_archived_session_file;
+    use crate::local::test_support::write_directory_session_file;
+    use crate::local::test_support::write_flat_segmented_session_file;
 
     #[tokio::test]
     async fn unarchive_thread_restores_rollout_and_returns_updated_thread() {
@@ -143,6 +145,142 @@ mod tests {
             thread.first_user_message.as_deref(),
             Some("Archived user message")
         );
+    }
+
+    #[tokio::test]
+    async fn unarchive_thread_restores_directory_layout_container() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let uuid = Uuid::from_u128(302);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let archived_base = write_directory_session_file(
+            home.path(),
+            home.path().join(rollout_api::ARCHIVED_SESSIONS_SUBDIR),
+            "2025-01-03T13-00-00",
+            uuid,
+            "Archived directory user message",
+        )
+        .expect("archived directory session");
+        let archived_container = archived_base.parent().expect("container").to_path_buf();
+
+        let thread = store
+            .unarchive_thread(ArchiveThreadParams { thread_id })
+            .await
+            .expect("unarchive thread");
+
+        assert!(!archived_container.exists());
+        let restored_container = home
+            .path()
+            .join("sessions/2025/01/03")
+            .join(archived_container.file_name().expect("container name"));
+        assert!(restored_container.join("rollout.jsonl").exists());
+        assert!(restored_container.join("compact-000001.jsonl").exists());
+        assert!(restored_container.join("segments.json").exists());
+        assert_eq!(thread.thread_id, thread_id);
+        assert_eq!(
+            thread.rollout_path,
+            Some(restored_container.join("compact-000001.jsonl"))
+        );
+        assert_eq!(thread.preview, "Archived directory user message");
+    }
+
+    #[tokio::test]
+    async fn unarchive_thread_restores_legacy_flat_segmented_collection() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let uuid = Uuid::from_u128(304);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let (archived_base, archived_head) = write_flat_segmented_session_file(
+            home.path(),
+            home.path().join(rollout_api::ARCHIVED_SESSIONS_SUBDIR),
+            "2025-01-03T13-00-00",
+            uuid,
+            "Archived legacy segmented user message",
+        )
+        .expect("archived legacy segmented session");
+        let archived_manifest = rollout::segment_manifest_path_for_rollout(archived_base.as_path());
+
+        let thread = store
+            .unarchive_thread(ArchiveThreadParams { thread_id })
+            .await
+            .expect("unarchive thread");
+
+        assert!(!archived_base.exists());
+        assert!(!archived_head.exists());
+        assert!(!archived_manifest.exists());
+        let restored_base = home
+            .path()
+            .join("sessions/2025/01/03")
+            .join(archived_base.file_name().expect("base name"));
+        let restored_head = home
+            .path()
+            .join("sessions/2025/01/03")
+            .join(archived_head.file_name().expect("head name"));
+        let restored_manifest = rollout::segment_manifest_path_for_rollout(restored_base.as_path());
+        assert!(restored_base.exists());
+        assert!(restored_head.exists());
+        assert!(restored_manifest.exists());
+        assert_eq!(thread.thread_id, thread_id);
+        assert_eq!(thread.rollout_path, Some(restored_head));
+        assert_eq!(thread.preview, "Archived legacy segmented user message");
+    }
+
+    #[tokio::test]
+    async fn unarchive_thread_accepts_sqlite_directory_container_path() {
+        let home = TempDir::new().expect("temp dir");
+        let config = test_config(home.path());
+        let uuid = Uuid::from_u128(305);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let archived_base = write_directory_session_file(
+            home.path(),
+            home.path().join(rollout_api::ARCHIVED_SESSIONS_SUBDIR),
+            "2025-01-03T13-00-00",
+            uuid,
+            "Archived directory from sqlite",
+        )
+        .expect("archived directory session");
+        let archived_container = archived_base.parent().expect("container").to_path_buf();
+        let runtime = state::StateRuntime::init(
+            home.path().to_path_buf(),
+            config.default_model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let mut builder = state::ThreadMetadataBuilder::new(
+            thread_id,
+            archived_container.clone(),
+            Utc::now(),
+            SessionSource::Cli,
+        );
+        builder.model_provider = Some(config.default_model_provider_id.clone());
+        builder.cwd = home.path().to_path_buf();
+        builder.cli_version = Some("test_version".to_string());
+        let mut metadata = builder.build(config.default_model_provider_id.as_str());
+        metadata.archived_at = Some(metadata.updated_at);
+        runtime
+            .upsert_thread(&metadata)
+            .await
+            .expect("state db upsert should succeed");
+        let store = LocalThreadStore::new(config, Some(runtime.clone()));
+
+        let thread = store
+            .unarchive_thread(ArchiveThreadParams { thread_id })
+            .await
+            .expect("unarchive thread");
+
+        let restored_container = home
+            .path()
+            .join("sessions/2025/01/03")
+            .join(archived_container.file_name().expect("container name"));
+        let restored_head = restored_container.join("compact-000001.jsonl");
+        assert_eq!(thread.rollout_path, Some(restored_head.clone()));
+        let updated = runtime
+            .get_thread(thread_id)
+            .await
+            .expect("state db read should succeed")
+            .expect("thread metadata should exist");
+        assert_eq!(updated.rollout_path, restored_head);
+        assert_eq!(updated.archived_at, None);
     }
 
     #[tokio::test]

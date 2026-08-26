@@ -1,7 +1,7 @@
 use crate::ARCHIVED_SESSIONS_SUBDIR;
 use crate::SESSIONS_SUBDIR;
+use crate::layout;
 use crate::list;
-use crate::list::parse_timestamp_uuid_from_filename;
 use crate::recorder::RolloutRecorder;
 use crate::state_db::normalize_cwd_for_state_db;
 use chrono::DateTime;
@@ -78,11 +78,7 @@ pub fn builder_from_items(
         return Some(builder);
     }
 
-    let file_name = rollout_path.file_name()?.to_str()?;
-    if !file_name.starts_with(ROLLOUT_PREFIX) || !file_name.ends_with(ROLLOUT_SUFFIX) {
-        return None;
-    }
-    let (created_ts, uuid) = parse_timestamp_uuid_from_filename(file_name)?;
+    let (created_ts, uuid) = layout::parse_timestamp_uuid_from_rollout_path(rollout_path)?;
     let created_at =
         DateTime::<Utc>::from_timestamp(created_ts.unix_timestamp(), 0)?.with_nanosecond(0)?;
     let id = ThreadId::from_string(&uuid.to_string()).ok()?;
@@ -98,6 +94,11 @@ pub async fn extract_metadata_from_rollout(
     rollout_path: &Path,
     default_provider: &str,
 ) -> anyhow::Result<ExtractionOutcome> {
+    let readable_path = if rollout_path.is_dir() {
+        crate::recorder::resolve_current_segment_path(rollout_path).await?
+    } else {
+        rollout_path.to_path_buf()
+    };
     let (items, _thread_id, parse_errors) =
         RolloutRecorder::load_rollout_items(rollout_path).await?;
     if items.is_empty() {
@@ -116,7 +117,7 @@ pub async fn extract_metadata_from_rollout(
     for item in &items {
         apply_rollout_item(&mut metadata, item, default_provider);
     }
-    if let Some(updated_at) = file_modified_time_utc(rollout_path).await {
+    if let Some(updated_at) = file_modified_time_utc(readable_path.as_path()).await {
         metadata.updated_at = updated_at;
     }
     Ok(ExtractionOutcome {
@@ -430,6 +431,16 @@ async fn collect_rollout_paths(root: &Path) -> std::io::Result<Vec<PathBuf>> {
                 }
             };
             if file_type.is_dir() {
+                let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                    stack.push(path);
+                    continue;
+                };
+                if name.starts_with(ROLLOUT_PREFIX)
+                    && let Some(head_path) = current_head_path_for_collection(path.as_path()).await
+                {
+                    paths.push(head_path);
+                    continue;
+                }
                 stack.push(path);
                 continue;
             }
@@ -440,12 +451,29 @@ async fn collect_rollout_paths(root: &Path) -> std::io::Result<Vec<PathBuf>> {
             let Some(name) = file_name.to_str() else {
                 continue;
             };
-            if name.starts_with(ROLLOUT_PREFIX) && name.ends_with(ROLLOUT_SUFFIX) {
+            if name.starts_with(ROLLOUT_PREFIX)
+                && name.ends_with(ROLLOUT_SUFFIX)
+                && !name.contains(".compact-")
+            {
+                let path = crate::recorder::resolve_current_segment_path(path.as_path())
+                    .await
+                    .unwrap_or(path);
                 paths.push(path);
             }
         }
     }
     Ok(paths)
+}
+
+async fn current_head_path_for_collection(container: &Path) -> Option<PathBuf> {
+    let head_path = crate::recorder::resolve_current_segment_path(container)
+        .await
+        .ok()
+        .unwrap_or_else(|| layout::directory_base_segment_path(container));
+    tokio::fs::try_exists(head_path.as_path())
+        .await
+        .unwrap_or(false)
+        .then_some(head_path)
 }
 
 #[cfg(test)]

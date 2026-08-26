@@ -4,7 +4,7 @@ use rollout_api::ARCHIVED_SESSIONS_SUBDIR;
 use rollout_api::SESSIONS_SUBDIR;
 
 use super::LocalThreadStore;
-use super::helpers::matching_rollout_file_name;
+use super::helpers::move_rollout_collection;
 use super::helpers::scoped_rollout_path;
 use crate::ArchiveThreadParams;
 use crate::ThreadStoreError;
@@ -34,22 +34,15 @@ pub(super) async fn archive_thread(
         rollout_path.as_path(),
         "sessions",
     )?;
-    let file_name = matching_rollout_file_name(
-        canonical_rollout_path.as_path(),
-        thread_id,
-        rollout_path.as_path(),
-    )?;
-
     let archive_folder = store.config.codex_home.join(ARCHIVED_SESSIONS_SUBDIR);
     std::fs::create_dir_all(&archive_folder).map_err(|err| ThreadStoreError::Internal {
         message: format!("failed to archive thread: {err}"),
     })?;
-    let archived_path = archive_folder.join(&file_name);
-    std::fs::rename(&canonical_rollout_path, &archived_path).map_err(|err| {
-        ThreadStoreError::Internal {
-            message: format!("failed to archive thread: {err}"),
-        }
-    })?;
+    let archived_path = move_rollout_collection(
+        canonical_rollout_path.as_path(),
+        archive_folder.as_path(),
+        thread_id,
+    )?;
 
     if let Some(ctx) = state_db_ctx {
         let _ = ctx
@@ -74,6 +67,8 @@ mod tests {
     use crate::ThreadStore;
     use crate::local::LocalThreadStore;
     use crate::local::test_support::test_config;
+    use crate::local::test_support::write_directory_session_file;
+    use crate::local::test_support::write_flat_segmented_session_file;
     use crate::local::test_support::write_session_file;
 
     #[tokio::test]
@@ -119,6 +114,215 @@ mod tests {
             archived.items[0].archived_at,
             Some(archived.items[0].updated_at)
         );
+    }
+
+    #[tokio::test]
+    async fn archive_thread_moves_directory_layout_container() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let uuid = Uuid::from_u128(301);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let active_base = write_directory_session_file(
+            home.path(),
+            home.path().join("sessions/2025/01/03"),
+            "2025-01-03T12-00-00",
+            uuid,
+            "Directory user message",
+        )
+        .expect("directory session");
+        let active_container = active_base.parent().expect("container").to_path_buf();
+
+        store
+            .archive_thread(ArchiveThreadParams { thread_id })
+            .await
+            .expect("archive thread");
+
+        assert!(!active_container.exists());
+        let archived_container = home
+            .path()
+            .join(ARCHIVED_SESSIONS_SUBDIR)
+            .join(active_container.file_name().expect("container name"));
+        assert!(archived_container.join("rollout.jsonl").exists());
+        assert!(archived_container.join("compact-000001.jsonl").exists());
+        assert!(archived_container.join("segments.json").exists());
+
+        let archived = store
+            .list_threads(ListThreadsParams {
+                page_size: 10,
+                cursor: None,
+                sort_key: ThreadSortKey::CreatedAt,
+                sort_direction: crate::SortDirection::Desc,
+                allowed_sources: Vec::new(),
+                model_providers: None,
+                cwd_filters: None,
+                archived: true,
+                search_term: None,
+                use_state_db_only: false,
+            })
+            .await
+            .expect("archived listing");
+        assert_eq!(archived.items.len(), 1);
+        assert_eq!(archived.items[0].thread_id, thread_id);
+        assert_eq!(
+            archived.items[0].rollout_path,
+            Some(archived_container.join("compact-000001.jsonl"))
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_thread_moves_legacy_flat_segmented_collection() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let uuid = Uuid::from_u128(303);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let (active_base, active_head) = write_flat_segmented_session_file(
+            home.path(),
+            home.path().join("sessions/2025/01/03"),
+            "2025-01-03T12-00-00",
+            uuid,
+            "Legacy segmented user message",
+        )
+        .expect("legacy segmented session");
+        let manifest_path = rollout::segment_manifest_path_for_rollout(active_base.as_path());
+
+        store
+            .archive_thread(ArchiveThreadParams { thread_id })
+            .await
+            .expect("archive thread");
+
+        assert!(!active_base.exists());
+        assert!(!active_head.exists());
+        assert!(!manifest_path.exists());
+        let archived_base = home
+            .path()
+            .join(ARCHIVED_SESSIONS_SUBDIR)
+            .join(active_base.file_name().expect("base name"));
+        let archived_head = home
+            .path()
+            .join(ARCHIVED_SESSIONS_SUBDIR)
+            .join(active_head.file_name().expect("head name"));
+        let archived_manifest = rollout::segment_manifest_path_for_rollout(archived_base.as_path());
+        assert!(archived_base.exists());
+        assert!(archived_head.exists());
+        assert!(archived_manifest.exists());
+
+        let archived = store
+            .list_threads(ListThreadsParams {
+                page_size: 10,
+                cursor: None,
+                sort_key: ThreadSortKey::CreatedAt,
+                sort_direction: crate::SortDirection::Desc,
+                allowed_sources: Vec::new(),
+                model_providers: None,
+                cwd_filters: None,
+                archived: true,
+                search_term: None,
+                use_state_db_only: false,
+            })
+            .await
+            .expect("archived listing");
+        assert_eq!(archived.items.len(), 1);
+        assert_eq!(archived.items[0].thread_id, thread_id);
+        assert_eq!(archived.items[0].rollout_path, Some(archived_head));
+    }
+
+    #[tokio::test]
+    async fn archive_thread_ignores_flat_manifest_sibling_rollout_segments() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let uuid = Uuid::from_u128(304);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let (active_base, active_head) = write_flat_segmented_session_file(
+            home.path(),
+            home.path().join("sessions/2025/01/03"),
+            "2025-01-03T12-00-00",
+            uuid,
+            "Legacy segmented user message",
+        )
+        .expect("legacy segmented session");
+        let sibling_uuid = Uuid::from_u128(305);
+        let sibling_path = write_session_file(home.path(), "2025-01-03T12-00-01", sibling_uuid)
+            .expect("sibling session file");
+        let manifest_path = rollout::segment_manifest_path_for_rollout(active_base.as_path());
+        std::fs::write(
+            manifest_path.as_path(),
+            serde_json::json!({
+                "version": 1,
+                "thread_id": thread_id,
+                "head": active_head.file_name().expect("head file name").to_string_lossy(),
+                "segments": [
+                    active_base.file_name().expect("base file name").to_string_lossy(),
+                    active_head.file_name().expect("head file name").to_string_lossy(),
+                    sibling_path.file_name().expect("sibling file name").to_string_lossy()
+                ],
+                "updated_at": "2025-01-03T12:00:00Z"
+            })
+            .to_string(),
+        )
+        .expect("rewrite manifest");
+
+        store
+            .archive_thread(ArchiveThreadParams { thread_id })
+            .await
+            .expect("archive thread");
+
+        assert!(
+            sibling_path.exists(),
+            "sibling rollout must not move with a corrupt manifest"
+        );
+        assert!(
+            !home
+                .path()
+                .join(ARCHIVED_SESSIONS_SUBDIR)
+                .join(sibling_path.file_name().expect("sibling name"))
+                .exists(),
+            "archive destination must not receive sibling rollout"
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_thread_rejects_oversized_flat_segment_manifest_without_partial_move() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let uuid = Uuid::from_u128(306);
+        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+        let (active_base, active_head) = write_flat_segmented_session_file(
+            home.path(),
+            home.path().join("sessions/2025/01/03"),
+            "2025-01-03T12-00-00",
+            uuid,
+            "Legacy segmented user message",
+        )
+        .expect("legacy segmented session");
+        let manifest_path = rollout::segment_manifest_path_for_rollout(active_base.as_path());
+        let base_stem = active_base
+            .file_stem()
+            .expect("base stem")
+            .to_string_lossy();
+        let segments = (0..=1024)
+            .map(|idx| format!("{base_stem}.compact-{idx:06}.jsonl"))
+            .collect::<Vec<_>>();
+        std::fs::write(
+            manifest_path.as_path(),
+            serde_json::json!({
+                "version": 1,
+                "thread_id": thread_id,
+                "head": segments.last().expect("head"),
+                "segments": segments,
+                "updated_at": "2025-01-03T12:00:00Z"
+            })
+            .to_string(),
+        )
+        .expect("rewrite manifest");
+
+        store
+            .archive_thread(ArchiveThreadParams { thread_id })
+            .await
+            .expect_err("oversized manifest should fail closed");
+
+        assert!(active_base.exists());
+        assert!(active_head.exists());
+        assert!(manifest_path.exists());
     }
 
     #[tokio::test]

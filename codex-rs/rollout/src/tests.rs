@@ -26,6 +26,7 @@ use crate::list::ThreadSortKey;
 use crate::list::ThreadsPage;
 use crate::list::get_threads;
 use crate::list::read_head_for_summary;
+use crate::list::read_thread_item_from_rollout;
 use crate::rollout_date_parts;
 use anyhow::Result;
 use protocol::ThreadId;
@@ -37,10 +38,10 @@ use protocol::protocol::RolloutLine;
 use protocol::protocol::SessionMeta;
 use protocol::protocol::SessionMetaLine;
 use protocol::protocol::SessionSource;
-use protocol::protocol::ThreadSource;
 use protocol::protocol::ThreadGoal;
 use protocol::protocol::ThreadGoalStatus;
 use protocol::protocol::ThreadGoalUpdatedEvent;
+use protocol::protocol::ThreadSource;
 use protocol::protocol::UserMessageEvent;
 
 const NO_SOURCE_FILTER: &[SessionSource] = &[];
@@ -336,6 +337,84 @@ async fn find_thread_path_repairs_missing_db_row_after_filesystem_fallback() {
 }
 
 #[tokio::test]
+async fn find_thread_path_normalizes_directory_layout_fallback_to_head_segment() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let uuid = Uuid::from_u128(306);
+    let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+    let ts = "2025-01-03T13-00-00";
+    let container = home
+        .join("sessions/2025/01/03")
+        .join(format!("rollout-{ts}-{uuid}"));
+    fs::create_dir_all(&container).unwrap();
+    let base_path = container.join("rollout.jsonl");
+    let head_path = container.join("compact-000001.jsonl");
+    write_session_file_at_path(home, &base_path, ts, uuid, Some(SessionSource::Cli)).unwrap();
+    write_session_file_at_path(home, &head_path, ts, uuid, Some(SessionSource::Cli)).unwrap();
+    fs::write(
+        container.join("segments.json"),
+        serde_json::json!({
+            "version": 1,
+            "thread_id": thread_id,
+            "head": "compact-000001.jsonl",
+            "segments": ["rollout.jsonl", "compact-000001.jsonl"],
+            "updated_at": "2025-01-03T13:00:00Z"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let runtime = state::StateRuntime::init(home.to_path_buf(), TEST_PROVIDER.to_string())
+        .await
+        .expect("state db should initialize");
+    runtime
+        .mark_backfill_complete(/*last_watermark*/ None)
+        .await
+        .expect("backfill should be complete");
+
+    let found = find_thread_path_by_id_str(home, &uuid.to_string(), Some(runtime.as_ref()))
+        .await
+        .expect("lookup should succeed");
+    assert_eq!(found, Some(head_path.clone()));
+    assert_state_db_rollout_path(home, thread_id, Some(head_path.as_path())).await;
+}
+
+#[tokio::test]
+async fn read_thread_item_from_explicit_directory_segment_keeps_exact_path() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+    let uuid = Uuid::from_u128(307);
+    let ts = "2025-01-03T13-00-00";
+    let container = home
+        .join("sessions/2025/01/03")
+        .join(format!("rollout-{ts}-{uuid}"));
+    fs::create_dir_all(&container).unwrap();
+    let base_path = container.join("rollout.jsonl");
+    let head_path = container.join("compact-000001.jsonl");
+    write_session_file_at_path(home, &base_path, ts, uuid, Some(SessionSource::Cli)).unwrap();
+    write_session_file_at_path(home, &head_path, ts, uuid, Some(SessionSource::Cli)).unwrap();
+    fs::write(
+        container.join("segments.json"),
+        serde_json::json!({
+            "version": 1,
+            "thread_id": thread_id_from_uuid(uuid),
+            "head": "compact-000001.jsonl",
+            "segments": ["rollout.jsonl", "compact-000001.jsonl"],
+            "updated_at": "2025-01-03T13:00:00Z"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let item = read_thread_item_from_rollout(base_path.clone())
+        .await
+        .expect("read explicit segment");
+
+    assert_eq!(item.path, base_path);
+    assert_eq!(item.thread_id, Some(thread_id_from_uuid(uuid)));
+}
+
+#[tokio::test]
 async fn find_thread_path_accepts_existing_state_db_path_without_canonical_filename() {
     let temp = TempDir::new().unwrap();
     let home = temp.path();
@@ -492,6 +571,68 @@ fn write_session_file_with_provider_and_thread_source(
     let times = FileTimes::new().set_modified(dt.into());
     file.set_times(times)?;
     Ok((dt, uuid))
+}
+
+fn write_session_file_at_path(
+    root: &Path,
+    path: &Path,
+    ts_str: &str,
+    uuid: Uuid,
+    source: Option<SessionSource>,
+) -> std::io::Result<()> {
+    fs::create_dir_all(path.parent().expect("rollout parent"))?;
+    let mut file = File::create(path)?;
+    let created_at = ts_str
+        .split_once('T')
+        .map(|(date, time)| format!("{date}T{}Z", time.replace('-', ":")))
+        .unwrap_or_else(|| "2025-01-03T13:00:00Z".to_string());
+    let session_meta = SessionMetaLine {
+        meta: SessionMeta {
+            id: thread_id_from_uuid(uuid),
+            forked_from_id: None,
+            timestamp: ts_str.to_string(),
+            cwd: root.to_path_buf(),
+            originator: "test_originator".to_string(),
+            cli_version: "test_version".to_string(),
+            agent_nickname: None,
+            agent_role: None,
+            agent_path: None,
+            source: source.unwrap_or_default(),
+            thread_source: None,
+            model_provider: Some(TEST_PROVIDER.to_string()),
+            base_instructions: None,
+            dynamic_tools: None,
+            memory_mode: None,
+            subscriptions: None,
+            external_reconnect: None,
+        },
+        git: None,
+    };
+    writeln!(
+        file,
+        "{}",
+        serde_json::to_string(&RolloutLine {
+            timestamp: created_at.clone(),
+            item: RolloutItem::SessionMeta(session_meta),
+        })
+        .unwrap()
+    )?;
+    writeln!(
+        file,
+        "{}",
+        serde_json::to_string(&RolloutLine {
+            timestamp: created_at,
+            item: RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                message: "Hello from user".to_string(),
+                images: None,
+                local_images: Vec::new(),
+                skills: Vec::new(),
+                text_elements: Vec::new(),
+            })),
+        })
+        .unwrap()
+    )?;
+    Ok(())
 }
 
 fn write_goal_started_session_file(
@@ -1083,7 +1224,7 @@ async fn test_pagination_cursor() {
             git_sha: None,
             git_origin_url: None,
             source: Some(SessionSource::VSCode),
-                thread_source: None,
+            thread_source: None,
             agent_nickname: None,
             agent_role: None,
             agent_path: None,
@@ -1255,7 +1396,7 @@ async fn test_get_thread_contents() {
             git_sha: None,
             git_origin_url: None,
             source: Some(SessionSource::VSCode),
-                thread_source: None,
+            thread_source: None,
             agent_nickname: None,
             agent_role: None,
             agent_path: None,

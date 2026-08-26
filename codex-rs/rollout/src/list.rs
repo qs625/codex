@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use super::ARCHIVED_SESSIONS_SUBDIR;
 use super::SESSIONS_SUBDIR;
+use super::layout;
 use crate::rollout_protocol::EventMsg;
 use crate::state_db;
 use codex_file_search as file_search;
@@ -742,21 +743,22 @@ pub fn parse_cursor(token: &str) -> Option<Cursor> {
         None => (token, None),
     };
 
-    let ts = OffsetDateTime::parse(timestamp_token, &Rfc3339).ok().or_else(|| {
-        let format: &[FormatItem] =
-            format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
-        PrimitiveDateTime::parse(timestamp_token, format)
-            .ok()
-            .map(PrimitiveDateTime::assume_utc)
-    })?;
+    let ts = OffsetDateTime::parse(timestamp_token, &Rfc3339)
+        .ok()
+        .or_else(|| {
+            let format: &[FormatItem] =
+                format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
+            PrimitiveDateTime::parse(timestamp_token, format)
+                .ok()
+                .map(PrimitiveDateTime::assume_utc)
+        })?;
 
     Some(Cursor { ts, id })
 }
 
 fn build_next_cursor(items: &[ThreadItem], sort_key: ThreadSortKey) -> Option<Cursor> {
     let last = items.last()?;
-    let file_name = last.path.file_name()?.to_string_lossy();
-    let (created_ts, id) = parse_timestamp_uuid_from_filename(&file_name)?;
+    let (created_ts, id) = layout::parse_timestamp_uuid_from_rollout_path(&last.path)?;
     let ts = match sort_key {
         ThreadSortKey::CreatedAt => created_ts,
         ThreadSortKey::UpdatedAt => {
@@ -921,19 +923,19 @@ async fn collect_flat_rollout_files(
         if *scanned_files >= MAX_SCAN_FILES {
             break;
         }
-        if !entry
-            .file_type()
-            .await
-            .map(|ft| ft.is_file())
-            .unwrap_or(false)
-        {
+        let file_type = entry.file_type().await?;
+        if !file_type.is_file() && !file_type.is_dir() {
             continue;
         }
         let file_name = entry.file_name();
         let Some(name_str) = file_name.to_str() else {
             continue;
         };
-        if !name_str.starts_with("rollout-") || !name_str.ends_with(".jsonl") {
+        if !name_str.starts_with("rollout-") {
+            continue;
+        }
+        if file_type.is_file() && (!name_str.ends_with(".jsonl") || name_str.contains(".compact-"))
+        {
             continue;
         }
         let Some((ts, id)) = parse_timestamp_uuid_from_filename(name_str) else {
@@ -943,7 +945,17 @@ async fn collect_flat_rollout_files(
         if *scanned_files > MAX_SCAN_FILES {
             break;
         }
-        collected.push((ts, id, entry.path()));
+        let entry_path = entry.path();
+        let path = if file_type.is_dir() {
+            current_head_path_for_listing(entry_path.as_path())
+                .await
+                .unwrap_or_else(|| layout::directory_base_segment_path(entry_path.as_path()))
+        } else {
+            current_head_path_for_listing(entry_path.as_path())
+                .await
+                .unwrap_or(entry_path)
+        };
+        collected.push((ts, id, path));
     }
     collected.sort_by_key(|(ts, sid, _path)| (Reverse(*ts), Reverse(*sid)));
     Ok(collected)
@@ -952,34 +964,46 @@ async fn collect_flat_rollout_files(
 async fn collect_rollout_day_files(
     day_path: &Path,
 ) -> io::Result<Vec<(OffsetDateTime, Uuid, PathBuf)>> {
-    let mut day_files = collect_files(day_path, |name_str, path| {
-        if !name_str.starts_with("rollout-") || !name_str.ends_with(".jsonl") {
-            return None;
+    let mut dir = tokio::fs::read_dir(day_path).await?;
+    let mut day_files = Vec::new();
+    while let Some(entry) = dir.next_entry().await? {
+        let file_type = entry.file_type().await?;
+        if !file_type.is_file() && !file_type.is_dir() {
+            continue;
         }
-
-        parse_timestamp_uuid_from_filename(name_str).map(|(ts, id)| (ts, id, path.to_path_buf()))
-    })
-    .await?;
+        let file_name = entry.file_name();
+        let Some(name_str) = file_name.to_str() else {
+            continue;
+        };
+        if !name_str.starts_with("rollout-") {
+            continue;
+        }
+        if file_type.is_file() && (!name_str.ends_with(".jsonl") || name_str.contains(".compact-"))
+        {
+            continue;
+        }
+        let Some((ts, id)) = parse_timestamp_uuid_from_filename(name_str) else {
+            continue;
+        };
+        let entry_path = entry.path();
+        let path = if file_type.is_dir() {
+            current_head_path_for_listing(entry_path.as_path())
+                .await
+                .unwrap_or_else(|| layout::directory_base_segment_path(entry_path.as_path()))
+        } else {
+            current_head_path_for_listing(entry_path.as_path())
+                .await
+                .unwrap_or(entry_path)
+        };
+        day_files.push((ts, id, path));
+    }
     // Stable ordering within the same second: (timestamp desc, uuid desc)
     day_files.sort_by_key(|(ts, sid, _path)| (Reverse(*ts), Reverse(*sid)));
     Ok(day_files)
 }
 
 pub(crate) fn parse_timestamp_uuid_from_filename(name: &str) -> Option<(OffsetDateTime, Uuid)> {
-    // Expected: rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl
-    let core = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
-
-    // Scan from the right for a '-' such that the suffix parses as a UUID.
-    let (sep_idx, uuid) = core
-        .match_indices('-')
-        .rev()
-        .find_map(|(i, _)| Uuid::parse_str(&core[i + 1..]).ok().map(|u| (i, u)))?;
-
-    let ts_str = &core[..sep_idx];
-    let format: &[FormatItem] =
-        format_description!("[year]-[month]-[day]T[hour]-[minute]-[second]");
-    let ts = PrimitiveDateTime::parse(ts_str, format).ok()?.assume_utc();
-    Some((ts, uuid))
+    layout::parse_timestamp_uuid_from_session_name(name)
 }
 
 struct ThreadCandidate {
@@ -1011,19 +1035,19 @@ async fn collect_flat_files_by_updated_at(
         if *scanned_files >= MAX_SCAN_FILES {
             break;
         }
-        if !entry
-            .file_type()
-            .await
-            .map(|ft| ft.is_file())
-            .unwrap_or(false)
-        {
+        let file_type = entry.file_type().await?;
+        if !file_type.is_file() && !file_type.is_dir() {
             continue;
         }
         let file_name = entry.file_name();
         let Some(name_str) = file_name.to_str() else {
             continue;
         };
-        if !name_str.starts_with("rollout-") || !name_str.ends_with(".jsonl") {
+        if !name_str.starts_with("rollout-") {
+            continue;
+        }
+        if file_type.is_file() && (!name_str.ends_with(".jsonl") || name_str.contains(".compact-"))
+        {
             continue;
         }
         let Some((_ts, id)) = parse_timestamp_uuid_from_filename(name_str) else {
@@ -1033,15 +1057,32 @@ async fn collect_flat_files_by_updated_at(
         if *scanned_files > MAX_SCAN_FILES {
             break;
         }
-        let updated_at = file_modified_time(&entry.path()).await.unwrap_or(None);
+        let entry_path = entry.path();
+        let path = if file_type.is_dir() {
+            current_head_path_for_listing(entry_path.as_path())
+                .await
+                .unwrap_or_else(|| layout::directory_base_segment_path(entry_path.as_path()))
+        } else {
+            current_head_path_for_listing(entry_path.as_path())
+                .await
+                .unwrap_or(entry_path)
+        };
+        let updated_at = file_modified_time(&path).await.unwrap_or(None);
         candidates.push(ThreadCandidate {
-            path: entry.path(),
+            path,
             id,
             updated_at,
         });
     }
 
     Ok(candidates)
+}
+
+async fn current_head_path_for_listing(path: &Path) -> Option<PathBuf> {
+    crate::recorder::resolve_current_segment_path(path)
+        .await
+        .ok()
+        .filter(|head_path| head_path != path)
 }
 
 async fn walk_rollout_files(
@@ -1205,6 +1246,11 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
 pub async fn read_head_for_summary(path: &Path) -> io::Result<Vec<serde_json::Value>> {
     use tokio::io::AsyncBufReadExt;
 
+    let path = if path.is_dir() {
+        crate::recorder::resolve_current_segment_path(path).await?
+    } else {
+        path.to_path_buf()
+    };
     let file = tokio::fs::File::open(path).await?;
     let reader = tokio::io::BufReader::new(file);
     let mut lines = reader.lines();
@@ -1409,7 +1455,10 @@ async fn find_thread_path_by_id_str_in_subdir(
     let results = file_search::run(id_str, vec![root], options, /*cancel_flag*/ None)
         .map_err(|e| io::Error::other(format!("file search failed: {e}")))?;
 
-    let found = results.matches.into_iter().next().map(|m| m.full_path());
+    let found = match results.matches.into_iter().next().map(|m| m.full_path()) {
+        Some(path) => Some(normalize_rollout_search_result(path).await),
+        None => None,
+    };
     if let Some(found_path) = found.as_ref() {
         tracing::debug!("state db missing rollout path for thread {id_str}");
         tracing::warn!(
@@ -1428,6 +1477,35 @@ async fn find_thread_path_by_id_str_in_subdir(
     }
 
     Ok(found.or(unverified_db_path))
+}
+
+async fn normalize_rollout_search_result(path: PathBuf) -> PathBuf {
+    if path
+        .parent()
+        .is_some_and(|parent| layout::parse_timestamp_uuid_from_rollout_path(parent).is_some())
+    {
+        return crate::recorder::resolve_current_segment_path(
+            path.parent().unwrap_or_else(|| Path::new("")),
+        )
+        .await
+        .unwrap_or(path);
+    }
+
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return path;
+    };
+    let Some(base_stem) = file_name.strip_suffix(".segments.json") else {
+        return crate::recorder::resolve_current_segment_path(path.as_path())
+            .await
+            .unwrap_or(path);
+    };
+    let base_path = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(format!("{base_stem}.jsonl"));
+    crate::recorder::resolve_current_segment_path(base_path.as_path())
+        .await
+        .unwrap_or(base_path)
 }
 
 /// Locate a recorded thread rollout file by its UUID string using the existing
