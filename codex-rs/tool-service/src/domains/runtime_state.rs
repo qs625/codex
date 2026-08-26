@@ -4,10 +4,16 @@ use command_service_api::CommandNotificationFilter;
 use command_service_api::CommandServiceSessionState;
 use command_service_api::RunningCommandSnapshot;
 use protocol::ThreadId;
+use protocol::protocol::BuiltinToolCallDisplayEvent;
+use protocol::protocol::BuiltinToolCallStatus;
+use protocol::protocol::EventMsg;
 use protocol::subscriptions::PersistedSubscription;
 use protocol::subscriptions::ScheduleSpec;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::Value;
+use serde_json::json;
+use thread_service_api::ThreadRuntimeCapability;
 use thread_service_api::ThreadSessionCapability;
 use tool_service_api::AnyToolResult;
 use tool_service_api::ErasedToolArgumentDiffConsumer;
@@ -53,20 +59,85 @@ pub(crate) fn supports_parallel(_request: &TypedToolSpecRequest<'_>, _call: &Too
 pub(crate) async fn dispatch(
     command_state: Arc<dyn CommandServiceSessionState>,
     session: Arc<dyn ThreadSessionCapability>,
+    turn: Arc<dyn ThreadRuntimeCapability>,
     call: ToolCall,
 ) -> Result<AnyToolResult, FunctionCallError> {
     let _args: EmptyArgs = parse_arguments(&call)?;
+    let arguments = display_arguments(&call)?;
+    let tool_name = call.tool_name.name.clone();
+    session
+        .emit_event(
+            turn.as_ref(),
+            runtime_state_display_msg(
+                session.as_ref(),
+                turn.as_ref(),
+                &call.call_id,
+                &tool_name,
+                arguments.clone(),
+                BuiltinToolCallStatus::InProgress,
+                None,
+            ),
+        )
+        .await;
     let result = match call.tool_name.name.as_str() {
         LIST_COMMANDS_TOOL_NAME => {
             let result =
                 list_commands_for_thread(command_state.as_ref(), session.conversation_id()).await;
-            function_tool_json_output(&result, LIST_COMMANDS_TOOL_NAME)?
+            let output = serialized_value(&result, LIST_COMMANDS_TOOL_NAME)?;
+            let tool_output = function_tool_json_output(&result, LIST_COMMANDS_TOOL_NAME)?;
+            session
+                .emit_event(
+                    turn.as_ref(),
+                    runtime_state_display_msg(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        &call.call_id,
+                        LIST_COMMANDS_TOOL_NAME,
+                        arguments,
+                        BuiltinToolCallStatus::Completed,
+                        Some(output),
+                    ),
+                )
+                .await;
+            tool_output
         }
         LIST_SUBSCRIPTIONS_TOOL_NAME => {
             let result = list_subscriptions_for_session(session.as_ref()).await;
-            function_tool_json_output(&result, LIST_SUBSCRIPTIONS_TOOL_NAME)?
+            let output = serialized_value(&result, LIST_SUBSCRIPTIONS_TOOL_NAME)?;
+            let tool_output = function_tool_json_output(&result, LIST_SUBSCRIPTIONS_TOOL_NAME)?;
+            session
+                .emit_event(
+                    turn.as_ref(),
+                    runtime_state_display_msg(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        &call.call_id,
+                        LIST_SUBSCRIPTIONS_TOOL_NAME,
+                        arguments,
+                        BuiltinToolCallStatus::Completed,
+                        Some(output),
+                    ),
+                )
+                .await;
+            tool_output
         }
         _ => {
+            session
+                .emit_event(
+                    turn.as_ref(),
+                    runtime_state_display_msg(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        &call.call_id,
+                        &tool_name,
+                        arguments,
+                        BuiltinToolCallStatus::Failed,
+                        Some(json!({
+                            "error": format!("unsupported runtime state tool {}", call.tool_name),
+                        })),
+                    ),
+                )
+                .await;
             return Err(FunctionCallError::Fatal(format!(
                 "unsupported runtime state tool {}",
                 call.tool_name
@@ -246,6 +317,42 @@ where
     })
 }
 
+fn display_arguments(call: &ToolCall) -> Result<Value, FunctionCallError> {
+    serde_json::from_str(call.function_arguments()?).map_err(|err| {
+        FunctionCallError::RespondToModel(format!(
+            "failed to parse {} arguments: {err}",
+            call.tool_name
+        ))
+    })
+}
+
+fn runtime_state_display_msg(
+    session: &dyn ThreadSessionCapability,
+    turn: &dyn ThreadRuntimeCapability,
+    call_id: &str,
+    tool: &str,
+    arguments: Value,
+    status: BuiltinToolCallStatus,
+    output: Option<Value>,
+) -> EventMsg {
+    let event = BuiltinToolCallDisplayEvent {
+        thread_id: session.conversation_id(),
+        turn_id: turn.runtime_turn_id_str().to_string(),
+        id: call_id.to_string(),
+        tool: tool.to_string(),
+        arguments,
+        status,
+        output,
+        lifecycle_at_ms: now_unix_timestamp_ms(),
+    };
+    match status {
+        BuiltinToolCallStatus::InProgress => EventMsg::BuiltinToolCallStarted(event),
+        BuiltinToolCallStatus::Completed | BuiltinToolCallStatus::Failed => {
+            EventMsg::BuiltinToolCallCompleted(event)
+        }
+    }
+}
+
 fn function_tool_json_output<T>(
     value: &T,
     tool_name: &str,
@@ -258,6 +365,24 @@ where
         .map_err(|err| {
             FunctionCallError::Fatal(format!("failed to serialize {tool_name} result: {err}"))
         })
+}
+
+fn serialized_value<T>(value: &T, tool_name: &str) -> Result<Value, FunctionCallError>
+where
+    T: Serialize,
+{
+    serde_json::to_value(value).map_err(|err| {
+        FunctionCallError::Fatal(format!(
+            "failed to serialize {tool_name} display result: {err}"
+        ))
+    })
+}
+
+fn now_unix_timestamp_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn command_label(command: &str) -> String {
@@ -276,6 +401,7 @@ fn command_label(command: &str) -> String {
 mod tests {
     use super::*;
 
+    use codex_utils_absolute_path::AbsolutePathBuf;
     use command_service_api::CommandServiceFuture;
     use command_service_api::CommandSessionError;
     use command_service_api::CommandWaitRequest;
@@ -283,7 +409,6 @@ mod tests {
     use command_service_api::UnifiedExecError;
     use command_service_api::WriteStdinOutput;
     use command_service_api::WriteStdinRequest;
-    use codex_utils_absolute_path::AbsolutePathBuf;
     use std::path::PathBuf;
 
     #[derive(Default)]

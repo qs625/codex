@@ -192,6 +192,7 @@ impl ToolServiceApi for ToolService {
                     domains::runtime_state::dispatch(
                         Arc::clone(&tool_request.session_command_state),
                         Arc::clone(&session),
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
                         call,
                     )
                     .await

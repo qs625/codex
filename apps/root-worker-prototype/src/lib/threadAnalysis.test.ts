@@ -220,6 +220,125 @@ test("builds command monitors from active command current state items", () => {
   );
 });
 
+test("does not build live command monitors from historical command items", () => {
+  const thread = makeThread(
+    [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "cargo test",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "inProgress",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "cargo test" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+    { type: "active", activeFlags: ["running"] },
+  );
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "command")
+      ?.monitors,
+    [],
+  );
+});
+
+test("deduplicates repeated active command current state items", () => {
+  const command = {
+    type: "commandExecution",
+    id: "exec-1",
+    command: "cargo test",
+    cwd: "/tmp/project",
+    processId: "process-1",
+    source: "agent",
+    status: "inProgress",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    commandActions: [{ type: "unknown", command: "cargo test" }],
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  } as const satisfies Extract<
+    Thread["turns"][number]["items"][number],
+    { type: "commandExecution" }
+  >;
+  const thread = {
+    ...makeThread([], { type: "active", activeFlags: ["running"] }),
+    activeCommandItems: [command, command],
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    analysis.monitors.sections
+      .find((section) => section.kind === "command")
+      ?.monitors.map((monitor) => monitor.id),
+    ["exec-1"],
+  );
+});
+
+test("historical empty list_commands snapshot does not hide active command monitors", () => {
+  const thread = {
+    ...makeThread(
+      [
+        {
+          type: "builtinToolCall",
+          id: "builtin-list-commands",
+          tool: "list_commands",
+          arguments: {},
+          status: "completed",
+          output: { commands: [] },
+        },
+      ],
+      { type: "active", activeFlags: ["running"] },
+    ),
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "cargo test",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "inProgress",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "cargo test" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
+  } satisfies Thread;
+
+  const analysis = buildThreadAnalysis(thread, 4);
+
+  assert.deepEqual(
+    analysis.monitors.sections.find((section) => section.kind === "command")
+      ?.monitors,
+    [
+      {
+        id: "exec-1",
+        subscriptionId: "exec-1",
+        kind: "command",
+        label: "cargo test",
+        detail: "/tmp/project",
+        status: "Running",
+        eventCount: 0,
+        latestEvent: null,
+      },
+    ],
+  );
+});
+
 test("terminal active command current state clears stale running command monitors", () => {
   const thread = {
     ...makeThread(
@@ -406,21 +525,6 @@ test("schedule unsubscribe does not remove command monitor with matching id", ()
           },
         },
         {
-          type: "commandExecution",
-          id: "exec-1",
-          command: "bun dev",
-          cwd: "/tmp/project",
-          processId: "process-1",
-          source: "agent",
-          status: "inProgress",
-          initialWaitMs: 1000,
-          notifyOn: "exit",
-          commandActions: [{ type: "unknown", command: "bun dev" }],
-          aggregatedOutput: null,
-          exitCode: null,
-          durationMs: null,
-        },
-        {
           type: "builtinToolCall",
           id: "schedule-unsub-1",
           tool: "schedule_unsubscribe",
@@ -431,6 +535,23 @@ test("schedule unsubscribe does not remove command monitor with matching id", ()
       ],
       { type: "active", activeFlags: ["running"] },
     ),
+    activeCommandItems: [
+      {
+        type: "commandExecution",
+        id: "exec-1",
+        command: "bun dev",
+        cwd: "/tmp/project",
+        processId: "process-1",
+        source: "agent",
+        status: "inProgress",
+        initialWaitMs: 1000,
+        notifyOn: "exit",
+        commandActions: [{ type: "unknown", command: "bun dev" }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      },
+    ],
   } satisfies Thread;
 
   const analysis = buildThreadAnalysis(thread, 4);
@@ -526,8 +647,9 @@ test("ignores incomplete file change items", () => {
 
 test("keeps running command active and records latest output line", () => {
   const analysis = buildThreadAnalysis(
-    makeThread(
-      [
+    {
+      ...makeThread([], { type: "active", activeFlags: ["running"] }),
+      activeCommandItems: [
         {
           type: "commandExecution",
           id: "command-1",
@@ -539,8 +661,7 @@ test("keeps running command active and records latest output line", () => {
           durationMs: null,
         },
       ],
-      { type: "active", activeFlags: ["running"] },
-    ),
+    },
     0,
   );
 
@@ -562,8 +683,9 @@ test("keeps running command active and records latest output line", () => {
 
 test("keeps in-progress command statuses active", () => {
   const analysis = buildThreadAnalysis(
-    makeThread(
-      [
+    {
+      ...makeThread([], { type: "waiting", reason: "command" }),
+      activeCommandItems: [
         {
           type: "commandExecution",
           id: "command-1",
@@ -585,8 +707,7 @@ test("keeps in-progress command statuses active", () => {
           durationMs: null,
         },
       ],
-      { type: "waiting", reason: "command" },
-    ),
+    },
     0,
   );
 
@@ -597,8 +718,9 @@ test("keeps in-progress command statuses active", () => {
 
 test("keeps live commands visible while thread waits on a child", () => {
   const analysis = buildThreadAnalysis(
-    makeThread(
-      [
+    {
+      ...makeThread([], { type: "waiting", reason: "child" }),
+      activeCommandItems: [
         {
           type: "commandExecution",
           id: "command-1",
@@ -610,8 +732,7 @@ test("keeps live commands visible while thread waits on a child", () => {
           durationMs: null,
         },
       ],
-      { type: "waiting", reason: "child" },
-    ),
+    },
     0,
   );
 
@@ -645,8 +766,23 @@ test("omits failed completed commands from live command index", () => {
 
 test("uses command notification as latest live command event", () => {
   const analysis = buildThreadAnalysis(
-    makeThread(
-      [
+    {
+      ...makeThread(
+        [
+          {
+            type: "commandExecutionNotification",
+            id: "command-1:notification:output:1",
+            commandItemId: "command-1",
+            kind: "output",
+            message: "Command output notification received.",
+            output: "fresh notification",
+            exitCode: null,
+            createdAtMs: 1,
+          },
+        ],
+        { type: "waiting", reason: "command" },
+      ),
+      activeCommandItems: [
         {
           type: "commandExecution",
           id: "command-1",
@@ -657,19 +793,8 @@ test("uses command notification as latest live command event", () => {
           exitCode: null,
           durationMs: null,
         },
-        {
-          type: "commandExecutionNotification",
-          id: "command-1:notification:output:1",
-          commandItemId: "command-1",
-          kind: "output",
-          message: "Command output notification received.",
-          output: "fresh notification",
-          exitCode: null,
-          createdAtMs: 1,
-        },
       ],
-      { type: "waiting", reason: "command" },
-    ),
+    },
     0,
   );
 
@@ -1116,6 +1241,12 @@ test("keeps schedules active while unsubscribe has not succeeded", () => {
   );
 
   assert.equal(analysis.monitors.totalCount, 1);
-  assert.equal(analysis.monitors.sections[1]?.monitors[0]?.subscriptionId, "sub-schedule");
-  assert.equal(analysis.monitors.sections[1]?.monitors[0]?.label, "cargo clean");
+  assert.equal(
+    analysis.monitors.sections[1]?.monitors[0]?.subscriptionId,
+    "sub-schedule",
+  );
+  assert.equal(
+    analysis.monitors.sections[1]?.monitors[0]?.label,
+    "cargo clean",
+  );
 });

@@ -108,12 +108,10 @@ export function buildConversationState(
               author,
               timestamp,
               commandLookup,
-            }).map(
-              (entry) => ({
-                ...entry,
-                turnId: turn.id,
-              }),
-            );
+            }).map((entry) => ({
+              ...entry,
+              turnId: turn.id,
+            }));
 
       flatItems.push({
         id: item.id,
@@ -329,9 +327,7 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "collabAgentStatusUpdate") {
-    return [
-      buildCollabAgentStatusUpdateEntry(item, { author, timestamp }),
-    ];
+    return [buildCollabAgentStatusUpdateEntry(item, { author, timestamp })];
   }
 
   if (item.type === "contextCompaction") {
@@ -757,8 +753,83 @@ function summarizeBuiltinToolCall(
     }
     return "poll_event • woke";
   }
+  if (item.tool === "list_commands") {
+    return summarizeListCommandsToolCall(item);
+  }
+  if (item.tool === "list_subscriptions") {
+    return summarizeListSubscriptionsToolCall(item);
+  }
   const details = extractEventDrivenSummaryDetails(item.tool, item.arguments);
   return details ? `${item.tool} • ${details}` : item.tool;
+}
+
+function summarizeListCommandsToolCall(
+  item: Extract<ThreadItem, { type: "builtinToolCall" }>,
+) {
+  if (isToolStatusInProgress(item.status)) {
+    return "list_commands • checking";
+  }
+  const output = objectOrNull(item.output);
+  const commands = Array.isArray(output?.commands) ? output.commands : [];
+  if (commands.length === 0) {
+    return "list_commands • no live commands";
+  }
+  const firstCommand = objectOrNull(commands[0]);
+  const label =
+    stringOrNull(firstCommand?.label) ??
+    stringOrNull(firstCommand?.command_text) ??
+    stringOrNull(firstCommand?.call_id);
+  const countLabel = `${commands.length} live command${commands.length === 1 ? "" : "s"}`;
+  return label
+    ? `list_commands • ${countLabel} • ${previewInlineText(label, 120)}`
+    : `list_commands • ${countLabel}`;
+}
+
+function summarizeListSubscriptionsToolCall(
+  item: Extract<ThreadItem, { type: "builtinToolCall" }>,
+) {
+  if (isToolStatusInProgress(item.status)) {
+    return "list_subscriptions • checking";
+  }
+  const output = objectOrNull(item.output);
+  const subscriptions = Array.isArray(output?.subscriptions)
+    ? output.subscriptions
+    : [];
+  if (subscriptions.length === 0) {
+    return "list_subscriptions • no active subscriptions";
+  }
+  const firstSubscription = objectOrNull(subscriptions[0]);
+  const label =
+    stringOrNull(firstSubscription?.label) ??
+    formatSubscriptionSnapshot(firstSubscription) ??
+    stringOrNull(firstSubscription?.subscription_id);
+  const countLabel = `${subscriptions.length} active subscription${subscriptions.length === 1 ? "" : "s"}`;
+  return label
+    ? `list_subscriptions • ${countLabel} • ${previewInlineText(label, 120)}`
+    : `list_subscriptions • ${countLabel}`;
+}
+
+function formatSubscriptionSnapshot(
+  subscription: Record<string, unknown> | null,
+) {
+  if (!subscription) {
+    return null;
+  }
+  const type = stringOrNull(subscription.type);
+  if (type === "schedule") {
+    return formatScheduleArgument(subscription.schedule) ?? "schedule";
+  }
+  if (type === "event_command") {
+    return stringOrNull(subscription.command_text) ?? "event command";
+  }
+  if (type === "fs") {
+    return stringOrNull(subscription.path) ?? "file watch";
+  }
+  if (type === "process_exit") {
+    const sessionId = numberOrNull(subscription.session_id);
+    return sessionId === null ? "process exit" : `process ${sessionId}`;
+  }
+  return type;
 }
 
 function summarizeReadAgentToolCall(
@@ -785,7 +856,9 @@ function summarizeReadAgentToolCall(
   }
 
   const lifecycleStatus = lifecycleStatusFromUnknown(output?.lifecycleStatus);
-  const status = lifecycleStatus ? formatLifecycleStatus(lifecycleStatus) : null;
+  const status = lifecycleStatus
+    ? formatLifecycleStatus(lifecycleStatus)
+    : null;
   const message =
     stringOrNull(output?.lastAgentMessage) ??
     stringOrNull(output?.lastTaskMessage);
@@ -820,7 +893,10 @@ function summarizeCollabAgentToolCall(
   const stateByPath = collabAgentStatesByPath(item);
   const receiverLabel =
     item.receiverPaths.length === 1
-      ? formatCollabAgentLabel(item.receiverPaths[0], stateByPath.get(item.receiverPaths[0]))
+      ? formatCollabAgentLabel(
+          item.receiverPaths[0],
+          stateByPath.get(item.receiverPaths[0]),
+        )
       : `${item.receiverPaths.length} workers`;
   const senderLabel = resolveAgentPath(item.senderPath);
 
@@ -832,7 +908,11 @@ function summarizeCollabAgentToolCall(
     case "resumeAgent":
       return `${senderLabel} -> ${receiverLabel}`;
     case "wait":
-      if (item.receiverPaths.length > 0 && item.timeoutMs !== null && item.timeoutMs !== undefined) {
+      if (
+        item.receiverPaths.length > 0 &&
+        item.timeoutMs !== null &&
+        item.timeoutMs !== undefined
+      ) {
         return `wait on ${receiverLabel} for ${formatWaitTimeout(item.timeoutMs)}`;
       }
       if (item.receiverPaths.length > 0) {
@@ -991,7 +1071,9 @@ function formatThreadGoalUpdateDetails(
   ];
 
   if (item.previousStatus) {
-    sections.push(`Previous Status\n${formatThreadGoalStatus(item.previousStatus)}`);
+    sections.push(
+      `Previous Status\n${formatThreadGoalStatus(item.previousStatus)}`,
+    );
   }
 
   if (item.goal.tokenBudget !== null && item.goal.tokenBudget !== undefined) {
@@ -999,11 +1081,15 @@ function formatThreadGoalUpdateDetails(
       `Token Usage\n${formatThreadGoalNumber(item.goal.tokensUsed)} / ${formatThreadGoalNumber(item.goal.tokenBudget)}`,
     );
   } else if (item.goal.tokensUsed > 0) {
-    sections.push(`Token Usage\n${formatThreadGoalNumber(item.goal.tokensUsed)}`);
+    sections.push(
+      `Token Usage\n${formatThreadGoalNumber(item.goal.tokensUsed)}`,
+    );
   }
 
   if (item.goal.timeUsedSeconds > 0) {
-    sections.push(`Time Used\n${formatThreadGoalDuration(item.goal.timeUsedSeconds)}`);
+    sections.push(
+      `Time Used\n${formatThreadGoalDuration(item.goal.timeUsedSeconds)}`,
+    );
   }
 
   return sections.join("\n\n");
@@ -1094,9 +1180,7 @@ function previewCapturedOutput(output: string) {
     omitted = true;
   }
 
-  return omitted
-    ? `${preview}\n… omitted additional captured output`
-    : preview;
+  return omitted ? `${preview}\n… omitted additional captured output` : preview;
 }
 
 function formatCollabAgentToolName(
@@ -1258,7 +1342,9 @@ function formatCollabAgentMessageTitle(
 function formatCollabAgentMessageCategory(
   item: Extract<ThreadItem, { type: "collabAgentMessage" }>,
 ): ConversationEntry["toolCategory"] {
-  return item.operation === "childCompletion" ? "childCompletion" : "multiAgent";
+  return item.operation === "childCompletion"
+    ? "childCompletion"
+    : "multiAgent";
 }
 
 function formatCollabAgentMessageDetails(
@@ -1327,7 +1413,11 @@ function summarizeCollabAgentStatusUpdate(
     item.lifecycleStatus.message,
     AGENT_STATUS_PREVIEW_MAX_CHARS,
   );
-  return [agentLabel, formatLifecycleStatus(item.lifecycleStatus.lifecycleStatus), message]
+  return [
+    agentLabel,
+    formatLifecycleStatus(item.lifecycleStatus.lifecycleStatus),
+    message,
+  ]
     .filter((value) => value && value.length > 0)
     .join(" • ");
 }
@@ -1335,7 +1425,10 @@ function summarizeCollabAgentStatusUpdate(
 function formatCollabAgentStatusUpdateTitle(
   item: Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>,
 ) {
-  const agentPath = resolveAgentPath(item.lifecycleStatus.path, item.senderPath);
+  const agentPath = resolveAgentPath(
+    item.lifecycleStatus.path,
+    item.senderPath,
+  );
   const agentLabel = formatCollabAgentLabel(agentPath, item.lifecycleStatus);
   return item.lifecycleStatus.lifecycleStatus.type === "final"
     ? `${agentLabel} subagent completion`
@@ -1353,7 +1446,9 @@ function formatCollabAgentStatusUpdateDetails(
 
   const statusPath = stringOrNull(item.lifecycleStatus.path);
   if (statusPath) {
-    sections.push(`Agent\n${formatCollabAgentLabel(statusPath, item.lifecycleStatus)}`);
+    sections.push(
+      `Agent\n${formatCollabAgentLabel(statusPath, item.lifecycleStatus)}`,
+    );
   }
 
   const providerLabel = collabExternalProviderLabel(item.lifecycleStatus);
@@ -1404,10 +1499,7 @@ function formatProviderSummary(
 }
 
 function collabExternalProviderLabel(state?: CollabAgentStateView | null) {
-  const providerId = [
-    state?.agentRole,
-    state?.agentNickname,
-  ]
+  const providerId = [state?.agentRole, state?.agentNickname]
     .map((value) => value?.trim())
     .find((value) => value && externalProviderLabels[value]);
   return providerId ? externalProviderLabels[providerId] : null;
@@ -1436,7 +1528,9 @@ function formatLifecycleStatus(status: ThreadLifecycleStatus) {
   }
 }
 
-function lifecycleStatusFromUnknown(value: unknown): ThreadLifecycleStatus | null {
+function lifecycleStatusFromUnknown(
+  value: unknown,
+): ThreadLifecycleStatus | null {
   const record = objectOrNull(value);
   const type = stringOrNull(record?.type);
   switch (type) {
@@ -1455,7 +1549,10 @@ function lifecycleStatusFromUnknown(value: unknown): ThreadLifecycleStatus | nul
       const result = objectOrNull(record?.result);
       const resultType = stringOrNull(result?.type);
       return resultType
-        ? ({ type, result: { ...result, type: resultType } } as ThreadLifecycleStatus)
+        ? ({
+            type,
+            result: { ...result, type: resultType },
+          } as ThreadLifecycleStatus)
         : null;
     }
     case "systemError":
@@ -1513,7 +1610,8 @@ function summarizeCommandExecutionNotification(
   item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
   commandLookup: Map<string, string>,
 ) {
-  const commandLabel = commandLookup.get(item.commandItemId) ?? item.commandItemId;
+  const commandLabel =
+    commandLookup.get(item.commandItemId) ?? item.commandItemId;
   const kind = item.kind || "notification";
   if (item.kind === "output") {
     return `Command notification • output • ${commandLabel}`;
@@ -1533,7 +1631,11 @@ function summarizeCommandExecutionNotification(
 function statusForCommandExecutionNotification(
   item: Extract<ThreadItem, { type: "commandExecutionNotification" }>,
 ) {
-  if (item.kind === "exit" && item.exitCode !== null && item.exitCode !== undefined) {
+  if (
+    item.kind === "exit" &&
+    item.exitCode !== null &&
+    item.exitCode !== undefined
+  ) {
     return item.exitCode === 0 ? "completed" : "failed";
   }
   return "completed";
@@ -1583,7 +1685,9 @@ function buildCommandLookup(thread: Thread) {
   return commandLookup;
 }
 
-function summarizeCommandWait(item: Extract<ThreadItem, { type: "commandWait" }>) {
+function summarizeCommandWait(
+  item: Extract<ThreadItem, { type: "commandWait" }>,
+) {
   const notification = item.notification
     ? ` after ${item.notification} notification`
     : "";
@@ -1613,7 +1717,9 @@ function summarizeEventCommandEvent(
   const label = stringOrNull(item.label) ?? item.command;
   switch (item.kind) {
     case "output":
-      return item.line ? `${label}: ${item.line}` : `${label}: output received.`;
+      return item.line
+        ? `${label}: ${item.line}`
+        : `${label}: output received.`;
     case "exited": {
       if (item.signal) {
         return `${label}: signal ${item.signal}.`;
@@ -1631,7 +1737,9 @@ function summarizeEventCommandEvent(
         ? `${label}: failed to start. ${item.message}`
         : `${label}: failed to start.`;
     default:
-      return item.message ? `${label}: ${item.message}` : `${label}: ${item.kind}.`;
+      return item.message
+        ? `${label}: ${item.message}`
+        : `${label}: ${item.kind}.`;
   }
 }
 
@@ -1744,7 +1852,9 @@ function basename(filePath: string) {
 }
 
 function resolveAgentPath(...paths: Array<unknown>) {
-  return paths.map(stringOrNull).find((path) => path && path.length > 0) ?? "unknown";
+  return (
+    paths.map(stringOrNull).find((path) => path && path.length > 0) ?? "unknown"
+  );
 }
 
 function isToolStatusInProgress(status: unknown) {
