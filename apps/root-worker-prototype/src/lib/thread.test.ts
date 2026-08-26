@@ -3157,6 +3157,97 @@ test("late same-turn item notifications cannot re-add compact-pruned items", () 
   );
 });
 
+test("segment compact head accepts later live assistant delta for a new turn", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const segmentLoadedThread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active", activeFlags: ["running"] },
+    turns: [makeTurn("turn-compact", [compact])],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = appendAgentDelta(
+    segmentLoadedThread,
+    "turn-live",
+    "live-agent",
+    "new live response",
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "live-agent"],
+  );
+  assert.equal(updated.turns.at(-1)?.id, "turn-live");
+  assert.equal(updated.turns.at(-1)?.status, "running");
+  assert.equal(
+    updated.turns.at(-1)?.items[0]?.type === "agentMessage"
+      ? updated.turns.at(-1)?.items[0]?.text
+      : "",
+    "new live response",
+  );
+});
+
+test("segment compact head rejects late assistant delta for a pruned old turn", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const segmentLoadedThread = {
+    ...makeThread(),
+    turns: [makeTurn("turn-compact", [compact])],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+
+  const updated = appendAgentDelta(
+    segmentLoadedThread,
+    "turn-old",
+    "old-agent",
+    "late old response",
+  );
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1"],
+  );
+});
+
+test("segment compact head accepts later live inter-agent followup item", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const segmentLoadedThread = {
+    ...makeThread(),
+    turns: [makeTurn("turn-compact", [compact])],
+    stats: { compactionCount: 1 },
+  } satisfies Thread;
+  const followup = {
+    type: "collabAgentMessage",
+    id: "followup-1",
+    operation: "followupTask",
+    senderThreadId: "thread-child",
+    senderPath: "/root/worker",
+    recipientThreadId: "thread-1",
+    recipientPath: "/root",
+    otherRecipientPaths: [],
+    content: "typed status update",
+    triggerTurn: true,
+  } satisfies ThreadItem;
+
+  const updated = updateThreadItem(segmentLoadedThread, "turn-live", followup, {
+    completedAtMs: 3_000,
+  });
+
+  assert.deepEqual(
+    updated.turns.flatMap((turn) => turn.items.map((item) => item.id)),
+    ["compact-1", "followup-1"],
+  );
+  assert.equal(updated.turns.at(-1)?.id, "turn-live");
+});
+
 test("same-turn pruned items with the compact boundary timestamp do not reappear", () => {
   const compactedThread = updateThreadItem(
     {

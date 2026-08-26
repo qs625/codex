@@ -222,6 +222,7 @@ pub fn is_legacy_structured_assistant_message_text(text: &str) -> bool {
             "<subagent_notification>",
             "</subagent_notification>",
         )
+        || is_plain_inter_agent_communication_envelope(trimmed)
     {
         return true;
     }
@@ -253,6 +254,51 @@ pub fn is_legacy_structured_user_inputs(content: &[UserInput]) -> bool {
 
 fn is_wrapped_marker(trimmed: &str, start_marker: &str, end_marker: &str) -> bool {
     trimmed.starts_with(start_marker) && trimmed.ends_with(end_marker)
+}
+
+fn is_plain_inter_agent_communication_envelope(trimmed: &str) -> bool {
+    let mut lines = trimmed.lines();
+    if lines.next() != Some("Inter-agent communication received.") {
+        return false;
+    }
+    let Some(author) = lines.next().and_then(|line| line.strip_prefix("Author: ")) else {
+        return false;
+    };
+    let Some(recipient) = lines
+        .next()
+        .and_then(|line| line.strip_prefix("Recipient: "))
+    else {
+        return false;
+    };
+    let Some(operation) = lines
+        .next()
+        .and_then(|line| line.strip_prefix("Operation: "))
+    else {
+        return false;
+    };
+    let mut saw_content = false;
+    for line in lines {
+        if line == "Content:" {
+            saw_content = true;
+            break;
+        }
+        if !(line.starts_with("Other recipients: ")
+            || line.starts_with("Status: ")
+            || line.starts_with("Lifecycle status: "))
+        {
+            return false;
+        }
+    }
+    if !saw_content {
+        return false;
+    }
+
+    author.starts_with('/')
+        && recipient.starts_with('/')
+        && matches!(
+            operation,
+            "unknown" | "spawn_agent" | "send_message" | "followup_task" | "child_completion"
+        )
 }
 
 fn is_inter_agent_communication_envelope(
@@ -376,6 +422,63 @@ mod tests {
         .to_string();
 
         assert!(is_legacy_structured_assistant_message_text(&message));
+    }
+
+    #[test]
+    fn legacy_structured_message_filter_handles_plain_inter_agent_envelope() {
+        let message = concat!(
+            "Inter-agent communication received.\n",
+            "Author: /cp_http_api/owner_infra\n",
+            "Recipient: /cp_http_api\n",
+            "Operation: followup_task\n",
+            "Content:\n",
+            "接口验证中间结果： 又收到了这样的raw message",
+        );
+
+        assert!(is_legacy_structured_assistant_message_text(message));
+    }
+
+    #[test]
+    fn legacy_structured_message_filter_handles_plain_inter_agent_envelope_with_metadata() {
+        let message = concat!(
+            "Inter-agent communication received.\n",
+            "Author: /cp_http_api/owner_infra\n",
+            "Recipient: /cp_http_api\n",
+            "Operation: child_completion\n",
+            "Other recipients: /cp_http_api/reviewer\n",
+            "Status: Completed(Some(\"done\"))\n",
+            "Lifecycle status: Final { result: Completed { last_agent_message: Some(\"done\") } }\n",
+            "Content:\n",
+            "done",
+        );
+
+        assert!(is_legacy_structured_assistant_message_text(message));
+    }
+
+    #[test]
+    fn legacy_structured_message_filter_preserves_plain_text_mentions() {
+        let message = concat!(
+            "The user reported this text in the UI:\n",
+            "Inter-agent communication received.\n",
+            "Author: /cp_http_api/owner_infra",
+        );
+
+        assert!(!is_legacy_structured_assistant_message_text(message));
+    }
+
+    #[test]
+    fn legacy_structured_message_filter_preserves_malformed_plain_inter_agent_envelope() {
+        let message = concat!(
+            "Inter-agent communication received.\n",
+            "Author: /cp_http_api/owner_infra\n",
+            "Recipient: /cp_http_api\n",
+            "Operation: followup_task\n",
+            "Unexpected: still ordinary text\n",
+            "Content:\n",
+            "hello",
+        );
+
+        assert!(!is_legacy_structured_assistant_message_text(message));
     }
 
     #[test]
