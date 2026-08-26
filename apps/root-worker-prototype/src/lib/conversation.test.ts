@@ -303,7 +303,10 @@ test("includes command session parameters in command details", () => {
     ]),
   );
 
-  assert.equal(entries[0]?.toolDetails?.includes("Initial Wait\n3000 ms"), true);
+  assert.equal(
+    entries[0]?.toolDetails?.includes("Initial Wait\n3000 ms"),
+    true,
+  );
   assert.equal(entries[0]?.toolDetails?.includes("Notify On\noutput"), true);
 });
 
@@ -710,10 +713,13 @@ test("does not render active command current state items as conversation tail", 
   const cells = buildConversationCells(entries);
 
   assert.deepEqual(
-    entries.map((entry) => [entry.id, entry.kind, entry.toolName, entry.turnId]),
-    [
-      ["compact-1", "compact", undefined, "turn-1"],
-    ],
+    entries.map((entry) => [
+      entry.id,
+      entry.kind,
+      entry.toolName,
+      entry.turnId,
+    ]),
+    [["compact-1", "compact", undefined, "turn-1"]],
   );
   assert.deepEqual(
     cells.map((cell) => ({
@@ -1178,7 +1184,10 @@ test("shows typed list_agents collab tool calls", () => {
     [["multiAgent", "list agents", "listed 1 agents"]],
   );
   assert.match(entries[0]?.toolDetails ?? "", /Tool\nlist_agents/);
-  assert.match(entries[0]?.toolDetails ?? "", /Agent States\n\/root\/worker • completed • done/);
+  assert.match(
+    entries[0]?.toolDetails ?? "",
+    /Agent States\n\/root\/worker • completed • done/,
+  );
 });
 
 test("labels external code agent providers in collab tool details", () => {
@@ -1214,7 +1223,10 @@ test("labels external code agent providers in collab tool details", () => {
     entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
     [["multiAgent", "spawn agent", "/root -> Codex CLI /root/external"]],
   );
-  assert.match(entries[0]?.toolDetails ?? "", /Receivers\nCodex CLI \/root\/external/);
+  assert.match(
+    entries[0]?.toolDetails ?? "",
+    /Receivers\nCodex CLI \/root\/external/,
+  );
   assert.match(
     entries[0]?.toolDetails ?? "",
     /Agent States\nCodex CLI \/root\/external • active • running/,
@@ -1272,8 +1284,14 @@ test("summarizes mixed native and external list_agents provider states", () => {
     entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
     [["multiAgent", "list agents", "listed 3 agents (Claude Code, OpenCode)"]],
   );
-  assert.match(entries[0]?.toolDetails ?? "", /\/root\/native • active • working/);
-  assert.match(entries[0]?.toolDetails ?? "", /Claude Code \/root\/claude • completed • done/);
+  assert.match(
+    entries[0]?.toolDetails ?? "",
+    /\/root\/native • active • working/,
+  );
+  assert.match(
+    entries[0]?.toolDetails ?? "",
+    /Claude Code \/root\/claude • completed • done/,
+  );
   assert.match(
     entries[0]?.toolDetails ?? "",
     /OpenCode \/root\/opencode • errored • provider unavailable/,
@@ -1306,11 +1324,13 @@ test("labels external code agent completion status updates", () => {
 
   assert.deepEqual(
     entries.map((entry) => [entry.toolCategory, entry.toolName, entry.text]),
-    [[
-      "subagentNotification",
-      "Claude Code /root/claude subagent completion",
-      "Claude Code /root/claude • completed • done",
-    ]],
+    [
+      [
+        "subagentNotification",
+        "Claude Code /root/claude subagent completion",
+        "Claude Code /root/claude • completed • done",
+      ],
+    ],
   );
   assert.match(entries[0]?.toolDetails ?? "", /Provider\nClaude Code/);
 });
@@ -1990,7 +2010,9 @@ test("extracts compact history details with init context replacement cell", () =
               {
                 type: "message",
                 role: "assistant",
-                content: [{ type: "output_text", text: "compact final output" }],
+                content: [
+                  { type: "output_text", text: "compact final output" },
+                ],
               },
             ],
           },
@@ -2072,7 +2094,9 @@ test("pruned compact rows omit archived cells until lazy-loaded details are read
     },
   ]);
 
-  const prunedState = buildConversationState(normalizeThreadSnapshot(fullThread));
+  const prunedState = buildConversationState(
+    normalizeThreadSnapshot(fullThread),
+  );
   const compactEntry = prunedState.cells[0]?.entries[0];
 
   assert.equal(compactEntry?.kind, "compact");
@@ -2129,7 +2153,9 @@ test("hides compact turn entries while preserving later visible items", () => {
               {
                 type: "message",
                 role: "assistant",
-                content: [{ type: "output_text", text: "compact final output" }],
+                content: [
+                  { type: "output_text", text: "compact final output" },
+                ],
               },
             ],
           },
@@ -2198,7 +2224,9 @@ test("multiple compactions keep only entries after the latest hidden compact bou
               {
                 type: "message",
                 role: "assistant",
-                content: [{ type: "output_text", text: "first compact output" }],
+                content: [
+                  { type: "output_text", text: "first compact output" },
+                ],
               },
             ],
           },
@@ -2227,7 +2255,9 @@ test("multiple compactions keep only entries after the latest hidden compact bou
               {
                 type: "message",
                 role: "assistant",
-                content: [{ type: "output_text", text: "second compact output" }],
+                content: [
+                  { type: "output_text", text: "second compact output" },
+                ],
               },
             ],
           },
@@ -2356,6 +2386,116 @@ test("builds visible entries for poll_event builtin tools", () => {
         kind: "tool",
         text: "poll_event • mailbox_message",
         toolName: "poll_event",
+        toolCategory: "external",
+      },
+    ],
+  );
+});
+
+test("builds visible entries for runtime state inspection builtin tools", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "builtinToolCall",
+        id: "builtin-list-commands-empty",
+        tool: "list_commands",
+        arguments: {},
+        status: "completed",
+        output: {
+          commands: [],
+        },
+      },
+      {
+        type: "builtinToolCall",
+        id: "builtin-list-commands-running",
+        tool: "list_commands",
+        arguments: {},
+        status: "completed",
+        output: {
+          commands: [
+            {
+              command_id: 7,
+              call_id: "exec-1",
+              label: "rtk cargo test",
+              tty: false,
+              notify_on: "exit",
+              cwd: "/repo",
+              command_text: "rtk cargo test --workspace",
+            },
+          ],
+        },
+      },
+      {
+        type: "builtinToolCall",
+        id: "builtin-list-subscriptions-empty",
+        tool: "list_subscriptions",
+        arguments: {},
+        status: "completed",
+        output: {
+          subscriptions: [],
+        },
+      },
+      {
+        type: "builtinToolCall",
+        id: "builtin-list-subscriptions-active",
+        tool: "list_subscriptions",
+        arguments: {},
+        status: "completed",
+        output: {
+          subscriptions: [
+            {
+              type: "schedule",
+              subscription_id: "schedule-1",
+              label: "daily cleanup",
+              status: "active",
+              schedule: {
+                kind: "every_day_at",
+                time: "09:00",
+                timezone: "Asia/Shanghai",
+              },
+              message: "cleanup",
+            },
+          ],
+        },
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      toolName: entry.toolName,
+      toolCategory: entry.toolCategory,
+    })),
+    [
+      {
+        id: "builtin-list-commands-empty",
+        kind: "tool",
+        text: "list_commands • no live commands",
+        toolName: "list_commands",
+        toolCategory: "external",
+      },
+      {
+        id: "builtin-list-commands-running",
+        kind: "tool",
+        text: "list_commands • 1 live command • rtk cargo test",
+        toolName: "list_commands",
+        toolCategory: "external",
+      },
+      {
+        id: "builtin-list-subscriptions-empty",
+        kind: "tool",
+        text: "list_subscriptions • no active subscriptions",
+        toolName: "list_subscriptions",
+        toolCategory: "external",
+      },
+      {
+        id: "builtin-list-subscriptions-active",
+        kind: "tool",
+        text: "list_subscriptions • 1 active subscription • daily cleanup",
+        toolName: "list_subscriptions",
         toolCategory: "external",
       },
     ],
@@ -2668,10 +2808,10 @@ test("keeps repeated standalone notifications as distinct cell entries", () => {
   );
   const cells = buildConversationCells(entries);
 
-  assert.deepEqual(cells.map((cell) => cell.entries.map((entry) => entry.id)), [
-    ["status-1"],
-    ["status-2"],
-  ]);
+  assert.deepEqual(
+    cells.map((cell) => cell.entries.map((entry) => entry.id)),
+    [["status-1"], ["status-2"]],
+  );
 });
 
 test("reuses unchanged conversation cells when only the tail item updates", () => {

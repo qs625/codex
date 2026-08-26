@@ -102,7 +102,9 @@ export function buildAgentTree(
     .map(buildNode);
 }
 
-export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar {
+export function buildProjectAgentSidebar(
+  threads: Thread[],
+): ProjectAgentSidebar {
   const parentlessThreads = threads.filter(isRootThread);
   const projectRootCandidates = new Map<
     string,
@@ -129,7 +131,9 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
 
   const projects = [...projectRootCandidates.values()]
     .map(({ cwd, projectPath, candidates }) => {
-      const sortedCandidates = [...candidates].sort(compareCanonicalProjectRoot);
+      const sortedCandidates = [...candidates].sort(
+        compareCanonicalProjectRoot,
+      );
       const rootThread = sortedCandidates[0];
       const projectLabel = projectPath ?? projectLabelFromCwd(cwd);
       const duplicateRootThreadIds = sortedCandidates
@@ -140,10 +144,8 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
         .map((thread) =>
           buildSidebarRootTree(threads, thread, withProjectConversationLabel),
         );
-      const projectTree = buildSidebarRootTree(
-        threads,
-        rootThread,
-        (node) => withProjectRootLabel(node, projectLabel),
+      const projectTree = buildSidebarRootTree(threads, rootThread, (node) =>
+        withProjectRootLabel(node, projectLabel),
       );
       projectTree.children.push(...duplicateRootTrees);
       const projectThreadList = collectTreeThreads(projectTree);
@@ -155,7 +157,9 @@ export function buildProjectAgentSidebar(threads: Thread[]): ProjectAgentSidebar
         subtitle: cwd,
         cwd,
         statusClass: selfTreeThreadLifecycleStatusClass(rootThread),
-        updatedAt: Math.max(...projectThreadList.map((thread) => thread.updatedAt)),
+        updatedAt: Math.max(
+          ...projectThreadList.map((thread) => thread.updatedAt),
+        ),
         tree: projectTree,
         descendantCount: countDescendants(projectTree),
         activeCount: counts.activeCount,
@@ -235,7 +239,10 @@ export function mergeDefaultCollapsedProjectIds(
     (projectId) =>
       currentCollapsedSet.has(projectId) || !touchedProjectIds.has(projectId),
   );
-  return areStringArraysEqual(currentCollapsedProjectIds, nextCollapsedProjectIds)
+  return areStringArraysEqual(
+    currentCollapsedProjectIds,
+    nextCollapsedProjectIds,
+  )
     ? currentCollapsedProjectIds
     : nextCollapsedProjectIds;
 }
@@ -265,7 +272,10 @@ export function buildCurrentThreadTodoItems(
   );
 }
 
-function areStringArraysEqual(left: readonly string[], right: readonly string[]) {
+function areStringArraysEqual(
+  left: readonly string[],
+  right: readonly string[],
+) {
   return (
     left.length === right.length &&
     left.every((value, index) => value === right[index])
@@ -448,7 +458,8 @@ export function getThreadSubtreeIdsChildrenFirst(
   rootThreadId: string,
 ) {
   return [...getThreadSubtreeIds(threads, rootThreadId)].sort(
-    (left, right) => getThreadDepth(threads, right) - getThreadDepth(threads, left),
+    (left, right) =>
+      getThreadDepth(threads, right) - getThreadDepth(threads, left),
   );
 }
 
@@ -479,12 +490,16 @@ export function getAgentRoleLabel(thread: Thread) {
 }
 
 export function getRootThreadConversationTitle(thread: Thread) {
-  return isProjectRootThread(thread) ? getThreadPath(thread) : getThreadLabel(thread);
+  return isProjectRootThread(thread)
+    ? getThreadPath(thread)
+    : getThreadLabel(thread);
 }
 
 export function isProjectRootThread(thread: Thread) {
   const projectCwd = normalizeProjectCwd(thread.cwd);
-  return isRootThread(thread) && projectCwd !== null && !isChatCompatCwd(projectCwd);
+  return (
+    isRootThread(thread) && projectCwd !== null && !isChatCompatCwd(projectCwd)
+  );
 }
 
 export function isCompletedFinalLifecycleStatus(
@@ -606,10 +621,7 @@ export function updateThreadTurnNotification(
   method: "turn/started" | "turn/completed",
   turn: Turn,
 ) {
-  if (
-    method === "turn/completed" &&
-    canMergeTurnSnapshotItems(thread, turn)
-  ) {
+  if (method === "turn/completed" && canMergeTurnSnapshotItems(thread, turn)) {
     return updateThreadTurn(thread, turn);
   }
   return updateThreadTurnLifecycle(thread, turn);
@@ -669,7 +681,14 @@ export function updateThreadItem(
   const nextItem = normalizeThreadItemSnapshot(
     applyItemTimestamps(item, timestamps),
   );
-  const existingCompactItemIds = new Set(collectContextCompactionItemIds(thread));
+  let shouldUpdateActiveCommandItems = false;
+  const finalize = (updated: Thread) =>
+    shouldUpdateActiveCommandItems
+      ? applyActiveCommandItemUpdate(updated, nextItem)
+      : updated;
+  const existingCompactItemIds = new Set(
+    collectContextCompactionItemIds(thread),
+  );
   const completedCollabSyntheticTurns = thread.turns.filter(
     (turn) =>
       turn.id !== turnId &&
@@ -683,60 +702,67 @@ export function updateThreadItem(
     (turn) => turn.items,
   );
   let foundTurn = false;
-  const updatedTurns = thread.turns.map((turn) => {
-    if (completedCollabSyntheticTurnIds.has(turn.id)) {
-      return null;
-    }
-    if (turn.id !== turnId) {
-      return turn;
-    }
-    foundTurn = true;
-    if (
-      !hasMatchingThreadItem(turn.items, nextItem) &&
-      turnHasCompactItem(turn) &&
-      nextItem.type !== "contextCompaction" &&
-      !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
-    ) {
-      return turn;
-    }
-    if (shouldRejectAmbiguousCompactItem(thread, turn, nextItem, timestamps)) {
-      return turn;
-    }
-    const items = [...completedCollabSyntheticItems, nextItem].reduce(
-      appendOrMergeThreadItem,
-      turn.items,
-    );
-    if (timestamps?.syntheticTurnStatus === "completed") {
-      const startedAt =
-        turn.startedAt ?? itemNotificationStartTimeSeconds(timestamps);
-      const completedAt =
-        itemNotificationCompletedTimeSeconds(timestamps) ??
-        turn.completedAt ??
-        startedAt;
-      const durationMs =
-        syntheticTurnDurationMs(timestamps) ??
-        (startedAt !== null && completedAt !== null
-          ? (completedAt - startedAt) * 1000
-          : turn.durationMs);
-      return {
-        ...turn,
-        items,
-        status: "completed",
-        startedAt,
-        completedAt,
-        durationMs,
-      };
-    }
-    return { ...turn, items };
-  }).filter((turn): turn is Turn => turn !== null);
+  const updatedTurns = thread.turns
+    .map((turn) => {
+      if (completedCollabSyntheticTurnIds.has(turn.id)) {
+        return null;
+      }
+      if (turn.id !== turnId) {
+        return turn;
+      }
+      foundTurn = true;
+      if (
+        !hasMatchingThreadItem(turn.items, nextItem) &&
+        turnHasCompactItem(turn) &&
+        nextItem.type !== "contextCompaction" &&
+        !isItemNotificationAfterLatestCompact(thread, nextItem, timestamps)
+      ) {
+        return turn;
+      }
+      if (
+        shouldRejectAmbiguousCompactItem(thread, turn, nextItem, timestamps)
+      ) {
+        return turn;
+      }
+      shouldUpdateActiveCommandItems = true;
+      const items = [...completedCollabSyntheticItems, nextItem].reduce(
+        appendOrMergeThreadItem,
+        turn.items,
+      );
+      if (timestamps?.syntheticTurnStatus === "completed") {
+        const startedAt =
+          turn.startedAt ?? itemNotificationStartTimeSeconds(timestamps);
+        const completedAt =
+          itemNotificationCompletedTimeSeconds(timestamps) ??
+          turn.completedAt ??
+          startedAt;
+        const durationMs =
+          syntheticTurnDurationMs(timestamps) ??
+          (startedAt !== null && completedAt !== null
+            ? (completedAt - startedAt) * 1000
+            : turn.durationMs);
+        return {
+          ...turn,
+          items,
+          status: "completed",
+          startedAt,
+          completedAt,
+          durationMs,
+        };
+      }
+      return { ...turn, items };
+    })
+    .filter((turn): turn is Turn => turn !== null);
   if (foundTurn) {
-    return updateStatsForNewLiveCompactions(
-      thread,
-      pruneThreadSnapshotToLatestCompact({
-        ...thread,
-        turns: updatedTurns,
-      }),
-      existingCompactItemIds,
+    return finalize(
+      updateStatsForNewLiveCompactions(
+        thread,
+        pruneThreadSnapshotToLatestCompact({
+          ...thread,
+          turns: updatedTurns,
+        }),
+        existingCompactItemIds,
+      ),
     );
   }
 
@@ -745,15 +771,18 @@ export function updateThreadItem(
       turn.items.some((item) => isEquivalentInitContextItem(item, nextItem)),
     );
     if (existingTurn) {
+      shouldUpdateActiveCommandItems = true;
       const turns = thread.turns.map((turn) =>
         turn.id === existingTurn.id
           ? { ...turn, items: appendOrMergeThreadItem(turn.items, nextItem) }
           : turn,
       );
-      return updateStatsForNewLiveCompactions(
-        thread,
-        pruneThreadSnapshotToLatestCompact({ ...thread, turns }),
-        existingCompactItemIds,
+      return finalize(
+        updateStatsForNewLiveCompactions(
+          thread,
+          pruneThreadSnapshotToLatestCompact({ ...thread, turns }),
+          existingCompactItemIds,
+        ),
       );
     }
   }
@@ -765,18 +794,21 @@ export function updateThreadItem(
       : [...thread.turns].reverse().find(isTurnInFlight)
     : undefined;
   if (activeTurn) {
+    shouldUpdateActiveCommandItems = true;
     const turns = thread.turns.map((turn) =>
       turn.id === activeTurn.id
         ? { ...turn, items: appendOrMergeThreadItem(turn.items, nextItem) }
         : turn,
     );
-    return updateStatsForNewLiveCompactions(
-      thread,
-      pruneThreadSnapshotToLatestCompact({
-        ...thread,
-        turns,
-      }),
-      existingCompactItemIds,
+    return finalize(
+      updateStatsForNewLiveCompactions(
+        thread,
+        pruneThreadSnapshotToLatestCompact({
+          ...thread,
+          turns,
+        }),
+        existingCompactItemIds,
+      ),
     );
   }
 
@@ -787,13 +819,19 @@ export function updateThreadItem(
     return thread;
   }
 
-  return updateStatsForNewLiveCompactions(
-    thread,
-    pruneThreadSnapshotToLatestCompact({
-      ...thread,
-      turns: [...thread.turns, createSyntheticTurn(turnId, nextItem, timestamps)],
-    }),
-    existingCompactItemIds,
+  shouldUpdateActiveCommandItems = true;
+  return finalize(
+    updateStatsForNewLiveCompactions(
+      thread,
+      pruneThreadSnapshotToLatestCompact({
+        ...thread,
+        turns: [
+          ...thread.turns,
+          createSyntheticTurn(turnId, nextItem, timestamps),
+        ],
+      }),
+      existingCompactItemIds,
+    ),
   );
 }
 
@@ -871,7 +909,11 @@ function canMergeTurnSnapshotItems(thread: Thread, nextTurn: Turn) {
   ) {
     return false;
   }
-  return !shouldRejectAmbiguousCompactTurnSnapshot(thread, nextTurn, existingTurn);
+  return !shouldRejectAmbiguousCompactTurnSnapshot(
+    thread,
+    nextTurn,
+    existingTurn,
+  );
 }
 
 function shouldRejectAmbiguousCompactTurnSnapshot(
@@ -970,7 +1012,8 @@ export function getThreadItemNotificationSyntheticTurnStatus(
   item: ThreadItem,
 ): "completed" | undefined {
   return method === "item/completed" &&
-    (isCollabCompletionNotificationItem(item) || item.type === "injectedContext")
+    (isCollabCompletionNotificationItem(item) ||
+      item.type === "injectedContext")
     ? "completed"
     : undefined;
 }
@@ -1057,26 +1100,26 @@ export function appendAgentDelta(
     : threadHasCompactItem(thread)
       ? thread.turns
       : [
-        ...thread.turns,
-        {
-          id: turnId,
-          items: [
-            markStreamingAgentMessage({
-              type: "agentMessage",
-              id: itemId,
-              text: delta,
-              phase: null,
-              memoryCitation: null,
-            } satisfies ThreadItem),
-          ],
-          itemsView: "full" as const,
-          status: "running" as const,
-          error: null,
-          startedAt: null,
-          completedAt: null,
-          durationMs: null,
-        } satisfies Turn,
-      ];
+          ...thread.turns,
+          {
+            id: turnId,
+            items: [
+              markStreamingAgentMessage({
+                type: "agentMessage",
+                id: itemId,
+                text: delta,
+                phase: null,
+                memoryCitation: null,
+              } satisfies ThreadItem),
+            ],
+            itemsView: "full" as const,
+            status: "running" as const,
+            error: null,
+            startedAt: null,
+            completedAt: null,
+            durationMs: null,
+          } satisfies Turn,
+        ];
   return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
 }
 
@@ -1113,7 +1156,10 @@ function isItemNotificationAfterLatestCompact(
   );
 }
 
-function isTimestampAfterLatestCompact(thread: Thread, timestampMs?: number | null) {
+function isTimestampAfterLatestCompact(
+  thread: Thread,
+  timestampMs?: number | null,
+) {
   if (!Number.isFinite(timestampMs)) {
     return false;
   }
@@ -1155,16 +1201,23 @@ export function appendCommandExecutionDelta(
     ...item,
     aggregatedOutput: `${item.aggregatedOutput ?? ""}${delta}`,
   });
-  const turns = thread.turns.some((turn) => turn.id === turnId)
+  let shouldUpdateActiveCommandItems = false;
+  const hasTargetTurn = thread.turns.some((turn) => turn.id === turnId);
+  const turns = hasTargetTurn
     ? thread.turns.map((turn) => {
         if (turn.id !== turnId) {
           return turn;
         }
+        const hasCommandItem = turn.items.some(
+          (item) => item.id === itemId && item.type === "commandExecution",
+        );
+        if (!hasCommandItem && turnHasCompactItem(turn)) {
+          return turn;
+        }
+        shouldUpdateActiveCommandItems = true;
         return {
           ...turn,
-          items: turn.items.some(
-            (item) => item.id === itemId && item.type === "commandExecution",
-          )
+          items: hasCommandItem
             ? turn.items.map((item) =>
                 item.id === itemId && item.type === "commandExecution"
                   ? appendDelta(item)
@@ -1175,20 +1228,111 @@ export function appendCommandExecutionDelta(
       })
     : threadHasCompactItem(thread)
       ? thread.turns
-      : [
-        ...thread.turns,
-        {
-          id: turnId,
-          items: [createDeltaPlaceholder()],
-          itemsView: "full" as const,
-          status: "running" as const,
-          error: null,
-          startedAt: null,
-          completedAt: null,
+      : (() => {
+          shouldUpdateActiveCommandItems = true;
+          return [
+            ...thread.turns,
+            {
+              id: turnId,
+              items: [createDeltaPlaceholder()],
+              itemsView: "full" as const,
+              status: "running" as const,
+              error: null,
+              startedAt: null,
+              completedAt: null,
+              durationMs: null,
+            } satisfies Turn,
+          ];
+        })();
+  const updated = pruneThreadSnapshotToLatestCompact({ ...thread, turns });
+  return shouldUpdateActiveCommandItems
+    ? appendActiveCommandExecutionDelta(updated, itemId, delta)
+    : updated;
+}
+
+function applyActiveCommandItemUpdate(
+  thread: Thread,
+  item: ThreadItem,
+): Thread {
+  if (item.type !== "commandExecution") {
+    return thread;
+  }
+  const activeCommandItems = thread.activeCommandItems ?? [];
+  if (!isRunningCommandExecutionStatus(item.status)) {
+    if (!activeCommandItems.some((activeItem) => activeItem.id === item.id)) {
+      return thread;
+    }
+    return {
+      ...thread,
+      activeCommandItems: activeCommandItems.filter(
+        (activeItem) => activeItem.id !== item.id,
+      ),
+    };
+  }
+
+  const existingIndex = activeCommandItems.findIndex(
+    (activeItem) => activeItem.id === item.id,
+  );
+  const nextItem =
+    existingIndex === -1
+      ? item
+      : mergeThreadItem(activeCommandItems[existingIndex]!, item);
+  const nextActiveCommandItems =
+    existingIndex === -1
+      ? [...activeCommandItems, nextItem]
+      : activeCommandItems.map((activeItem, index) =>
+          index === existingIndex ? nextItem : activeItem,
+        );
+  return { ...thread, activeCommandItems: nextActiveCommandItems };
+}
+
+function appendActiveCommandExecutionDelta(
+  thread: Thread,
+  itemId: string,
+  delta: string,
+): Thread {
+  const activeCommandItems = thread.activeCommandItems ?? [];
+  const existingIndex = activeCommandItems.findIndex(
+    (item) => item.id === itemId && item.type === "commandExecution",
+  );
+  const appendDelta = (
+    item: Extract<ThreadItem, { type: "commandExecution" }>,
+  ): ThreadItem => ({
+    ...item,
+    aggregatedOutput: `${item.aggregatedOutput ?? ""}${delta}`,
+  });
+  const nextItem =
+    existingIndex === -1
+      ? ({
+          type: "commandExecution",
+          id: itemId,
+          command: "Command output",
+          cwd: "cwd pending",
+          status: "inProgress",
+          initialWaitMs: null,
+          notifyOn: null,
+          aggregatedOutput: delta,
+          exitCode: null,
           durationMs: null,
-        } satisfies Turn,
-      ];
-  return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
+        } satisfies ThreadItem)
+      : appendDelta(
+          activeCommandItems[existingIndex]! as Extract<
+            ThreadItem,
+            { type: "commandExecution" }
+          >,
+        );
+  const nextActiveCommandItems =
+    existingIndex === -1
+      ? [...activeCommandItems, nextItem]
+      : activeCommandItems.map((item, index) =>
+          index === existingIndex ? nextItem : item,
+        );
+  return { ...thread, activeCommandItems: nextActiveCommandItems };
+}
+
+function isRunningCommandExecutionStatus(status: string) {
+  const normalized = status.trim().toLowerCase().replace(/[_-]/g, "");
+  return normalized === "running" || normalized === "inprogress";
 }
 
 export function mergeTurn(existing: Turn, next: Turn): Turn {
@@ -1263,10 +1407,7 @@ function threadItemOrderTimestampMs(item: ThreadItem) {
     : null;
 }
 
-export function mergeThreadSnapshot(
-  existing: Thread | null,
-  next: Thread,
-) {
+export function mergeThreadSnapshot(existing: Thread | null, next: Thread) {
   const normalizedNext = normalizeThreadSnapshot(next);
   if (!existing || existing.id !== normalizedNext.id) {
     return normalizedNext;
@@ -1318,6 +1459,7 @@ export function mergeThreadSnapshot(
     contextUsage,
     stats: mergeThreadStats(existing.stats, normalizedNext.stats),
     turns,
+    activeCommandItems: normalizedNext.activeCommandItems ?? [],
   });
 }
 
@@ -1387,20 +1529,14 @@ export function markThreadCommandExecutionRunning(thread: Thread): Thread {
 }
 
 function isStrongTerminalLifecycleStatus(status: ThreadLifecycleStatus) {
-  return (
-    status.type === "final" &&
-    status.result.type !== "completed"
-  );
+  return status.type === "final" && status.result.type !== "completed";
 }
 
 export function preserveTerminalLifecycleStatus(
   existing: ThreadLifecycleStatus,
   next: ThreadLifecycleStatus,
 ) {
-  if (
-    existing.type === "final" &&
-    next.type !== "final"
-  ) {
+  if (existing.type === "final" && next.type !== "final") {
     return existing;
   }
   return next;
@@ -1411,7 +1547,11 @@ export function normalizeThreadSnapshot(thread: Thread): Thread {
   const activeCommandItems = [...(thread.activeCommandItems ?? [])];
   const turns = thread.turns.reduce<Turn[]>((normalizedTurns, turn) => {
     if (isActiveSubscriptionsTurn(turn)) {
-      activeSubscriptionItems.splice(0, activeSubscriptionItems.length, ...turn.items);
+      activeSubscriptionItems.splice(
+        0,
+        activeSubscriptionItems.length,
+        ...turn.items,
+      );
       return normalizedTurns;
     }
     if (isActiveCommandsTurn(turn)) {
@@ -1496,7 +1636,9 @@ export function pruneThreadSnapshotToLatestCompact(thread: Thread): Thread {
     .at(-1);
   const activeSubscriptionItems =
     latestActiveSubscriptionTurn?.items ?? thread.activeSubscriptionItems;
-  const latestActiveCommandTurn = thread.turns.filter(isActiveCommandsTurn).at(-1);
+  const latestActiveCommandTurn = thread.turns
+    .filter(isActiveCommandsTurn)
+    .at(-1);
   const activeCommandItems =
     latestActiveCommandTurn?.items ?? thread.activeCommandItems;
   const postCompactTurns = thread.turns.slice(latestCompact.turnIndex);
@@ -1538,7 +1680,11 @@ function findLatestCompactItemPosition(turns: Turn[]) {
     if (!turn) {
       continue;
     }
-    for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    for (
+      let itemIndex = turn.items.length - 1;
+      itemIndex >= 0;
+      itemIndex -= 1
+    ) {
       const item = turn.items[itemIndex];
       if (item?.type === "contextCompaction") {
         return {
@@ -1997,7 +2143,8 @@ function isLiveDerivedCompletedAgentTurn(turn: Turn) {
     turn.items.length > 0 &&
     turn.items.every(
       (item) =>
-        item.type === "agentMessage" || isCollabCompletionNotificationItem(item),
+        item.type === "agentMessage" ||
+        isCollabCompletionNotificationItem(item),
     ) &&
     (turn.itemsView !== "full" ||
       turn.items.every(isCollabCompletionNotificationItem))
@@ -2075,7 +2222,11 @@ function incrementMapCount(map: Map<string, number>, key: string) {
   map.set(key, (map.get(key) ?? 0) + 1);
 }
 
-function decrementMapCount(map: Map<string, number>, key: string, count: number) {
+function decrementMapCount(
+  map: Map<string, number>,
+  key: string,
+  count: number,
+) {
   const next = (map.get(key) ?? 0) - count;
   if (next <= 0) {
     map.delete(key);
@@ -2144,11 +2295,15 @@ export type TreeThreadLifecycleStatusClass =
   | "waiting-eventtool"
   | "waiting-subscription";
 
-export function treeThreadLifecycleStatusClass(node: TreeNode): TreeThreadLifecycleStatusClass {
+export function treeThreadLifecycleStatusClass(
+  node: TreeNode,
+): TreeThreadLifecycleStatusClass {
   return node.thread ? selfTreeThreadLifecycleStatusClass(node.thread) : "todo";
 }
 
-export function treeThreadLifecycleStatusLabel(statusClass: TreeThreadLifecycleStatusClass) {
+export function treeThreadLifecycleStatusLabel(
+  statusClass: TreeThreadLifecycleStatusClass,
+) {
   switch (statusClass) {
     case "doing":
       return "Active";
@@ -2167,7 +2322,9 @@ export function treeThreadLifecycleStatusLabel(statusClass: TreeThreadLifecycleS
   }
 }
 
-function selfTreeThreadLifecycleStatusClass(thread: Thread): TreeThreadLifecycleStatusClass {
+function selfTreeThreadLifecycleStatusClass(
+  thread: Thread,
+): TreeThreadLifecycleStatusClass {
   if (thread.lifecycleStatus.type === "systemError") {
     return "blocked";
   }
@@ -2246,7 +2403,10 @@ function canonicalProjectRootPriority(lifecycleStatus: ThreadLifecycleStatus) {
   if (lifecycleStatus.type === "systemError") {
     return 4;
   }
-  if (lifecycleStatus.type === "active" || lifecycleStatus.type === "initializing") {
+  if (
+    lifecycleStatus.type === "active" ||
+    lifecycleStatus.type === "initializing"
+  ) {
     return 3;
   }
   if (lifecycleStatus.type === "waiting") {
@@ -2319,7 +2479,9 @@ function collectTreeThreads(node: TreeNode): Thread[] {
   ];
 }
 
-function aggregateSidebarStatus(threads: Thread[]): TreeThreadLifecycleStatusClass {
+function aggregateSidebarStatus(
+  threads: Thread[],
+): TreeThreadLifecycleStatusClass {
   const statusClasses = threads.map(selfTreeThreadLifecycleStatusClass);
   if (statusClasses.includes("blocked")) {
     return "blocked";
@@ -2336,7 +2498,10 @@ function aggregateSidebarStatus(threads: Thread[]): TreeThreadLifecycleStatusCla
   if (statusClasses.includes("waiting-subscription")) {
     return "waiting-subscription";
   }
-  if (threads.length > 0 && statusClasses.every((status) => status === "done")) {
+  if (
+    threads.length > 0 &&
+    statusClasses.every((status) => status === "done")
+  ) {
     return "done";
   }
   return "todo";
@@ -2394,7 +2559,9 @@ export function trimThreadId(threadId: string) {
   return threadId.slice(0, 8);
 }
 
-function mapTaskStatus(lifecycleStatus: ThreadLifecycleStatus): Exclude<TaskFilter, "all"> {
+function mapTaskStatus(
+  lifecycleStatus: ThreadLifecycleStatus,
+): Exclude<TaskFilter, "all"> {
   const mapped = threadStatusClass(lifecycleStatus);
   if (mapped === "blocked" || mapped === "doing") {
     return mapped;

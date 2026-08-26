@@ -137,7 +137,10 @@ function buildRuntimeSummary(
 ): ThreadAnalysis["runtime"] {
   return {
     lifetimeLabel: formatThreadLifetime(thread?.createdAt, options.now),
-    lifetimeSeconds: calculateThreadLifetimeSeconds(thread?.createdAt, options.now),
+    lifetimeSeconds: calculateThreadLifetimeSeconds(
+      thread?.createdAt,
+      options.now,
+    ),
     compactionCount: countThreadCompactions(thread),
   };
 }
@@ -230,6 +233,7 @@ function buildMonitorSections(
           eventsByTool,
           commandNotificationsByCommandId,
           allowLiveCommandMonitors,
+          allowCommandExecutionMonitors: false,
         });
       }
     }
@@ -239,6 +243,7 @@ function buildMonitorSections(
         eventsByTool,
         commandNotificationsByCommandId,
         allowLiveCommandMonitors,
+        allowCommandExecutionMonitors: false,
       });
     }
     for (const item of thread.activeCommandItems ?? []) {
@@ -247,6 +252,7 @@ function buildMonitorSections(
         eventsByTool,
         commandNotificationsByCommandId,
         allowLiveCommandMonitors,
+        allowCommandExecutionMonitors: true,
       });
     }
   }
@@ -287,7 +293,10 @@ function buildMonitorSections(
   return {
     totalCount: activeMonitors.length,
     eventCount:
-      [...eventsByTool.values()].reduce((sum, events) => sum + events.length, 0) +
+      [...eventsByTool.values()].reduce(
+        (sum, events) => sum + events.length,
+        0,
+      ) +
       activeMonitors
         .filter((monitor) => monitor.kind === "command")
         .reduce((sum, monitor) => sum + monitor.eventCount, 0),
@@ -303,6 +312,7 @@ function applyMonitorItem(
     eventsByTool: Map<string, MonitorEvent[]>;
     commandNotificationsByCommandId: Map<string, string>;
     allowLiveCommandMonitors: boolean;
+    allowCommandExecutionMonitors: boolean;
   },
 ) {
   const {
@@ -310,6 +320,7 @@ function applyMonitorItem(
     eventsByTool,
     commandNotificationsByCommandId,
     allowLiveCommandMonitors,
+    allowCommandExecutionMonitors,
   } = state;
   if (isMonitorToolCall(item)) {
     const monitor = buildMonitorSummary(item);
@@ -332,6 +343,9 @@ function applyMonitorItem(
   }
 
   if (item.type === "commandExecution") {
+    if (!allowCommandExecutionMonitors) {
+      return;
+    }
     if (!isRunningCommandStatus(item.status)) {
       removeCommandMonitor(monitors, item.id);
       return;
@@ -360,7 +374,10 @@ function applyMonitorItem(
   }
 }
 
-function removeCommandMonitor(monitors: InternalMonitorSummary[], commandId: string) {
+function removeCommandMonitor(
+  monitors: InternalMonitorSummary[],
+  commandId: string,
+) {
   for (let index = monitors.length - 1; index >= 0; index -= 1) {
     const monitor = monitors[index];
     if (monitor?.kind === "command" && monitor.id === commandId) {
@@ -423,10 +440,11 @@ function buildCommandMonitorSummary(
   if (!allowLiveCommandMonitors || !isRunningCommandStatus(item.status)) {
     return null;
   }
-  const latestOutput = stringOrNull(item.aggregatedOutput)
-    ?.split(/\r?\n/)
-    .filter(Boolean)
-    .at(-1) ?? null;
+  const latestOutput =
+    stringOrNull(item.aggregatedOutput)
+      ?.split(/\r?\n/)
+      .filter(Boolean)
+      .at(-1) ?? null;
   return {
     id: item.id,
     subscriptionId: item.id,
@@ -479,7 +497,10 @@ function summarizeCommandNotification(
 }
 
 function buildMonitorSummary(
-  item: Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }>,
+  item: Extract<
+    ThreadItem,
+    { type: "eventDrivenToolCall" | "builtinToolCall" }
+  >,
 ): InternalMonitorSummary | null {
   const subscriptionId = subscriptionIdFromOutput(item.output);
   if (item.status !== "completed" || !subscriptionId) {
@@ -496,7 +517,8 @@ function buildMonitorSummary(
     kind,
     label: monitorLabel(kind, args),
     detail: monitorDetail(kind, args, item.output),
-    status: item.status === "completed" ? "Listening" : statusLabel(item.status),
+    status:
+      item.status === "completed" ? "Listening" : statusLabel(item.status),
     eventCount: 0,
     latestEvent: null,
     schedule,
@@ -507,9 +529,15 @@ function buildMonitorSummary(
 
 function removeUnsubscribedMonitor(
   monitors: InternalMonitorSummary[],
-  item: Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }>,
+  item: Extract<
+    ThreadItem,
+    { type: "eventDrivenToolCall" | "builtinToolCall" }
+  >,
 ) {
-  if (item.status !== "completed" || objectRecord(item.output).unsubscribed !== true) {
+  if (
+    item.status !== "completed" ||
+    objectRecord(item.output).unsubscribed !== true
+  ) {
     return;
   }
   const args = objectRecord(item.arguments);
@@ -543,7 +571,9 @@ function upsertMonitorSummary(
   monitors[existingIndex] = monitor;
 }
 
-function toPublicMonitorSummary(monitor: InternalMonitorSummary): MonitorSummary {
+function toPublicMonitorSummary(
+  monitor: InternalMonitorSummary,
+): MonitorSummary {
   const {
     schedule: _schedule,
     scheduleRule: _scheduleRule,
@@ -587,7 +617,8 @@ function buildScheduleAgenda(
   const items = monitors
     .filter((monitor) => monitor.kind === "schedule")
     .flatMap((monitor) => {
-      const rule = monitor.scheduleRule ?? formatScheduleArgument(monitor.schedule);
+      const rule =
+        monitor.scheduleRule ?? formatScheduleArgument(monitor.schedule);
       if (!rule) {
         return [];
       }
@@ -727,7 +758,10 @@ function isUnsubscribeTool(
 
 function isMonitorToolCall(
   item: ThreadItem,
-): item is Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }> {
+): item is Extract<
+  ThreadItem,
+  { type: "eventDrivenToolCall" | "builtinToolCall" }
+> {
   return (
     (item.type === "eventDrivenToolCall" || item.type === "builtinToolCall") &&
     isMonitorTool(item.tool)
@@ -736,7 +770,10 @@ function isMonitorToolCall(
 
 function isUnsubscribeToolCall(
   item: ThreadItem,
-): item is Extract<ThreadItem, { type: "eventDrivenToolCall" | "builtinToolCall" }> {
+): item is Extract<
+  ThreadItem,
+  { type: "eventDrivenToolCall" | "builtinToolCall" }
+> {
   return (
     (item.type === "eventDrivenToolCall" || item.type === "builtinToolCall") &&
     isUnsubscribeTool(item.tool)

@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildConversationEntries, buildConversationState } from "./conversation";
+import {
+  buildConversationEntries,
+  buildConversationState,
+} from "./conversation";
 import { buildThreadAnalysis } from "./threadAnalysis";
 import {
   appendAgentDelta,
@@ -216,9 +219,15 @@ function collabAgentLifecycleState(
 ): Extract<ThreadItem, { type: "collabAgentStatusUpdate" }>["lifecycleStatus"] {
   const lifecycleStatus =
     status === "completed"
-      ? { type: "final" as const, result: { type: "completed" as const, lastAgentMessage: message } }
+      ? {
+          type: "final" as const,
+          result: { type: "completed" as const, lastAgentMessage: message },
+        }
       : status === "errored"
-        ? { type: "final" as const, result: { type: "errored" as const, message } }
+        ? {
+            type: "final" as const,
+            result: { type: "errored" as const, message },
+          }
         : status === "shutdown"
           ? { type: "final" as const, result: { type: "shutdown" as const } }
           : { type: "notLoaded" as const };
@@ -321,7 +330,9 @@ test("buildProjectAgentSidebar groups parentless project chat roots by cwd", () 
     sidebar.projects.map((project) => project.label),
     ["alpha", "beta"],
   );
-  const alpha = sidebar.projects.find((project) => project.cwd === "/work/alpha");
+  const alpha = sidebar.projects.find(
+    (project) => project.cwd === "/work/alpha",
+  );
   assert.equal(alpha?.tree.threadId, "project-a");
   assert.equal(alpha?.tree.label, "Alpha chat");
   assert.equal(alpha?.tree.children[0]?.threadId, "owner-a");
@@ -441,7 +452,10 @@ test("buildProjectAgentSidebar keeps project root labels independent from user m
     cwd: "/work/project",
     turns: [
       makeTurn("turn-1", [
-        makeUserMessage("user-1", "This prompt should not rename the project root"),
+        makeUserMessage(
+          "user-1",
+          "This prompt should not rename the project root",
+        ),
       ]),
     ],
   });
@@ -534,10 +548,10 @@ test("getThreadAncestorIds returns ancestors for selected Chat subagents", () =>
     "/root/helper/reviewer",
   );
 
-  assert.deepEqual(getThreadAncestorIds([chat, helper, reviewer], "chat-reviewer"), [
-    "chat-helper",
-    "chat",
-  ]);
+  assert.deepEqual(
+    getThreadAncestorIds([chat, helper, reviewer], "chat-reviewer"),
+    ["chat-helper", "chat"],
+  );
 });
 
 test("buildProjectAgentSidebar keeps duplicate parentless roots visible in the same project", () => {
@@ -729,7 +743,11 @@ test("buildProjectAgentSidebar makes subagents inherit their project root", () =
   const owner = makeSubagentThread("owner", "project-root", "/root/owner", {
     cwd: "/another/repo",
   });
-  const reviewer = makeSubagentThread("reviewer", "owner", "/root/owner/reviewer");
+  const reviewer = makeSubagentThread(
+    "reviewer",
+    "owner",
+    "/root/owner/reviewer",
+  );
 
   const sidebar = buildProjectAgentSidebar([root, owner, reviewer]);
   const project = sidebar.projects[0];
@@ -771,7 +789,11 @@ test("buildProjectAgentSidebar keeps live external codex cli subagents under the
 test("getThreadSubtreeIdsChildrenFirst returns only a project subtree deepest first", () => {
   const root = makeSidebarThread({ id: "project-root", cwd: "/work/project" });
   const owner = makeSubagentThread("owner", "project-root", "/root/owner");
-  const reviewer = makeSubagentThread("reviewer", "owner", "/root/owner/reviewer");
+  const reviewer = makeSubagentThread(
+    "reviewer",
+    "owner",
+    "/root/owner/reviewer",
+  );
   const siblingProject = makeSidebarThread({
     id: "sibling-root",
     cwd: "/work/sibling",
@@ -779,13 +801,10 @@ test("getThreadSubtreeIdsChildrenFirst returns only a project subtree deepest fi
   const chat = makeSidebarThread({ id: "chat", cwd: "" });
 
   assert.deepEqual(
-    getThreadSubtreeIdsChildrenFirst([
-      root,
-      owner,
-      reviewer,
-      siblingProject,
-      chat,
-    ], "project-root"),
+    getThreadSubtreeIdsChildrenFirst(
+      [root, owner, reviewer, siblingProject, chat],
+      "project-root",
+    ),
     ["reviewer", "owner", "project-root"],
   );
 });
@@ -1527,10 +1546,12 @@ test("command item notifications create a visible running command and complete t
     "running\n",
   );
   assert.equal(
-    (withOutput.turns[0]?.items[0] as Extract<
-      ThreadItem,
-      { type: "commandExecution" }
-    >).aggregatedOutput,
+    (
+      withOutput.turns[0]?.items[0] as Extract<
+        ThreadItem,
+        { type: "commandExecution" }
+      >
+    ).aggregatedOutput,
     "running\n",
   );
 
@@ -1978,12 +1999,11 @@ test("mergeThreadSnapshot keeps one completed init context after first user turn
 
   assert.equal(initContextEntries.length, 1);
   assert.deepEqual(
-    merged.turns
-      .flatMap((turn) =>
-        turn.items
-          .filter((item) => item.type === "injectedContext")
-          .map(() => turn.status),
-      ),
+    merged.turns.flatMap((turn) =>
+      turn.items
+        .filter((item) => item.type === "injectedContext")
+        .map(() => turn.status),
+    ),
     ["completed"],
   );
 });
@@ -2968,17 +2988,13 @@ test("turn completed notifications do not restore compact-pruned old turns", () 
 test("pending turn completed compact notifications update stats after snapshot", () => {
   const pendingUpdates = new Map<string, ThreadUpdate[]>();
   queuePendingThreadUpdate(pendingUpdates, "thread-1", (thread) =>
-    updateThreadTurnNotification(
-      thread,
-      "turn/completed",
-      {
-        ...makeTurn("turn-compact", [
-          makeAgentMessage("compact-summary", "summarizing old context"),
-          makeCompactItem("compact-3"),
-        ]),
-        status: "completed",
-      },
-    ),
+    updateThreadTurnNotification(thread, "turn/completed", {
+      ...makeTurn("turn-compact", [
+        makeAgentMessage("compact-summary", "summarizing old context"),
+        makeCompactItem("compact-3"),
+      ]),
+      status: "completed",
+    }),
   );
   const snapshot = {
     ...makeThread(),
@@ -3437,9 +3453,10 @@ test("mergeThreadSnapshot preserves init context when a started snapshot omits t
     turns: [],
   });
 
-  assert.deepEqual(buildConversationEntries(merged).map((entry) => entry.id), [
-    "ctx-1",
-  ]);
+  assert.deepEqual(
+    buildConversationEntries(merged).map((entry) => entry.id),
+    ["ctx-1"],
+  );
 });
 
 test("mergeThreadSnapshot preserves same-content in-flight items with different ids", () => {
@@ -3671,10 +3688,7 @@ test("mergeThreadSnapshot preserves every same-content item with a distinct id",
     },
   );
 
-  assert.deepEqual(merged.turns, [
-    readTurn,
-    restoredTurn,
-  ]);
+  assert.deepEqual(merged.turns, [readTurn, restoredTurn]);
 });
 
 test("mergeThreadSnapshot preserves distinct in-flight items with matching content", () => {
@@ -3902,6 +3916,19 @@ test("appendAgentDelta preserves later same-content assistant turns", () => {
       durationMs: null,
     },
   ]);
+});
+
+test("appendAgentDelta does not create active command monitor state", () => {
+  const updated = appendAgentDelta(
+    markThreadCommandExecutionRunning(makeThread()),
+    "turn-agent",
+    "agent-message-1",
+    "working",
+  );
+  const analysis = buildThreadAnalysis(updated, 0);
+
+  assert.deepEqual(updated.activeCommandItems, undefined);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
 });
 
 test("mergeThreadSnapshot keeps the more complete in-flight agent message text", () => {
@@ -4560,6 +4587,147 @@ test("live command start marks stale completed snapshot active for monitors", ()
   ]);
 });
 
+test("live command completion removes active command monitor state", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 1",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const commandEnd: ThreadItem = {
+    ...commandStart,
+    status: "completed",
+    aggregatedOutput: "",
+    exitCode: 0,
+    durationMs: 1000,
+  };
+  const running = updateThreadItem(
+    markThreadCommandExecutionRunning(makeThread()),
+    "turn-command",
+    commandStart,
+    { startedAtMs: 1_000 },
+  );
+  const completed = updateThreadItem(running, "turn-command", commandEnd, {
+    completedAtMs: 2_000,
+  });
+  const analysis = buildThreadAnalysis(completed, 0);
+
+  assert.deepEqual(completed.activeCommandItems, []);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+});
+
+test("mergeThreadSnapshot clears stale active command state when snapshot has none", () => {
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 100",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const existing = {
+    ...makeThread(),
+    activeCommandItems: [commandStart],
+  } satisfies Thread;
+  const next = {
+    ...makeThread(),
+    updatedAt: 2,
+    turns: [makeTurn("turn-1", [])],
+  } satisfies Thread;
+
+  const merged = mergeThreadSnapshot(existing, next);
+
+  assert.deepEqual(merged.activeCommandItems, []);
+  assert.deepEqual(
+    buildThreadAnalysis(merged, 0).monitors.sections[0]?.monitors,
+    [],
+  );
+});
+
+test("compact-pruned late command start does not create active command monitor state", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const commandStart: ThreadItem = {
+    type: "commandExecution",
+    id: "cmd-1",
+    command: "rtk sleep 100",
+    cwd: "/repo",
+    status: "running",
+    initialWaitMs: 1000,
+    notifyOn: "exit",
+    aggregatedOutput: null,
+    exitCode: null,
+    durationMs: null,
+  };
+  const updated = updateThreadItem(
+    markThreadCommandExecutionRunning({
+      ...makeThread(),
+      turns: [makeTurn("turn-compact", [compact])],
+    }),
+    "turn-old-command",
+    commandStart,
+    { startedAtMs: 1_000 },
+  );
+  const analysis = buildThreadAnalysis(updated, 0);
+
+  assert.deepEqual(updated.activeCommandItems, undefined);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+});
+
+test("compact-pruned late command delta does not create active command monitor state", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const updated = appendCommandExecutionDelta(
+    markThreadCommandExecutionRunning({
+      ...makeThread(),
+      turns: [makeTurn("turn-compact", [compact])],
+    }),
+    "turn-old-command",
+    "cmd-1",
+    "late output\n",
+  );
+  const analysis = buildThreadAnalysis(updated, 0);
+
+  assert.deepEqual(updated.activeCommandItems, undefined);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+});
+
+test("compact turn command delta without existing command does not create placeholder monitor", () => {
+  const compact = {
+    ...makeCompactItem("compact-1"),
+    completedAtMs: 2_000,
+  } satisfies ThreadItem;
+  const thread = markThreadCommandExecutionRunning({
+    ...makeThread(),
+    turns: [makeTurn("turn-compact", [compact])],
+  });
+  const updated = appendCommandExecutionDelta(
+    thread,
+    "turn-compact",
+    "cmd-1",
+    "late output\n",
+  );
+  const analysis = buildThreadAnalysis(updated, 0);
+
+  assert.deepEqual(updated.turns, thread.turns);
+  assert.deepEqual(updated.activeCommandItems, undefined);
+  assert.deepEqual(analysis.monitors.sections[0]?.monitors, []);
+});
+
 test("live command delta before start creates one monitor and merges start", () => {
   const commandStart: ThreadItem = {
     type: "commandExecution",
@@ -4673,7 +4841,11 @@ test("uninitialized live schedule notifications update monitors after the snapsh
     pendingUpdates,
     "thread-1",
     (thread) =>
-      updateThreadItem(thread, "turn-schedule-unsubscribe", scheduleUnsubscribe),
+      updateThreadItem(
+        thread,
+        "turn-schedule-unsubscribe",
+        scheduleUnsubscribe,
+      ),
   );
   updated = applyPendingThreadUpdates(updated, pendingUpdates);
   analysis = buildThreadAnalysis(updated, 0);
@@ -4907,7 +5079,11 @@ for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        lifecycleStatus: collabAgentLifecycleState(terminalStatus, "done", null),
+        lifecycleStatus: collabAgentLifecycleState(
+          terminalStatus,
+          "done",
+          null,
+        ),
       },
       {
         type: "collabAgentStatusUpdate",
@@ -4916,7 +5092,11 @@ for (const terminalStatus of ["completed", "errored", "shutdown", "notFound"]) {
         senderPath: "/root/worker",
         recipientThreadId: "thread-1",
         recipientPath: "/root",
-        lifecycleStatus: collabAgentLifecycleState(terminalStatus, "done", null),
+        lifecycleStatus: collabAgentLifecycleState(
+          terminalStatus,
+          "done",
+          null,
+        ),
       },
     ]);
   });
@@ -5446,7 +5626,11 @@ test("terminal child status does not hide restored conversation history or keep 
     senderPath: "/root/worker/tester",
     recipientThreadId: "thread-1",
     recipientPath: "/root/worker",
-    lifecycleStatus: collabAgentLifecycleState("shutdown", "completed", "/root/worker/tester"),
+    lifecycleStatus: collabAgentLifecycleState(
+      "shutdown",
+      "completed",
+      "/root/worker/tester",
+    ),
   };
   const updated = updateThreadItem(restoredThread, "turn-child", childStatus, {
     completedAtMs: 3_000,
@@ -5518,11 +5702,7 @@ test("initialized live child completion preserves existing assistant messages", 
   assert.ok(updated);
   assert.deepEqual(
     buildConversationEntries(updated).map((entry) => entry.text),
-    [
-      "run worker",
-      "Worker is running.",
-      "/root/worker • completed • done",
-    ],
+    ["run worker", "Worker is running.", "/root/worker • completed • done"],
   );
 });
 
@@ -5819,12 +5999,7 @@ test("pending agent deltas preserve structured process exit marker text with a d
 });
 
 test("appendAgentDelta preserves split structured process exit marker text", () => {
-  const partial = appendAgentDelta(
-    makeThread(),
-    "turn-1",
-    "item-1",
-    "<event",
-  );
+  const partial = appendAgentDelta(makeThread(), "turn-1", "item-1", "<event");
   const middle = appendAgentDelta(
     partial,
     "turn-1",
@@ -5884,12 +6059,7 @@ for (const operation of ["sendMessage", "send_message", "childCompletion"]) {
 }
 
 test("appendAgentDelta keeps split ordinary JSON assistant text", () => {
-  const partial = appendAgentDelta(
-    makeThread(),
-    "turn-1",
-    "item-1",
-    '{"foo":',
-  );
+  const partial = appendAgentDelta(makeThread(), "turn-1", "item-1", '{"foo":');
 
   const updated = appendAgentDelta(partial, "turn-1", "item-1", '"bar"}');
 
@@ -5960,12 +6130,7 @@ test("updateThreadItem clears suppressed legacy stream buffers", () => {
 });
 
 test("updateThreadTurn clears suppressed legacy stream buffers", () => {
-  const partial = appendAgentDelta(
-    makeThread(),
-    "turn-1",
-    "item-1",
-    "<event",
-  );
+  const partial = appendAgentDelta(makeThread(), "turn-1", "item-1", "<event");
   const completed = updateThreadTurn(partial, {
     id: "turn-1",
     items: [
@@ -6043,7 +6208,10 @@ test("treeThreadLifecycleStatusClass shows subagent waiting separately", () => {
     lifecycleStatus: { type: "waiting" as const, reason: "child" as const },
   } satisfies Thread;
 
-  assert.equal(treeThreadLifecycleStatusClass(makeTreeNode(thread)), "waiting-subagent");
+  assert.equal(
+    treeThreadLifecycleStatusClass(makeTreeNode(thread)),
+    "waiting-subagent",
+  );
   assert.equal(
     treeThreadLifecycleStatusLabel("waiting-subagent"),
     "Waiting on subagent",
@@ -6120,7 +6288,10 @@ test("treeThreadLifecycleStatusClass prioritizes backend event tool flags over s
 test("treeThreadLifecycleStatusClass ignores process exit restore failures when backend status is idle", () => {
   const thread = {
     ...makeThread(),
-    lifecycleStatus: { type: "final" as const, result: { type: "completed" as const } },
+    lifecycleStatus: {
+      type: "final" as const,
+      result: { type: "completed" as const },
+    },
     turns: [
       {
         id: "turn-1",
@@ -6157,7 +6328,10 @@ test("treeThreadLifecycleStatusClass ignores process exit restore failures when 
 test("treeThreadLifecycleStatusClass ignores event tool subscriptions after unsubscribe when backend status is idle", () => {
   const thread = {
     ...makeThread(),
-    lifecycleStatus: { type: "final" as const, result: { type: "completed" as const } },
+    lifecycleStatus: {
+      type: "final" as const,
+      result: { type: "completed" as const },
+    },
     turns: [
       {
         id: "turn-1",
@@ -6222,7 +6396,9 @@ test("treeThreadLifecycleStatusClass does not infer parent status from active de
   };
 
   assert.equal(
-    treeThreadLifecycleStatusClass(makeTreeNode(parent, [makeTreeNode(activeChild)])),
+    treeThreadLifecycleStatusClass(
+      makeTreeNode(parent, [makeTreeNode(activeChild)]),
+    ),
     "todo",
   );
 });
@@ -6508,7 +6684,10 @@ test("getPresenceLabel surfaces canonical thread lifecycle status", () => {
 test("isThreadThinking stays false while a turn only injects init context", () => {
   const thread: Thread = {
     ...makeThread(),
-    lifecycleStatus: { type: "active" as const, activeFlags: ["waitingOnUserInput"] },
+    lifecycleStatus: {
+      type: "active" as const,
+      activeFlags: ["waitingOnUserInput"],
+    },
     turns: [
       {
         id: "turn-1",
@@ -6548,7 +6727,10 @@ test("isThreadThinking stays false while a turn only injects init context", () =
 test("isThreadThinking ignores item-derived running state when backend status is idle", () => {
   const thread = {
     ...makeThread(),
-    lifecycleStatus: { type: "final" as const, result: { type: "completed" as const } },
+    lifecycleStatus: {
+      type: "final" as const,
+      result: { type: "completed" as const },
+    },
     turns: [
       {
         id: "turn-1",

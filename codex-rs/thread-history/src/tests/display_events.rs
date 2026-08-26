@@ -64,6 +64,90 @@ use super::*;
     }
 
     #[test]
+    fn runtime_state_builtin_tool_history_rebuilds_inspection_items() {
+        let commands_output = serde_json::json!({
+            "commands": [{
+                "command_id": 7,
+                "call_id": "exec-1",
+                "label": "rtk cargo test",
+                "tty": false,
+                "notify_on": "exit",
+                "cwd": "/repo",
+                "command_text": "rtk cargo test --workspace"
+            }]
+        });
+        let subscriptions_output = serde_json::json!({
+            "subscriptions": [{
+                "type": "schedule",
+                "subscription_id": "schedule-1",
+                "label": "daily cleanup",
+                "status": "active",
+                "schedule": {
+                    "kind": "every_day_at",
+                    "time": "09:00",
+                    "timezone": "Asia/Shanghai"
+                },
+                "message": "cleanup"
+            }]
+        });
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "list-commands-1".into(),
+                    tool: "list_commands".into(),
+                    arguments: serde_json::json!({}),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(commands_output.clone()),
+                    lifecycle_at_ms: 123,
+                },
+            )),
+            RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
+                protocol::protocol::BuiltinToolCallDisplayEvent {
+                    thread_id: ThreadId::new(),
+                    turn_id: "turn-1".into(),
+                    id: "list-subscriptions-1".into(),
+                    tool: "list_subscriptions".into(),
+                    arguments: serde_json::json!({}),
+                    status: protocol::protocol::BuiltinToolCallStatus::Completed,
+                    output: Some(subscriptions_output.clone()),
+                    lifecycle_at_ms: 124,
+                },
+            )),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::BuiltinToolCall {
+                    id: "list-commands-1".into(),
+                    tool: "list_commands".into(),
+                    arguments: serde_json::json!({}),
+                    status: DynamicToolCallStatus::Completed,
+                    output: Some(commands_output),
+                },
+                ThreadItem::BuiltinToolCall {
+                    id: "list-subscriptions-1".into(),
+                    tool: "list_subscriptions".into(),
+                    arguments: serde_json::json!({}),
+                    status: DynamicToolCallStatus::Completed,
+                    output: Some(subscriptions_output),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn typed_read_agent_builtin_tool_history_rebuilds_thread_item() {
         let output = serde_json::json!({
             "target": "/root/worker",
