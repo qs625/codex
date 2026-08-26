@@ -1097,7 +1097,7 @@ export function appendAgentDelta(
             ];
         return { ...turn, items };
       })
-    : threadHasCompactItem(thread)
+    : threadHasCompactItem(thread) && !isThreadActive(thread)
       ? thread.turns
       : [
           ...thread.turns,
@@ -1121,6 +1121,10 @@ export function appendAgentDelta(
           } satisfies Turn,
         ];
   return pruneThreadSnapshotToLatestCompact({ ...thread, turns });
+}
+
+function isThreadActive(thread: Thread) {
+  return thread.lifecycleStatus.type === "active";
 }
 
 function threadHasCompactItem(thread: Thread) {
