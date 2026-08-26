@@ -76,6 +76,7 @@
 - thread reload / history replay 默认只消费 rollout `Limited` 视图；因此“重启后能否恢复”本质上是持久化策略问题，不只是 replay 代码问题。
 - `commandExecution` 的历史重建依赖 thread history 对 `ExecCommandBegin` / `ExecCommandEnd` 的重放；如果 rollout limited 缺少所需事件，重启后就无法恢复 `exec_command` thread item。
 - 对 `thread/read` / `thread/resume` / `thread/turns/list` 这类“persisted history + live turn merge”路径，只有仍处于 in-progress 的 live turn snapshot 才能覆盖 persisted history；带 fallback 语义的“最后一个 turn 快照”不能当作 live turn merge 回去，否则会把已完成 command 或其他 finished item 重新盖回成 stale live residue。
+- 新创建的 rollout session 使用目录容器布局：`sessions/YYYY/MM/DD/rollout-<timestamp>-<thread_id>/rollout.jsonl`，compact 后的 head segment 和 `segments.json` 留在同一容器目录内；旧 flat single file 与旧 flat segmented sidecar layout 必须继续可读。普通 by-id read/resume/load_history 仍只通过 manifest 定位当前 head segment，不读取旧 base 大文件或完整 segment chain；显式按具体 segment file path 读取保留调试语义。
 - `list_agents` 当前依赖 runtime 的 `registered_agents()` 索引和 `live_thread_agent_status(...)`，不是直接从持久化 thread store 列 completed agent；reload 后如果未把已完成 agent 恢复到 runtime 注册表，`list_agents` 就会缺失它们。
 - owner 在处理“看起来像前端问题”的缺失、重复、状态错乱时，应默认检查 `rollout policy -> thread history replay -> runtime registration -> renderer` 这条链，而不是直接改 renderer。
 

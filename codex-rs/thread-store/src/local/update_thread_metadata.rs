@@ -12,6 +12,7 @@ use rollout::append_thread_name;
 use rollout::find_archived_thread_path_by_id_str;
 use rollout::find_thread_path_by_id_str;
 use rollout::read_session_meta_line;
+use rollout::resolve_current_segment_path;
 use rollout_api::ARCHIVED_SESSIONS_SUBDIR;
 use state::ThreadMetadataBuilder;
 
@@ -637,6 +638,9 @@ async fn resolve_rollout_path(
         message: format!("failed to locate thread id {thread_id}: {err}"),
     })?;
     if let Some(path) = active_path {
+        let path = resolve_current_segment_path(path.as_path())
+            .await
+            .unwrap_or(path);
         return Ok(ResolvedRolloutPath {
             path,
             archived: false,
@@ -647,7 +651,7 @@ async fn resolve_rollout_path(
             message: format!("thread not found: {thread_id}"),
         });
     }
-    find_archived_thread_path_by_id_str(
+    let archived_path = find_archived_thread_path_by_id_str(
         store.config.codex_home.as_path(),
         &thread_id.to_string(),
         state_db_ctx.as_deref(),
@@ -655,13 +659,18 @@ async fn resolve_rollout_path(
     .await
     .map_err(|err| ThreadStoreError::InvalidRequest {
         message: format!("failed to locate archived thread id {thread_id}: {err}"),
-    })?
-    .map(|path| ResolvedRolloutPath {
+    })?;
+    let Some(path) = archived_path else {
+        return Err(ThreadStoreError::InvalidRequest {
+            message: format!("thread not found: {thread_id}"),
+        });
+    };
+    let path = resolve_current_segment_path(path.as_path())
+        .await
+        .unwrap_or(path);
+    Ok(ResolvedRolloutPath {
         path,
         archived: true,
-    })
-    .ok_or_else(|| ThreadStoreError::InvalidRequest {
-        message: format!("thread not found: {thread_id}"),
     })
 }
 

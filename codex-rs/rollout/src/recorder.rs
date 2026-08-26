@@ -31,6 +31,7 @@ use tracing::warn;
 
 use super::ARCHIVED_SESSIONS_SUBDIR;
 use super::SESSIONS_SUBDIR;
+use super::layout;
 use super::list::Cursor;
 use super::list::SortDirection;
 use super::list::ThreadItem;
@@ -40,7 +41,6 @@ use super::list::ThreadSortKey;
 use super::list::ThreadsPage;
 use super::list::get_threads;
 use super::list::get_threads_in_root;
-use super::list::parse_timestamp_uuid_from_filename;
 use super::metadata;
 use super::session_index::find_thread_names_by_ids;
 use crate::config::RolloutConfigView;
@@ -843,6 +843,12 @@ impl RolloutRecorder {
     pub async fn load_rollout_items(
         path: &Path,
     ) -> std::io::Result<(Vec<RolloutItem>, Option<ThreadId>, usize)> {
+        let path = if path.is_dir() {
+            resolve_current_segment_path(path).await?
+        } else {
+            path.to_path_buf()
+        };
+        let path = path.as_path();
         trace!("Resuming rollout from {path:?}");
         let text = tokio::fs::read_to_string(path).await?;
         if text.trim().is_empty() {
@@ -1335,8 +1341,7 @@ fn thread_item_sort_key(
     item: &ThreadItem,
     sort_key: ThreadSortKey,
 ) -> Option<(OffsetDateTime, uuid::Uuid)> {
-    let file_name = item.path.file_name()?.to_str()?;
-    let (created_at, id) = parse_timestamp_uuid_from_filename(file_name)?;
+    let (created_at, id) = layout::parse_timestamp_uuid_from_rollout_path(&item.path)?;
     let timestamp = match sort_key {
         ThreadSortKey::CreatedAt => created_at,
         ThreadSortKey::UpdatedAt => {
@@ -1418,20 +1423,12 @@ impl SegmentChain {
         let current_head = self
             .head()
             .ok_or_else(|| IoError::other("segment chain has no head"))?;
-        let parent = current_head.parent().ok_or_else(|| {
+        layout::next_segment_path(current_head, self.segments.len()).ok_or_else(|| {
             IoError::other(format!(
-                "rollout segment path has no parent: {}",
+                "failed to derive next rollout segment path from {}",
                 current_head.display()
             ))
-        })?;
-        let base_stem = base_rollout_stem(current_head).ok_or_else(|| {
-            IoError::other(format!(
-                "failed to derive rollout segment stem from {}",
-                current_head.display()
-            ))
-        })?;
-        let next_index = self.segments.len();
-        Ok(parent.join(format!("{base_stem}.compact-{next_index:06}.jsonl")))
+        })
     }
 
     fn push_segment(&mut self, path: PathBuf) -> std::io::Result<SegmentManifest> {
@@ -1463,27 +1460,12 @@ impl SegmentChain {
 }
 
 pub fn segment_manifest_path_for_rollout(path: &Path) -> PathBuf {
-    let parent = path.parent().unwrap_or_else(|| Path::new(""));
-    let stem = base_rollout_stem(path)
-        .or_else(|| {
-            path.file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-        })
-        .unwrap_or_else(|| "rollout".to_string());
-    parent.join(format!("{stem}.segments.json"))
+    layout::segment_manifest_path_for_rollout_path(path)
 }
 
 pub fn segmented_compaction_count_for_rollout_path(path: &Path) -> Option<u32> {
     let manifest = load_segment_manifest_for_path(path).ok().flatten()?;
     Some(manifest.segments.len().saturating_sub(1) as u32)
-}
-
-fn base_rollout_stem(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_string_lossy();
-    match stem.find(".compact-") {
-        Some(index) => Some(stem[..index].to_string()),
-        None => Some(stem.to_string()),
-    }
 }
 
 fn load_segment_manifest_for_path(path: &Path) -> std::io::Result<Option<SegmentManifest>> {
@@ -1506,6 +1488,15 @@ fn load_segment_manifest_for_path(path: &Path) -> std::io::Result<Option<Segment
 pub async fn resolve_current_segment_path(path: &Path) -> std::io::Result<PathBuf> {
     let manifest_path = segment_manifest_path_for_rollout(path);
     let Some(manifest) = load_segment_manifest_for_path(path)? else {
+        if path.is_dir() {
+            let base_path = layout::directory_base_segment_path(path);
+            if tokio::fs::try_exists(base_path.as_path())
+                .await
+                .unwrap_or(false)
+            {
+                return Ok(base_path);
+            }
+        }
         return Ok(path.to_path_buf());
     };
     let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
@@ -1531,7 +1522,12 @@ async fn persist_segment_manifest(
 }
 
 async fn read_latest_session_meta_line(path: &Path) -> std::io::Result<SessionMetaLine> {
-    let file = tokio::fs::File::open(path).await?;
+    let path = if path.is_dir() {
+        resolve_current_segment_path(path).await?
+    } else {
+        path.to_path_buf()
+    };
+    let file = tokio::fs::File::open(path.as_path()).await?;
     let reader = tokio::io::BufReader::new(file);
     let mut lines = reader.lines();
     let mut latest = None;
@@ -1576,9 +1572,7 @@ fn precompute_log_file_info(
         .format(format)
         .map_err(|e| IoError::other(format!("failed to format timestamp: {e}")))?;
 
-    let filename = format!("rollout-{date_str}-{conversation_id}.jsonl");
-
-    let path = dir.join(filename);
+    let path = layout::new_session_base_path(&dir, &date_str, conversation_id);
 
     Ok(LogFileInfo {
         path,
@@ -1969,6 +1963,11 @@ pub async fn append_rollout_item_to_path(
     rollout_path: &Path,
     item: &RolloutItem,
 ) -> std::io::Result<()> {
+    let rollout_path = if rollout_path.is_dir() {
+        resolve_current_segment_path(rollout_path).await?
+    } else {
+        rollout_path.to_path_buf()
+    };
     let file = tokio::fs::OpenOptions::new()
         .append(true)
         .open(rollout_path)

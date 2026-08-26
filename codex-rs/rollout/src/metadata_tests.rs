@@ -152,7 +152,7 @@ fn builder_from_items_falls_back_to_filename() {
     let items = vec![RolloutItem::Compacted(CompactedItem {
         message: "noop".to_string(),
         replacement_history: None,
-                visible_replacement_history_len: None,
+        visible_replacement_history_len: None,
     })];
 
     let builder = builder_from_items(items.as_slice(), path.as_path()).expect("builder");
@@ -320,6 +320,65 @@ async fn backfill_sessions_normalizes_cwd_before_upsert() {
     assert_eq!(stored.cwd, normalize_cwd_for_state_db(&session_cwd));
 }
 
+#[tokio::test]
+async fn backfill_sessions_reads_legacy_flat_segmented_head() {
+    let dir = tempdir().expect("tempdir");
+    let codex_home = dir.path().to_path_buf();
+    let thread_uuid = Uuid::new_v4();
+    let base_path = write_rollout_in_sessions_with_cwd(
+        codex_home.as_path(),
+        "2026-01-27T12-34-56",
+        "2026-01-27T12:34:56Z",
+        thread_uuid,
+        codex_home.join("base-cwd"),
+        /*git*/ None,
+    );
+    let base_stem = base_path.file_stem().expect("base stem").to_string_lossy();
+    let head_path = base_path
+        .parent()
+        .expect("sessions dir")
+        .join(format!("{base_stem}.compact-000001.jsonl"));
+    let head_cwd = codex_home.join("head-cwd");
+    write_rollout_at_path(
+        head_path.as_path(),
+        "2026-01-27T12:35:00Z",
+        thread_uuid,
+        head_cwd.clone(),
+        /*git*/ None,
+    );
+    std::fs::write(
+        crate::recorder::segment_manifest_path_for_rollout(base_path.as_path()),
+        serde_json::json!({
+            "version": 1,
+            "thread_id": thread_uuid,
+            "head": head_path.file_name().expect("head file name").to_string_lossy(),
+            "segments": [
+                base_path.file_name().expect("base file name").to_string_lossy(),
+                head_path.file_name().expect("head file name").to_string_lossy()
+            ],
+            "updated_at": "2026-01-27T12:35:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write manifest");
+
+    let runtime = state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+        .await
+        .expect("initialize runtime");
+
+    backfill_sessions(runtime.as_ref(), codex_home.as_path(), "test-provider").await;
+
+    let thread_id = ThreadId::from_string(&thread_uuid.to_string()).expect("thread id");
+    let stored = runtime
+        .get_thread(thread_id)
+        .await
+        .expect("get thread")
+        .expect("thread should be backfilled");
+
+    assert_eq!(stored.rollout_path, head_path);
+    assert_eq!(stored.cwd, normalize_cwd_for_state_db(&head_cwd));
+}
+
 fn write_rollout_in_sessions(
     codex_home: &Path,
     filename_ts: &str,
@@ -345,12 +404,22 @@ fn write_rollout_in_sessions_with_cwd(
     cwd: PathBuf,
     git: Option<GitInfo>,
 ) -> PathBuf {
-    let id = ThreadId::from_string(&thread_uuid.to_string()).expect("thread id");
     let sessions_dir = codex_home.join("sessions");
     std::fs::create_dir_all(sessions_dir.as_path()).expect("create sessions dir");
     let path = sessions_dir.join(format!("rollout-{filename_ts}-{thread_uuid}.jsonl"));
+    write_rollout_at_path(path.as_path(), event_ts, thread_uuid, cwd, git);
+    path
+}
+
+fn write_rollout_at_path(
+    path: &Path,
+    event_ts: &str,
+    thread_uuid: Uuid,
+    cwd: PathBuf,
+    git: Option<GitInfo>,
+) {
     let session_meta = SessionMeta {
-        id,
+        id: ThreadId::from_string(&thread_uuid.to_string()).expect("thread id"),
         forked_from_id: None,
         timestamp: event_ts.to_string(),
         cwd,
@@ -379,5 +448,4 @@ fn write_rollout_in_sessions_with_cwd(
     let json = serde_json::to_string(&rollout_line).expect("serialize rollout");
     let mut file = File::create(&path).expect("create rollout");
     writeln!(file, "{json}").expect("write rollout");
-    path
 }

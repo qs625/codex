@@ -286,6 +286,17 @@ async fn load_rollout_items_skips_legacy_ghost_snapshot_lines() -> std::io::Resu
     Ok(())
 }
 
+#[test]
+fn plain_rollout_jsonl_uses_legacy_manifest_path() {
+    let home = TempDir::new().expect("temp dir");
+    let rollout_path = home.path().join("rollout.jsonl");
+
+    assert_eq!(
+        segment_manifest_path_for_rollout(&rollout_path),
+        home.path().join("rollout.segments.json")
+    );
+}
+
 #[tokio::test]
 async fn load_rollout_items_preserves_legacy_guardian_assessment_lines() -> std::io::Result<()> {
     let home = TempDir::new().expect("temp dir");
@@ -529,6 +540,17 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
     )
     .await?;
     let initial_path = recorder.rollout_path();
+    assert_eq!(
+        initial_path.file_name().and_then(|name| name.to_str()),
+        Some("rollout.jsonl")
+    );
+    let session_dir = initial_path.parent().expect("session dir").to_path_buf();
+    assert!(
+        session_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("rollout-"))
+    );
 
     recorder
         .record_canonical_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
@@ -562,6 +584,7 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
     );
 
     let manifest_path = segment_manifest_path_for_rollout(&initial_path);
+    assert_eq!(manifest_path, session_dir.join("segments.json"));
     let manifest_text = std::fs::read_to_string(manifest_path)?;
     assert!(manifest_text.contains("\"version\": 1"));
     assert!(manifest_text.contains("compact-000001.jsonl"));
@@ -581,6 +604,30 @@ async fn recorder_rotates_to_head_segment_on_compaction() -> std::io::Result<()>
         !std::fs::read_to_string(&head_path)?.contains("before compact"),
         "head segment should not contain pre-compact events"
     );
+    let (dir_items, dir_thread_id, _) = RolloutRecorder::load_rollout_items(&session_dir).await?;
+    assert_eq!(dir_thread_id, Some(thread_id));
+    assert_eq!(
+        serde_json::to_value(&dir_items)?,
+        serde_json::to_value(&head_items)?
+    );
+
+    let page = RolloutRecorder::list_threads(
+        /*state_db*/ None,
+        &config,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        SortDirection::Desc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        config.model_provider_id.as_str(),
+        /*search_term*/ None,
+    )
+    .await?;
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].thread_id, Some(thread_id));
+    assert_eq!(page.items[0].path, head_path);
 
     recorder.shutdown().await?;
     Ok(())
@@ -1117,6 +1164,79 @@ async fn list_threads_filesystem_asc_paginates_same_timestamp_ties() -> std::io:
             ThreadId::from_string(&ids[2].to_string()).expect("thread id")
         )]
     );
+    assert_eq!(page2.next_cursor, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_threads_filesystem_asc_paginates_legacy_flat_segmented_heads() -> std::io::Result<()>
+{
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let timestamp = "2025-01-03T17-00-00";
+    let ids = [Uuid::from_u128(9031), Uuid::from_u128(9032)];
+    let mut head_paths = Vec::new();
+    for id in ids {
+        let base_path = write_session_file(home.path(), timestamp, id)?;
+        let base_stem = base_path.file_stem().expect("base stem").to_string_lossy();
+        let head_path = base_path
+            .parent()
+            .expect("session parent")
+            .join(format!("{base_stem}.compact-000001.jsonl"));
+        std::fs::copy(&base_path, &head_path)?;
+        let thread_id = ThreadId::from_string(&id.to_string()).expect("thread id");
+        std::fs::write(
+            segment_manifest_path_for_rollout(&base_path),
+            serde_json::json!({
+                "version": 1,
+                "thread_id": thread_id,
+                "head": head_path.file_name().expect("head file name").to_string_lossy(),
+                "segments": [
+                    base_path.file_name().expect("base file name").to_string_lossy(),
+                    head_path.file_name().expect("head file name").to_string_lossy()
+                ],
+                "updated_at": "2025-01-03T17:00:00Z"
+            })
+            .to_string(),
+        )?;
+        head_paths.push(head_path);
+    }
+
+    let default_provider = config.model_provider_id.clone();
+    let page1 = RolloutRecorder::list_threads(
+        /*state_db_ctx*/ None,
+        &config,
+        /*page_size*/ 1,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        SortDirection::Asc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        default_provider.as_str(),
+        /*search_term*/ None,
+    )
+    .await?;
+    assert_eq!(page1.items.len(), 1);
+    assert_eq!(page1.items[0].path, head_paths[0]);
+    assert!(page1.next_cursor.is_some());
+
+    let page2 = RolloutRecorder::list_threads(
+        /*state_db_ctx*/ None,
+        &config,
+        /*page_size*/ 1,
+        page1.next_cursor.as_ref(),
+        ThreadSortKey::CreatedAt,
+        SortDirection::Asc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        default_provider.as_str(),
+        /*search_term*/ None,
+    )
+    .await?;
+    assert_eq!(page2.items.len(), 1);
+    assert_eq!(page2.items[0].path, head_paths[1]);
     assert_eq!(page2.next_cursor, None);
     Ok(())
 }
