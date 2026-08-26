@@ -13,6 +13,7 @@ import {
   CodeIcon,
   DocumentIcon,
   GearIcon,
+  OpenIcon,
   RobotIcon,
   ShareIcon,
   TerminalIcon,
@@ -34,6 +35,10 @@ type ToolRowProps = {
   onToggleOpen?: (open: boolean) => void;
   selectedEntryId?: string | null;
   onSelectEntry?: (entryId: string | null) => void;
+};
+
+type ArtifactRowProps = {
+  entry: ConversationEntry;
 };
 
 type CompactRowProps = {
@@ -85,6 +90,13 @@ const TOOL_BLOCKED_STATUSES = new Set([
   "canceled",
   "timed_out",
 ]);
+const ARTIFACT_PREVIEW_MIME_TYPES = new Set(["image/svg+xml", "text/html"]);
+const MARKDOWN_ARTIFACT_MIME_TYPES = new Set(["text/markdown", "text/md"]);
+const UNSUPPORTED_ARTIFACT_MIME_TYPES = new Set([
+  "application/vnd.ant.mermaid",
+  "text/mermaid",
+]);
+const ARTIFACT_DISPLAY_SOURCE_MAX_CHARS = 20_000;
 
 function clampScale(value: number) {
   return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
@@ -919,6 +931,213 @@ export const ToolRow = memo(function ToolRow({
   );
 }, areToolRowPropsEqual);
 
+export const ArtifactRow = memo(function ArtifactRow({
+  entry,
+}: ArtifactRowProps) {
+  const artifact = entry.artifact;
+  const mimeType = normalizeArtifactMimeType(artifact?.mimeType);
+  const title = artifact?.title?.trim() || "Artifact";
+  const content = artifact?.content ?? "";
+  const isRenderable = isRenderableArtifactMimeType(mimeType);
+  const isMarkdown = isMarkdownArtifactMimeType(mimeType);
+  const [mode, setMode] = useState<"preview" | "source">(() =>
+    isRenderable || isMarkdown ? "preview" : "source",
+  );
+  const displaySource = truncateArtifactSource(content);
+  const sourceIsTruncated =
+    content.length > ARTIFACT_DISPLAY_SOURCE_MAX_CHARS ||
+    artifact?.truncated === true;
+
+  const copySource = async () => {
+    if (!navigator.clipboard) {
+      return;
+    }
+    await navigator.clipboard.writeText(content);
+  };
+
+  const openSource = () => {
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+  };
+
+  return (
+    <article className="artifact-row">
+      <div className="event-icon artifact-icon">
+        <CodeIcon />
+      </div>
+      <section className="artifact-card" aria-label={title}>
+        <div className="artifact-card-head">
+          <div className="artifact-card-copy">
+            <strong>{title}</strong>
+            <span>{mimeType}</span>
+          </div>
+          <div className="artifact-actions">
+            <div
+              className="artifact-mode-control"
+              role="tablist"
+              aria-label="Artifact view"
+            >
+              <button
+                type="button"
+                className={mode === "preview" ? "selected" : ""}
+                onClick={() => setMode("preview")}
+                disabled={!isRenderable && !isMarkdown}
+                aria-selected={mode === "preview"}
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                className={mode === "source" ? "selected" : ""}
+                onClick={() => setMode("source")}
+                aria-selected={mode === "source"}
+              >
+                Source
+              </button>
+            </div>
+            <button
+              type="button"
+              className="artifact-action"
+              onClick={() => void copySource()}
+            >
+              Copy
+            </button>
+            <button
+              type="button"
+              className="artifact-action icon-only"
+              onClick={openSource}
+              title="Open source"
+            >
+              <OpenIcon />
+            </button>
+          </div>
+        </div>
+        <div className="artifact-card-body">
+          {mode === "preview" ? (
+            <ArtifactPreview
+              content={displaySource}
+              mimeType={mimeType}
+              isMarkdown={isMarkdown}
+            />
+          ) : (
+            <ArtifactSource
+              content={displaySource}
+              mimeType={mimeType}
+              truncated={sourceIsTruncated}
+            />
+          )}
+        </div>
+        {!isRenderable && !isMarkdown ? (
+          <div className="artifact-fallback">
+            <DocumentIcon />
+            <span>
+              {UNSUPPORTED_ARTIFACT_MIME_TYPES.has(mimeType)
+                ? "Preview unavailable for this artifact type."
+                : "Unsupported artifact type."}
+            </span>
+          </div>
+        ) : null}
+      </section>
+    </article>
+  );
+});
+
+function ArtifactPreview({
+  content,
+  mimeType,
+  isMarkdown,
+}: {
+  content: string;
+  mimeType: string;
+  isMarkdown: boolean;
+}) {
+  if (isMarkdown) {
+    return (
+      <div className="artifact-markdown-preview">
+        <MarkdownContent text={content} />
+      </div>
+    );
+  }
+
+  if (!isRenderableArtifactMimeType(mimeType)) {
+    return (
+      <ArtifactSource
+        content={content}
+        mimeType={mimeType}
+        truncated={false}
+      />
+    );
+  }
+
+  return (
+    <iframe
+      className="artifact-preview-frame"
+      sandbox=""
+      referrerPolicy="no-referrer"
+      srcDoc={buildArtifactSrcDoc(content, mimeType)}
+      title="Artifact preview"
+    />
+  );
+}
+
+function ArtifactSource({
+  content,
+  mimeType,
+  truncated,
+}: {
+  content: string;
+  mimeType: string;
+  truncated: boolean;
+}) {
+  return (
+    <div className="artifact-source">
+      <pre>
+        <code>{content}</code>
+      </pre>
+      {truncated ? <span>{mimeType} source preview truncated.</span> : null}
+    </div>
+  );
+}
+
+function isRenderableArtifactMimeType(mimeType: string) {
+  return ARTIFACT_PREVIEW_MIME_TYPES.has(normalizeArtifactMimeType(mimeType));
+}
+
+function isMarkdownArtifactMimeType(mimeType: string) {
+  return MARKDOWN_ARTIFACT_MIME_TYPES.has(normalizeArtifactMimeType(mimeType));
+}
+
+function normalizeArtifactMimeType(mimeType: string | null | undefined) {
+  return (
+    mimeType
+      ?.split(";")[0]
+      ?.trim()
+      .toLowerCase() || "application/octet-stream"
+  );
+}
+
+function truncateArtifactSource(content: string) {
+  return content.length > ARTIFACT_DISPLAY_SOURCE_MAX_CHARS
+    ? `${content.slice(0, ARTIFACT_DISPLAY_SOURCE_MAX_CHARS)}\n\n[truncated]`
+    : content;
+}
+
+function buildArtifactSrcDoc(content: string, mimeType: string) {
+  const csp =
+    "default-src 'none'; img-src data:; media-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'";
+  const body =
+    mimeType === "image/svg+xml"
+      ? `<main class="artifact-svg-host">${content}</main>`
+      : content;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}"><style>html,body{margin:0;min-height:100%;background:#fff;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{padding:16px;box-sizing:border-box}.artifact-svg-host{display:grid;place-items:center;min-height:220px}.artifact-svg-host svg{max-width:100%;height:auto}</style></head><body>${body}</body></html>`;
+}
+
+function escapeHtmlAttribute(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
 function hasToolBody(entry: ConversationEntry) {
   return Boolean(entry.toolDetails || entry.toolOutput || entry.pollEventProgress);
 }
@@ -1194,6 +1413,9 @@ function renderNestedConversationCell(
   }
   if (cell.kind === "event") {
     return <EventRow entry={cell.entries[0]} />;
+  }
+  if (cell.kind === "artifact") {
+    return <ArtifactRow entry={cell.entries[0]} />;
   }
   if (cell.kind === "compact") {
     return (

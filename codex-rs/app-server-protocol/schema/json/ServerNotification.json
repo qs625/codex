@@ -1067,6 +1067,47 @@
           ],
           "title": "AgentMessageContextCompactionReplacementItem",
           "type": "object"
+        },
+        {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "language": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "conversationArtifact"
+              ],
+              "title": "ConversationArtifactContextCompactionReplacementItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "id",
+            "mimeType",
+            "title",
+            "type"
+          ],
+          "title": "ConversationArtifactContextCompactionReplacementItem",
+          "type": "object"
         }
       ]
     },
@@ -3175,6 +3216,26 @@
     },
     "Thread": {
       "properties": {
+        "activeCommandItems": {
+          "description": "Current command display facts restored from persisted activity events. These are intentionally kept out of `turns`, which represents ordinary conversation history.",
+          "items": {
+            "$ref": "#/definitions/ThreadItem"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "activeSubscriptionItems": {
+          "description": "Current active subscription display facts restored from persisted activity events. These are intentionally kept out of `turns`, which represents ordinary conversation history.",
+          "items": {
+            "$ref": "#/definitions/ThreadItem"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "agentNickname": {
           "description": "Optional random unique nickname assigned to an AgentControl-spawned sub-agent.",
           "type": [
@@ -3298,6 +3359,17 @@
             }
           ],
           "description": "Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.)."
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Bounded thread-level historical statistics restored from persisted history."
         },
         "threadSource": {
           "anyOf": [
@@ -4663,6 +4735,47 @@
         },
         {
           "properties": {
+            "content": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "language": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "conversationArtifact"
+              ],
+              "title": "ConversationArtifactThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "id",
+            "mimeType",
+            "title",
+            "type"
+          ],
+          "title": "ConversationArtifactThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
             "agentsStates": {
               "additionalProperties": {
                 "$ref": "#/definitions/CollabAgentState"
@@ -5447,6 +5560,20 @@
       },
       "required": [
         "thread"
+      ],
+      "type": "object"
+    },
+    "ThreadStats": {
+      "properties": {
+        "compactionCount": {
+          "description": "Total number of context compactions observed in the persisted thread history.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "compactionCount"
       ],
       "type": "object"
     },

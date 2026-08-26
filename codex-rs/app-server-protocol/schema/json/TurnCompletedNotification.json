@@ -490,6 +490,47 @@
           ],
           "title": "AgentMessageContextCompactionReplacementItem",
           "type": "object"
+        },
+        {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "language": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "conversationArtifact"
+              ],
+              "title": "ConversationArtifactContextCompactionReplacementItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "id",
+            "mimeType",
+            "title",
+            "type"
+          ],
+          "title": "ConversationArtifactContextCompactionReplacementItem",
+          "type": "object"
         }
       ]
     },
@@ -1826,6 +1867,47 @@
             "type"
           ],
           "title": "CollabAgentMessageThreadItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "language": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "conversationArtifact"
+              ],
+              "title": "ConversationArtifactThreadItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "id",
+            "mimeType",
+            "title",
+            "type"
+          ],
+          "title": "ConversationArtifactThreadItem",
           "type": "object"
         },
         {

@@ -218,11 +218,13 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::WebSearchEnd(_)
         | EventMsg::ImageGenerationEnd(_) => Some(EventPersistenceMode::Limited),
         EventMsg::ItemCompleted(event) => {
-            // Plan and injected context items are display-capable typed items
-            // that are not recoverable from raw ResponseItem replay.
+            // These display-capable typed items are not recoverable from raw
+            // ResponseItem replay, so persist their completed payloads.
             if matches!(
                 event.item,
-                protocol::items::TurnItem::Plan(_) | protocol::items::TurnItem::InjectedContext(_)
+                protocol::items::TurnItem::Plan(_)
+                    | protocol::items::TurnItem::InjectedContext(_)
+                    | protocol::items::TurnItem::ConversationArtifact(_)
             ) {
                 Some(EventPersistenceMode::Limited)
             } else {
@@ -290,6 +292,7 @@ mod tests {
     use super::should_persist_event_msg;
     use crate::rollout_protocol::RolloutItem;
     use protocol::ThreadId;
+    use protocol::items::ConversationArtifactItem;
     use protocol::items::InjectedContextItem;
     use protocol::items::InjectedContextSection;
     use protocol::items::TurnItem;
@@ -528,6 +531,29 @@ mod tests {
                     label: "Developer".to_string(),
                     text: "Agent type file body: always inspect the active task.".to_string(),
                 }],
+            }),
+        });
+
+        assert_eq!(
+            should_persist_event_msg(&event, EventPersistenceMode::Limited),
+            true
+        );
+    }
+
+    #[test]
+    fn limited_mode_persists_conversation_artifact_item_completed() {
+        let event = EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::from_string("00000000-0000-0000-0000-000000000001")
+                .expect("valid thread"),
+            turn_id: "turn-1".to_string(),
+            completed_at_ms: 1_000,
+            item: TurnItem::ConversationArtifact(ConversationArtifactItem {
+                id: "artifact-1".to_string(),
+                title: "Inline page".to_string(),
+                mime_type: "text/html".to_string(),
+                content: "<main>Hello</main>".to_string(),
+                language: Some("html".to_string()),
+                truncated: false,
             }),
         });
 

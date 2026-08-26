@@ -10,6 +10,7 @@ import {
 
 import {
   ArchivedHistoryRow,
+  ArtifactRow,
   CompactRow,
   EventRow,
   MessageRow,
@@ -552,6 +553,10 @@ function renderConversationCell(
         onSelectEntry={(entryId) => onToolEntrySelection(cell.id, entryId)}
       />
     );
+  }
+
+  if (cell.kind === "artifact") {
+    return <ArtifactRow entry={cell.entries[0]} />;
   }
 
   return (

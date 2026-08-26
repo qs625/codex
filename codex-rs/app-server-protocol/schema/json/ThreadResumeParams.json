@@ -429,6 +429,24 @@
         "content": {
           "type": "string"
         },
+        "content_parts": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/InterAgentContentPart"
+          },
+          "type": "array"
+        },
+        "lifecycle_status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadLifecycleStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "operation": {
           "allOf": [
             {
@@ -497,6 +515,57 @@
         "trigger_turn"
       ],
       "type": "object"
+    },
+    "InterAgentContentPart": {
+      "oneOf": [
+        {
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "text"
+              ],
+              "title": "TextInterAgentContentPartType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text",
+            "type"
+          ],
+          "title": "TextInterAgentContentPart",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "attachment_id": {
+              "type": "string"
+            },
+            "image_url": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "image_ref"
+              ],
+              "title": "ImageRefInterAgentContentPartType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "attachment_id",
+            "type"
+          ],
+          "title": "ImageRefInterAgentContentPart",
+          "type": "object"
+        }
+      ]
     },
     "InterAgentOperation": {
       "enum": [
@@ -1639,6 +1708,223 @@
       "type": "string"
     },
     "ThreadId": {
+      "type": "string"
+    },
+    "ThreadLifecycleActiveFlag": {
+      "enum": [
+        "running",
+        "waitingOnApproval",
+        "waitingOnUserInput"
+      ],
+      "type": "string"
+    },
+    "ThreadLifecycleFinalStatus": {
+      "oneOf": [
+        {
+          "properties": {
+            "last_agent_message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "completed"
+              ],
+              "title": "CompletedThreadLifecycleFinalStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "CompletedThreadLifecycleFinalStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "errored"
+              ],
+              "title": "ErroredThreadLifecycleFinalStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "ErroredThreadLifecycleFinalStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "interrupted"
+              ],
+              "title": "InterruptedThreadLifecycleFinalStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "InterruptedThreadLifecycleFinalStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "shutdown"
+              ],
+              "title": "ShutdownThreadLifecycleFinalStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "ShutdownThreadLifecycleFinalStatus",
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadLifecycleStatus": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "notLoaded"
+              ],
+              "title": "NotLoadedThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "NotLoadedThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "initializing"
+              ],
+              "title": "InitializingThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "InitializingThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "active_flags": {
+              "items": {
+                "$ref": "#/definitions/ThreadLifecycleActiveFlag"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "active"
+              ],
+              "title": "ActiveThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "active_flags",
+            "type"
+          ],
+          "title": "ActiveThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "$ref": "#/definitions/ThreadLifecycleWaitReason"
+            },
+            "type": {
+              "enum": [
+                "waiting"
+              ],
+              "title": "WaitingThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "type"
+          ],
+          "title": "WaitingThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "result": {
+              "$ref": "#/definitions/ThreadLifecycleFinalStatus"
+            },
+            "type": {
+              "enum": [
+                "final"
+              ],
+              "title": "FinalThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "type"
+          ],
+          "title": "FinalThreadLifecycleStatus",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "systemError"
+              ],
+              "title": "SystemErrorThreadLifecycleStatusType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "SystemErrorThreadLifecycleStatus",
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadLifecycleWaitReason": {
+      "enum": [
+        "child",
+        "command",
+        "eventSubscription"
+      ],
       "type": "string"
     },
     "WorkflowRunProgressEvent": {

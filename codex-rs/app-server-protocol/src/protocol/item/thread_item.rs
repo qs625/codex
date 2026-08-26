@@ -7,6 +7,7 @@ use crate::protocol::ThreadGoalStatus;
 use crate::protocol::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
+use protocol::items::ConversationArtifactItem as CoreConversationArtifactItem;
 use protocol::items::McpToolCallStatus as CoreMcpToolCallStatus;
 use protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
@@ -420,6 +421,19 @@ pub enum ThreadItem {
     },
     #[serde(rename_all = "camelCase")]
     #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    ConversationArtifact {
+        id: String,
+        title: String,
+        mime_type: String,
+        content: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema-export", ts(optional))]
+        language: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
     CollabAgentToolCall {
         id: String,
         tool: CollabAgentTool,
@@ -533,6 +547,19 @@ pub enum ContextCompactionReplacementItem {
         #[cfg_attr(feature = "schema-export", ts(rename = "memoryCitation"))]
         memory_citation: Option<MemoryCitation>,
     },
+    #[serde(rename_all = "camelCase")]
+    #[cfg_attr(feature = "schema-export", ts(rename_all = "camelCase"))]
+    ConversationArtifact {
+        id: String,
+        title: String,
+        mime_type: String,
+        content: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema-export", ts(optional))]
+        language: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+    },
 }
 
 #[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
@@ -583,6 +610,7 @@ impl ThreadItem {
             | ThreadItem::WorkflowRunProgress { id, .. }
             | ThreadItem::ThreadGoalUpdate { id, .. }
             | ThreadItem::CollabAgentMessage { id, .. }
+            | ThreadItem::ConversationArtifact { id, .. }
             | ThreadItem::CollabAgentToolCall { id, .. }
             | ThreadItem::CollabAgentStatusUpdate { id, .. }
             | ThreadItem::WebSearch { id, .. }
@@ -592,6 +620,19 @@ impl ThreadItem {
             | ThreadItem::ExitedReviewMode { id, .. }
             | ThreadItem::ContextCompaction { id, .. } => id,
         }
+    }
+}
+
+pub(crate) fn conversation_artifact_thread_item(
+    artifact: CoreConversationArtifactItem,
+) -> ThreadItem {
+    ThreadItem::ConversationArtifact {
+        id: artifact.id,
+        title: artifact.title,
+        mime_type: artifact.mime_type,
+        content: artifact.content,
+        language: artifact.language,
+        truncated: artifact.truncated,
     }
 }
 

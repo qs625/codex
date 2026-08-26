@@ -120,6 +120,7 @@
   - Settings 的 provider onboarding 应在 provider group 内通过 app-server `account/read` / `account/login/start` / `account/login/cancel` 完成；OpenAI auth 只把 `apiKey` / `chatgpt` account 视为 OpenAI authenticated，非 OpenAI account 不能隐藏 OpenAI 登录入口。
   - `src/lib/conversation.ts` 已支持 `ThreadItem::BuiltinToolCall` 的 `poll_event` 展示文案；若 live UI 仍缺失，要先怀疑 server notification / 运行实例版本，而不是前端 summary 缺口。
   - `poll_event` 的主文案当前只展示 `sourceHint` / `timeout` / `failed` 等输出态，不会在 summary 文案里额外展开 arguments；而且该 tool 的 arguments 按设计本来就是 `{}`。
+  - conversation inline artifacts 应由 typed `ConversationArtifact` / `conversationArtifact` ThreadItem 驱动，SVG/HTML 预览走 sandboxed iframe，Markdown 预览复用 `MarkdownContent`；不要从普通 assistant Markdown/code block 自动解析成 artifact。
 
 ## Persistent State And Recovery
 - thread/history 的 reload 恢复能力由两段共同决定：

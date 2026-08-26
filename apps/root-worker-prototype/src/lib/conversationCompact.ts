@@ -212,6 +212,10 @@ function shouldMergeConversationEntry(
     return false;
   }
 
+  if (cell.kind === "artifact" || nextEntry.kind === "artifact") {
+    return false;
+  }
+
   if (cell.kind === "tool" && nextEntry.kind === "tool") {
     if (previousEntry.turnId !== nextEntry.turnId) {
       return false;

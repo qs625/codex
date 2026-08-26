@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   ApprovalRequestsPanel,
   ArchivedHistoryRow,
+  ArtifactRow,
   CompactRow,
   MessageRow,
   ToolRow,
@@ -18,6 +19,27 @@ import {
   shouldHandleFocusedItemRequest,
 } from "./ConversationVirtualList";
 import type { ConversationEntry } from "../types";
+
+function artifactEntry(
+  overrides: Partial<NonNullable<ConversationEntry["artifact"]>> = {},
+): ConversationEntry {
+  const artifact = {
+    title: "Inline artifact",
+    mimeType: "text/html",
+    content: "<main><h1>Hello</h1><script>window.bad = true</script></main>",
+    ...overrides,
+  };
+  return {
+    id: "artifact-1",
+    kind: "artifact",
+    author: "root",
+    role: "agent",
+    text: `${artifact.title} • ${artifact.mimeType}`,
+    timestamp: "09:41",
+    attachments: [],
+    artifact,
+  };
+}
 
 test("approval request panel renders pending command approval actions", () => {
   const markup = renderToStaticMarkup(
@@ -167,6 +189,104 @@ test("message rows expose role classes for chat alignment", () => {
   assert.match(agentMarkup, /class="message-avatar agent"/);
 });
 
+test("artifact row renders html preview in a sandboxed iframe", () => {
+  const markup = renderToStaticMarkup(
+    <ArtifactRow
+      entry={artifactEntry({
+        mimeType: "text/html; charset=utf-8",
+      })}
+    />,
+  );
+
+  assert.match(markup, /class="artifact-row"/);
+  assert.match(markup, /class="artifact-card"/);
+  assert.match(markup, /Inline artifact/);
+  assert.match(markup, /text\/html/);
+  assert.match(markup, /<iframe /);
+  assert.match(markup, /sandbox=""/);
+  assert.doesNotMatch(markup, /allow-scripts/);
+  assert.match(markup, /script-src &#x27;none&#x27;/);
+});
+
+test("artifact row renders svg preview through the same sandbox", () => {
+  const markup = renderToStaticMarkup(
+    <ArtifactRow
+      entry={artifactEntry({
+        mimeType: "image/svg+xml",
+        content: "<svg viewBox=\"0 0 10 10\"><circle cx=\"5\" cy=\"5\" r=\"4\" /></svg>",
+      })}
+    />,
+  );
+
+  assert.match(markup, /image\/svg\+xml/);
+  assert.match(markup, /artifact-svg-host/);
+  assert.match(markup, /sandbox=""/);
+});
+
+test("artifact row previews markdown with MarkdownContent", () => {
+  const markup = renderToStaticMarkup(
+    <ArtifactRow
+      entry={artifactEntry({
+        mimeType: "text/markdown; charset=utf-8",
+        content: "## Heading\n\n- one",
+      })}
+    />,
+  );
+
+  assert.match(markup, /artifact-markdown-preview/);
+  assert.match(markup, /class="markdown-content"/);
+  assert.match(markup, /<h2>Heading<\/h2>/);
+});
+
+test("unsupported artifact row falls back to source", () => {
+  const markup = renderToStaticMarkup(
+    <ArtifactRow
+      entry={artifactEntry({
+        mimeType: "text/mermaid",
+        content: "graph TD; A-->B;",
+      })}
+    />,
+  );
+
+  assert.match(markup, /Preview unavailable for this artifact type/);
+  assert.match(markup, /class="artifact-source"/);
+  assert.doesNotMatch(markup, /<iframe /);
+});
+
+test("expanded compact rows render archived artifacts inline", () => {
+  const markup = renderToStaticMarkup(
+    <CompactRow
+      entry={{
+        id: "compact-with-artifact",
+        kind: "compact",
+        author: "Root",
+        role: "system",
+        text: "Previous conversation was archived.",
+        timestamp: "09:43",
+        attachments: [],
+        replacementHistoryStatus: "available",
+        replacementHistoryCount: 0,
+        replacementHistoryEntries: [],
+        archivedEntryCount: 1,
+        archivedCells: [
+          {
+            id: "archived-artifact",
+            kind: "artifact",
+            entries: [artifactEntry()],
+          },
+        ],
+        replacementHistoryCells: [],
+      }}
+      isExpanded
+    />,
+  );
+
+  assert.match(markup, /class="artifact-row"/);
+  assert.match(markup, /Inline artifact/);
+  assert.match(markup, /<iframe /);
+  assert.doesNotMatch(markup, /Archived item/);
+});
+
 test("conversation text surfaces keep long urls inside measured cells", () => {
   const longUrl =
     "https://example.com/search?q=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -259,6 +379,15 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
       isExpanded
     />,
   );
+  const artifactMarkup = renderToStaticMarkup(
+    <ArtifactRow
+      entry={artifactEntry({
+        title: longMethod,
+        mimeType: "text/html",
+        content: `<main>${longPath}</main>`,
+      })}
+    />,
+  );
   const approvalMarkup = renderToStaticMarkup(
     <ApprovalRequestsPanel
       requests={[
@@ -293,6 +422,8 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   assert.match(toolMarkup, /Session ID/);
   assert.match(compactMarkup, /archive-tool-stack/);
   assert.match(compactMarkup, new RegExp(longMethod));
+  assert.match(artifactMarkup, /class="artifact-card-copy"/);
+  assert.match(artifactMarkup, new RegExp(longMethod));
   assert.match(approvalMarkup, /class="approval-request-metadata"/);
   assert.match(approvalMarkup, new RegExp(longMethod));
   assert.match(
@@ -310,6 +441,12 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   assert.match(styles, /\.markdown-content code[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-card-copy span[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-card-copy strong[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.artifact-card \{[\s\S]*max-width: 100%;/);
+  assert.match(styles, /\.artifact-card-head \{[^}]*flex-wrap: wrap;/);
+  assert.match(styles, /\.artifact-card-copy \{[^}]*flex: 1 1 220px;/);
+  assert.match(styles, /\.artifact-card-copy strong[\s\S]*overflow-wrap: anywhere;/);
+  assert.match(styles, /\.artifact-preview-frame \{[\s\S]*min-height: 220px;/);
+  assert.match(styles, /\.artifact-source pre[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-card-summary \{[^}]*flex-wrap: wrap;/);
   assert.match(styles, /\.tool-card-item-head \{[^}]*flex-wrap: wrap;/);
   assert.match(styles, /\.tool-card-copy \{[^}]*flex: 1 1 240px;/);

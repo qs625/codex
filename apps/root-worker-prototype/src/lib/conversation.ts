@@ -49,6 +49,7 @@ type ConversationFlatItemState = {
 };
 
 const AGENT_STATUS_PREVIEW_MAX_CHARS = 120;
+const ARTIFACT_SUMMARY_MAX_CHARS = 96;
 
 type CollabAgentStateView = {
   path?: string | null;
@@ -330,6 +331,27 @@ function buildConversationItemEntries(
     return [buildCollabAgentStatusUpdateEntry(item, { author, timestamp })];
   }
 
+  if (item.type === "conversationArtifact") {
+    return [
+      {
+        id: item.id,
+        kind: "artifact" as const,
+        author,
+        role: "agent" as const,
+        text: summarizeConversationArtifact(item),
+        timestamp,
+        attachments: [],
+        artifact: {
+          title: item.title || "Artifact",
+          mimeType: item.mimeType,
+          content: item.content,
+          language: item.language,
+          truncated: item.truncated,
+        },
+      },
+    ];
+  }
+
   if (item.type === "contextCompaction") {
     return [
       buildContextCompactionEntry(item, {
@@ -583,6 +605,15 @@ function buildConversationItemEntries(
       attachments: [],
     },
   ];
+}
+
+function summarizeConversationArtifact(
+  item: Extract<ThreadItem, { type: "conversationArtifact" }>,
+) {
+  const title = item.title.trim() || "Artifact";
+  const mimeType = item.mimeType.trim() || "unknown";
+  const summary = `${title} • ${mimeType}`;
+  return previewInlineText(summary, ARTIFACT_SUMMARY_MAX_CHARS);
 }
 
 function buildContextCompactionEntry(

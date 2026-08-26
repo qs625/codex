@@ -1159,6 +1159,46 @@ fn live_projection_preserves_ordinary_agent_json_with_operation_field() {
 }
 
 #[test]
+fn live_projection_maps_typed_conversation_artifact() {
+    let event =
+        protocol::protocol::EventMsg::ItemCompleted(protocol::protocol::ItemCompletedEvent {
+            thread_id: protocol::ThreadId::new(),
+            turn_id: "turn-1".into(),
+            item: protocol::items::TurnItem::ConversationArtifact(
+                protocol::items::ConversationArtifactItem {
+                    id: "artifact-1".into(),
+                    title: "Inline chart".into(),
+                    mime_type: "image/svg+xml".into(),
+                    content: "<svg viewBox=\"0 0 10 10\"></svg>".into(),
+                    language: Some("svg".into()),
+                    truncated: false,
+                },
+            ),
+            completed_at_ms: 1,
+        });
+
+    let projected =
+        crate::protocol::event_item_projection::project_event_msg_item(&event).expect("projected");
+    let crate::protocol::event_item_projection::ProjectedEventItem::Completed { item, .. } =
+        projected
+    else {
+        panic!("expected completed item");
+    };
+
+    assert_eq!(
+        item,
+        ThreadItem::ConversationArtifact {
+            id: "artifact-1".into(),
+            title: "Inline chart".into(),
+            mime_type: "image/svg+xml".into(),
+            content: "<svg viewBox=\"0 0 10 10\"></svg>".into(),
+            language: Some("svg".into()),
+            truncated: false,
+        }
+    );
+}
+
+#[test]
 fn live_projection_preserves_user_item_that_mentions_subagent_notification_marker() {
     let message = "Please inspect <subagent_notification> output".to_string();
     let event =

@@ -697,6 +697,15 @@ function accumulateItemUnits(
     return;
   }
 
+  if (item.type === "conversationArtifact") {
+    units.llmMessages +=
+      estimateTextUnits(item.title) +
+      estimateTextUnits(item.mimeType) +
+      estimateTextUnits(item.language) +
+      estimateTextUnits(item.content);
+    return;
+  }
+
   if (item.type === "plan") {
     units.llmMessages += estimateTextUnits(item.text);
     return;

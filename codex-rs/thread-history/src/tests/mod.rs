@@ -29,6 +29,7 @@ use protocol::event_driven_tool::EventDrivenToolTrigger;
 use protocol::items::AgentMessageContent as CoreAgentMessageContent;
 use protocol::items::AgentMessageItem as CoreAgentMessageItem;
 use protocol::items::CollabAgentMessageItem as CoreCollabAgentMessageItem;
+use protocol::items::ConversationArtifactItem as CoreConversationArtifactItem;
 use protocol::items::EventCommandEventItem as CoreEventCommandEventItem;
 use protocol::items::EventDrivenToolItem as CoreEventDrivenToolItem;
 use protocol::items::InjectedContextItem as CoreInjectedContextItem;
