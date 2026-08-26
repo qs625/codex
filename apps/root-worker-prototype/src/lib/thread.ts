@@ -601,6 +601,26 @@ export function updateThreadTurn(thread: Thread, turn: Turn) {
   );
 }
 
+export function updateThreadTurnNotification(
+  thread: Thread,
+  method: "turn/started" | "turn/completed",
+  turn: Turn,
+) {
+  if (
+    method === "turn/completed" &&
+    canMergeTurnSnapshotItems(thread, turn)
+  ) {
+    return updateThreadTurn(thread, turn);
+  }
+  return updateThreadTurnLifecycle(thread, turn);
+}
+
+export function updateThreadTurnSnapshot(thread: Thread, turn: Turn) {
+  return canMergeTurnSnapshotItems(thread, turn)
+    ? updateThreadTurn(thread, turn)
+    : updateThreadTurnLifecycle(thread, turn);
+}
+
 export function updateThreadTurnLifecycle(thread: Thread, turn: Turn) {
   const normalizedTurn = normalizeTurnSnapshot(turn);
   const hasExistingTurn = thread.turns.some(
@@ -836,6 +856,68 @@ function shouldRejectAmbiguousCompactItem(
     durableCompactionCount !== undefined &&
     validCompactionCount(durableCompactionCount) >
       countVisibleContextCompactions(thread)
+  );
+}
+
+function canMergeTurnSnapshotItems(thread: Thread, nextTurn: Turn) {
+  if (nextTurn.items.length === 0) {
+    return false;
+  }
+  const existingTurn = thread.turns.find((turn) => turn.id === nextTurn.id);
+  if (
+    !existingTurn &&
+    threadHasCompactItem(thread) &&
+    !isTurnSnapshotAfterLatestCompact(thread, nextTurn)
+  ) {
+    return false;
+  }
+  return !shouldRejectAmbiguousCompactTurnSnapshot(thread, nextTurn, existingTurn);
+}
+
+function shouldRejectAmbiguousCompactTurnSnapshot(
+  thread: Thread,
+  nextTurn: Turn,
+  existingTurn: Turn | undefined = thread.turns.find(
+    (turn) => turn.id === nextTurn.id,
+  ),
+) {
+  if (!existingTurn || !turnHasCompactItem(existingTurn)) {
+    return false;
+  }
+  const unmatchedCompactItems = nextTurn.items.filter(
+    (item) =>
+      item.type === "contextCompaction" &&
+      !hasMatchingThreadItem(existingTurn.items, item),
+  );
+  if (unmatchedCompactItems.length === 0) {
+    return false;
+  }
+  if (
+    unmatchedCompactItems.some((item) =>
+      isCompactItemSnapshotAfterLatestCompact(thread, nextTurn, item),
+    )
+  ) {
+    return false;
+  }
+  const durableCompactionCount = thread.stats?.compactionCount;
+  return (
+    durableCompactionCount !== undefined &&
+    validCompactionCount(durableCompactionCount) >
+      countVisibleContextCompactions(thread)
+  );
+}
+
+function isCompactItemSnapshotAfterLatestCompact(
+  thread: Thread,
+  turn: Turn,
+  item: ThreadItem,
+) {
+  return isTimestampAfterLatestCompact(
+    thread,
+    item.completedAtMs ??
+      item.startedAtMs ??
+      timestampMsFromSeconds(turn.completedAt) ??
+      timestampMsFromSeconds(turn.startedAt),
   );
 }
 
