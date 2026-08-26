@@ -1473,6 +1473,11 @@ pub fn segment_manifest_path_for_rollout(path: &Path) -> PathBuf {
     parent.join(format!("{stem}.segments.json"))
 }
 
+pub fn segmented_compaction_count_for_rollout_path(path: &Path) -> Option<u32> {
+    let manifest = load_segment_manifest_for_path(path).ok().flatten()?;
+    Some(manifest.segments.len().saturating_sub(1) as u32)
+}
+
 fn base_rollout_stem(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_string_lossy();
     match stem.find(".compact-") {

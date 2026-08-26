@@ -210,10 +210,10 @@ use app_server_protocol::ThreadShellCommandParams;
 use app_server_protocol::ThreadShellCommandResponse;
 use app_server_protocol::ThreadSortKey;
 use app_server_protocol::ThreadSourceKind;
-use app_server_protocol::ThreadStats;
 use app_server_protocol::ThreadStartParams;
 use app_server_protocol::ThreadStartResponse;
 use app_server_protocol::ThreadStartedNotification;
+use app_server_protocol::ThreadStats;
 use app_server_protocol::ThreadTurnsItemsListParams;
 use app_server_protocol::ThreadTurnsListParams;
 use app_server_protocol::ThreadTurnsListResponse;
@@ -552,20 +552,30 @@ pub(crate) fn build_api_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<T
     builder.finish()
 }
 
-pub(crate) fn thread_stats_from_rollout_items(items: &[RolloutItem]) -> ThreadStats {
+pub(crate) fn thread_stats_from_rollout_items_and_path(
+    items: &[RolloutItem],
+    rollout_path: Option<&Path>,
+) -> ThreadStats {
+    let history_count = items
+        .iter()
+        .filter(|item| {
+            matches!(*item, RolloutItem::Compacted(_))
+                && is_persisted_rollout_item(item, EventPersistenceMode::Limited)
+        })
+        .count() as u32;
+    let manifest_count = rollout_path
+        .and_then(rollout::segmented_compaction_count_for_rollout_path)
+        .unwrap_or(0);
     ThreadStats {
-        compaction_count: items
-            .iter()
-            .filter(|item| {
-                matches!(*item, RolloutItem::Compacted(_))
-                    && is_persisted_rollout_item(item, EventPersistenceMode::Limited)
-            })
-            .count() as u32,
+        compaction_count: history_count.max(manifest_count),
     }
 }
 
 pub(crate) fn apply_thread_stats_from_rollout_items(thread: &mut Thread, items: &[RolloutItem]) {
-    thread.stats = Some(thread_stats_from_rollout_items(items));
+    thread.stats = Some(thread_stats_from_rollout_items_and_path(
+        items,
+        thread.path.as_deref(),
+    ));
 }
 
 pub(crate) fn prune_turns_to_latest_compaction_boundary(turns: &mut Vec<Turn>) {
@@ -596,6 +606,7 @@ pub(crate) fn prune_turns_to_latest_compaction_boundary(turns: &mut Vec<Turn>) {
 mod build_api_turns_from_rollout_items_tests {
     use super::build_api_turns_from_rollout_items;
     use super::prune_turns_to_latest_compaction_boundary;
+    use super::thread_stats_from_rollout_items_and_path;
     use app_server_protocol::CommandAction;
     use app_server_protocol::CommandExecutionNotifyOn as ApiCommandExecutionNotifyOn;
     use app_server_protocol::CommandExecutionSource;
@@ -619,6 +630,7 @@ mod build_api_turns_from_rollout_items_tests {
     use rollout::EventPersistenceMode;
     use rollout::persisted_rollout_items;
     use std::time::Duration;
+    use tempfile::TempDir;
 
     fn completed_turn(id: &str, items: Vec<ThreadItem>) -> Turn {
         Turn {
@@ -654,6 +666,48 @@ mod build_api_turns_from_rollout_items_tests {
         }
     }
 
+    fn compacted_rollout_item() -> RolloutItem {
+        RolloutItem::Compacted(protocol::protocol::CompactedItem {
+            message: String::new(),
+            replacement_history: None,
+            visible_replacement_history_len: None,
+        })
+    }
+
+    #[test]
+    fn stats_use_segment_manifest_for_lifetime_compaction_count() {
+        let temp = TempDir::new().expect("temp dir");
+        let initial_path = temp
+            .path()
+            .join("rollout-2026-08-26T00-00-00-00000000-0000-0000-0000-000000000000.jsonl");
+        let head_path = temp.path().join(
+            "rollout-2026-08-26T00-00-00-00000000-0000-0000-0000-000000000000.compact-000003.jsonl",
+        );
+        let manifest_path = rollout::segment_manifest_path_for_rollout(&head_path);
+        std::fs::write(
+            manifest_path,
+            serde_json::json!({
+                "version": 1,
+                "thread_id": "00000000-0000-0000-0000-000000000000",
+                "head": head_path.file_name().expect("head file name").to_string_lossy(),
+                "segments": [
+                    initial_path.file_name().expect("initial file name").to_string_lossy(),
+                    "rollout-2026-08-26T00-00-00-00000000-0000-0000-0000-000000000000.compact-000001.jsonl",
+                    "rollout-2026-08-26T00-00-00-00000000-0000-0000-0000-000000000000.compact-000002.jsonl",
+                    head_path.file_name().expect("head file name").to_string_lossy()
+                ],
+                "updated_at": "2026-08-26T00:00:00Z"
+            })
+            .to_string(),
+        )
+        .expect("write manifest");
+
+        let stats =
+            thread_stats_from_rollout_items_and_path(&[compacted_rollout_item()], Some(&head_path));
+
+        assert_eq!(stats.compaction_count, 3);
+    }
+
     #[test]
     fn prunes_display_turns_to_latest_compaction_boundary() {
         let mut turns = vec![
@@ -672,7 +726,10 @@ mod build_api_turns_from_rollout_items_tests {
         prune_turns_to_latest_compaction_boundary(&mut turns);
 
         assert_eq!(
-            turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
+            turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["compact-turn", "new-turn"]
         );
         assert_eq!(
@@ -694,16 +751,25 @@ mod build_api_turns_from_rollout_items_tests {
     #[test]
     fn prunes_display_turns_to_latest_of_multiple_compactions() {
         let mut turns = vec![
-            completed_turn("first-compact-turn", vec![context_compaction("compact-old")]),
+            completed_turn(
+                "first-compact-turn",
+                vec![context_compaction("compact-old")],
+            ),
             completed_turn("middle-turn", vec![agent_message("middle-agent", "middle")]),
-            completed_turn("latest-compact-turn", vec![context_compaction("compact-new")]),
+            completed_turn(
+                "latest-compact-turn",
+                vec![context_compaction("compact-new")],
+            ),
             completed_turn("after-turn", vec![agent_message("after-agent", "after")]),
         ];
 
         prune_turns_to_latest_compaction_boundary(&mut turns);
 
         assert_eq!(
-            turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
+            turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["latest-compact-turn", "after-turn"]
         );
         assert_eq!(
@@ -729,7 +795,10 @@ mod build_api_turns_from_rollout_items_tests {
         prune_turns_to_latest_compaction_boundary(&mut turns);
 
         assert_eq!(
-            turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
+            turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["compact-turn"]
         );
     }
@@ -1088,9 +1157,7 @@ mod build_api_turns_from_rollout_items_tests {
                     collaboration_mode_kind: Default::default(),
                 })),
                 RolloutItem::EventMsg(EventMsg::BuiltinToolCallCompleted(
-                    schedule_subscribe_event(Some(
-                        "Clean checkout targets and report the result.",
-                    )),
+                    schedule_subscribe_event(Some("Clean checkout targets and report the result.")),
                 )),
                 RolloutItem::Compacted(protocol::protocol::CompactedItem {
                     message: String::new(),
@@ -1131,14 +1198,16 @@ mod build_api_turns_from_rollout_items_tests {
             &[RolloutItem::SessionMeta(
                 protocol::protocol::SessionMetaLine {
                     meta: protocol::protocol::SessionMeta {
-                        subscriptions: Some(vec![protocol::subscriptions::PersistedSubscription::Schedule {
-                            subscription_id: "sub-schedule".into(),
-                            schedule: protocol::subscriptions::ScheduleSpec::EveryInterval {
-                                interval_ms: 60_000,
+                        subscriptions: Some(vec![
+                            protocol::subscriptions::PersistedSubscription::Schedule {
+                                subscription_id: "sub-schedule".into(),
+                                schedule: protocol::subscriptions::ScheduleSpec::EveryInterval {
+                                    interval_ms: 60_000,
+                                },
+                                label: Some("standup".into()),
+                                message: None,
                             },
-                            label: Some("standup".into()),
-                            message: None,
-                        }]),
+                        ]),
                         ..Default::default()
                     },
                     git: None,

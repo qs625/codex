@@ -864,6 +864,34 @@ async fn root_external_followup_resolves_target_within_sender_scope() {
     let worker_b = ThreadId::new();
     let (input_tx_a, mut input_rx_a) = tokio::sync::mpsc::unbounded_channel();
     let (input_tx_b, mut input_rx_b) = tokio::sync::mpsc::unbounded_channel();
+    let worker_a_path = AgentPath::try_from("/root/worker").expect("agent path");
+    let worker_a_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root_a,
+        depth: 1,
+        agent_path: Some(worker_a_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some(provider_label(SpawnAgentProvider::ClaudeCli).to_string()),
+    });
+    let worker_a_config = ExternalSpawnConfig::from_config(&harness.config);
+    let worker_a_metadata = AgentMetadata {
+        agent_id: Some(worker_a),
+        agent_path: Some(worker_a_path.clone()),
+        agent_nickname: Some("worker".to_string()),
+        agent_role: Some(provider_label(SpawnAgentProvider::ClaudeCli).to_string()),
+        counted: true,
+        ..Default::default()
+    };
+    let worker_a_live_thread = harness
+        .control
+        .create_external_thread_persistence(
+            &worker_a_config,
+            worker_a,
+            worker_a_source.clone(),
+            ThreadSource::Subagent,
+            &worker_a_metadata,
+        )
+        .await
+        .expect("create worker A persisted thread");
 
     for (thread_id, parent_thread_id, path, input_sink) in [
         (root_a, root_a, "/root", None),
@@ -896,7 +924,7 @@ async fn root_external_followup_resolves_target_within_sender_scope() {
                 depth: if thread_id == parent_thread_id { 0 } else { 1 },
                 spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
                 input_sink,
-                live_thread: None,
+                live_thread: (thread_id == worker_a).then(|| worker_a_live_thread.clone()),
                 status: AgentStatus::Running,
                 active_turn_id: None,
                 last_task_message: None,
@@ -922,7 +950,45 @@ async fn root_external_followup_resolves_target_within_sender_scope() {
     assert!(result.ok, "followup failed: {:?}", result.error);
     let queued = input_rx_a.recv().await.expect("worker A input");
     assert_eq!(queued.content, "scoped hello");
+    assert!(
+        !queued
+            .content
+            .contains("Inter-agent communication received.")
+    );
     assert!(input_rx_b.try_recv().is_err());
+
+    let stored = harness
+        .manager
+        .read_thread(ReadThreadParams {
+            thread_id: worker_a,
+            include_archived: true,
+            include_history: true,
+        })
+        .await
+        .expect("read worker A stored thread");
+    let history = stored.history.expect("worker A history");
+    assert!(
+        history.items.iter().any(|item| matches!(
+            item,
+            RolloutItem::EventMsg(EventMsg::InterAgentCommunicationCompleted(event))
+                if event.thread_id == worker_a
+                    && event.communication.content == "scoped hello"
+                    && event.communication.operation == InterAgentOperation::FollowupTask
+        )),
+        "external followup should persist a typed inter-agent display event"
+    );
+    assert!(
+        !history.items.iter().any(|item| match item {
+            RolloutItem::EventMsg(EventMsg::UserMessage(event)) => event
+                .message
+                .contains("Inter-agent communication received."),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(event)) => event
+                .message
+                .contains("Inter-agent communication received."),
+            _ => false,
+        }),
+        "external followup must not persist provider-visible raw envelopes as ordinary messages"
+    );
 }
 
 #[tokio::test]
