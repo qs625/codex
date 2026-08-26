@@ -273,6 +273,7 @@ impl TurnItem {
             TurnItem::EventDrivenTool(item) => item.id.clone(),
             TurnItem::EventCommandEvent(item) => item.id.clone(),
             TurnItem::CollabAgentMessage(item) => item.id.clone(),
+            TurnItem::ConversationArtifact(item) => item.id.clone(),
             TurnItem::Plan(item) => item.id.clone(),
             TurnItem::Reasoning(item) => item.id.clone(),
             TurnItem::WebSearch(item) => item.id.clone(),
@@ -293,6 +294,7 @@ impl TurnItem {
             TurnItem::EventDrivenTool(_) => Vec::new(),
             TurnItem::EventCommandEvent(_) => Vec::new(),
             TurnItem::CollabAgentMessage(_) => Vec::new(),
+            TurnItem::ConversationArtifact(_) => Vec::new(),
             TurnItem::Plan(_) => Vec::new(),
             TurnItem::WebSearch(item) => vec![item.as_legacy_event()],
             TurnItem::ImageView(item) => {

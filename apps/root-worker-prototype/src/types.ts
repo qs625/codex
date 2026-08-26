@@ -144,6 +144,15 @@ export type ThreadItem = ThreadItemTimestamps &
       triggerTurn: boolean;
     }
   | {
+      type: "conversationArtifact";
+      id: string;
+      title: string;
+      mimeType: string;
+      content: string;
+      language?: string | null;
+      truncated?: boolean;
+    }
+  | {
       type: "collabAgentStatusUpdate";
       id: string;
       senderThreadId: string | null;
@@ -306,6 +315,15 @@ export type CompactReplacementHistoryItem =
       text: string;
       phase?: string | null;
       memoryCitation?: unknown | null;
+    }
+  | {
+      type: "conversationArtifact";
+      id: string;
+      title: string;
+      mimeType: string;
+      content: string;
+      language?: string | null;
+      truncated?: boolean;
     };
 
 export type ResponseItem = {
@@ -788,7 +806,7 @@ export type TodoCardItem = {
 export type ConversationEntry = {
   id: string;
   turnId?: string;
-  kind: "message" | "event" | "tool" | "compact" | "archive";
+  kind: "message" | "event" | "tool" | "artifact" | "compact" | "archive";
   author: string;
   role: "user" | "agent" | "system";
   text: string;
@@ -810,6 +828,13 @@ export type ConversationEntry = {
   pollEventProgress?: {
     startedAtMs: number;
     currentTimeoutMs: number;
+  };
+  artifact?: {
+    title: string;
+    mimeType: string;
+    content: string;
+    language?: string | null;
+    truncated?: boolean;
   };
   toolCategory?:
     | "command"
@@ -834,7 +859,7 @@ export type ConversationEntry = {
 
 export type ConversationCell = {
   id: string;
-  kind: "message" | "event" | "tool" | "compact" | "archive";
+  kind: "message" | "event" | "tool" | "artifact" | "compact" | "archive";
   entries: ConversationEntry[];
 };
 

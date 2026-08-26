@@ -24,6 +24,7 @@ const STRUCTURED_TOOL_OUTPUT_NAMES = new Set([
   "command_write_stdin",
   "wait_agent",
 ]);
+const ARTIFACT_SUMMARY_MAX_CHARS = 96;
 
 export function buildReplacementHistoryEntries(
   items: Array<CompactReplacementHistoryItem | ResponseItem>,
@@ -88,9 +89,12 @@ export function buildReplacementHistoryEntries(
 function isResponseItem(
   item: CompactReplacementHistoryItem | ResponseItem,
 ): item is ResponseItem {
-  return !["injectedContext", "userMessage", "agentMessage"].includes(
-    String(item.type),
-  );
+  return ![
+    "injectedContext",
+    "userMessage",
+    "agentMessage",
+    "conversationArtifact",
+  ].includes(String(item.type));
 }
 
 function buildTypedReplacementHistoryEntry(
@@ -136,7 +140,35 @@ function buildTypedReplacementHistoryEntry(
         timestamp,
         attachments: [],
       };
+    case "conversationArtifact":
+      return {
+        id,
+        kind: "artifact",
+        author,
+        role: "agent",
+        text: summarizeConversationArtifactReplacement(item),
+        timestamp,
+        attachments: [],
+        artifact: {
+          title: item.title || "Artifact",
+          mimeType: item.mimeType,
+          content: item.content,
+          language: item.language,
+          truncated: item.truncated,
+        },
+      };
   }
+}
+
+function summarizeConversationArtifactReplacement(
+  item: Extract<CompactReplacementHistoryItem, { type: "conversationArtifact" }>,
+) {
+  const title = item.title.trim() || "Artifact";
+  const mimeType = item.mimeType.trim() || "unknown";
+  return previewInlineText(
+    `${title} • ${mimeType}`,
+    ARTIFACT_SUMMARY_MAX_CHARS,
+  );
 }
 
 function buildReplacementHistoryEntry(

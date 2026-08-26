@@ -52,6 +52,7 @@ pub(super) fn redact_thread_resume_payloads(thread: &mut Thread) {
             | ThreadItem::EventCommandEvent { .. }
             | ThreadItem::ThreadGoalUpdate { .. }
             | ThreadItem::CollabAgentMessage { .. }
+            | ThreadItem::ConversationArtifact { .. }
             | ThreadItem::CollabAgentToolCall { .. }
             | ThreadItem::CollabAgentStatusUpdate { .. }
             | ThreadItem::WorkflowRunProgress { .. }

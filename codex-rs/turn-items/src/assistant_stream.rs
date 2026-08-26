@@ -83,6 +83,7 @@ pub fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
             | TurnItem::EventDrivenTool(_)
             | TurnItem::EventCommandEvent(_)
             | TurnItem::CollabAgentMessage(_)
+            | TurnItem::ConversationArtifact(_)
             | TurnItem::Plan(_)
             | TurnItem::Reasoning(_)
             | TurnItem::WebSearch(_)

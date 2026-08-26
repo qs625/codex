@@ -2415,6 +2415,7 @@ svg {
 .message-row,
 .event-row,
 .tool-row,
+.artifact-row,
 .compact-row,
 .archive-row {
   display: flex;
@@ -2428,10 +2429,12 @@ svg {
 .message-row + .message-row,
 .message-row + .event-row,
 .message-row + .tool-row,
+.message-row + .artifact-row,
 .message-row + .compact-row,
 .message-row + .archive-row,
 .event-row + .message-row,
 .event-row + .event-row,
+.event-row + .artifact-row,
 .event-row + .compact-row,
 .event-row + .archive-row {
   margin-top: 18px;
@@ -2443,6 +2446,13 @@ svg {
 .tool-row + .message-row,
 .tool-row + .event-row,
 .tool-row + .tool-row,
+.tool-row + .artifact-row,
+.artifact-row + .message-row,
+.artifact-row + .event-row,
+.artifact-row + .tool-row,
+.artifact-row + .artifact-row,
+.artifact-row + .compact-row,
+.artifact-row + .archive-row,
 .compact-row + .message-row,
 .compact-row + .event-row,
 .compact-row + .tool-row,
@@ -2451,6 +2461,7 @@ svg {
 .archive-row + .message-row,
 .archive-row + .event-row,
 .archive-row + .tool-row,
+.archive-row + .artifact-row,
 .archive-row + .compact-row,
 .archive-row + .archive-row {
   margin-top: 18px;
@@ -2787,6 +2798,197 @@ svg {
 .tool-icon-context,
 .tool-icon-external {
   color: #44403c;
+}
+
+.artifact-icon {
+  color: #0f766e;
+  background: linear-gradient(180deg, #f0fdfa 0%, #ccfbf1 100%);
+}
+
+.artifact-card {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid rgba(13, 148, 136, 0.18);
+  border-radius: 16px;
+  background: linear-gradient(
+    180deg,
+    rgba(240, 253, 250, 0.92),
+    rgba(255, 255, 255, 0.78)
+  );
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+
+.artifact-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(13, 148, 136, 0.12);
+}
+
+.artifact-card-copy {
+  display: flex;
+  flex: 1 1 220px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.artifact-card-copy strong,
+.artifact-card-copy span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.artifact-card-copy strong {
+  color: #292524;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.artifact-card-copy span,
+.artifact-source span,
+.artifact-fallback {
+  color: #78716c;
+  font-size: 12px;
+}
+
+.artifact-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 8px;
+}
+
+.artifact-mode-control {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.artifact-mode-control button,
+.artifact-action {
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: #57534e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.artifact-mode-control button {
+  padding: 0 11px;
+}
+
+.artifact-mode-control button.selected {
+  background: #ffffff;
+  color: #0f766e;
+  box-shadow: 0 0 0 1px rgba(13, 148, 136, 0.18);
+}
+
+.artifact-mode-control button:disabled {
+  color: #a8a29e;
+  cursor: default;
+}
+
+.artifact-action {
+  display: inline-grid;
+  place-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.artifact-action.icon-only {
+  width: 30px;
+  padding: 0;
+}
+
+.artifact-action svg {
+  width: 15px;
+  height: 15px;
+}
+
+.artifact-card-body {
+  min-width: 0;
+  padding: 12px;
+}
+
+.artifact-preview-frame {
+  display: block;
+  width: 100%;
+  height: min(420px, 56vh);
+  min-height: 220px;
+  max-height: 520px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.artifact-markdown-preview,
+.artifact-source pre {
+  min-width: 0;
+  max-width: 100%;
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.artifact-markdown-preview {
+  padding: 14px;
+}
+
+.artifact-source {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.artifact-source pre {
+  margin: 0;
+  padding: 12px 14px;
+  color: #292524;
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.artifact-fallback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px 12px;
+}
+
+.artifact-fallback svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.artifact-fallback span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tool-card-command,

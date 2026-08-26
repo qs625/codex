@@ -6,4 +6,4 @@ import type { MemoryCitation } from "./MemoryCitation";
 import type { MessagePhase } from "./MessagePhase";
 import type { UserInput } from "./UserInput";
 
-export type ContextCompactionReplacementItem = { "type": "injectedContext", id: string, title: string, preview: string, sections: Array<InjectedContextSection>, } | { "type": "userMessage", id: string, content: Array<UserInput>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, };
+export type ContextCompactionReplacementItem = { "type": "injectedContext", id: string, title: string, preview: string, sections: Array<InjectedContextSection>, } | { "type": "userMessage", id: string, content: Array<UserInput>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, } | { "type": "conversationArtifact", id: string, title: string, mimeType: string, content: string, language?: string, truncated?: boolean, };

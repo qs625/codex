@@ -6,6 +6,7 @@ export const CONVERSATION_OVERSCAN_PX = 640;
 const DEFAULT_MESSAGE_ROW_HEIGHT = 104;
 const DEFAULT_EVENT_ROW_HEIGHT = 72;
 const DEFAULT_TOOL_ROW_HEIGHT = 112;
+const DEFAULT_ARTIFACT_ROW_HEIGHT = 420;
 const DEFAULT_COMPACT_ROW_HEIGHT = 156;
 const DEFAULT_ARCHIVE_ROW_HEIGHT = 112;
 const TEXT_LINE_HEIGHT = 22;
@@ -26,6 +27,10 @@ export function estimateConversationCellHeight(cell: ConversationCell): number {
 
   if (cell.kind === "tool") {
     return estimateToolCellHeight(cell.entries);
+  }
+
+  if (cell.kind === "artifact") {
+    return estimateArtifactCellHeight(cell.entries[0]);
   }
 
   if (cell.kind === "archive") {
@@ -104,6 +109,21 @@ function estimateMessageCellHeight(entries: ConversationEntry[]) {
     }
   }
   return height;
+}
+
+function estimateArtifactCellHeight(entry: ConversationEntry | undefined) {
+  if (!entry?.artifact) {
+    return DEFAULT_ARTIFACT_ROW_HEIGHT;
+  }
+  const sourceLines = Math.min(
+    14,
+    Math.max(1, entry.artifact.content.split("\n").length),
+  );
+  return (
+    DEFAULT_ARTIFACT_ROW_HEIGHT +
+    estimateWrappedTextHeight(entry.text, TOOL_CHARS_PER_LINE, 1) +
+    sourceLines * 8
+  );
 }
 
 function estimateToolCellHeight(entries: ConversationEntry[]) {

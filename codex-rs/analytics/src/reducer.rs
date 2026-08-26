@@ -92,8 +92,6 @@ use app_server_protocol::CommandExecutionStatus;
 use app_server_protocol::DynamicToolCallOutputContentItem;
 use app_server_protocol::DynamicToolCallStatus;
 use app_server_protocol::FileChangeApprovalDecision;
-use app_server_protocol::ThreadLifecycleFinalStatus;
-use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::GuardianApprovalReviewAction;
 use app_server_protocol::GuardianApprovalReviewStatus;
 use app_server_protocol::InitializeParams;
@@ -107,6 +105,8 @@ use app_server_protocol::ServerNotification;
 use app_server_protocol::ServerRequest;
 use app_server_protocol::ServerResponse;
 use app_server_protocol::ThreadItem;
+use app_server_protocol::ThreadLifecycleFinalStatus;
+use app_server_protocol::ThreadLifecycleStatus;
 use app_server_protocol::TurnSteerResponse;
 use app_server_protocol::UserInput;
 use app_server_protocol::WebSearchAction;
@@ -374,6 +374,7 @@ impl TurnToolCounts {
             | ThreadItem::WorkflowRunProgress { .. }
             | ThreadItem::ThreadGoalUpdate { .. }
             | ThreadItem::CollabAgentMessage { .. }
+            | ThreadItem::ConversationArtifact { .. }
             | ThreadItem::CollabAgentStatusUpdate { .. }
             | ThreadItem::ImageView { .. }
             | ThreadItem::EnteredReviewMode { .. }
@@ -1616,6 +1617,7 @@ fn tracked_tool_item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::WorkflowRunProgress { .. }
         | ThreadItem::ThreadGoalUpdate { .. }
         | ThreadItem::CollabAgentMessage { .. }
+        | ThreadItem::ConversationArtifact { .. }
         | ThreadItem::CollabAgentStatusUpdate { .. }
         | ThreadItem::ImageView { .. }
         | ThreadItem::EnteredReviewMode { .. }
@@ -1890,9 +1892,8 @@ fn tool_item_event(input: ToolItemEventInput<'_>) -> Option<TrackEventRequest> {
                                     matches!(
                                         state.lifecycle_status,
                                         ThreadLifecycleStatus::Final {
-                                            result:
-                                                ThreadLifecycleFinalStatus::Errored { .. }
-                                                    | ThreadLifecycleFinalStatus::Shutdown
+                                            result: ThreadLifecycleFinalStatus::Errored { .. }
+                                                | ThreadLifecycleFinalStatus::Shutdown
                                         } | ThreadLifecycleStatus::NotLoaded
                                             | ThreadLifecycleStatus::SystemError { .. }
                                     )

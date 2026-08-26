@@ -16,6 +16,7 @@ use crate::protocol::ThreadItem;
 use crate::protocol::UserInput;
 use crate::protocol::WebSearchAction;
 use crate::protocol::assistant_message_thread_item;
+use crate::protocol::conversation_artifact_thread_item;
 use crate::protocol::item_builders::convert_patch_changes;
 use crate::protocol::response_item_projection::is_legacy_structured_assistant_message_text;
 use crate::protocol::response_item_projection::is_legacy_structured_user_inputs;
@@ -173,16 +174,14 @@ pub fn project_event_msg_item(event: &EventMsg) -> Option<ProjectedEventItem> {
             },
             completed_at_ms: event.completed_at_ms,
         }),
-        EventMsg::InterAgentCommunicationCompleted(event) => {
-            Some(ProjectedEventItem::Completed {
-                turn_id: event.turn_id.clone(),
-                item: thread_item_from_inter_agent_communication(
-                    event.id.clone(),
-                    event.communication.clone(),
-                ),
-                completed_at_ms: event.completed_at_ms,
-            })
-        }
+        EventMsg::InterAgentCommunicationCompleted(event) => Some(ProjectedEventItem::Completed {
+            turn_id: event.turn_id.clone(),
+            item: thread_item_from_inter_agent_communication(
+                event.id.clone(),
+                event.communication.clone(),
+            ),
+            completed_at_ms: event.completed_at_ms,
+        }),
         EventMsg::ThreadGoalUpdateCompleted(event) => Some(ProjectedEventItem::Completed {
             turn_id: event.turn_id.clone(),
             item: ThreadItem::ThreadGoalUpdate {
@@ -279,6 +278,9 @@ fn thread_item_from_turn_item(value: CoreTurnItem) -> Option<ThreadItem> {
         CoreTurnItem::CollabAgentMessage(collab) => Some(
             thread_item_from_inter_agent_communication(collab.id, collab.communication),
         ),
+        CoreTurnItem::ConversationArtifact(artifact) => {
+            Some(conversation_artifact_thread_item(artifact))
+        }
         CoreTurnItem::Plan(plan) => Some(ThreadItem::Plan {
             id: plan.id,
             text: plan.text,
@@ -380,6 +382,27 @@ pub fn context_compaction_replacement_item_from_core(
                 text,
                 phase: agent.phase,
                 memory_citation: agent.memory_citation.map(Into::into),
+            }
+        }
+        CoreContextCompactionReplacementItem::ConversationArtifact(artifact) => {
+            let ThreadItem::ConversationArtifact {
+                id,
+                title,
+                mime_type,
+                content,
+                language,
+                truncated,
+            } = conversation_artifact_thread_item(artifact)
+            else {
+                unreachable!("conversation artifact projection returns artifact item")
+            };
+            ContextCompactionReplacementItem::ConversationArtifact {
+                id,
+                title,
+                mime_type,
+                content,
+                language,
+                truncated,
             }
         }
     }

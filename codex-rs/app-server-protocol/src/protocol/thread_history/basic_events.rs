@@ -161,6 +161,7 @@ impl ThreadHistoryBuilder {
             | protocol::items::TurnItem::EventDrivenTool(_)
             | protocol::items::TurnItem::EventCommandEvent(_)
             | protocol::items::TurnItem::CollabAgentMessage(_)
+            | protocol::items::TurnItem::ConversationArtifact(_)
             | protocol::items::TurnItem::Reasoning(_)
             | protocol::items::TurnItem::WebSearch(_)
             | protocol::items::TurnItem::ImageView(_)
@@ -181,7 +182,8 @@ impl ThreadHistoryBuilder {
             }
             protocol::items::TurnItem::EventDrivenTool(_)
             | protocol::items::TurnItem::EventCommandEvent(_)
-            | protocol::items::TurnItem::InjectedContext(_) => {
+            | protocol::items::TurnItem::InjectedContext(_)
+            | protocol::items::TurnItem::ConversationArtifact(_) => {
                 self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
             protocol::items::TurnItem::AgentMessage(_) => {

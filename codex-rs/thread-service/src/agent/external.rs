@@ -2231,6 +2231,7 @@ fn codex_thread_item_type_name(item: &app_server_protocol::ThreadItem) -> &'stat
         app_server_protocol::ThreadItem::ThreadGoalUpdate { .. } => "threadGoalUpdate",
         app_server_protocol::ThreadItem::ContextCompaction { .. } => "contextCompaction",
         app_server_protocol::ThreadItem::WorkflowRunProgress { .. } => "workflowRunProgress",
+        app_server_protocol::ThreadItem::ConversationArtifact { .. } => "conversationArtifact",
         app_server_protocol::ThreadItem::EnteredReviewMode { .. } => "enteredReviewMode",
         app_server_protocol::ThreadItem::ExitedReviewMode { .. } => "exitedReviewMode",
         app_server_protocol::ThreadItem::CollabAgentToolCall { .. } => "collabAgentToolCall",

@@ -29,6 +29,7 @@ pub enum TurnItem {
     EventDrivenTool(EventDrivenToolItem),
     EventCommandEvent(EventCommandEventItem),
     CollabAgentMessage(CollabAgentMessageItem),
+    ConversationArtifact(ConversationArtifactItem),
     Plan(PlanItem),
     Reasoning(ReasoningItem),
     WebSearch(WebSearchItem),
@@ -129,6 +130,21 @@ pub struct EventCommandEventItem {
 pub struct CollabAgentMessageItem {
     pub id: String,
     pub communication: InterAgentCommunication,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct ConversationArtifactItem {
+    pub id: String,
+    pub title: String,
+    pub mime_type: String,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
@@ -247,6 +263,7 @@ pub enum ContextCompactionReplacementItem {
     InjectedContext(InjectedContextItem),
     UserMessage(UserMessageItem),
     AgentMessage(AgentMessageItem),
+    ConversationArtifact(ConversationArtifactItem),
 }
 
 fn deserialize_context_compaction_replacement_history<'de, D>(

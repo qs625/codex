@@ -1,7 +1,7 @@
 use super::PendingAgentMessageResponse;
 use super::ThreadHistoryBuilder;
-use app_server_protocol::ProjectedEventItem;
 use app_server_protocol::MemoryCitation;
+use app_server_protocol::ProjectedEventItem;
 use app_server_protocol::ThreadItem;
 use app_server_protocol::is_legacy_structured_assistant_message_text;
 use app_server_protocol::is_legacy_structured_user_inputs;
@@ -174,6 +174,7 @@ impl ThreadHistoryBuilder {
             | protocol::items::TurnItem::EventDrivenTool(_)
             | protocol::items::TurnItem::EventCommandEvent(_)
             | protocol::items::TurnItem::CollabAgentMessage(_)
+            | protocol::items::TurnItem::ConversationArtifact(_)
             | protocol::items::TurnItem::Reasoning(_)
             | protocol::items::TurnItem::WebSearch(_)
             | protocol::items::TurnItem::ImageView(_)
@@ -194,7 +195,8 @@ impl ThreadHistoryBuilder {
             }
             protocol::items::TurnItem::EventDrivenTool(_)
             | protocol::items::TurnItem::EventCommandEvent(_)
-            | protocol::items::TurnItem::InjectedContext(_) => {
+            | protocol::items::TurnItem::InjectedContext(_)
+            | protocol::items::TurnItem::ConversationArtifact(_) => {
                 self.handle_projected_event_item(&EventMsg::ItemCompleted(payload.clone()));
             }
             protocol::items::TurnItem::AgentMessage(_) => {

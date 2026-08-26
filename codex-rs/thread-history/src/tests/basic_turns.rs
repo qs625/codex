@@ -259,6 +259,50 @@ use super::*;
     }
 
     #[test]
+    fn maps_typed_conversation_artifact_completed_to_artifact_item() {
+        let events = [
+            EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            }),
+            EventMsg::ItemCompleted(ItemCompletedEvent {
+                thread_id: ThreadId::new(),
+                turn_id: "turn-1".into(),
+                item: CoreTurnItem::ConversationArtifact(CoreConversationArtifactItem {
+                    id: "artifact-1".into(),
+                    title: "Inline page".into(),
+                    mime_type: "text/html".into(),
+                    content: "<main>Hello</main>".into(),
+                    language: Some("html".into()),
+                    truncated: false,
+                }),
+                completed_at_ms: 123,
+            }),
+        ];
+
+        let mut builder = ThreadHistoryBuilder::new();
+        for event in &events {
+            builder.handle_event(event);
+        }
+        let turns = builder.finish();
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![ThreadItem::ConversationArtifact {
+                id: "artifact-1".into(),
+                title: "Inline page".into(),
+                mime_type: "text/html".into(),
+                content: "<main>Hello</main>".into(),
+                language: Some("html".into()),
+                truncated: false,
+            }]
+        );
+    }
+
+    #[test]
     fn dedupes_typed_agent_message_completed_before_raw_response_item() {
         let events = [
             EventMsg::TurnStarted(TurnStartedEvent {

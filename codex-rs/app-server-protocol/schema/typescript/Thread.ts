@@ -9,6 +9,7 @@ import type { ThreadItem } from "./ThreadItem";
 import type { ThreadLifecycleStatus } from "./ThreadLifecycleStatus";
 import type { ThreadSkill } from "./ThreadSkill";
 import type { ThreadSource } from "./ThreadSource";
+import type { ThreadStats } from "./ThreadStats";
 import type { ThreadTokenUsage } from "./ThreadTokenUsage";
 import type { Turn } from "./Turn";
 
@@ -97,6 +98,10 @@ tokenUsage: ThreadTokenUsage | null,
  * Restored aggregate thread context usage, when available.
  */
 contextUsage: ThreadContextUsage | null,
+/**
+ * Bounded thread-level historical statistics restored from persisted history.
+ */
+stats?: ThreadStats,
 /**
  * Populated only on responses that explicitly include display history, such as
  * `thread/resume`, `thread/rollback`, `thread/fork`, and

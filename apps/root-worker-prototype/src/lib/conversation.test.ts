@@ -220,6 +220,138 @@ test("builds a workflow progress tool entry from typed thread items", () => {
   ]);
 });
 
+test("builds inline artifact entries from typed thread items", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "conversationArtifact",
+        id: "artifact-1",
+        title: "Signup mock",
+        mimeType: "text/html",
+        content: "<main><h1>Signup</h1></main>",
+        language: "html",
+      },
+    ]),
+  );
+
+  assert.deepEqual(entries, [
+    {
+      id: "artifact-1",
+      kind: "artifact",
+      author: "root",
+      role: "agent",
+      text: "Signup mock • text/html",
+      timestamp: formatClockTime(1),
+      attachments: [],
+      artifact: {
+        title: "Signup mock",
+        mimeType: "text/html",
+        content: "<main><h1>Signup</h1></main>",
+        language: "html",
+        truncated: undefined,
+      },
+      turnId: "turn-1",
+    },
+  ]);
+
+  assert.deepEqual(buildConversationCells(entries), [
+    {
+      id: "artifact-1",
+      kind: "artifact",
+      entries,
+    },
+  ]);
+});
+
+test("ordinary html or svg code blocks stay agent messages", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "agentMessage",
+        id: "agent-1",
+        text: "```html\n<svg><circle /></svg>\n```",
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].kind, "message");
+  assert.equal(entries[0].text, "```html\n<svg><circle /></svg>\n```");
+  assert.equal(entries[0].artifact, undefined);
+});
+
+test("ordinary markdown assistant messages stay on the message path", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "agentMessage",
+        id: "agent-markdown",
+        text: "## Summary\n\n- keep markdown in messages",
+        phase: null,
+        memoryCitation: null,
+      },
+    ]),
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].kind, "message");
+  assert.equal(entries[0].text, "## Summary\n\n- keep markdown in messages");
+  assert.equal(entries[0].artifact, undefined);
+});
+
+test("compact rows archive prior artifact cells", () => {
+  const entries = buildConversationEntries(
+    makeThreadWithTurns([
+      {
+        id: "turn-1",
+        items: [
+          {
+            type: "conversationArtifact",
+            id: "artifact-1",
+            title: "Inline chart",
+            mimeType: "image/svg+xml",
+            content: "<svg viewBox=\"0 0 10 10\"><circle cx=\"5\" cy=\"5\" r=\"4\" /></svg>",
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 1,
+        completedAt: 1,
+        durationMs: 0,
+      },
+      {
+        id: "turn-2",
+        items: [
+          {
+            type: "contextCompaction",
+            id: "compact-1",
+            replacementHistory: [],
+          },
+        ],
+        itemsView: "full",
+        status: "completed",
+        error: null,
+        startedAt: 2,
+        completedAt: 2,
+        durationMs: 0,
+      },
+    ]),
+  );
+
+  const cells = buildConversationCells(entries);
+
+  assert.equal(cells.length, 1);
+  assert.equal(cells[0].kind, "compact");
+  assert.equal(cells[0].entries[0].archivedCells?.[0]?.kind, "artifact");
+  assert.equal(
+    cells[0].entries[0].archivedCells?.[0]?.entries[0]?.artifact?.mimeType,
+    "image/svg+xml",
+  );
+});
+
 test("keeps consecutive ordinary tools grouped in one visible cell", () => {
   const entries = buildConversationEntries(
     makeThread([
