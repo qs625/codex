@@ -18,6 +18,7 @@ use time::OffsetDateTime;
 use time::format_description::FormatItem;
 use time::format_description::well_known::Rfc3339;
 use time::macros::format_description;
+use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
@@ -72,7 +73,7 @@ use state_api::StateDbRuntime;
 pub struct RolloutRecorder {
     tx: Sender<RolloutCmd>,
     writer_task: Arc<RolloutWriterTask>,
-    pub(crate) rollout_path: PathBuf,
+    current_rollout_path: Arc<Mutex<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -653,7 +654,7 @@ impl RolloutRecorder {
         config: &impl RolloutConfigView,
         params: RolloutRecorderParams,
     ) -> std::io::Result<Self> {
-        let (file, deferred_log_file_info, rollout_path, meta) = match params {
+        let (file, deferred_log_file_info, rollout_path, meta, thread_id) = match params {
             RolloutRecorderParams::Create {
                 conversation_id,
                 forked_from_id,
@@ -701,19 +702,32 @@ impl RolloutRecorder {
                     external_reconnect: None,
                 };
 
-                (None, Some(log_file_info), path, Some(session_meta))
+                (
+                    None,
+                    Some(log_file_info),
+                    path,
+                    Some(session_meta),
+                    session_id,
+                )
             }
-            RolloutRecorderParams::Resume { path } => (
-                Some(
-                    tokio::fs::OpenOptions::new()
-                        .append(true)
-                        .open(&path)
-                        .await?,
-                ),
-                None,
-                path,
-                None,
-            ),
+            RolloutRecorderParams::Resume { path } => {
+                let head_path = resolve_current_segment_path(path.as_path())
+                    .await
+                    .unwrap_or(path);
+                let meta_line = read_latest_session_meta_line(head_path.as_path()).await?;
+                (
+                    Some(
+                        tokio::fs::OpenOptions::new()
+                            .append(true)
+                            .open(&head_path)
+                            .await?,
+                    ),
+                    None,
+                    head_path,
+                    None,
+                    meta_line.meta.id,
+                )
+            }
         };
 
         // Clone the cwd for the spawned task to collect git info asynchronously
@@ -729,6 +743,9 @@ impl RolloutRecorder {
         let writer_task = Arc::new(RolloutWriterTask::new());
         let writer_task_for_spawn = Arc::clone(&writer_task);
         let rollout_path_for_spawn = rollout_path.clone();
+        let current_rollout_path = Arc::new(Mutex::new(rollout_path.clone()));
+        let current_rollout_path_for_spawn = Arc::clone(&current_rollout_path);
+        let segment_chain = SegmentChain::new(rollout_path.clone(), thread_id);
         let handle = tokio::task::spawn(async move {
             let result = rollout_writer(
                 file,
@@ -737,6 +754,8 @@ impl RolloutRecorder {
                 meta,
                 cwd,
                 rollout_path_for_spawn.clone(),
+                current_rollout_path_for_spawn,
+                segment_chain,
             )
             .await;
             if let Err(err) = result {
@@ -754,12 +773,15 @@ impl RolloutRecorder {
         Ok(Self {
             tx,
             writer_task,
-            rollout_path,
+            current_rollout_path,
         })
     }
 
-    pub fn rollout_path(&self) -> &Path {
-        self.rollout_path.as_path()
+    pub fn rollout_path(&self) -> PathBuf {
+        self.current_rollout_path
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub async fn record_canonical_items(&self, items: &[RolloutItem]) -> std::io::Result<()> {
@@ -1255,16 +1277,15 @@ async fn list_threads_from_files_asc(
     if let Some(cursor) = cursor {
         let anchor = cursor.timestamp();
         let anchor_id = cursor.id();
-        all_items
-            .retain(|item| {
-                thread_item_sort_key(item, sort_key).is_some_and(|key| {
-                    if let Some(anchor_id) = anchor_id {
-                        key.0 > anchor || (key.0 == anchor && key.1 > anchor_id)
-                    } else {
-                        key.0 > anchor
-                    }
-                })
-            });
+        all_items.retain(|item| {
+            thread_item_sort_key(item, sort_key).is_some_and(|key| {
+                if let Some(anchor_id) = anchor_id {
+                    key.0 > anchor || (key.0 == anchor && key.1 > anchor_id)
+                } else {
+                    key.0 > anchor
+                }
+            })
+        });
     }
 
     let more_matches_available = all_items.len() > page_size || reached_scan_cap;
@@ -1342,6 +1363,193 @@ struct LogFileInfo {
     timestamp: OffsetDateTime,
 }
 
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct SegmentManifest {
+    version: u32,
+    thread_id: ThreadId,
+    head: String,
+    segments: Vec<String>,
+    updated_at: String,
+}
+
+#[derive(Clone, Debug)]
+struct SegmentChain {
+    manifest_path: PathBuf,
+    thread_id: ThreadId,
+    segments: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingSegment {
+    path: PathBuf,
+    compact_written: bool,
+}
+
+impl SegmentChain {
+    fn new(initial_path: PathBuf, thread_id: ThreadId) -> Self {
+        match load_segment_manifest_for_path(initial_path.as_path()) {
+            Ok(Some(manifest)) => {
+                let manifest_path = segment_manifest_path_for_rollout(initial_path.as_path());
+                let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+                let segments = manifest
+                    .segments
+                    .iter()
+                    .map(|segment| base_dir.join(segment))
+                    .collect();
+                Self {
+                    manifest_path,
+                    thread_id: manifest.thread_id,
+                    segments,
+                }
+            }
+            Ok(None) | Err(_) => Self {
+                manifest_path: segment_manifest_path_for_rollout(initial_path.as_path()),
+                thread_id,
+                segments: vec![initial_path],
+            },
+        }
+    }
+
+    fn head(&self) -> Option<&Path> {
+        self.segments.last().map(PathBuf::as_path)
+    }
+
+    fn next_segment_path(&self) -> std::io::Result<PathBuf> {
+        let current_head = self
+            .head()
+            .ok_or_else(|| IoError::other("segment chain has no head"))?;
+        let parent = current_head.parent().ok_or_else(|| {
+            IoError::other(format!(
+                "rollout segment path has no parent: {}",
+                current_head.display()
+            ))
+        })?;
+        let base_stem = base_rollout_stem(current_head).ok_or_else(|| {
+            IoError::other(format!(
+                "failed to derive rollout segment stem from {}",
+                current_head.display()
+            ))
+        })?;
+        let next_index = self.segments.len();
+        Ok(parent.join(format!("{base_stem}.compact-{next_index:06}.jsonl")))
+    }
+
+    fn push_segment(&mut self, path: PathBuf) -> std::io::Result<SegmentManifest> {
+        self.segments.push(path);
+        self.to_manifest()
+    }
+
+    fn to_manifest(&self) -> std::io::Result<SegmentManifest> {
+        let base_dir = self.manifest_path.parent().unwrap_or_else(|| Path::new(""));
+        let mut segments = Vec::with_capacity(self.segments.len());
+        for segment in &self.segments {
+            let relative = segment.strip_prefix(base_dir).unwrap_or(segment.as_path());
+            segments.push(relative.to_string_lossy().to_string());
+        }
+        let head = segments
+            .last()
+            .cloned()
+            .ok_or_else(|| IoError::other("segment manifest has no head"))?;
+        Ok(SegmentManifest {
+            version: 1,
+            thread_id: self.thread_id,
+            head,
+            segments,
+            updated_at: OffsetDateTime::now_utc()
+                .format(&Rfc3339)
+                .unwrap_or_else(|_| "unknown".to_string()),
+        })
+    }
+}
+
+pub fn segment_manifest_path_for_rollout(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let stem = base_rollout_stem(path)
+        .or_else(|| {
+            path.file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| "rollout".to_string());
+    parent.join(format!("{stem}.segments.json"))
+}
+
+fn base_rollout_stem(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    match stem.find(".compact-") {
+        Some(index) => Some(stem[..index].to_string()),
+        None => Some(stem.to_string()),
+    }
+}
+
+fn load_segment_manifest_for_path(path: &Path) -> std::io::Result<Option<SegmentManifest>> {
+    let manifest_path = segment_manifest_path_for_rollout(path);
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&manifest_path)?;
+    let manifest = serde_json::from_str::<SegmentManifest>(&text).map_err(IoError::other)?;
+    if manifest.version != 1 {
+        return Err(IoError::other(format!(
+            "unsupported rollout segment manifest version {} at {}",
+            manifest.version,
+            manifest_path.display()
+        )));
+    }
+    Ok(Some(manifest))
+}
+
+pub async fn resolve_current_segment_path(path: &Path) -> std::io::Result<PathBuf> {
+    let manifest_path = segment_manifest_path_for_rollout(path);
+    let Some(manifest) = load_segment_manifest_for_path(path)? else {
+        return Ok(path.to_path_buf());
+    };
+    let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+    let head = base_dir.join(manifest.head);
+    if tokio::fs::try_exists(head.as_path()).await.unwrap_or(false) {
+        Ok(head)
+    } else {
+        Ok(path.to_path_buf())
+    }
+}
+
+async fn persist_segment_manifest(
+    manifest_path: &Path,
+    manifest: &SegmentManifest,
+) -> std::io::Result<()> {
+    if let Some(parent) = manifest_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let temp_path = manifest_path.with_extension("segments.json.tmp");
+    let json = serde_json::to_vec_pretty(manifest).map_err(IoError::other)?;
+    tokio::fs::write(temp_path.as_path(), json).await?;
+    tokio::fs::rename(temp_path, manifest_path).await
+}
+
+async fn read_latest_session_meta_line(path: &Path) -> std::io::Result<SessionMetaLine> {
+    let file = tokio::fs::File::open(path).await?;
+    let reader = tokio::io::BufReader::new(file);
+    let mut lines = reader.lines();
+    let mut latest = None;
+    while let Some(line) = lines.next_line().await? {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(rollout_line) = serde_json::from_str::<RolloutLine>(trimmed) else {
+            continue;
+        };
+        if let RolloutItem::SessionMeta(meta_line) = rollout_line.item {
+            latest = Some(meta_line);
+        }
+    }
+    latest.ok_or_else(|| {
+        IoError::other(format!(
+            "rollout at {} does not contain session metadata",
+            path.display()
+        ))
+    })
+}
+
 fn precompute_log_file_info(
     config: &impl RolloutConfigView,
     conversation_id: ThreadId,
@@ -1400,6 +1608,9 @@ struct RolloutWriterState {
     meta: Option<SessionMeta>,
     cwd: PathBuf,
     rollout_path: PathBuf,
+    current_rollout_path: Arc<Mutex<PathBuf>>,
+    segment_chain: SegmentChain,
+    pending_segment: Option<PendingSegment>,
     last_logged_error: Option<String>,
 }
 
@@ -1410,6 +1621,8 @@ impl RolloutWriterState {
         meta: Option<SessionMeta>,
         cwd: PathBuf,
         rollout_path: PathBuf,
+        current_rollout_path: Arc<Mutex<PathBuf>>,
+        segment_chain: SegmentChain,
     ) -> Self {
         Self {
             writer: file.map(|file| JsonlWriter { file }),
@@ -1418,6 +1631,9 @@ impl RolloutWriterState {
             meta,
             cwd,
             rollout_path,
+            current_rollout_path,
+            segment_chain,
+            pending_segment: None,
             last_logged_error: None,
         }
     }
@@ -1523,10 +1739,78 @@ impl RolloutWriterState {
         Ok(())
     }
 
+    async fn prepare_segment_for_compaction(&mut self) -> std::io::Result<()> {
+        if self.pending_segment.is_some() {
+            self.ensure_writer_open().await?;
+            return Ok(());
+        }
+        self.ensure_writer_open().await?;
+        if let Some(writer) = self.writer.as_mut() {
+            writer.file.flush().await?;
+        }
+
+        let current_path = self
+            .segment_chain
+            .head()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.rollout_path.clone());
+        let session_meta = read_latest_session_meta_line(current_path.as_path())
+            .await
+            .or_else(|_| {
+                self.meta
+                    .as_ref()
+                    .cloned()
+                    .map(|meta| SessionMetaLine { meta, git: None })
+                    .ok_or_else(|| {
+                        IoError::other(format!(
+                            "failed to read session metadata before segmenting {}",
+                            current_path.display()
+                        ))
+                    })
+            })?;
+
+        let next_path = self.segment_chain.next_segment_path()?;
+        let file = open_log_file(next_path.as_path())?;
+        self.writer = Some(JsonlWriter {
+            file: tokio::fs::File::from_std(file),
+        });
+        write_session_meta_line(self.writer.as_mut(), session_meta).await?;
+        self.meta = None;
+
+        self.rollout_path = next_path.clone();
+        self.pending_segment = Some(PendingSegment {
+            path: next_path,
+            compact_written: false,
+        });
+        Ok(())
+    }
+
+    async fn finalize_pending_segment_after_compaction(&mut self) -> std::io::Result<()> {
+        let Some(pending_segment) = self.pending_segment.as_ref() else {
+            return Ok(());
+        };
+        if !pending_segment.compact_written {
+            return Ok(());
+        }
+        let path = pending_segment.path.clone();
+        let mut next_chain = self.segment_chain.clone();
+        let manifest = next_chain.push_segment(path.clone())?;
+        persist_segment_manifest(self.segment_chain.manifest_path.as_path(), &manifest).await?;
+        self.segment_chain = next_chain;
+        *self
+            .current_rollout_path
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = path.clone();
+        self.rollout_path = path;
+        self.pending_segment = None;
+        Ok(())
+    }
+
     async fn write_pending_once(&mut self) -> std::io::Result<()> {
         self.ensure_writer_open().await?;
         self.write_session_meta_if_needed().await?;
 
+        self.finalize_pending_segment_after_compaction().await?;
         self.write_pending_items_once().await?;
 
         if let Some(writer) = self.writer.as_mut() {
@@ -1536,22 +1820,46 @@ impl RolloutWriterState {
     }
 
     async fn write_pending_items_once(&mut self) -> std::io::Result<()> {
-        let Some(writer) = self.writer.as_mut() else {
-            return Err(IoError::other("rollout writer is not open"));
-        };
-
         let mut written_count = 0usize;
         let mut write_result = Ok(());
-        for item in &self.pending_items {
-            if let Err(err) = writer.write_rollout_item(item).await {
-                write_result = Err(err);
-                break;
+        while written_count < self.pending_items.len() {
+            let item = self.pending_items[written_count].clone();
+            let item_starts_segment = matches!(item, RolloutItem::Compacted(_));
+            if item_starts_segment {
+                self.prepare_segment_for_compaction().await?;
+            }
+            let Some(writer) = self.writer.as_mut() else {
+                return Err(IoError::other("rollout writer is not open"));
+            };
+            if !(item_starts_segment
+                && self
+                    .pending_segment
+                    .as_ref()
+                    .is_some_and(|segment| segment.compact_written))
+            {
+                if let Err(err) = writer.write_rollout_item(&item).await {
+                    write_result = Err(err);
+                    break;
+                }
             }
             written_count += 1;
+            if item_starts_segment {
+                if let Some(segment) = self.pending_segment.as_mut() {
+                    segment.compact_written = true;
+                }
+                if let Err(err) = self.finalize_pending_segment_after_compaction().await {
+                    write_result = Err(err);
+                    break;
+                }
+            }
         }
 
         if written_count > 0 {
             self.pending_items.drain(..written_count);
+        }
+
+        if write_result.is_ok() {
+            write_result = self.finalize_pending_segment_after_compaction().await;
         }
 
         write_result
@@ -1565,8 +1873,18 @@ async fn rollout_writer(
     meta: Option<SessionMeta>,
     cwd: PathBuf,
     rollout_path: PathBuf,
+    current_rollout_path: Arc<Mutex<PathBuf>>,
+    segment_chain: SegmentChain,
 ) -> std::io::Result<()> {
-    let mut state = RolloutWriterState::new(file, deferred_log_file_info, meta, cwd, rollout_path);
+    let mut state = RolloutWriterState::new(
+        file,
+        deferred_log_file_info,
+        meta,
+        cwd,
+        rollout_path,
+        current_rollout_path,
+        segment_chain,
+    );
 
     // Process rollout commands
     while let Some(cmd) = rx.recv().await {
@@ -1597,7 +1915,7 @@ async fn rollout_writer(
 }
 
 async fn write_session_meta(
-    mut writer: Option<&mut JsonlWriter>,
+    writer: Option<&mut JsonlWriter>,
     session_meta: SessionMeta,
     cwd: &Path,
 ) -> std::io::Result<()> {
@@ -1616,8 +1934,23 @@ async fn write_session_meta(
     };
 
     let rollout_item = RolloutItem::SessionMeta(session_meta_line);
-    if let Some(writer) = writer.as_mut() {
-        writer.write_rollout_item(&rollout_item).await?;
+    write_rollout_item_if_writer(writer, &rollout_item).await
+}
+
+async fn write_session_meta_line(
+    writer: Option<&mut JsonlWriter>,
+    session_meta_line: SessionMetaLine,
+) -> std::io::Result<()> {
+    let rollout_item = RolloutItem::SessionMeta(session_meta_line);
+    write_rollout_item_if_writer(writer, &rollout_item).await
+}
+
+async fn write_rollout_item_if_writer(
+    writer: Option<&mut JsonlWriter>,
+    rollout_item: &RolloutItem,
+) -> std::io::Result<()> {
+    if let Some(writer) = writer {
+        writer.write_rollout_item(rollout_item).await?;
     }
     Ok(())
 }

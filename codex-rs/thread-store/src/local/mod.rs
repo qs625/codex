@@ -324,6 +324,7 @@ mod tests {
 
     use protocol::ThreadId;
     use protocol::models::BaseInstructions;
+    use protocol::protocol::CompactedItem;
     use protocol::protocol::EventMsg;
     use protocol::protocol::RolloutItem;
     use protocol::protocol::SessionSource;
@@ -949,6 +950,84 @@ mod tests {
             matches!(
                 item,
                 RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "external history item"
+            )
+        }));
+    }
+
+    #[tokio::test]
+    async fn load_history_uses_live_writer_head_segment_after_compaction() {
+        let home = TempDir::new().expect("temp dir");
+        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let thread_id = ThreadId::new();
+
+        store
+            .create_thread(create_thread_params(thread_id))
+            .await
+            .expect("create live thread");
+        let initial_path = store
+            .live_rollout_path(thread_id)
+            .await
+            .expect("initial rollout path");
+
+        store
+            .append_items(AppendThreadItemsParams {
+                thread_id,
+                items: vec![user_message_item("before compact")],
+            })
+            .await
+            .expect("append pre-compact item");
+        store
+            .append_items(AppendThreadItemsParams {
+                thread_id,
+                items: vec![RolloutItem::Compacted(CompactedItem {
+                    message: "compact checkpoint".to_string(),
+                    replacement_history: None,
+                    visible_replacement_history_len: None,
+                })],
+            })
+            .await
+            .expect("append compact item");
+
+        let head_path = store
+            .live_rollout_path(thread_id)
+            .await
+            .expect("head rollout path");
+        assert_ne!(head_path, initial_path);
+
+        store
+            .append_items(AppendThreadItemsParams {
+                thread_id,
+                items: vec![user_message_item("after compact")],
+            })
+            .await
+            .expect("append post-compact item");
+        store
+            .flush_thread(thread_id)
+            .await
+            .expect("flush live thread");
+
+        let history = store
+            .load_history(LoadThreadHistoryParams {
+                thread_id,
+                include_archived: false,
+            })
+            .await
+            .expect("load head history");
+
+        assert_eq!(history.thread_id, thread_id);
+        assert!(history.items.iter().any(|item| {
+            matches!(item, RolloutItem::Compacted(CompactedItem { message, .. }) if message == "compact checkpoint")
+        }));
+        assert!(history.items.iter().any(|item| {
+            matches!(
+                item,
+                RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "after compact"
+            )
+        }));
+        assert!(!history.items.iter().any(|item| {
+            matches!(
+                item,
+                RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "before compact"
             )
         }));
     }

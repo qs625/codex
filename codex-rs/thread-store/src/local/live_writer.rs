@@ -147,8 +147,7 @@ pub(super) async fn rollout_path(
         .await
         .get(&thread_id)
         .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?
-        .rollout_path()
-        .to_path_buf())
+        .rollout_path())
 }
 
 async fn sync_materialized_rollout_path(
