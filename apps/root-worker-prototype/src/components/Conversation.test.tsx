@@ -203,9 +203,9 @@ test("artifact row renders html preview in a sandboxed iframe", () => {
   assert.match(markup, /Inline artifact/);
   assert.match(markup, /text\/html/);
   assert.match(markup, /<iframe /);
-  assert.match(markup, /sandbox=""/);
-  assert.doesNotMatch(markup, /allow-scripts/);
-  assert.match(markup, /script-src &#x27;none&#x27;/);
+  assert.match(markup, /sandbox="allow-scripts"/);
+  assert.doesNotMatch(markup, /allow-same-origin/);
+  assert.match(markup, /script-src &#x27;unsafe-inline&#x27;/);
 });
 
 test("artifact row renders svg preview through the same sandbox", () => {
@@ -220,7 +220,9 @@ test("artifact row renders svg preview through the same sandbox", () => {
 
   assert.match(markup, /image\/svg\+xml/);
   assert.match(markup, /artifact-svg-host/);
-  assert.match(markup, /sandbox=""/);
+  assert.match(markup, /sandbox="allow-scripts"/);
+  assert.doesNotMatch(markup, /allow-same-origin/);
+  assert.match(markup, /script-src &#x27;none&#x27;/);
 });
 
 test("artifact row previews markdown with MarkdownContent", () => {
