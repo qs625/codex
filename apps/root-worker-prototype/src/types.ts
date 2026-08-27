@@ -147,6 +147,7 @@ export type ThreadItem = ThreadItemTimestamps &
       type: "conversationArtifact";
       id: string;
       title: string;
+      source?: ConversationArtifactSource | null;
       mimeType: string;
       content: string;
       language?: string | null;
@@ -320,10 +321,26 @@ export type CompactReplacementHistoryItem =
       type: "conversationArtifact";
       id: string;
       title: string;
+      source?: ConversationArtifactSource | null;
       mimeType: string;
       content: string;
       language?: string | null;
       truncated?: boolean;
+    };
+
+export type ConversationArtifactSource =
+  | {
+      type: "inline";
+      content: string;
+      mimeType: string;
+      language?: string | null;
+      truncated?: boolean;
+    }
+  | {
+      type: "url";
+      url: string;
+      mimeType?: string | null;
+      fallbackContent?: string | null;
     };
 
 export type ResponseItem = {
@@ -831,6 +848,7 @@ export type ConversationEntry = {
   };
   artifact?: {
     title: string;
+    source: ConversationArtifactSource;
     mimeType: string;
     content: string;
     language?: string | null;

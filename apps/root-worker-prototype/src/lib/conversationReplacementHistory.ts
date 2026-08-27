@@ -1,5 +1,6 @@
 import type {
   CompactReplacementHistoryItem,
+  ConversationArtifactSource,
   ConversationEntry,
   ResponseItem,
 } from "../types";
@@ -151,6 +152,7 @@ function buildTypedReplacementHistoryEntry(
         attachments: [],
         artifact: {
           title: item.title || "Artifact",
+          source: conversationArtifactReplacementSource(item),
           mimeType: item.mimeType,
           content: item.content,
           language: item.language,
@@ -164,11 +166,48 @@ function summarizeConversationArtifactReplacement(
   item: Extract<CompactReplacementHistoryItem, { type: "conversationArtifact" }>,
 ) {
   const title = item.title.trim() || "Artifact";
-  const mimeType = item.mimeType.trim() || "unknown";
+  const source = conversationArtifactReplacementSource(item);
+  const mimeType = artifactSourceMimeType(source, item.mimeType);
   return previewInlineText(
-    `${title} • ${mimeType}`,
+    source.type === "url" ? `${title} • ${mimeType} • ${source.url}` : `${title} • ${mimeType}`,
     ARTIFACT_SUMMARY_MAX_CHARS,
   );
+}
+
+function conversationArtifactReplacementSource(
+  item: Extract<CompactReplacementHistoryItem, { type: "conversationArtifact" }>,
+): ConversationArtifactSource {
+  if (item.source?.type === "url") {
+    return {
+      type: "url",
+      url: item.source.url,
+      mimeType: item.source.mimeType ?? item.mimeType,
+      fallbackContent: item.source.fallbackContent ?? item.content,
+    };
+  }
+  if (item.source?.type === "inline") {
+    return {
+      type: "inline",
+      content: item.source.content,
+      mimeType: item.source.mimeType,
+      language: item.source.language,
+      truncated: item.source.truncated,
+    };
+  }
+  return {
+    type: "inline",
+    content: item.content,
+    mimeType: item.mimeType,
+    language: item.language,
+    truncated: item.truncated,
+  };
+}
+
+function artifactSourceMimeType(
+  source: ConversationArtifactSource,
+  fallbackMimeType: string,
+) {
+  return (source.mimeType ?? fallbackMimeType).trim() || "unknown";
 }
 
 function buildReplacementHistoryEntry(

@@ -1,4 +1,5 @@
 import type {
+  ConversationArtifactSource,
   ConversationCell,
   ConversationEntry,
   Thread,
@@ -343,6 +344,7 @@ function buildConversationItemEntries(
         attachments: [],
         artifact: {
           title: item.title || "Artifact",
+          source: conversationArtifactSource(item),
           mimeType: item.mimeType,
           content: item.content,
           language: item.language,
@@ -599,9 +601,49 @@ function summarizeConversationArtifact(
   item: Extract<ThreadItem, { type: "conversationArtifact" }>,
 ) {
   const title = item.title.trim() || "Artifact";
-  const mimeType = item.mimeType.trim() || "unknown";
-  const summary = `${title} • ${mimeType}`;
+  const source = conversationArtifactSource(item);
+  const mimeType = artifactSourceMimeType(source, item.mimeType);
+  const summary =
+    source.type === "url"
+      ? `${title} • ${mimeType} • ${source.url}`
+      : `${title} • ${mimeType}`;
   return previewInlineText(summary, ARTIFACT_SUMMARY_MAX_CHARS);
+}
+
+function conversationArtifactSource(
+  item: Extract<ThreadItem, { type: "conversationArtifact" }>,
+): ConversationArtifactSource {
+  if (item.source?.type === "url") {
+    return {
+      type: "url",
+      url: item.source.url,
+      mimeType: item.source.mimeType ?? item.mimeType,
+      fallbackContent: item.source.fallbackContent ?? item.content,
+    };
+  }
+  if (item.source?.type === "inline") {
+    return {
+      type: "inline",
+      content: item.source.content,
+      mimeType: item.source.mimeType,
+      language: item.source.language,
+      truncated: item.source.truncated,
+    };
+  }
+  return {
+    type: "inline",
+    content: item.content,
+    mimeType: item.mimeType,
+    language: item.language,
+    truncated: item.truncated,
+  };
+}
+
+function artifactSourceMimeType(
+  source: ConversationArtifactSource,
+  fallbackMimeType: string,
+) {
+  return (source.mimeType ?? fallbackMimeType).trim() || "unknown";
 }
 
 function buildContextCompactionEntry(

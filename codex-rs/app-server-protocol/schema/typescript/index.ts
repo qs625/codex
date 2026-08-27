@@ -85,6 +85,7 @@ export type { ConfiguredHookMatcherGroup } from "./ConfiguredHookMatcherGroup";
 export type { ContentItem } from "./ContentItem";
 export type { ContextCompactedNotification } from "./ContextCompactedNotification";
 export type { ContextCompactionReplacementItem } from "./ContextCompactionReplacementItem";
+export type { ConversationArtifactSource } from "./ConversationArtifactSource";
 export type { CreditsSnapshot } from "./CreditsSnapshot";
 export type { DeprecationNoticeNotification } from "./DeprecationNoticeNotification";
 export type { DynamicToolCallOutputContentItem } from "./DynamicToolCallOutputContentItem";

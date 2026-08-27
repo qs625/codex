@@ -419,6 +419,7 @@ mod tests {
         let turn_item = TurnItem::ConversationArtifact(ConversationArtifactItem {
             id: "artifact-1".to_string(),
             title: "Demo".to_string(),
+            source: None,
             mime_type: "text/html".to_string(),
             content: "<p>Hello</p>".to_string(),
             language: Some("html".to_string()),

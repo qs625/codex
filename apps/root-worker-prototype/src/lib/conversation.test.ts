@@ -245,6 +245,13 @@ test("builds inline artifact entries from typed thread items", () => {
       attachments: [],
       artifact: {
         title: "Signup mock",
+        source: {
+          type: "inline",
+          content: "<main><h1>Signup</h1></main>",
+          mimeType: "text/html",
+          language: "html",
+          truncated: undefined,
+        },
         mimeType: "text/html",
         content: "<main><h1>Signup</h1></main>",
         language: "html",
@@ -261,6 +268,37 @@ test("builds inline artifact entries from typed thread items", () => {
       entries,
     },
   ]);
+});
+
+test("builds url artifact entries from source union thread items", () => {
+  const entries = buildConversationEntries(
+    makeThread([
+      {
+        type: "conversationArtifact",
+        id: "artifact-1",
+        title: "Preview server",
+        source: {
+          type: "url",
+          url: "http://localhost:5173/",
+          mimeType: "text/html",
+          fallbackContent: "Local preview",
+        },
+        mimeType: "text/uri-list",
+        content: "http://localhost:5173/",
+      },
+    ]),
+  );
+
+  assert.equal(
+    entries[0].text,
+    "Preview server • text/html • http://localhost:5173/",
+  );
+  assert.deepEqual(entries[0].artifact?.source, {
+    type: "url",
+    url: "http://localhost:5173/",
+    mimeType: "text/html",
+    fallbackContent: "Local preview",
+  });
 });
 
 test("ordinary html or svg code blocks stay agent messages", () => {

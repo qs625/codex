@@ -1,5 +1,6 @@
 mod agent_jobs;
 mod apply_patch;
+mod artifact;
 mod code_mode_execute;
 mod code_mode_wait;
 mod goal;
@@ -18,6 +19,8 @@ mod workflow;
 pub use agent_jobs::create_report_agent_job_result_tool;
 pub use agent_jobs::create_spawn_agents_on_csv_tool;
 pub use apply_patch::create_apply_patch_freeform_tool;
+pub use artifact::PUBLISH_ARTIFACT_TOOL_NAME;
+pub use artifact::create_publish_artifact_tool;
 pub use code_mode_execute::create_code_mode_tool;
 pub use code_mode_wait::create_wait_tool as create_code_mode_wait_tool;
 pub use goal::CREATE_GOAL_TOOL_NAME;

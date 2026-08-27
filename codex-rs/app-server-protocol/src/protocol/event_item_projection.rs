@@ -388,6 +388,7 @@ pub fn context_compaction_replacement_item_from_core(
             let ThreadItem::ConversationArtifact {
                 id,
                 title,
+                source,
                 mime_type,
                 content,
                 language,
@@ -399,6 +400,7 @@ pub fn context_compaction_replacement_item_from_core(
             ContextCompactionReplacementItem::ConversationArtifact {
                 id,
                 title,
+                source,
                 mime_type,
                 content,
                 language,

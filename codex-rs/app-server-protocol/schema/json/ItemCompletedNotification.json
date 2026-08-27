@@ -371,6 +371,16 @@
             "mimeType": {
               "type": "string"
             },
+            "source": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ConversationArtifactSource"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "title": {
               "type": "string"
             },
@@ -393,6 +403,75 @@
             "type"
           ],
           "title": "ConversationArtifactContextCompactionReplacementItem",
+          "type": "object"
+        }
+      ]
+    },
+    "ConversationArtifactSource": {
+      "oneOf": [
+        {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "language": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "inline"
+              ],
+              "title": "InlineConversationArtifactSourceType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "content",
+            "mimeType",
+            "type"
+          ],
+          "title": "InlineConversationArtifactSource",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "fallbackContent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "url"
+              ],
+              "title": "UrlConversationArtifactSourceType",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "title": "UrlConversationArtifactSource",
           "type": "object"
         }
       ]
@@ -1741,6 +1820,16 @@
             },
             "mimeType": {
               "type": "string"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ConversationArtifactSource"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "title": {
               "type": "string"

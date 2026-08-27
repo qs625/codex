@@ -1,5 +1,6 @@
 pub(crate) mod agent;
 pub(crate) mod apply_patch;
+pub(crate) mod artifact;
 pub(crate) mod code_mode;
 pub(crate) mod command_interaction;
 pub(crate) mod discovery;
@@ -30,6 +31,7 @@ use crate::context::TypedToolSpecRequest;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ToolDomain {
     Agent,
+    Artifact,
     ApplyPatch,
     CodeMode,
     CommandInteraction,
@@ -55,6 +57,8 @@ pub(crate) fn classify_tool_name(
 ) -> ToolDomain {
     if workflow::owns_tool_name(tool_name) {
         ToolDomain::Workflow
+    } else if artifact::owns_tool_name(request, tool_name) {
+        ToolDomain::Artifact
     } else if goal::owns_tool_name(request, tool_name) {
         ToolDomain::Goal
     } else if mcp::owns_tool_name(request, tool_name) {
@@ -99,6 +103,7 @@ pub(crate) fn model_visible_specs(
 ) -> Vec<ToolSpec> {
     let mut specs = Vec::new();
     specs.extend(agent::specs(&request));
+    specs.extend(artifact::specs(&request));
     specs.extend(apply_patch::specs(&request));
     specs.extend(command_interaction::specs(&request));
     specs.extend(discovery::specs(&request));
@@ -123,6 +128,7 @@ pub(crate) fn create_diff_consumer(
 ) -> Option<Box<dyn ErasedToolArgumentDiffConsumer>> {
     match classify_tool_name(&request, tool_name) {
         ToolDomain::Agent => agent::create_diff_consumer(&request, tool_name),
+        ToolDomain::Artifact => artifact::create_diff_consumer(&request, tool_name),
         ToolDomain::ApplyPatch => apply_patch::create_diff_consumer(&request, tool_name),
         ToolDomain::CodeMode => code_mode::create_diff_consumer(&request, tool_name),
         ToolDomain::CommandInteraction => {
@@ -147,6 +153,7 @@ pub(crate) fn supports_parallel(
 ) -> bool {
     match classify_tool_name(&request, &call.tool_name) {
         ToolDomain::Agent => agent::supports_parallel(&request, call),
+        ToolDomain::Artifact => artifact::supports_parallel(&request, call),
         ToolDomain::ApplyPatch => apply_patch::supports_parallel(&request, call),
         ToolDomain::CodeMode => code_mode::supports_parallel(&request, call),
         ToolDomain::CommandInteraction => command_interaction::supports_parallel(&request, call),
