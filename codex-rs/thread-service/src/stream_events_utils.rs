@@ -9,7 +9,6 @@ use codex_turn_items::finalized_turn_item_facts;
 use codex_turn_items::raw_assistant_output_text_from_item;
 use codex_turn_items::response_input_to_response_item;
 use codex_turn_items::response_item_may_include_external_context;
-use codex_turn_items::split_agent_message_into_artifact_turn_items;
 use codex_utils_stream_parser::strip_citations;
 use protocol::config_types::ModeKind;
 use protocol::items::TurnItem;
@@ -276,12 +275,7 @@ pub(crate) async fn finalize_non_tool_response_items(
     let turn_item =
         handle_non_tool_response_item(sess, turn_context, contributor_policy, item, plan_mode)
             .await?;
-    let mut turn_items = match turn_item {
-        TurnItem::AgentMessage(agent_message) => {
-            split_agent_message_into_artifact_turn_items(agent_message)
-        }
-        item => vec![item],
-    };
+    let mut turn_items = vec![turn_item];
     let mut facts = FinalizedTurnItemFacts::default();
     for turn_item in &mut turn_items {
         if let TurnItem::AgentMessage(agent_message) = turn_item {

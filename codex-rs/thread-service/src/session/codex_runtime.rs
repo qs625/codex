@@ -1,6 +1,6 @@
 use super::*;
 use codex_file_system::LOCAL_FS;
-use model_service::model_info::ensure_inline_artifact_instructions;
+use model_service::model_info::ensure_artifact_publishing_instructions;
 
 /// The high-level interface to the Codex system.
 /// It operates as a queue pair where you send submissions and receive events.
@@ -318,7 +318,7 @@ impl Codex {
             .clone()
             .or_else(|| conversation_history.get_base_instructions().map(|s| s.text))
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality));
-        let base_instructions = ensure_inline_artifact_instructions(base_instructions);
+        let base_instructions = ensure_artifact_publishing_instructions(base_instructions);
 
         // Respect thread-start tools. When missing (resumed/forked threads), read from the db
         // first, then fall back to rollout-file tools.

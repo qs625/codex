@@ -965,7 +965,7 @@ async fn isolated_staged_compact_acknowledges_processed_response_when_enabled() 
 }
 
 #[tokio::test]
-async fn isolated_compact_sampling_sends_inline_artifact_guidance_as_base_instructions() {
+async fn isolated_compact_sampling_sends_artifact_publishing_guidance_as_base_instructions() {
     let (session, turn_context, _rx) = make_session_and_context_with_rx().await;
     let request_count = Arc::new(AtomicUsize::new(0));
     let request_base_instructions: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
@@ -994,9 +994,10 @@ async fn isolated_compact_sampling_sends_inline_artifact_guidance_as_base_instru
         .lock()
         .expect("request base instructions mutex poisoned");
     assert_eq!(base_instructions.len(), 1);
-    assert!(base_instructions[0].contains("<<<MORPHEUS_ARTIFACT "));
+    assert!(base_instructions[0].contains("publish_artifact"));
+    assert!(!base_instructions[0].contains(concat!("MORPHEUS", "_ARTIFACT")));
     assert!(
-        base_instructions[0].contains("ordinary Markdown"),
+        base_instructions[0].contains("Artifact Publishing"),
         "compact sampling should rebuild prompts from session base instructions, not rely on a start-time injected message"
     );
 }
@@ -2095,11 +2096,16 @@ async fn get_base_instructions_no_user_content() {
 
         let base_instructions = session.get_base_instructions().await;
         assert_eq!(base_instructions.text, model_info.base_instructions);
-        assert!(base_instructions.text.contains("<<<MORPHEUS_ARTIFACT "));
+        assert!(base_instructions.text.contains("publish_artifact"));
+        assert!(
+            !base_instructions
+                .text
+                .contains(concat!("MORPHEUS", "_ARTIFACT"))
+        );
         assert!(
             base_instructions
                 .text
-                .contains("Do not use an artifact marker for ordinary Markdown")
+                .contains("Artifact Publishing")
         );
     }
 }

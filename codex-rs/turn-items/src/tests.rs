@@ -1,14 +1,10 @@
-use super::AssistantArtifactPart;
 use super::AssistantMessageStreamParsers;
-use super::MAX_CONVERSATION_ARTIFACT_CONTENT_BYTES;
 use super::PlanModeStreamAction;
 use super::PlanModeStreamState;
 use super::ProposedPlanSegment;
 use super::last_assistant_message_from_item;
 use super::parse_turn_item;
 use super::proposed_plan_text_from_assistant_response_item;
-use super::split_agent_message_into_artifact_turn_items;
-use super::split_assistant_artifact_markers;
 use super::strip_hidden_assistant_markup;
 use pretty_assertions::assert_eq;
 use protocol::AgentPath;
@@ -94,84 +90,6 @@ fn assistant_message_stream_parsers_seed_plan_parser_across_added_and_delta_boun
     assert!(tail.plan_segments.is_empty());
 }
 
-#[test]
-fn plan_mode_stream_parser_ignores_proposed_plan_inside_artifact_marker() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ true);
-    let item_id = "msg-1";
-
-    let seeded = parsers.seed_item_text(
-        item_id,
-        "before <<<MORPHEUS_ARTIFACT {\"title\":\"Demo\",\"mime_type\":\"text/html\"}>>>",
-    );
-    let parsed = parsers.parse_delta(
-        item_id,
-        "<proposed_plan>\n- hidden\n</proposed_plan><<<END_MORPHEUS_ARTIFACT>>> after",
-    );
-    let tail = parsers.finish_item(item_id);
-
-    assert_eq!(seeded.visible_text, "before ");
-    assert_eq!(
-        seeded.plan_segments,
-        vec![ProposedPlanSegment::Normal("before ".to_string())]
-    );
-    assert_eq!(parsed.visible_text, " after");
-    assert_eq!(
-        parsed.plan_segments,
-        vec![ProposedPlanSegment::Normal(" after".to_string())]
-    );
-    assert_eq!(tail.visible_text, "");
-    assert!(tail.plan_segments.is_empty());
-}
-
-#[test]
-fn assistant_message_stream_parsers_hide_artifact_marker_blocks() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
-    let item_id = "msg-1";
-
-    let seeded = parsers.seed_item_text(
-        item_id,
-        "before <<<MORPHEUS_ARTIFACT {\"title\":\"Demo\",\"mime_type\":\"text/html\"}>>>",
-    );
-    let parsed = parsers.parse_delta(item_id, "<p>hidden</p><<<END_MORPHEUS_ARTIFACT>>> after");
-    let tail = parsers.finish_item(item_id);
-
-    assert_eq!(seeded.visible_text, "before ");
-    assert_eq!(parsed.visible_text, " after");
-    assert_eq!(tail.visible_text, "");
-}
-
-#[test]
-fn assistant_message_stream_parsers_return_malformed_artifact_text_on_finish() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
-    let item_id = "msg-1";
-
-    let parsed = parsers.parse_delta(item_id, "before <<<MORPHEUS_ARTIFACT {\"title\":\"Demo\"");
-    let tail = parsers.finish_item(item_id);
-
-    assert_eq!(parsed.visible_text, "before ");
-    assert_eq!(
-        tail.visible_text,
-        "<<<MORPHEUS_ARTIFACT {\"title\":\"Demo\""
-    );
-}
-
-#[test]
-fn assistant_message_stream_parsers_drain_malformed_artifact_text_on_finish() {
-    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
-    let item_id = "msg-1";
-
-    let parsed = parsers.parse_delta(item_id, "before <<<MORPHEUS_ARTIFACT {\"title\":\"Demo\"");
-    let finished = parsers.drain_finished();
-
-    assert_eq!(parsed.visible_text, "before ");
-    assert_eq!(finished.len(), 1);
-    assert_eq!(finished[0].0, item_id);
-    assert_eq!(
-        finished[0].1.visible_text,
-        "<<<MORPHEUS_ARTIFACT {\"title\":\"Demo\""
-    );
-}
-
 fn assistant_output_text(text: &str) -> ResponseItem {
     ResponseItem::Message {
         id: Some("msg-1".to_string()),
@@ -203,151 +121,38 @@ fn agent_message_visible_text(item: &AgentMessageItem) -> String {
         .collect()
 }
 
-fn artifact_marker(title: &str, mime_type: &str, language: Option<&str>, content: &str) -> String {
-    let language = language
-        .map(|language| format!(",\"language\":\"{language}\""))
-        .unwrap_or_default();
-    format!(
-        "<<<MORPHEUS_ARTIFACT {{\"title\":\"{title}\",\"mime_type\":\"{mime_type}\"{language}}}>>>{content}<<<END_MORPHEUS_ARTIFACT>>>"
-    )
-}
-
-#[test]
-fn splits_multiple_artifact_markers_and_preserves_text_order() {
-    let text = format!(
-        "before {} middle {} after",
-        artifact_marker("HTML", "text/html", Some("html"), "<h1>Hello</h1>"),
-        artifact_marker("Data", "application/json", Some("json"), "{\"ok\":true}")
-    );
-
-    let parts = split_assistant_artifact_markers(&text);
-
-    assert_eq!(
-        parts,
-        vec![
-            AssistantArtifactPart::Text("before ".to_string()),
-            AssistantArtifactPart::Artifact {
-                title: "HTML".to_string(),
-                mime_type: "text/html".to_string(),
-                content: "<h1>Hello</h1>".to_string(),
-                language: Some("html".to_string()),
-                truncated: false,
-            },
-            AssistantArtifactPart::Text(" middle ".to_string()),
-            AssistantArtifactPart::Artifact {
-                title: "Data".to_string(),
-                mime_type: "application/json".to_string(),
-                content: "{\"ok\":true}".to_string(),
-                language: Some("json".to_string()),
-                truncated: false,
-            },
-            AssistantArtifactPart::Text(" after".to_string()),
-        ]
-    );
-}
-
-#[test]
-fn malformed_artifact_marker_stays_visible_text() {
-    let text = "before <<<MORPHEUS_ARTIFACT {\"title\":\"Broken\"}>>>content after";
-
-    assert_eq!(
-        split_assistant_artifact_markers(text),
-        vec![AssistantArtifactPart::Text(text.to_string())]
-    );
-    assert_eq!(strip_hidden_assistant_markup(text, false), text);
-}
-
-#[test]
-fn proposed_plan_extraction_ignores_artifact_marker_content() {
-    let text = format!(
-        "before {} after",
-        artifact_marker(
-            "HTML",
-            "text/html",
-            Some("html"),
-            "<proposed_plan>\n- hidden\n</proposed_plan>"
-        )
-    );
-    let item = assistant_output_text(&text);
-
-    assert_eq!(proposed_plan_text_from_assistant_response_item(&item), None);
-}
-
-#[test]
-fn missing_or_empty_title_artifact_marker_stays_visible_text() {
-    for text in [
-        "before <<<MORPHEUS_ARTIFACT {\"mime_type\":\"text/html\"}>>>content<<<END_MORPHEUS_ARTIFACT>>> after",
-        "before <<<MORPHEUS_ARTIFACT {\"title\":\"\",\"mime_type\":\"text/html\"}>>>content<<<END_MORPHEUS_ARTIFACT>>> after",
-    ] {
-        assert_eq!(
-            split_assistant_artifact_markers(text),
-            vec![AssistantArtifactPart::Text(text.to_string())]
-        );
-        assert_eq!(strip_hidden_assistant_markup(text, false), text);
-    }
-}
-
 #[test]
 fn ordinary_markdown_and_html_fences_stay_agent_message_text() {
     let text = "Here is markdown.\n\n```html\n<section>plain code</section>\n```";
     let item = TurnItem::AgentMessage(agent_message_item("msg-1", text));
 
-    let TurnItem::AgentMessage(agent_message) = item else {
-        panic!("expected agent message");
-    };
-    let items = split_agent_message_into_artifact_turn_items(agent_message);
-
-    assert_eq!(items.len(), 1);
-    let TurnItem::AgentMessage(message) = &items[0] else {
+    let TurnItem::AgentMessage(message) = item else {
         panic!("expected ordinary message");
     };
-    assert_eq!(agent_message_visible_text(message), text);
+    assert_eq!(agent_message_visible_text(&message), text);
 }
 
 #[test]
-fn oversized_artifact_content_is_truncated_on_char_boundary() {
-    let content = format!("{}é", "a".repeat(MAX_CONVERSATION_ARTIFACT_CONTENT_BYTES));
-    let text = artifact_marker("Large", "text/html", None, &content);
+fn marker_looking_text_stays_visible_in_streaming() {
+    let mut parsers = AssistantMessageStreamParsers::new(/*plan_mode*/ false);
+    let item_id = "msg-1";
+    let start = "before <<<MORPHEUS_ARTIFACT {\"title\":\"Demo\",\"mime_type\":\"text/html\"}>>>";
+    let end = "<p>visible</p><<<END_MORPHEUS_ARTIFACT>>> after";
 
-    let parts = split_assistant_artifact_markers(&text);
+    let seeded = parsers.seed_item_text(item_id, start);
+    let parsed = parsers.parse_delta(item_id, end);
+    let tail = parsers.finish_item(item_id);
 
-    let [
-        AssistantArtifactPart::Artifact {
-            content, truncated, ..
-        },
-    ] = parts.as_slice()
-    else {
-        panic!("expected one artifact");
-    };
-    assert_eq!(content.len(), MAX_CONVERSATION_ARTIFACT_CONTENT_BYTES);
-    assert!(*truncated);
+    assert_eq!(seeded.visible_text, start);
+    assert_eq!(parsed.visible_text, end);
+    assert_eq!(tail.visible_text, "");
 }
 
 #[test]
-fn agent_message_marker_split_produces_ordered_turn_items() {
-    let text = format!(
-        "before {} after",
-        artifact_marker("SVG", "image/svg+xml", Some("svg"), "<svg></svg>")
-    );
-    let items = split_agent_message_into_artifact_turn_items(agent_message_item("msg-1", &text));
+fn marker_looking_text_stays_visible_after_hidden_markup_stripping() {
+    let text = "before <<<MORPHEUS_ARTIFACT {\"title\":\"Demo\"}>>>content<<<END_MORPHEUS_ARTIFACT>>> after";
 
-    assert_eq!(items.len(), 3);
-    let TurnItem::AgentMessage(before) = &items[0] else {
-        panic!("expected leading message");
-    };
-    assert_eq!(before.id, "msg-1");
-    assert_eq!(agent_message_visible_text(before), "before ");
-    let TurnItem::ConversationArtifact(artifact) = &items[1] else {
-        panic!("expected artifact");
-    };
-    assert_eq!(artifact.id, "msg-1-artifact-0");
-    assert_eq!(artifact.title, "SVG");
-    assert_eq!(artifact.mime_type, "image/svg+xml");
-    let TurnItem::AgentMessage(after) = &items[2] else {
-        panic!("expected trailing message");
-    };
-    assert_eq!(after.id, "msg-1-text-0");
-    assert_eq!(agent_message_visible_text(after), " after");
+    assert_eq!(strip_hidden_assistant_markup(text, false), text);
 }
 
 #[test]

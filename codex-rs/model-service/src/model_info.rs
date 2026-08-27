@@ -14,21 +14,11 @@ use model_service_api::ModelsManagerConfig;
 use tracing::warn;
 
 pub const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
-const INLINE_ARTIFACT_MARKER: &str = "<<<MORPHEUS_ARTIFACT ";
-const INLINE_ARTIFACT_INSTRUCTIONS: &str = r#"
-# Inline artifacts
+const ARTIFACT_PUBLISHING_MARKER: &str = "publish_artifact";
+const ARTIFACT_PUBLISHING_INSTRUCTIONS: &str = r#"
+# Artifact Publishing
 
-Default assistant replies are Markdown. Do not use an artifact marker for ordinary Markdown prose, lists, or fenced code blocks.
-
-Use the marker form below only as a lightweight inline fallback when `publish_artifact` is unavailable or unnecessary. It is for small self-contained `text/html`, `image/svg+xml`, `text/markdown`, `text/mermaid`, `application/json`, `text/csv`, or source/code content. HTML and SVG artifacts are rendered in a sandbox; Mermaid and unsupported types may be shown as source. Marker artifact content must be self-contained and must not rely on network scripts or remote resources.
-
-When you create an artifact, emit this exact marker format, outside of Markdown fences:
-
-<<<MORPHEUS_ARTIFACT {"title":"Short title","mime_type":"text/html","language":"html"}>>>
-...artifact content...
-<<<END_MORPHEUS_ARTIFACT>>>
-
-`title` and `mime_type` are required. `language` is optional. You may include normal assistant text before and after artifact markers; it will remain ordinary conversation text.
+Default assistant replies are Markdown. Use the `publish_artifact` tool when the user needs a distinct previewable artifact, such as self-contained `text/html`, `image/svg+xml`, `text/markdown`, `text/mermaid`, `application/json`, `text/csv`, source/code content, or a URL-backed preview. Artifact content should be self-contained unless published as a URL source.
 "#;
 const DEFAULT_PERSONALITY_HEADER: &str = "You are Codex, a coding agent based on GPT-5. You and the user share the same workspace and collaborate to achieve the user's goals.";
 const LOCAL_FRIENDLY_TEMPLATE: &str =
@@ -90,29 +80,29 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
     }
 
     if let Some(base_instructions) = &config.base_instructions {
-        model.base_instructions = ensure_inline_artifact_instructions(base_instructions.clone());
+        model.base_instructions = ensure_artifact_publishing_instructions(base_instructions.clone());
         model.model_messages = None;
     } else if !config.personality_enabled {
         model.model_messages = None;
     }
-    model.base_instructions = ensure_inline_artifact_instructions(model.base_instructions);
+    model.base_instructions = ensure_artifact_publishing_instructions(model.base_instructions);
     if let Some(model_messages) = &mut model.model_messages
         && let Some(template) = &mut model_messages.instructions_template
     {
-        *template = ensure_inline_artifact_instructions(std::mem::take(template));
+        *template = ensure_artifact_publishing_instructions(std::mem::take(template));
     }
 
     model
 }
 
-pub fn ensure_inline_artifact_instructions(mut instructions: String) -> String {
-    if instructions.contains(INLINE_ARTIFACT_MARKER) {
+pub fn ensure_artifact_publishing_instructions(mut instructions: String) -> String {
+    if instructions.contains(ARTIFACT_PUBLISHING_MARKER) {
         return instructions;
     }
     if !instructions.ends_with('\n') {
         instructions.push('\n');
     }
-    instructions.push_str(INLINE_ARTIFACT_INSTRUCTIONS);
+    instructions.push_str(ARTIFACT_PUBLISHING_INSTRUCTIONS);
     instructions
 }
 
