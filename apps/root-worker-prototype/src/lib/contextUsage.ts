@@ -389,6 +389,13 @@ function buildContextUsageAnalysisFromBackend(
   const reasoningSharePercent = categories.find((category) => category.id === "reasoning")?.sharePercent ?? 0;
   const normalizedTotalSkills =
     contextUsage.loadedSkills.totalCount ?? Math.max(totalSkillMetadataCount, loadedConcreteSkills.length);
+  const authoritativeLoadedSkills = hasAuthoritativeLoadedSkills(contextUsage);
+  const loadedSkillCount = authoritativeLoadedSkills
+    ? sanitizeUnitCount(contextUsage.loadedSkills.loadedCount)
+    : Math.max(
+        sanitizeUnitCount(contextUsage.loadedSkills.loadedCount),
+        loadedConcreteSkills.length,
+      );
 
   return {
     hasBudgetData: hasContextWindow(tokenUsage, modelContextWindowOverride),
@@ -401,7 +408,7 @@ function buildContextUsageAnalysisFromBackend(
       tokenUsage,
       modelContextWindowOverride,
     ),
-    loadedSkills: Math.max(contextUsage.loadedSkills.loadedCount, loadedConcreteSkills.length),
+    loadedSkills: loadedSkillCount,
     totalSkills: normalizedTotalSkills,
     totalConcreteLoads,
     reasoningSharePercent,
@@ -538,6 +545,18 @@ function mergeLoadedSkills(
 ) {
   const merged = new Map<string, LoadedSkillSummary>();
 
+  if (hasAuthoritativeLoadedSkills(contextUsage)) {
+    for (const skill of contextUsage.loadedSkills.skills) {
+      merged.set(skill.path, {
+        name: skill.name,
+        path: skill.path,
+        kind: skill.kind,
+        loadCount: Math.max(skill.loadCount, 1),
+      });
+    }
+    return sortLoadedSkills(merged);
+  }
+
   for (const skill of skillLoads.values()) {
     merged.set(skill.path, {
       ...skill,
@@ -554,7 +573,18 @@ function mergeLoadedSkills(
     });
   }
 
-  return [...merged.values()].sort(
+  return sortLoadedSkills(merged);
+}
+
+function hasAuthoritativeLoadedSkills(contextUsage: ThreadContextUsage) {
+  return (
+    typeof contextUsage.loadedSkills.loadedCount === "number" &&
+    Array.isArray(contextUsage.loadedSkills.skills)
+  );
+}
+
+function sortLoadedSkills(skillLoads: Map<string, LoadedSkillSummary>) {
+  return [...skillLoads.values()].sort(
     (left, right) => right.loadCount - left.loadCount || left.name.localeCompare(right.name),
   );
 }
@@ -572,19 +602,24 @@ function collectThreadUsage(thread: Thread) {
   }> = [];
   const skillLoads = new Map<string, LoadedSkillSummary>();
 
-  for (const skill of thread.skills) {
-    skillLoads.set(skill.path, {
-      name: skill.name,
-      path: skill.path,
-      kind: skill.kind,
-      loadCount: 0,
-    });
+  if (!threadHasCompactBoundary(thread)) {
+    for (const skill of thread.skills) {
+      skillLoads.set(skill.path, {
+        name: skill.name,
+        path: skill.path,
+        kind: skill.kind,
+        loadCount: 0,
+      });
+    }
   }
 
   thread.turns.forEach((turn, index) => {
     const perTurnUnits = initializeCategoryUnits();
 
     for (const item of turn.items) {
+      if (item.type === "contextCompaction") {
+        skillLoads.clear();
+      }
       accumulateItemUnits(item, perTurnUnits, skillLoads);
     }
 
@@ -604,6 +639,12 @@ function collectThreadUsage(thread: Thread) {
     skillLoads,
     turnTrend: buildTurnTrendRows(turnCategoryUnits),
   };
+}
+
+function threadHasCompactBoundary(thread: Thread) {
+  return thread.turns.some((turn) =>
+    turn.items.some((item) => item.type === "contextCompaction"),
+  );
 }
 
 function buildTurnTrendRows(

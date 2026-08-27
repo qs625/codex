@@ -42,6 +42,7 @@ import {
   treeThreadLifecycleStatusClass,
   treeThreadLifecycleStatusLabel,
   updateThreadItem,
+  updateThreadSkills,
   updateThreadTurn,
   updateThreadTurnNotification,
   updateThreadTurnSnapshot,
@@ -1257,6 +1258,23 @@ test("mergeThreadSnapshot keeps the highest compaction count", () => {
 
   assert.equal(merged.preview, "stale stats refresh");
   assert.deepEqual(merged.stats, { compactionCount: 4 });
+});
+
+test("updateThreadSkills replaces stale skills with explicit empty list", () => {
+  const thread = {
+    ...makeThread(),
+    skills: [
+      {
+        name: "old-skill",
+        path: "/skills/old-skill/SKILL.md",
+        kind: "explicit" as const,
+      },
+    ],
+  } satisfies Thread;
+
+  const updated = updateThreadSkills(thread, []);
+
+  assert.deepEqual(updated.skills, []);
 });
 
 test("mergeThreadSnapshot does not downgrade completed lifecycle from stale metadata", () => {

@@ -247,10 +247,8 @@ test("uses last token usage for budget percent and context usage ratios for toke
   assert.equal(analysis.budgetUsedPercent, 9);
   assert.equal(analysis.usedTokens, 18000);
   assert.equal(analysis.contextWindowTokens, 200000);
-  assert.equal(analysis.loadedSkills, 1);
-  assert.equal(analysis.loadedConcreteSkills.length, 1);
-  assert.equal(analysis.loadedConcreteSkills[0]?.name, "openai-docs");
-  assert.equal(analysis.loadedConcreteSkills[0]?.loadCount, 1);
+  assert.equal(analysis.loadedSkills, 0);
+  assert.equal(analysis.loadedConcreteSkills.length, 0);
   assert.equal(analysis.turnTrend.turns[0]?.label, "1");
   assert.equal(analysis.turnTrend.rows.find((row) => row.id === "llmMessages")?.cells.length, 1);
   assert.equal(analysis.categories.find((row) => row.id === "llmMessages")?.sharePercent, 1.8);
@@ -269,6 +267,132 @@ test("uses last token usage for budget percent and context usage ratios for toke
   assert.equal(analysis.categories.find((row) => row.id === "commands")?.units, 6100);
   assert.equal(analysis.categories.find((row) => row.id === "interAgent")?.sharePercent, 0.1);
   assert.deepEqual(analysis.toolBreakdown, []);
+});
+
+test("backend explicit empty loaded skills overrides stale thread skill state", () => {
+  const thread = makeThread(
+    [
+      {
+        type: "userMessage",
+        id: "user-1",
+        content: [
+          {
+            type: "skill",
+            name: "old-skill",
+            path: "/skills/old-skill/SKILL.md",
+          },
+        ],
+      },
+      {
+        type: "injectedContext",
+        id: "ctx-1",
+        title: "old-skill",
+        preview: "Old skill preview",
+        sections: [
+          {
+            label: "Skill: old-skill",
+            text: "Old concrete skill body",
+          },
+        ],
+      },
+      {
+        type: "contextCompaction",
+        id: "compact-1",
+      },
+    ],
+    [
+      {
+        name: "old-skill",
+        path: "/skills/old-skill/SKILL.md",
+        kind: "explicit",
+      },
+    ],
+  );
+  thread.contextUsage = {
+    totalBytes: 100,
+    budgetUsedPercent: null,
+    categories: {
+      compact: 100,
+      skillsMetadata: 0,
+      concreteSkills: 0,
+      toolsMetadata: 0,
+      toolCalls: 0,
+      userMessages: 0,
+      llmMessages: 0,
+      reasoning: 0,
+    },
+    loadedSkills: {
+      loadedCount: 0,
+      totalCount: 8,
+      skills: [],
+    },
+  };
+
+  const analysis = buildContextUsageAnalysis(thread, 8);
+
+  assert.equal(analysis.loadedSkills, 0);
+  assert.equal(analysis.totalSkills, 8);
+  assert.equal(analysis.totalConcreteLoads, 0);
+  assert.deepEqual(analysis.loadedConcreteSkills, []);
+});
+
+test("skill load inference only counts skills after latest compact", () => {
+  const thread = makeThread([]);
+  thread.turns = [
+    {
+      id: "turn-1",
+      items: [
+        {
+          type: "userMessage",
+          id: "user-1",
+          content: [
+            {
+              type: "skill",
+              name: "old-skill",
+              path: "/skills/old-skill/SKILL.md",
+            },
+          ],
+        },
+        {
+          type: "contextCompaction",
+          id: "compact-1",
+        },
+        {
+          type: "userMessage",
+          id: "user-2",
+          content: [
+            {
+              type: "skill",
+              name: "new-skill",
+              path: "/skills/new-skill/SKILL.md",
+            },
+          ],
+        },
+      ],
+      itemsView: "full",
+      status: "completed",
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1_000,
+    },
+  ];
+  thread.skills = [
+    {
+      name: "old-skill",
+      path: "/skills/old-skill/SKILL.md",
+      kind: "explicit",
+    },
+  ];
+
+  const analysis = buildContextUsageAnalysis(thread, 8);
+
+  assert.equal(analysis.loadedSkills, 1);
+  assert.equal(analysis.totalConcreteLoads, 1);
+  assert.deepEqual(
+    analysis.loadedConcreteSkills.map((skill) => skill.name),
+    ["new-skill"],
+  );
 });
 
 test("keeps tool I/O fallback when backend context usage has no breakdown data", () => {
