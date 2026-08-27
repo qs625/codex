@@ -11,7 +11,13 @@ const { buildDesktopEnvironment } = require("./environment.cjs");
 const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
 const MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS = 20;
 const MOBILE_CONNECTION_REFRESH_INTERVAL_MS = 5_000;
-const DEFAULT_MORPHEUS_HOME = resolvePrototypeMorpheusHome();
+const PACKAGED_APP_SERVER_RELATIVE_PATH = path.join("bin", "app-server");
+const PACKAGED_COMPACT_PROMPT_RELATIVE_PATH = path.join(
+  "default-config",
+  "compact",
+  "COMPACT.md",
+);
+const HOME_COMPACT_PROMPT_RELATIVE_PATH = path.join("compact", "COMPACT.md");
 
 class AppServerClient extends EventEmitter {
   constructor() {
@@ -120,7 +126,7 @@ class AppServerClient extends EventEmitter {
   async start() {
     const env = buildAppServerEnvironment(process.env);
     const morpheusHome = env.MORPHEUS_HOME;
-    fs.mkdirSync(morpheusHome, { recursive: true });
+    ensureMorpheusHomeDefaults(morpheusHome, { warn: console.warn });
     const launch = await resolveAppServerLaunch(process.env, {
       morpheusHome,
       randomToken: () => crypto.randomBytes(32).toString("base64url"),
@@ -267,6 +273,9 @@ module.exports = {
   buildAppServerEnvironment,
   buildDefaultAppServerCommand,
   buildMobileConnectionLaunch,
+  ensureMorpheusHomeDefaults,
+  findDefaultCompactPromptSeedPath,
+  resolveDefaultAppServerBinary,
   resolveAppServerCommand,
   resolveAppServerLaunch,
   refreshMobileConnectionInfo,
@@ -275,8 +284,19 @@ module.exports = {
 };
 
 function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {}) {
-  const env = buildDesktopEnvironment(baseEnv, environmentOptions);
-  env.MORPHEUS_HOME = baseEnv.MORPHEUS_HOME ?? DEFAULT_MORPHEUS_HOME;
+  const home = baseEnv.HOME ?? environmentOptions.home ?? os.homedir();
+  const env = buildDesktopEnvironment(
+    {
+      ...baseEnv,
+      HOME: home,
+    },
+    {
+      ...environmentOptions,
+      home,
+    },
+  );
+  env.HOME = home;
+  env.MORPHEUS_HOME = baseEnv.MORPHEUS_HOME ?? resolvePrototypeMorpheusHome(env);
   return env;
 }
 
@@ -284,7 +304,7 @@ function resolveAppServerCommand(baseEnv = process.env) {
   return (
     baseEnv.APP_SERVER_CMD ??
     baseEnv.CODEX_APP_SERVER_CMD ??
-    `${resolveWorkspaceAppServerBinary()} --listen stdio://`
+    `${resolveDefaultAppServerBinary()} --listen stdio://`
   );
 }
 
@@ -304,7 +324,7 @@ async function resolveAppServerLaunch(baseEnv = process.env, options = {}) {
   const mobileLaunch = await buildMobileConnectionLaunch(baseEnv, options);
   return {
     command: buildDefaultAppServerCommand({
-      appServerBinary: resolveWorkspaceAppServerBinary(),
+      appServerBinary: resolveDefaultAppServerBinary(options),
       mobileLaunch,
     }),
     mobileConnection: mobileLaunch.info,
@@ -373,7 +393,7 @@ async function buildMobileConnectionLaunch(baseEnv = process.env, options = {}) 
       },
     };
   }
-  const morpheusHome = options.morpheusHome ?? DEFAULT_MORPHEUS_HOME;
+  const morpheusHome = options.morpheusHome ?? resolvePrototypeMorpheusHome(baseEnv);
   const tokenFile =
     options.tokenFile ??
     path.join(morpheusHome, "root-worker-mobile-ws-token");
@@ -503,6 +523,76 @@ function writeTokenFile(tokenFile, token) {
   fs.chmodSync(tokenFile, 0o600);
 }
 
+function ensureMorpheusHomeDefaults(morpheusHome, options = {}) {
+  const mkdirSync = options.mkdirSync ?? fs.mkdirSync;
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const readFileSync = options.readFileSync ?? fs.readFileSync;
+  const writeFileSync = options.writeFileSync ?? fs.writeFileSync;
+  mkdirSync(morpheusHome, { recursive: true });
+
+  const compactPromptPath = path.join(
+    morpheusHome,
+    HOME_COMPACT_PROMPT_RELATIVE_PATH,
+  );
+  mkdirSync(path.dirname(compactPromptPath), { recursive: true });
+  if (existsSync(compactPromptPath)) {
+    return {
+      compactPromptPath,
+      seededCompactPrompt: false,
+      compactPromptSeedPath: null,
+    };
+  }
+
+  const seedPath = findDefaultCompactPromptSeedPath(options);
+  if (!seedPath) {
+    options.warn?.(
+      `Default compact prompt seed was not found; ${compactPromptPath} was not created.`,
+    );
+    return {
+      compactPromptPath,
+      seededCompactPrompt: false,
+      compactPromptSeedPath: null,
+    };
+  }
+
+  const content = readFileSync(seedPath, "utf8");
+  writeFileSync(compactPromptPath, content);
+  return {
+    compactPromptPath,
+    seededCompactPrompt: true,
+    compactPromptSeedPath: seedPath,
+  };
+}
+
+function findDefaultCompactPromptSeedPath(options = {}) {
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const explicitSeedPath = options.defaultCompactPromptSeedPath;
+  if (explicitSeedPath && existsSync(explicitSeedPath)) {
+    return explicitSeedPath;
+  }
+
+  const resourcesPath = options.resourcesPath ?? currentResourcesPath();
+  if (resourcesPath) {
+    const packagedSeedPath = path.join(
+      resourcesPath,
+      PACKAGED_COMPACT_PROMPT_RELATIVE_PATH,
+    );
+    if (existsSync(packagedSeedPath)) {
+      return packagedSeedPath;
+    }
+  }
+
+  const sourceSeedPath = findWorkspacePath(
+    path.join("codex-rs", "thread-service", "templates", "compact", "prompt.md"),
+    options,
+  );
+  if (sourceSeedPath) {
+    return sourceSeedPath;
+  }
+
+  return null;
+}
+
 function canBindWebSocketListenUrl(listenUrl) {
   const parsed = parseMobileWebSocketListenUrl(listenUrl);
   if (!parsed) {
@@ -584,25 +674,63 @@ function formatMobileWebSocketListenUrl(host, port) {
   return `ws://${formattedHost}:${port}`;
 }
 
-function resolveWorkspaceAppServerBinary() {
-  for (
-    let current = __dirname;
-    current !== path.dirname(current);
-    current = path.dirname(current)
-  ) {
-    const workspaceBinary = path.join(
-      current,
-      "codex-rs/target/debug/app-server",
+function resolveDefaultAppServerBinary(options = {}) {
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const resourcesPath = options.resourcesPath ?? currentResourcesPath();
+  if (resourcesPath) {
+    const packagedBinary = path.join(
+      resourcesPath,
+      PACKAGED_APP_SERVER_RELATIVE_PATH,
     );
-    if (fs.existsSync(workspaceBinary)) {
-      return shellQuote(workspaceBinary);
+    if (existsSync(packagedBinary)) {
+      return shellQuote(packagedBinary);
     }
+  }
+  return resolveWorkspaceAppServerBinary(options);
+}
+
+function resolveWorkspaceAppServerBinary(options = {}) {
+  const workspaceBinary = findWorkspacePath(
+    path.join("codex-rs", "target", "debug", "app-server"),
+    options,
+  );
+  if (workspaceBinary) {
+    return shellQuote(workspaceBinary);
+  }
+  const workspaceReleaseBinary = findWorkspacePath(
+    path.join("codex-rs", "target", "release", "app-server"),
+    options,
+  );
+  if (workspaceReleaseBinary) {
+    return shellQuote(workspaceReleaseBinary);
   }
   return "app-server";
 }
 
-function resolvePrototypeMorpheusHome() {
-  return path.join(os.homedir(), ".morpheus");
+function findWorkspacePath(relativePath, options = {}) {
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const startDir = options.startDir ?? __dirname;
+  for (
+    let current = startDir;
+    current !== path.dirname(current);
+    current = path.dirname(current)
+  ) {
+    const candidate = path.join(current, relativePath);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function currentResourcesPath() {
+  return typeof process.resourcesPath === "string"
+    ? process.resourcesPath
+    : null;
+}
+
+function resolvePrototypeMorpheusHome(baseEnv = process.env) {
+  return path.join(baseEnv.HOME ?? os.homedir(), ".morpheus");
 }
 
 function shellQuote(value) {
