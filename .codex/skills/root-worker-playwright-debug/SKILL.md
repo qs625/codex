@@ -23,6 +23,34 @@ rtk pnpm install
 
 脚本会从 `apps/root-worker-prototype/package.json` 所在目录解析 `playwright` 和 `electron`，不要依赖全局 Playwright，也不要从临时 runtime 目录运行脚本。
 
+## 内置浏览器
+
+如果只是调试普通前端页面或复现 renderer DOM/CSS 问题，可以使用 Playwright CLI，但必须使用项目内 `playwright` 包管理的 Chromium：
+
+```bash
+rtk pnpm --dir apps/root-worker-prototype exec playwright open --browser chromium http://127.0.0.1:<port>
+```
+
+不要使用系统浏览器 channel，例如 `--channel chrome`、`--channel msedge`，也不要在调试脚本里指定系统浏览器 `executablePath`。如果 Chromium 尚未安装，先在当前 checkout 安装 Playwright 管理的浏览器：
+
+```bash
+rtk pnpm --dir apps/root-worker-prototype exec playwright install chromium
+```
+
+如果需要把浏览器二进制固定到项目依赖目录内，安装和运行时都使用：
+
+```bash
+rtk env PLAYWRIGHT_BROWSERS_PATH=0 \
+  pnpm --dir apps/root-worker-prototype exec playwright install chromium
+```
+
+```bash
+rtk env PLAYWRIGHT_BROWSERS_PATH=0 \
+  pnpm --dir apps/root-worker-prototype exec playwright open --browser chromium http://127.0.0.1:<port>
+```
+
+调试 Root Worker 的完整客户端时仍优先使用本 skill 的 Electron 脚本，而不是 Playwright CLI 浏览器，因为 CLI 浏览器没有 Electron preload IPC 和 app-server stdio 生命周期。
+
 ## 固定脚本
 
 本 skill 的可执行脚本都在：
@@ -102,19 +130,19 @@ rtk env \
 Electron app-server command 选择逻辑：
 
 1. 优先使用 `CODEX_APP_SERVER_CMD`
-2. 否则从 Electron 文件目录向上查找 `codex-rs/target/debug/codex-app-server`
-3. 找不到 workspace binary 时 fallback 到 PATH 上的 `codex-app-server`
+2. 否则从 Electron 文件目录向上查找 `codex-rs/target/debug/app-server`
+3. 找不到 workspace binary 时 fallback 到 PATH 上的 `app-server`
 
 固定脚本默认显式使用当前 repo 的 debug binary：
 
 ```text
-CODEX_APP_SERVER_CMD="$REPO/codex-rs/target/debug/codex-app-server --listen stdio://"
+CODEX_APP_SERVER_CMD="$REPO/codex-rs/target/debug/app-server --listen stdio://"
 ```
 
 如需指定其他 binary：
 
 ```bash
-rtk env CODEX_APP_SERVER_CMD="/path/to/codex-app-server --listen stdio://" \
+rtk env CODEX_APP_SERVER_CMD="/path/to/app-server --listen stdio://" \
   scripts/run-electron-smoke.sh
 ```
 

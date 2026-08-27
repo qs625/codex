@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Build a complete packaged Root Worker desktop app by bundling a release app-server binary and default compact prompt seed resources.
+None
 
 ## Active Work
+- id: compact-clears-loaded-skills
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/compact-clears-loaded-skills
+  task_type: bugfix/ui-runtime
+  depends_on: dfb43a8bf71a87c9285604161d62ca85a3de284e
+  files: apps/root-worker-prototype/src/lib/contextUsage.ts; apps/root-worker-prototype/src/lib/contextUsage.test.ts; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/thread.test.ts; apps/root-worker-prototype/src/App.tsx; apps/root-worker-prototype/electron/main.cjs; codex-rs/app-server or codex-rs/thread-service usage/skill notification paths only if root cause is backend payload/state
+  base_commit: dfb43a8bf71a87c9285604161d62ca85a3de284e
+  pending_sync_from_main: none; owner_dev was fast-forwarded to `dfb43a8bf71a87c9285604161d62ca85a3de284e` before dispatch. owner_dev_2 and owner_dev_3 were fast-forwarded to merge `b1caa190888e386c21a57fc0b058bd488f641ff8` after PM integration.
+  status: merged
+  objective: After context compaction, Root Worker must stop showing pre-compact loaded skills in the client context/skills panel; the displayed loaded skills should reflect only the post-compact authoritative context usage and currently attached thread skills.
+  last_update: 2026-08-27 PM accepted owner_dev commit `b5bccff4bc` and merged it into main as `b1caa190888e386c21a57fc0b058bd488f641ff8`. PM design-checked that backend explicit empty `contextUsage.loadedSkills` is treated as authoritative, stale `thread.skills` and pre-compact inferred skill loads no longer override compacted state, compact boundaries clear inferred pre-compact skill loads when backend usage is absent, and `thread/skills/updated` empty arrays replace stale skills.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the compact loaded-skill cleanup.
+  blockers: none
+  validation: Owner ran Root Worker contextUsage/thread focused tests -> 202 passed; Root Worker build -> passed with existing chunk-size warning; reviewer passed. PM reran on merged main: `rtk pnpm --filter @my-codex/root-worker-prototype test -- src/lib/contextUsage.test.ts src/lib/thread.test.ts` -> 202 passed; `rtk pnpm --filter @my-codex/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check HEAD~1..HEAD` -> passed.
+  commit: b1caa190888e386c21a57fc0b058bd488f641ff8
 - id: root-worker-complete-packaged-app
   owner: /my_codex/owner_dev
   checkout: /Users/bytedance/Projects/my-codex-dev
