@@ -12,7 +12,7 @@ pnpm --filter @my-codex/root-worker-prototype dev
 This starts:
 
 - Vite on `http://localhost:5173` for the Electron renderer
-- Electron, which starts `../../codex-rs/target/debug/app-server --listen stdio://` by default when that local build exists, otherwise it falls back to `app-server --listen stdio://` from `PATH`
+- Electron, which starts a bundled `app-server` when running from a packaged app; source-tree runs fall back to `../../codex-rs/target/debug/app-server`, `../../codex-rs/target/release/app-server`, then `app-server` from `PATH`
 - the prototype defaults `MORPHEUS_HOME` to `~/.morpheus`
 
 Use this only when you specifically want the Vite dev server flow.
@@ -31,6 +31,19 @@ pnpm --filter @my-codex/root-worker-prototype dev
 ```bash
 pnpm --filter @my-codex/root-worker-prototype build
 ```
+
+## Package macOS
+
+```bash
+pnpm --filter @my-codex/root-worker-prototype package:mac
+```
+
+The macOS app packaging builds release `app-server`, bundles it into the app
+resources at `Contents/Resources/bin/app-server`, and bundles the default
+compact prompt seed at `Contents/Resources/default-config/compact/COMPACT.md`.
+When launched from Finder or Dock, the app prepares `MORPHEUS_HOME`, preserves
+the desktop process environment with an enhanced `PATH`, and creates
+`~/.morpheus/compact/COMPACT.md` only if that file is missing.
 
 ## Electron
 

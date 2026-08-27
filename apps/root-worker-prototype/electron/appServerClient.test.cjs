@@ -10,7 +10,9 @@ const {
   buildDefaultAppServerCommand,
   buildAppServerEnvironment,
   buildMobileConnectionLaunch,
+  ensureMorpheusHomeDefaults,
   refreshMobileConnectionInfo,
+  resolveDefaultAppServerBinary,
   resolveAppServerCommand,
   resolveAppServerLaunch,
   resolveLanEndpoint,
@@ -48,6 +50,49 @@ test("app-server environment includes enhanced PATH and MORPHEUS_HOME", () => {
   assert.ok(env.PATH.includes("/usr/local/bin"));
 });
 
+test("app-server environment supports sparse desktop launch env", () => {
+  const env = buildAppServerEnvironment(
+    {
+      HOME: "/Users/alice",
+      OPENAI_API_KEY: "keep-key",
+      PATH: "/usr/bin",
+    },
+    {
+      platform: "darwin",
+      shellPath: "",
+    },
+  );
+
+  assert.equal(env.HOME, "/Users/alice");
+  assert.equal(env.OPENAI_API_KEY, "keep-key");
+  assert.equal(env.MORPHEUS_HOME, path.join("/Users/alice", ".morpheus"));
+  assert.ok(env.PATH.startsWith("/usr/bin:"));
+  assert.ok(env.PATH.includes("/opt/homebrew/bin"));
+  assert.ok(env.PATH.includes("/Users/alice/.cargo/bin"));
+  assert.equal(env.APP_SERVER_CMD, undefined);
+  assert.equal(env.CODEX_APP_SERVER_CMD, undefined);
+});
+
+test("app-server environment supplies HOME when desktop env omits it", () => {
+  const env = buildAppServerEnvironment(
+    {
+      OPENAI_API_KEY: "keep-key",
+      PATH: "/usr/bin",
+    },
+    {
+      home: "/Users/alice",
+      platform: "darwin",
+      shellPath: "",
+    },
+  );
+
+  assert.equal(env.HOME, "/Users/alice");
+  assert.equal(env.OPENAI_API_KEY, "keep-key");
+  assert.equal(env.MORPHEUS_HOME, path.join("/Users/alice", ".morpheus"));
+  assert.ok(env.PATH.includes("/Users/alice/.cargo/bin"));
+  assert.ok(env.PATH.includes("/opt/homebrew/bin"));
+});
+
 test("app-server environment ignores CODEX_HOME for MORPHEUS_HOME", () => {
   const env = buildAppServerEnvironment({
     CODEX_HOME: "/tmp/legacy-codex-home",
@@ -75,6 +120,70 @@ test("app-server command accepts CODEX_APP_SERVER_CMD when APP_SERVER_CMD is abs
       CODEX_APP_SERVER_CMD: "/custom/codex-app-server --listen stdio://",
     }),
     "/custom/codex-app-server --listen stdio://",
+  );
+});
+
+test("default app-server binary prefers packaged resources", () => {
+  const resourcesPath = "/Applications/Root Worker.app/Contents/Resources";
+  const packagedBinary = path.join(resourcesPath, "bin/app-server");
+  const workspaceBinary = "/repo/codex-rs/target/debug/app-server";
+  const seen = [];
+
+  assert.equal(
+    resolveDefaultAppServerBinary({
+      resourcesPath,
+      startDir: "/repo/apps/root-worker-prototype/electron",
+      existsSync: (candidate) => {
+        seen.push(candidate);
+        return candidate === packagedBinary || candidate === workspaceBinary;
+      },
+    }),
+    `"${packagedBinary}"`,
+  );
+  assert.deepEqual(seen, [packagedBinary]);
+});
+
+test("default app-server launch uses bundled binary without PATH dependency", async () => {
+  const resourcesPath = "/Applications/Root Worker.app/Contents/Resources";
+  const packagedBinary = path.join(resourcesPath, "bin/app-server");
+
+  const launch = await resolveAppServerLaunch(
+    {
+      HOME: "/Users/alice",
+      PATH: "/usr/bin",
+      ROOT_WORKER_MOBILE_LISTEN: "off",
+    },
+    {
+      resourcesPath,
+      existsSync: (candidate) => candidate === packagedBinary,
+    },
+  );
+
+  assert.equal(launch.command, `"${packagedBinary}" --listen stdio://`);
+  assert.equal(launch.mobileConnection.enabled, false);
+});
+
+test("default app-server binary falls back to dev workspace binary", () => {
+  const workspaceBinary = "/repo/codex-rs/target/debug/app-server";
+
+  assert.equal(
+    resolveDefaultAppServerBinary({
+      resourcesPath: "/missing/resources",
+      startDir: "/repo/apps/root-worker-prototype/electron",
+      existsSync: (candidate) => candidate === workspaceBinary,
+    }),
+    `"${workspaceBinary}"`,
+  );
+});
+
+test("default app-server binary falls back to PATH when no local binary exists", () => {
+  assert.equal(
+    resolveDefaultAppServerBinary({
+      resourcesPath: "/missing/resources",
+      startDir: "/repo/apps/root-worker-prototype/electron",
+      existsSync: () => false,
+    }),
+    "app-server",
   );
 });
 
@@ -289,6 +398,123 @@ test("custom app-server command leaves mobile listener ownership to the override
     reason:
       "Mobile listener is unavailable when APP_SERVER_CMD overrides app-server launch.",
   });
+});
+
+test("custom CODEX_APP_SERVER_CMD leaves mobile listener ownership to the override", async () => {
+  const launch = await resolveAppServerLaunch({
+    CODEX_APP_SERVER_CMD: "/custom/codex-app-server --listen stdio://",
+  });
+
+  assert.equal(launch.command, "/custom/codex-app-server --listen stdio://");
+  assert.deepEqual(launch.mobileConnection, {
+    enabled: false,
+    reason:
+      "Mobile listener is unavailable when APP_SERVER_CMD overrides app-server launch.",
+  });
+});
+
+test("morpheus home defaults seed missing compact prompt", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-home-seed-"));
+  const seedPath = path.join(dir, "seed-COMPACT.md");
+  const morpheusHome = path.join(dir, "home");
+  fs.writeFileSync(seedPath, "default compact prompt\n");
+
+  const result = ensureMorpheusHomeDefaults(morpheusHome, {
+    defaultCompactPromptSeedPath: seedPath,
+  });
+
+  const compactPromptPath = path.join(morpheusHome, "compact/COMPACT.md");
+  assert.deepEqual(result, {
+    compactPromptPath,
+    seededCompactPrompt: true,
+    compactPromptSeedPath: seedPath,
+  });
+  assert.equal(fs.readFileSync(compactPromptPath, "utf8"), "default compact prompt\n");
+});
+
+test("morpheus home defaults do not overwrite custom compact prompt", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-home-custom-"));
+  const seedPath = path.join(dir, "seed-COMPACT.md");
+  const compactPromptPath = path.join(dir, "home/compact/COMPACT.md");
+  fs.mkdirSync(path.dirname(compactPromptPath), { recursive: true });
+  fs.writeFileSync(seedPath, "default compact prompt\n");
+  fs.writeFileSync(compactPromptPath, "custom compact prompt\n");
+
+  const result = ensureMorpheusHomeDefaults(path.join(dir, "home"), {
+    defaultCompactPromptSeedPath: seedPath,
+  });
+
+  assert.equal(result.seededCompactPrompt, false);
+  assert.equal(result.compactPromptSeedPath, null);
+  assert.equal(fs.readFileSync(compactPromptPath, "utf8"), "custom compact prompt\n");
+});
+
+test("morpheus home defaults use packaged compact seed before source fallback", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-packaged-seed-"));
+  const resourcesPath = path.join(dir, "resources");
+  const packagedSeed = path.join(
+    resourcesPath,
+    "default-config/compact/COMPACT.md",
+  );
+  const sourceSeed = path.join(
+    dir,
+    "codex-rs/thread-service/templates/compact/prompt.md",
+  );
+  fs.mkdirSync(path.dirname(packagedSeed), { recursive: true });
+  fs.mkdirSync(path.dirname(sourceSeed), { recursive: true });
+  fs.writeFileSync(packagedSeed, "packaged compact prompt\n");
+  fs.writeFileSync(sourceSeed, "source compact prompt\n");
+
+  ensureMorpheusHomeDefaults(path.join(dir, "home"), {
+    resourcesPath,
+    startDir: path.join(dir, "apps/root-worker-prototype/electron"),
+  });
+
+  assert.equal(
+    fs.readFileSync(path.join(dir, "home/compact/COMPACT.md"), "utf8"),
+    "packaged compact prompt\n",
+  );
+});
+
+test("morpheus home defaults use source compact seed in dev mode", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-source-seed-"));
+  const sourceSeed = path.join(
+    dir,
+    "codex-rs/thread-service/templates/compact/prompt.md",
+  );
+  fs.mkdirSync(path.dirname(sourceSeed), { recursive: true });
+  fs.writeFileSync(sourceSeed, "source compact prompt\n");
+
+  const result = ensureMorpheusHomeDefaults(path.join(dir, "home"), {
+    resourcesPath: path.join(dir, "missing-resources"),
+    startDir: path.join(dir, "apps/root-worker-prototype/electron"),
+  });
+
+  assert.equal(result.seededCompactPrompt, true);
+  assert.equal(result.compactPromptSeedPath, sourceSeed);
+  assert.equal(
+    fs.readFileSync(path.join(dir, "home/compact/COMPACT.md"), "utf8"),
+    "source compact prompt\n",
+  );
+});
+
+test("morpheus home defaults skip compact seed non-fatally when no seed exists", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-missing-seed-"));
+  const warnings = [];
+
+  const result = ensureMorpheusHomeDefaults(path.join(dir, "home"), {
+    resourcesPath: path.join(dir, "missing-resources"),
+    startDir: path.join(dir, "apps/root-worker-prototype/electron"),
+    existsSync: () => false,
+    warn: (message) => warnings.push(message),
+  });
+
+  assert.equal(result.seededCompactPrompt, false);
+  assert.equal(result.compactPromptSeedPath, null);
+  assert.deepEqual(warnings, [
+    `Default compact prompt seed was not found; ${path.join(dir, "home/compact/COMPACT.md")} was not created.`,
+  ]);
+  assert.equal(fs.existsSync(path.join(dir, "home/compact/COMPACT.md")), false);
 });
 
 test("mobile websocket token file permissions are tightened on rewrite", () => {
