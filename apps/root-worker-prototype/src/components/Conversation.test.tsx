@@ -13,6 +13,7 @@ import {
   ToolRow,
 } from "./Conversation";
 import {
+  ConversationVirtualList,
   buildConversationRowClassName,
   planConversationCellMeasurement,
   planFocusedItemScrollAttempt,
@@ -286,6 +287,43 @@ test("url artifact row exposes explicit browser action", () => {
   assert.match(markup, />Open<\/button>/);
   assert.doesNotMatch(markup, /<iframe /);
   assert.deepEqual(opened, []);
+});
+
+test("virtual list renders url artifacts with browser action", () => {
+  const markup = renderToStaticMarkup(
+    <ConversationVirtualList
+      cells={[
+        {
+          id: "artifact-cell",
+          kind: "artifact",
+          entries: [
+            artifactEntry({
+              title: "Preview server",
+              mimeType: "text/uri-list",
+              content: "http://localhost:5173/",
+              source: {
+                type: "url",
+                url: "http://localhost:5173/",
+                mimeType: "text/html",
+                fallbackContent: "Local preview",
+              },
+            }),
+          ],
+        },
+      ]}
+      compactHistoryById={{}}
+      containerRef={React.createRef<HTMLDivElement>()}
+      focusedItem={null}
+      onToggleCompactHistory={() => {}}
+      onOpenLocalFile={() => {}}
+      onOpenArtifactUrl={() => {}}
+      searchCurrentCellId={null}
+      searchMatchCellIds={new Set()}
+    />,
+  );
+
+  assert.match(markup, /Preview server/);
+  assert.match(markup, />Open<\/button>/);
 });
 
 test("expanded compact rows render archived artifacts inline", () => {

@@ -467,6 +467,7 @@ export function ConversationVirtualList({
                 selectedToolEntryIds.get(cell.id) ?? null,
                 onToggleCompactHistory,
                 onOpenLocalFile,
+                onOpenArtifactUrl,
                 handleToolOpenChange,
                 handleToolEntrySelection,
               )}
@@ -515,6 +516,7 @@ function renderConversationCell(
   selectedToolEntryId: string | null,
   onToggleCompactHistory: (entryId: string) => void,
   onOpenLocalFile: (target: string) => void,
+  onOpenArtifactUrl: (url: string) => void,
   onToolOpenChange: (cellId: string, isOpen: boolean) => void,
   onToolEntrySelection: (cellId: string, entryId: string | null) => void,
 ) {
@@ -527,6 +529,7 @@ function renderConversationCell(
       <ArchivedHistoryRow
         entry={cell.entries[0]}
         onOpenLocalFile={onOpenLocalFile}
+        onOpenArtifactUrl={onOpenArtifactUrl}
       />
     );
   }
