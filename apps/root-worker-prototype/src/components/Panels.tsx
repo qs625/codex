@@ -1168,6 +1168,7 @@ export function ConversationPanel({
   onHandleImageSelection,
   onToggleCompactHistory,
   onOpenLocalFile,
+  onOpenArtifactUrl,
   onPauseGoal,
   onRemoveDraftImage,
   onRemoveDraftSkill,
@@ -1210,6 +1211,7 @@ export function ConversationPanel({
   onHandleImageSelection: (event: ChangeEvent<HTMLInputElement>) => void;
   onToggleCompactHistory: (entryId: string) => void;
   onOpenLocalFile: (target: string) => void;
+  onOpenArtifactUrl: (url: string) => void;
   onPauseGoal: () => void;
   onRemoveDraftImage: (imageId: string) => void;
   onRemoveDraftSkill: (path: string) => void;
@@ -1581,6 +1583,7 @@ export function ConversationPanel({
               focusedItem={focusedConversationListItem}
               onToggleCompactHistory={onToggleCompactHistory}
               onOpenLocalFile={onOpenLocalFile}
+              onOpenArtifactUrl={onOpenArtifactUrl}
               searchCurrentCellId={activeSearchResult?.cellId ?? null}
               searchMatchCellIds={conversationSearchMatchingCellIds}
             />

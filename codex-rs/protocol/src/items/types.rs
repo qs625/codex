@@ -138,6 +138,9 @@ pub struct CollabAgentMessageItem {
 pub struct ConversationArtifactItem {
     pub id: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<ConversationArtifactSource>,
     pub mime_type: String,
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,6 +148,49 @@ pub struct ConversationArtifactItem {
     pub language: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub enum ConversationArtifactSource {
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Inline {
+        content: String,
+        mime_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        language: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Url {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        mime_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        fallback_content: Option<String>,
+    },
+}
+
+impl ConversationArtifactItem {
+    pub fn inline_source(&self) -> ConversationArtifactSource {
+        ConversationArtifactSource::Inline {
+            content: self.content.clone(),
+            mime_type: self.mime_type.clone(),
+            language: self.language.clone(),
+            truncated: self.truncated,
+        }
+    }
+
+    pub fn resolved_source(&self) -> ConversationArtifactSource {
+        self.source.clone().unwrap_or_else(|| self.inline_source())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
@@ -347,5 +393,61 @@ fn context_compaction_replacement_item_from_response_item(
             },
         )),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn old_flat_conversation_artifact_resolves_to_inline_source() {
+        let item: ConversationArtifactItem = serde_json::from_value(json!({
+            "id": "artifact-1",
+            "title": "Inline page",
+            "mimeType": "text/html",
+            "content": "<main>Hello</main>",
+            "language": "html",
+            "truncated": false
+        }))
+        .expect("old flat artifact should deserialize");
+
+        assert_eq!(item.source, None);
+        assert_eq!(
+            item.resolved_source(),
+            ConversationArtifactSource::Inline {
+                content: "<main>Hello</main>".to_string(),
+                mime_type: "text/html".to_string(),
+                language: Some("html".to_string()),
+                truncated: false,
+            }
+        );
+    }
+
+    #[test]
+    fn conversation_artifact_source_uses_camel_case_wire_fields() {
+        let item: ConversationArtifactItem = serde_json::from_value(json!({
+            "id": "artifact-1",
+            "title": "Preview",
+            "source": {
+                "type": "url",
+                "url": "http://localhost:5173/",
+                "mimeType": "text/html",
+                "fallbackContent": "Open preview"
+            },
+            "mimeType": "text/uri-list",
+            "content": "http://localhost:5173/"
+        }))
+        .expect("source union artifact should deserialize");
+
+        assert_eq!(
+            item.source,
+            Some(ConversationArtifactSource::Url {
+                url: "http://localhost:5173/".to_string(),
+                mime_type: Some("text/html".to_string()),
+                fallback_content: Some("Open preview".to_string()),
+            })
+        );
     }
 }

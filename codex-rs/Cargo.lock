@@ -3545,6 +3545,7 @@ dependencies = [
  "tokio-util",
  "tool-config",
  "tracing",
+ "url",
  "uuid",
 ]
 

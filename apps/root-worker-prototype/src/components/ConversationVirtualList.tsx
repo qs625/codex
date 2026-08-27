@@ -33,6 +33,7 @@ type ConversationVirtualListProps = {
   focusedItem: { itemId: string; token: number } | null;
   onToggleCompactHistory: (entryId: string) => void;
   onOpenLocalFile: (target: string) => void;
+  onOpenArtifactUrl: (url: string) => void;
   searchCurrentCellId: string | null;
   searchMatchCellIds: Set<string>;
 };
@@ -110,6 +111,7 @@ export function ConversationVirtualList({
   focusedItem,
   onToggleCompactHistory,
   onOpenLocalFile,
+  onOpenArtifactUrl,
   searchCurrentCellId,
   searchMatchCellIds,
 }: ConversationVirtualListProps) {
@@ -539,6 +541,7 @@ function renderConversationCell(
         loadError={compactHistoryState?.error ?? null}
         onToggleExpanded={() => onToggleCompactHistory(entry.id)}
         onOpenLocalFile={onOpenLocalFile}
+        onOpenArtifactUrl={onOpenArtifactUrl}
       />
     );
   }
@@ -556,7 +559,12 @@ function renderConversationCell(
   }
 
   if (cell.kind === "artifact") {
-    return <ArtifactRow entry={cell.entries[0]} />;
+    return (
+      <ArtifactRow
+        entry={cell.entries[0]}
+        onOpenArtifactUrl={onOpenArtifactUrl}
+      />
+    );
   }
 
   return (

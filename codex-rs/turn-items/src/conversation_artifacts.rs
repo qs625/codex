@@ -1,6 +1,7 @@
 use protocol::items::AgentMessageContent;
 use protocol::items::AgentMessageItem;
 use protocol::items::ConversationArtifactItem;
+use protocol::items::ConversationArtifactSource;
 use protocol::items::TurnItem;
 use serde_json::Value;
 
@@ -146,6 +147,12 @@ pub fn split_agent_message_into_artifact_turn_items(
                 items.push(TurnItem::ConversationArtifact(ConversationArtifactItem {
                     id: item_id,
                     title,
+                    source: Some(ConversationArtifactSource::Inline {
+                        content: content.clone(),
+                        mime_type: mime_type.clone(),
+                        language: language.clone(),
+                        truncated,
+                    }),
                     mime_type,
                     content,
                     language,

@@ -222,6 +222,10 @@ function App() {
     readStoredRightPanelView,
   );
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
+  const [browserNavigationRequest, setBrowserNavigationRequest] = useState<{
+    url: string;
+    token: number;
+  } | null>(null);
   const [focusedConversationItem, setFocusedConversationItem] = useState<{
     itemId: string;
     token: number;
@@ -2677,6 +2681,21 @@ function App() {
     await loadFilePreview(target);
   }
 
+  function handleOpenArtifactUrl(url: string) {
+    setBrowserNavigationRequest((current) => ({
+      url,
+      token: (current?.token ?? 0) + 1,
+    }));
+    setRightPanelView("browser");
+    setIsRightPanelCollapsed(false);
+  }
+
+  function handleBrowserNavigationRequestHandled(token: number) {
+    setBrowserNavigationRequest((current) =>
+      current?.token === token ? null : current,
+    );
+  }
+
   async function loadFileTreeDirectory(target: string) {
     const requestThreadId = selectedThreadIdRef.current;
     const requestCwd = selectedThreadCwdRef.current;
@@ -2902,6 +2921,7 @@ function App() {
           onHandleImageSelection={(event) => void handleImageSelection(event)}
           onToggleCompactHistory={toggleCompactHistory}
           onOpenLocalFile={(target) => void handleOpenLocalFile(target)}
+          onOpenArtifactUrl={handleOpenArtifactUrl}
           onPauseGoal={pauseCurrentThreadGoal}
           onRemoveDraftImage={removeDraftImage}
           onRemoveDraftSkill={removeDraftSkill}
@@ -2934,6 +2954,8 @@ function App() {
         />
         <RightPanel
           activeView={rightPanelView}
+          browserNavigationRequest={browserNavigationRequest}
+          onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
           availableSkillCount={availableSkills.length}
           availableWorkflows={availableWorkflows}
           isCollapsed={isRightPanelCollapsed}

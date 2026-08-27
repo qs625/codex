@@ -273,6 +273,7 @@ use super::*;
                 item: CoreTurnItem::ConversationArtifact(CoreConversationArtifactItem {
                     id: "artifact-1".into(),
                     title: "Inline page".into(),
+                    source: None,
                     mime_type: "text/html".into(),
                     content: "<main>Hello</main>".into(),
                     language: Some("html".into()),
@@ -294,6 +295,12 @@ use super::*;
             vec![ThreadItem::ConversationArtifact {
                 id: "artifact-1".into(),
                 title: "Inline page".into(),
+                source: Some(protocol::items::ConversationArtifactSource::Inline {
+                    content: "<main>Hello</main>".into(),
+                    mime_type: "text/html".into(),
+                    language: Some("html".into()),
+                    truncated: false,
+                }),
                 mime_type: "text/html".into(),
                 content: "<main>Hello</main>".into(),
                 language: Some("html".into()),

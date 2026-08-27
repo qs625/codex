@@ -8,6 +8,7 @@ use crate::protocol::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use protocol::event_command::EventCommandEventKind as CoreEventCommandEventKind;
 use protocol::items::ConversationArtifactItem as CoreConversationArtifactItem;
+use protocol::items::ConversationArtifactSource;
 use protocol::items::McpToolCallStatus as CoreMcpToolCallStatus;
 use protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
@@ -424,6 +425,9 @@ pub enum ThreadItem {
     ConversationArtifact {
         id: String,
         title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema-export", ts(optional))]
+        source: Option<ConversationArtifactSource>,
         mime_type: String,
         content: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -552,6 +556,9 @@ pub enum ContextCompactionReplacementItem {
     ConversationArtifact {
         id: String,
         title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema-export", ts(optional))]
+        source: Option<ConversationArtifactSource>,
         mime_type: String,
         content: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -626,9 +633,11 @@ impl ThreadItem {
 pub(crate) fn conversation_artifact_thread_item(
     artifact: CoreConversationArtifactItem,
 ) -> ThreadItem {
+    let source = artifact.resolved_source();
     ThreadItem::ConversationArtifact {
         id: artifact.id,
         title: artifact.title,
+        source: Some(source),
         mime_type: artifact.mime_type,
         content: artifact.content,
         language: artifact.language,

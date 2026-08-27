@@ -20,7 +20,7 @@ const INLINE_ARTIFACT_INSTRUCTIONS: &str = r#"
 
 Default assistant replies are Markdown. Do not use an artifact marker for ordinary Markdown prose, lists, or fenced code blocks.
 
-Use an inline artifact only when the user needs a distinct previewable or copyable block, such as self-contained `text/html`, `image/svg+xml`, `text/markdown`, `text/mermaid`, `application/json`, `text/csv`, or source/code content. HTML and SVG artifacts are rendered in a sandbox; Mermaid and unsupported types may be shown as source. Artifact content must be self-contained and must not rely on network scripts or remote resources.
+Use the marker form below only as a lightweight inline fallback when `publish_artifact` is unavailable or unnecessary. It is for small self-contained `text/html`, `image/svg+xml`, `text/markdown`, `text/mermaid`, `application/json`, `text/csv`, or source/code content. HTML and SVG artifacts are rendered in a sandbox; Mermaid and unsupported types may be shown as source. Marker artifact content must be self-contained and must not rely on network scripts or remote resources.
 
 When you create an artifact, emit this exact marker format, outside of Markdown fences:
 

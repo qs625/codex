@@ -1168,6 +1168,7 @@ fn live_projection_maps_typed_conversation_artifact() {
                 protocol::items::ConversationArtifactItem {
                     id: "artifact-1".into(),
                     title: "Inline chart".into(),
+                    source: None,
                     mime_type: "image/svg+xml".into(),
                     content: "<svg viewBox=\"0 0 10 10\"></svg>".into(),
                     language: Some("svg".into()),
@@ -1190,6 +1191,12 @@ fn live_projection_maps_typed_conversation_artifact() {
         ThreadItem::ConversationArtifact {
             id: "artifact-1".into(),
             title: "Inline chart".into(),
+            source: Some(protocol::items::ConversationArtifactSource::Inline {
+                content: "<svg viewBox=\"0 0 10 10\"></svg>".into(),
+                mime_type: "image/svg+xml".into(),
+                language: Some("svg".into()),
+                truncated: false,
+            }),
             mime_type: "image/svg+xml".into(),
             content: "<svg viewBox=\"0 0 10 10\"></svg>".into(),
             language: Some("svg".into()),

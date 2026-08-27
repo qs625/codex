@@ -160,6 +160,9 @@ impl ToolServiceApi for ToolService {
                     )
                     .await
                 }
+                domains::ToolDomain::Artifact => {
+                    domains::artifact::dispatch(session.as_ref(), turn.as_ref(), call).await
+                }
                 domains::ToolDomain::ApplyPatch => {
                     domains::apply_patch::dispatch(
                         Arc::clone(&approval_api),

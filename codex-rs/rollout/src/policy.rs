@@ -550,6 +550,7 @@ mod tests {
             item: TurnItem::ConversationArtifact(ConversationArtifactItem {
                 id: "artifact-1".to_string(),
                 title: "Inline page".to_string(),
+                source: None,
                 mime_type: "text/html".to_string(),
                 content: "<main>Hello</main>".to_string(),
                 language: Some("html".to_string()),

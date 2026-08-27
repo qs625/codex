@@ -39,6 +39,7 @@ type ToolRowProps = {
 
 type ArtifactRowProps = {
   entry: ConversationEntry;
+  onOpenArtifactUrl?: (url: string) => void;
 };
 
 type CompactRowProps = {
@@ -48,11 +49,13 @@ type CompactRowProps = {
   loadError?: string | null;
   onToggleExpanded?: () => void;
   onOpenLocalFile?: (target: string) => void;
+  onOpenArtifactUrl?: (url: string) => void;
 };
 
 type ArchivedHistoryRowProps = {
   entry: ConversationEntry;
   onOpenLocalFile?: (target: string) => void;
+  onOpenArtifactUrl?: (url: string) => void;
 };
 
 type ApprovalRequestsPanelProps = {
@@ -933,15 +936,21 @@ export const ToolRow = memo(function ToolRow({
 
 export const ArtifactRow = memo(function ArtifactRow({
   entry,
+  onOpenArtifactUrl,
 }: ArtifactRowProps) {
   const artifact = entry.artifact;
-  const mimeType = normalizeArtifactMimeType(artifact?.mimeType);
+  const source = artifact?.source;
+  const mimeType = normalizeArtifactMimeType(source?.mimeType ?? artifact?.mimeType);
   const title = artifact?.title?.trim() || "Artifact";
-  const content = artifact?.content ?? "";
+  const content =
+    source?.type === "inline"
+      ? source.content
+      : source?.fallbackContent ?? artifact?.content ?? "";
+  const artifactUrl = source?.type === "url" ? source.url : null;
   const isRenderable = isRenderableArtifactMimeType(mimeType);
   const isMarkdown = isMarkdownArtifactMimeType(mimeType);
   const [mode, setMode] = useState<"preview" | "source">(() =>
-    isRenderable || isMarkdown ? "preview" : "source",
+    artifactUrl ? "source" : isRenderable || isMarkdown ? "preview" : "source",
   );
   const displaySource = truncateArtifactSource(content);
   const sourceIsTruncated =
@@ -972,31 +981,47 @@ export const ArtifactRow = memo(function ArtifactRow({
           <div className="artifact-card-copy">
             <strong>{title}</strong>
             <span>{mimeType}</span>
+            {artifactUrl ? (
+              <a href={artifactUrl} target="_blank" rel="noreferrer">
+                {artifactUrl}
+              </a>
+            ) : null}
           </div>
           <div className="artifact-actions">
-            <div
-              className="artifact-mode-control"
-              role="tablist"
-              aria-label="Artifact view"
-            >
+            {artifactUrl ? null : (
+              <div
+                className="artifact-mode-control"
+                role="tablist"
+                aria-label="Artifact view"
+              >
+                <button
+                  type="button"
+                  className={mode === "preview" ? "selected" : ""}
+                  onClick={() => setMode("preview")}
+                  disabled={!isRenderable && !isMarkdown}
+                  aria-selected={mode === "preview"}
+                >
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  className={mode === "source" ? "selected" : ""}
+                  onClick={() => setMode("source")}
+                  aria-selected={mode === "source"}
+                >
+                  Source
+                </button>
+              </div>
+            )}
+            {artifactUrl ? (
               <button
                 type="button"
-                className={mode === "preview" ? "selected" : ""}
-                onClick={() => setMode("preview")}
-                disabled={!isRenderable && !isMarkdown}
-                aria-selected={mode === "preview"}
+                className="artifact-action"
+                onClick={() => onOpenArtifactUrl?.(artifactUrl)}
               >
-                Preview
+                Open
               </button>
-              <button
-                type="button"
-                className={mode === "source" ? "selected" : ""}
-                onClick={() => setMode("source")}
-                aria-selected={mode === "source"}
-              >
-                Source
-              </button>
-            </div>
+            ) : null}
             <button
               type="button"
               className="artifact-action"
@@ -1015,7 +1040,13 @@ export const ArtifactRow = memo(function ArtifactRow({
           </div>
         </div>
         <div className="artifact-card-body">
-          {mode === "preview" ? (
+          {artifactUrl ? (
+            <ArtifactUrlSource
+              url={artifactUrl}
+              fallbackContent={content}
+              mimeType={mimeType}
+            />
+          ) : mode === "preview" ? (
             <ArtifactPreview
               content={displaySource}
               mimeType={mimeType}
@@ -1029,7 +1060,7 @@ export const ArtifactRow = memo(function ArtifactRow({
             />
           )}
         </div>
-        {!isRenderable && !isMarkdown ? (
+        {!artifactUrl && !isRenderable && !isMarkdown ? (
           <div className="artifact-fallback">
             <DocumentIcon />
             <span>
@@ -1042,7 +1073,7 @@ export const ArtifactRow = memo(function ArtifactRow({
       </section>
     </article>
   );
-});
+}, areArtifactRowPropsEqual);
 
 function ArtifactPreview({
   content,
@@ -1097,6 +1128,32 @@ function ArtifactSource({
         <code>{content}</code>
       </pre>
       {truncated ? <span>{mimeType} source preview truncated.</span> : null}
+    </div>
+  );
+}
+
+function ArtifactUrlSource({
+  url,
+  fallbackContent,
+  mimeType,
+}: {
+  url: string;
+  fallbackContent: string;
+  mimeType: string;
+}) {
+  return (
+    <div className="artifact-source artifact-url-source">
+      <pre>
+        <code>{url}</code>
+      </pre>
+      {fallbackContent && fallbackContent !== url ? (
+        <>
+          <span>{mimeType} fallback content</span>
+          <pre>
+            <code>{fallbackContent}</code>
+          </pre>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1239,6 +1296,7 @@ export const CompactRow = memo(function CompactRow({
   loadError = null,
   onToggleExpanded,
   onOpenLocalFile,
+  onOpenArtifactUrl,
 }: CompactRowProps) {
   const replacementCount = entry.replacementHistoryCount;
   const replacementLabel =
@@ -1301,7 +1359,11 @@ export const CompactRow = memo(function CompactRow({
                           key={cell.id}
                           className={`archive-cell archive-cell-${cell.kind}`}
                         >
-                          {renderNestedConversationCell(cell, onOpenLocalFile)}
+                          {renderNestedConversationCell(
+                            cell,
+                            onOpenLocalFile,
+                            onOpenArtifactUrl,
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1328,7 +1390,11 @@ export const CompactRow = memo(function CompactRow({
                           key={cell.id}
                           className={`archive-cell archive-cell-${cell.kind}`}
                         >
-                          {renderNestedConversationCell(cell, onOpenLocalFile)}
+                          {renderNestedConversationCell(
+                            cell,
+                            onOpenLocalFile,
+                            onOpenArtifactUrl,
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1350,6 +1416,7 @@ export const CompactRow = memo(function CompactRow({
 export const ArchivedHistoryRow = memo(function ArchivedHistoryRow({
   entry,
   onOpenLocalFile,
+  onOpenArtifactUrl,
 }: ArchivedHistoryRowProps) {
   const archivedCells = entry.archivedCells ?? [];
   const archivedEntryCount = entry.archivedEntryCount ?? 0;
@@ -1379,7 +1446,11 @@ export const ArchivedHistoryRow = memo(function ArchivedHistoryRow({
               key={cell.id}
               className={`archive-cell archive-cell-${cell.kind}`}
             >
-              {renderArchivedConversationCell(cell, onOpenLocalFile)}
+              {renderArchivedConversationCell(
+                cell,
+                onOpenLocalFile,
+                onOpenArtifactUrl,
+              )}
             </div>
           ))}
         </div>
@@ -1391,13 +1462,15 @@ export const ArchivedHistoryRow = memo(function ArchivedHistoryRow({
 function renderArchivedConversationCell(
   cell: ConversationCell,
   onOpenLocalFile?: (target: string) => void,
+  onOpenArtifactUrl?: (url: string) => void,
 ) {
-  return renderNestedConversationCell(cell, onOpenLocalFile);
+  return renderNestedConversationCell(cell, onOpenLocalFile, onOpenArtifactUrl);
 }
 
 function renderNestedConversationCell(
   cell: ConversationCell,
   onOpenLocalFile?: (target: string) => void,
+  onOpenArtifactUrl?: (url: string) => void,
 ) {
   if (cell.kind === "message") {
     return (
@@ -1417,7 +1490,12 @@ function renderNestedConversationCell(
     return <EventRow entry={cell.entries[0]} />;
   }
   if (cell.kind === "artifact") {
-    return <ArtifactRow entry={cell.entries[0]} />;
+    return (
+      <ArtifactRow
+        entry={cell.entries[0]}
+        onOpenArtifactUrl={onOpenArtifactUrl}
+      />
+    );
   }
   if (cell.kind === "compact") {
     return (
@@ -1425,6 +1503,7 @@ function renderNestedConversationCell(
         entry={cell.entries[0]}
         isExpanded
         onOpenLocalFile={onOpenLocalFile}
+        onOpenArtifactUrl={onOpenArtifactUrl}
       />
     );
   }
@@ -1433,6 +1512,7 @@ function renderNestedConversationCell(
       <ArchivedHistoryRow
         entry={cell.entries[0]}
         onOpenLocalFile={onOpenLocalFile}
+        onOpenArtifactUrl={onOpenArtifactUrl}
       />
     );
   }
@@ -1478,7 +1558,8 @@ function areCompactRowPropsEqual(
     previous.isExpanded === next.isExpanded &&
     previous.isLoading === next.isLoading &&
     previous.loadError === next.loadError &&
-    previous.onOpenLocalFile === next.onOpenLocalFile
+    previous.onOpenLocalFile === next.onOpenLocalFile &&
+    previous.onOpenArtifactUrl === next.onOpenArtifactUrl
   );
 }
 
@@ -1486,7 +1567,21 @@ function areArchivedHistoryRowPropsEqual(
   previous: Readonly<ArchivedHistoryRowProps>,
   next: Readonly<ArchivedHistoryRowProps>,
 ) {
-  return previous.entry === next.entry;
+  return (
+    previous.entry === next.entry &&
+    previous.onOpenLocalFile === next.onOpenLocalFile &&
+    previous.onOpenArtifactUrl === next.onOpenArtifactUrl
+  );
+}
+
+function areArtifactRowPropsEqual(
+  previous: Readonly<ArtifactRowProps>,
+  next: Readonly<ArtifactRowProps>,
+) {
+  return (
+    previous.entry === next.entry &&
+    previous.onOpenArtifactUrl === next.onOpenArtifactUrl
+  );
 }
 
 function getToolIcon(category: NonNullable<ConversationEntry["toolCategory"]>) {

@@ -2840,7 +2840,8 @@ svg {
 }
 
 .artifact-card-copy strong,
-.artifact-card-copy span {
+.artifact-card-copy span,
+.artifact-card-copy a {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -2852,10 +2853,19 @@ svg {
 }
 
 .artifact-card-copy span,
+.artifact-card-copy a,
 .artifact-source span,
 .artifact-fallback {
   color: #78716c;
   font-size: 12px;
+}
+
+.artifact-card-copy a {
+  text-decoration: none;
+}
+
+.artifact-card-copy a:hover {
+  text-decoration: underline;
 }
 
 .artifact-actions {

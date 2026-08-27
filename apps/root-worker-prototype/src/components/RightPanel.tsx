@@ -172,6 +172,8 @@ function formatTokenCount(value: number | null) {
 
 export function RightPanel({
   activeView,
+  browserNavigationRequest,
+  onBrowserNavigationRequestHandled,
   availableSkillCount,
   availableWorkflows,
   isCollapsed,
@@ -204,6 +206,8 @@ export function RightPanel({
   todoItems,
 }: {
   activeView: RightPanelView;
+  browserNavigationRequest?: { url: string; token: number } | null;
+  onBrowserNavigationRequestHandled?: (token: number) => void;
   availableSkillCount: number;
   availableWorkflows: WorkflowSummary[];
   isCollapsed: boolean;
@@ -264,7 +268,10 @@ export function RightPanel({
             ) : activeView === "git" ? (
               <GitPanel changedFiles={threadAnalysis.changedFiles} thread={thread} />
             ) : activeView === "browser" ? (
-              <BrowserPanel />
+              <BrowserPanel
+                navigationRequest={browserNavigationRequest ?? null}
+                onNavigationRequestHandled={onBrowserNavigationRequestHandled}
+              />
             ) : activeView === "workflow" ? (
               <WorkflowPanel model={workflowPanel} />
             ) : (
@@ -597,7 +604,13 @@ function formatWorkflowStageStatus(status: WorkflowStageView["status"]) {
   }
 }
 
-function BrowserPanel() {
+function BrowserPanel({
+  navigationRequest,
+  onNavigationRequestHandled,
+}: {
+  navigationRequest: { url: string; token: number } | null;
+  onNavigationRequestHandled?: (token: number) => void;
+}) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [address, setAddress] = useState("");
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
@@ -624,6 +637,29 @@ function BrowserPanel() {
       unsubscribe?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (!navigationRequest) {
+      return;
+    }
+    onNavigationRequestHandled?.(navigationRequest.token);
+    const normalized = normalizeBrowserUrl(navigationRequest.url);
+    if (!normalized.ok) {
+      setLocalError(normalized.reason);
+      return;
+    }
+    const browserApi = currentBrowserPanelApi();
+    if (!browserApi) {
+      setLocalError("In-app browser is unavailable in this environment.");
+      return;
+    }
+    setAddress(normalized.url);
+    setLocalError(null);
+    void browserApi
+      .navigateBrowserView(normalized.url)
+      .then(setState)
+      .catch((navigationError) => setLocalError(toBrowserError(navigationError)));
+  }, [navigationRequest, onNavigationRequestHandled]);
 
   useEffect(() => {
     const viewport = viewportRef.current;

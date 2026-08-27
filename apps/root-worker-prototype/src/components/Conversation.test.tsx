@@ -29,6 +29,13 @@ function artifactEntry(
     content: "<main><h1>Hello</h1><script>window.bad = true</script></main>",
     ...overrides,
   };
+  artifact.source ??= {
+    type: "inline",
+    content: artifact.content,
+    mimeType: artifact.mimeType,
+    language: artifact.language,
+    truncated: artifact.truncated,
+  };
   return {
     id: "artifact-1",
     kind: "artifact",
@@ -253,6 +260,32 @@ test("unsupported artifact row falls back to source", () => {
   assert.match(markup, /Preview unavailable for this artifact type/);
   assert.match(markup, /class="artifact-source"/);
   assert.doesNotMatch(markup, /<iframe /);
+});
+
+test("url artifact row exposes explicit browser action", () => {
+  const opened: string[] = [];
+  const markup = renderToStaticMarkup(
+    <ArtifactRow
+      entry={artifactEntry({
+        title: "Preview server",
+        mimeType: "text/uri-list",
+        content: "http://localhost:5173/",
+        source: {
+          type: "url",
+          url: "http://localhost:5173/",
+          mimeType: "text/html",
+          fallbackContent: "Local preview",
+        },
+      })}
+      onOpenArtifactUrl={(url) => opened.push(url)}
+    />,
+  );
+
+  assert.match(markup, /Preview server/);
+  assert.match(markup, /http:\/\/localhost:5173\//);
+  assert.match(markup, />Open<\/button>/);
+  assert.doesNotMatch(markup, /<iframe /);
+  assert.deepEqual(opened, []);
 });
 
 test("expanded compact rows render archived artifacts inline", () => {
