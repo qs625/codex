@@ -376,19 +376,7 @@ function buildConversationItemEntries(
   }
 
   if (item.type === "reasoning") {
-    const text =
-      item.summary.join("\n").trim() || item.content.join("\n").trim();
-    return [
-      {
-        id: item.id,
-        kind: "event" as const,
-        author,
-        role: "system" as const,
-        text: text || "Reasoning item received.",
-        timestamp,
-        attachments: [],
-      },
-    ];
+    return [];
   }
 
   if (item.type === "eventCommandCall") {

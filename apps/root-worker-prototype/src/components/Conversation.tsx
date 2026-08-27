@@ -1074,7 +1074,7 @@ function ArtifactPreview({
   return (
     <iframe
       className="artifact-preview-frame"
-      sandbox=""
+      sandbox="allow-scripts"
       referrerPolicy="no-referrer"
       srcDoc={buildArtifactSrcDoc(content, mimeType)}
       title="Artifact preview"
@@ -1125,10 +1125,12 @@ function truncateArtifactSource(content: string) {
 }
 
 function buildArtifactSrcDoc(content: string, mimeType: string) {
-  const csp =
-    "default-src 'none'; img-src data:; media-src data:; font-src data:; style-src 'unsafe-inline'; script-src 'none'; base-uri 'none'; form-action 'none'";
+  const normalizedMimeType = normalizeArtifactMimeType(mimeType);
+  const scriptSrc =
+    normalizedMimeType === "text/html" ? "'unsafe-inline'" : "'none'";
+  const csp = `default-src 'none'; img-src data:; media-src data:; font-src data:; style-src 'unsafe-inline'; script-src ${scriptSrc}; base-uri 'none'; form-action 'none'`;
   const body =
-    mimeType === "image/svg+xml"
+    normalizedMimeType === "image/svg+xml"
       ? `<main class="artifact-svg-host">${content}</main>`
       : content;
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}"><style>html,body{margin:0;min-height:100%;background:#fff;color:#1c1917;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{padding:16px;box-sizing:border-box}.artifact-svg-host{display:grid;place-items:center;min-height:220px}.artifact-svg-host svg{max-width:100%;height:auto}</style></head><body>${body}</body></html>`;

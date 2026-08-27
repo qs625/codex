@@ -2430,7 +2430,7 @@ test("multiple compactions keep only entries after the latest hidden compact bou
   );
 });
 
-test("builds visible entries for empty reasoning and builtin schedule tools", () => {
+test("hides reasoning entries while keeping adjacent builtin schedule tools visible", () => {
   const entries = buildConversationEntries(
     makeThread([
       {
@@ -2438,6 +2438,12 @@ test("builds visible entries for empty reasoning and builtin schedule tools", ()
         id: "reasoning-empty",
         summary: [],
         content: [],
+      },
+      {
+        type: "reasoning",
+        id: "reasoning-with-text",
+        summary: ["considering options"],
+        content: ["private details"],
       },
       {
         type: "builtinToolCall",
@@ -2465,13 +2471,6 @@ test("builds visible entries for empty reasoning and builtin schedule tools", ()
       toolCategory: entry.toolCategory,
     })),
     [
-      {
-        id: "reasoning-empty",
-        kind: "event",
-        text: "Reasoning item received.",
-        toolName: undefined,
-        toolCategory: undefined,
-      },
       {
         id: "builtin-schedule",
         kind: "tool",
