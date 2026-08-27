@@ -11,9 +11,996 @@
 None
 
 ## Active Work
-None
+- id: remove-artifact-marker-path
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: refactor/remove-artifact-marker-path
+  task_type: refactor/product-simplification
+  depends_on: 84d9d0316a7d0a1dad452c1b0b3f2b3f75c5630c
+  files: codex-rs/model-service and protocol prompt text/tests; codex-rs/turn-items marker parser/stream filtering/finalization tests; codex-rs/thread-service artifact-marker producer tests; any now-unused marker exports; Root Worker tests only if marker-like ordinary messages expectations need adjustment
+  base_commit: 84d9d0316a7d0a1dad452c1b0b3f2b3f75c5630c
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to main merge `8cf23f6eee3f2524c293d879086cd3f5e50718d5`. owner_dev_2 still has unrelated untracked `apps/android-companion/local.properties`.
+  status: merged
+  objective: Remove the old `MORPHEUS_ARTIFACT` marker-based artifact implementation now that `publish_artifact` is the primary artifact publishing tool, leaving artifacts to be published through structured typed runtime/tool paths rather than assistant text marker parsing.
+  last_update: 2026-08-27 PM accepted owner_dev_2 commit `61c216a77d` and merged it into main as `8cf23f6eee3f2524c293d879086cd3f5e50718d5`. PM verified the design: prompt no longer teaches marker syntax, `turn-items` marker parser/export and streaming marker hide/filter were removed, thread-service no longer splits assistant text into artifact items, marker-looking assistant text remains ordinary visible text, and typed `ConversationArtifact` / source union / `publish_artifact` tool / replay / frontend renderer remain intact.
+  next_action: Restart/reload Root Worker/app-server so running clients and new model contexts consume marker-free artifact publishing guidance and tool-only artifact publishing.
+  blockers: none; model-service and tool-service focused crate test targets still have known unrelated test harness/dev-dep blockers, so production lib checks and downstream focused tests were used for coverage.
+  validation: Owner ran `rtk cargo test -p codex-turn-items` -> 48 passed; focused thread-service marker-looking text/base/compact tests passed; model-service lib check passed; tool-service lib check passed; app-server-protocol/thread-history/rollout artifact focused tests passed; app-server build passed; Root Worker focused tests passed; reviewer passed. PM reran on merged main: `rtk cargo test --manifest-path codex-rs/Cargo.toml -p codex-turn-items` -> 48 passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service handle_output_item_done_keeps_marker_looking_assistant_text_as_message` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service isolated_compact_sampling_sends_artifact_publishing_guidance_as_base_instructions` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service get_base_instructions_no_user_content` -> passed; `rtk cargo check --manifest-path codex-rs/Cargo.toml -p model-service --lib` -> passed; `rtk cargo check --manifest-path codex-rs/Cargo.toml -p codex-tool-service --lib` -> passed; app-server-protocol/thread-history/rollout focused artifact tests passed; `rtk npm --prefix apps/root-worker-prototype test -- src/components/Conversation.test.tsx` -> 29 passed; `rtk npm --prefix apps/root-worker-prototype test -- src/lib/conversation.test.ts` -> 58 passed; `rtk npm --prefix apps/root-worker-prototype run build` -> passed with existing warnings; `rtk cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> passed with existing warnings; `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: 8cf23f6eee3f2524c293d879086cd3f5e50718d5
+- id: url-backed-conversation-artifact
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/url-backed-conversation-artifact
+  task_type: feature/protocol-ui
+  depends_on: 380c54c1ba7628970cb0b985780e9905f524f34b
+  files: codex-rs/turn-items artifact marker parser/tests; codex-rs/protocol `ConversationArtifactItem`; app-server-protocol/thread-history projection/replay/tests; model-service/protocol prompt guidance; generated schema/types if required; apps/root-worker-prototype conversation artifact entry/rendering, Browser panel integration, tests
+  base_commit: 380c54c1ba7628970cb0b985780e9905f524f34b
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to main merge `84d9d0316a7d0a1dad452c1b0b3f2b3f75c5630c`. owner_dev_2 still has unrelated untracked `apps/android-companion/local.properties`.
+  status: merged
+  objective: Add a URL-backed conversation artifact type so models can emit a single http/https server URL as a typed artifact, and the Root Worker client can present it as a web preview/open-in-browser artifact instead of requiring complex HTML to be embedded as one continuous text block.
+  last_update: 2026-08-27 PM accepted owner_dev_2 commits `52815f806a` and `1c6f78a127` and merged them into main as `84d9d0316a7d0a1dad452c1b0b3f2b3f75c5630c`. PM verified the design alignment: `publish_artifact` is the primary tool-first path and directly emits typed `ConversationArtifact` items; marker remains lightweight inline fallback and was not extended for URL; `ConversationArtifact` now has source union with legacy flat compatibility; URL sources render as artifact cards with explicit Browser panel action and no implicit navigation; URL validation accepts http/https with host and rejects file/data/javascript/relative/missing-host; publish tool payloads are bounded.
+  next_action: Restart/reload Root Worker/app-server so running clients and new model contexts consume the `publish_artifact` tool and source-union artifact renderer.
+  blockers: none; `codex-tool-service` focused test target remains blocked by existing test harness/dev-dep unresolved imports, so artifact domain unit tests were not executable through that target.
+  validation: Owner ran schema generation, focused protocol/projection/thread-history/rollout/turn-items tests, codex-tool-service lib check, app-server build, Root Worker focused tests/build; reviewer passed after fixing Browser request consumption and after PM-requested URL/bounds返工. PM reran on merged main: `rtk cargo test -p protocol conversation_artifact` -> 2 passed; `rtk cargo check -p codex-tool-service --lib` -> passed; `rtk cargo test -p app-server-protocol live_projection_maps_typed_conversation_artifact` -> passed; `rtk cargo test -p thread-history maps_typed_conversation_artifact_completed_to_artifact_item` -> passed; `rtk cargo test -p rollout limited_mode_persists_conversation_artifact_item_completed` -> passed; `rtk cargo test -p codex-turn-items artifact` -> 10 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing warnings; `rtk npm --prefix apps/root-worker-prototype test -- src/components/Conversation.test.tsx` -> 29 passed; `rtk npm --prefix apps/root-worker-prototype test -- src/lib/conversation.test.ts` -> 58 passed; `rtk npm --prefix apps/root-worker-prototype run build` -> passed with npm config warnings and existing Vite chunk warning; `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: 84d9d0316a7d0a1dad452c1b0b3f2b3f75c5630c
+- id: artifact-html-interactivity-hide-reasoning
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/artifact-html-interactivity-hide-reasoning
+  task_type: bugfix/ui-runtime
+  depends_on: 20fffbfe6ec5afab7b8e1f59898c3b610486f1e5
+  files: apps/root-worker-prototype/src/components/Conversation.tsx; apps/root-worker-prototype/src/components/Conversation.test.tsx; apps/root-worker-prototype/src/lib/conversation.ts; apps/root-worker-prototype/src/lib/conversation.test.ts; related frontend-only helpers/tests if needed
+  base_commit: 20fffbfe6ec5afab7b8e1f59898c3b610486f1e5
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to main merge `380c54c1ba7628970cb0b985780e9905f524f34b`. owner_dev_2 still has unrelated untracked `apps/android-companion/local.properties`.
+  status: merged
+  objective: Fix Root Worker conversation display so self-contained HTML artifacts can run local interaction scripts while remaining sandboxed, and stop showing reasoning thread items in the conversation transcript.
+  last_update: 2026-08-27 PM accepted owner_dev_3 commit `1586f7dacd95a54ddac05c8c2e8f7bedc1c41de1` and merged it into main as `380c54c1ba7628970cb0b985780e9905f524f34b`. PM verified the implementation against the brief: HTML artifact iframe now uses `sandbox="allow-scripts"` without `allow-same-origin`; HTML artifact CSP allows inline scripts while SVG artifact CSP keeps scripts disabled; reasoning items are skipped at the visible conversation entry builder instead of deleting protocol/thread state; no raw marker or fenced HTML/SVG parser was added.
+  next_action: Restart/reload Root Worker so the running client consumes interactive HTML artifact previews and hidden reasoning transcript entries.
+  blockers: none
+  validation: Owner ran focused frontend tests -> 85 passed; Playwright browser-level inline check proved HTML sandbox iframe button script executes and SVG script does not; Root Worker build passed with existing Vite chunk-size warning; diff check passed. Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after owner added browser-level validation. PM reran on merged main: `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx src/lib/conversation.test.ts` -> 85 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: 380c54c1ba7628970cb0b985780e9905f524f34b
+- id: conversation-artifact-marker-prompt-producer
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/conversation-artifact-marker-prompt-producer
+  task_type: feature/protocol-runtime
+  depends_on: ef5dff57165f6fb8d63ec14142f8941260200896
+  files: model-visible instruction/prompt assembly; protocol/thread-service assistant output handling; `ConversationArtifact` producer path; focused tests; frontend only if marker UX or docs require small follow-up
+  base_commit: ef5dff57165f6fb8d63ec14142f8941260200896
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to main merge `20fffbfe6ec5afab7b8e1f59898c3b610486f1e5`. owner_dev_2 still has unrelated untracked `apps/android-companion/local.properties`.
+  status: merged
+  objective: Complete the end-to-end conversation artifact feature: model-visible init context instructions explain supported artifact types and marker format, backend consumes valid model artifact markers into typed `conversationArtifact` thread items, live/reload/compact display remains consistent, compact-rebuilt model context still includes the artifact prompt, and ordinary Markdown stays on the normal assistant message path.
+  last_update: 2026-08-26 PM accepted owner_dev_2 commit `e354d97270d6357bc0155063647edf0a9fd1d3bc` and merged it into main as `20fffbfe6ec5afab7b8e1f59898c3b610486f1e5`. PM verified complete feature contract: prompt guidance is injected into base instructions/init instruction assembly, compact sampling request carries the same artifact guidance, backend assistant output parser produces ordered message/artifact/message typed turn items from explicit markers, streaming hides valid marker blocks, malformed markers remain visible text, normal Markdown and fenced HTML/SVG code stay message-only, oversized content is truncated, and artifacts continue through the previously merged typed renderer/reload path.
+  next_action: Restart/reload Root Worker/app-server so running clients and new model contexts consume the artifact prompt/producer.
+  blockers: none
+  validation: Owner ran `rtk cargo test -p codex-turn-items artifact -- --nocapture` -> 10 passed; `rtk cargo test -p thread-service stream_events_utils -- --nocapture` -> 14 passed; `rtk cargo test -p thread-service get_base_instructions_no_user_content -- --nocapture` -> 1 passed; `rtk cargo test -p thread-service isolated_compact_sampling_sends_inline_artifact_guidance_as_base_instructions -- --nocapture` -> 1 passed; focused rollout/thread-history artifact tests passed; app-server build passed with existing warnings; model-service focused test blocked by existing missing test files; diff check passed. Reviewer passed after fixes and compact prompt coverage review. PM reran on merged main: `rtk cargo test --manifest-path codex-rs/Cargo.toml -p codex-turn-items artifact -- --nocapture` -> 10 passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service stream_events_utils -- --nocapture` -> 14 passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service isolated_compact_sampling_sends_inline_artifact_guidance_as_base_instructions -- --nocapture` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service get_base_instructions_no_user_content -- --nocapture` -> passed; `rtk cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> passed with existing warnings; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` passed.
+  commit: 20fffbfe6ec5afab7b8e1f59898c3b610486f1e5
+- id: conversation-inline-artifact-renderer
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/conversation-inline-artifact-renderer
+  task_type: feature/ui-protocol
+  depends_on: cd5514098921dfed8dae074ffd89f677f5990004
+  files: codex-rs/protocol/app-server-protocol/thread-history if typed artifact items are needed; apps/root-worker-prototype conversation rendering, artifact preview components, markdown/source toggle, tests; model/tool instructions only if needed
+  base_commit: cd5514098921dfed8dae074ffd89f677f5990004
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to main merge `ef5dff57165f6fb8d63ec14142f8941260200896`. owner_dev_2 still has unrelated untracked `apps/android-companion/local.properties`.
+  status: merged
+  objective: Add first-class inline conversation artifacts so SVG/HTML/Markdown/Mermaid or similar self-contained visual outputs can render directly in the conversation with safe preview/source controls, rather than only appearing as code blocks or raw text.
+  last_update: 2026-08-26 PM accepted owner_dev_2 commit `051e6cd23c1bdbf342e98c7047e90953382bb81f` and merged it into main as `ef5dff57165f6fb8d63ec14142f8941260200896`. PM verified the user contract: ordinary assistant markdown stays on message path, HTML/SVG fenced code blocks are not parsed into artifacts, artifact display is driven by typed `conversationArtifact` thread items, live projection/reload replay/rollout Limited persistence are wired, and HTML/SVG preview uses a sandboxed iframe with source fallback.
+  next_action: Restart/reload Root Worker/app-server so the running client consumes inline conversation artifact rendering; future follow-up should add the explicit model/tool artifact marker producer.
+  blockers: none
+  validation: Owner ran protocol schema generation, Root Worker tests/build, focused app-server-protocol/thread-history/rollout tests, codex-turn-items tests, app-server build, diff checks; `cargo fmt --all` blocked by existing unrelated missing sandboxing test file, targeted rustfmt passed. PM reran on merged main: `rtk pnpm --dir apps/root-worker-prototype test` -> 525 passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p app-server-protocol live_projection_maps_typed_conversation_artifact -- --nocapture` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-history maps_typed_conversation_artifact_completed_to_artifact_item -- --nocapture` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p rollout limited_mode_persists_conversation_artifact_item_completed -- --nocapture` -> passed; `rtk cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` passed.
+  commit: ef5dff57165f6fb8d63ec14142f8941260200896
+- id: rollout-session-directory-layout
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: feature/rollout-session-directory-layout
+  task_type: feature/storage-layout
+  depends_on: cd5514098921dfed8dae074ffd89f677f5990004
+  files: codex-rs/rollout recorder/list/metadata/state_db/session_index tests; codex-rs/thread-store local read/archive/resume paths; codex-rs/app-server feedback/archive/list/read only if implicated; project memory/docs as needed
+  base_commit: cd5514098921dfed8dae074ffd89f677f5990004
+  pending_sync_from_main: none for idle checkouts; owner_dev and owner_dev_3 were fast-forwarded to `e43e1b7afb30b560d3fc6ca07062fdda2f67655b` after merge. owner_dev_2 is active on `conversation-inline-artifact-renderer` from previous base and records its own pending sync.
+  status: merged
+  objective: Store new segmented rollout sessions in a per-session directory so base/head/compact segments/manifest are not all mixed in the date directory, while preserving old flat rollout compatibility and bounded normal load semantics.
+  last_update: 2026-08-26 PM accepted owner_dev commit `68dced0fa86ff0abdbd0bb2c548bf835282b2638` and merged it into main as `e43e1b7afb30b560d3fc6ca07062fdda2f67655b`. PM inspected implementation against the brief: new sessions now use `sessions/YYYY/MM/DD/rollout-<timestamp>-<thread_id>/rollout.jsonl`; compact segments and `segments.json` stay in the same container; path helpers centralize directory vs legacy flat semantics; list/metadata/backfill normalize directory sessions to current head without duplicate compact listings; archive/unarchive move the full rollout collection for directory and legacy flat segmented layouts; explicit segment-file read remains exact; normal read/resume remains manifest + head.
+  next_action: Restart/reload Morpheus for new sessions to use directory layout; resolve owner_dev_2 pending sync when artifact task reaches a merge point.
+  blockers: none
+  validation: Owner ran `rtk cargo test -p rollout` -> 75 passed; `rtk cargo test -p thread-store` -> 83 passed after fixing SQLite archived directory path regression; `rtk git diff --check` and staged diff check passed. `rtk cargo fmt` remains blocked by existing unrelated missing `codex-rs/sandboxing-api/src/policy_engine_tests.rs`; owner restored unrelated formatter churn. Fixed reviewer `/my_codex/owner_dev/reviewer` passed after multiple rounds covering exact segment read, legacy compact filename parse, discovery de-duplication, archive/unarchive collection move, manifest path safety, oversized manifest fail-closed, and unarchive directory path. PM inspected the diff against the brief and accepted the design. PM reran on merged main: `rtk cargo test --manifest-path codex-rs/Cargo.toml -p rollout` -> 75 passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-store` -> 83 passed; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` passed.
+  commit: e43e1b7afb30b560d3fc6ca07062fdda2f67655b
+- id: inter-agent-envelope-root-cause-followup
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/inter-agent-envelope-root-cause-followup
+  task_type: bugfix
+  depends_on: 47c9410767109fb0becc4d3f9dfaff7f0dd04fe1
+  files: codex-rs/thread-service inter-agent/followup pending input and conversation persistence; codex-rs/app-server-protocol live/replay mapping; codex-rs/thread-history if persisted replay implicated; apps/root-worker-prototype only if typed items are present but rendered incorrectly
+  base_commit: 47c9410767109fb0becc4d3f9dfaff7f0dd04fe1
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to `cd5514098921dfed8dae074ffd89f677f5990004` after merge
+  status: merged
+  objective: Root-cause the inter-agent raw envelope leak so newly generated followup/child-completion communications are not persisted or emitted as ordinary user/assistant messages, fix the broader intermittent live conversation message visibility issue where messages sometimes do not appear immediately, and fix compact count/stat updates regressing after segment compact; keep the existing filter only as legacy/replay compatibility.
+  last_update: 2026-08-26 PM accepted owner_dev commit `a5941131fa12fd1b5e8804b44614d76ac34ee745` and merged it into main as `cd5514098921dfed8dae074ffd89f677f5990004`. PM accepted the root-cause correction: the previous filter remains only legacy compatibility; external followup now persists typed `InterAgentCommunicationCompleted` display facts while provider input still receives the actual content, and tests assert native/external generated paths do not persist raw `Inter-agent communication received` envelopes as ordinary messages. The same commit loosens compact guard only for active in-flight turn snapshots/pending live items, preserving non-active stale pre-compact rejection, and fixes lifetime compaction stats by taking max(history_count, segment manifest compact count) so head-only segment reads do not reset count.
+  next_action: Restart/reload Root Worker/app-server so the running client consumes the inter-agent root-cause, live message visibility, and compact stats fixes.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 189 passed; `rtk cargo test -p thread-service inter_agent_child_completion_live_item_waits_for_typed_recording` -> passed; `rtk cargo test -p thread-service root_external_followup_resolves_target_within_sender_scope` -> passed; `rtk cargo test -p app-server stats_use_segment_manifest_for_lifetime_compaction_count` -> passed; `rtk cargo test -p app-server-protocol legacy_structured_message_filter` -> 10 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing warnings; diff checks passed. Fixed reviewer `/my_codex/owner_dev/reviewer` passed two rounds and explicitly reviewed the post-review ownership clone/unused wrapper cleanup. PM inspected diff against the follow-up brief and accepted the design. PM reran on merged main: `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 189 passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service inter_agent_child_completion_live_item_waits_for_typed_recording` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service root_external_followup_resolves_target_within_sender_scope` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p app-server stats_use_segment_manifest_for_lifetime_compaction_count` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p app-server-protocol legacy_structured_message_filter` -> 10 passed; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` passed.
+  commit: cd5514098921dfed8dae074ffd89f677f5990004
+- id: inter-agent-raw-message-display
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/inter-agent-raw-message-display
+  task_type: bugfix
+  depends_on: 8ef72ae5399a396a2b21e822b6d03e3f2a6202cf
+  files: codex-rs/thread-service inter-agent/followup delivery events and pending input; codex-rs/app-server-protocol live/replay mapping if needed; codex-rs/thread-history replay if persisted path implicated; apps/root-worker-prototype conversation/thread rendering only after typed item availability is confirmed
+  base_commit: 8ef72ae5399a396a2b21e822b6d03e3f2a6202cf
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to `47c9410767109fb0becc4d3f9dfaff7f0dd04fe1` after merge
+  status: merged
+  objective: Prevent inter-agent communication envelopes such as `Inter-agent communication received. Author: ... Recipient: ... Operation: followup_task ...` from appearing as raw user-visible conversation messages, and restore live thread conversation updates that no longer appear; represent inter-agent facts through the proper typed conversation/display path while preserving model-visible delivery semantics.
+  last_update: 2026-08-26 PM accepted owner_dev commit `c5448b4b518f937846366655389070a4b155d79f` and merged it into main as `47c9410767109fb0becc4d3f9dfaff7f0dd04fe1`. Root cause matched the user's segment-loaded thread hypothesis: after replaying a compact head, Root Worker `appendAgentDelta` saw a compact marker and rejected streaming assistant deltas for unknown/missed turn ids, so active live messages vanished. The fix allows active threads to create a new streaming turn after a compact head while preserving non-active compact-pruned stale delta rejection. The raw envelope side adds a strict backend replay filter for provider-visible plain inter-agent envelopes while preserving typed `InterAgentCommunicationCompleted -> CollabAgentMessage/CollabAgentStatusUpdate` display semantics.
+  next_action: Restart/reload Root Worker/app-server so the running client consumes the segment-loaded live message and raw inter-agent envelope fixes.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 186 passed; `rtk cargo test -p app-server-protocol legacy_structured_message_filter` -> 10 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check` -> passed. Fixed reviewer `/my_codex/owner_dev/reviewer` reviewed two rounds and passed after owner fixed stale old-turn delta and optional metadata envelope risks. PM inspected the diff against the brief and accepted the design. PM reran on merged main: `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 186 passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p app-server-protocol legacy_structured_message_filter` -> 10 passed; `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: 47c9410767109fb0becc4d3f9dfaff7f0dd04fe1
+- id: live-list-tools-display-items
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/live-list-tools-display-items
+  task_type: bugfix
+  depends_on: e3a486773016098b522458523b7cafc4cf0ed62d
+  files: codex-rs/tool-service list_commands/list_subscriptions tool execution/display facts; codex-rs/app-server-protocol event_mapping/thread_history display mapping; codex-rs/thread-history replay if persisted path implicated; apps/root-worker-prototype/src/lib/conversation.ts and tests only if typed item already arrives but render is missing
+  base_commit: e3a486773016098b522458523b7cafc4cf0ed62d
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to `8ef72ae5399a396a2b21e822b6d03e3f2a6202cf` after merge
+  status: merged
+  objective: Make Root Worker conversation display typed items for `list_commands` and `list_subscriptions` tool calls/results so users can see that live command/schedule inspection tools ran.
+  last_update: 2026-08-26 PM accepted owner_dev_3 commit `a10ad05fa3041bdacb3f671ab53a82657aa94038` and merged it into main as `8ef72ae5399a396a2b21e822b6d03e3f2a6202cf`. User reported that `list_commands` / `list_subscriptions` produced no conversation items and supplied a screenshot showing RightPanel Live Commands with duplicate stale Running Android commands even though `list_commands` returned empty. PM inspected and accepted the design: runtime-state tools now emit bounded typed `BuiltinToolCallStarted/Completed` events for live/reload display; conversation summaries format empty/non-empty inspection snapshots; RightPanel command monitors are built from `activeCommandItems` current state rather than historical command residue; command completion, snapshot merge and compact-pruned late events clear/reject stale monitor state.
+  next_action: Restart/reload Root Worker so the client consumes runtime-state inspection tool display and Live Commands cleanup.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts src/lib/threadAnalysis.test.ts src/lib/conversation.test.ts` -> 267 passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-history runtime_state_builtin_tool_history_rebuilds_inspection_items` -> passed; `rtk cargo check --manifest-path codex-rs/Cargo.toml -p codex-tool-service --lib` -> passed; `rtk cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> passed with existing warnings; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; diff check passed. `rtk cargo test --manifest-path codex-rs/Cargo.toml -p codex-tool-service runtime_state` remains blocked by existing test-target dependency/import issues. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` passed; front-end 267 tests passed; thread-history focused test passed; codex-tool-service lib check passed.
+  commit: 8ef72ae5399a396a2b21e822b6d03e3f2a6202cf
+- id: segmented-session-rollout-storage
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: performance/segmented-session-rollout-storage
+  task_type: performance/bugfix
+  depends_on: e3a486773016098b522458523b7cafc4cf0ed62d
+  files: codex-rs/rollout/src/recorder.rs; codex-rs/rollout/src/state_db.rs; codex-rs/rollout/src/session_index.rs; codex-rs/rollout/src/list.rs; codex-rs/thread-history/src/**; codex-rs/app-server/src/request_processors/thread_processor/**; codex-rs/app-server/tests/suite/thread_read.rs; codex-rs/app-server/tests/suite/thread_resume.rs; related tests/docs only as needed
+  base_commit: e3a486773016098b522458523b7cafc4cf0ed62d
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 were fast-forwarded to `8ef72ae5399a396a2b21e822b6d03e3f2a6202cf`
+  status: merged
+  objective: Change session rollout persistence/load path so a long-running session with many compactions does not require appending and replaying one unbounded session log file for normal load/thread-read/resume operations.
+  last_update: 2026-08-26 PM accepted owner_dev commit `a085075d27d0fbbacb1a38b82355957cc2163c69` and merged it into main as `2d81b5448371f69897ecd619b1858633db2cd80e`. PM inspected implementation against the user direction and brief: a stable session now has compact segment files plus sidecar `*.segments.json`; compact creates a new JSONL head containing latest `SessionMeta` plus compact checkpoint, then exposes the head after manifest persistence; thread-store by-id read/load resolves manifest head so normal load is bounded, while explicit read-by-rollout-path remains a specific segment/legacy debug path. Old single-file sessions remain compatible.
+  next_action: Restart/reload Morpheus so new sessions use compact-aware segmented rollout storage.
+  blockers: none
+  validation: Owner ran `rtk cargo test -p rollout recorder_rotates_to_head_segment_on_compaction`, `rtk cargo test -p rollout recorder_copies_latest_session_meta_to_compact_segment`, `rtk cargo test -p thread-store load_history_uses_live_writer_head_segment_after_compaction`, `rtk cargo test -p rollout` -> 70 passed, `rtk cargo test -p thread-store` -> 73 passed, `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings, and diff/show checks. `rtk cargo fmt --all` was blocked by unrelated missing `sandboxing-api/src/policy_engine_tests.rs`. PM reran before/after merge: dev focused rollout/thread-store tests passed; main `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` passed; main focused rollout/thread-store tests passed.
+  commit: 2d81b5448371f69897ecd619b1858633db2cd80e
+- id: compact-count-realtime-update-followup
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/compact-count-realtime-update-followup
+  task_type: bugfix
+  depends_on: 64a2a2d1e7cec1f76f850f2614b187d6cb11391e
+  files: apps/root-worker-prototype/src/App.tsx; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/threadAnalysis.ts; apps/root-worker-prototype/src/components/RightPanel.tsx; Electron/app-server compact notification mapping only if implicated
+  base_commit: 64a2a2d1e7cec1f76f850f2614b187d6cb11391e
+  pending_sync_from_main: none; owner_dev checkout was fast-forwarded to `64a2a2d1e7cec1f76f850f2614b187d6cb11391e`
+  status: merged
+  objective: Resolve the user's continued repro that Thread Analysis compact count still does not update in realtime in the Root Worker client.
+  last_update: 2026-08-26 PM accepted owner_dev commit `f2fa6403834b280a3dc5e87e37ab028c073407af` and merged it into main as `e3a486773016098b522458523b7cafc4cf0ed62d`. Root cause: the first fix covered `item/started|item/completed -> updateThreadItem`, but actual client paths can receive compact markers inside completed turn snapshots. `turn/completed` notifications and `submitThreadMessage` response turns were lifecycle-only and discarded `turn.items`, so `contextCompaction` never entered thread state and `stats.compactionCount` was not projected. PM inspected the diff and accepted the design: typed turn snapshots with items now merge through `updateThreadTurn`, lifecycle-only remains for started/empty turns, stale compact-pruned snapshots are guarded, and RightPanel continues to read selected `Thread` state.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the compact turn snapshot realtime stats fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadAnalysis.test.ts src/components/RightPanel.test.tsx src/lib/threadSelectionPolicy.test.ts` -> 246 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Fixed reviewer `/my_codex/owner_dev/reviewer` found turn snapshot stale compact and compact-pruned old turn risks; owner added guards/tests and final review passed. PM inspected the dev diff and found no design blockers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadAnalysis.test.ts src/components/RightPanel.test.tsx src/lib/threadSelectionPolicy.test.ts` -> 246 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning.
+  commit: e3a486773016098b522458523b7cafc4cf0ed62d
+- id: selected-thread-loading-stuck
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/selected-thread-loading-stuck
+  task_type: bugfix
+  depends_on: 7b1c7d209f6fbfa6f5818829b766c84df3776904
+  files: apps/root-worker-prototype/src/App.tsx; apps/root-worker-prototype/src/lib/threadSelectionPolicy.ts; apps/root-worker-prototype/src/lib/threadSelectionPolicy.test.ts; App/send flow tests only if implicated
+  base_commit: 7b1c7d209f6fbfa6f5818829b766c84df3776904
+  pending_sync_from_main: none; owner_dev checkout was fast-forwarded to `7b1c7d209f6fbfa6f5818829b766c84df3776904`
+  status: merged
+  objective: Prevent the Root Worker conversation panel from getting stuck showing `Loading thread...` after switching threads or after stale/failed thread-read requests.
+  last_update: 2026-08-25 PM accepted owner_dev commit `3228d92db9e5176f04281948649060306ce9fb00` and merged it into main as `64a2a2d1e7cec1f76f850f2614b187d6cb11391e`. PM inspected the diff and accepted the design: selected-view loading is now synchronized from `selectedThreadIdRef.current` plus per-thread `loadingThreadIdsRef`, `loadThread` begin/finally maintains request-id stale protection and recomputes current selected loading, and selection actions `none` / `subscribeOnly` also resync loading. The fix does not use timeout, force `thread/read`, hide the loading text, or weaken stale snapshot protection.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the selected-thread loading fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/threadSelectionPolicy.test.ts src/lib/thread.test.ts src/components/Panels.test.tsx` -> 199 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Fixed reviewer `/my_codex/owner_dev/reviewer` passed, with a non-blocking suggestion to add future App-level async flow tests. PM inspected the dev diff and found no design blockers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/threadSelectionPolicy.test.ts src/lib/thread.test.ts src/components/Panels.test.tsx` -> 199 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning.
+  commit: 64a2a2d1e7cec1f76f850f2614b187d6cb11391e
+- id: chat-session-status-and-first-message-title
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: feature/chat-session-status-and-first-message-title
+  task_type: feature
+  depends_on: 625e413bc951894ec27e20a182ea9a0b7a08b26c
+  files: apps/root-worker-prototype/src/components/Panels.tsx; apps/root-worker-prototype/src/components/Panels.test.tsx; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/thread.test.ts; styles only if needed
+  base_commit: 625e413bc951894ec27e20a182ea9a0b7a08b26c
+  pending_sync_from_main: none; owner_dev checkout was fast-forwarded to `625e413bc951894ec27e20a182ea9a0b7a08b26c`
+  status: merged
+  objective: Show per-thread status for Chat sessions in the Root Worker sidebar and use the first user message as the chat title when available.
+  last_update: 2026-08-25 PM accepted owner_dev commit `7320a7c4136fbba453050b2de8b524e0aef69729` and merged it into main as `7b1c7d209f6fbfa6f5818829b766c84df3776904`. PM inspected the diff and accepted the design: Chat labels are derived in the sidebar data/helper layer from the first typed `userMessage`, normalized and capped at 80 chars with existing fallback preserved; Chat rows reuse existing lifecycle status classes/labels; project root/conversation label semantics and root-only project status behavior are not changed.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the Chat session status/title update.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/threadSelectionPolicy.test.ts` -> 198 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Fixed reviewer `/my_codex/owner_dev/reviewer` passed with only a non-blocking suggestion for an additional image-only fallback edge test. PM inspected the dev diff and found no design blockers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/threadSelectionPolicy.test.ts` -> 198 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning.
+  commit: 7b1c7d209f6fbfa6f5818829b766c84df3776904
+- id: thread-read-reasoning-order
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/thread-read-reasoning-order
+  task_type: bugfix
+  depends_on: efd656854ac33708fe3910093eb1ec92e0435992
+  files: apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/App.tsx; reasoning/thread read snapshot merge tests; app-server/protocol replay only if implicated
+  base_commit: efd656854ac33708fe3910093eb1ec92e0435992
+  pending_sync_from_main: none; owner_dev checkout is at `efd656854ac33708fe3910093eb1ec92e0435992` on branch `bugfix/thread-read-reasoning-order`
+  status: merged
+  objective: Fix thread switching/read snapshot ordering so older reasoning messages do not appear after later messages.
+  last_update: 2026-08-25 PM accepted owner_dev commit `4c36d4452af76044c0c11fa7a7e6a29f6756efcf` and merged it into main as `5295b61be816baf86aa88c09f8e84eb4793119c0`. PM inspected the diff and accepted the reasoning断点: live path emits reasoning summary/raw content as separate UUID items with timestamps, while `thread/read` replay may merge adjacent reasoning fragments into snapshot `item-N` items without item timestamps. Previous merge matched by id/init-context only, so snapshot-represented live reasoning was treated as unmatched existing/pending content and appended to the turn tail. The fix consumes duplicate reasoning via same-turn typed fragment multiset and runs a pending replay cleanup pass without UI sorting, text sorting, backend serialization changes, or `/cp_http_api` special cases.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the reasoning ordering fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadSelectionPolicy.test.ts` -> 171 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check` -> passed; `rtk git show --stat --oneline --check HEAD` -> passed. Fixed reviewer `/my_codex/owner_dev/reviewer` found and owner fixed id-hit fragment consumption and same-content pending replay over-consumption issues; final review passed. PM inspected dev diff and found no design blockers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadSelectionPolicy.test.ts` -> 171 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  commit: 5295b61be816baf86aa88c09f8e84eb4793119c0
+- id: compact-count-realtime-update
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/compact-count-realtime-update
+  task_type: bugfix
+  depends_on: thread-read-reasoning-order
+  files: apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/threadAnalysis.ts; apps/root-worker-prototype/src/components/RightPanel.tsx; app-server thread stats/notifications only if implicated
+  base_commit: 5295b61be816baf86aa88c09f8e84eb4793119c0
+  pending_sync_from_main: none; dispatching after `thread-read-reasoning-order` merged into main
+  status: merged
+  objective: Fix Root Worker compaction count so it updates in realtime when a compact happens, without waiting for manual reload/thread read.
+  last_update: 2026-08-25 PM accepted owner_dev commit `738beced16a6cc8da0d9b89e75cce0c2cbf68675` and merged it into main as `625e413bc951894ec27e20a182ea9a0b7a08b26c`. Root cause was live `contextCompaction` item notifications updating/pruning turn items without lifting `Thread.stats.compactionCount`, while Thread Analysis correctly reads that stats field first. PM inspected the diff and accepted the design: the fix stays in Root Worker thread state merge/prune logic, derives bounded local increments from new compact marker ids, preserves durable stats as authoritative with max/no-downgrade snapshot merge, and does not force `thread/read`, parse raw backend events, scan pruned/visible items as the primary total, or patch RightPanel rendering.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the compact count realtime update fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadAnalysis.test.ts` -> 195 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check` -> passed; `rtk git show --stat --oneline --check HEAD` -> passed. Fixed reviewer `/my_codex/owner_dev/reviewer` found a same-turn stale compact marker overcount risk; owner added an ambiguous stale guard plus tests and reviewer passed. PM inspected the dev diff and found no design blockers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadAnalysis.test.ts` -> 195 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning.
+  commit: 625e413bc951894ec27e20a182ea9a0b7a08b26c
+- id: subagent-followup-task-reporting
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/subagent-followup-task-reporting
+  task_type: bugfix
+  depends_on: aa58828e6eb3445f43efd40a0c32977d048692fa
+  files: codex-rs/tool-service followup tool specs; codex-rs/thread-service subagent init/system/developer instructions and external context injection; .codex/agents owner/reviewer instructions if implicated; tests covering model-visible guidance
+  base_commit: aa58828e6eb3445f43efd40a0c32977d048692fa
+  pending_sync_from_main: none; owner_dev_2 checkout is at `aa58828e6eb3445f43efd40a0c32977d048692fa` on branch `bugfix/subagent-followup-task-reporting`
+  status: merged
+  objective: Fix the observed behavior where a subagent that receives a `followup_task` asking it to report status/progress back still outputs a plain assistant/LLM message instead of calling the typed `followup_task` tool.
+  last_update: 2026-08-25 PM accepted owner_dev_2 commit `d65ea6796a82b91294f2596ea1b0da15c89f6116` and merged it into main as `efd656854ac33708fe3910093eb1ec92e0435992`. PM inspected the diff and confirmed it follows the user's direction: native `followup_task` description no longer centers `trigger a turn` or queued mechanics; shared guidance is scenario-oriented and says that if a parent/agent asks for status/progress/findings/blockers/decision needs, the agent should call the followup tool targeting that agent, not answer only in the current thread. External description keeps the external surface boundary and external init context explicitly requires emitting a `followup_external_task` JSON tool call for report-back requests. No runtime auto-conversion or schema change was introduced.
+  next_action: Restart/reload running Morpheus sessions so newly spawned/continued agents consume the updated model-visible followup descriptions and external init context.
+  blockers: none
+  validation: Owner ran `rtk rustfmt --check ...` -> passed with existing stable rustfmt warning; `rtk cargo test -p thread-service external_context_injects_schema_and_forbids_internal_tool_names -- --nocapture` -> passed; `rtk cargo build -p app-server --bin app-server` -> passed with warnings; `rtk git diff --check` and `rtk git show --check --stat --oneline HEAD` -> passed. `rtk cargo test -p codex-tool-service multi_agents -- --nocapture` remains blocked by existing codex-tool-service test compile issues, but owner added/updated wording assertions in that test file and reviewer confirmed coverage. Reviewer `/my_codex/owner_dev_2/reviewer` passed. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk cargo test -p thread-service external_context_injects_schema_and_forbids_internal_tool_names -- --nocapture` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings.
+  commit: efd656854ac33708fe3910093eb1ec92e0435992
+- id: cp-http-api-project-live-info
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/cp-http-api-project-live-info
+  task_type: bugfix
+  depends_on: 875c8430cb362e60ef4b78e1c00469cfec04409b
+  files: apps/root-worker-prototype project/sidebar selection/subscription/live notification merge path; app-server thread/read/list/resume only if implicated; focused tests
+  base_commit: 875c8430cb362e60ef4b78e1c00469cfec04409b
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 fast-forwarded to `6ba308d66cf9f9c5cf73317075bfcadaa84fcdfc` after merge
+  status: merged
+  objective: Fix the Root Worker project `/cp_http_api` not showing live/realtime information while preserving correct behavior for other projects and selected thread read/subscription flows.
+  last_update: 2026-08-24 PM accepted owner_dev commit `ce3e540856243102b4d2448351e5fc251b30cf0f` and merged it into main as `6ba308d66cf9f9c5cf73317075bfcadaa84fcdfc`. Root cause was Root Worker create/open routing for existing projects still matching by cwd only; same-cwd named roots such as `/cp_http_api` could route the user to a different project root, so selected-thread read/subscribe and live notifications appeared stale/missing. PM inspected the diff and confirmed the fix is generic root identity matching (`cwd + normalized root agentPath`), supports segment and `/path` task names, keeps workspace shortcut matching to blank/cwd-only roots, and does not use a `/cp_http_api` string special case, eager reads, or backend `thread/read` serialization changes.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the project open/create routing fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadSelectionPolicy.test.ts src/components/RightPanel.test.tsx` -> 197 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Fixed owner reviewer `/my_codex/owner_dev/reviewer` reviewed twice; first round found workspace cwd-only routing and path-form taskName issues, owner fixed them, second round passed. PM inspected dev diff and found no design blockers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadSelectionPolicy.test.ts src/components/RightPanel.test.tsx` -> 197 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning.
+  commit: 6ba308d66cf9f9c5cf73317075bfcadaa84fcdfc
+- id: cp-http-api-live-info-followup
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/cp-http-api-project-live-info
+  task_type: bugfix
+  depends_on: 6ba308d66cf9f9c5cf73317075bfcadaa84fcdfc
+  files: apps/root-worker-prototype project selection/subscription/notification/render paths; Electron IPC/app-server read/resume/list paths only if implicated; focused tests and, if possible, full Electron Root Worker reproduction
+  base_commit: 6ba308d66cf9f9c5cf73317075bfcadaa84fcdfc
+  pending_sync_from_main: none; owner_dev checkout fast-forwarded to `6ba308d66cf9f9c5cf73317075bfcadaa84fcdfc` after first merge
+  status: merged
+  objective: Continue the `/cp_http_api` live info investigation because the user reports it still does not display after the first root identity routing fix.
+  last_update: 2026-08-24 PM accepted owner_dev commit `d805a650b4004033e196401383a9f4a991db4084` and merged it into main as `4403503afff29578087e71df846d9bf8b8c44394`. PM inspected the diff and accepted the identified second断点: live notification/status can reach child threads, but project sidebar container `statusClass` still used root-only lifecycle (`selfTreeThreadLifecycleStatusClass(rootThread)`) while counts were already subtree-aggregated. A `/cp_http_api` root that is completed with an active child therefore looked inactive/done at the project row. The fix changes project status to use subtree aggregate status, maps completed-final leaves to `done` for aggregate semantics, and keeps thread-node self status semantics intact. No backend/read serialization/eager read or `/cp_http_api` string special case was introduced.
+  next_action: Restart/reload Root Worker so the running desktop client consumes both `/cp_http_api` project root routing and project sidebar live-status aggregation fixes. If the user still expects child-agent command details to appear in the selected root conversation/right panel, open a separate follow-up for cross-thread detail aggregation.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/threadSelectionPolicy.test.ts` -> 187 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Fixed reviewer `/my_codex/owner_dev/reviewer` reviewed twice; first round requested aggregate priority and completed->done aggregate semantics, owner fixed them, second round passed. PM inspected dev diff and found no design blockers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/threadSelectionPolicy.test.ts` -> 187 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  commit: 4403503afff29578087e71df846d9bf8b8c44394
+- id: cp-http-api-input-message-missing
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/cp-http-api-project-live-info
+  task_type: bugfix
+  depends_on: 4403503afff29578087e71df846d9bf8b8c44394
+  files: apps/root-worker-prototype project/thread input submission, selection, subscribe/read, pending update and message render paths; backend turn/start/submit paths only if implicated
+  base_commit: 4403503afff29578087e71df846d9bf8b8c44394
+  pending_sync_from_main: none; owner_dev checkout is at `4403503afff29578087e71df846d9bf8b8c44394`
+  status: merged
+  objective: Revert the incorrect project status aggregation direction and fix the actual `/cp_http_api` issue: after the user submits new input, no new message appears.
+  last_update: 2026-08-25 PM accepted owner_dev commit `0a68bb4d9ff0e154837bdddffefba28e0b6c3940` and merged it into main as `aa58828e6eb3445f43efd40a0c32977d048692fa`. PM inspected the diff and accepted the correction: previous project subtree status aggregation is removed, project `statusClass` again uses root/backend status. The real input-message断点 is a subscription race: `turn/start` response only provides an in-progress turn and the actual user message depends on typed notifications/read snapshot; `sendMessage` did not ensure the selected thread was subscribed first, so immediately sending in an existing `/cp_http_api` project could miss item notifications. The fix sends through `submitThreadMessage`, ensures target-thread subscription before `turn/start`, applies the response turn as a stable local landing point, and preserves draft/images if subscription fails.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the project input live update fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/sendMessagePayload.test.ts src/lib/sendMessageFlow.test.ts src/lib/threadSelectionPolicy.test.ts` -> 172 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check` / `rtk git diff --cached --check` -> passed; `rtk git show --stat --oneline --check HEAD` -> passed. Fixed reviewer `/my_codex/owner_dev/reviewer` reviewed; after adding core send flow tests and tightening response type handling, final review passed. PM inspected dev diff and found no design blockers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/sendMessagePayload.test.ts src/lib/sendMessageFlow.test.ts src/lib/threadSelectionPolicy.test.ts` -> 172 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  commit: aa58828e6eb3445f43efd40a0c32977d048692fa
+- id: thread-analysis-lifetime-compact-stats
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: feature/thread-analysis-lifetime-compact-stats
+  task_type: feature
+  depends_on: 605ea88990970396839060c65b1a4a356670fd84
+  files: apps/root-worker-prototype/src/lib/threadAnalysis.ts; apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/styles.css; apps/root-worker-prototype/src/lib/threadAnalysis.test.ts; apps/root-worker-prototype/src/components/RightPanel.test.tsx; backend/protocol thread DTO/history files if durable compaction count requires them
+  base_commit: 605ea88990970396839060c65b1a4a356670fd84
+  pending_sync_from_main: none; owner_dev checkout is at `605ea88990970396839060c65b1a4a356670fd84` and branch `feature/thread-analysis-lifetime-compact-stats`
+  status: merged
+  objective: Add Thread Analysis metrics for a thread's lifetime from creation time to now and the number of compactions, with a durable compaction count when client-side pruned turns cannot represent total historical compactions.
+  last_update: 2026-08-24 PM accepted owner_dev commit `26df823d99fd7a30869b99412fdcd3c5cab290bb` and merged it into main as `875c8430cb362e60ef4b78e1c00469cfec04409b`. PM confirmed compaction count is backed by optional `Thread.stats.compactionCount` from persisted `RolloutItem::Compacted(_)` before display pruning; front-end visible-turn scan is only an old-data fallback; thread snapshot merge preserves/increases stats rather than letting stale lower counts overwrite newer data; lifetime is computed from `Thread.createdAt` and deterministic `ThreadAnalysisOptions.now`; Thread Analysis UI only extends the existing overview metric grid. Reviewer found and owner fixed same-turn multi-compact counting and stale stats overwrite risks.
+  next_action: Restart/reload Root Worker/app-server so Thread Analysis consumes the new `Thread.stats` field and renders Lifetime/Compactions.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/threadAnalysis.test.ts src/lib/thread.test.ts src/components/RightPanel.test.tsx` -> 212 passed; `rtk cargo test -p app-server thread_processor_behavior_tests::populate_thread_turns_from_history` -> 3 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing warnings; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; diff-check/show-check passed. PM inspected the diff and reran dev diff/show checks; no design blockers found. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/threadAnalysis.test.ts src/lib/thread.test.ts src/components/RightPanel.test.tsx` -> 212 passed; `rtk cargo test -p app-server thread_processor_behavior_tests::populate_thread_turns_from_history` -> 3 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings.
+  commit: 875c8430cb362e60ef4b78e1c00469cfec04409b
+- id: followup-status-tool-guidance
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/followup-status-tool-guidance
+  task_type: bugfix/design-assessment
+  depends_on: ffa297bdbbcc5eb1a367911a8b4c13ecfe545c27
+  files: codex-rs/tool-service/src/planning/tool_specs/multi_agents.rs; codex-rs/thread-service/src/agent/external.rs; tool spec tests; config/design docs only if justified
+  base_commit: ffa297bdbbcc5eb1a367911a8b4c13ecfe545c27
+  pending_sync_from_main: none; owner_dev_2 checkout is at `ffa297bdbbcc5eb1a367911a8b4c13ecfe545c27` and branch `bugfix/followup-status-tool-guidance`
+  status: merged
+  objective: Make the model-visible followup task guidance clear that a subagent reporting status/progress back to its parent should use the appropriate typed followup tool instead of only emitting an ordinary assistant message, and assess whether built-in tool descriptions should be configurable from files rather than requiring code changes.
+  last_update: 2026-08-24 PM accepted owner_dev_2 commit `2e904507fe3695d74ca61aad51c1d302207b9ab1` and merged it into main as `605ea88990970396839060c65b1a4a356670fd84`. PM confirmed native/external followup tool descriptions now explicitly cover status/progress/interim findings/blockers/decision-request reports to a parent or another agent; ordinary assistant/final output is called out as current-thread completion rather than typed targeted inter-agent update; external guidance stays on `followup_external_task` and does not expose internal `followup_task`; parameter shape and image-ref guidance are preserved. Built-in tool descriptions remain code-owned provider-visible contracts, with project memory recording that future lower-churn wording should use typed repo-local templates/assets rather than unschematized user config overrides.
+  next_action: Restart/reload running Morpheus sessions so the model-visible tool descriptions and external initialization context consume the new guidance.
+  blockers: none
+  validation: Owner ran `rtk rustfmt --check ...` -> passed with existing rustfmt warning; `rtk cargo test -p thread-service external_context_injects_schema_and_forbids_internal_tool_names -- --nocapture` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check` and `rtk git show --check --stat --oneline HEAD` -> passed. `rtk cargo test -p codex-tool-service multi_agents -- --nocapture` did not compile due existing codex-tool-service test infrastructure issues (`pretty_assertions` / `codex_features` dev deps and stale imports), so new tool spec assertions were reviewed but not executed in that crate. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk cargo test -p thread-service external_context_injects_schema_and_forbids_internal_tool_names -- --nocapture` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings.
+  commit: 605ea88990970396839060c65b1a4a356670fd84
+- id: right-panel-plan-monitor-alignment
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/right-panel-plan-monitor-alignment
+  task_type: bugfix
+  depends_on: de2fb9513690dd1023f08da619eab613bad1274c
+  files: apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/styles.css; apps/root-worker-prototype/src/components/RightPanel.test.tsx
+  base_commit: de2fb9513690dd1023f08da619eab613bad1274c
+  pending_sync_from_main: none; owner_dev, owner_dev_2, and owner_dev_3 fast-forwarded to `ffa297bdbbcc5eb1a367911a8b4c13ecfe545c27` after merge
+  status: merged
+  objective: Fix Root Worker right-panel visual density/alignment so the Plan widget uses the correct compact card size and Monitor Activity Live Commands/Schedules rows align with the rest of the panel.
+  last_update: 2026-08-24 PM accepted owner_dev_3 commit `105d78d0bdb5113ec4cf8bab019db0ba8f26fd04` and merged it into main as `ffa297bdbbcc5eb1a367911a8b4c13ecfe545c27`. PM inspected the diff and confirmed the implementation follows the brief: CurrentPlanCard now reuses `context-section-card current-plan-card` with compact padding rather than a separate oversized widget shell; Monitor Activity section dividers/padding are owned by `.monitor-section` so Live Commands and Schedules titles, empty states, and dividers share the same left boundary. No backend monitor/goal/plan semantics were changed. PM fast-forwarded idle dev checkouts to the merge commit.
+  next_action: Restart/reload Root Worker so the running desktop client consumes both the same-cwd different-project-path sidebar grouping fix and the right-panel layout polish.
+  blockers: none
+  validation: Owner ran `rtk pnpm exec tsx --test src/components/RightPanel.test.tsx` -> 31 passed; `rtk pnpm build` -> passed with existing Vite chunk-size warning; reviewer `/my_codex_tmp/owner_dev_3/reviewer` passed after three rounds. PM inspected diff and reran `rtk git diff --check de2fb9513690dd1023f08da619eab613bad1274c..105d78d0bdb5113ec4cf8bab019db0ba8f26fd04` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx` -> 31 passed. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx` -> 31 passed. No Playwright screenshot validation was run; residual risk is only pixel-level visual confirmation in the live shell.
+  commit: ffa297bdbbcc5eb1a367911a8b4c13ecfe545c27
+- id: root-worker-project-key-includes-project-path
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/root-worker-project-key-includes-project-path
+  task_type: bugfix
+  depends_on: de2fb9513690dd1023f08da619eab613bad1274c
+  files: apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/thread.test.ts; related sidebar/components tests if needed
+  base_commit: de2fb9513690dd1023f08da619eab613bad1274c
+  pending_sync_from_main: none for owner_dev; owner_dev_2 fast-forwarded to `7eba614d012901a87b6a185dde336956188bccfd`; owner_dev_3 pending sync from main because right-panel-plan-monitor-alignment is active in dev-3
+  status: merged
+  objective: Root Worker Projects sidebar should show different project paths under the same cwd as separate top-level Projects entries instead of merging them into one cwd-level project.
+  last_update: 2026-08-24 PM accepted owner_dev commit `ec9624287df39b741afd5975e3e87a404df211a6` and merged it into main as `7eba614d012901a87b6a185dde336956188bccfd`. PM confirmed Projects identity now uses normalized cwd plus explicit `thread.agentPath`, with empty/missing project path falling back to cwd-only grouping. Same cwd with different agentPath becomes separate top-level Projects; same cwd with same normalized agentPath keeps canonical root plus duplicate child behavior.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the same-cwd different-project-path sidebar grouping fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 149 passed; `rtk git diff --check` -> passed. Reviewer `/my_codex_tmp/owner_dev/reviewer` passed. PM inspected diff and `rtk git -C /Users/bytedance/Projects/my-codex-dev diff --check de2fb9513690dd1023f08da619eab613bad1274c..ec9624287df39b741afd5975e3e87a404df211a6` -> passed. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 149 passed.
+  commit: 7eba614d012901a87b6a185dde336956188bccfd
+- id: restart-projects-state-db-missing-projects
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/restart-projects-state-db-missing-projects
+  task_type: bugfix
+  depends_on: 77c78b1b38cdcdb50b70ccd822d4d650c2977e63
+  files: codex-rs/app-server thread/list state-db-only path; codex-rs/rollout state_db listing filters; apps/root-worker-prototype project/sidebar grouping/list params if implicated; focused tests
+  base_commit: 77c78b1b38cdcdb50b70ccd822d4d650c2977e63
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `de2fb9513690dd1023f08da619eab613bad1274c` after follow-up merge
+  status: merged
+  objective: Fix restart-time Projects/sidebar loading so projects that already exist in the state DB, including `/my_codex`, appear in Root Worker after restart when the desktop client calls `thread/list` with `useStateDbOnly: true`.
+  last_update: 2026-08-24 PM accepted owner_dev follow-up commit `c3c53865bb221dba74a08abd6e11d72067b533fe` and merged it into main as `de2fb9513690dd1023f08da619eab613bad1274c`. Root causes found: Electron bootstrap only consumed the first `thread/list` page; state DB/filesystem cursor used timestamp-only anchors so same-timestamp page boundaries could skip siblings; same-cwd duplicate parentless roots were hidden; live/read snapshot merge used the newer snapshot as base and appended unmatched older in-flight items to the end. PM confirmed the merged follow-up fixes the requested layers without reverting metadata-only design: bootstrap follows `nextCursor`, cursors become `timestamp|thread_id` with old-token compatibility, duplicate roots remain visible as project tree children, and snapshot merge inserts unmatched in-flight items by item timestamp instead of display-string sorting. PM fast-forwarded idle dev checkouts to the merge commit.
+  next_action: Restart/reload Root Worker/app-server so the running desktop client consumes the full pagination, duplicate-root visibility, and conversation ordering fixes.
+  blockers: none
+  validation: First fix: Owner ran `rtk git diff --check` -> passed; `rtk cargo test -p rollout list_threads_state_db_only_keeps_metadata_with_missing_rollout_path` -> passed; `rtk cargo test -p app-server thread_list_state_db_only` -> passed after fixing macOS `/var` vs `/private/var` assertion; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings. Reviewer passed. PM reran same focused validation on merged main. Follow-up fix: Owner ran `rtk cargo test -p rollout list_threads_filesystem_asc_paginates_same_timestamp_ties` -> passed; `rtk cargo test -p rollout list_threads_filesystem_search_paginates_same_timestamp_ties` -> passed; `rtk cargo test -p rollout cursor` -> passed; `rtk cargo test -p rollout list_threads` -> 14 passed; `rtk node --test apps/root-worker-prototype/electron/threadList.test.cjs apps/root-worker-prototype/electron/threadConfig.test.cjs apps/root-worker-prototype/electron/threadSnapshots.test.cjs` -> 33 passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 147 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk cargo test -p state list_threads_created_at_paginates_across_same_timestamp` blocked by existing state crate test-only compile issue, but app-server build covered state library compile. Reviewer `/my_codex_tmp/owner_dev/reviewer` passed after multiple rounds. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; Electron thread list/config/snapshot tests -> 33 passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 147 passed; `rtk cargo test -p rollout list_threads_filesystem_asc_paginates_same_timestamp_ties` -> 1 passed; `rtk cargo test -p rollout list_threads_filesystem_search_paginates_same_timestamp_ties` -> 1 passed; `rtk cargo test -p rollout cursor` -> 4 passed; `rtk cargo test -p rollout list_threads` -> 14 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings.
+  commit: de2fb9513690dd1023f08da619eab613bad1274c
+- id: right-panel-monitor-layout
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/right-panel-monitor-layout
+  task_type: bugfix
+  depends_on: 06cb3eb299f99f95521cd6fd54e0f92315b817ea
+  files: apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/styles.css; focused Root Worker tests
+  base_commit: 06cb3eb299f99f95521cd6fd54e0f92315b817ea
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `77c78b1b38cdcdb50b70ccd822d4d650c2977e63` after merge
+  status: merged
+  objective: Fix the right panel Monitor Activity layout so the schedule agenda is not visually nested under Live Index in a confusing way, live command/schedule sections align correctly, the schedule agenda can be collapsed as a whole while preserving existing per-date collapse behavior, and the Current Plan card uses the same compact right-panel sizing/density as adjacent inspector cards.
+  last_update: 2026-08-24 PM accepted owner_dev commit `e1896c9e87a0c2c81ef10ed7401c2339c13a4a2c` and merged it into main as `77c78b1b38cdcdb50b70ccd822d4d650c2977e63`. PM confirmed the implementation adds an overall Upcoming collapse control, keeps per-date collapse, separates schedule agenda from live monitor sections, tightens CurrentPlanCard density, and does not change backend monitor/schedule/plan data semantics.
+  next_action: Restart/reload Root Worker so the running desktop client consumes the right-panel layout fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx` -> 30 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; diff-check/show-check passed; reviewer passed. PM reran on main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx` -> 30 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning. No Electron screenshot was run; residual risk is minor visual density tuning in the live shell.
+  commit: 77c78b1b38cdcdb50b70ccd822d4d650c2977e63
+- id: reset-loaded-skills-after-compact
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/reset-loaded-skills-after-compact
+  task_type: bugfix
+  depends_on: 6c3f8204440222fdac558a9aa619ba605e24f61b
+  files: codex-rs/thread-service compact/session skill-load state; codex-rs/context-usage loaded skill reconstruction; codex-rs/app-server context usage replay/read/resume notifications; focused tests
+  base_commit: 6c3f8204440222fdac558a9aa619ba605e24f61b
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `06cb3eb299f99f95521cd6fd54e0f92315b817ea` after merge
+  status: merged
+  objective: After a successful compact, previously loaded skills must no longer be considered loaded in the current client/runtime context, because compact can remove or distort the actual skill bodies from model-visible history. Subsequent skill use must be able to reload the skill rather than being skipped due to stale loaded-state bookkeeping.
+  last_update: 2026-08-21 PM accepted owner_dev_2 commit `8c32a3275ce898a85653c9419fbbd61162e0d1ae` and merged it into main as `06cb3eb299f99f95521cd6fd54e0f92315b817ea`. PM confirmed the implementation treats successful compact as current loaded-skill boundary: context usage counts only skill loads after compact replacement history, app-server replay ignores stale context usage before the latest `RolloutItem::Compacted`, and memory now records loaded skills as current model-visible context state rather than permanent history.
+  next_action: Restart/reload running app-server and Root Worker clients so context usage/read/resume paths consume the fix.
+  blockers: none
+  validation: Owner ran `rtk cargo test -p codex-context-usage` -> 9 passed; `rtk cargo test -p app-server context_usage_replay` -> 4 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing warnings; focused rustfmt/diff-check/show-check passed; reviewer passed. PM reran on main: `rtk cargo test -p codex-context-usage` -> 9 passed; `rtk cargo test -p app-server context_usage_replay` -> 4 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings.
+  commit: 06cb3eb299f99f95521cd6fd54e0f92315b817ea
+- id: eliminate-raw-internal-envelope-messages
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/eliminate-raw-internal-envelope-messages
+  task_type: bugfix
+  depends_on: f036a80b665aff3967d8e9b88fb0b00f28ed486a
+  files: codex-rs/thread-service response/conversation recording paths; codex-rs/app-server-protocol projection/history filters; codex-rs/thread-history mirror; apps/root-worker-prototype conversation/thread delta handling; focused tests
+  base_commit: f036a80b665aff3967d8e9b88fb0b00f28ed486a
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `6c3f8204440222fdac558a9aa619ba605e24f61b` after merge
+  status: merged
+  objective: Completely stop internal raw transport envelopes from appearing as ordinary conversation messages. This includes inter-agent envelopes with `operation: "message"` as well as previous nullable/unknown/sendMessage/childCompletion variants, across source recording, live projection, persisted replay, and Root Worker streaming/delta paths.
+  last_update: 2026-08-21 PM accepted owner_dev commit `601e9fba9c67d8b42bf2c216ea7d89402c726984` and merged it into main as `6c3f8204440222fdac558a9aa619ba605e24f61b`. PM confirmed the fix cuts the source downgrade path by replacing raw envelope JSON provider formatting with non-JSON commentary context, keeps typed image attachment scanning on `ResponseItem::InterAgentCommunication`, and adds legacy replay coverage for `operation: "message"` status envelopes.
+  next_action: Restart/reload running app-server and Root Worker clients so live instances consume the fix; separately fix the existing model-service cfg(test) module gap if model-service focused tests need to run.
+  blockers: none
+  validation: Owner ran focused protocol, thread-service image, thread-history replay, app-server-protocol legacy filter, app-server build, diff-check and show-check successfully; reviewer passed. PM reran on main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk cargo test -p protocol inter_agent_communication_response_input_item -- --nocapture` -> 1 passed; `rtk cargo test -p thread-service visible_image_attachments_include_forwarded_inter_agent_images -- --nocapture` -> 1 passed; `rtk cargo test -p thread-history filters_status_message_raw_inter_agent_envelope_without_displaying_json -- --nocapture` -> 1 passed; `rtk cargo test -p app-server-protocol legacy_structured_message_filter_handles_status_inter_agent_message_envelope -- --nocapture` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings. `rtk cargo test -p model-service formats_inter_agent_context_without_raw_json_envelope -- --nocapture` remains blocked by pre-existing cfg(test) references to missing `model-service/src/client/test_support.rs` and `client_tests.rs`.
+  commit: 6c3f8204440222fdac558a9aa619ba605e24f61b
+- id: desktop-command-notification-grouping
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/desktop-command-notification-grouping
+  task_type: feature
+  depends_on: ce1203fbc7d70e4485bb82f0dda09e8e7f1a5364
+  files: apps/root-worker-prototype/src/lib/conversationCompact.ts; apps/root-worker-prototype/src/lib/conversation.test.ts; apps/root-worker-prototype/src/components/Conversation.tsx only if summary copy needs adjustment
+  base_commit: ce1203fbc7d70e4485bb82f0dda09e8e7f1a5364
+  pending_sync_from_main: none
+  status: merged
+  objective: Desktop Root Worker conversation should group multiple consecutive command execution notification items into one visible tool row, similar to grouped tool calls, instead of rendering each notification as a separate row.
+  last_update: 2026-08-20 PM accepted owner_dev_3 commit `4f99a5aed3` and merged it into main as `2ac37997c2`. PM inspected the diff and confirmed it only changes desktop conversation grouping/tests: consecutive `commandNotification` entries can merge, while turn, replacement-history, and category boundaries remain enforced; no backend/event/schema paths changed.
+  next_action: Restart/reload Root Worker so running desktop clients consume the grouping fix.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` -> 51 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Reviewer `/my_codex/owner_dev_3/reviewer` passed. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts` -> 51 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  commit: 2ac37997c2
+- id: desktop-file-preview-go-highlighting
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: feature/desktop-file-preview-go-highlighting
+  task_type: feature
+  depends_on: 7c7b6c0eabb52ca8fd32c86d5fe62f0c1c97e4b5
+  files: apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/*.test.cjs if suitable; apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/styles.css only if needed for file preview editor shell
+  base_commit: 7c7b6c0eabb52ca8fd32c86d5fe62f0c1c97e4b5
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `ce1203fbc7d70e4485bb82f0dda09e8e7f1a5364` after merge
+  status: merged
+  objective: Desktop Root Worker file preview should syntax-highlight Go files in the existing Monaco editor preview path when opening `.go` files or previews identified as Go, instead of showing them as plain text.
+  last_update: 2026-08-20 PM accepted owner_dev commit `86f1705fcd8ac06787df902a6ea28c27ad86ccdb` and merged it into main as `ce1203fbc7d70e4485bb82f0dda09e8e7f1a5364`. PM inspected the diff and confirmed the fix stays on the file preview path: `.go` maps to Monaco language id `go`, existing language mappings moved into a focused helper, file preview still uses Monaco editor, and Android/conversation Markdown/protocol paths were not touched. All idle dev checkouts were synchronized to the merge commit.
+  next_action: Restart/reload Root Worker so running desktop clients consume the file preview mapping fix.
+  blockers: none
+  validation: Owner ran `rtk git diff --check` -> passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test electron/filePreviewLanguages.test.cjs src/components/RightPanel.test.tsx` -> 28 passed; `rtk pnpm --dir apps/root-worker-prototype exec node -e "require.resolve('monaco-editor/esm/vs/basic-languages/go/go.js'); ..."` -> Go language module available; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning. Reviewer `/my_codex/owner_dev/reviewer` passed. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; focused Electron/RightPanel test command -> 28 passed; Monaco Go module resolve check -> passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  commit: ce1203fbc7d70e4485bb82f0dda09e8e7f1a5364
+- id: android-go-code-highlighting
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/android-go-code-highlighting
+  task_type: feature
+  depends_on: 7c7b6c0eabb52ca8fd32c86d5fe62f0c1c97e4b5
+  files: apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/ui/CompanionApp.kt; apps/android-companion/app/src/test/java/dev/morpheus/androidcompanion/ui/MessageBodyPreviewTest.kt or focused UI/parser tests if added
+  base_commit: 7c7b6c0eabb52ca8fd32c86d5fe62f0c1c97e4b5
+  pending_sync_from_main: none
+  status: blocked
+  objective: Superseded by user clarification; original Android Companion Go highlighting task should not continue.
+  last_update: 2026-08-20 User clarified the target is desktop file preview, not Android. PM sent owner_dev_2 a stop notice; owner_dev_2 reported uncommitted Android-direction temp edits and no commit. PM asked owner_dev_2 to clean only its own two Android temp edits, leaving local `apps/android-companion/local.properties`; checkout was then fast-forwarded to `ce1203fbc7d70e4485bb82f0dda09e8e7f1a5364`.
+  next_action: none; superseded task intentionally not merged.
+  blockers: superseded by user clarification
+  validation: not applicable
+  commit: none
+- id: android-conversation-copy-selection
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/android-conversation-copy-selection
+  task_type: feature
+  depends_on: e81a70506b33ed3009b5ffdc648cba2382313346
+  files: apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/ui/CompanionApp.kt; Android conversation UI tests/helpers if available
+  base_commit: e81a70506b33ed3009b5ffdc648cba2382313346
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `7c7b6c0eabb52ca8fd32c86d5fe62f0c1c97e4b5` after merge
+  status: merged
+  objective: Android Companion conversation stream items should support standard Android long-press text selection and copy for message/tool/command content, so users can copy text from the mobile conversation view.
+  last_update: 2026-08-19 PM merged owner_dev_2 commit `2d6c49ebe00f19408cce81fdd9a9930669f2a07b` into main as merge commit `7c7b6c0eabb52ca8fd32c86d5fe62f0c1c97e4b5`. PM inspected the diff and confirmed it stays in Android UI layer: message body, tool/command summaries, and details/output now use a local `SelectableTextBlock` backed by Compose `SelectionContainer`; broad clickable containers were narrowed to reduce conflict with long-press selection. PM fast-forwarded idle dev checkouts to the merge commit.
+  next_action: Install APK on device and smoke-test long-press selection/copy.
+  blockers: none
+  validation: Owner ran focused `rtk env ... gradle --no-daemon :app:testDebugUnitTest --tests dev.morpheus.androidcompanion.ui.MessageBodyPreviewTest` -> passed; `rtk env ... gradle --no-daemon :app:assembleDebug` -> passed; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Reviewer passed after confirming `SelectionContainer` is scoped to text and expanded output/details are not inside broad parent clickable containers. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; focused `MessageBodyPreviewTest` -> BUILD SUCCESSFUL; `:app:assembleDebug` -> BUILD SUCCESSFUL. PM observed Kotlin incremental compilation fallback due local cache missing snapshot, but final build/test succeeded.
+  commit: 7c7b6c0eabb52ca8fd32c86d5fe62f0c1c97e4b5
+- id: runtime-context-recovery-progressive-suffix-trim
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/runtime-context-recovery-progressive-suffix-trim
+  task_type: bugfix
+  depends_on: 75361fcdd2e5671598f25af15d2efa77581b49df
+  files: codex-rs/thread-service/src/session/turn.rs; codex-rs/thread-service/src/compact.rs; codex-rs/thread-service/src/session/tests/turn_flow.rs; related context-window recovery tests
+  base_commit: 75361fcdd2e5671598f25af15d2efa77581b49df
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `e81a70506b33ed3009b5ffdc648cba2382313346` after merge
+  status: merged
+  objective: Implement the user-specified recovery strategy for automatic compaction with retained suffix: if compact overflows, remove the last suffix item and retry compact; if it still overflows, remove the last two suffix items, and so on. After compact succeeds, append the remaining suffix for the normal retry; if that retry still overflows, repeat the same progressive suffix-trim flow.
+  last_update: 2026-08-19 PM merged owner_dev commit `dca424710b31f35a94fce4ece31fd536637eb1fe` into main as merge commit `e81a70506b33ed3009b5ffdc648cba2382313346`. PM inspected key implementation and confirmed it follows the user-specified strategy: recovery is rebuilt from the first overflow history snapshot, retained suffix trimming starts at 0 then removes suffix vector tail items progressively, current input and user-prompt additional contexts stay protected, and accepted pending input resets the recovery snapshot/trim count. PM fast-forwarded idle dev checkouts to the merge commit.
+  next_action: Restart/reload running app-server clients to consume the fix.
+  blockers: none
+  validation: Owner ran `rtk rustfmt --edition 2024 ...` -> passed with existing nightly-only rustfmt warning; `rtk cargo test -p thread-service provider_context_window -- --nocapture` -> 6 passed; `rtk cargo test -p thread-service suffix_trim_plan_protects_current_input_when_followed_by_injections -- --nocapture` -> 1 passed; `rtk cargo test -p thread-service compact_context_window_failure_emits_controlled_error -- --nocapture` -> 1 passed; `rtk cargo test -p thread-service auto_compact_replays_turn_scoped_injections -- --nocapture` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing warnings; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Reviewer passed after two rounds that caught current-input protection, additional contexts, and pending-input recovery reset issues. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk cargo test -p thread-service provider_context_window -- --nocapture` -> 6 passed; `rtk cargo test -p thread-service suffix_trim_plan_protects_current_input_when_followed_by_injections -- --nocapture` -> 1 passed; `rtk cargo test -p thread-service compact_context_window_failure_emits_controlled_error -- --nocapture` -> 1 passed; `rtk cargo test -p thread-service auto_compact_replays_turn_scoped_injections -- --nocapture` -> 1 passed.
+  commit: e81a70506b33ed3009b5ffdc648cba2382313346
+- id: runtime-command-exit-unknown-output-bloat
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-command-exit-unknown-output-bloat
+  task_type: bugfix
+  depends_on: 239834cbefd15ce3b1e0719fabc820884b4add63
+  files: codex-rs/command-service process lifecycle/exit tracking; codex-rs/thread-service command execution notification/pending input/history paths; codex-rs/tool-service list_commands/runtime state if authoritative running snapshot needs adjustment; rollout/app-server-protocol only if bounded command-exit persistence is confirmed to be wrong; related focused tests
+  base_commit: 239834cbefd15ce3b1e0719fabc820884b4add63
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `75361fcdd2e5671598f25af15d2efa77581b49df` after merge
+  status: merged
+  objective: Commands whose OS process has already exited must not remain as stale running commands and later inject `command_execution_notification` events with `unknown exit code` plus large/full output into conversation history. Exit notifications should carry reliable terminal status when available and model-visible/persisted command output must remain bounded.
+  last_update: 2026-08-19 PM merged owner_dev_3 commit `f06bae38e85e57f87ed6994a2bf0b64f5242f3dc` into main as merge commit `75361fcdd2e5671598f25af15d2efa77581b49df`. PM inspected the diff and confirmed it fixes the command-service source path: command notification output is bounded to 16KiB UTF-8 safe head/tail, background exit notification uses a terminal fallback exit code instead of null, and exit watcher releases the stale process store entry with an `Arc::ptr_eq + has_exited()` guard. PM fast-forwarded idle dev checkouts to the merge commit.
+  next_action: Restart/reload running app-server clients to consume the fix.
+  blockers: none
+  validation: Owner ran `rtk git diff --check` -> passed; `rtk cargo test -p command-service` -> passed, 27 passed; `rtk cargo build -p app-server --bin app-server` -> passed with 2 existing warnings; focused rustfmt on touched files had no diff but command returned failure because of existing unrelated `unified_exec_process.rs` format/import ordering and nightly-only rustfmt config warning. Reviewer passed after three rounds; residual accepted risk is lack of a dedicated cleanup helper integration test. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk cargo test -p command-service` -> 27 passed; `rtk cargo build -p app-server --bin app-server` -> passed with 2 existing warnings.
+  commit: 75361fcdd2e5671598f25af15d2efa77581b49df
+- id: runtime-context-compaction-false-too-large
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/runtime-context-compaction-false-too-large
+  task_type: bugfix
+  depends_on: 16561448d3ebb84c2959eebe879de952a021762b
+  files: codex-rs/thread-service context/compaction/model-visible-history paths; codex-rs/model-service request/token-limit error paths; related tests; memory/project-understanding only if new stable fact is found
+  base_commit: 16561448d3ebb84c2959eebe879de952a021762b
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `239834cbefd15ce3b1e0719fabc820884b4add63` after merge
+  status: merged
+  objective: A thread whose current/model-visible context is actually within limits should not repeatedly fail with "The thread is still too large for this model's context window after automatic compaction. Reduce recent tool output or switch to a model with a larger context window, then try again." Investigate and fix the runtime path that keeps treating the thread as oversized after automatic compaction.
+  last_update: 2026-08-18 PM merged owner_dev commit `8136a6abe051d6850acfd3fc48a5aa46a0a02973` into main as merge commit `239834cbefd15ce3b1e0719fabc820884b4add63`. PM inspected the diff and confirmed it changes context-window recovery in the requested abstraction layer: first provider overflow still uses suffix-staged compact, second/subsequent overflow full-compacts current replacement history, and compact failure emits one controlled error from the turn layer. PM fast-forwarded idle dev checkouts to the merge commit.
+  next_action: Restart/reload running app-server clients to consume the fix.
+  blockers: none
+  validation: Owner ran `rtk cargo test -p thread-service provider_context_window -- --nocapture` -> 5 passed; `rtk cargo test -p thread-service compact_context_window_failure_emits_controlled_error -- --nocapture` -> 1 passed; `rtk cargo test -p thread-service auto_compact_replays_turn_scoped_injections -- --nocapture` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing warnings; `rtk git diff --check` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed. Reviewer passed after finding and verifying the duplicate controlled-error fix. PM reran on merged main without `rtk` because current shell could not find `rtk`: `git diff --check HEAD~1..HEAD` -> passed; `cargo test -p thread-service provider_context_window -- --nocapture` -> 5 passed; `cargo test -p thread-service compact_context_window_failure_emits_controlled_error -- --nocapture` -> 1 passed; `cargo test -p thread-service auto_compact_replays_turn_scoped_injections -- --nocapture` -> 1 passed.
+  commit: 239834cbefd15ce3b1e0719fabc820884b4add63
+- id: android-companion-test-visibility
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/android-companion-test-visibility
+  task_type: bugfix
+  depends_on: 19a58201019012be092b0c2b35596b0afba89dcf
+  files: apps/android-companion/app/src/test/java/dev/morpheus/androidcompanion/state/CompanionViewModelTest.kt; related Android test-only files if compiler reveals adjacent test-only issues
+  base_commit: 19a58201019012be092b0c2b35596b0afba89dcf
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `16561448d3ebb84c2959eebe879de952a021762b` after merge
+  status: merged
+  objective: After Android SDK installation, make the Android companion unit tests compile and pass. Current failure is a test visibility issue: public `mainDispatcherRule` exposes private-in-file `MainDispatcherRule`.
+  last_update: 2026-08-18 PM accepted and merged owner_dev_2 test-only commit `ce5d4757241d2e1003fa0a11625b7fa39f7baa88`; main merge commit `16561448d3ebb84c2959eebe879de952a021762b`. PM inspected the diff and confirmed it only updates `CompanionViewModelTest.kt` test harness visibility/scheduler/subscriber waiting helpers; production reconnect/persistence code is unchanged. PM installed Android SDK locally, resolved the previous SDK blocker, and confirmed focused Android tests pass on merged main.
+  next_action: Sync idle dev checkouts to `16561448d3ebb84c2959eebe879de952a021762b`; optionally investigate stale command bookkeeping after long Gradle test commands, because OS processes exited but `list_commands` retained command entries.
+  blockers: none
+  validation: Owner ran focused `gradle --no-daemon :app:testDebugUnitTest --tests dev.morpheus.androidcompanion.state.CompanionViewModelTest` -> passed, full `gradle --no-daemon :app:testDebugUnitTest` -> passed, `git diff --check` -> passed, and `git show --check --stat --oneline HEAD` -> passed. PM reran on dev-2 with local SDK/JDK env: focused `gradle --no-daemon :app:testDebugUnitTest --tests dev.morpheus.androidcompanion.state.CompanionViewModelTest` -> passed, `git diff --check 19a5820..ce5d475` -> passed, and `git show --check --stat --oneline ce5d475` -> passed. PM reran on merged main: `git diff --check HEAD~1..HEAD` -> passed; focused `CompanionViewModelTest` -> BUILD SUCCESSFUL; `ConnectionPayloadTest` -> BUILD SUCCESSFUL; `ThreadReducerTest` -> BUILD SUCCESSFUL; `MessageBodyPreviewTest` -> BUILD SUCCESSFUL. PM attempted full `gradle --no-daemon :app:testDebugUnitTest` on main; the command runtime did not deliver exit after the test phase and left stale `list_commands` entries even though no Gradle/java OS process remained, so owner-provided full-test pass remains the full-suite evidence.
+  commit: 16561448d3ebb84c2959eebe879de952a021762b
+- id: android-companion-persist-reconnect
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/android-companion-persist-reconnect
+  task_type: bugfix
+  depends_on: c655f3243a6dcf3beee0813a3cd7c899ffedef75
+  files: apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/rpc/AppServerRpcClient.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/CompanionViewModel.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/CompanionState.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/ui/CompanionApp.kt; Android connection persistence helper/tests; Android build config only if needed
+  base_commit: c655f3243a6dcf3beee0813a3cd7c899ffedef75
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `19a58201019012be092b0c2b35596b0afba89dcf` after merge
+  status: merged
+  objective: Android companion must preserve the user-used public/tunnel endpoint and token across app restarts, and must automatically reconnect to that saved endpoint after WebSocket/network failure. Exiting and reopening the app must not silently revert the connection form to the LAN default if the user previously connected with a `wss://...` tunnel URL.
+  last_update: 2026-08-18 PM accepted and merged owner_dev_2 commit `ad53b29f889c512be74352416e7a37a0a6d26ba9`; main merge commit `19a58201019012be092b0c2b35596b0afba89dcf`. PM inspected the diff and confirmed both user-requested behaviors are implemented: successful connections save last-known-good endpoint/token through `SharedPreferencesConnectionSettingsStore`, the production UI no longer hard-codes the LAN default, failed connections do not overwrite saved public endpoint, manual disconnect disables reconnect, and socket failure schedules reconnect using saved endpoint/token.
+  next_action: Install/configure Android SDK before running `rtk gradle :app:testDebugUnitTest`; then test the tunnel reconnect path on a device.
+  blockers: none
+  validation: Owner ran `gradle -q projects` -> passed, `git diff --check` -> passed, and reviewer passed after multiple rounds covering in-flight connection race and Kotlin override/default-parameter risk. Owner and PM attempted `gradle :app:testDebugUnitTest`; it could not run because this machine has no Android SDK configured (`ANDROID_HOME` missing and no `local.properties sdk.dir`). PM reran on dev: `git diff --check c655f324..ad53b29f` -> passed, `gradle -q projects` -> passed, and `git show --check --stat --oneline ad53b29f` -> passed. PM reran on merged main: `git diff --check HEAD~1..HEAD` -> passed, `gradle -q projects` -> passed, and `gradle :app:testDebugUnitTest` -> blocked by missing Android SDK with the same `SDK location not found` message.
+  commit: 19a58201019012be092b0c2b35596b0afba89dcf
+- id: runtime-list-current-thread-state
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: feature/runtime-list-current-thread-state
+  task_type: feature
+  depends_on: 99073f05653b974cfbbe8f2fbaa278755a490cd1
+  files: codex-rs/thread-service tool/runtime surfaces for model-visible tools; active subscription runtime facts; running command runtime facts; protocol/schema/tests if needed
+  base_commit: 99073f05653b974cfbbe8f2fbaa278755a490cd1
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `c655f3243a6dcf3beee0813a3cd7c899ffedef75` after merge
+  status: merged
+  objective: Add read-only model-visible commands for querying the current thread's active subscriptions and currently running commands. Scope is current thread only. Command listing must stay concise and must not include recent command output.
+  last_update: 2026-08-18 PM accepted and merged owner_dev commit `22db64fcee68bf0b383eda5bc16353977ce70eb4`; main merge commit `c655f3243a6dcf3beee0813a3cd7c899ffedef75`. PM inspected the design: commands query `running_processes_for_thread(session.conversation_id())` and omit output tail; subscriptions query current active subscription registry through `ThreadSessionCapability::active_subscriptions()`. Reviewer passed.
+  next_action: Restart/reload app-server so running clients consume merge `c655f3243a6dcf3beee0813a3cd7c899ffedef75`.
+  blockers: none
+  validation: Owner ran `cargo check -p codex-tool-service --lib` -> passed, `cargo test -p thread-service-api` -> 2 passed, `cargo test -p thread-service runtime_state -- --nocapture` -> crate test compile passed with 0 matching tests, `cargo build -p app-server --bin app-server` -> passed with existing warnings, `git diff --cached --check` -> passed, and `git show --check --stat --oneline HEAD` -> passed. Owner noted `cargo test -p codex-tool-service runtime_state -- --nocapture` is blocked by existing codex-tool-service test compile issues unrelated to this change. PM reran on dev: `cargo test -p thread-service-api` -> 2 passed, `cargo check -p codex-tool-service --lib` -> passed, and `git diff --check 99073f056..22db64f` -> passed. PM reran on merged main: `cargo test -p thread-service-api` -> 2 passed, `cargo check -p codex-tool-service --lib` -> passed, and `git diff --check HEAD~1..HEAD` -> passed.
+  commit: c655f3243a6dcf3beee0813a3cd7c899ffedef75
+- id: root-worker-live-command-display
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/root-worker-live-command-display
+  task_type: bugfix
+  depends_on: 362d9edeef72a0873d912c5ee9fc6562344a59b4
+  files: apps/root-worker-prototype/src/App.tsx; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/threadAnalysis.ts; apps/root-worker-prototype/src/components/RightPanel.tsx/tests; codex-rs/app-server-protocol/src/protocol/event_mapping.rs and app-server event notification tests if backend typed command events are missing
+  base_commit: 362d9edeef72a0873d912c5ee9fc6562344a59b4
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `99073f05653b974cfbbe8f2fbaa278755a490cd1` after merge
+  status: merged
+  objective: Live/running commands must appear in the Root Worker live commands surface while the command is still running, using the typed `commandExecution` / `item/commandExecution/outputDelta` / terminal events path. Do not fix this by UI text heuristics or by relying on completed history reload.
+  last_update: 2026-08-17 PM accepted and merged owner_dev_3 commit `374fc8877af2b393b44d26244e47e7c869816ace`; main merge commit `99073f05653b974cfbbe8f2fbaa278755a490cd1`. PM inspected diff and confirmed it stays on the typed live command path. The fix marks the thread active/running when live `commandExecution` begin or output delta arrives, so `threadAnalysis` no longer filters a real running command just because the current snapshot was stale completed/idle.
+  next_action: Restart/reload Root Worker so running clients consume merge `99073f05653b974cfbbe8f2fbaa278755a490cd1`.
+  blockers: none
+  validation: Owner ran `pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts` -> 145 passed, `pnpm --dir apps/root-worker-prototype test src/lib/threadAnalysis.test.ts` -> 19 passed, `pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk warning, and `git diff --check`; reviewer passed. PM reran on dev-3: `thread.test.ts` -> 145 passed, `threadAnalysis.test.ts` -> 19 passed, and `git diff --check HEAD~1..HEAD` -> passed. PM reran on merged main: `thread.test.ts` -> 145 passed, `threadAnalysis.test.ts` -> 19 passed, `git diff --check HEAD~1..HEAD` -> passed, and `pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning.
+  commit: 99073f05653b974cfbbe8f2fbaa278755a490cd1
+- id: restart-projects-metadata-only-load
+  owner: /my_codex/owner_main
+  checkout: /Users/bytedance/Projects/my-codex
+  branch: perf/restart-projects-metadata-only-load
+  task_type: performance
+  depends_on: 6d33127184662d1f00fbe913aa4e4ae71a17127e
+  files: apps/root-worker-prototype project/sidebar loading path; codex-rs/app-server thread list/read metadata paths; app-server-protocol thread metadata types/tests if needed
+  base_commit: 6d33127184662d1f00fbe913aa4e4ae71a17127e
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `362d9edeef72a0873d912c5ee9fc6562344a59b4` after completion
+  status: merged
+  objective: After restart, loading the Projects/sidebar view should be fast and metadata-only. It should not eagerly load full thread histories/conversation turns just to build project groups, labels, lifecycle status, or root/subagent tree metadata.
+  last_update: 2026-08-17 PM accepted owner_main commit `362d9edeef72a0873d912c5ee9fc6562344a59b4` directly on main checkout. The fix makes Root Worker navigation `thread/list` pass `useStateDbOnly: true` and makes app-server skip per-thread history fallback in that mode, preserving default `thread/list` compatibility. PM updated project memory with the metadata-only project list rule.
+  next_action: Restart/reload Root Worker/app-server so running clients consume merge `362d9edeef72a0873d912c5ee9fc6562344a59b4`.
+  blockers: none
+  validation: Owner ran `node apps/root-worker-prototype/electron/threadConfig.test.cjs` -> 9 passed, `cargo test -p app-server --test all remote_thread_store` -> 1 passed, `cargo test -p app-server --test all thread_list_state_db_only_returns_sqlite_without_jsonl_repair` -> 1 passed, and `git diff --check`; reviewer passed. PM inspected diff and confirmed metadata-only path avoids history/read fallback, reran the same Electron/Rust focused tests -> passed, `git diff --check HEAD~1..HEAD` -> passed, and `cargo build -p app-server --bin app-server` -> 0 errors with existing linker/future-incompat warnings.
+  commit: 362d9edeef72a0873d912c5ee9fc6562344a59b4
+- id: context-overflow-suffix-compact-recovery
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/context-overflow-suffix-compact-recovery
+  task_type: bugfix
+  depends_on: 61913ba1da8df1e2754e3bff4664b6e76ae71cca
+  files: codex-rs/thread-service/src/session/turn.rs; codex-rs/thread-service/src/compact.rs; codex-rs/thread-service/src/session/tests/turn_flow.rs; related compact/model-context tests only if needed
+  base_commit: 61913ba1da8df1e2754e3bff4664b6e76ae71cca
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `6d33127184662d1f00fbe913aa4e4ae71a17127e` after both runtime fixes merged
+  status: merged
+  objective: Normal agent execution with ordinary user input should not surface a context-window overflow just because accumulated history/context injections/pending inputs made the next provider request too large. Confirm whether the intended recovery exists and complete it if incomplete: on provider context-window exceeded, recover through the generic suffix-staged compact path by temporarily excluding newest history suffix from the compact prefix, compacting the prefix, restoring bounded suffix facts, and retrying the model request. Do not implement provider/tool/UI/single-fixture special cases.
+  last_update: 2026-08-17 PM accepted and merged owner_dev commit `5e9c2e72669629bd7d027d0e79b8f801d6c82bf5`; main merge commit `f92a0930228600a07d9a43eedac8dc2baa97f5f5`. PM inspected diff and confirmed the change is in the generic provider ContextWindowExceeded recovery path, not a provider/tool/UI/single-fixture special case. The fix replaces one-shot retry with a bounded turn-scoped recovery counter and adds regression coverage for a second overflow in the same turn.
+  next_action: Restart/reload app-server so running clients consume merge `f92a0930228600a07d9a43eedac8dc2baa97f5f5`.
+  blockers: none
+  validation: Owner ran `cargo test -p thread-service provider_context_window_expands_suffix_when_compact_prefix_overflows`, `cargo test -p thread-service provider_context_window`, `cargo test -p thread-service oversized_current_input_emits_controlled_error_without_compacting`, `cargo build -p app-server --bin app-server`, `git diff --check`, and `git show --check`; reviewer passed. PM reran on dev: `cargo test -p thread-service provider_context_window` -> 4 passed, `cargo test -p thread-service oversized_current_input_emits_controlled_error_without_compacting` -> 1 passed, and `git diff --check HEAD~1..HEAD` -> passed. PM reran on merged main: `cargo test -p thread-service provider_context_window` -> 4 passed, `cargo test -p thread-service oversized_current_input_emits_controlled_error_without_compacting` -> 1 passed, and `git diff --check HEAD~1..HEAD` -> passed.
+  commit: f92a0930228600a07d9a43eedac8dc2baa97f5f5
+- id: system-error-parent-notification
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/system-error-parent-notification
+  task_type: bugfix
+  depends_on: 61913ba1da8df1e2754e3bff4664b6e76ae71cca
+  files: codex-rs/thread-service/src/agent/control.rs; codex-rs/thread-service/src/agent/mod.rs; codex-rs/thread-service/src/agent/control_tests.rs; codex-rs/protocol/src/protocol_parts/event_types.rs only if typed status mapping is missing; codex-rs/app-server and app-server-protocol status/collab mapping tests only if backend notification projection is incomplete
+  base_commit: 61913ba1da8df1e2754e3bff4664b6e76ae71cca
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `6d33127184662d1f00fbe913aa4e4ae71a17127e` after merge
+  status: merged
+  objective: When a child thread/agent enters system error, the parent should receive a typed notification/status update so parent-side UI and runtime state know the child is failed/system-error without relying on polling or stale completion bookkeeping.
+  last_update: 2026-08-17 PM accepted and merged owner_dev_2 commit `5378696d07459e1802ecdc515b2e7bda213e4085`; main merge commit `6d33127184662d1f00fbe913aa4e4ae71a17127e`. PM inspected diff and confirmed it records `EventMsg::Error` as a typed system-error fact in `Session`, prioritizes `ThreadLifecycleStatus::SystemError` in parent child notifications, and clears stale facts on `TurnStarted` / `ShutdownComplete` rather than relying on UI polling or text parsing.
+  next_action: Restart/reload app-server and Root Worker so running clients consume merge `6d33127184662d1f00fbe913aa4e4ae71a17127e`.
+  blockers: none
+  validation: Owner ran `cargo test -p thread-service multi_agent_v2_child_notification_reports_system_error_after_waiting_status`, `cargo test -p thread-service multi_agent_v2_child_notification`, `cargo test -p thread-service on_event_updates_status`, and `git diff --check`; reviewer passed after requiring stale SystemError cleanup on shutdown direct-delivery path. PM reran on dev-2: `multi_agent_v2_child_notification_reports_system_error_after_waiting_status` -> 1 passed, `multi_agent_v2_child_notification` -> 4 passed, `on_event_updates_status` -> 6 passed, and `git diff --check HEAD~1..HEAD` -> passed. PM reran on merged main: `multi_agent_v2_child_notification_reports_system_error_after_waiting_status` -> 1 passed, `multi_agent_v2_child_notification` -> 4 passed, `on_event_updates_status` -> 6 passed, `git diff --check HEAD~1..HEAD` -> passed, and `cargo build -p app-server --bin app-server` -> 0 errors with existing linker/future-incompat warnings.
+  commit: 6d33127184662d1f00fbe913aa4e4ae71a17127e
+- id: poll-event-should-stay-active
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/poll-event-should-stay-active
+  task_type: bugfix
+  depends_on: b423d752a491aff9ca7375e5d81b8620b6e778c4
+  files: codex-rs/app-server lifecycle/status tests and status mapping; codex-rs/thread-service poll_event/post-turn status path if needed; apps/root-worker-prototype lifecycle merge/render tests if needed
+  base_commit: b423d752a491aff9ca7375e5d81b8620b6e778c4
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `61913ba1da8df1e2754e3bff4664b6e76ae71cca` after merge
+  status: merged
+  objective: Correct the just-merged lifecycle semantics by returning to the normal in-turn/after-turn status flow: while a turn is synchronously blocked inside `poll_event`, the turn is still in progress and lifecycle should remain active/running; only after-turn state evaluation may classify a yielded/background event subscription or wait-event state as waiting/eventSubscription. This must not be implemented as a tool-name special case for `poll_event`.
+  last_update: 2026-08-17 PM accepted and merged owner_dev_2 commit `dec891a7f52d53c00e5d1ac4b1833e0f703ece57`; main merge commit `61913ba1da8df1e2754e3bff4664b6e76ae71cca`. The fix uses general in-progress turn/live Running facts plus after-turn watch status, not tool-name special-casing: synchronous in-turn waits remain Active, after-turn/background eventSubscription remains Waiting, and strong terminal priority is preserved.
+  next_action: Restart/reload app-server and Root Worker so running clients consume merge `61913ba1da8df1e2754e3bff4664b6e76ae71cca`.
+  blockers: none
+  validation: Owner ran app-server status helper tests -> 16 passed, app-server `thread_status` integration tests -> 23 passed, root-worker `thread.test.ts` -> 143 passed, `cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings, and `git diff --check` -> passed. PM reran on dev-2: root-worker `thread.test.ts` -> 143 passed, `git diff --check` -> passed, app-server helper tests -> 16 passed, app-server `thread_status` integration tests -> 23 passed, and `cargo build -p app-server --bin app-server` -> 0 errors with existing warnings. PM reran on merged main: root-worker `thread.test.ts` -> 143 passed, `git diff --check HEAD~1..HEAD` -> passed, app-server helper tests -> 16 passed, app-server `thread_status` integration tests -> 23 passed, and `cargo build -p app-server --bin app-server` -> 0 errors with existing warnings.
+  commit: 61913ba1da8df1e2754e3bff4664b6e76ae71cca
+- id: poll-event-waiting-thread-shown-complete
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/poll-event-waiting-thread-shown-complete
+  task_type: bugfix
+  depends_on: 806b1fc724ca53a6107cbbdc3eaa203e908ccb7b
+  files: codex-rs/thread-service lifecycle/runtime status and poll_event wait-state paths; codex-rs/app-server status notification/read projection paths; apps/root-worker-prototype status merge/render tests only if backend sends correct waiting status and client still regresses; Android status projection only if shared protocol mapping requires it
+  base_commit: 806b1fc724ca53a6107cbbdc3eaa203e908ccb7b
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `b423d752a491aff9ca7375e5d81b8620b6e778c4` after merge
+  status: merged
+  objective: A thread/agent that is currently blocked inside `poll_event` must be represented and displayed as waiting on an event subscription/poll event, not as complete, until a real terminal lifecycle status is reached. When the user sends a new message/followup into that thread, the lifecycle must update back to active/running while the turn is being processed instead of remaining stuck on the prior waiting/complete-like status.
+  last_update: 2026-08-17 PM accepted and merged owner_dev_2 commit `5ae374ed016b8038fb99c806fcfd5bee45630827`; main merge commit `b423d752a491aff9ca7375e5d81b8620b6e778c4`. The fix treats `Completed` as a weak terminal that can be overridden by live/watch Active/Waiting/SystemError facts, preserves Errored/Interrupted/Shutdown as strong terminals, records `note_turn_started` after successful `turn/start` submission so new input transitions to active, and updates Root Worker status notification merge to treat backend status notifications as authoritative while still preserving strong terminal states.
+  next_action: Restart/reload app-server and Root Worker so running clients consume merge `b423d752a491aff9ca7375e5d81b8620b6e778c4`.
+  blockers: none
+  validation: Owner ran focused app-server poll_event/new-message regression -> passed, app-server status helper tests -> 14 passed, root-worker `thread.test.ts` -> 143 passed, `cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings, and `git diff --check` -> passed. PM reran on dev-2: root-worker `thread.test.ts` -> 143 passed, `git diff --check` -> passed, app-server poll_event/new-message regression -> 1 passed, app-server status helper tests -> 14 passed, and `cargo build -p app-server --bin app-server` -> 0 errors with existing warnings. PM reran on merged main: root-worker `thread.test.ts` -> 143 passed, `git diff --check HEAD~1..HEAD` -> passed, app-server poll_event/new-message regression -> 1 passed, app-server status helper tests -> 14 passed, and `cargo build -p app-server --bin app-server` -> 0 errors with existing warnings.
+  commit: b423d752a491aff9ca7375e5d81b8620b6e778c4
+- id: android-ui-edge-to-edge-navigation
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/android-ui-edge-to-edge-navigation
+  task_type: feature
+  depends_on: 84dc7863b09dc320ed88d4d16b8da463079959a4
+  files: apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/ui/CompanionApp.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/CompanionState.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/CompanionViewModel.kt; apps/android-companion/app/src/test/java/dev/morpheus/androidcompanion/ui/*; apps/android-companion/app/src/test/java/dev/morpheus/androidcompanion/state/*; Android manifest/theme files if needed
+  base_commit: 84dc7863b09dc320ed88d4d16b8da463079959a4
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `806b1fc724ca53a6107cbbdc3eaa203e908ccb7b` after merge
+  status: merged
+  objective: Android Companion should feel like a polished full-screen mobile app rather than a demo: improve visual hierarchy and spacing, support edge-to-edge/fullscreen safe areas on modern Android phones, and add explicit/system back navigation between connection, thread list, and conversation surfaces so horizontal/system back gestures do not immediately exit the app from a nested view.
+  last_update: 2026-08-17 PM accepted and merged owner_dev_3 commit `ee2c034ffcbccaeb1cd876c99b569ac2ce9335a5`; main merge commit `806b1fc724ca53a6107cbbdc3eaa203e908ccb7b`. Android app shell now enables edge-to-edge, applies safeDrawing insets, uses IME padding for the composer, has a thread-list -> conversation detail navigation state, consumes system back only on conversation detail, and exposes a top app bar back arrow.
+  next_action: Reconnect/authorize Android device and install `apps/android-companion/app/build/outputs/apk/debug/app-debug.apk`; `adb devices` returned no attached device after the main build.
+  blockers: none
+  validation: Owner ran `rtk git diff --check`, serial Android `testDebugUnitTest` -> BUILD SUCCESSFUL, and serial `assembleDebug` -> BUILD SUCCESSFUL. PM inspected design/behavior diff and reran on dev-3: serial `testDebugUnitTest` -> BUILD SUCCESSFUL, serial `assembleDebug` -> BUILD SUCCESSFUL. PM merged to main and reran on merged main: serial `testDebugUnitTest` -> BUILD SUCCESSFUL, serial `assembleDebug` -> BUILD SUCCESSFUL. PM attempted install but `rtk adb devices` via SDK adb showed no attached devices.
+  commit: 806b1fc724ca53a6107cbbdc3eaa203e908ccb7b
+- id: root-worker-android-qr-network-refresh
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/root-worker-android-qr-network-refresh
+  task_type: feature
+  depends_on: d35c5db7847f175d690a2aa07450dd4184649dcd
+  files: apps/root-worker-prototype/electron/appServerClient.cjs; apps/root-worker-prototype/electron/appServerClient.test.cjs; apps/root-worker-prototype/electron/preload.cjs; apps/root-worker-prototype/src/electron.d.ts; apps/root-worker-prototype/src/components/SettingsPanel.tsx; apps/root-worker-prototype/src/components/SettingsPanel.test.tsx
+  base_commit: d35c5db7847f175d690a2aa07450dd4184649dcd
+  pending_sync_from_main: none; all idle dev checkouts fast-forwarded to `84dc7863b09dc320ed88d4d16b8da463079959a4` after merge
+  status: merged
+  objective: Root Worker Settings should automatically refresh the Android Companion WebSocket endpoint and QR payload when the desktop's reachable LAN address changes, so switching Wi-Fi/VPN/network does not leave the QR advertising a stale `ws://old-ip:port` address. Explicit tunnel endpoint overrides and user-edited tunnel URLs must not be silently overwritten by LAN auto-detection.
+  last_update: 2026-08-17 PM accepted and merged owner_dev_3 commit `6e10b98dfd355e3e29816a00c98077a6613b41b6`; main merge commit `84dc7863b09dc320ed88d4d16b8da463079959a4`. Electron now polls every 5s to refresh advertised mobile LAN endpoint for wildcard listeners without changing bind/port/token, broadcasts changes through existing status mobileConnection, and Settings auto-follows backend endpoint/token only while the user has not manually overridden the endpoint.
+  next_action: Restart/reload Root Worker desktop app-server so Settings consumes merge `84dc7863b09dc320ed88d4d16b8da463079959a4`.
+  blockers: none
+  validation: Owner ran `rtk node --check apps/root-worker-prototype/electron/appServerClient.cjs`, `rtk git diff --check`, `rtk npm --prefix apps/root-worker-prototype test -- electron/appServerClient.test.cjs src/components/SettingsPanel.test.tsx` -> 25/25 passed, and `rtk npm --prefix apps/root-worker-prototype run build` -> passed. Owner also ran `rtk npx --prefix apps/root-worker-prototype tsc --noEmit -p apps/root-worker-prototype/tsconfig.json`, which failed on existing broad TS errors not pointing at touched files. PM inspected diff against brief, then reran on dev-3: `node --check` -> passed, focused tests -> 25/25 passed, `git diff --check` -> passed, `npm run build` -> passed. PM reran on merged main: `node --check` -> passed, focused tests -> 25/25 passed, `git diff --check HEAD~1..HEAD` -> passed, `npm run build` -> passed.
+  commit: 84dc7863b09dc320ed88d4d16b8da463079959a4
+- id: android-remove-visible-truncated-text
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/android-remove-visible-truncated-text
+  task_type: bugfix
+  depends_on: fb959ff523fbcdf559f6a18f5dda9ab68798c235
+  files: apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/ui/CompanionApp.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/model/ProtocolModels.kt; apps/android-companion/app/src/test/java/dev/morpheus/androidcompanion/ui/MessageBodyPreviewTest.kt; apps/android-companion/app/src/test/java/dev/morpheus/androidcompanion/state/ThreadReducerTest.kt; focused Android UI/model tests as needed
+  base_commit: fb959ff523fbcdf559f6a18f5dda9ab68798c235
+  pending_sync_from_main: none; merged after main advanced to `efe000a6060b737584deead779ddca3077f6e8ef` with no conflicts
+  status: merged
+  objective: Android companion conversation UI should be a complete mobile app implementation aligned with desktop client's typed conversation logic: no literal `truncated` markers in content, no intermittent dropped messages, bottom-pinned auto-scroll when appropriate, adjacent command/tool cells grouped consistently with desktop, and internal model/reducer/UI boundaries robust enough for production use rather than demo-level item rendering.
+  last_update: 2026-08-17 PM accepted and merged dev-3 rework commit `6661c415cb92da6dafaa051cced0a6da95ce233e`; main merge commit `d35c5db7847f175d690a2aa07450dd4184649dcd`. Android companion now uses typed conversation cells aligned with desktop categories, preserves ordinary message bodies in model/state with UI-only preview expansion, creates typed command placeholders for missed command output deltas, and keeps bottom-pinned scroll target responsive to content growth. PM reran Android unit tests and debug APK build on merged main successfully.
+  next_action: Rebuild/reinstall Android Companion from main merge `d35c5db7847f175d690a2aa07450dd4184649dcd` for device smoke.
+  blockers: none
+  validation: PM checks on dev-3 rework: `rtk git diff --check fb959ff523fbcdf559f6a18f5dda9ab68798c235..6661c415cb92da6dafaa051cced0a6da95ce233e` -> passed; `rtk rg -n "showing latest|\\[truncated|Preview truncated|boundedBody|appendBodyDeltaBounded|takeLast\\(|bodyIsTruncated"` confirmed no Android-injected visible marker strings and ordinary message model paths preserve full body; dev-3 `assembleDebug` -> BUILD SUCCESSFUL; fresh dev-3 `testDebugUnitTest --rerun-tasks --no-build-cache` -> BUILD SUCCESSFUL. PM merged to main, corrected validation to avoid concurrent Android Gradle runs, and reran on merged main serially: `testDebugUnitTest --rerun-tasks --no-build-cache` -> BUILD SUCCESSFUL and `assembleDebug` -> BUILD SUCCESSFUL. Earlier interim commit `4187350e711bcbf7b3171368bfcf4f0cd733ce42` was rejected and is not the merge candidate.
+  commit: d35c5db7847f175d690a2aa07450dd4184649dcd
+- id: root-worker-agent-tree-status-parity
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/root-worker-agent-tree-status-parity
+  task_type: bugfix
+  depends_on: fb959ff523fbcdf559f6a18f5dda9ab68798c235
+  files: apps/root-worker-prototype/src/App.tsx; apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/thread.test.ts; apps/root-worker-prototype/src/components/Panels.tsx and focused tests if needed; backend lifecycle/status notification paths only if evidence shows PC state is receiving stale authoritative data
+  base_commit: fb959ff523fbcdf559f6a18f5dda9ab68798c235
+  pending_sync_from_main: none; owner dev checkout will be synced after merge
+  status: merged
+  objective: PC Root Worker agent tree must show the same completed/terminal lifecycle status as `list_agents` for the same agent, instead of continuing to show stale `wait event tool` / eventSubscription state after the agent has completed.
+  last_update: 2026-08-14 PM accepted and merged owner_dev commit `f24d1c73ebc0cd0c1d5174e3654a4c554e95cec0`; main merge commit `1842c7c38a93d98ec7c3663732058c0955e355ed`. The PC Root Worker `thread/status/changed` path now preserves terminal lifecycle status instead of letting stale waiting/eventSubscription notifications overwrite completed status.
+  next_action: Restart/reload PC Root Worker client/app-server so the running UI consumes merge `1842c7c38a`.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 141 passed, `rtk git diff --check` -> passed, `rtk git show --check --stat --oneline HEAD` -> passed. PM reran `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` on dev checkout -> 141 passed, inspected diff against the design, merged to main, then reran on merged main `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 141 passed and `rtk git diff --check HEAD~1..HEAD` -> passed.
+  commit: 1842c7c38a93d98ec7c3663732058c0955e355ed
+- id: child-notification-on-agent-done
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/child-notification-on-agent-done
+  task_type: bugfix
+  depends_on: fb959ff523fbcdf559f6a18f5dda9ab68798c235
+  files: codex-rs/thread-service child completion/notification production, parent-side child event delivery/bookkeeping, pending input and goal state checks; codex-rs/app-server-protocol inter-agent operation naming/projection if needed; app-server/root-worker display naming only if protocol output changes; focused tests
+  base_commit: fb959ff523fbcdf559f6a18f5dda9ab68798c235
+  pending_sync_from_main: none; merged after main advanced to `1842c7c38a93d98ec7c3663732058c0955e355ed` with no conflicts
+  status: merged
+  objective: Change child-agent parent signaling from a strict subtree-completion signal into a child notification/status signal: a child may notify the parent once it has a meaningful current status/result and no goal/pending input requiring immediate child-agent handling, even if the child is still waiting on a command or subagent; parent should infer whether the child is truly complete from the typed status.
+  last_update: 2026-08-14 PM accepted and merged owner_dev_2 commit `dcbd70308b6c4309dddcee5b487dd138d43b4778`; main merge commit `efe000a6060b737584deead779ddca3077f6e8ef`. New child parent signaling is now a typed child notification/status update: waiting command/child/eventSubscription can notify parent, identical lifecycle notifications are deduped, waiting -> final sends another notification, and old `ChildCompletion` wire/persisted compatibility remains.
+  next_action: Restart/reload runtime clients to consume merge `efe000a606`; future work should use child notification/status wording for new code while preserving `ChildCompletion` compatibility where required.
+  blockers: none
+  validation: Owner ran `rtk cargo test -p thread-service multi_agent_v2_child_notification` -> 3 passed, `rtk cargo test -p thread-service multi_agent_v2_completion` -> 4 passed, `rtk cargo test -p app-server-protocol projection` -> 10 passed, `rtk cargo test -p thread-service completion_communication_uses_plain_typed_status_content` -> 1 passed, `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/proc-macro warnings, `rtk git diff --check` -> passed, and `rtk git show --check --stat --oneline HEAD` -> passed. PM reran on dev-2 and merged main: child notification -> 3 passed, completion compatibility -> 4 passed, app-server-protocol projection -> 10 passed, typed status content -> 1 passed, `rtk cargo build -p app-server --bin app-server` -> 0 errors with existing linker/future-incompat warnings, and `rtk git diff --check HEAD~1..HEAD` -> passed.
+  commit: efe000a6060b737584deead779ddca3077f6e8ef
+- id: root-worker-mobile-listener-port-recovery
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/root-worker-mobile-listener-port-recovery
+  task_type: bugfix
+  depends_on: 1106ba057ae6808375793c698feeec7dadef9200
+  files: apps/root-worker-prototype/electron/appServerClient.cjs; apps/root-worker-prototype/electron/appServerClient.test.cjs; related mobile connection payload/settings tests only if needed
+  base_commit: 1106ba057ae6808375793c698feeec7dadef9200
+  pending_sync_from_main: none; dev-2 is clean and at main before dispatch
+  status: merged
+  objective: Root Worker restart must keep Android Companion mobile WS usable when the default mobile port is occupied, either by safely cleaning up the stale old app-server process or by automatically selecting another usable port and surfacing the new endpoint/token.
+  last_update: 2026-08-14 PM accepted and merged dev-2 commit `1a0eb57aecce2827bce9604f8056cb4f72081216`; main merge commit `8393e9f9e90d755eb4a69e6fb771c042dbb6cf27`.
+  next_action: Restart Root Worker/app-server to consume the mobile listener port recovery fix.
+  blockers: none
+  validation: Owner ran `rtk node --test apps/root-worker-prototype/electron/appServerClient.test.cjs` -> 15 passed, `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning, and `rtk git diff --check` -> passed. PM reran `rtk node --test apps/root-worker-prototype/electron/appServerClient.test.cjs` on dev-2 and merged main -> 15 passed; `rtk git show --check --format=short 1a0eb57aecce2827bce9604f8056cb4f72081216` -> passed; `rtk git diff --check HEAD~1..HEAD` on merged main -> passed.
+  commit: 8393e9f9e90d755eb4a69e6fb771c042dbb6cf27
+- id: reload-active-subscription-trailing-item
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/reload-active-subscription-trailing-item
+  task_type: bugfix
+  depends_on: 1106ba057ae6808375793c698feeec7dadef9200
+  files: apps/root-worker-prototype desktop typed thread/conversation state and subscription display surfaces; codex-rs/app-server thread/read and thread/turns/list display assembly if the backend contract needs separating current-state subscriptions from conversation turns; focused tests
+  base_commit: 1106ba057ae6808375793c698feeec7dadef9200
+  pending_sync_from_main: none; merged after main had advanced to `8393e9f9e90d755eb4a69e6fb771c042dbb6cf27`
+  status: merged
+  objective: After desktop client restart or compact, active subscriptions such as `daily-cargo-clean-worktrees` must remain visible in the desktop client as subscription/current-state UI, but must not be emitted or rendered as a normal conversation item pinned to the bottom.
+  last_update: 2026-08-14 PM accepted and merged dev-3 commit `06910955a1b4a7f94fd88cb3b2b14512d9092184`; main merge commit `fb959ff523fbcdf559f6a18f5dda9ab68798c235`.
+  next_action: Restart Root Worker/app-server to consume the protocol/backend/client separation fix.
+  blockers: none
+  validation: Owner ran focused Rust/TS tests and app-server build; reviewer passed after multi-round fixes. PM inspected the diff and confirmed active subscriptions are separated into `active_subscription_items` / `activeSubscriptionItems`, normal conversation turns drop `active-subscriptions`, and RightPanel monitor analysis reads the current-state items. PM reran on dev-3: `rtk cargo test -p app-server restore_persisted_display_turns` -> 5 passed, `rtk cargo test -p app-server apply_subscription_snapshot_items_from_turns_sets_current_state_items` -> 1 passed, `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_compact_and_startup_subscription_restore` -> 1 passed, `rtk cargo test -p app-server --test all thread_read_empty_subscription_state_overrides_legacy_rollout_active_schedule` -> 1 passed, and root-worker `thread.test.ts` + `threadAnalysis.test.ts` -> 158 passed. PM reran on merged main: root-worker `thread.test.ts` + `threadAnalysis.test.ts` -> 158 passed, `rtk cargo test -p app-server restore_persisted_display_turns` -> 5 passed, `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_compact_and_startup_subscription_restore` -> 1 passed, `rtk cargo test -p app-server --test all thread_read_empty_subscription_state_overrides_legacy_rollout_active_schedule` -> 1 passed, and `rtk git diff --check HEAD~1..HEAD` -> passed.
+  commit: fb959ff523fbcdf559f6a18f5dda9ab68798c235
+- id: android-companion-bottom-scroll-freeze
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/android-companion-bottom-scroll-freeze
+  task_type: performance
+  depends_on: f6ef5bbae4
+  files: apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/ui/CompanionApp.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/CompanionViewModel.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/ThreadReducer.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/model/ProtocolModels.kt; focused Android tests as needed
+  base_commit: f6ef5bbae4e5456dbb16cd5dc47ba3133fc369c9
+  pending_sync_from_main: none; checkout was clean and already at base commit before dispatch
+  status: merged
+  objective: Diagnose and fix the Android companion freeze reported after connecting, scrolling a conversation to the bottom, and reaching the bottom edge.
+  last_update: 2026-08-14 PM accepted and merged dev-3 commit `d673cc19b5003edaf0a209a5d741d3d4230202a5`; main merge commit `80c0e2231db8bebd1d92d40eea046ed1000691b4`.
+  next_action: None for implementation; residual risk is real connected-device smoke because install was blocked by device restriction.
+  blockers: none
+  validation: Owner ran `rtk git diff --check`, Android `testDebugUnitTest --console=plain` -> BUILD SUCCESSFUL with 25 tests, and `assembleDebug --console=plain` -> BUILD SUCCESSFUL. Fixed reviewer passed after requiring a truncation-boundary fix. PM ran `rtk git diff --check HEAD~1..HEAD` on main -> passed.
+  commit: 80c0e2231db8bebd1d92d40eea046ed1000691b4
+- id: android-companion-stale-agent-tree-status
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: bugfix/android-companion-stale-agent-tree-status
+  task_type: bugfix
+  depends_on: f6ef5bbae4; coordinate findings with android-companion-bottom-scroll-freeze but do not wait for it
+  files: apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/ThreadReducer.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/CompanionViewModel.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/ui/CompanionApp.kt; possibly codex-rs app-server/thread-service status assembly if evidence points backend-side
+  base_commit: f6ef5bbae4e5456dbb16cd5dc47ba3133fc369c9
+  pending_sync_from_main: none; checkout was clean and already at base commit before dispatch
+  status: merged
+  objective: Diagnose and fix why Android conversation top/agent tree can show `wait on event tool` while `list_agents` reports the same agent lifecycle as completed.
+  last_update: 2026-08-14 PM accepted and merged dev-2 commit `0b62c3dffb0d14baa80708e269e8d78a1dd03453`; main merge commit `14d83c5e784b2208bd6c1fcaf72548dba2f4b5fc`.
+  next_action: Rebuild and reinstall Android APK so the companion app contains the lifecycle merge fix.
+  blockers: none
+  validation: Owner ran diff check, Android focused reducer test, Android assemble, root-worker thread tests, and root-worker build; reviewer passed after multi-round fixes. PM inspected diff, resolved test-only merge conflict with Android bottom-scroll tests, ran `rtk git diff --check`, `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 137 passed, and Android focused `ThreadReducerTest` -> BUILD SUCCESSFUL.
+  commit: 14d83c5e784b2208bd6c1fcaf72548dba2f4b5fc
+- id: compact-live-command-model-context
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/compact-live-command-model-context
+  task_type: bugfix
+  depends_on: 80c0e2231db8bebd1d92d40eea046ed1000691b4
+  files: codex-rs/thread-service compact/model-visible history paths; codex-rs/app-server thread read/resume/live merge paths if needed; rollout/thread-history only if persisted display facts are involved
+  base_commit: 80c0e2231db8bebd1d92d40eea046ed1000691b4
+  pending_sync_from_main: none; dev-3 was fast-forwarded to main merge commit before dispatch
+  status: merged
+  objective: Ensure compacted model-visible context preserves bounded facts for still-running live commands or event-wait tools so the model knows what is currently running after compact, analogous to active schedule subscription recovery.
+  last_update: 2026-08-14 PM accepted and merged dev-3 commit `06cbe984e004475d496e9a504a5e4af7c6ff87cf`; main merge commit `f75275a018a57b0003424f52fee27901927ca801`.
+  next_action: If UI still shows dev-3 waiting, verify the running app-server/client is refreshed and consuming current lifecycle status; server-side `list_agents` now reports dev-3 completed.
+  blockers: none
+  validation: Owner ran `rtk cargo test -p command-service running_command_context_tail_keeps_latest_text`, `rtk cargo test -p thread-service replacement_history_keeps_runtime_activity_initial_context_before_checkpoint`, `rtk cargo test -p thread-service runtime_activity`, `rtk cargo build -p app-server --bin app-server`, `rtk git diff --check`, and `rtk git show --check --stat`; reviewer passed. PM ran `rtk git diff --check HEAD~1..HEAD` on merged main -> passed.
+  commit: f75275a018a57b0003424f52fee27901927ca801
+- id: android-compact-thread-read-display
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: bugfix/android-compact-thread-read-display
+  task_type: bugfix
+  depends_on: 80c0e2231db8bebd1d92d40eea046ed1000691b4
+  files: apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/state/CompanionViewModel.kt; apps/android-companion/app/src/main/java/dev/morpheus/androidcompanion/model/ProtocolModels.kt; codex-rs/app-server thread/read assembly; codex-rs/thread-history compact replay; codex-rs/app-server-protocol thread history only if needed
+  base_commit: 80c0e2231db8bebd1d92d40eea046ed1000691b4
+  pending_sync_from_main: none; dev checkout was force-synced clean to main and branch created before dispatch
+  status: merged
+  objective: Fix Android companion conversation display after compact so it matches the desktop/client compacted conversation and does not load excessive pre-compact history.
+  last_update: 2026-08-14 PM accepted and merged dev commit `f78a6f6da04ef446adcd87be38315f0804e3dcb4`; main merge commit `1106ba057ae6808375793c698feeec7dadef9200`.
+  next_action: Restart/reload app-server clients to consume the backend `thread/read` pruning fix; Android APK reinstall is not required for this backend-only change, but the running app-server binary must include the merge.
+  blockers: none
+  validation: Owner ran compact pruning focused tests and app-server build; reviewer passed after requiring backend-first fix per user direction. PM inspected the diff and confirmed pruning is in app-server `thread/read` / `thread/turns/list` assembly rather than Android UI. PM reran `rtk cargo test -p app-server compact_prefix -- --nocapture` -> 1 passed, `rtk cargo test -p app-server prunes_display_turns -- --nocapture` -> 2 passed, `rtk cargo test -p app-server pruning_preserves_pre_compact_active_subscriptions_when_no_new_snapshot_exists -- --nocapture` -> 2 passed, and `rtk git diff --check HEAD~1..HEAD` on merged main -> passed.
+  commit: 1106ba057ae6808375793c698feeec7dadef9200
 
 ## Completed
+- commit: efd656854ac33708fe3910093eb1ec92e0435992
+  summary: Merged and accepted `/my_codex/owner_dev_2` bugfix commit `d65ea6796a82b91294f2596ea1b0da15c89f6116` (`Clarify followup report-back tool guidance`). `followup_task` / `followup_external_task` descriptions now focus on usage scenarios and examples instead of backend turn/queue mechanics. They explicitly instruct agents to call the typed followup tool when a parent or another agent asks for status/progress/findings/blockers/decision needs, and clarify that a normal assistant response stays in the current thread. External init context mirrors this guidance while preserving the external-only tool surface.
+  validation: Owner ran focused thread-service test, app-server build, rustfmt check, git checks, and reviewer passed. PM inspected the diff and reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk cargo test -p thread-service external_context_injects_schema_and_forbids_internal_tool_names -- --nocapture` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings. `codex-tool-service` focused tests remain blocked by existing test compile issues.
+  residual_risk: This is prompt/tool-description guidance, not runtime coercion; it should improve model behavior but cannot guarantee every model will always comply. Running sessions need restart/reload to expose the new descriptions.
+- commit: aa58828e6eb3445f43efd40a0c32977d048692fa
+  summary: Merged and accepted `/my_codex/owner_dev` correction/follow-up commit `0a68bb4d9ff0e154837bdddffefba28e0b6c3940` (`Fix project input live updates`). This removes the incorrect frontend project subtree status aggregation and restores project status to root/backend status. It fixes the actual `/cp_http_api` input path by ensuring the selected thread is subscribed before `turn/start`, then applying the response turn locally so subsequent typed item notifications have a stable landing point. Draft/images are preserved if subscription fails.
+  validation: Owner ran focused Root Worker tests/build and git checks; fixed reviewer `/my_codex/owner_dev/reviewer` passed after additional send-flow tests and response type tightening. PM inspected the diff and reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/sendMessagePayload.test.ts src/lib/sendMessageFlow.test.ts src/lib/threadSelectionPolicy.test.ts` -> 172 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  residual_risk: No full Electron/manual `/cp_http_api` smoke was run. Running Root Worker clients must reload/restart to consume the renderer fix.
+- commit: 4403503afff29578087e71df846d9bf8b8c44394
+  summary: Superseded by `aa58828e6eb3445f43efd40a0c32977d048692fa`. This merge had accepted `/my_codex/owner_dev` follow-up bugfix commit `d805a650b4004033e196401383a9f4a991db4084` (`Aggregate project live status`), but the user later clarified that project status must not be frontend subtree-aggregated and should reflect backend/root status. The aggregation behavior introduced here was reverted by the later correction merge.
+  validation: Owner ran focused Root Worker tests/build and git checks; fixed reviewer `/my_codex/owner_dev/reviewer` passed after a first-round correction. PM inspected the diff and reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/components/Panels.test.tsx src/lib/threadSelectionPolicy.test.ts` -> 187 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  residual_risk: Superseded direction; do not use this commit as the desired project-status behavior.
+- commit: 6ba308d66cf9f9c5cf73317075bfcadaa84fcdfc
+  summary: Merged and accepted `/my_codex/owner_dev` bugfix commit `ce3e540856243102b4d2448351e5fc251b30cf0f` (`Route project opens by root identity`). Root Worker project create/open now matches existing project roots by `cwd + normalized root agentPath`, so same-cwd named roots such as `/cp_http_api` no longer route to another project root and miss selected-thread read/subscribe/live updates. Workspace shortcut routing only matches blank/cwd-only roots. No `/cp_http_api` string special case, eager read, or backend `thread/read` serialization change was introduced.
+  validation: Owner ran focused Root Worker tests/build and git checks; fixed reviewer `/my_codex/owner_dev/reviewer` passed after a first-round correction. PM inspected the diff and reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/threadSelectionPolicy.test.ts src/components/RightPanel.test.tsx` -> 197 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  residual_risk: No full Electron/manual `/cp_http_api` live-session smoke was run; running Root Worker clients need restart/reload to consume the merged frontend bundle.
+- commit: f036a80b665aff3967d8e9b88fb0b00f28ed486a
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `c50e3296fe` (`Avoid sticky active command conversation item`). Root cause was the command current-state field introduced by persisted runtime activity recovery being appended into `conversation.ts`; that let command notification grouping treat `activeCommandItems` as ordinary tail entries, producing a sticky bottom `2 tool calls / 1/2 Done` cell. The fix removes `activeCommandItems` from conversation rendering while preserving monitor recovery in `threadAnalysis`, including terminal tombstones and kind-scoped command/schedule upsert/delete.
+  validation: Owner ran focused Root Worker tests and build, reviewer passed. PM reran on dev-3 and merged main: `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/conversation.test.ts src/lib/threadAnalysis.test.ts` -> 76 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check HEAD~1..HEAD` -> passed.
+  residual_risk: Running Root Worker clients must reload/restart to consume the merged frontend bundle.
+- commit: 31c787d0b30f54266632e179569fe27079cf4a05
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `645908f31e` (`Persist runtime activity across compact`). Active subscriptions and active/running commands now recover across compact/reload/read through persisted typed activity replay. `SessionMeta.subscriptions` display synthesis was removed; `schedule_subscribe` / `schedule_unsubscribe` events and recoverable `ExecCommandBegin/End` maintain current-state activity, app-server extracts internal carrier turns into `Thread.active_subscription_items` / `Thread.active_command_items`, and Root Worker consumes those typed fields for conversation and monitors.
+  validation: Owner ran app-server-protocol full tests, focused app-server/thread-history/backend frontend tests, app-server build, Root Worker build, and reviewer passed. PM inspected the diff for design alignment and confirmed no `thread/read` SessionMeta/runtime snapshot display synthesis remains. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; app-server build-api-turns tests -> 15 passed; app-server SessionMeta ignore test -> passed; thread-history active command/subscription compact tests -> passed; root-worker `thread.test.ts` + `conversation.test.ts` + `threadAnalysis.test.ts` -> 218 passed.
+  residual_risk: Full `thread-history`, analytics, TUI, and codex-exec integration suites still have owner-reported unrelated existing failures/compile drift. Running app-server/Root Worker clients must restart to consume this new behavior.
+- commit: 891b801499a3ff27ba73e2d98e3879e355c58f67
+  summary: Merged and accepted `/my_codex/owner_dev` bugfix commit `82e6a270e9` (`Keep command notifications out of conversation history`). `ResponseItem::CommandExecutionNotification` is now treated as display-only at the source: `record_model_items_and_emit_display_events` filters it before writing conversation history/rollout, while still emitting typed display events and preserving `poll_event` typed command notification results. A narrow replay fallback filters legacy raw `command_execution_notification` JSON envelopes without hiding ordinary JSON.
+  validation: Owner ran focused thread-service, app-server-protocol, thread-history tests plus app-server build and reviewer passed. PM inspected the source path from command-service `record_model_items_and_emit_display_events` through pending input and verified the fix is source-level, not renderer hiding. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk cargo test -p thread-service command_execution_notification_display_is_not_recorded_as_conversation_item -- --nocapture` -> passed; `rtk cargo test -p thread-service leftover_command_exit_display_does_not_enter_provider_request_history -- --nocapture` -> passed.
+  residual_risk: The currently running host can still show raw command notifications until restarted with this merge. The app-server-protocol mirror `thread_history/tests` remains not wired as a crate test suite, so real replay coverage relies on `thread-history` tests.
+- commit: e4054d66bfa8e0e088220a2bfc8a87b0c80427fd
+  summary: Merged and accepted `/my_codex/owner_dev` bugfix commit `d0cc360d67` (`Filter raw inter-agent envelopes from thread history`). Raw inter-agent communication JSON envelopes, including nullable `operation/status/lifecycle_status` samples, are filtered from ordinary message display, typed unknown inter-agent communication now projects to a generic collaboration message, and ordinary JSON remains visible. The fix is in backend protocol/history projection and real `thread-history`, not frontend string hiding.
+  validation: Owner ran focused app-server-protocol/thread-history tests plus app-server build and reviewer passed. PM inspected the diff against the backend typed/history design and reran focused validation on dev and merged main: nullable inter-agent app-server-protocol and thread-history tests passed, and `rtk git diff --check HEAD~1..HEAD` passed.
+  residual_risk: Very old incomplete raw inter-agent envelopes that lack the detector's envelope-only fields may still display, but current transport shape and user sample are covered.
+- commit: 61913ba1da8df1e2754e3bff4664b6e76ae71cca
+  summary: Merged and accepted `/my_codex/owner_dev_2` bugfix commit `dec891a7f52d53c00e5d1ac4b1833e0f703ece57` (`Keep in-progress poll event turns active`). Lifecycle status now follows the general in-turn / after-turn flow: synchronous waits inside an in-progress turn remain Active via in-progress turn/live Running facts, while after-turn/background eventSubscription states remain Waiting. The fix intentionally avoids tool-name, provider, UI text, or single-fixture special casing.
+  validation: PM reran focused backend and frontend checks on dev-2 and merged main: app-server helper tests passed 16/16, app-server `thread_status` integration tests passed 23/23, root-worker `thread.test.ts` passed 143/143, `git diff --check` passed, and `cargo build -p app-server --bin app-server` passed with existing linker/future-incompat warnings.
+  residual_risk: Running app-server/Root Worker clients must be restarted to consume the new lifecycle logic. Future lifecycle changes should preserve the no-special-case rule and keep strong-terminal precedence in sync across backend and Root Worker merge code.
+- commit: b423d752a491aff9ca7375e5d81b8620b6e778c4
+  summary: Merged and accepted `/my_codex/owner_dev_2` bugfix commit `5ae374ed016b8038fb99c806fcfd5bee45630827` (`Fix poll event waiting thread lifecycle`). Threads waiting on `poll_event`/eventSubscription no longer remain displayed as complete: live/watch Active/Waiting/SystemError facts can override weak Completed status, while Errored/Interrupted/Shutdown remain strong terminal states. `turn/start` now records active state after successful input submission so a new message/followup flips the thread back to active, and Root Worker authoritative status notifications can update stale completed UI state without letting weak stale statuses clear strong terminals.
+  validation: PM reran focused backend and frontend checks on dev-2 and merged main: app-server poll_event/new-message regression passed, app-server status helper tests passed 14/14, root-worker `thread.test.ts` passed 143/143, `git diff --check` passed, and `cargo build -p app-server --bin app-server` passed with existing linker/future-incompat warnings.
+  residual_risk: Running app-server/Root Worker clients must be restarted to consume the new lifecycle logic. Future new terminal categories should keep backend status precedence and Root Worker authoritative merge rules in sync.
+- commit: 806b1fc724ca53a6107cbbdc3eaa203e908ccb7b
+  summary: Merged and accepted `/my_codex/owner_dev_3` Android UI/navigation commit `ee2c034ffcbccaeb1cd876c99b569ac2ce9335a5` (`Polish Android companion navigation shell`). Android Companion now uses a more polished compact dark mobile shell, enables edge-to-edge display, respects safe drawing and IME/navigation insets, replaces the connected bottom-tab shell with a thread-list -> conversation detail hierarchy, and handles system back/top back from conversation detail back to the thread list instead of immediately exiting from nested views.
+  validation: PM inspected the implementation against the design brief and confirmed this was structural, not cosmetic-only. Dev-3 and merged main both passed serial Android `testDebugUnitTest` and `assembleDebug`; merged main APK was built at `apps/android-companion/app/build/outputs/apk/debug/app-debug.apk`.
+  residual_risk: Device install/smoke was not completed because `adb devices` showed no attached device after the main build. Existing SDK XML / Gradle deprecation / Compose `Divider` warnings remain non-blocking.
+- commit: 84dc7863b09dc320ed88d4d16b8da463079959a4
+  summary: Merged and accepted `/my_codex/owner_dev_3` feature commit `6e10b98dfd355e3e29816a00c98077a6613b41b6` (`Refresh Android companion QR endpoint`). Root Worker now refreshes the advertised Android Companion LAN endpoint for wildcard mobile listeners every 5 seconds, broadcasts changed `mobileConnection` through the existing desktop status channel, and Settings auto-refreshes the endpoint/token/QR only while the user is still following the automatic endpoint. Manual tunnel endpoint edits and explicit `ROOT_WORKER_MOBILE_ENDPOINT` overrides are preserved.
+  validation: PM inspected the implementation against the requested backend fact-source plus UI consumption design and reran focused validation on dev-3 and merged main. `rtk node --check apps/root-worker-prototype/electron/appServerClient.cjs` passed; `rtk npm --prefix apps/root-worker-prototype test -- electron/appServerClient.test.cjs src/components/SettingsPanel.test.tsx` passed 25/25; `rtk git diff --check HEAD~1..HEAD` passed on merged main; `rtk npm --prefix apps/root-worker-prototype run build` passed with existing npm config warnings and chunk-size warning.
+  residual_risk: Refresh uses lightweight 5s polling rather than OS network-change events. Full `tsc --noEmit` was not used as a merge gate because owner found existing broad TypeScript errors outside this task; focused tests and Vite build covered the changed path.
+- commit: d35c5db7847f175d690a2aa07450dd4184649dcd
+  summary: Merged and accepted `/my_codex/owner_dev_3` Android rework commit `6661c415cb92da6dafaa051cced0a6da95ce233e` (`Align Android conversation tool cells`). Android Companion conversation UI now uses a real typed cell model instead of raw item rendering, groups command/tool entries by desktop-like categories, preserves ordinary user/assistant/reasoning/plan bodies in model/state, bounds long ordinary text only in UI preview with full expansion available, creates typed command placeholders for missed command output deltas, and updates bottom-scroll targets when the last cell content grows.
+  validation: PM inspected the design against the rejected first implementation, confirmed ordinary message model paths no longer truncate, confirmed no Android-injected visible `[truncated]`/preview marker strings in content, and ran Android validation. On dev-3: diff check passed, `assembleDebug` -> BUILD SUCCESSFUL, fresh `testDebugUnitTest --rerun-tasks --no-build-cache` -> BUILD SUCCESSFUL. On merged main: `rtk git diff --check HEAD~1..HEAD` -> passed, `testDebugUnitTest --rerun-tasks --no-build-cache` -> BUILD SUCCESSFUL, and `assembleDebug` -> BUILD SUCCESSFUL.
+  residual_risk: No connected-device smoke was run in this pass. There are existing Gradle SDK XML/deprecation warnings and Compose `Divider` deprecation warnings, but they do not block build/tests. Android Gradle validation should be run serially; concurrent test/build runs caused transient Kotlin compile visibility errors.
+- commit: efe000a6060b737584deead779ddca3077f6e8ef
+  summary: Merged and accepted `/my_codex/owner_dev_2` runtime commit `dcbd70308b6c4309dddcee5b487dd138d43b4778` (`Notify parents of child status changes`). Parent-side child signaling is now a typed child notification/status update rather than strict subtree completion: child threads waiting on command, child/subagent, or event subscription can notify the parent with a waiting lifecycle; identical lifecycle notifications are deduped; later final status sends an updated notification. `InterAgentCommunication` carries optional `lifecycle_status`, projections prefer it, and old `ChildCompletion` `status` fallback remains compatible.
+  validation: Owner and PM ran focused thread-service tests (`multi_agent_v2_child_notification` -> 3 passed, `multi_agent_v2_completion` -> 4 passed), app-server-protocol projection tests -> 10 passed, typed status content test -> 1 passed, and `rtk cargo build -p app-server --bin app-server` -> 0 errors with existing linker/future-incompat warnings. PM also ran `rtk git diff --check HEAD~1..HEAD` on merged main -> passed.
+  residual_risk: Wire/persisted operation name `ChildCompletion` remains for compatibility, so some old function/test names remain as wrappers. Future code should prefer child notification/status wording and avoid reintroducing strict command/subagent quiescence gating.
+- commit: 1842c7c38a93d98ec7c3663732058c0955e355ed
+  summary: Merged and accepted `/my_codex/owner_dev` bugfix commit `f24d1c73ebc0cd0c1d5174e3654a4c554e95cec0` (`Preserve terminal status in agent tree`). PC Root Worker now routes `thread/status/changed` updates through the same terminal-preserving lifecycle merge helper as snapshot/metadata updates, so a stale `waiting:eventSubscription` / wait-event-tool notification cannot overwrite a completed/final lifecycle in the agent tree. True waiting states remain visible when no terminal status exists.
+  validation: Owner and PM ran `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 141 passed. PM also ran `rtk git diff --check HEAD~1..HEAD` on merged main -> passed.
+  residual_risk: No full Electron visual smoke was run in this pass. The fix is scoped to Root Worker local state merge; running PC client/app-server needs reload/restart to consume merge `1842c7c38a`.
+- commit: fb959ff523fbcdf559f6a18f5dda9ab68798c235
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `06910955a1b4a7f94fd88cb3b2b14512d9092184` (`Fix active subscription reload display`). Active schedule subscriptions are now carried as `Thread.active_subscription_items` / `activeSubscriptionItems` current-state facts instead of ordinary `active-subscriptions` conversation turns. Desktop RightPanel monitor analysis reads those current-state items, while conversation display no longer gets a stale completed `schedule_subscribe` cell pinned to the bottom after restart or compact.
+  validation: PM reran root-worker `thread.test.ts` + `threadAnalysis.test.ts` -> 158 passed, `rtk cargo test -p app-server restore_persisted_display_turns` -> 5 passed, `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_compact_and_startup_subscription_restore` -> 1 passed, `rtk cargo test -p app-server --test all thread_read_empty_subscription_state_overrides_legacy_rollout_active_schedule` -> 1 passed, and `rtk git diff --check HEAD~1..HEAD` -> passed.
+  residual_risk: Full root-worker `tsc --noEmit` and full `cargo fmt --check` were not used as gates because owner reported existing unrelated failures. The new protocol field is optional and root-worker keeps legacy `active-subscriptions` turn normalization for compatibility.
+- commit: 8393e9f9e90d755eb4a69e6fb771c042dbb6cf27
+  summary: Merged and accepted `/my_codex/owner_dev_2` bugfix commit `1a0eb57aecce2827bce9604f8056cb4f72081216` (`Recover mobile listener port conflicts`). Root Worker now recovers from default Android Companion mobile WebSocket port conflicts by selecting a nearby available port and using that actual listen URL in the app-server command and Settings/QR endpoint. Explicit tunnel endpoint overrides avoid automatic fallback so the UI does not advertise a stale external URL as usable, and custom app-server commands plus `ROOT_WORKER_MOBILE_LISTEN=off` keep their existing behavior.
+  validation: Owner and PM ran `rtk node --test apps/root-worker-prototype/electron/appServerClient.test.cjs` -> 15 passed. PM also ran `rtk git diff --check HEAD~1..HEAD` -> passed.
+  residual_risk: The fix chooses port fallback over killing stale old app-server processes because there is no reliable ownership proof yet. If an external tunnel endpoint override is configured and the local bind is occupied, the listener remains disabled with a clear reason; the user must restart/remap the tunnel or clear the override.
+- commit: 80c0e2231db8bebd1d92d40eea046ed1000691b4
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `d673cc19b5003edaf0a209a5d741d3d4230202a5` (`Bound Android companion message bodies`). Android companion now bounds ordinary message/reasoning/injected-context bodies and live agent-message deltas, shows explicit bounded preview truncation, and adds LazyColumn content types to reduce bottom-scroll measurement churn.
+  validation: Owner ran `rtk git diff --check`, Android `testDebugUnitTest --console=plain` -> BUILD SUCCESSFUL with 25 tests, and `assembleDebug --console=plain` -> BUILD SUCCESSFUL. Reviewer passed after requiring truncation-boundary fix. PM ran `rtk git diff --check HEAD~1..HEAD` on merged main -> passed. PM fast-forwarded dev-3 to this merge commit before dispatching the compact live-command context task.
+  residual_risk: Real device install/smoke was blocked by `INSTALL_FAILED_USER_RESTRICTED`; connected bottom-scroll should still be smoke-tested after installing on an unlocked/permitted device.
+- commit: f6ef5bbae4
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `6fca20a9926291186cf46b845b03723b259099a7` (`Bound Android tool presentation payloads`). Android companion now bounds command/tool summary/details/output, builds bounded JSON instead of full `JsonElement.toString()`, removes raw thread/read payloads from UI state, projects thread reads/lists/start results and live notifications on `Dispatchers.Default`, remembers flattened conversation items for the LazyColumn, bounds expanded output/details rendering, and keeps live command output delta state bounded with latest-tail output. This preserves default-collapsed tool cards while addressing the ANR and first-pass scroll jank root cause.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after multiple rounds. PM inspected the diff against the no-eager-large-payload design and confirmed it does not change app-server protocol, parse raw provider output, use WebView, or revert tool cards. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; Android `testDebugUnitTest --console=plain` -> BUILD SUCCESSFUL; Android `assembleDebug --console=plain` -> BUILD SUCCESSFUL; `adb install -r apps/android-companion/app/build/outputs/apk/debug/app-debug.apk` -> Success on device `e2c4e942`.
+  residual_risk: After the user unlocked the phone, PM reran cold-start smoke and confirmed the new app process reached the Morpheus connection screen; `dumpsys window` showed `mDreamingLockscreen=false` and current focus on the new MainActivity. The window dump still includes an old task `t1604` ANR record from before reinstall, but the active task is the newer MainActivity. Connected thread-list/conversation scrolling was not smoke-tested because the app was on the connection screen; further profile-driven Compose optimization remains a separate performance task if scrolling still feels slow after connecting.
+- commit: 4a440fb5d1
+  summary: Merged and accepted `/my_codex/owner_dev_3` feature commit `03fe540cb6bf89cbf4eb3e4ec9db051acf1b8694` (`Improve Android tool cell presentation`). Android companion now keeps structured command/tool presentation data in its model/reducer layer and renders commandExecution, commandExecutionNotification, and builtinToolCall items as default-collapsed Compose tool cards with summary/status visible and details/output available on tap. Ordinary user/assistant rows remain unchanged, live command output deltas append to structured output when the item exists, and fallback delta behavior remains visible when the start item is missing.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after catching builtin tool detail truncation risk. PM inspected the diff against the typed-display design and confirmed it does not modify app-server protocol, use WebView, parse raw provider output, or turn all messages into collapsible cards. PM reran on merged main: `rtk git diff --check HEAD~1..HEAD` -> passed; `rtk sh -lc 'export JAVA_HOME=/opt/homebrew/opt/openjdk@17; export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools; export ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools; gradle --no-daemon -p apps/android-companion testDebugUnitTest --console=plain'` -> BUILD SUCCESSFUL; same env with `assembleDebug --console=plain` -> BUILD SUCCESSFUL.
+  residual_risk: No connected Android device was available during PM install smoke (`adb devices` returned none), so the APK was built but not installed in this validation pass. Existing non-blocking Android warnings remain for SDK XML version, Compose `Divider` deprecation, and Gradle 10 deprecations.
+- commit: 3a7174f00e
+  summary: Merged and accepted `/my_codex/owner_dev_2` UI bugfix commit `6bcc9c4bf04960669d687e67fd67ba8eba7d720c` (`Fix conversation tool status badge layout`). Root Worker conversation tool/command rows now keep short status badges such as `completed` horizontally readable next to very long command text by letting summary rows wrap, preserving a stable command-copy flex basis, and making status badges `nowrap` with bounded ellipsis for unusually long statuses.
+  validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed. PM inspected the diff and confirmed it is limited to conversation CSS/tests, does not alter backend status data, does not hide `completed`, and preserves long command/token wrapping. PM reran on dev-2 and merged main: `rtk git diff --check` -> passed; `rtk git show --check --format=short 6bcc9c4bf0` -> passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx` -> 23 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  residual_risk: No screenshot-level visual smoke was run; CSS contract tests cover the regression. On very narrow widths, status may wrap to the next metadata line, but should not collapse into single-letter vertical text.
+- commit: db18d7efac
+  summary: Merged and accepted `/my_codex/owner_dev_3` feature commit `f17c23d29311edc091eb37ea542d5728a40093b9` (`Add Android companion QR pairing`). Root Worker now keeps the desktop primary app-server connection on stdio while adding an authenticated same-process mobile WebSocket listener through `--mobile-listen`; Settings exposes Android Companion pairing info, endpoint/token inputs, and a typed/versioned QR payload. Android companion can scan the QR, validate the payload, auto-fill endpoint/token, and connect through the existing WebSocket JSON-RPC protocol. Standalone `app-server` and `codex app-server` both support `--mobile-listen`, and token files are written with `0600` permissions.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after catching default-port startup blocking, missing CLI wrapper support, token-file permissions, Electron/Rust URL validation drift, and Android parser compile issues. PM inspected the diff against the single-runtime design and confirmed it does not start a second app-server or change JSON-RPC semantics. PM reran on dev-3 and merged main: `rtk node --test apps/root-worker-prototype/electron/appServerClient.test.cjs` -> 12 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/androidConnectionPayload.test.ts src/components/SettingsPanel.test.tsx` -> 8 passed after installing lockfile dependencies on main; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk sh -lc 'export JAVA_HOME=/opt/homebrew/opt/openjdk@17; export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools; export ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools; gradle --no-daemon -p apps/android-companion testDebugUnitTest --console=plain'` -> BUILD SUCCESSFUL; same env with `assembleDebug --console=plain` -> BUILD SUCCESSFUL; `rtk git diff --check` and `rtk git show --check --format=short f17c23d29311edc091eb37ea542d5728a40093b9` -> passed.
+  residual_risk: No real phone/tunnel/Electron Settings screenshot smoke was run. There remains a small TOCTOU window between Electron mobile-port preflight and Rust listener bind; if another process takes the port in between, app-server startup can still fail. A parallel PM validation run of Android test/build hit a transient `mergeDebugResources` delete failure from two Gradle processes sharing the same build directory; sequential reruns passed. Non-blocking warnings remain for Android SDK XML version, Compose `Divider` deprecation, Gradle 10 deprecations, and existing Rust linker/future-incompat messages.
+- commit: a34b709741
+  summary: Merged and accepted `/my_codex/owner_dev_2` bugfix commit `581bd5b44e4ba3656d5d2baf23f0b72c92d92003` (`Fix Android companion build configuration`). Android companion now builds under the locally installed Gradle/JDK/Android SDK stack by explicitly aligning Java and Kotlin compilation to JVM 17, fixing Kotlin inference issues exposed by real compilation, stabilizing MockWebServer RPC unit tests, and ignoring local Gradle/build outputs.
+  validation: PM installed Gradle 9.7.0, OpenJDK 17.0.20, Android command line tools, accepted SDK licenses, and installed `platform-tools`, `platforms;android-35`, `build-tools;35.0.0`, plus AGP-requested `build-tools;34.0.0`. Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed. PM inspected the diff for no absolute local paths and reran on merged main: `rtk git diff --check` -> passed; `rtk sh -lc 'export JAVA_HOME=/opt/homebrew/opt/openjdk@17; export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools; export ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools; gradle --no-daemon -p apps/android-companion testDebugUnitTest'` -> BUILD SUCCESSFUL; same env with `gradle --no-daemon -p apps/android-companion assembleDebug` -> BUILD SUCCESSFUL. Debug APK generated at `apps/android-companion/app/build/outputs/apk/debug/app-debug.apk` (15.7M).
+  residual_risk: No emulator/device install or live app-server/tunnel smoke was run. Remaining non-blocking warnings: SDK XML version compatibility warning from command line tools, Compose `Divider` deprecation warning, Gradle 10 deprecation warning, and native library strip warning for `libandroidx.graphics.path.so`.
+- commit: 702a2313cb
+  summary: Merged and accepted `/my_codex/owner_dev_2` feature commit `abee8e68fb70149e02350648894b562c02fb8f5b` (`Add Android companion app`). Added first-pass native Android client under `apps/android-companion/`: Kotlin + Jetpack Compose UI, OkHttp WebSocket JSON-RPC client, typed thread snapshot/notification reducer, agent tree and conversation surfaces, connection/auth/error states, start-thread and send-message actions, plus README instructions for app-server WebSocket/tunnel usage.
+  validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after import and stale-thread-read fixes. PM inspected the diff against the brief and checked app-server protocol compatibility for `initialize`, `thread/list`, `thread/read`, `thread/resume`, `thread/start`, `turn/start`, WebSocket auth flags, and Android cleartext LAN support. PM reran `rtk git diff --check` and `rtk git show --check --format=short abee8e68fb70149e02350648894b562c02fb8f5b` successfully. Gradle/Android build and JVM tests could not run locally because `gradle` is absent, no Gradle wrapper exists, and `/Users/bytedance/Library/Android/sdk` is missing.
+  residual_risk: No real Android compile, emulator, device, or live app-server/tunnel smoke was run in this environment. The first version intentionally omits settings, approval review UI, attachments, file editing, and a tunnel service.
+- commit: 6cd7e65e30
+  summary: Merged and accepted `/my_codex/owner_dev_2` refinement commit `382fbeb946c34c49ea58e62445dbfaf37e8738d4` (`Add suffix-staged context compaction recovery`). Context-window overflow recovery now follows the user's suffix-staged strategy: when a regular request actually returns `ContextWindowExceeded`, runtime temporarily stages the newest model-visible suffix item(s) out of in-memory history, compacts the remaining prefix, expands the suffix if compact itself overflows, then writes replacement history as compacted prefix plus retained suffix and retries the regular request. This preserves the current user input and recent suffix without deleting persisted history or repeatedly showing the suffix in compact detail; `CompactedItem.visible_replacement_history_len` lets reload retain suffix while compact display shows only the compacted prefix.
+  validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after checking suffix staging, isolated compact sampling, replacement-history replay, and ack/fallback semantics. PM inspected the implementation against the user-specified strategy and reran on dev-2 and merged main: `rtk git diff --check` -> passed; `rtk cargo test -p thread-service context_window` -> 8 passed; `rtk cargo test -p thread-history compaction` -> 2 passed; `rtk cargo test -p rollout-api` -> 28 passed; `rtk cargo test -p app-server-protocol` -> 201 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings.
+  residual_risk: `rtk cargo test -p thread-history` full suite still has unrelated collab-status fixture expectation failures per owner report, so PM relied on focused compaction/replay/protocol tests plus app-server build. No live provider/Electron smoke was run.
+- commit: 999782f0a7
+  summary: Merged and accepted `/my_codex/owner_dev_2` runtime bugfix commit `82bceb115ecc8df9932a3239b3668938b1af9a68` (`Guard context-window overflow with compact retry`). Regular turns now preserve typed provider `ContextWindowExceeded` through model-service adapters, run a projected pre-request compact guard using the current model-visible history, retry once with automatic compact when the provider first reports context-window overflow, and convert unrecoverable non-current-input overflows into a controlled local recovery error instead of surfacing the old fatal `Codex ran out of room... Start a new thread...` text. The implementation explicitly classifies oversized current user input with a current-input-specific controlled error and removed the compact path that blindly deleted the oldest history item.
+  validation: Fixed reviewer `/my_codex/owner_dev_2/reviewer` passed after PM required full `run_turn` / user-visible event tests for the user's 100% no-raw-fatal-error requirement. PM inspected that the implementation uses compact/retry and controlled errors rather than history deletion, and reran on dev-2 and merged main: `rtk git diff --check` -> passed; `rtk cargo test -p thread-service context_window` -> 6 passed; `rtk cargo test -p thread-service oversized_current_input_emits_controlled_error_without_compacting` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings.
+  residual_risk: Single-message input-size detection still uses approximate local token counting, so provider tokenizer edge cases may still classify a borderline current input differently. `rtk cargo test -p model-service-api map_api_error` remains blocked by an existing missing test file in that crate. No full live provider/Electron smoke was run.
+- commit: 45c8438ecb
+  summary: Merged and accepted `/my_codex/owner_dev_3` UI bugfix commit `4326a0a115468409c9162a015f41bd399a6fc1ff` (`Wrap long conversation cell text`). Root Worker conversation cells now keep long API paths, method names, numeric ids, schema labels, tool output, approval metadata, attachment chips, and compact/archive nested cell text inside the measured cell frame by using scoped flex shrink/wrapping constraints instead of changing backend data, truncating real content, widening panels, or adding outer horizontal scroll.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after catching approval metadata and attachment-chip overflow gaps. PM inspected the diff against the UI brief and confirmed the fix stays in scoped conversation CSS/tests. PM reran on dev-3 and merged main: `rtk git diff --check` -> passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Conversation.test.tsx` -> 23 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning.
+  residual_risk: No Playwright/Electron screenshot smoke was run at real panel widths; coverage is focused component/CSS regression tests plus production build.
+- commit: 3b9aeb8fa7
+  summary: Merged and accepted `/my_codex/owner_dev_3` storage hardening commit `3b9aeb8fa7264b7b2f39df397e4d651c75b2b168` (`Persist subscription state in thread metadata`). Active event/schedule subscription snapshots now have a durable current-state source in thread metadata/state DB via a new nullable `threads.subscriptions` JSON column. Subscription writes update DB current state and still append rollout `SessionMeta` for history/compatibility; reads, startup restore, active subscription thread listing, and `thread/read(includeTurns=true)` prefer DB state and only fallback to rollout when DB has no snapshot. `Some([])` is preserved as an explicit cleared state and suppresses legacy rollout active subscriptions.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after catching an active-list fallback gap. PM inspected storage/schema/app-server diffs against the DB-first brief. PM reran on dev-3 and merged main: `rtk cargo test -p thread-store subscriptions` -> 3 passed; `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_compact_and_startup_subscription_restore` -> 1 passed; `rtk cargo test -p app-server --test all thread_read_empty_subscription_state_overrides_legacy_rollout_active_schedule` -> 1 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; current `rtk git diff --check` -> passed. `rtk git diff --check HEAD~1..HEAD` / `rtk git show --check HEAD` returned code 2 with no output in main, but dev-3 `rtk git diff --check` and current main diff check passed.
+  residual_risk: Owner reported `rtk cargo fmt` and `rtk cargo test -p state subscription` are still blocked by existing unrelated state/rustfmt issues. The change is covered through thread-store and app-server compile/test paths, but state-crate-only focused tests were not runnable.
+- commit: ccd27e7875
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `ccd27e7875e8dc74e8f472d6325667eb2cdfbe5b` (`Preserve subscription monitors across compact`). Root Worker compact pruning no longer drops the synthetic `active-subscriptions` current-state turn that represents active schedule subscriptions before the latest compact marker. If a post-compact `active-subscriptions` snapshot exists, it remains authoritative, so unsubscribe/empty snapshots do not revive stale pre-compact monitors. The task also added protocol and app-server compacted-rollout/read regressions proving active `SessionMeta.subscriptions` after compact still replays/hydrates into a typed monitor.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after requiring cleanup/empty snapshot protections. PM inspected the diff and confirmed the fix covers the user-suspected compact boundary path without restoring full pre-compact history, raw parsing, or undoing lazy `thread/list`. PM reran on dev-3 and merged main: `rtk cargo test -p app-server-protocol thread_history_projects_active_schedule_subscription_after_compact` -> 1 passed; `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_compact_and_startup_subscription_restore` -> passed after one initial app-server initialize timeout rerun on dev-3, and passed on merged main; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 134 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD` -> passed.
+  residual_risk: This tactical fix preserves compacted display and validates rollout `SessionMeta` recovery, but it does not add an independent DB/state current-subscription store. Active subscriptions still use rollout `SessionMeta` as durable snapshot today; a future architecture task should move current subscription state into state DB/session metadata and keep rollout as history/compat fallback.
+- commit: 2239148375
+  summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `223914837541115871d745395b7b614cc39bd749` (`Keep live command deltas visible`). Root Worker no longer silently drops live command output deltas when the corresponding `commandExecution` started item was missed or arrives late. The frontend now creates a typed visible command placeholder from the delta, later merges real started/completed command fields by id, and preserves already-received output when a delayed started item has `aggregatedOutput: null`. The task also locks the lazy-list subscription path with a state merge regression: list metadata -> subscribe metadata -> selected `thread/read` snapshot must hydrate the restored `active-subscriptions` schedule monitor.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after requiring the delayed-start output preservation fix. PM inspected the diff and confirmed the live command fix stays in typed Root Worker state merge, not raw parsing or backend command execution, and does not undo `thread/list` lazy restore. PM reran on dev-3 and merged main: `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 130 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/threadSelectionPolicy.test.ts` -> 9 passed; `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_startup_subscription_restore` -> 1 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check HEAD~1..HEAD` -> passed.
+  residual_risk: No full Electron live-command/restart smoke was run. If the backend never sends started/completed items for a command, the UI can now show bounded placeholder command/cwd text plus output, but exact command/cwd remain unavailable until typed command items arrive.
+- commit: b7d4b27b05
+  summary: Merged and accepted `/my_codex/owner_dev_3` feature commit `b7d4b27b0537d21b3d4b5eb81e9628ac3fe37d24` (`Make thread list restore lazy`). Root Worker restart no longer needs `thread/list` to synchronously restore every persisted active thread before showing navigation metadata. `thread/list` now returns stored thread metadata with current loaded-status overlay first, then schedules persisted active thread restore once in the background; explicit `thread/loaded/list` still waits for startup restore, and selected thread content continues to hydrate through `thread/read(includeTurns=true)` / existing read paths.
+  validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed. PM inspected the diff and confirmed the change is in the app-server list/restore abstraction layer, not a frontend spinner or full-history list payload. PM reran on dev-3 and merged main: `rtk cargo test -p app-server --test all thread_read_restores_active_schedule_after_startup_subscription_restore` -> 1 passed; `rtk cargo test -p app-server --test all thread_loaded_list` -> 2 passed; `rtk cargo build -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD` -> passed.
+  residual_risk: No full Electron restart timing smoke was run; the backend low-latency boundary is covered by focused tests. Background restore failure still logs warnings only and is not surfaced as a typed UI state.
 - commit: eb8cafb118
   summary: Merged and accepted `/my_codex/owner_dev_3` bugfix commit `1934fc94085697bf2a2e91ab513f68bc1a8a2910` (`Preserve command exit notifications in model input`). The user correctly pointed out that seeing the typed command exit notification in the client means pending input had already been consumed/displayed; the real missing link was provider request formatting. `model-service/src/client/prompt.rs` no longer filters `ResponseItem::CommandExecutionNotification` out of Responses API input, so command exit/output notifications that were recorded and displayed remain model-visible without requiring `poll_event`. The fix does not change UI, `poll_event`, `notify_on` defaults, or output-notification aggregation.
   validation: Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after three rounds per owner report. PM inspected the diff and confirmed the production change is limited to allowing `CommandExecutionNotification` through provider input formatting, while the new thread-service test waits for display and then asserts the next `/v1/responses` request input contains the command exit notification. PM reran on merged main: `rtk cargo check -p model-service --lib` -> passed; `rtk cargo test -p thread-service poll_event_wakes_for_command_exit_notification` -> 1 passed; `rtk cargo test -p thread-service leftover_command_exit_display_is_followed_by_provider_request_with_notification -- --nocapture` -> 1 passed; `rtk cargo test -p thread-service deferred_command_exit_display_waits_for_request_construction_consumption` -> 1 passed; `rtk git diff --check HEAD~1..HEAD && rtk git diff --check` -> passed.
@@ -126,6 +1113,11 @@ None
 Older completed entries moved to [PM Progress Archive](pm-progress-archive.md#archived-completed) on 2026-08-07 (289 entries).
 
 ## Known Issues
+- 2026-08-14 after merging `3a7174f00e`, clean `/Users/bytedance/Projects/my-codex-dev-2` and `/Users/bytedance/Projects/my-codex-dev-3` were fast-forwarded to that commit. `/Users/bytedance/Projects/my-codex-dev` remains unsynced because it still has unrelated unstaged thread-service edits.
+- 2026-08-14 after merging `db18d7efac`, clean `/Users/bytedance/Projects/my-codex-dev-2` and `/Users/bytedance/Projects/my-codex-dev-3` were fast-forwarded to that commit. `/Users/bytedance/Projects/my-codex-dev` remains unsynced because it still has unrelated unstaged thread-service edits.
+- 2026-08-14 after merging `a34b709741`, clean `/Users/bytedance/Projects/my-codex-dev-2` and `/Users/bytedance/Projects/my-codex-dev-3` were fast-forwarded to that commit. `/Users/bytedance/Projects/my-codex-dev` remains unsynced because it still has unrelated unstaged thread-service edits.
+- 2026-08-13 after merging `702a2313cb`, clean `/Users/bytedance/Projects/my-codex-dev-2` and `/Users/bytedance/Projects/my-codex-dev-3` were fast-forwarded to that commit. `/Users/bytedance/Projects/my-codex-dev` remains unsynced because it still has unrelated unstaged thread-service edits.
+- 2026-08-12 after merging `45c8438ecb`, clean `/Users/bytedance/Projects/my-codex-dev-3` was fast-forwarded to that commit. `/Users/bytedance/Projects/my-codex-dev-2` was realigned by preserving its old diverged branch tip at `backup/dev-2-live-command-running-display-524c32a` and switching the checkout to clean branch `sync/main-45c8438` at main commit `45c8438ecb`; the backup retains unrelated local commit `58190f235e` (`Polish agent tree connectors`) if it is needed later. `/Users/bytedance/Projects/my-codex-dev` remains unsynced because it has unrelated unstaged thread-service edits.
 - 2026-08-07 用户反馈模型有时不能识别已到达的 command exit event，仍继续使用 `poll_event` 等同一个 command。已先做 wording 修复，随后 2026-08-11 进一步定位到 Responses provider input formatter 过滤了 `CommandExecutionNotification`，并通过 `eb8cafb118` / `ef32db421f` 修复。若后续仍复现，应基于新 provider-request test 继续查，而不是继续按“pending input 未消费”旧假设排查。
 - Workflow smoke run `wf_1785737385_1` exposed event routing/status bugs before it was aborted: `workflow_status` stayed at `runner_starting` while workflow agents had spawned, and the run consumed an unrelated `/my_codex/owner_dev` DMG completion/reviewer payload as workflow-internal review/fix input. The workflow run and its child agents were aborted/closed; dev-3 stayed clean. This is separate from the right-panel visualization feature but should inform workflow progress UI validation.
 - 2026-07-27 用户反馈 root-worker 客户端运行时间长会变卡且偶现黑屏，并询问 compact 后客户端是否仍保存旧 items。只读确认：compact row 会把 compact 前 entries 从主可见 cell 列表折叠进 `archivedCells`，且展开详情按需加载/折叠丢弃；但客户端主 `Thread.turns` state 仍保留 compact 前原始 turns/items，`buildConversationState` / `buildCommandLookup` / context usage / thread analysis 等仍会遍历全量 `thread.turns`。当前也未看到 React error boundary 或全局 renderer error 捕获。后续应作为独立 root-worker 性能/稳定性 bugfix：compact 后对客户端 state 引入可恢复的 item pruning/archival boundary 或后端 read snapshot 裁剪策略，并补 error boundary/logging 与长线程回归。

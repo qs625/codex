@@ -38,8 +38,10 @@
 - `poll_event` 需要支持在同一个 turn 内等待并在 event 到达后继续执行；runtime 不应维护会影响状态机的硬性等待目标，event 应直接作为 pending input 注入当前 turn，并携带来源信息供模型判断。
 - `poll_event` 对模型暴露的是空参数对象；默认 `initial_timeout_ms` / `hard_cap_timeout_ms` 由 thread runtime 从 `TurnContext.config.multi_agent_v2` 注入，再结合 thread-scoped backoff 计算每次调用的 `current_timeout_ms`。
 - `poll_event` result 不再只是 wake metadata：它仍保留 `timedOut` / `sourceHint` / timeout fields，但可通过 optional `event` 和 `events` 暴露 typed pending payload。`poll_event` 是 agent 内部等待事件的 tool，workflow runtime 可在底层复用同一唤醒链路；普通 workflow JS 脚本应使用 target-specific `await agent.wait()` 等待指定 agent 完成，不应直接手写 `wf.pollEvent()` 扫描 child completion。`wf.pollEvent()` / `event.poll` 保留为空参数、非 target-specific 的低层/advanced API。
-- command output / exit、child completion、inter-agent completion 应复用同一套 pending-input 唤醒链路；不要再为某一类等待事件维护平行 wait API。
-- parent-side child completion bookkeeping 只用于 completion envelope 的投递、去重和清理，不应定义 child 当前是否 active；`WaitChild` / `IdleWaitChild` 只应由 direct child thread 的本地 active 状态驱动。
+- 所有 lifecycle/status 修复和设计都不应通过特殊判断某个 tool name、UI 文案、provider、单个 test fixture 或单一场景来实现；应优先回到通用状态机、typed lifecycle facts、provider-neutral runtime 边界和既有 in-turn / after-turn 判断流程。`poll_event` 这类具体工具可以作为复现用例，但生产逻辑不能依赖字符串或工具名分支来决定 active/waiting/final。
+- command output / exit、child notification、inter-agent completion 应复用同一套 pending-input 唤醒链路；不要再为某一类等待事件维护平行 wait API。
+- parent-side child notification 是 child status/update signal，不是严格 subtree completion：child 等 command、subagent 或 event subscription 时也可以向 parent 发送 typed lifecycle notification；parent 根据 lifecycle/status 判断 child 是否真正完成。active goal 或 pending input 仍应阻止通知；相同 lifecycle 去重，waiting -> final 等状态变化应再次通知。兼容 wire/persisted 名称 `ChildCompletion` 可保留，但不应用它定义新语义。
+- parent-side child notification bookkeeping 只用于 notification/status 投递、去重和清理，不应定义 child 当前是否 active；`WaitChild` / `IdleWaitChild` 只应由 direct child thread 的本地 active 状态驱动。
 - thread init context 中的 workflow discovery 依赖 `TurnContext::discovery_context()`，其 project workflows 来自 `config.config_layer_stack` 中各 project layer 的 `.codex/workflows`。
 - session 初始化阶段的 `instruction_files` 应按本地 config 路径读取，不应依赖 primary execution environment 是否存在。
 - ThreadProvider runtime API split 的当前边界是：`ThreadServiceApi` 作为兼容 facade，组合 `ThreadLifecycleRuntime`、`ThreadCollaborationRuntime` 和 `ThreadEventRuntime`；`NativeAgentRuntime` 承载 Morpheus-only `spawn_agent` / `followup_task` / `close_agent` / `list_agents`。后续新增 provider/thread 能力时优先挂到窄 trait 或 provider-neutral handle，不要继续扩大旧 facade。
@@ -59,6 +61,9 @@
 - 旧 `LiveThreadRegistry` / `AppServerLiveThreadRegistry` compatibility facade 已删除；已迁到窄 runtime 的 copied reads、commands、status、feedback metadata、turn validation、conversation append、history read、usage、skill-watch、goal、elicitation、listener/event-stream 等能力不应再通过 broad registry 暴露。
 - app-server thread processor 的 broad `ThreadProcessorThreadRuntime` 已删除；native root start/resume/fork creation 和 environment default/validation 现收口到 thread-service crate 内的 native-only `NativeThreadCreationRuntime` / `NativeThreadEnvironmentRuntime`。这些 trait 仍携带完整 `Config`、`InitialHistory`、dynamic tools、environment selections、agent metadata 等 native/app-server DTO，不是最终 provider-neutral `ThreadProvider` contract；不要把它们伪装成 external provider root start support。
 - turn request 的 environment selection validation 已复用 `NativeThreadEnvironmentRuntime`；`TurnProcessorRuntime` 已删除，不再承载 environment validation、live config read 或其他 native-only turn 能力。
+- Root Worker restart/navigation project list 应使用 `thread/list` 的 `useStateDbOnly: true` metadata-only path；Projects/sidebar 首屏只需要 cwd/project grouping、agent tree/lifecycle 等 navigation metadata，不应 eager `thread/read(include_history=true)` 或触发 app-server per-thread rollout history fallback。app-server `thread/list` 在 `use_state_db_only=true` 时不得为补 lifecycle 去 `read_thread_history_items(...)`，完整 conversation/history 仍应在打开具体 thread 时按需走 `thread/read` / turns list。
+- `thread/list(useStateDbOnly=true)` 是 state DB metadata 的信任读路径，不应因为 `rollout_path` 文件缺失而过滤或删除已有 DB row；默认 scan/repair/search/resume 路径仍应校验 rollout path 并清理真正 stale row。
+- Root Worker RightPanel 的 Live Commands 应来自 `activeCommandItems` 这类 live/current-state snapshot，而不是从 historical `commandExecution` conversation items 推导。历史 command item 可以保留为 conversation history，但不能让已完成、reload residue 或 compact-pruned late command 继续显示为 Running monitor；`list_commands` / `list_subscriptions` inspection tool 本身应通过 bounded typed `BuiltinToolCallStarted/Completed` event 进入 live/reload conversation display。
 - `thread/inject_items` 的 live conversation injection 已迁到独立 `LiveThreadConversationInjectionRuntime` / `AppServerLiveThreadConversationInjectionRuntime`。Injection 语义是直接记录 prebuilt `ResponseItem` 到 live conversation history，不 enqueue async input、不触发 pending work；不要与 subscription append 的 `LiveThreadConversationRuntime::append_live_thread_conversation_item` 混用。
 - `turn/steer` 的 live input capability 已迁到 thread-service crate native module 的 `NativeThreadSteerRuntime` 和 app-server object-safe `AppServerLiveThreadSteerRuntime`。它保留 `ThreadService::steer_thread_input` / `SteerInputError` typed active-turn semantics，不应改成普通 `LiveThreadCommandRuntime::submit_live_thread_op_with_trace(Op::UserInput...)`，也不应放入 provider-neutral `thread-service-api` 以泄漏 native steer error DTO。
 - detached review 的 current-history fork 和 metadata-only stored read 已迁到 thread-service crate native module 的 `NativeDetachedReviewRuntime`。它仍依赖 native `Config`、`ForkSnapshot::Interrupted`、current-history fork 和 `StoredThread` DTO，不是 provider-neutral lifecycle API；app-server 仍负责 listener attach、watch upsert、`ThreadStarted` notification 和 review turn submit orchestration。
@@ -116,12 +121,22 @@
   - workflow runtime bridge 的 agent wait 语义也应统一走 `poll_event`，不要继续依赖独立 `wait_agent` API。
 - `apps/root-worker-prototype/`
   - 负责 root-worker prototype 客户端、thread 展示、compact UI 与 renderer 状态。
+  - 默认 Electron app-server 启动仍以 `--listen stdio://` 作为桌面主通道；Android companion 配对时是在同一个 app-server 进程上附加 capability-token 保护的 mobile WebSocket listener（`--mobile-listen ws://IP:PORT`），而不是启动第二个独立 app-server 或复制 live runtime state。
   - 图形化设置编辑应走 Electron IPC 代理到 app-server `config/read` / `config/value/write` / `config/batchWrite`；Root Worker 不应直接用 fs 读写或拼接 `config.toml`。
+  - Settings 的 Android Companion 区只生成 typed/versioned connection QR payload；tunnel 由外部 provider 把同一 mobile listener 暴露成 `wss://...`，Settings 可展示/替换 endpoint，但不内置 tunnel 服务。
   - Settings 的 Provider 区负责 provider registry 和 provider-backed model catalog 配置，不是当前/thread 模型选择器；新增 ModelHub/custom 模型应写 `model_options` 并让 `model/list` / `RunConfigPicker` 后续选择，不能通过直接写全局 `model` / `model_provider` 来伪装新增模型。
   - Settings 的 provider onboarding 应在 provider group 内通过 app-server `account/read` / `account/login/start` / `account/login/cancel` 完成；OpenAI auth 只把 `apiKey` / `chatgpt` account 视为 OpenAI authenticated，非 OpenAI account 不能隐藏 OpenAI 登录入口。
   - `src/lib/conversation.ts` 已支持 `ThreadItem::BuiltinToolCall` 的 `poll_event` 展示文案；若 live UI 仍缺失，要先怀疑 server notification / 运行实例版本，而不是前端 summary 缺口。
   - `poll_event` 的主文案当前只展示 `sourceHint` / `timeout` / `failed` 等输出态，不会在 summary 文案里额外展开 arguments；而且该 tool 的 arguments 按设计本来就是 `{}`。
-  - conversation inline artifacts 应由 typed `ConversationArtifact` / `conversationArtifact` ThreadItem 驱动，SVG/HTML 预览走 sandboxed iframe，Markdown 预览复用 `MarkdownContent`；不要从普通 assistant Markdown/code block 自动解析成 artifact。
+  - conversation inline artifacts 应由 typed `ConversationArtifact` / `conversationArtifact` ThreadItem 驱动，SVG/HTML 预览走 sandboxed iframe，Markdown 预览复用 `MarkdownContent`；HTML artifact iframe 可允许自包含脚本执行但不能放开 same-origin/top navigation/forms/popups，SVG artifact 仍应禁脚本；不要从普通 assistant Markdown/code block 自动解析成 artifact。
+  - conversation artifacts 的发布路径已收口为 tool-first：`publish_artifact` 是唯一 model-visible declarative UI/artifact publishing tool，成功时直接发布 typed `ConversationArtifact` thread item 并走 live/reload/persistence 链路；它不是 runtime inspection/control tool，也不能返回 marker 文本再绕回 parser。旧 `MORPHEUS_ARTIFACT` marker 发布入口、assistant text parser 和 streaming hide/filter 已删除；普通 marker-looking assistant text 应保持普通可见消息。
+  - `ConversationArtifact` 支持 source union：inline source 承载自包含 content/mime/language/truncated；url source 承载一个有界 http/https URL 和可选 fallback。URL artifact 展示为 conversation artifact card，并通过用户显式 action 打开右侧 Browser panel；发布 artifact 本身不得隐式导航 Browser panel。
+  - Root Worker conversation transcript 默认不展示 reasoning thread item；reasoning typed item 仍可存在于后端/thread state/context usage/token accounting 中，不应通过删除数据模型或协议 schema 来实现隐藏。
+- `apps/android-companion/`
+  - 是第一版原生 Android remote client：手机通过用户配置的 `ws://` / `wss://` tunnel URL 连接当前机器运行的 app-server，Android 端不启动本地 runtime、不直接读写 `MORPHEUS_HOME`、rollout 或配置文件。
+  - Android 连接二维码推荐 payload 是 typed/versioned JSON：`type = "morpheus.androidConnection"`、`version = 1`、`endpoint`、可选 `token`；Android 端也可兼容 `morpheus://connect?...` 和裸 `ws://` / `wss://`，但必须拒绝非 WebSocket endpoint、错误 type/version 和非字符串 token。
+  - Android app 使用 app-server WebSocket JSON-RPC 协议：`initialize` / `initialized`、`thread/list`、`thread/read`、`thread/resume`、`thread/start`、`turn/start` 和 typed notifications。
+  - Android conversation/agent tree 展示应继续以 app-server typed thread items 和 notifications 为事实源；未知 item 可以用 bounded JSON fallback，但不要解析 provider raw output、assistant marker 或 legacy envelope 来伪造展示。
 
 ## Persistent State And Recovery
 - thread/history 的 reload 恢复能力由两段共同决定：
@@ -134,12 +149,13 @@
   - runtime 或 renderer 是否正确消费 replay 结果
 - 不能假设 `Extended` 中有事件就足够；如果 reload 路径只读 `Limited`，那对恢复语义来说 `Extended` 等于不存在。
 - 进入 `Limited` 的恢复型事件仍要保持 payload 有界；否则 `thread/read` / reload 会把大输出原样带回客户端。对 `ExecCommandEnd` 这类事件，持久化 sanitize 与展示恢复语义需要一起考虑。
+- session rollout 现在支持 compact-aware segmented storage：同一个 stable thread/session 可由多个 compact segment JSONL 加 sidecar `*.segments.json` manifest 组成；普通 by-id load/read/resume 应解析到 manifest head segment，只读 compact 后的 bounded head，而显式按 rollout path 读取可保留为旧 segment/调试入口。新 head segment 必须自带 `SessionMeta` 和 compact checkpoint，旧单文件无 manifest 时继续兼容旧读取。
 - `UnifiedExecStartup` / `Agent` 来源的 `ExecCommandBegin` 与 `ExecCommandEnd` 应进入 `Limited` 以支持 reload；`UserShell` / `UnifiedExecInteraction` 不应借此进入可恢复展示路径。
-- active schedule monitor 的 reload display 可由 `SessionMeta.subscriptions` 恢复：`thread-history` 会把 latest subscription snapshot 合成为 bounded typed `schedule_subscribe` / `schedule_unsubscribe` builtin items；`subscriptions: Some([])` 表示最新快照已无 active subscription，`subscriptions: None` 不能当作清空。
+- active subscription / current schedule monitor 现在有独立 current-state 持久化：`threads.subscriptions` nullable JSON 是 restart/restore/read 的优先权威源；rollout `SessionMeta.subscriptions` 继续作为历史、审计和旧线程兼容 fallback。`Some([])` 表示最新快照已无 active subscription，必须覆盖旧 rollout active；`None` 表示无 current-state snapshot，才允许 fallback。compact 可以裁剪 display history，但不能让 active subscription current-state 消失。
 
 ## Runtime And Agent Lifecycle
 - agent 是否可见、是否 active、是否 complete，不能只从某一个 bookkeeping 字段推断；需要区分本地 active 状态、completion 投递状态，以及 reload 后是否重新注册到 runtime 索引。
-- child completion 相关逻辑的长期目标是“完成态事件投递正确”而不是“靠 bookkeeping 假装 child 仍 active”。
+- child notification 相关逻辑的长期目标是“child status/update 及时投递且可去重”而不是“靠 bookkeeping 假装 child 仍 active”；不要把 `ChildCompletion` 兼容名重新解释成必须等待 command/subagent 全部完成的严格完成态。
 - `list_agents` 这类查询面向的是 runtime 可见集合；如果需求是“重启后仍能列出已完成 agent”，通常要检查恢复后的 runtime 注册语义，而不是只改查询接口。
 - external agent 的长期目标是成为 backend thread/provider execution mode：thread lifecycle、followup/pending input、tool loop、close/abort、parent completion 应与 native thread 对齐，差异只应留在 model IO / provider transport adapter。
 - external root 也参与统一 agent identity/path 模型：`thread/start.taskName` 应由后端 provider route 校验并落到 root agent path / metadata；不能要求客户端过滤，也不能简单忽略。external root 与 external subagent 的持久化分类应依赖 provider id、root-vs-subagent `SessionSource` / thread-spawn facts 和 `ThreadSource::User`，不要再用 `agent_path/role/nickname == None` 识别 external root。
@@ -179,6 +195,7 @@
 - memory 文件在 compact 后仍通过 `instruction_files` / init context 注入后续模型上下文；`CompactedItem.replacement_history` / `ContextCompaction.replacementHistory` 负责的是最小模型可见 history 种子与 persisted/UI compact 事实，不承载整份 memory markdown 的重复副本。
 - compact final output 的提取必须限定在“当前 compact turn、最后一次 compact prompt 之后”的 assistant 输出；不能从整段历史扫描最后 assistant message，否则会误吸上一轮普通回复。
 - context usage 的 loaded skills 表示当前 model-visible context 中可信的已加载 skill body 状态，不是“历史上曾经加载过 skill”的永久事实；successful compact 是 loaded-skill current-state 的强边界，compact replacement 前的 skill loads 不应继续让客户端或后续 skill 触发逻辑认为该 skill 当前仍 loaded。
+- context-window overflow recovery 现在采用 suffix-staged compact：普通请求实际 `ContextWindowExceeded` 后，runtime 临时从 in-memory model-visible history 尾部 staged 最新 suffix item(s)，对剩余 prefix 做 compact；若 compact 仍 overflow 则扩大 suffix，compact 成功后把 suffix 原样接回 replacement history 再 retry 普通请求。该过程不能删除 persisted history，不能重复持久化/展示 suffix；`CompactedItem.visible_replacement_history_len` 用于让 reload history 保留 suffix，但 compact detail 只展示 compacted prefix。当前单条用户输入本身超窗仍是明确的 current-input-too-large 例外。
 
 ## Validation Defaults
 - 默认只做最小必要验证，不默认运行全量 `cargo test`、广域 `just fix`、snapshot、schema 或 lockfile workflow。
