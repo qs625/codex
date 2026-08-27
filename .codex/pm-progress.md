@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Build a complete packaged Root Worker desktop app by bundling a release app-server binary and default compact prompt seed resources.
 
 ## Active Work
+- id: root-worker-complete-packaged-app
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: feature/rollout-session-directory-layout
+  task_type: feature/packaging
+  depends_on: 981dfdd9776ac4f97aaec7dbe9b82d91d8e8473a
+  files: apps/root-worker-prototype/package.json; apps/root-worker-prototype/electron/appServerClient.cjs; apps/root-worker-prototype/electron/appServerClient.test.cjs; apps/root-worker-prototype/scripts/*; codex-rs/thread-service/templates/compact/prompt.md or package seed assets only if needed; README/package docs as needed
+  base_commit: 981dfdd9776ac4f97aaec7dbe9b82d91d8e8473a
+  pending_sync_from_main: none; owner_dev fast-forwarded to `981dfdd9776ac4f97aaec7dbe9b82d91d8e8473a` before dispatch.
+  status: merged
+  objective: Make Root Worker mac packaging produce a self-contained installed app: build release `app-server`, bundle it into the `.app`, use the bundled binary by default at runtime, and seed default `MORPHEUS_HOME/compact/COMPACT.md` from packaged defaults on first launch without overwriting user edits.
+  last_update: 2026-08-27 PM accepted owner_dev commit `dde932618a` and merged it into main. PM design-checked that packaging builds release `app-server`, stages it as app resource `bin/app-server`, stages compact seed `default-config/compact/COMPACT.md`, runtime prefers bundled binary before dev/PATH fallback, env overrides remain highest priority, desktop sparse env is normalized, and `MORPHEUS_HOME/compact/COMPACT.md` is seeded only when missing.
+  next_action: Commit PM validation record, push origin/main, then sync idle dev checkouts.
+  blockers: none
+  validation: Owner ran Root Worker appServerClient/package helper tests -> 34 passed; release app-server build passed with existing warnings; `package:mac:app` passed and produced codesigned `.app` with bundled app-server and compact seed; reviewer passed after HOME sparse-env fix. PM reran on merged main: `rtk pnpm --filter @my-codex/root-worker-prototype test -- electron/appServerClient.test.cjs scripts/package-mac-app.test.cjs` -> 34 passed; `rtk pnpm --filter @my-codex/root-worker-prototype package:mac:app` -> passed with existing Vite chunk-size and app-server warnings; checked `.app/Contents/Resources/bin/app-server` exists and is executable; checked `.app/Contents/Resources/default-config/compact/COMPACT.md` exists and matches `codex-rs/thread-service/templates/compact/prompt.md`; `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: ed872369a8ed9477b3028550e7f647e837b195c5
 - id: remove-artifact-marker-path
   owner: /my_codex/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
