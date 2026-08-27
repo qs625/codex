@@ -23,7 +23,7 @@ use crate::request_headers::build_session_headers;
 use crate::request_headers::insert_header;
 use crate::request_headers::subagent_header;
 use crate::responses_requests::attach_item_ids;
-use crate::responses_requests::strip_unsupported_responses_input_items;
+use crate::responses_requests::make_responses_input_items_compatible;
 use crate::responses_sse::spawn_response_stream;
 
 pub struct ResponsesClient<T: HttpTransport> {
@@ -70,7 +70,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
             turn_state,
         } = options;
 
-        strip_unsupported_responses_input_items(&mut request.input);
+        make_responses_input_items_compatible(&mut request.input);
         let mut body = serde_json::to_value(&request).map_err(|error| {
             ApiError::Stream(format!("failed to encode responses request: {error}"))
         })?;

@@ -659,7 +659,7 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
 }
 
 #[tokio::test]
-async fn responses_client_strips_context_compaction_from_request_input() -> Result<()> {
+async fn responses_client_makes_internal_history_items_responses_compatible() -> Result<()> {
     let state = RecordingState::default();
     let transport = RecordingTransport::new(state.clone());
     let client = ResponsesClient::new(transport, provider("azure"), Arc::new(NoAuth));
@@ -678,6 +678,15 @@ async fn responses_client_strips_context_compaction_from_request_input() -> Resu
             },
             ResponseItem::ContextCompaction {
                 encrypted_content: None,
+            },
+            ResponseItem::CommandExecutionNotification {
+                id: Some("cmd-1:notification:exit".into()),
+                command_item_id: "cmd-1".into(),
+                kind: protocol::models::CommandExecutionNotificationKind::Exit,
+                message: "Command exit notification received.".into(),
+                output: Some("done\n".into()),
+                exit_code: Some(0),
+                created_at_ms: 1234,
             },
             ResponseItem::Message {
                 id: Some("msg_2".into()),
@@ -721,7 +730,7 @@ async fn responses_client_strips_context_compaction_from_request_input() -> Resu
         .and_then(|body| body.get("input"))
         .and_then(|input| input.as_array())
         .expect("input array");
-    assert_eq!(input.len(), 2);
+    assert_eq!(input.len(), 3);
     assert_eq!(
         input[0].get("type").and_then(|value| value.as_str()),
         Some("message")
@@ -734,8 +743,22 @@ async fn responses_client_strips_context_compaction_from_request_input() -> Resu
         input[1].get("type").and_then(|value| value.as_str()),
         Some("message")
     );
+    let notification_text = input[1]
+        .get("content")
+        .and_then(|content| content.as_array())
+        .and_then(|content| content.first())
+        .and_then(|item| item.get("text"))
+        .and_then(|text| text.as_str())
+        .expect("notification message text");
+    assert!(notification_text.contains(r#""type":"command_execution_notification""#));
+    assert!(notification_text.contains(r#""command_item_id":"cmd-1""#));
+    assert!(notification_text.contains(r#""exit_code":0"#));
     assert_eq!(
-        input[1].get("id").and_then(|value| value.as_str()),
+        input[2].get("type").and_then(|value| value.as_str()),
+        Some("message")
+    );
+    assert_eq!(
+        input[2].get("id").and_then(|value| value.as_str()),
         Some("msg_2")
     );
 

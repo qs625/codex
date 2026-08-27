@@ -54,7 +54,7 @@ use tungstenite::extensions::compression::deflate::DeflateConfig;
 use tungstenite::protocol::WebSocketConfig;
 use url::Url;
 
-use crate::responses_requests::strip_unsupported_responses_ws_input_items;
+use crate::responses_requests::make_responses_ws_input_items_compatible;
 use crate::responses_sse::ResponsesStreamEvent;
 use crate::responses_sse::process_responses_event;
 use crate::responses_sse::response_stream_from_receiver;
@@ -292,7 +292,7 @@ impl ResponsesWebsocketConnection {
         let models_etag = self.models_etag.clone();
         let server_model = self.server_model.clone();
         let telemetry = self.telemetry.clone();
-        strip_unsupported_responses_ws_input_items(&mut request);
+        make_responses_ws_input_items_compatible(&mut request);
         let request_body = serde_json::to_value(&request).map_err(|err| {
             ApiError::Stream(format!("failed to encode websocket request: {err}"))
         })?;
