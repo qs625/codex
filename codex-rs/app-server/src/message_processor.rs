@@ -12,6 +12,7 @@ use crate::error_code::invalid_request;
 use crate::extensions::FileSubscriptionThreadHost;
 use crate::extensions::thread_extensions;
 use crate::fs_watch::FsWatchManager;
+use crate::host_lifecycle::AppServerHostLifecycleToolRuntime;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
 use crate::outgoing_message::OutgoingMessageSender;
@@ -366,11 +367,14 @@ impl MessageProcessor {
         ));
         let thread_service_plugin_runtime: plugin_service_api::SharedPluginRuntime =
             plugins_manager.clone();
+        let host_lifecycle_runtime: Arc<dyn codex_tool_service::HostLifecycleToolRuntime> =
+            Arc::new(AppServerHostLifecycleToolRuntime::new(outgoing.clone()));
         let workflow_service_slot = std::sync::OnceLock::new();
         let thread_service: Arc<ThreadService> =
             Arc::new_cyclic(|thread_service: &Weak<ThreadService>| {
                 let agent_tool_runtime: Weak<dyn codex_tool_service::AgentToolRuntime> =
                     thread_service.clone();
+                let host_lifecycle_runtime = Some(Arc::clone(&host_lifecycle_runtime));
                 let workflow_thread_runtime: Weak<dyn codex_workflow::WorkflowThreadRuntime> =
                     thread_service.clone();
                 let workflow_service = Arc::new(codex_workflow::WorkflowService::new(
@@ -382,15 +386,17 @@ impl MessageProcessor {
                     .unwrap_or_else(|_| panic!("workflow service slot should only be set once"));
                 let approval_service = Arc::new(approval_service::ApprovalService);
                 let mcp_service = Arc::new(mcp_service::McpService::new(approval_service.clone()));
-                let tool_service = Arc::new(codex_tool_service::ToolService::new(
-                    approval_service,
-                    Arc::new(command_service::CommandService::new()),
-                    Arc::new(goal_service::GoalService),
-                    mcp_service.clone(),
-                    Arc::new(permissions_service::PermissionsService),
-                    workflow_service,
-                    agent_tool_runtime,
-                ));
+                let tool_service =
+                    Arc::new(codex_tool_service::ToolService::new_with_host_lifecycle(
+                        approval_service,
+                        Arc::new(command_service::CommandService::new()),
+                        Arc::new(goal_service::GoalService),
+                        mcp_service.clone(),
+                        Arc::new(permissions_service::PermissionsService),
+                        workflow_service,
+                        agent_tool_runtime,
+                        host_lifecycle_runtime,
+                    ));
                 let runtime_environment_provider: Arc<dyn ExecEnvironmentProvider> =
                     environment_manager.clone();
                 let auth_runtimes = ThreadAuthRuntimes::from_auth_runtime(

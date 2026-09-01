@@ -699,6 +699,7 @@ mod tests {
     use app_server_protocol::AccountLoginCompletedNotification;
     use app_server_protocol::AccountRateLimitsUpdatedNotification;
     use app_server_protocol::AccountUpdatedNotification;
+    use app_server_protocol::ClientRelaunchRequestedNotification;
     use app_server_protocol::CommandExecutionApprovalDecision;
     use app_server_protocol::CommandExecutionRequestApprovalParams;
     use app_server_protocol::ConfigWarningNotification;
@@ -883,6 +884,31 @@ mod tests {
             serde_json::to_value(jsonrpc_notification)
                 .expect("ensure the notification serializes correctly"),
             "ensure the notification serializes correctly"
+        );
+    }
+
+    #[test]
+    fn verify_client_relaunch_requested_notification_serialization() {
+        let notification =
+            ServerNotification::ClientRelaunchRequested(ClientRelaunchRequestedNotification {
+                reason: Some("runtime update".to_string()),
+                requested_by_thread_id: Some("thread-1".to_string()),
+                resume_strategy: "client_bootstrap_autoresume".to_string(),
+            });
+
+        let jsonrpc_notification = OutgoingMessage::AppServerNotification(notification);
+        assert_eq!(
+            json!({
+                "method": "client/relaunch/requested",
+                "params": {
+                    "reason": "runtime update",
+                    "requestedByThreadId": "thread-1",
+                    "resumeStrategy": "client_bootstrap_autoresume",
+                },
+            }),
+            serde_json::to_value(jsonrpc_notification)
+                .expect("ensure the notification serializes correctly"),
+            "ensure the client relaunch notification serializes correctly"
         );
     }
 

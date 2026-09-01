@@ -94,6 +94,7 @@ mod extensions;
 mod filters;
 mod fs_watch;
 mod fuzzy_file_search;
+mod host_lifecycle;
 pub mod in_process;
 mod live_thread_runtime;
 mod mcp_refresh;

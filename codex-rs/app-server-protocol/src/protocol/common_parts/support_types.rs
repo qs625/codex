@@ -237,6 +237,7 @@ server_notification_definitions! {
     ThreadGoalCleared => "thread/goal/cleared" (v2::ThreadGoalClearedNotification),
     ThreadTokenUsageUpdated => "thread/tokenUsage/updated" (v2::ThreadTokenUsageUpdatedNotification),
     ThreadContextUsageUpdated => "thread/contextUsage/updated" (v2::ThreadContextUsageUpdatedNotification),
+    ClientRelaunchRequested => "client/relaunch/requested" (v2::ClientRelaunchRequestedNotification),
     WorkflowRunUpdated => "workflow/run/updated" (v2::WorkflowRunUpdatedNotification),
     TurnStarted => "turn/started" (v2::TurnStartedNotification),
     HookStarted => "hook/started" (v2::HookStartedNotification),
