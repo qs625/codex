@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   health: () => ipcRenderer.invoke("codex:health"),
   showSystemNotification: (payload) =>
     ipcRenderer.invoke("codex:showSystemNotification", payload),
+  relaunchApp: (payload) => ipcRenderer.invoke("codex:relaunchApp", payload),
   bootstrap: () => ipcRenderer.invoke("codex:bootstrap"),
   listThreads: (cwd) => ipcRenderer.invoke("codex:listThreads", cwd),
   listModels: () => ipcRenderer.invoke("codex:listModels"),

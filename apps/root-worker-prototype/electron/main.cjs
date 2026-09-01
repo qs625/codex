@@ -47,14 +47,25 @@ const {
 const {
   showSystemNotification,
 } = require("./systemNotification.cjs");
+const {
+  createAppRelaunchAdapter,
+  isClientRelaunchNotification,
+} = require("./appLifecycle.cjs");
+const {
+  AUTO_RESUME_PROMPT,
+  createJsonAutoResumeStateStore,
+  createThreadAutoResumeCoordinator,
+} = require("./threadAutoResume.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
+const appRelaunch = createAppRelaunchAdapter({ app });
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
 const threadRuntimeById = new Map();
+let autoResumeCoordinator = null;
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
@@ -135,7 +146,12 @@ appServerClient.on("notification", (notification) => {
       }),
     );
   }
-  broadcast("codex:notification", normalizeNotification(notification));
+  const normalizedNotification = normalizeNotification(notification);
+  if (isClientRelaunchNotification(normalizedNotification)) {
+    handleClientRelaunchNotification(normalizedNotification);
+    return;
+  }
+  broadcast("codex:notification", normalizedNotification);
 });
 
 appServerClient.on("request", (request) => {
@@ -174,12 +190,18 @@ ipcMain.handle("codex:showSystemNotification", async (_event, payload) =>
   showSystemNotification(payload, { Notification }),
 );
 
+ipcMain.handle("codex:relaunchApp", async (_event, payload = {}) => {
+  return requestClientRelaunch(payload?.reason ?? "renderer");
+});
+
 ipcMain.handle("codex:bootstrap", async () => {
   await ensureDefaultWorkspace();
   const threads = await listThreads(defaultWorkspace);
+  const autoResume = await getAutoResumeCoordinator().run(threads);
   return {
     workspace: defaultWorkspace,
     threads,
+    autoResume,
     appServer: appServerClient.status,
   };
 });
@@ -476,15 +498,7 @@ ipcMain.handle("codex:sendMessage", async (_event, payload) => {
     });
   }
 
-  const response = await appServerClient.request(
-    "turn/start",
-    buildTurnStartParams(payload, input),
-  );
-  rememberThreadRuntime(
-    payload.threadId,
-    mergeRuntimeOverride(threadRuntimeById.get(payload.threadId), payload),
-  );
-  return response;
+  return startThreadTurn(payload, input);
 });
 
 ipcMain.handle("codex:interruptTurn", async (_event, payload) => {
@@ -816,6 +830,45 @@ function handleStartupError(error) {
   app.exit(1);
 }
 
+function handleClientRelaunchNotification(notification) {
+  const result = requestClientRelaunch(
+    notification.params?.reason ?? notification.method,
+  );
+  if (!result.ok) {
+    broadcast("codex:status", {
+      ...appServerClient.status,
+      relaunch: result,
+    });
+  }
+}
+
+function requestClientRelaunch(reason) {
+  const result = appRelaunch.requestRelaunch(reason);
+  if (!result.ok) {
+    console.error(
+      "[prototype] client relaunch unavailable",
+      JSON.stringify({ reason: result.reason }),
+    );
+  }
+  return result;
+}
+
+function getAutoResumeCoordinator() {
+  if (!autoResumeCoordinator) {
+    autoResumeCoordinator = createThreadAutoResumeCoordinator({
+      readThread,
+      subscribeThread,
+      sendResumeInput: sendAutoResumeInput,
+      stateStore: createJsonAutoResumeStateStore(
+        path.join(app.getPath("userData"), "runtime-autoresume.json"),
+        fs,
+      ),
+      logger: console,
+    });
+  }
+  return autoResumeCoordinator;
+}
+
 async function listThreads(cwd) {
   return listAllThreads(appServerClient, normalizeThread);
 }
@@ -854,6 +907,30 @@ async function subscribeThread(threadId) {
       ? normalizeThread({ ...resume.thread, turns: [] }, runtime)
       : null,
   };
+}
+
+async function sendAutoResumeInput(thread) {
+  return startThreadTurn({
+    threadId: thread.id,
+    model: thread.model ?? null,
+    modelProvider: thread.modelProvider ?? null,
+    effort: thread.reasoningEffort ?? null,
+    text: AUTO_RESUME_PROMPT,
+    skills: [],
+    images: [],
+  });
+}
+
+async function startThreadTurn(payload, input = buildTurnInput(payload)) {
+  const response = await appServerClient.request(
+    "turn/start",
+    buildTurnStartParams(payload, input),
+  );
+  rememberThreadRuntime(
+    payload.threadId,
+    mergeRuntimeOverride(threadRuntimeById.get(payload.threadId), payload),
+  );
+  return response;
 }
 
 function rememberThreadRuntime(threadId, runtime) {

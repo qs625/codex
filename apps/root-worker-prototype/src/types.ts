@@ -587,6 +587,13 @@ export type Thread = {
 export type BootstrapResponse = {
   workspace: string;
   threads: Thread[];
+  autoResume?: {
+    resumedThreadIds: string[];
+    skippedThreadIds: string[];
+    failedThreadIds: string[];
+    focusThreadId: string | null;
+    errors: Array<{ threadId: string; message: string }>;
+  };
   appServer: {
     connected: boolean;
     pid: number | null;
@@ -681,6 +688,12 @@ export type NotificationEnvelope = {
     connected: boolean;
     pid?: number | null;
     reason?: string;
+    relaunch?: {
+      ok: boolean;
+      relaunching: boolean;
+      alreadyRequested?: boolean;
+      reason?: string | null;
+    };
   };
 };
 

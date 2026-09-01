@@ -873,7 +873,11 @@ function App() {
         ),
       );
       setThreads(normalizedThreads.map(applyQueuedThreadUpdates));
-      const preferredProjectThread = pickInitialProjectThread(normalizedThreads);
+      const autoResumeThread = normalizedThreads.find(
+        (thread) => thread.id === payload.autoResume?.focusThreadId,
+      );
+      const preferredProjectThread =
+        autoResumeThread ?? pickInitialProjectThread(normalizedThreads);
       if (preferredProjectThread) {
         setSelectedThreadId(preferredProjectThread.id);
         return;
