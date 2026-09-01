@@ -66,6 +66,7 @@ pub(crate) use tool_specs::WORKFLOW_LIST_TOOL_NAME;
 pub(crate) use tool_specs::WORKFLOW_RESUME_TOOL_NAME;
 pub(crate) use tool_specs::WORKFLOW_START_TOOL_NAME;
 pub(crate) use tool_specs::WORKFLOW_STATUS_TOOL_NAME;
+pub(crate) use tool_specs::create_agent_role_load_tool;
 pub(crate) use tool_specs::create_apply_patch_freeform_tool;
 pub(crate) use tool_specs::create_close_agent_tool_v2;
 pub(crate) use tool_specs::create_close_external_agent_tool;

@@ -254,6 +254,55 @@ pub fn create_poll_event_tool() -> ToolSpec {
     })
 }
 
+pub fn create_agent_role_load_tool() -> ToolSpec {
+    let properties = BTreeMap::from([(
+        "agent_type".to_string(),
+        JsonSchema::string(Some(
+            "Agent role/type to load into the current Morpheus native thread. Must be one of the configured or built-in agent types visible to this session.".to_string(),
+        )),
+    )]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "agent_role_load".to_string(),
+        description: "Load an agent role into the current Morpheus native thread. The requested role is resolved from the session's configured and built-in agent types, then applied to the live runtime and persisted thread metadata for subsequent turns, thread reads, lists, resumes, and compaction.".to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["agent_type".to_string()]),
+            Some(false.into()),
+        ),
+        output_schema: Some(agent_role_load_output_schema()),
+    })
+}
+
+fn agent_role_load_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "agentRole": {
+                "type": "string",
+                "description": "The loaded agent role."
+            },
+            "effective": {
+                "type": "string",
+                "enum": ["next_turn"],
+                "description": "When the loaded role becomes part of model-visible turn context."
+            },
+            "model": {
+                "type": "string",
+                "description": "The effective session model after applying the role."
+            },
+            "reasoningEffort": {
+                "type": ["string", "null"],
+                "description": "The effective reasoning effort after applying the role."
+            }
+        },
+        "required": ["agentRole", "effective", "model", "reasoningEffort"],
+        "additionalProperties": false
+    })
+}
+
 fn poll_event_output_schema() -> serde_json::Value {
     let poll_event_item_schema = poll_event_item_output_schema();
     json!({

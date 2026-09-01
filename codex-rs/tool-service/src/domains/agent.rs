@@ -6,6 +6,7 @@ use std::time::UNIX_EPOCH;
 
 use crate::planning::SpawnAgentToolOptions;
 use crate::planning::ToolSpec;
+use crate::planning::create_agent_role_load_tool;
 use crate::planning::create_close_agent_tool_v2;
 use crate::planning::create_close_external_agent_tool;
 use crate::planning::create_followup_external_task_tool;
@@ -38,6 +39,7 @@ use serde_json::json;
 use thread_service_api::NativeAgentRuntime;
 use thread_service_api::NativeTurnEventRuntime;
 use thread_service_api::SessionAgentJobCaller;
+use thread_service_api::ThreadAgentRoleLoadResult;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
 use thread_service_api::ThreadFollowupTaskInput;
@@ -77,6 +79,7 @@ const POLL_EXTERNAL_EVENT_TOOL_NAME: &str = "poll_external_event";
 const LIST_EXTERNAL_AGENTS_TOOL_NAME: &str = "list_external_agents";
 const READ_EXTERNAL_AGENT_TOOL_NAME: &str = "read_external_agent";
 const CLOSE_EXTERNAL_AGENT_TOOL_NAME: &str = "close_external_agent";
+const AGENT_ROLE_LOAD_TOOL_NAME: &str = "agent_role_load";
 const READ_AGENT_DISPLAY_TEXT_LIMIT: usize = 500;
 
 pub trait AgentToolRuntime: Send + Sync + 'static {
@@ -115,6 +118,13 @@ pub trait AgentToolRuntime: Send + Sync + 'static {
         call_id: String,
         target: String,
     ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>>;
+
+    fn load_agent_role<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        agent_type: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadAgentRoleLoadResult, FunctionCallError>>;
 
     fn spawn_external_agent<'a>(
         &'a self,
@@ -215,6 +225,15 @@ where
         NativeAgentRuntime::read_agent(self, turn, call_id, target)
     }
 
+    fn load_agent_role<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        agent_type: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadAgentRoleLoadResult, FunctionCallError>> {
+        NativeAgentRuntime::load_agent_role(self, turn, call_id, agent_type)
+    }
+
     fn spawn_external_agent<'a>(
         &'a self,
         turn: Arc<dyn ThreadTurnCapability>,
@@ -293,6 +312,7 @@ pub(crate) fn specs(request: &TypedToolSpecRequest<'_>) -> Vec<ToolSpec> {
         create_list_agents_tool(),
         create_read_agent_tool(),
         create_close_agent_tool_v2(),
+        create_agent_role_load_tool(),
         create_spawn_external_agent_tool(),
         create_followup_external_task_tool(),
         create_poll_external_event_tool(),
@@ -314,6 +334,7 @@ pub(crate) fn owns_tool_name(_request: &TypedToolSpecRequest<'_>, tool_name: &To
                 | LIST_AGENTS_TOOL_NAME
                 | READ_AGENT_TOOL_NAME
                 | CLOSE_AGENT_TOOL_NAME
+                | AGENT_ROLE_LOAD_TOOL_NAME
                 | SPAWN_EXTERNAL_AGENT_TOOL_NAME
                 | FOLLOWUP_EXTERNAL_TASK_TOOL_NAME
                 | POLL_EXTERNAL_EVENT_TOOL_NAME
@@ -700,6 +721,83 @@ pub(crate) async fn dispatch(
                 .await?;
             function_tool_json_output(&result, CLOSE_AGENT_TOOL_NAME)?
         }
+        AGENT_ROLE_LOAD_TOOL_NAME => {
+            let arguments = function_arguments(&call)?;
+            let args: AgentRoleLoadArgs = parse_arguments(&arguments)?;
+            let display_arguments = json!({
+                "agent_type": args.agent_type.clone(),
+            });
+            let item_id = call.call_id.clone();
+            let turn_id = turn.runtime_turn_id_str().to_string();
+            session_capability
+                .emit_event(
+                    turn.as_ref(),
+                    EventMsg::BuiltinToolCallStarted(BuiltinToolCallDisplayEvent {
+                        thread_id: session_capability.conversation_id(),
+                        turn_id: turn_id.clone(),
+                        id: item_id.clone(),
+                        tool: AGENT_ROLE_LOAD_TOOL_NAME.to_string(),
+                        arguments: display_arguments.clone(),
+                        status: BuiltinToolCallStatus::InProgress,
+                        output: None,
+                        lifecycle_at_ms: now_unix_timestamp_ms(),
+                    }),
+                )
+                .await;
+            let result = agent_runtime
+                .load_agent_role(
+                    Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadTurnCapability>,
+                    call.call_id.clone(),
+                    args.agent_type.clone(),
+                )
+                .await;
+            match result {
+                Ok(result) => {
+                    let display_output = serde_json::to_value(&result).map_err(|err| {
+                        FunctionCallError::Fatal(format!(
+                            "failed to serialize {AGENT_ROLE_LOAD_TOOL_NAME} display output: {err}"
+                        ))
+                    })?;
+                    session_capability
+                        .emit_event(
+                            turn.as_ref(),
+                            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                                thread_id: session_capability.conversation_id(),
+                                turn_id,
+                                id: item_id,
+                                tool: AGENT_ROLE_LOAD_TOOL_NAME.to_string(),
+                                arguments: display_arguments,
+                                status: BuiltinToolCallStatus::Completed,
+                                output: Some(display_output),
+                                lifecycle_at_ms: now_unix_timestamp_ms(),
+                            }),
+                        )
+                        .await;
+                    function_tool_json_output(&result, AGENT_ROLE_LOAD_TOOL_NAME)?
+                }
+                Err(err) => {
+                    session_capability
+                        .emit_event(
+                            turn.as_ref(),
+                            EventMsg::BuiltinToolCallCompleted(BuiltinToolCallDisplayEvent {
+                                thread_id: session_capability.conversation_id(),
+                                turn_id,
+                                id: item_id,
+                                tool: AGENT_ROLE_LOAD_TOOL_NAME.to_string(),
+                                arguments: display_arguments,
+                                status: BuiltinToolCallStatus::Failed,
+                                output: Some(json!({
+                                    "agentType": args.agent_type,
+                                    "error": err.to_string(),
+                                })),
+                                lifecycle_at_ms: now_unix_timestamp_ms(),
+                            }),
+                        )
+                        .await;
+                    return Err(err);
+                }
+            }
+        }
         SPAWN_AGENTS_ON_CSV_TOOL_NAME => {
             let arguments = function_arguments(&call)?;
             agent_jobs::handle_spawn_agents_on_csv(session, turn, arguments).await?
@@ -978,6 +1076,12 @@ struct ReadAgentArgs {
     target: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentRoleLoadArgs {
+    agent_type: String,
+}
+
 fn function_arguments(call: &ToolCall) -> Result<String, FunctionCallError> {
     match &call.payload {
         ToolPayload::Function { arguments } => Ok(arguments.clone()),
@@ -1104,6 +1208,15 @@ mod tests {
             _target: String,
         ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>> {
             Box::pin(async { unreachable!("read_agent should not be called in this test") })
+        }
+
+        fn load_agent_role<'a>(
+            &'a self,
+            _turn: Arc<dyn thread_service_api::ThreadTurnCapability>,
+            _call_id: String,
+            _agent_type: String,
+        ) -> ThreadServiceFuture<'a, Result<ThreadAgentRoleLoadResult, FunctionCallError>> {
+            Box::pin(async { unreachable!("load_agent_role should not be called in this test") })
         }
 
         fn spawn_external_agent<'a>(

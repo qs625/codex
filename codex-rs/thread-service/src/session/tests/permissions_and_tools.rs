@@ -51,6 +51,134 @@ async fn request_permissions_is_auto_denied_when_granular_policy_blocks_tool_req
 }
 
 #[tokio::test]
+async fn agent_role_load_config_uses_current_session_overlays_as_base() {
+    let codex_home = tempfile::tempdir().expect("create temp dir");
+    let (session, _turn_context, _rx) = make_session_and_context_with_auth_config_home_and_rx(
+        CodexAuth::from_api_key("test-api-key"),
+        Vec::new(),
+        codex_home.path(),
+        |config| {
+            config.model_reasoning_effort = Some(protocol::openai_models::ReasoningEffort::Medium);
+            config.service_tier = Some("flex".to_string());
+            let agents_dir = config.codex_home.join("agents");
+            std::fs::create_dir_all(&agents_dir).expect("create agents dir");
+            let role_file = agents_dir.join("custom.agent.md");
+            std::fs::write(
+                &role_file,
+                r#"---
+name: custom
+description: Custom role
+---
+Custom developer instructions.
+"#,
+            )
+            .expect("write custom role");
+            let approval_role_file = agents_dir.join("approval.toml");
+            std::fs::write(
+                &approval_role_file,
+                r#"developer_instructions = "Approval developer instructions."
+approval_policy = "never"
+allow_login_shell = false
+"#,
+            )
+            .expect("write approval role");
+            config.agent_roles.insert(
+                "custom".to_string(),
+                codex_agent_roles::AgentRoleConfig {
+                    description: Some("Custom role".to_string()),
+                    config_file: Some(role_file.to_path_buf()),
+                    ..Default::default()
+                },
+            );
+            config.agent_roles.insert(
+                "approval".to_string(),
+                codex_agent_roles::AgentRoleConfig {
+                    description: Some("Approval role".to_string()),
+                    config_file: Some(approval_role_file.to_path_buf()),
+                    ..Default::default()
+                },
+            );
+        },
+    )
+    .await;
+
+    let selected_root =
+        AbsolutePathBuf::try_from(codex_home.path().join("selected-workspace-root"))
+            .expect("absolute selected workspace root");
+    session
+        .update_settings(SessionSettingsUpdate {
+            collaboration_mode: Some(session.collaboration_mode().await.with_updates(
+                None,
+                Some(None),
+                None,
+            )),
+            workspace_roots: Some(vec![selected_root.clone()]),
+            approval_policy: Some(AskForApproval::UnlessTrusted),
+            approvals_reviewer: Some(config_service::types::ApprovalsReviewer::AutoReview),
+            permission_profile: Some(protocol::models::PermissionProfile::Disabled),
+            service_tier: Some(None),
+            personality: Some(protocol::config_types::Personality::Friendly),
+            ..Default::default()
+        })
+        .await
+        .expect("update session overlays");
+    assert!(
+        session
+            .get_config()
+            .await
+            .agent_roles
+            .contains_key("custom"),
+        "custom role should remain available on session config"
+    );
+
+    let next_config = session
+        .build_agent_role_load_config_for_next_turn("custom")
+        .await
+        .expect("build role load config");
+
+    assert_eq!(next_config.model_reasoning_effort, None);
+    assert_eq!(next_config.service_tier, None);
+    assert_eq!(
+        next_config.personality,
+        Some(protocol::config_types::Personality::Friendly)
+    );
+    assert_eq!(
+        next_config.permissions.approval_policy.value(),
+        AskForApproval::UnlessTrusted
+    );
+    assert_eq!(
+        next_config.approvals_reviewer,
+        config_service::types::ApprovalsReviewer::AutoReview
+    );
+    assert_eq!(
+        next_config.permissions.effective_permission_profile(),
+        protocol::models::PermissionProfile::Disabled
+    );
+    assert_eq!(next_config.workspace_roots, vec![selected_root.clone()]);
+    assert_eq!(
+        next_config.developer_instructions.as_deref(),
+        Some("Custom developer instructions.")
+    );
+
+    let approval_role_config = session
+        .build_agent_role_load_config_for_next_turn("approval")
+        .await
+        .expect("build approval role load config");
+    assert_eq!(
+        approval_role_config.permissions.approval_policy.value(),
+        AskForApproval::Never
+    );
+    assert!(!approval_role_config.permissions.allow_login_shell);
+    assert_eq!(
+        approval_role_config
+            .permissions
+            .effective_permission_profile(),
+        protocol::models::PermissionProfile::Disabled
+    );
+    assert_eq!(approval_role_config.workspace_roots, vec![selected_root]);
+}
+
+#[tokio::test]
 async fn submit_with_id_captures_current_span_trace_context() {
     let (session, _turn_context) = make_session_and_context().await;
     let (tx_sub, rx_sub) = async_channel::bounded(1);

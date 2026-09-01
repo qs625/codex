@@ -30,6 +30,7 @@ use thread_service_api::RootThreadProviderResolutionError;
 use thread_service_api::RootThreadProviderRoute;
 use thread_service_api::ThreadAgentDetails;
 use thread_service_api::ThreadAgentDirectoryRuntime;
+use thread_service_api::ThreadAgentRoleLoadResult;
 use thread_service_api::ThreadCloseAgentResult;
 use thread_service_api::ThreadCollaborationRuntime;
 use thread_service_api::ThreadCreatedEvent;
@@ -478,6 +479,21 @@ impl NativeAgentRuntime for ThreadService {
             multi_agent::read_agent_tool(session(turn.as_ref()), Arc::clone(&turn), call_id, target)
                 .await
                 .map(from_runtime_read_agent_result)
+        })
+    }
+
+    fn load_agent_role<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        _call_id: String,
+        agent_type: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadAgentRoleLoadResult, FunctionCallError>> {
+        Box::pin(async move {
+            let turn = turn_context(turn)?;
+            session(turn.as_ref())
+                .load_agent_role_for_next_turn(turn.as_ref(), agent_type)
+                .await
+                .map_err(FunctionCallError::RespondToModel)
         })
     }
 }
