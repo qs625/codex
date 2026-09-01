@@ -8,6 +8,7 @@ pub(crate) mod exec_command;
 pub(crate) mod extension;
 pub(crate) mod function;
 pub(crate) mod goal;
+pub(crate) mod host_lifecycle;
 pub(crate) mod mcp;
 pub(crate) mod runtime_state;
 pub(crate) mod workflow;
@@ -40,6 +41,7 @@ pub(crate) enum ToolDomain {
     Extension,
     Function,
     Goal,
+    HostLifecycle,
     Mcp,
     RuntimeState,
     Workflow,
@@ -61,6 +63,8 @@ pub(crate) fn classify_tool_name(
         ToolDomain::Artifact
     } else if goal::owns_tool_name(request, tool_name) {
         ToolDomain::Goal
+    } else if host_lifecycle::owns_tool_name(request, tool_name) {
+        ToolDomain::HostLifecycle
     } else if mcp::owns_tool_name(request, tool_name) {
         ToolDomain::Mcp
     } else if agent::owns_tool_name(request, tool_name) {
@@ -112,6 +116,7 @@ pub(crate) fn model_visible_specs(
     specs.extend(extension::specs(&request));
     specs.extend(function::specs(&request));
     specs.extend(goal::specs(&request));
+    specs.extend(host_lifecycle::specs(&request));
     specs.extend(mcp::specs(&request));
     specs.extend(workflow::specs());
 
@@ -139,6 +144,7 @@ pub(crate) fn create_diff_consumer(
         ToolDomain::Extension => extension::create_diff_consumer(&request, tool_name),
         ToolDomain::Function => function::create_diff_consumer(&request, tool_name),
         ToolDomain::Goal => goal::create_diff_consumer(&request, tool_name),
+        ToolDomain::HostLifecycle => host_lifecycle::create_diff_consumer(&request, tool_name),
         ToolDomain::Mcp => mcp::create_diff_consumer(&request, tool_name),
         ToolDomain::RuntimeState => runtime_state::create_diff_consumer(&request, tool_name),
         ToolDomain::Workflow => workflow::create_diff_consumer(tool_name),
@@ -162,6 +168,7 @@ pub(crate) fn supports_parallel(
         ToolDomain::Extension => extension::supports_parallel(&request, call),
         ToolDomain::Function => function::supports_parallel(&request, call),
         ToolDomain::Goal => goal::supports_parallel(&request, call),
+        ToolDomain::HostLifecycle => host_lifecycle::supports_parallel(&request, call),
         ToolDomain::Mcp => mcp::supports_parallel(&request, call),
         ToolDomain::RuntimeState => runtime_state::supports_parallel(&request, call),
         ToolDomain::Workflow => workflow::supports_parallel(call),

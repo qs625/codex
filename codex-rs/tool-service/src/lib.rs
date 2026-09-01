@@ -36,6 +36,40 @@ pub struct ToolService {
     permissions_api: Arc<dyn PermissionsServiceApi>,
     workflow_api: Arc<dyn WorkflowApi>,
     agent_runtime: Weak<dyn AgentToolRuntime>,
+    host_lifecycle_runtime: Option<Arc<dyn HostLifecycleToolRuntime>>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostRelaunchRequest {
+    pub reason: Option<String>,
+    pub requested_by_thread_id: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostRelaunchResult {
+    pub status: HostRelaunchStatus,
+    pub accepted: bool,
+    pub relaunching: bool,
+    pub message: String,
+    pub reason: Option<String>,
+    pub resume_strategy: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HostRelaunchStatus {
+    Accepted,
+    Unsupported,
+    Failed,
+}
+
+pub trait HostLifecycleToolRuntime: Send + Sync + 'static {
+    fn request_client_relaunch<'a>(
+        &'a self,
+        request: HostRelaunchRequest,
+    ) -> tool_service_api::ToolServiceFuture<'a, HostRelaunchResult>;
 }
 
 impl ToolService {
@@ -48,6 +82,28 @@ impl ToolService {
         workflow_api: Arc<dyn WorkflowApi>,
         agent_runtime: Weak<dyn AgentToolRuntime>,
     ) -> Self {
+        Self::new_with_host_lifecycle(
+            approval_api,
+            command_service_api,
+            goal_api,
+            mcp_service_api,
+            permissions_api,
+            workflow_api,
+            agent_runtime,
+            None,
+        )
+    }
+
+    pub fn new_with_host_lifecycle(
+        approval_api: Arc<dyn ApprovalServiceApi>,
+        command_service_api: Arc<dyn CommandServiceApi>,
+        goal_api: Arc<dyn GoalServiceApi>,
+        mcp_service_api: Arc<dyn McpServiceApi>,
+        permissions_api: Arc<dyn PermissionsServiceApi>,
+        workflow_api: Arc<dyn WorkflowApi>,
+        agent_runtime: Weak<dyn AgentToolRuntime>,
+        host_lifecycle_runtime: Option<Arc<dyn HostLifecycleToolRuntime>>,
+    ) -> Self {
         Self {
             approval_api,
             command_service_api,
@@ -56,7 +112,12 @@ impl ToolService {
             permissions_api,
             workflow_api,
             agent_runtime,
+            host_lifecycle_runtime,
         }
+    }
+
+    fn host_lifecycle_runtime(&self) -> Option<Arc<dyn HostLifecycleToolRuntime>> {
+        self.host_lifecycle_runtime.clone()
     }
 
     fn agent_runtime(&self) -> Result<Arc<dyn AgentToolRuntime>, FunctionCallError> {
@@ -123,6 +184,7 @@ impl ToolServiceApi for ToolService {
         let command_service_api = Arc::clone(&self.command_service_api);
         let mcp_service_api = Arc::clone(&self.mcp_service_api);
         let permissions_api = Arc::clone(&self.permissions_api);
+        let host_lifecycle_runtime = self.host_lifecycle_runtime();
         let session = Arc::clone(&tool_request.session);
         let approval_session = Arc::clone(&tool_request.approval_session);
         let turn = Arc::clone(&tool_request.turn);
@@ -196,6 +258,15 @@ impl ToolServiceApi for ToolService {
                         Arc::clone(&tool_request.session_command_state),
                         Arc::clone(&session),
                         Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        call,
+                    )
+                    .await
+                }
+                domains::ToolDomain::HostLifecycle => {
+                    domains::host_lifecycle::dispatch(
+                        Arc::clone(&session),
+                        Arc::clone(&turn) as Arc<dyn thread_service_api::ThreadRuntimeCapability>,
+                        host_lifecycle_runtime,
                         call,
                     )
                     .await
