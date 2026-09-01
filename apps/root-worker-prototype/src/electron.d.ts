@@ -16,9 +16,24 @@ declare global {
         title: string;
         body?: string | null;
       }) => Promise<{ ok: boolean; reason?: string }>;
+      relaunchApp: (payload?: {
+        reason?: string | null;
+      }) => Promise<{
+        ok: boolean;
+        relaunching: boolean;
+        alreadyRequested?: boolean;
+        reason?: string | null;
+      }>;
       bootstrap: () => Promise<{
         workspace: string;
         threads: unknown[];
+        autoResume?: {
+          resumedThreadIds: string[];
+          skippedThreadIds: string[];
+          failedThreadIds: string[];
+          focusThreadId: string | null;
+          errors: Array<{ threadId: string; message: string }>;
+        };
         appServer: {
           connected: boolean;
           pid: number | null;
