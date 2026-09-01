@@ -597,6 +597,31 @@ fn poll_event_tool_has_empty_object_params_and_optional_payload() {
 }
 
 #[test]
+fn agent_role_load_tool_requires_agent_type_and_reports_effective_boundary() {
+    let tool = function_tool(create_agent_role_load_tool(), "agent_role_load");
+    assert_object_params(&tool);
+    assert_eq!(required_params(&tool), vec!["agent_type".to_string()]);
+
+    let properties = tool
+        .parameters
+        .properties
+        .as_ref()
+        .expect("agent_role_load should define properties");
+    assert!(properties.contains_key("agent_type"));
+    assert_eq!(tool.parameters.additional_properties, Some(false.into()));
+
+    let output_schema = tool.output_schema.expect("agent_role_load output schema");
+    assert_eq!(
+        output_schema["required"],
+        json!(["agentRole", "effective", "model", "reasoningEffort"])
+    );
+    assert_eq!(
+        output_schema["properties"]["effective"]["enum"],
+        json!(["next_turn"])
+    );
+}
+
+#[test]
 fn list_agents_tool_includes_path_prefix_and_agent_fields() {
     let ToolSpec::Function(ResponsesApiTool {
         parameters,

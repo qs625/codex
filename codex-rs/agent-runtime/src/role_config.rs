@@ -13,16 +13,17 @@ use codex_agent_roles::DEFAULT_ROLE_NAME;
 use codex_agent_roles::built_in_config_file_contents;
 use codex_agent_roles::parse_agent_role_file_contents;
 use codex_agent_roles::resolve_role_config;
-use config_service::Config;
-use config_service::ConfigOverrides;
-use config_service::ConfigLayerEntry;
-use config_service::ConfigLayerStack;
-use config_service::ConfigLayerStackOrdering;
 use codex_config_toml::config_toml::ConfigToml;
 use codex_config_toml::deserialize_config_toml_with_base;
 use codex_config_toml::resolve_relative_paths_in_config_toml;
 use codex_config_types::ConfigLayerSource;
 use codex_file_system::LOCAL_FS;
+use config_service::Config;
+use config_service::ConfigLayerEntry;
+use config_service::ConfigLayerStack;
+use config_service::ConfigLayerStackOrdering;
+use config_service::ConfigOverrides;
+use serde::Serialize;
 use std::path::Path;
 use toml::Value as TomlValue;
 
@@ -75,18 +76,110 @@ async fn apply_role_to_config_inner(
     let (preserve_current_profile, preserve_current_provider) =
         preservation_policy(config, &role_layer_toml);
 
-    *config = reload::build_next_config(
+    let current_config = config.clone();
+    let mut next_config = reload::build_next_config(
         config,
-        role_layer_toml,
+        role_layer_toml.clone(),
         preserve_current_profile,
         preserve_current_provider,
     )
     .await?;
+    preserve_runtime_session_fields(&current_config, &mut next_config, &role_layer_toml);
+    *config = next_config;
     config.agent_tool_patterns =
         resolve_allowlist_patterns(&role.tool_allowlist, inherited_tool_patterns);
     config.agent_skill_patterns =
         resolve_allowlist_patterns(&role.skill_allowlist, inherited_skill_patterns);
     Ok(())
+}
+
+fn preserve_runtime_session_fields(
+    current_config: &Config,
+    next_config: &mut Config,
+    role_layer_toml: &TomlValue,
+) {
+    if role_preserves_field(current_config, role_layer_toml, "model") {
+        next_config.model = current_config.model.clone();
+    }
+    if role_preserves_field(current_config, role_layer_toml, "model_reasoning_effort") {
+        next_config.model_reasoning_effort = current_config.model_reasoning_effort;
+    }
+    if role_preserves_field(current_config, role_layer_toml, "model_reasoning_summary") {
+        next_config.model_reasoning_summary = current_config.model_reasoning_summary;
+    }
+    if role_preserves_field(current_config, role_layer_toml, "service_tier") {
+        next_config.service_tier = current_config.service_tier.clone();
+    }
+    if role_preserves_field(current_config, role_layer_toml, "personality") {
+        next_config.personality = current_config.personality;
+    }
+    if role_preserves_field(current_config, role_layer_toml, "approval_policy") {
+        next_config.permissions.approval_policy =
+            current_config.permissions.approval_policy.clone();
+    }
+    if role_preserves_field(current_config, role_layer_toml, "approvals_reviewer") {
+        next_config.approvals_reviewer = current_config.approvals_reviewer;
+    }
+    if role_preserves_field(current_config, role_layer_toml, "developer_instructions") {
+        next_config.developer_instructions = current_config.developer_instructions.clone();
+    }
+    if role_preserves_field(current_config, role_layer_toml, "compact_prompt") {
+        next_config.compact_prompt = current_config.compact_prompt.clone();
+    }
+    if role_preserves_permission_profile(current_config, role_layer_toml) {
+        let role_permissions = next_config.permissions.clone();
+        next_config.permissions = current_config.permissions.clone();
+        if !role_preserves_field(current_config, role_layer_toml, "approval_policy") {
+            next_config.permissions.approval_policy = role_permissions.approval_policy;
+        }
+        if !role_preserves_field(current_config, role_layer_toml, "allow_login_shell") {
+            next_config.permissions.allow_login_shell = role_permissions.allow_login_shell;
+        }
+        if !role_preserves_field(current_config, role_layer_toml, "shell_environment_policy") {
+            next_config.permissions.shell_environment_policy =
+                role_permissions.shell_environment_policy;
+        }
+        if !role_preserves_field(current_config, role_layer_toml, "windows") {
+            next_config.permissions.windows_sandbox_mode = role_permissions.windows_sandbox_mode;
+            next_config.permissions.windows_sandbox_private_desktop =
+                role_permissions.windows_sandbox_private_desktop;
+        }
+        next_config.workspace_roots = current_config.workspace_roots.clone();
+        next_config.workspace_roots_explicit = current_config.workspace_roots_explicit;
+    }
+}
+
+fn role_preserves_field(config: &Config, role_layer_toml: &TomlValue, key: &str) -> bool {
+    role_layer_toml.get("profile").is_none()
+        && role_layer_toml.get(key).is_none()
+        && !role_active_profile_contains(config, role_layer_toml, key)
+}
+
+fn role_preserves_permission_profile(config: &Config, role_layer_toml: &TomlValue) -> bool {
+    role_layer_toml.get("profile").is_none()
+        && [
+            "sandbox_mode",
+            "default_permissions",
+            "permissions",
+            "sandbox_workspace_write",
+        ]
+        .into_iter()
+        .all(|key| {
+            role_layer_toml.get(key).is_none()
+                && !role_active_profile_contains(config, role_layer_toml, key)
+        })
+}
+
+fn role_active_profile_contains(config: &Config, role_layer_toml: &TomlValue, key: &str) -> bool {
+    let Some(active_profile) = config.active_profile.as_deref() else {
+        return false;
+    };
+    role_layer_toml
+        .get("profiles")
+        .and_then(TomlValue::as_table)
+        .and_then(|profiles| profiles.get(active_profile))
+        .and_then(TomlValue::as_table)
+        .is_some_and(|profile| profile.contains_key(key))
 }
 
 fn resolve_allowlist_patterns(
@@ -194,6 +287,9 @@ mod reload {
         active_profile_name: Option<&str>,
     ) -> anyhow::Result<ConfigLayerStack> {
         let mut layers = existing_layers(config);
+        if let Some(session_runtime_layer) = session_runtime_layer(config)? {
+            insert_layer(&mut layers, session_runtime_layer);
+        }
         if let Some(resolved_profile_layer) =
             resolved_profile_layer(config, &layers, role_layer_toml, active_profile_name)?
         {
@@ -233,6 +329,61 @@ mod reload {
             ConfigLayerSource::SessionFlags,
             TomlValue::try_from(resolved_profile)?,
         )))
+    }
+
+    fn session_runtime_layer(config: &Config) -> anyhow::Result<Option<ConfigLayerEntry>> {
+        let mut table = toml::map::Map::new();
+        if let Some(model) = config.model.as_ref() {
+            table.insert("model".to_string(), TomlValue::String(model.clone()));
+        }
+        insert_serialized_option(
+            &mut table,
+            "model_reasoning_effort",
+            config.model_reasoning_effort,
+        )?;
+        insert_serialized_option(
+            &mut table,
+            "model_reasoning_summary",
+            config.model_reasoning_summary,
+        )?;
+        insert_serialized_option(&mut table, "service_tier", config.service_tier.as_ref())?;
+        insert_serialized_option(&mut table, "personality", config.personality)?;
+        insert_serialized(
+            &mut table,
+            "approval_policy",
+            config.permissions.approval_policy.value(),
+        )?;
+        insert_serialized(&mut table, "approvals_reviewer", config.approvals_reviewer)?;
+        insert_serialized_option(
+            &mut table,
+            "developer_instructions",
+            config.developer_instructions.as_ref(),
+        )?;
+        insert_serialized_option(&mut table, "compact_prompt", config.compact_prompt.as_ref())?;
+
+        Ok((!table.is_empty()).then(|| {
+            ConfigLayerEntry::new(ConfigLayerSource::SessionFlags, TomlValue::Table(table))
+        }))
+    }
+
+    fn insert_serialized<T: Serialize>(
+        table: &mut toml::map::Map<String, TomlValue>,
+        key: &str,
+        value: T,
+    ) -> anyhow::Result<()> {
+        table.insert(key.to_string(), TomlValue::try_from(value)?);
+        Ok(())
+    }
+
+    fn insert_serialized_option<T: Serialize>(
+        table: &mut toml::map::Map<String, TomlValue>,
+        key: &str,
+        value: Option<T>,
+    ) -> anyhow::Result<()> {
+        if let Some(value) = value {
+            insert_serialized(table, key, value)?;
+        }
+        Ok(())
     }
 
     fn deserialize_effective_config(

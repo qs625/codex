@@ -355,6 +355,15 @@ pub struct ThreadReadAgentResult {
     pub agent: ThreadAgentDetails,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadAgentRoleLoadResult {
+    pub agent_role: String,
+    pub effective: String,
+    pub model: String,
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreToolUsePayload {
     pub tool_name: HookToolName,
@@ -822,6 +831,13 @@ pub trait NativeAgentRuntime: Send + Sync + 'static {
         call_id: String,
         target: String,
     ) -> ThreadServiceFuture<'a, Result<ThreadReadAgentResult, FunctionCallError>>;
+
+    fn load_agent_role<'a>(
+        &'a self,
+        turn: Arc<dyn ThreadTurnCapability>,
+        call_id: String,
+        agent_type: String,
+    ) -> ThreadServiceFuture<'a, Result<ThreadAgentRoleLoadResult, FunctionCallError>>;
 }
 
 /// External collaboration tool runtime.

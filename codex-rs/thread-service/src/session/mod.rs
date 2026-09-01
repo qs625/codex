@@ -1793,6 +1793,144 @@ impl Session {
         }
     }
 
+    pub(crate) async fn load_agent_role_for_next_turn(
+        &self,
+        turn: &TurnContext,
+        agent_role: String,
+    ) -> Result<thread_service_api::ThreadAgentRoleLoadResult, String> {
+        let agent_role = agent_role.trim().to_string();
+        if agent_role.is_empty() {
+            return Err("agent_type is required".to_string());
+        }
+
+        let next_config = self
+            .build_agent_role_load_config_for_next_turn(agent_role.as_str())
+            .await?;
+
+        let live_thread = self
+            .live_thread_for_persistence("load agent role")
+            .map_err(|err| err.to_string())?;
+        live_thread.persist().await.map_err(|err| err.to_string())?;
+        live_thread.flush().await.map_err(|err| err.to_string())?;
+        live_thread
+            .update_metadata(
+                thread_store_api::ThreadMetadataPatch {
+                    agent_role: Some(Some(agent_role.clone())),
+                    ..Default::default()
+                },
+                /*include_archived*/ false,
+            )
+            .await
+            .map_err(|err| err.to_string())?;
+        live_thread.flush().await.map_err(|err| err.to_string())?;
+
+        let model = next_config.model.clone().unwrap_or_default();
+        let reasoning_effort = next_config.model_reasoning_effort;
+        let (previous_config, new_config, config) = {
+            let mut state = self.state.lock().await;
+            let previous_config =
+                Self::build_effective_session_config(&state.session_configuration);
+            state.session_configuration.provider = next_config.model_provider.clone();
+            state.session_configuration.collaboration_mode = state
+                .session_configuration
+                .collaboration_mode
+                .with_updates(Some(model.clone()), Some(reasoning_effort), None);
+            state.session_configuration.model_reasoning_summary =
+                next_config.model_reasoning_summary;
+            state.session_configuration.developer_instructions =
+                next_config.developer_instructions.clone();
+            state.session_configuration.compact_prompt = next_config.compact_prompt.clone();
+            state.session_configuration.personality = next_config.personality;
+            state.session_configuration.approval_policy =
+                next_config.permissions.approval_policy.clone();
+            state
+                .session_configuration
+                .approval_policy_is_session_override =
+                SessionConfiguration::approval_policy_is_session_override(&next_config);
+            state.session_configuration.approvals_reviewer = next_config.approvals_reviewer;
+            state.session_configuration.permission_profile_state =
+                session_permission_profile_state_from_config(&next_config)
+                    .map_err(|err| err.to_string())?;
+            state
+                .session_configuration
+                .permission_profile_is_session_override =
+                SessionConfiguration::permission_profile_is_session_override(&next_config);
+            state.session_configuration.windows_sandbox_level =
+                WindowsSandboxLevel::from_config(&next_config);
+            state.session_configuration.workspace_roots = next_config.workspace_roots.clone();
+            let config = Arc::new(next_config);
+            state.session_configuration.original_config_do_not_use = Arc::clone(&config);
+
+            let mut root_agent_metadata = state
+                .session_configuration
+                .root_agent_metadata
+                .clone()
+                .or_else(|| {
+                    self.services
+                        .agent_control
+                        .get_agent_metadata(self.conversation_id)
+                })
+                .unwrap_or_else(|| AgentMetadata {
+                    agent_id: Some(self.conversation_id),
+                    agent_path: Some(self.current_agent_path_for_turn(turn)),
+                    ..Default::default()
+                });
+            root_agent_metadata.agent_id = Some(self.conversation_id);
+            if root_agent_metadata.agent_path.is_none() {
+                root_agent_metadata.agent_path = Some(self.current_agent_path_for_turn(turn));
+            }
+            root_agent_metadata.agent_role = Some(agent_role.clone());
+            state.session_configuration.root_agent_metadata = Some(root_agent_metadata.clone());
+            self.services
+                .agent_control
+                .register_root_scope_agent_metadata(root_agent_metadata);
+
+            let new_config = Self::build_effective_session_config(&state.session_configuration);
+            (previous_config, new_config, config)
+        };
+        self.emit_config_changed_contributors(Some(&previous_config), Some(&new_config));
+        self.services.skill_service.clear_cache();
+        self.services.plugins_manager.clear_cache();
+        let hooks = build_hooks_for_config(
+            config.as_ref(),
+            self.services.plugins_manager.as_ref(),
+            self.services.user_shell.as_ref(),
+            self.services.hook_runtime_factory.as_ref(),
+        )
+        .await;
+
+        let state = self.state.lock().await;
+        if Arc::ptr_eq(
+            &state.session_configuration.original_config_do_not_use,
+            &config,
+        ) {
+            *self
+                .services
+                .hooks
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = hooks;
+        }
+
+        Ok(thread_service_api::ThreadAgentRoleLoadResult {
+            agent_role,
+            effective: "next_turn".to_string(),
+            model,
+            reasoning_effort,
+        })
+    }
+
+    pub(crate) async fn build_agent_role_load_config_for_next_turn(
+        &self,
+        agent_role: &str,
+    ) -> Result<Config, String> {
+        let mut next_config = {
+            let state = self.state.lock().await;
+            Self::build_effective_session_config(&state.session_configuration)
+        };
+        crate::agent::role::apply_role_to_config(&mut next_config, Some(agent_role)).await?;
+        Ok(next_config)
+    }
+
     async fn rebuild_runtime_config_with_user_layers(
         current_config: &Config,
         next_config: &Config,

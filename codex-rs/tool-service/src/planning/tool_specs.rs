@@ -32,6 +32,7 @@ pub use mcp_resource::create_list_mcp_resource_templates_tool;
 pub use mcp_resource::create_list_mcp_resources_tool;
 pub use mcp_resource::create_read_mcp_resource_tool;
 pub use multi_agents::SpawnAgentToolOptions;
+pub use multi_agents::create_agent_role_load_tool;
 pub use multi_agents::create_close_agent_tool_v2;
 pub use multi_agents::create_close_external_agent_tool;
 pub use multi_agents::create_followup_external_task_tool;
