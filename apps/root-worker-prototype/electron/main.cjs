@@ -1,11 +1,15 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const { randomUUID } = require("node:crypto");
+const { pathToFileURL } = require("node:url");
 const {
   app,
   BrowserWindow,
   dialog,
   ipcMain,
+  net,
   Notification,
+  protocol,
   session,
   shell,
   systemPreferences,
@@ -21,6 +25,10 @@ const {
   localFilePathFromTarget,
   parseLocalFileTarget,
 } = require("./fileTargets.cjs");
+const {
+  buildPdfPreview,
+  FILE_PREVIEW_PROTOCOL,
+} = require("./localFilePreview.cjs");
 const { languageForFilePath } = require("./filePreviewLanguages.cjs");
 const { readGitCommitFiles, readGitSnapshot } = require("./gitPanel.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
@@ -103,12 +111,25 @@ const handleClientRelaunchNotification =
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
 const threadRuntimeById = new Map();
+const localFilePreviewTargetsByToken = new Map();
 let autoResumeCoordinator = null;
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const builtRendererPath = path.join(__dirname, "../dist/index.html");
 const browserSessionPartition = "persist:root-worker-browser";
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: FILE_PREVIEW_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+]);
 
 async function createWindow() {
   const window = new BrowserWindow({
@@ -658,6 +679,7 @@ ipcMain.handle("codex:stopRealtime", async (_event, payload) => {
 });
 
 app.whenReady().then(() => {
+  registerLocalFilePreviewProtocol();
   configurePermissionHandlers(session.defaultSession, ({ webContents, permission }) =>
     permission === "media" && !isBrowserPanelWebContents(webContents),
   );
@@ -1518,9 +1540,12 @@ async function readLocalFileTarget(target) {
   const displayPath = path.relative(defaultWorkspace, filePath) || filePath;
   const extension = path.extname(filePath).toLowerCase();
   const imageMime = imageMimeForExtension(extension);
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile()) {
+    throw new Error("Only files can be previewed");
+  }
 
   if (imageMime) {
-    const { size } = await fs.stat(filePath);
     return {
       path: filePath,
       displayPath,
@@ -1540,8 +1565,36 @@ async function readLocalFileTarget(target) {
         path: filePath,
         mimeType: imageMime,
         name: path.basename(filePath),
-        byteSize: size,
+        byteSize: stat.size,
       },
+      pdf: null,
+    };
+  }
+
+  const pdfPreviewToken = randomUUID();
+  const pdf = buildPdfPreview(filePath, stat.size, pdfPreviewToken);
+  if (pdf) {
+    localFilePreviewTargetsByToken.set(pdfPreviewToken, {
+      path: filePath,
+      mimeType: pdf.mimeType,
+    });
+    return {
+      path: filePath,
+      displayPath,
+      content: "",
+      language: "pdf",
+      line: null,
+      column: null,
+      lsp: {
+        enabled: false,
+        languageId: null,
+        lspStatus: { phase: "plain", detail: "PDF preview" },
+        serverLabel: null,
+        workspaceRoot: null,
+        reason: "PDF file",
+      },
+      image: null,
+      pdf,
     };
   }
 
@@ -1557,7 +1610,50 @@ async function readLocalFileTarget(target) {
     column,
     lsp,
     image: null,
+    pdf: null,
   };
+}
+
+function registerLocalFilePreviewProtocol() {
+  protocol.handle(FILE_PREVIEW_PROTOCOL, async (request) => {
+    const target = localFilePreviewTargetForUrl(request.url);
+    if (!target) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    try {
+      return await net.fetch(pathToFileURL(target.path).href);
+    } catch (error) {
+      console.error(
+        "[prototype] failed to serve local file preview",
+        JSON.stringify({
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      return new Response("Unable to load preview", { status: 500 });
+    }
+  });
+}
+
+function localFilePreviewTargetForUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (
+    parsed.protocol !== `${FILE_PREVIEW_PROTOCOL}:` ||
+    parsed.hostname !== "pdf"
+  ) {
+    return null;
+  }
+  const token = decodeURIComponent(parsed.pathname.split("/").filter(Boolean)[0] ?? "");
+  const target = localFilePreviewTargetsByToken.get(token);
+  if (!target || target.mimeType !== "application/pdf") {
+    return null;
+  }
+  return target;
 }
 
 async function readLocalImageTarget(target) {

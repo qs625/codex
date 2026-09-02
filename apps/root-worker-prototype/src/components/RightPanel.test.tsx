@@ -171,6 +171,7 @@ function makePreview(overrides: Partial<FilePreview> = {}): FilePreview {
       reason: null,
     },
     image: null,
+    pdf: null,
     ...overrides,
   };
 }
@@ -417,19 +418,19 @@ test("omits plan work queue from thread analysis", () => {
 });
 
 test("renders live commands and schedule subscriptions", () => {
+  const activeCommand = {
+    type: "commandExecution",
+    id: "command-1",
+    command: "tail -f /tmp/out.log",
+    cwd: "/tmp",
+    status: "running",
+    aggregatedOutput: "changed:/tmp/out.log\n",
+    exitCode: null,
+    durationMs: null,
+  } satisfies NonNullable<Thread["activeCommandItems"]>[number];
   const thread = {
     ...makeThread(
       [
-        {
-          type: "commandExecution",
-          id: "command-1",
-          command: "tail -f /tmp/out.log",
-          cwd: "/tmp",
-          status: "running",
-          aggregatedOutput: "changed:/tmp/out.log\n",
-          exitCode: null,
-          durationMs: null,
-        },
         {
           type: "builtinToolCall",
           id: "schedule-1",
@@ -447,6 +448,7 @@ test("renders live commands and schedule subscriptions", () => {
       ],
       { type: "idle", reason: "waitCommand" },
     ),
+    activeCommandItems: [activeCommand],
     stats: { compactionCount: 2 },
   } satisfies Thread;
   const markup = renderRightPanel(thread);
@@ -947,6 +949,46 @@ test("keeps non-markdown file previews on the editor render path", () => {
     ),
     "editor",
   );
+});
+
+test("renders PDF file previews with an embedded PDF object", () => {
+  const markup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: makePreview({
+      path: "/tmp/Project Docs/spec.PDF",
+      displayPath: "Project Docs/spec.PDF",
+      content: "",
+      language: "pdf",
+      pdf: {
+        path: "/tmp/Project Docs/spec.PDF",
+        mimeType: "application/pdf",
+        name: "spec.PDF",
+        byteSize: 4096,
+        url: "morpheus-file-preview://pdf/token-1/spec.PDF",
+      },
+    }),
+  });
+
+  assert.equal(
+    filePreviewRenderMode(
+      makePreview({
+        language: "markdown",
+        pdf: {
+          path: "/tmp/spec.pdf",
+          mimeType: "application/pdf",
+          name: "spec.pdf",
+          byteSize: 512,
+          url: "morpheus-file-preview://pdf/token-2/spec.pdf",
+        },
+      }),
+    ),
+    "pdf",
+  );
+  assert.match(markup, /PDF/);
+  assert.match(markup, /application\/pdf/);
+  assert.match(markup, /4\.0 KB/);
+  assert.match(markup, /aria-label="PDF preview for spec\.PDF"/);
+  assert.match(markup, /data="morpheus-file-preview:\/\/pdf\/token-1\/spec\.PDF"/);
+  assert.doesNotMatch(markup, /Loading editor/);
 });
 
 test("resolves preview definition clicks to a column inside the current word", () => {

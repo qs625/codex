@@ -6500,6 +6500,19 @@ svg {
   object-fit: contain;
 }
 
+.preview-pdf-shell {
+  overflow: hidden;
+}
+
+.preview-pdf-frame {
+  display: block;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: #ffffff;
+}
+
 .preview-symbol-link {
   color: #0f766e;
   text-decoration: underline;

@@ -2413,6 +2413,9 @@ export function filePreviewRenderMode(preview: FilePreview | null) {
   if (preview.image) {
     return "image";
   }
+  if (preview.pdf) {
+    return "pdf";
+  }
   if (preview.language === "markdown") {
     return "markdown";
   }
@@ -2604,7 +2607,36 @@ function FilePreviewPanel({
           </div>
         </div>
       ) : null}
-      {!previewLoading && !previewError && preview && previewRenderMode !== "image" ? (
+      {!previewLoading && !previewError && previewRenderMode === "pdf" && preview?.pdf ? (
+        <div className="preview-editor-shell preview-pdf-shell">
+          <div className="preview-utility-strip">
+            <div className="preview-utility-primary">
+              <span className="preview-signal plain" />
+              <button type="button" className="preview-lsp-button plain" disabled>
+                PDF
+              </button>
+            </div>
+            <div className="preview-utility-secondary">
+              <span>{preview.pdf.mimeType}</span>
+              <span className="preview-utility-separator">•</span>
+              <span>{formatByteSize(preview.pdf.byteSize)}</span>
+              <span className="preview-utility-separator">•</span>
+              <span className="preview-utility-cwd">{preview.pdf.name}</span>
+            </div>
+          </div>
+          <object
+            className="preview-pdf-frame"
+            data={preview.pdf.url}
+            type={preview.pdf.mimeType}
+            aria-label={`PDF preview for ${preview.pdf.name}`}
+          >
+            <div className="preview-empty">
+              <p>This PDF cannot be embedded here. Use the open button to view it in the system app.</p>
+            </div>
+          </object>
+        </div>
+      ) : null}
+      {!previewLoading && !previewError && preview && previewRenderMode !== "image" && previewRenderMode !== "pdf" ? (
         <div className="preview-editor-shell">
           <div className="preview-utility-strip">
             <div className="preview-utility-primary">
