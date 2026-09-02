@@ -204,6 +204,138 @@ svg {
   outline: none;
 }
 
+.self-command-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: start center;
+  padding: min(14vh, 120px) 16px 16px;
+  background: rgba(28, 25, 23, 0.2);
+}
+
+.self-command-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 54px rgba(15, 23, 42, 0.18);
+  color: #292524;
+}
+
+.self-command-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.self-command-header h2 {
+  margin: 2px 0 0;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.self-command-eyebrow {
+  color: #57534e;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.self-command-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #44403c;
+  cursor: pointer;
+}
+
+.self-command-target {
+  min-width: 0;
+  overflow: hidden;
+  padding: 7px 9px;
+  border: 1px solid rgba(16, 24, 40, 0.1);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #57534e;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.self-command-input {
+  min-height: 116px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid rgba(16, 24, 40, 0.16);
+  border-radius: 6px;
+  color: #1c1917;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.self-command-input:focus {
+  border-color: rgba(37, 99, 235, 0.6);
+  outline: 2px solid rgba(37, 99, 235, 0.14);
+}
+
+.self-command-input:disabled {
+  background: #f5f5f4;
+  color: #78716c;
+}
+
+.self-command-error {
+  padding: 8px 9px;
+  border: 1px solid rgba(220, 38, 38, 0.24);
+  border-radius: 6px;
+  background: rgba(254, 242, 242, 0.9);
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.self-command-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.self-command-secondary,
+.self-command-primary {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.self-command-secondary {
+  border: 1px solid rgba(16, 24, 40, 0.14);
+  background: #ffffff;
+  color: #44403c;
+}
+
+.self-command-primary {
+  border: 1px solid rgba(37, 99, 235, 0.9);
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.self-command-primary:disabled,
+.self-command-secondary:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
 .sidebar-create-popover {
   width: 100%;
   min-width: 0;

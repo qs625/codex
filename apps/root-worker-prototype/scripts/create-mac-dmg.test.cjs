@@ -1,8 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 
 const {
+  assertMacAppBundleSymlinksRelative,
   assertMacPackagingPlatform,
   buildFinderLayoutScriptArgs,
   buildHdiutilAttachArgs,
@@ -10,6 +13,7 @@ const {
   buildHdiutilCreateWritableArgs,
   buildHdiutilDetachArgs,
   buildMacDmgPaths,
+  copyAppBundleForDmg,
   isMountedVolumeOutput,
   shouldUseFinderLayout,
   toAppleScriptString,
@@ -216,3 +220,90 @@ test("Finder DMG layout is skipped in CI or when explicitly disabled", () => {
     true,
   );
 });
+
+test("copyAppBundleForDmg preserves Electron framework relative symlinks", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-dmg-copy-"));
+  try {
+    const sourceApp = path.join(tmpDir, "Source.app");
+    const stagedApp = path.join(tmpDir, "Staged.app");
+    const framework = path.join(
+      sourceApp,
+      "Contents",
+      "Frameworks",
+      "Electron Framework.framework",
+    );
+    await createElectronFrameworkSymlinkFixture(framework);
+
+    await copyAppBundleForDmg(sourceApp, stagedApp);
+    await assertMacAppBundleSymlinksRelative(stagedApp);
+
+    assert.equal(
+      await fs.readlink(path.join(framework, "Electron Framework")),
+      "Versions/Current/Electron Framework",
+    );
+    const stagedFramework = path.join(
+      stagedApp,
+      "Contents",
+      "Frameworks",
+      "Electron Framework.framework",
+    );
+    assert.equal(
+      await fs.readlink(path.join(stagedFramework, "Electron Framework")),
+      "Versions/Current/Electron Framework",
+    );
+    assert.equal(
+      await fs.readlink(path.join(stagedFramework, "Versions", "Current")),
+      "A",
+    );
+  } finally {
+    await fs.rm(tmpDir, { force: true, recursive: true });
+  }
+});
+
+test("assertMacAppBundleSymlinksRelative rejects absolute framework symlinks", async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "root-worker-dmg-bad-"));
+  try {
+    const appBundle = path.join(tmpDir, "Broken.app");
+    const framework = path.join(
+      appBundle,
+      "Contents",
+      "Frameworks",
+      "Electron Framework.framework",
+    );
+    await createElectronFrameworkSymlinkFixture(framework);
+    await fs.rm(path.join(framework, "Electron Framework"));
+    await fs.symlink(
+      path.join(framework, "Versions", "Current", "Electron Framework"),
+      path.join(framework, "Electron Framework"),
+    );
+
+    await assert.rejects(
+      () => assertMacAppBundleSymlinksRelative(appBundle),
+      /must stay relative/,
+    );
+  } finally {
+    await fs.rm(tmpDir, { force: true, recursive: true });
+  }
+});
+
+async function createElectronFrameworkSymlinkFixture(frameworkPath) {
+  const currentVersion = path.join(frameworkPath, "Versions", "A");
+  await fs.mkdir(path.join(currentVersion, "Helpers"), { recursive: true });
+  await fs.mkdir(path.join(currentVersion, "Libraries"), { recursive: true });
+  await fs.mkdir(path.join(currentVersion, "Resources"), { recursive: true });
+  await fs.writeFile(path.join(currentVersion, "Electron Framework"), "");
+  await fs.symlink("A", path.join(frameworkPath, "Versions", "Current"));
+  await fs.symlink(
+    "Versions/Current/Electron Framework",
+    path.join(frameworkPath, "Electron Framework"),
+  );
+  await fs.symlink("Versions/Current/Helpers", path.join(frameworkPath, "Helpers"));
+  await fs.symlink(
+    "Versions/Current/Libraries",
+    path.join(frameworkPath, "Libraries"),
+  );
+  await fs.symlink(
+    "Versions/Current/Resources",
+    path.join(frameworkPath, "Resources"),
+  );
+}

@@ -16,6 +16,12 @@ import {
   TreeContextMenu,
 } from "./components/Panels";
 import { RightPanel } from "./components/RightPanel";
+import {
+  isSelfCommandShortcut,
+  normalizeSelfCommandText,
+  SelfCommandDialog,
+  type SelfCommandProject,
+} from "./components/SelfCommandDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import {
   clearComposerDraft,
@@ -213,6 +219,14 @@ function App() {
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [isCreatingChatThread, setIsCreatingChatThread] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSelfCommandOpen, setIsSelfCommandOpen] = useState(false);
+  const [isSelfCommandSubmitting, setIsSelfCommandSubmitting] = useState(false);
+  const [selfCommandText, setSelfCommandText] = useState("");
+  const [selfCommandProject, setSelfCommandProject] =
+    useState<SelfCommandProject | null>(null);
+  const [selfCommandError, setSelfCommandError] = useState<string | null>(null);
+  const [selfCommandUnavailableMessage, setSelfCommandUnavailableMessage] =
+    useState<string | null>(null);
   const [newProjectName, setNewProjectName] = useState("Project chat");
   const [error, setError] = useState<string | null>(null);
   const [collapsedPaths, setCollapsedPaths] = useState<string[]>([]);
@@ -713,6 +727,12 @@ function App() {
   useEffect(() => {
     function handleWindowKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) {
+        return;
+      }
+
+      if (isSelfCommandShortcut(event)) {
+        event.preventDefault();
+        void openSelfCommand();
         return;
       }
 
@@ -1487,6 +1507,78 @@ function App() {
       setSelectedThreadId(payload.thread.id);
     } catch (createError) {
       setError(toErrorMessage(createError));
+    }
+  }
+
+  async function openSelfCommand() {
+    setIsSelfCommandOpen(true);
+    setSelfCommandText("");
+    setSelfCommandError(null);
+    setSelfCommandUnavailableMessage(null);
+    setSelfCommandProject(null);
+
+    const desktopApi = (
+      window as Window & { codexDesktop?: Window["codexDesktop"] }
+    ).codexDesktop;
+    if (!desktopApi?.getSelfProject || !desktopApi.startSelfCommand) {
+      setSelfCommandUnavailableMessage(
+        "Self command is only available in the desktop app.",
+      );
+      return;
+    }
+
+    try {
+      const payload = await desktopApi.getSelfProject();
+      if (!payload.project) {
+        setSelfCommandUnavailableMessage(
+          "Self command is available after installing the packaged app.",
+        );
+        return;
+      }
+      setSelfCommandProject(payload.project);
+    } catch (selfProjectError) {
+      setSelfCommandUnavailableMessage("Self command is unavailable.");
+      setSelfCommandError(toErrorMessage(selfProjectError));
+    }
+  }
+
+  function closeSelfCommand() {
+    if (isSelfCommandSubmitting) {
+      return;
+    }
+    setIsSelfCommandOpen(false);
+    setSelfCommandText("");
+    setSelfCommandError(null);
+  }
+
+  async function submitSelfCommand() {
+    const text = normalizeSelfCommandText(selfCommandText);
+    if (!selfCommandProject || !text || isSelfCommandSubmitting) {
+      return;
+    }
+    const desktopApi = (
+      window as Window & { codexDesktop?: Window["codexDesktop"] }
+    ).codexDesktop;
+    if (!desktopApi?.startSelfCommand) {
+      setSelfCommandError("Self command is only available in the desktop app.");
+      return;
+    }
+
+    setIsSelfCommandSubmitting(true);
+    setSelfCommandError(null);
+    try {
+      const payload = await desktopApi.startSelfCommand({ text });
+      const thread = payload.thread as Thread;
+      markThreadLoaded(thread.id);
+      markThreadSubscribed(thread.id);
+      setThreads((current) => upsertThreadWithPending(current, thread));
+      setSelectedThreadId(thread.id);
+      setIsSelfCommandOpen(false);
+      setSelfCommandText("");
+    } catch (selfCommandError) {
+      setSelfCommandError(toErrorMessage(selfCommandError));
+    } finally {
+      setIsSelfCommandSubmitting(false);
     }
   }
 
@@ -3014,6 +3106,17 @@ function App() {
           workspacePath={workspace}
         />
       ) : null}
+      <SelfCommandDialog
+        error={selfCommandError}
+        isOpen={isSelfCommandOpen}
+        isSubmitting={isSelfCommandSubmitting}
+        onClose={closeSelfCommand}
+        onSubmit={() => void submitSelfCommand()}
+        onTextChange={setSelfCommandText}
+        project={selfCommandProject}
+        text={selfCommandText}
+        unavailableMessage={selfCommandUnavailableMessage}
+      />
     </div>
   );
 }
