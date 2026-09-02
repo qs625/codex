@@ -105,9 +105,7 @@ export function buildAgentTree(
 export function buildProjectAgentSidebar(
   threads: Thread[],
 ): ProjectAgentSidebar {
-  const parentlessThreads = threads.filter(
-    (thread) => isRootThread(thread) && !isSelfCommandRootThread(thread),
-  );
+  const parentlessThreads = threads.filter(isRootThread);
   const projectRootCandidates = new Map<
     string,
     { cwd: string; projectPath: string | null; candidates: Thread[] }
@@ -120,7 +118,7 @@ export function buildProjectAgentSidebar(
       chatThreads.push(thread);
       continue;
     }
-    const projectPath = normalizeProjectPathIdentity(thread.agentPath);
+    const projectPath = projectPathIdentityForThread(thread);
     const projectKey = projectIdentityKey(projectCwd, projectPath);
     const group = projectRootCandidates.get(projectKey) ?? {
       cwd: projectCwd,
@@ -213,9 +211,9 @@ export function findProjectByRootIdentity(
       if (normalizeProjectCwd(project.cwd) !== projectCwd) {
         return false;
       }
-      const existingPath = normalizeProjectPathIdentity(
-        project.tree.thread?.agentPath,
-      );
+      const existingPath = project.tree.thread
+        ? projectPathIdentityForThread(project.tree.thread)
+        : null;
       return existingPath === projectPath;
     }) ?? null
   );
@@ -393,17 +391,6 @@ export function getParentThreadId(thread: Thread): string | null {
 
 export function isRootThread(thread: Thread) {
   return !getParentThreadId(thread);
-}
-
-export function isSelfCommandRootThread(thread: Thread) {
-  if (!isRootThread(thread)) {
-    return false;
-  }
-  return (
-    normalizeProjectPathIdentity(thread.agentPath) === "/self" ||
-    normalizeProjectPathIdentity(thread.path) === "/self" ||
-    thread.name === "/self"
-  );
 }
 
 export function getTreeRootThreadId(threads: Thread[], threadId: string) {
@@ -2387,6 +2374,23 @@ export function normalizeProjectCwd(cwd: string | null | undefined) {
 
 function projectLabelFromCwd(cwd: string) {
   return cwd.split("/").filter(Boolean).at(-1) ?? cwd;
+}
+
+function projectPathIdentityForThread(thread: Thread) {
+  return (
+    normalizeProjectPathIdentity(thread.agentPath) ??
+    selfProjectPathIdentityForThread(thread)
+  );
+}
+
+function selfProjectPathIdentityForThread(thread: Thread) {
+  if (
+    normalizeProjectPathIdentity(thread.path) === "/self" ||
+    thread.name === "/self"
+  ) {
+    return "/self";
+  }
+  return null;
 }
 
 function normalizeProjectPathIdentity(path: string | null | undefined) {
