@@ -7,6 +7,10 @@ const path = require("node:path");
 const { createInterface } = require("node:readline");
 const { EventEmitter } = require("node:events");
 const { buildDesktopEnvironment } = require("./environment.cjs");
+const {
+  ensureDefaultWorkspaceSync,
+  findPackagedSourceSnapshotPath,
+} = require("./workspace.cjs");
 
 const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
 const MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS = 20;
@@ -127,6 +131,14 @@ class AppServerClient extends EventEmitter {
     const env = buildAppServerEnvironment(process.env);
     const morpheusHome = env.MORPHEUS_HOME;
     ensureMorpheusHomeDefaults(morpheusHome, { warn: console.warn });
+    let appServerCwd = process.cwd();
+    if (!env.ROOT_WORKER_WORKSPACE && findPackagedSourceSnapshotPath()) {
+      const defaultWorkspace = ensureDefaultWorkspaceSync(env, {
+        warn: console.warn,
+      });
+      env.ROOT_WORKER_WORKSPACE = defaultWorkspace;
+      appServerCwd = defaultWorkspace;
+    }
     const launch = await resolveAppServerLaunch(process.env, {
       morpheusHome,
       randomToken: () => crypto.randomBytes(32).toString("base64url"),
@@ -137,7 +149,7 @@ class AppServerClient extends EventEmitter {
     this.mobileConnection = launch.mobileConnection;
     this.mobileConnectionRefreshEnv = launch.mobileConnectionEnv ?? {};
     this.child = spawn(command, {
-      cwd: process.cwd(),
+      cwd: appServerCwd,
       env,
       shell: true,
       stdio: "pipe",

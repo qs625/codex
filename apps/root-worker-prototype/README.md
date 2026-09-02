@@ -41,9 +41,23 @@ pnpm --filter @my-codex/root-worker-prototype package:mac
 The macOS app packaging builds release `app-server`, bundles it into the app
 resources at `Contents/Resources/bin/app-server`, and bundles the default
 compact prompt seed at `Contents/Resources/default-config/compact/COMPACT.md`.
+It also bundles a tracked source snapshot at `Contents/Resources/source`.
+The snapshot excludes heavy build outputs, dependency caches, package staging,
+local Android config, `.env*`, and common key/certificate files.
 When launched from Finder or Dock, the app prepares `MORPHEUS_HOME`, preserves
 the desktop process environment with an enhanced `PATH`, and creates
 `~/.morpheus/compact/COMPACT.md` only if that file is missing.
+When a packaged source snapshot is present and `ROOT_WORKER_WORKSPACE` is not
+set, the app seeds `~/.morpheus/source_workspace` from the bundled snapshot only
+if that writable workspace is missing, then uses it as the default workspace.
+Existing user edits in `source_workspace` are never overwritten by launch.
+
+The packaged app uses the stable bundle id
+`com.openai.root-worker-prototype.dev` for macOS privacy prompts. `Info.plist`
+declares microphone, screen capture, and app automation usage descriptions.
+Screen Recording and Accessibility approval are still granted by macOS to the
+installed, signed app identity in System Settings; they are not replaced by
+external computer-use permissions.
 
 ## Electron
 
