@@ -896,8 +896,14 @@ function App() {
       const autoResumeThread = normalizedThreads.find(
         (thread) => thread.id === payload.autoResume?.focusThreadId,
       );
+      const excludedInitialThreadIds = payload.materializedSelfThreadId
+        ? new Set([payload.materializedSelfThreadId])
+        : undefined;
       const preferredProjectThread =
-        autoResumeThread ?? pickInitialProjectThread(normalizedThreads);
+        autoResumeThread ??
+        pickInitialProjectThread(normalizedThreads, {
+          excludedThreadIds: excludedInitialThreadIds,
+        });
       if (preferredProjectThread) {
         setSelectedThreadId(preferredProjectThread.id);
         return;

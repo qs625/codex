@@ -587,6 +587,7 @@ export type Thread = {
 export type BootstrapResponse = {
   workspace: string;
   threads: Thread[];
+  materializedSelfThreadId?: string | null;
   autoResume?: {
     resumedThreadIds: string[];
     skippedThreadIds: string[];

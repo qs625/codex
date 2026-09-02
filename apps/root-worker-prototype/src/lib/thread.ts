@@ -191,9 +191,20 @@ export function buildProjectAgentSidebar(
   };
 }
 
-export function pickInitialProjectThread(threads: Thread[]) {
-  const sidebar = buildProjectAgentSidebar(threads);
-  return sidebar.projects[0]?.tree.thread ?? pickInitialThread(threads);
+export function pickInitialProjectThread(
+  threads: Thread[],
+  options: { excludedThreadIds?: ReadonlySet<string> } = {},
+) {
+  const excludedThreadIds = options.excludedThreadIds;
+  const candidateThreads = excludedThreadIds?.size
+    ? threads.filter((thread) => !excludedThreadIds.has(thread.id))
+    : threads;
+  const sidebar = buildProjectAgentSidebar(candidateThreads);
+  return (
+    sidebar.projects[0]?.tree.thread ??
+    pickInitialThread(candidateThreads) ??
+    pickInitialThread(threads)
+  );
 }
 
 export function findProjectByRootIdentity(

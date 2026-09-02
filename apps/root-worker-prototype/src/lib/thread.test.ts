@@ -802,6 +802,43 @@ test("pickInitialProjectThread follows sidebar canonical project root selection"
   assert.equal(picked?.id, "active-root");
 });
 
+test("pickInitialProjectThread skips a freshly materialized self root when possible", () => {
+  const selfRoot = makeSidebarThread({
+    id: "self-root",
+    name: "/self",
+    path: "/self",
+    cwd: "/Users/example/.morpheus/source_workspace",
+    updatedAt: 20,
+  });
+  const projectRoot = makeSidebarThread({
+    id: "project-root",
+    cwd: "/work/project",
+    updatedAt: 10,
+  });
+
+  const picked = pickInitialProjectThread([selfRoot, projectRoot], {
+    excludedThreadIds: new Set(["self-root"]),
+  });
+
+  assert.equal(picked?.id, "project-root");
+});
+
+test("pickInitialProjectThread can fall back to an excluded self root", () => {
+  const selfRoot = makeSidebarThread({
+    id: "self-root",
+    name: "/self",
+    path: "/self",
+    cwd: "/Users/example/.morpheus/source_workspace",
+    updatedAt: 20,
+  });
+
+  const picked = pickInitialProjectThread([selfRoot], {
+    excludedThreadIds: new Set(["self-root"]),
+  });
+
+  assert.equal(picked?.id, "self-root");
+});
+
 test("buildProjectAgentSidebar makes subagents inherit their project root", () => {
   const root = makeSidebarThread({ id: "project-root", cwd: "/work/project" });
   const owner = makeSubagentThread("owner", "project-root", "/root/owner", {

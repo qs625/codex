@@ -36,6 +36,7 @@ const {
 } = require("./threadConfig.cjs");
 const { listThreads: listAllThreads } = require("./threadList.cjs");
 const { ensureSelfProjectSync } = require("./selfProject.cjs");
+const { ensureSelfProjectThread } = require("./selfProjectThread.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
   buildTurnStartParams,
@@ -233,11 +234,13 @@ ipcMain.handle("codex:relaunchApp", async (_event, payload = {}) => {
 
 ipcMain.handle("codex:bootstrap", async () => {
   await ensureDefaultWorkspace();
-  const threads = await listThreads(defaultWorkspace);
+  const listResult = await listThreads(defaultWorkspace);
+  const threads = listResult.threads;
   const autoResume = await getAutoResumeCoordinator().run(threads);
   return {
     workspace: defaultWorkspace,
     threads,
+    materializedSelfThreadId: listResult.materializedSelfThreadId,
     autoResume,
     appServer: appServerClient.status,
   };
@@ -245,7 +248,7 @@ ipcMain.handle("codex:bootstrap", async () => {
 
 ipcMain.handle("codex:listThreads", async (_event, cwd = defaultWorkspace) => {
   await ensureDefaultWorkspace();
-  return { data: await listThreads(cwd) };
+  return { data: (await listThreads(cwd)).threads };
 });
 
 ipcMain.handle("codex:listModels", async () => {
@@ -999,7 +1002,24 @@ function getAutoResumeCoordinator() {
 }
 
 async function listThreads(cwd) {
-  return listAllThreads(appServerClient, normalizeThread);
+  const threads = await listAllThreads(appServerClient, normalizeThread);
+  const project = await ensureSelfProjectForCurrentApp();
+  if (!project) {
+    return { materializedSelfThreadId: null, threads };
+  }
+  const result = await ensureSelfProjectThread(
+    appServerClient,
+    normalizeThread,
+    project,
+    threads,
+  );
+  if (result.created) {
+    rememberThreadRuntime(result.thread.id, result.runtime);
+  }
+  return {
+    materializedSelfThreadId: result.created ? result.thread.id : null,
+    threads: result.threads,
+  };
 }
 
 async function listSkills(cwd) {
