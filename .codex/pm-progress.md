@@ -11,6 +11,38 @@
 None
 
 ## Active Work
+- id: self-command-reuses-self-thread
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/self-command-reuses-self-thread
+  task_type: bugfix/ui-runtime
+  depends_on: main baseline `a45f585720921e5e478f9917437761b5120ba43a`
+  files: apps/root-worker-prototype Electron self command IPC/thread lookup, renderer SelfCommandDialog, focused self command/thread tests; README wording only if current behavior text is inaccurate
+  base_commit: a45f585720921e5e478f9917437761b5120ba43a
+  pending_sync_from_main: none; owner_dev_3 is clean and branched from current main baseline `a45f585720921e5e478f9917437761b5120ba43a`
+  status: merged
+  objective: User corrected the intended Cmd+P behavior: the popup is not for creating a new self project or new self thread; it should target the existing `/self` thread and send one new user message to that thread.
+  last_update: 2026-09-02 CST PM captured corrected product semantics and prepared owner_dev_3 on branch `bugfix/self-command-reuses-self-thread`. Owner delivered commit `95c3d94755`: Cmd+P now finds/materializes the `/self` root without carrying user text through `thread/start`, resumes persisted `/self` before sending, and sends the command text via `turn/start` to the existing thread; reviewer passed after unloaded-persisted and run-config override fixes. PM design-checked the patch and fast-forward merged it into main as `95c3d94755`.
+  next_action: none
+  blockers: none
+  validation: Owner ran focused Electron/renderer tests -> 12 passed; `rtk git diff --check` -> passed; fixed reviewer passed. PM reran merged-main patch checks -> passed; after installing main checkout dependencies, PM reran the combined focused Root Worker test target -> 47 passed; Root Worker build -> passed with existing chunk-size warning.
+  commit: 95c3d94755
+- id: client-pdf-preview
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/client-pdf-preview
+  task_type: feature/ui
+  depends_on: main baseline `a45f585720921e5e478f9917437761b5120ba43a`; independent of `self-command-reuses-self-thread`
+  files: apps/root-worker-prototype Electron local file preview IPC, renderer RightPanel file preview UI/types/styles, focused tests; no Cmd+P/self command files unless test fixtures require type updates
+  base_commit: a45f585720921e5e478f9917437761b5120ba43a
+  pending_sync_from_main: none; owner_dev_2 branched from current main baseline `a45f585720921e5e478f9917437761b5120ba43a`; unrelated untracked `apps/android-companion/local.properties` must remain uncommitted
+  status: merged
+  objective: Add client-side PDF display support so local PDF links/files opened in the Root Worker client render as an in-app preview instead of being treated as UTF-8 text/editor content.
+  last_update: 2026-09-02 CST user requested “客户端再支持展示下pdf”. PM chose the existing File Preview panel as the target surface and prepared owner_dev_2 on branch `feature/client-pdf-preview`. Owner delivered commit `b83a2c9d23`: PDF preview is a first-class File Preview render mode backed by a controlled `morpheus-file-preview://` protocol token URL, not raw `file://` and not UTF-8 content. PM design-checked the implementation and merged it into main as merge commit `6539e088558c0851780cc94d4db78d9212e71503`.
+  next_action: none
+  blockers: none
+  validation: Owner ran `rtk pnpm --filter @my-codex/root-worker-prototype test -- electron/localFilePreview.test.cjs src/components/RightPanel.test.tsx` -> 35 passed; `rtk pnpm --filter @my-codex/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check` -> passed; fixed reviewer passed after rejecting raw `file://` embedding. PM reran merged-main patch checks -> passed; after installing main checkout dependencies, PM reran the combined focused Root Worker test target -> 47 passed; Root Worker build -> passed with existing chunk-size warning.
+  commit: 6539e088558c0851780cc94d4db78d9212e71503
 - id: self-project-tree-runtime-visibility
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
