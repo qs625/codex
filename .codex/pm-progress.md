@@ -11,6 +11,22 @@
 None
 
 ## Active Work
+- id: runtime-refresh-installed-update-result
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-refresh-installed-update-result
+  task_type: bugfix/runtime-packaging-lifecycle
+  depends_on: main baseline `bac8df854c492927932d33108536db2e307020dc`
+  files: codex-rs request_runtime_restart host lifecycle result semantics if needed; apps/root-worker-prototype Electron lifecycle/installedArtifactUpdate/appServer notification handling/tests; progress/memory only if stable product fact changes
+  base_commit: bac8df854c492927932d33108536db2e307020dc
+  pending_sync_from_main: none; owner_dev_3 branched from current main baseline `bac8df854c492927932d33108536db2e307020dc`
+  status: merged
+  objective: User observed that after `request_runtime_restart` returned accepted/relaunching, installed `/Applications/Root Worker Prototype.app/Contents/Resources/app.asar` still lacked newly built PDF preview code. Fix the tool/update lifecycle so refresh directly replaces built frontend/backend runnable artifacts and cannot mask failed or skipped installed artifact updates.
+  last_update: 2026-09-02 CST PM confirmed source `dist` contains `morpheus-file-preview` / `preview-pdf-frame`, but installed `app.asar` timestamp remains 19:51 and lacks those strings after refresh. User corrected the implementation model: update is not full repackaging; it should directly replace built frontend/backend artifacts and then restart. PM redirected owner_dev_3 with that constraint. Owner delivered commits `9cd7eae09e` and `0007c89f0`: refresh now directly stages built frontend/backend artifacts, packs only `app.asar`, resolves release `app-server` from cargo metadata, replaces installed resources with hash postcondition checks, and exposes async host update failure via lifecycle status. PM manually ran direct update against `/Applications/Root Worker Prototype.app`; installed `app.asar` contained PDF preview strings and artifact mtimes were 22:16, but `codesign --verify --deep --strict` failed because `.morpheus-update-backup-*` under `Contents/Resources` was sealed during codesign and later removed. Owner delivered follow-up commit `f102535c1` moving artifact staging/backup outside the app bundle; PM design-checked, fast-forward merged it into main, reran direct update, verified installed `app.asar` contains `morpheus-file-preview` / `preview-pdf-frame`, verified no updater temp dirs under `.app/Contents`, verified `codesign --verify --deep --strict --verbose=4` passes, and restarted `/Applications/Root Worker Prototype.app`.
+  next_action: none
+  blockers: none
+  validation: Owner ran Electron lifecycle/update tests -> 28 passed; Root Worker build -> passed with existing chunk-size warning; `rtk git diff --check` -> passed; reviewer passed. PM reran `rtk pnpm --dir apps/root-worker-prototype test electron/installedArtifactUpdate.test.cjs electron/appLifecycle.test.cjs` -> 28 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check` -> passed; direct installed update returned `{ ok: true, updated: true }`; installed `app.asar` contains `morpheus-file-preview` / `preview-pdf-frame`; installed `app.asar` and `bin/app-server` mtimes are Sep 2 22:25:42 2026; no updater temp dirs remain under `.app/Contents`; `rtk codesign --verify --deep --strict --verbose=4` -> valid on disk / satisfies Designated Requirement; app quit/open restart completed. Broader app-server/tool-service host_lifecycle tests remain blocked by unrelated existing compile drift.
+  commit: 9cd7eae09e, 0007c89f0, f102535c1
 - id: self-command-reuses-self-thread
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
