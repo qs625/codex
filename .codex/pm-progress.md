@@ -8,9 +8,41 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Make `request_runtime_restart` perform installed-app source-workspace builds and update the running installed artifacts through a host/runtime-owned path.
 
 ## Active Work
+- id: runtime-restart-installed-artifact-update
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/runtime-restart-installed-artifact-update
+  task_type: feature/runtime-packaging-lifecycle
+  depends_on: desktop-install-self-command-fix merged in `4966d3525f34ce757f3dfdf1117c7e5a052bd093`; self-project-visible-tree merged in `28099f6690`; source workspace clone semantics merged in `264def19898a92559f80099d52d5bd6c2723683c`
+  files: codex-rs request_runtime_restart host lifecycle payload if needed; apps/root-worker-prototype Electron lifecycle/restart/update orchestration; app packaging scripts/helpers if reused; tests/docs
+  base_commit: pending sync to main after `28099f6690`
+  pending_sync_from_main: owner_dev_2 currently at `70a3502cce4738b486fb486e041cf5a9c2cf2a08` with unrelated untracked `apps/android-companion/local.properties`; must fast-forward to latest main before dispatch.
+  status: planned
+  objective: When a model calls `request_runtime_restart` from an installed Root Worker app after editing/building Morpheus code in `~/.morpheus/source_workspace`, the runtime/host path should own the build and installed-artifact update flow instead of expecting the model to copy files by hand. The tool should build the necessary frontend/backend artifacts from the source workspace, update the installed app's runnable artifacts through a path-safe mechanism, then restart/reload so the app actually runs the new code.
+  last_update: 2026-09-02 18:08 CST user clarified the desired design: the restart tool should automatically build and update artifacts; this should live in the runtime/tool path rather than leaving the model to update the installed app manually. User also noted path issues are likely; PM agrees path resolution is a core design constraint.
+  next_action: Sync owner_dev_2 to latest main, then assign a complete runtime/packaging lifecycle brief.
+  blockers: none
+  validation: pending
+  commit:
+- id: self-project-visible-tree
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/self-project-visible-tree
+  task_type: feature/ui
+  depends_on: desktop-install-self-command-fix merged in `4966d3525f34ce757f3dfdf1117c7e5a052bd093`; progress commits through `011ab8373549a5ed1d5bf4a05c91fee67c53788d`
+  files: apps/root-worker-prototype project tree/sidebar thread classification and focused tests; Cmd+P self command UI only if needed; README/docs only if behavior text changes
+  base_commit: 011ab8373549a5ed1d5bf4a05c91fee67c53788d
+  pending_sync_from_main: none; owner_dev_3 fast-forwarded to `011ab8373549a5ed1d5bf4a05c91fee67c53788d` before dispatch.
+  status: merged
+  objective: Honor the updated product direction from the user: `/self` should appear in the ordinary project tree rather than being hidden from normal navigation. Keep Cmd+P as a shortcut input path, but make the created/available self root visible like a regular project root in the sidebar/tree.
+  last_update: 2026-09-02 17:54 CST user explicitly chose the ordinary project tree approach: “就用普通的project tree吧”. PM asked owner_dev_3 to remove/revise the prior `/self` root sidebar filtering added in `c45752c2ff`, and adjust labels/tests so self is visible without breaking normal project grouping. Owner_dev_3 delivered commit `e9f0d7de122e8c8917169005e1d37ab6b99c7206`; PM merged it into main as `28099f6690`.
+  next_action: Include in next package/release build.
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 192 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/components/SelfCommandDialog.test.tsx` -> 5 passed; Root Worker build -> passed with existing chunk-size warning; diff check -> passed; reviewer passed after two rounds. PM reran focused tests `src/lib/thread.test.ts src/components/SelfCommandDialog.test.tsx` -> 197 passed; Root Worker build -> passed with existing chunk-size warning; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: 28099f6690
 - id: desktop-install-self-command-fix
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
