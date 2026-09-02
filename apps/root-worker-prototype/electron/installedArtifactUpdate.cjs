@@ -13,6 +13,7 @@ const APP_PLATFORM_DIR = "Root Worker Prototype-darwin-arm64";
 const SOURCE_APP_RELATIVE_PATH = path.join("apps", "root-worker-prototype");
 const APP_ASAR_RELATIVE_PATH = "app.asar";
 const APP_SERVER_RELATIVE_PATH = path.join("bin", "app-server");
+const APP_SERVER_BINARY_NAME = "app-server";
 const DEFAULT_CONFIG_RELATIVE_PATH = "default-config";
 const SIGNATURE_RELATIVE_PATH = path.join("Contents", "_CodeSignature");
 const DIRECT_REFRESH_STAGING_PREFIX = "morpheus-runtime-refresh-";
@@ -25,6 +26,7 @@ function resolveInstalledArtifactUpdatePlan({
   appName = APP_NAME,
   appPlatformDir = APP_PLATFORM_DIR,
   isPackaged = isPackagedApp({ resourcesPath }),
+  spawnSync: spawn = spawnSync,
 } = {}) {
   if (platform !== "darwin" || !isPackaged || !resourcesPath) {
     return null;
@@ -39,15 +41,21 @@ function resolveInstalledArtifactUpdatePlan({
   const appBundlePath = path.dirname(path.dirname(resourcesPath));
   const sourceAppDir = path.join(resolvedWorkspace, SOURCE_APP_RELATIVE_PATH);
   const codexRsDir = path.join(resolvedWorkspace, "codex-rs");
+  const codexRsCargoManifestPath = path.join(codexRsDir, "Cargo.toml");
+  const cargoTargetDir = resolveCargoTargetDirectory({
+    codexRsCargoManifestPath,
+    codexRsDir,
+    spawnSync: spawn,
+  });
 
   return {
     appBundlePath,
     appServerBinaryPath: path.join(
-      codexRsDir,
-      "target",
+      cargoTargetDir,
       "release",
-      "app-server",
+      APP_SERVER_BINARY_NAME,
     ),
+    codexRsCargoManifestPath,
     defaultCompactPromptSourcePath: path.join(
       codexRsDir,
       "thread-service",
@@ -65,6 +73,51 @@ function resolveInstalledArtifactUpdatePlan({
       { kind: "directory", relativePath: DEFAULT_CONFIG_RELATIVE_PATH },
     ],
   };
+}
+
+function resolveCargoTargetDirectory({
+  codexRsCargoManifestPath,
+  codexRsDir,
+  spawnSync: spawn = spawnSync,
+} = {}) {
+  const result = spawn(
+    "rtk",
+    [
+      "cargo",
+      "metadata",
+      "--format-version=1",
+      "--no-deps",
+      "--manifest-path",
+      codexRsCargoManifestPath,
+    ],
+    {
+      cwd: codexRsDir,
+      encoding: "utf8",
+      stdio: "pipe",
+    },
+  );
+  assertSuccessfulSpawn(
+    result,
+    "rtk cargo metadata --format-version=1 --no-deps --manifest-path <Cargo.toml>",
+    { cwd: codexRsDir },
+  );
+
+  let metadata;
+  try {
+    metadata = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `Failed to parse cargo metadata for app-server target directory${formatCause(error)}`,
+    );
+  }
+  if (
+    !metadata ||
+    typeof metadata.target_directory !== "string" ||
+    metadata.target_directory.length === 0
+  ) {
+    throw new Error("Cargo metadata did not include target_directory.");
+  }
+  return metadata.target_directory;
 }
 
 function updateInstalledArtifacts(plan, options = {}) {
@@ -99,6 +152,7 @@ function updateInstalledArtifacts(plan, options = {}) {
     signatureBackup = backupSignatureMetadataSync(stagedPlan, {
       ...options,
       fsOps: replacement.fsOps,
+      signatureBackupRoot: prepared.stagingRoot,
       updateId: replacement.updateId,
     });
     codesign(stagedPlan, { spawnSync: spawn, logger });
@@ -493,15 +547,21 @@ function backupSignatureMetadataSync(plan, options = {}) {
   };
   const existsSync = options.existsSync ?? fs.existsSync;
   const signaturePath = path.join(plan.appBundlePath, SIGNATURE_RELATIVE_PATH);
+  const backupRoot =
+    options.signatureBackupRoot ??
+    path.join(
+      os.tmpdir(),
+      `${DIRECT_REFRESH_STAGING_PREFIX}signature-${options.updateId ?? "current"}`,
+    );
   const backupPath = path.join(
-    plan.appBundlePath,
-    "Contents",
+    backupRoot,
     `.morpheus-signature-backup-${options.updateId ?? "current"}`,
   );
   cleanupPath(backupPath, fsOps);
   if (!existsSync(signaturePath)) {
     return { backupPath, existed: false, fsOps, signaturePath };
   }
+  fsOps.mkdirSync(path.dirname(backupPath), { recursive: true });
   fsOps.cpSync(signaturePath, backupPath, { recursive: true });
   return { backupPath, existed: true, fsOps, signaturePath };
 }
@@ -538,6 +598,7 @@ module.exports = {
   backupSignatureMetadataSync,
   packAppAsar,
   prepareDirectArtifacts,
+  resolveCargoTargetDirectory,
   resolveInstalledArtifactUpdatePlan,
   updateInstalledArtifacts,
   replaceInstalledArtifactsSync,

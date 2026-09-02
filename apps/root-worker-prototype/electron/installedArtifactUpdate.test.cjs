@@ -6,18 +6,23 @@ const path = require("node:path");
 
 const {
   prepareDirectArtifacts,
+  resolveCargoTargetDirectory,
   resolveInstalledArtifactUpdatePlan,
   replaceInstalledArtifactsSync,
   updateInstalledArtifacts,
 } = require("./installedArtifactUpdate.cjs");
 
 test("resolves installed update plan from current app resources path", () => {
+  const workspace = "/Users/example/.morpheus/source_workspace";
   const plan = resolveInstalledArtifactUpdatePlan({
     env: { MORPHEUS_HOME: "/Users/example/.morpheus" },
     platform: "darwin",
     resourcesPath:
       "/Applications/Root Worker Prototype.app/Contents/Resources",
     isPackaged: true,
+    spawnSync: fakeCargoMetadataSpawn({
+      target_directory: path.join(workspace, "target"),
+    }),
   });
 
   assert.equal(
@@ -38,7 +43,7 @@ test("resolves installed update plan from current app resources path", () => {
   );
   assert.equal(
     plan.appServerBinaryPath,
-    "/Users/example/.morpheus/source_workspace/codex-rs/target/release/app-server",
+    "/Users/example/.morpheus/source_workspace/target/release/app-server",
   );
   assert.equal(
     plan.defaultCompactPromptSourcePath,
@@ -47,19 +52,70 @@ test("resolves installed update plan from current app resources path", () => {
 });
 
 test("resolves installed update plan from explicit workspace", () => {
+  const workspace = "/Volumes/Work/Morpheus Source";
   const plan = resolveInstalledArtifactUpdatePlan({
     env: {
       MORPHEUS_HOME: "/Users/example/.morpheus",
-      ROOT_WORKER_WORKSPACE: "/Volumes/Work/Morpheus Source",
+      ROOT_WORKER_WORKSPACE: workspace,
     },
     platform: "darwin",
     resourcesPath:
       "/Volumes/Apps/Root Worker Prototype.app/Contents/Resources",
     isPackaged: true,
+    spawnSync: fakeCargoMetadataSpawn({
+      target_directory: path.join(workspace, ".shared-target"),
+    }),
   });
 
   assert.equal(plan.workspace, "/Volumes/Work/Morpheus Source");
   assert.equal(plan.appBundlePath, "/Volumes/Apps/Root Worker Prototype.app");
+  assert.equal(
+    plan.appServerBinaryPath,
+    "/Volumes/Work/Morpheus Source/.shared-target/release/app-server",
+  );
+});
+
+test("resolves release app-server from cargo metadata target directory", () => {
+  const workspace = "/repo/source";
+  const calls = [];
+  const plan = resolveInstalledArtifactUpdatePlan({
+    env: { ROOT_WORKER_WORKSPACE: workspace },
+    platform: "darwin",
+    resourcesPath: "/Applications/Root Worker Prototype.app/Contents/Resources",
+    isPackaged: true,
+    spawnSync: fakeCargoMetadataSpawn(
+      { target_directory: "/repo/target" },
+      calls,
+    ),
+  });
+
+  assert.equal(plan.appServerBinaryPath, "/repo/target/release/app-server");
+  assert.deepEqual(calls, [
+    {
+      command: "rtk",
+      args: [
+        "cargo",
+        "metadata",
+        "--format-version=1",
+        "--no-deps",
+        "--manifest-path",
+        "/repo/source/codex-rs/Cargo.toml",
+      ],
+      cwd: "/repo/source/codex-rs",
+    },
+  ]);
+});
+
+test("cargo target directory parsing rejects missing metadata field", () => {
+  assert.throws(
+    () =>
+      resolveCargoTargetDirectory({
+        codexRsCargoManifestPath: "/repo/source/codex-rs/Cargo.toml",
+        codexRsDir: "/repo/source/codex-rs",
+        spawnSync: fakeCargoMetadataSpawn({}),
+      }),
+    /Cargo metadata did not include target_directory/,
+  );
 });
 
 test("does not plan installed artifact update outside packaged mac app", () => {
@@ -134,6 +190,9 @@ test("successful update replaces runnable artifacts and codesigns installed app"
       if (args.includes("@electron/asar")) {
         write(args.at(-1), "new asar");
       }
+      if (args.includes("codesign")) {
+        assert.equal(hasBundleSignatureBackup(fixture.appContentsPath), false);
+      }
       return { status: 0 };
     },
   });
@@ -183,6 +242,10 @@ test("codesign failure restores old installed artifacts", () => {
         updateId: "codesign-failure",
         spawnSync: (command, args) => {
           if (args.includes("codesign")) {
+            assert.equal(
+              hasBundleSignatureBackup(fixture.appContentsPath),
+              false,
+            );
             return { status: 1, stderr: "signature failed" };
           }
           if (args.includes("@electron/asar")) {
@@ -198,6 +261,7 @@ test("codesign failure restores old installed artifacts", () => {
   assert.equal(read(fixture.targetAppServer), "old server");
   assert.equal(read(fixture.targetCompact), "old compact");
   assert.equal(read(fixture.targetSignature), "old signature");
+  assert.equal(hasBundleSignatureBackup(fixture.appContentsPath), false);
 });
 
 test("backup rename failure restores already moved artifacts", () => {
@@ -336,12 +400,19 @@ function createUpdateFixture() {
     root,
     "Moved Root Worker Prototype.app/Contents/Resources",
   );
+  const appContentsPath = path.join(
+    root,
+    "Moved Root Worker Prototype.app/Contents",
+  );
   const directStagingRoot = path.join(root, "direct-staging");
   const plan = resolveInstalledArtifactUpdatePlan({
     env: { ROOT_WORKER_WORKSPACE: workspace },
     platform: "darwin",
     resourcesPath: installedResources,
     isPackaged: true,
+    spawnSync: fakeCargoMetadataSpawn({
+      target_directory: path.join(workspace, "target"),
+    }),
   });
 
   write(path.join(installedResources, "app.asar"), "old asar");
@@ -358,10 +429,7 @@ function createUpdateFixture() {
     "old signature",
   );
   write(path.join(sourceDist, "index.html"), "<main>new renderer</main>");
-  write(
-    path.join(workspace, "codex-rs/target/release/app-server"),
-    "new server",
-  );
+  write(path.join(workspace, "target/release/app-server"), "new server");
   write(
     path.join(
       workspace,
@@ -373,6 +441,7 @@ function createUpdateFixture() {
 
   return {
     directStagingRoot,
+    appContentsPath,
     plan,
     sourceDist,
     targetAppAsar: path.join(installedResources, "app.asar"),
@@ -390,6 +459,25 @@ function createUpdateFixture() {
 
 function failUnexpectedSpawn(command, args) {
   throw new Error(`unexpected spawn: ${command} ${args.join(" ")}`);
+}
+
+function fakeCargoMetadataSpawn(metadata, calls = []) {
+  return (command, args, options = {}) => {
+    calls.push({ command, args, cwd: options.cwd });
+    return {
+      status: 0,
+      stdout: JSON.stringify(metadata),
+    };
+  };
+}
+
+function hasBundleSignatureBackup(appContentsPath) {
+  if (!fs.existsSync(appContentsPath)) {
+    return false;
+  }
+  return fs
+    .readdirSync(appContentsPath)
+    .some((entry) => entry.startsWith(".morpheus-signature-backup-"));
 }
 
 function write(filePath, content) {

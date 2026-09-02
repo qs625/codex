@@ -384,8 +384,15 @@ test("client relaunch notification falls back to renderer reload when update uns
 test("installed artifact update coalesces concurrent restart requests", async () => {
   let resolveUpdate;
   let updateCount = 0;
+  let resolveCount = 0;
   const adapter = createInstalledArtifactUpdateLifecycleAdapter({
-    resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+    resolvePlan: () => {
+      resolveCount += 1;
+      if (resolveCount > 1) {
+        throw new Error("duplicate request should not resolve a new plan");
+      }
+      return { appBundlePath: "/Moved App.app" };
+    },
     updateArtifacts: () => {
       updateCount += 1;
       return new Promise((resolve) => {
@@ -408,6 +415,7 @@ test("installed artifact update coalesces concurrent restart requests", async ()
 
   assert.equal((await first).alreadyRequested, undefined);
   assert.equal((await second).alreadyRequested, true);
+  assert.equal(resolveCount, 1);
   assert.equal(updateCount, 1);
 });
 

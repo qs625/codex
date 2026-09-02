@@ -171,18 +171,18 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 
   return {
     requestUpdateAndRelaunch(reason = null) {
+      if (inFlight) {
+        return inFlight.then((result) => ({
+          ...result,
+          alreadyRequested: true,
+        }));
+      }
       if (!resolvePlan || typeof resolvePlan !== "function") {
         return Promise.resolve({ ok: false, unsupported: true });
       }
       const plan = resolvePlan();
       if (!plan) {
         return Promise.resolve({ ok: false, unsupported: true });
-      }
-      if (inFlight) {
-        return inFlight.then((result) => ({
-          ...result,
-          alreadyRequested: true,
-        }));
       }
 
       inFlight = runInstalledArtifactUpdate({
