@@ -272,6 +272,13 @@ declare global {
           name: string;
           byteSize: number;
         } | null;
+        pdf?: {
+          path: string;
+          mimeType: string;
+          name: string;
+          byteSize: number;
+          url: string;
+        } | null;
       }>;
       lspDefinition: (payload: {
         path: string;

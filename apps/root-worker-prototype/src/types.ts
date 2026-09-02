@@ -927,6 +927,14 @@ export type FilePreviewImage = {
   byteSize: number;
 };
 
+export type FilePreviewPdf = {
+  path: string;
+  mimeType: string;
+  name: string;
+  byteSize: number;
+  url: string;
+};
+
 export type FilePreview = {
   path: string;
   displayPath: string;
@@ -946,6 +954,7 @@ export type FilePreview = {
     reason: string | null;
   };
   image?: FilePreviewImage | null;
+  pdf?: FilePreviewPdf | null;
 };
 
 export type FileLocation = {
