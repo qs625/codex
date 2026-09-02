@@ -11,6 +11,22 @@
 None
 
 ## Active Work
+- id: desktop-install-self-command-fix
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/desktop-install-self-command-fix
+  task_type: bugfix/packaging-ui
+  depends_on: package-origin-clone-workspace merged in `264def19898a92559f80099d52d5bd6c2723683c`; progress/memory commit `2e3706ee1f0736081ae835aa077408858b9e91d7`
+  files: apps/root-worker-prototype/scripts/create-mac-dmg.cjs and tests; apps/root-worker-prototype Cmd+P/self command renderer UI and focused tests; Electron preload/main IPC only if needed; README/docs only if behavior wording changes
+  base_commit: 2e3706ee1f0736081ae835aa077408858b9e91d7
+  pending_sync_from_main: none; owner_dev_3 fast-forwarded to `2e3706ee1f0736081ae835aa077408858b9e91d7` before dispatch.
+  status: merged
+  objective: Fix the local desktop release gaps found during install smoke: DMG staging must preserve macOS app bundle relative symlinks so dragging the app to `/Applications` produces a self-contained app, and Cmd+P must be a real dedicated `/self` input surface that calls the existing packaged-app IPC instead of doing nothing.
+  last_update: 2026-09-02 17:19 CST PM diagnosed that the generated DMG contains absolute Electron Framework symlinks pointing back to the build checkout, because DMG staging copied the `.app` with Node `fs.cp` without preserving symlink text. PM also confirmed `~/.morpheus/source_workspace` can clone successfully once the installed app bundle is repaired, and that the currently merged `/self` work only exposes Electron IPC, not a working Cmd+P UI. 2026-09-02 17:31 CST owner_dev_3 delivered commit `c45752c2ff` with reviewer approval: DMG staging copy now preserves symlink text and guards Electron framework symlinks as relative; renderer adds `SelfCommandDialog`, Cmd/Ctrl+P shortcut, `/self` project load, `startSelfCommand({ text })` submit, success selection, unavailable/error states, and sidebar filtering for self root. PM merged owner_dev_3 into main as `4966d3525f34ce757f3dfdf1117c7e5a052bd093`.
+  next_action: Push main when ready; create a new desktop release tag only if a GitHub release artifact is needed, because the old `desktop-v0.0.0` tag predates this fix.
+  blockers: none
+  validation: Owner reports focused Root Worker tests -> 270 passed; Root Worker build -> passed with existing chunk warning; `package:mac:app` -> passed with existing Rust warnings; skip-Finder `package:mac:dmg` -> passed; app and mounted DMG Electron Framework symlink spot checks -> all relative; `hdiutil verify` -> checksum valid; no `Contents/Resources/source`; diff check passed. Reviewer passed after adding `/self` sidebar filtering. PM reran focused main tests `scripts/create-mac-dmg.test.cjs src/components/SelfCommandDialog.test.tsx src/lib/thread.test.ts` -> 210 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk warning; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` -> passed; `rtk env CARGO_PROFILE_RELEASE_LTO=thin ROOT_WORKER_DMG_SKIP_FINDER_LAYOUT=1 pnpm --dir apps/root-worker-prototype package:mac` -> passed with existing Rust warnings; generated DMG size 175 MB; `rtk hdiutil verify` -> valid; generated app and mounted DMG Electron Framework symlinks -> relative; no `Contents/Resources/source`; installed `/Applications` copy via DMG source has relative symlinks and passes codesign verification; packaged Electron Playwright smoke with temporary `MORPHEUS_HOME` confirmed window title `Root Worker Prototype`, packaged `file://...app.asar/dist/index.html`, `window.codexDesktop` true, Cmd+P dialog visible, `/self` text visible, and temporary `source_workspace` cloned clean at `2e3706ee1f0736081ae835aa077408858b9e91d7`.
+  commit: 4966d3525f34ce757f3dfdf1117c7e5a052bd093
 - id: package-origin-clone-workspace
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
