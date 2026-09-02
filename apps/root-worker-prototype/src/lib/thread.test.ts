@@ -28,6 +28,7 @@ import {
   getThreadSubtreeIdsChildrenFirst,
   shouldNotifyProjectThreadCompleted,
   isThreadThinking,
+  isSelfCommandRootThread,
   markThreadCommandExecutionRunning,
   mergeDefaultCollapsedProjectIds,
   mergeThreadLifecycleStatus,
@@ -338,6 +339,33 @@ test("buildProjectAgentSidebar groups parentless project chat roots by cwd", () 
   assert.equal(alpha?.tree.label, "Alpha chat");
   assert.equal(alpha?.tree.children[0]?.threadId, "owner-a");
   assert.equal(alpha?.descendantCount, 1);
+});
+
+test("buildProjectAgentSidebar keeps self command roots out of ordinary navigation", () => {
+  const selfRoot = makeSidebarThread({
+    id: "self-root",
+    name: "/self",
+    cwd: "/Users/example/.morpheus/source_workspace",
+    agentPath: "/self",
+    createdAt: 2,
+    updatedAt: 10,
+  });
+  const project = makeSidebarThread({
+    id: "project-root",
+    name: "Project chat",
+    cwd: "/Users/example/.morpheus/source_workspace",
+    createdAt: 1,
+    updatedAt: 4,
+  });
+
+  const sidebar = buildProjectAgentSidebar([selfRoot, project]);
+
+  assert.equal(isSelfCommandRootThread(selfRoot), true);
+  assert.deepEqual(
+    sidebar.projects.map((item) => item.tree.threadId),
+    ["project-root"],
+  );
+  assert.equal(sidebar.chat.conversations.length, 0);
 });
 
 test("mergeDefaultCollapsedProjectIds collapses untouched projects by default", () => {

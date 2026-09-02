@@ -105,7 +105,9 @@ export function buildAgentTree(
 export function buildProjectAgentSidebar(
   threads: Thread[],
 ): ProjectAgentSidebar {
-  const parentlessThreads = threads.filter(isRootThread);
+  const parentlessThreads = threads.filter(
+    (thread) => isRootThread(thread) && !isSelfCommandRootThread(thread),
+  );
   const projectRootCandidates = new Map<
     string,
     { cwd: string; projectPath: string | null; candidates: Thread[] }
@@ -391,6 +393,17 @@ export function getParentThreadId(thread: Thread): string | null {
 
 export function isRootThread(thread: Thread) {
   return !getParentThreadId(thread);
+}
+
+export function isSelfCommandRootThread(thread: Thread) {
+  if (!isRootThread(thread)) {
+    return false;
+  }
+  return (
+    normalizeProjectPathIdentity(thread.agentPath) === "/self" ||
+    normalizeProjectPathIdentity(thread.path) === "/self" ||
+    thread.name === "/self"
+  );
 }
 
 export function getTreeRootThreadId(threads: Thread[], threadId: string) {

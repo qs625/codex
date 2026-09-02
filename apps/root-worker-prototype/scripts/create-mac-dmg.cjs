@@ -9,6 +9,13 @@ const DIST_DIR_NAME = "dist-app";
 const MOUNT_ROOT_DIR_NAME = "dmg-mount";
 const STAGING_DIR_NAME = "dmg-staging";
 const TEMP_DMG_FILE_NAME = "Root Worker Prototype-arm64.temp.dmg";
+const ELECTRON_FRAMEWORK_SYMLINKS = [
+  ["Contents", "Frameworks", "Electron Framework.framework", "Electron Framework"],
+  ["Contents", "Frameworks", "Electron Framework.framework", "Helpers"],
+  ["Contents", "Frameworks", "Electron Framework.framework", "Libraries"],
+  ["Contents", "Frameworks", "Electron Framework.framework", "Resources"],
+  ["Contents", "Frameworks", "Electron Framework.framework", "Versions", "Current"],
+];
 
 function buildMacDmgPaths({
   appName = APP_NAME,
@@ -111,11 +118,9 @@ async function createMacDmg({
   await fs.rm(paths.tempDmgPath, { force: true });
   await fs.mkdir(paths.stagingDir, { recursive: true });
   await fs.mkdir(paths.mountRootDir, { recursive: true });
-  await fs.cp(
-    paths.appBundlePath,
-    path.join(paths.stagingDir, `${appName}.app`),
-    { recursive: true },
-  );
+  const stagedAppBundlePath = path.join(paths.stagingDir, `${appName}.app`);
+  await copyAppBundleForDmg(paths.appBundlePath, stagedAppBundlePath);
+  await assertMacAppBundleSymlinksRelative(stagedAppBundlePath);
   await fs.symlink("/Applications", path.join(paths.stagingDir, "Applications"));
 
   let mounted = false;
@@ -186,6 +191,36 @@ async function assertFileExists(targetPath, label) {
   }
   if (!stat.isFile()) {
     throw new Error(`${label} is not a file: ${targetPath}`);
+  }
+}
+
+async function copyAppBundleForDmg(sourceAppBundlePath, stagedAppBundlePath) {
+  await fs.cp(sourceAppBundlePath, stagedAppBundlePath, {
+    recursive: true,
+    verbatimSymlinks: true,
+  });
+}
+
+async function assertMacAppBundleSymlinksRelative(appBundlePath) {
+  for (const symlinkParts of ELECTRON_FRAMEWORK_SYMLINKS) {
+    const symlinkPath = path.join(appBundlePath, ...symlinkParts);
+    let stat;
+    try {
+      stat = await fs.lstat(symlinkPath);
+    } catch (error) {
+      throw new Error(`Expected Electron framework symlink missing: ${symlinkPath}`, {
+        cause: error,
+      });
+    }
+    if (!stat.isSymbolicLink()) {
+      throw new Error(`Expected Electron framework symlink: ${symlinkPath}`);
+    }
+    const target = await fs.readlink(symlinkPath);
+    if (path.isAbsolute(target)) {
+      throw new Error(
+        `Electron framework symlink must stay relative: ${symlinkPath} -> ${target}`,
+      );
+    }
   }
 }
 
@@ -330,6 +365,7 @@ if (require.main === module) {
 
 module.exports = {
   assertMacPackagingPlatform,
+  assertMacAppBundleSymlinksRelative,
   buildFinderLayoutScriptArgs,
   buildHdiutilAttachArgs,
   buildHdiutilConvertArgs,
@@ -337,6 +373,7 @@ module.exports = {
   buildHdiutilDetachArgs,
   buildMacDmgPaths,
   cleanupMountedVolume,
+  copyAppBundleForDmg,
   createMacDmg,
   isMountedVolumeOutput,
   shouldUseFinderLayout,

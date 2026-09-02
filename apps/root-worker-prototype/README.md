@@ -70,8 +70,9 @@ content is left intact.
 It also maintains `~/.morpheus/self-project.json` as a hidden/system `/self`
 project record whose workspace is the same Morpheus source workspace. The
 Electron IPC contract exposes `getSelfProject` and `startSelfCommand` for a
-dedicated self command surface; `startSelfCommand` always creates a `/self`
-project thread in that workspace and submits the provided task text there.
+dedicated self command surface. Press Cmd+P in the desktop app to open that
+`/self` input; submitting it always creates a `/self` project thread in the
+source workspace and sends the provided task text there.
 
 Desktop release automation lives in `.github/workflows/desktop-release.yml`.
 Pushing a tag like `desktop-v1.2.3` builds and uploads GitHub Release assets:
@@ -86,6 +87,8 @@ These artifacts do not include a repository source snapshot. They rely on the
 installed app's origin-clone workspace setup described above. The workflow does
 not perform Apple notarization or Windows code signing; macOS is ad-hoc signed
 by the local `package:mac:app` script and Windows/Linux artifacts are unsigned.
+DMG staging preserves Electron Framework bundle-relative symlinks so the app
+does not depend on the build checkout after being dragged to `/Applications`.
 CI DMG creation skips Finder-driven icon layout so macOS runners do not depend
 on GUI AppleEvents. GitHub Release upload uses the workflow `GITHUB_TOKEN`, so
 CI execution does not depend on local `gh` login; local `gh` authentication is
