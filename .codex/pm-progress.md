@@ -18,12 +18,12 @@ Make `request_runtime_restart` perform installed-app source-workspace builds and
   task_type: feature/runtime-packaging-lifecycle
   depends_on: desktop-install-self-command-fix merged in `4966d3525f34ce757f3dfdf1117c7e5a052bd093`; self-project-visible-tree merged in `28099f6690`; source workspace clone semantics merged in `264def19898a92559f80099d52d5bd6c2723683c`
   files: codex-rs request_runtime_restart host lifecycle payload if needed; apps/root-worker-prototype Electron lifecycle/restart/update orchestration; app packaging scripts/helpers if reused; tests/docs
-  base_commit: pending sync to main after `28099f6690`
-  pending_sync_from_main: owner_dev_2 currently at `70a3502cce4738b486fb486e041cf5a9c2cf2a08` with unrelated untracked `apps/android-companion/local.properties`; must fast-forward to latest main before dispatch.
-  status: planned
+  base_commit: dc05a858bd
+  pending_sync_from_main: none; owner_dev_2 fast-forwarded to `dc05a858bd` before dispatch and still has unrelated untracked `apps/android-companion/local.properties`, which must not be included.
+  status: in_progress
   objective: When a model calls `request_runtime_restart` from an installed Root Worker app after editing/building Morpheus code in `~/.morpheus/source_workspace`, the runtime/host path should own the build and installed-artifact update flow instead of expecting the model to copy files by hand. The tool should build the necessary frontend/backend artifacts from the source workspace, update the installed app's runnable artifacts through a path-safe mechanism, then restart/reload so the app actually runs the new code.
   last_update: 2026-09-02 18:08 CST user clarified the desired design: the restart tool should automatically build and update artifacts; this should live in the runtime/tool path rather than leaving the model to update the installed app manually. User also noted path issues are likely; PM agrees path resolution is a core design constraint.
-  next_action: Sync owner_dev_2 to latest main, then assign a complete runtime/packaging lifecycle brief.
+  next_action: owner_dev_2 is implementing the installed artifact update path; PM will design-check update strategy, path derivation, failure rollback, and restart semantics before merge.
   blockers: none
   validation: pending
   commit:
