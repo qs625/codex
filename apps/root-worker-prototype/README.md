@@ -75,9 +75,10 @@ It also maintains `~/.morpheus/self-project.json` as a system `/self` project
 record whose workspace is the same Morpheus source workspace. The Electron IPC
 contract exposes `getSelfProject` and `startSelfCommand` for a dedicated self
 command surface. Press Cmd+P in the desktop app to open that `/self` input;
-submitting it always creates a `/self` project thread in the source workspace
-and sends the provided task text there. The `/self` root is also shown in the
-ordinary project tree so it can be selected from the normal sidebar.
+submitting it sends the provided task text to a `/self` project thread in the
+source workspace. App startup and thread-list refresh ensure a real `/self` root
+exists, and that root is shown in the ordinary project tree so it can be
+selected from the normal sidebar.
 
 Desktop release automation lives in `.github/workflows/desktop-release.yml`.
 Pushing a tag like `desktop-v1.2.3` builds and uploads GitHub Release assets:
