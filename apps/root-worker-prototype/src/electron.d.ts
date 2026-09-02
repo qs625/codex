@@ -444,8 +444,15 @@ declare global {
             reason?: string;
             mobileConnection?: AndroidConnectionInfo;
             lifecycle?: {
-              type: "rendererReload";
-              phase: "reloading" | "reloaded" | "fullRelaunchFallback" | "failed";
+              type: "rendererReload" | "installedArtifactUpdate";
+              phase:
+                | "building"
+                | "updated"
+                | "relaunching"
+                | "reloading"
+                | "reloaded"
+                | "fullRelaunchFallback"
+                | "failed";
               reason?: string | null;
             };
             relaunch?: {

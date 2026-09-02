@@ -92,20 +92,162 @@ function createRendererReloadLifecycleAdapter({
   };
 }
 
-function createClientRelaunchNotificationHandler({ rendererReload } = {}) {
-  return function handleClientRelaunchNotification(notification) {
+function createClientRelaunchNotificationHandler({
+  rendererReload,
+  installedArtifactUpdate,
+} = {}) {
+  return async function handleClientRelaunchNotification(notification) {
     const reason = notification?.params?.reason ?? notification?.method ?? null;
+    if (
+      installedArtifactUpdate &&
+      typeof installedArtifactUpdate.requestUpdateAndRelaunch === "function"
+    ) {
+      const updateResult =
+        await installedArtifactUpdate.requestUpdateAndRelaunch(reason);
+      if (!updateResult.unsupported) {
+        return updateResult;
+      }
+    }
     if (!rendererReload || typeof rendererReload.requestReload !== "function") {
-      return Promise.resolve({
+      return {
         ok: false,
         inPlace: false,
         relaunching: false,
         reloaded: false,
         reason: "Renderer reload adapter is unavailable",
-      });
+      };
     }
     return rendererReload.requestReload(reason);
   };
+}
+
+function createInstalledArtifactUpdateLifecycleAdapter({
+  fullRelaunch,
+  resolvePlan,
+  updateArtifacts,
+  broadcastStatus,
+  logger = console,
+} = {}) {
+  let inFlight = null;
+
+  return {
+    requestUpdateAndRelaunch(reason = null) {
+      if (!resolvePlan || typeof resolvePlan !== "function") {
+        return Promise.resolve({ ok: false, unsupported: true });
+      }
+      const plan = resolvePlan();
+      if (!plan) {
+        return Promise.resolve({ ok: false, unsupported: true });
+      }
+      if (inFlight) {
+        return inFlight.then((result) => ({
+          ...result,
+          alreadyRequested: true,
+        }));
+      }
+
+      inFlight = runInstalledArtifactUpdate({
+        fullRelaunch,
+        updateArtifacts,
+        broadcastStatus,
+        logger,
+        plan,
+        reason,
+      }).finally(() => {
+        inFlight = null;
+      });
+      return inFlight;
+    },
+  };
+}
+
+async function runInstalledArtifactUpdate({
+  fullRelaunch,
+  updateArtifacts,
+  broadcastStatus,
+  logger,
+  plan,
+  reason,
+}) {
+  if (!updateArtifacts || typeof updateArtifacts !== "function") {
+    return {
+      ok: false,
+      unsupported: false,
+      relaunching: false,
+      updated: false,
+      reason: "Installed artifact updater is unavailable",
+    };
+  }
+
+  broadcastStatus?.({
+    lifecycle: {
+      type: "installedArtifactUpdate",
+      phase: "building",
+      reason,
+    },
+  });
+
+  try {
+    const update = await updateArtifacts(plan);
+    if (!update?.ok) {
+      throw new Error(
+        update?.reason ?? "Installed artifact update did not complete",
+      );
+    }
+    broadcastStatus?.({
+      lifecycle: {
+        type: "installedArtifactUpdate",
+        phase: "updated",
+        reason,
+      },
+    });
+    const relaunch =
+      fullRelaunch && typeof fullRelaunch.requestRelaunch === "function"
+        ? fullRelaunch.requestRelaunch(reason)
+        : {
+            ok: false,
+            relaunching: false,
+            reason: "Application relaunch is unavailable in this environment",
+          };
+    broadcastStatus?.({
+      lifecycle: {
+        type: "installedArtifactUpdate",
+        phase: relaunch.ok ? "relaunching" : "failed",
+        reason: relaunch.reason ?? reason,
+      },
+      relaunch,
+    });
+    return {
+      ok: Boolean(update.ok && relaunch.ok),
+      inPlace: false,
+      relaunching: Boolean(relaunch.relaunching),
+      reloaded: false,
+      updated: Boolean(update.updated),
+      relaunch,
+      reason: relaunch.reason ?? reason,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger?.error?.(
+      "[prototype] installed artifact update failed",
+      JSON.stringify({ reason: message }),
+    );
+    broadcastStatus?.({
+      lifecycle: {
+        type: "installedArtifactUpdate",
+        phase: "failed",
+        reason: message,
+      },
+    });
+    return {
+      ok: false,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      reason: message,
+    };
+  }
 }
 
 async function runRendererReload({
@@ -197,6 +339,7 @@ function requestFullRelaunchFallback(
 module.exports = {
   createAppRelaunchAdapter,
   createClientRelaunchNotificationHandler,
+  createInstalledArtifactUpdateLifecycleAdapter,
   createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
 };

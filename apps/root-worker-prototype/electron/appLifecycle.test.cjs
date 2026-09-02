@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   createAppRelaunchAdapter,
   createClientRelaunchNotificationHandler,
+  createInstalledArtifactUpdateLifecycleAdapter,
   createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
 } = require("./appLifecycle.cjs");
@@ -151,6 +152,192 @@ test("client relaunch notification handler defaults to renderer reload", async (
     },
   );
   assert.deepEqual(reloads, ["restart tool"]);
+});
+
+test("client relaunch notification handler updates installed artifacts before full relaunch", async () => {
+  const statuses = [];
+  const calls = [];
+  const plan = { appBundlePath: "/Moved App.app" };
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("renderer reload should not run for installed updates");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => plan,
+      updateArtifacts: async (receivedPlan) => {
+        calls.push(["update", receivedPlan]);
+        return { ok: true, updated: true };
+      },
+      fullRelaunch: {
+        requestRelaunch: (reason) => {
+          calls.push(["relaunch", reason]);
+          return { ok: true, relaunching: true, reason };
+        },
+      },
+      broadcastStatus: (status) => statuses.push(status),
+    }),
+  });
+
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { reason: "restart tool" },
+    }),
+    {
+      ok: true,
+      inPlace: false,
+      relaunching: true,
+      reloaded: false,
+      updated: true,
+      relaunch: { ok: true, relaunching: true, reason: "restart tool" },
+      reason: "restart tool",
+    },
+  );
+  assert.deepEqual(calls, [
+    ["update", plan],
+    ["relaunch", "restart tool"],
+  ]);
+  assert.deepEqual(statuses.map((status) => status.lifecycle.phase), [
+    "building",
+    "updated",
+    "relaunching",
+  ]);
+});
+
+test("installed artifact update failure does not reload stale renderer", async () => {
+  const reloads = [];
+  const statuses = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        reloads.push("reload");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+      updateArtifacts: async () => {
+        throw new Error("build failed");
+      },
+      fullRelaunch: {
+        requestRelaunch: () => {
+          throw new Error("full relaunch should not run after failed update");
+        },
+      },
+      logger: { error: () => {} },
+      broadcastStatus: (status) => statuses.push(status),
+    }),
+  });
+
+  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
+    ok: false,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    reason: "build failed",
+  });
+  assert.deepEqual(reloads, []);
+  assert.deepEqual(statuses.at(-1), {
+    lifecycle: {
+      type: "installedArtifactUpdate",
+      phase: "failed",
+      reason: "build failed",
+    },
+  });
+});
+
+test("installed artifact update ok false does not relaunch", async () => {
+  const relaunches = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("renderer reload should not run");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+      updateArtifacts: async () => ({
+        ok: false,
+        updated: false,
+        reason: "update declined",
+      }),
+      fullRelaunch: {
+        requestRelaunch: () => {
+          relaunches.push("relaunch");
+        },
+      },
+      logger: { error: () => {} },
+      broadcastStatus: () => {},
+    }),
+  });
+
+  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
+    ok: false,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    reason: "update declined",
+  });
+  assert.deepEqual(relaunches, []);
+});
+
+test("client relaunch notification falls back to renderer reload when update unsupported", async () => {
+  const reloads = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: async (reason) => {
+        reloads.push(reason);
+        return { ok: true, inPlace: true, reloaded: true, reason };
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => null,
+      updateArtifacts: () => {
+        throw new Error("unsupported update should not run");
+      },
+    }),
+  });
+
+  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
+    ok: true,
+    inPlace: true,
+    reloaded: true,
+    reason: "client/relaunch/requested",
+  });
+  assert.deepEqual(reloads, ["client/relaunch/requested"]);
+});
+
+test("installed artifact update coalesces concurrent restart requests", async () => {
+  let resolveUpdate;
+  let updateCount = 0;
+  const adapter = createInstalledArtifactUpdateLifecycleAdapter({
+    resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+    updateArtifacts: () => {
+      updateCount += 1;
+      return new Promise((resolve) => {
+        resolveUpdate = resolve;
+      });
+    },
+    fullRelaunch: {
+      requestRelaunch: (reason) => ({
+        ok: true,
+        relaunching: true,
+        reason,
+      }),
+    },
+    broadcastStatus: () => {},
+  });
+
+  const first = adapter.requestUpdateAndRelaunch("first");
+  const second = adapter.requestUpdateAndRelaunch("second");
+  resolveUpdate({ ok: true, updated: true });
+
+  assert.equal((await first).alreadyRequested, undefined);
+  assert.equal((await second).alreadyRequested, true);
+  assert.equal(updateCount, 1);
 });
 
 test("client relaunch notification handler does not use app relaunch directly", async () => {

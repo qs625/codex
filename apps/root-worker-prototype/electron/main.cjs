@@ -53,9 +53,14 @@ const {
 const {
   createAppRelaunchAdapter,
   createClientRelaunchNotificationHandler,
+  createInstalledArtifactUpdateLifecycleAdapter,
   createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
 } = require("./appLifecycle.cjs");
+const {
+  resolveInstalledArtifactUpdatePlan,
+  updateInstalledArtifacts,
+} = require("./installedArtifactUpdate.cjs");
 const {
   AUTO_RESUME_PROMPT,
   createJsonAutoResumeStateStore,
@@ -74,12 +79,25 @@ const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
     broadcast("codex:status", {
       ...appServerClient.status,
       ...status,
-    }),
+  }),
   logger: console,
 });
+const installedArtifactUpdateLifecycle =
+  createInstalledArtifactUpdateLifecycleAdapter({
+    fullRelaunch: appRelaunch,
+    resolvePlan: () => resolveInstalledArtifactUpdatePlan(),
+    updateArtifacts: (plan) => updateInstalledArtifacts(plan),
+    broadcastStatus: (status) =>
+      broadcast("codex:status", {
+        ...appServerClient.status,
+        ...status,
+      }),
+    logger: console,
+  });
 const handleClientRelaunchNotification =
   createClientRelaunchNotificationHandler({
     rendererReload: rendererReloadLifecycle,
+    installedArtifactUpdate: installedArtifactUpdateLifecycle,
   });
 const windows = new Set();
 const browserPanelsByWindowId = new Map();

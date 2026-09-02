@@ -31,7 +31,7 @@
 - Morpheus 自己的用户配置 home 使用 `MORPHEUS_HOME`，默认目录是 `~/.morpheus`；不要再让 `CODEX_HOME` 控制 Morpheus config home。project-local `.codex/` 目录、workflow/agents/memory 目录语义保持不变；external official `codex_cli` / `~/.codex` 只在外部 provider 语义中出现。
 - `MORPHEUS_HOME/instructions/` 是用户配置级 model-visible instructions 目录：启动时加载其中直属普通非隐藏文件，按稳定顺序与既有 `instruction_files` / AGENTS/user instructions 组合，并继续受 instruction 总预算约束。不要把它和任意项目内的 `instructions/` 目录混用。
 - 安装态 Root Worker/Morpheus desktop 包不再携带仓库源码 snapshot；`.app/.dmg` 只带运行资源和构建产物。需要源码 workspace 时，packaged app 默认从 `origin` (`git@github.com:qs625/codex.git`) clone 到 `~/.morpheus/source_workspace`，已有 workspace 或显式 `ROOT_WORKER_WORKSPACE` 时不覆盖、不自动 pull/reset。
-- 安装态会维护一份受控 instruction 文件 `MORPHEUS_HOME/instructions/morpheus-source-workspace.md`，告诉模型当前 Morpheus source workspace 路径，以及修改 runtime/client/server/frontend/backend 后应先完成相关 build/test，再调用 `request_runtime_restart`。
+- 安装态会维护一份受控 instruction 文件 `MORPHEUS_HOME/instructions/morpheus-source-workspace.md`，告诉模型当前 Morpheus source workspace 路径，以及修改 runtime/client/server/frontend/backend 后应先完成相关测试，再调用 `request_runtime_restart`；packaged macOS app 会由 host 运行 source workspace package build、更新当前 installed runnable artifacts、重新签名并 full relaunch。
 - `/self` 是指向 Morpheus 自身源码 workspace 的 hidden/system self project contract；self command IPC 应只向 `/self` 发送任务，并确保 thread cwd/workspace 是实际源码 workspace。Cmd+P 类命令板的产品方向是专用 `/self` 输入面，不是通用 project selector。
 - Desktop installer release 使用独立 GitHub Actions workflow 和 tag pattern `desktop-v*.*.*`；tag push 后构建 macOS DMG、Windows zip app bundle、Linux tar.gz app bundle并上传 release assets。签名/notarization 若无 secrets 只能明确为 unsigned/dev-signed，不能伪装完成。
 - app-server / root-worker conversation display 走 typed `EventMsg -> ThreadItem` 路径。
