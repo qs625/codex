@@ -49,6 +49,8 @@ const {
 } = require("./systemNotification.cjs");
 const {
   createAppRelaunchAdapter,
+  createClientRelaunchNotificationHandler,
+  createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
 } = require("./appLifecycle.cjs");
 const {
@@ -62,6 +64,20 @@ const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
 const appRelaunch = createAppRelaunchAdapter({ app });
+const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
+  fullRelaunch: appRelaunch,
+  reloadWindows: reloadRendererWindows,
+  broadcastStatus: (status) =>
+    broadcast("codex:status", {
+      ...appServerClient.status,
+      ...status,
+    }),
+  logger: console,
+});
+const handleClientRelaunchNotification =
+  createClientRelaunchNotificationHandler({
+    rendererReload: rendererReloadLifecycle,
+  });
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
 const threadRuntimeById = new Map();
@@ -830,18 +846,6 @@ function handleStartupError(error) {
   app.exit(1);
 }
 
-function handleClientRelaunchNotification(notification) {
-  const result = requestClientRelaunch(
-    notification.params?.reason ?? notification.method,
-  );
-  if (!result.ok) {
-    broadcast("codex:status", {
-      ...appServerClient.status,
-      relaunch: result,
-    });
-  }
-}
-
 function requestClientRelaunch(reason) {
   const result = appRelaunch.requestRelaunch(reason);
   if (!result.ok) {
@@ -851,6 +855,66 @@ function requestClientRelaunch(reason) {
     );
   }
   return result;
+}
+
+async function reloadRendererWindows() {
+  let windowsReloaded = 0;
+  const reloads = [];
+  for (const window of windows) {
+    if (window.isDestroyed()) {
+      continue;
+    }
+    windowsReloaded += 1;
+    reloads.push(reloadWindowRenderer(window));
+  }
+  if (windowsReloaded === 0) {
+    throw new Error("No renderer windows are available to reload");
+  }
+  await Promise.all(reloads);
+  return { windowsReloaded };
+}
+
+function reloadWindowRenderer(window) {
+  return new Promise((resolve, reject) => {
+    const webContents = window.webContents;
+    if (webContents.isDestroyed()) {
+      reject(new Error("Renderer webContents is destroyed"));
+      return;
+    }
+    const cleanup = () => {
+      webContents.removeListener("did-finish-load", handleFinish);
+      webContents.removeListener("did-fail-load", handleFail);
+    };
+    const handleFinish = () => {
+      cleanup();
+      resolve();
+    };
+    const handleFail = (
+      _event,
+      _errorCode,
+      errorDescription,
+      _url,
+      isMainFrame,
+    ) => {
+      if (!isMainFrame) {
+        return;
+      }
+      cleanup();
+      reject(new Error(errorDescription || "Renderer reload failed"));
+    };
+    webContents.once("did-finish-load", handleFinish);
+    webContents.on("did-fail-load", handleFail);
+    try {
+      if (typeof webContents.reloadIgnoringCache === "function") {
+        webContents.reloadIgnoringCache();
+      } else {
+        webContents.reload();
+      }
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
+  });
 }
 
 function getAutoResumeCoordinator() {
