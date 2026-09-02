@@ -117,14 +117,13 @@ fn create_request_runtime_restart_tool() -> ToolSpec {
     let properties = std::collections::BTreeMap::from([(
         "reason".to_string(),
         JsonSchema::string(Some(
-            "Optional concise reason for requesting a full Morpheus client/app-server relaunch."
-                .to_string(),
+            "Optional concise reason for refreshing the running Morpheus host.".to_string(),
         )),
     )]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: REQUEST_RUNTIME_RESTART_TOOL_NAME.to_string(),
-        description: "Request a full Morpheus client/app-server relaunch after runtime, client, or server code changes. This does not run shell commands, kill processes directly, or wait for the restarted app to finish work; after relaunch, client bootstrap autoresume will restore eligible interrupted sessions and let the model decide the next step.".to_string(),
+        description: "Use after completing a feature, fixing a bug, or changing Morpheus runtime, client, server, frontend, or backend code when the running app needs to pick up the latest compiled code. Before calling, ensure the relevant frontend and backend builds needed for the changes have already completed.".to_string(),
         strict: false,
         defer_loading: None,
         parameters: JsonSchema::object(properties, Some(Vec::new()), Some(false.into())),
@@ -139,15 +138,15 @@ fn request_runtime_restart_output_schema() -> Value {
             "status": {
                 "type": "string",
                 "enum": ["accepted", "unsupported", "failed"],
-                "description": "Whether the host accepted, does not support, or failed the relaunch request."
+                "description": "Whether the host accepted, does not support, or failed the refresh request."
             },
             "accepted": {
                 "type": "boolean",
-                "description": "Whether the relaunch request was accepted for delivery to the host client."
+                "description": "Whether the refresh request was accepted for delivery to the host client."
             },
             "relaunching": {
                 "type": "boolean",
-                "description": "Whether a client relaunch should now be in progress."
+                "description": "Whether the host reported that a relaunch-style fallback should now be in progress."
             },
             "message": {
                 "type": "string",
@@ -155,12 +154,12 @@ fn request_runtime_restart_output_schema() -> Value {
             },
             "reason": {
                 "type": ["string", "null"],
-                "description": "The normalized relaunch reason."
+                "description": "The normalized refresh reason."
             },
             "resumeStrategy": {
                 "type": "string",
                 "enum": [RESUME_STRATEGY],
-                "description": "How continuation is attempted after relaunch."
+                "description": "How continuation is attempted after the host refreshes."
             }
         },
         "required": ["status", "accepted", "relaunching", "message", "reason", "resumeStrategy"],
