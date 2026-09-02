@@ -7,5 +7,9 @@
   <string>Root Worker Prototype</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Root Worker Prototype uses the microphone to transcribe voice input into the composer.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Root Worker Prototype uses screen recording access when a local automation tool needs to inspect the screen.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Root Worker Prototype uses automation access when a local tool needs to control another application at your request.</string>
 </dict>
 </plist>
