@@ -31,8 +31,9 @@ const PACKAGED_COMPACT_PROMPT_RELATIVE_PATH = path.join(
 const HOME_COMPACT_PROMPT_RELATIVE_PATH = path.join("compact", "COMPACT.md");
 
 class AppServerClient extends EventEmitter {
-  constructor() {
+  constructor(options = {}) {
     super();
+    this.spawnProcess = options.spawnProcess ?? spawn;
     this.child = null;
     this.pending = new Map();
     this.nextRequestId = 1;
@@ -42,12 +43,20 @@ class AppServerClient extends EventEmitter {
     };
     this.mobileConnectionRefreshEnv = {};
     this.mobileConnectionRefreshTimer = null;
+    this.resetReadyPromise();
+    if (options.autoStart !== false) {
+      void this.start().catch((error) => {
+        this.readyReject(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      });
+    }
+  }
+
+  resetReadyPromise() {
     this.readyPromise = new Promise((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
-    });
-    void this.start().catch((error) => {
-      this.readyReject(error instanceof Error ? error : new Error(String(error)));
     });
   }
 
@@ -90,6 +99,84 @@ class AppServerClient extends EventEmitter {
 
   async ready() {
     return this.readyPromise;
+  }
+
+  async restart(reason = null) {
+    const restartReason = reason ?? "app-server restart requested";
+    this.emit("status", {
+      ...this.status,
+      restarting: true,
+      reason: restartReason,
+    });
+    const stopped = await this.stopForRestart(restartReason);
+    if (!stopped.ok) {
+      return {
+        ok: false,
+        restarted: false,
+        reason: stopped.reason,
+      };
+    }
+    this.resetReadyPromise();
+    try {
+      await this.start();
+      await this.ready();
+      return {
+        ok: true,
+        restarted: true,
+        pid: this.child?.pid ?? null,
+        reason: restartReason,
+      };
+    } catch (error) {
+      const restartError =
+        error instanceof Error ? error : new Error(String(error));
+      this.readyReject(restartError);
+      this.readyPromise.catch(() => {});
+      return {
+        ok: false,
+        restarted: false,
+        reason: restartError.message,
+      };
+    }
+  }
+
+  async stopForRestart(reason) {
+    const child = this.child;
+    this.stopMobileConnectionRefresh();
+    this.rejectPendingRequests(new Error(`app-server restarting: ${reason}`));
+    if (!child || child.exitCode != null) {
+      return { ok: true };
+    }
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = (result = { ok: true }) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        resolve(result);
+      };
+      const timeout = setTimeout(
+        () =>
+          finish({
+            ok: false,
+            reason: "Timed out waiting for app-server process to exit",
+          }),
+        5_000,
+      );
+      timeout.unref?.();
+      child.once("exit", () => finish());
+      if (typeof child.kill === "function" && child.kill() === false) {
+        finish({ ok: false, reason: "Failed to stop app-server process" });
+      }
+    });
+  }
+
+  rejectPendingRequests(error) {
+    for (const pending of this.pending.values()) {
+      pending.reject(error);
+    }
+    this.pending.clear();
   }
 
   async request(method, params) {
@@ -151,7 +238,7 @@ class AppServerClient extends EventEmitter {
     const command = launch.command;
     this.mobileConnection = launch.mobileConnection;
     this.mobileConnectionRefreshEnv = launch.mobileConnectionEnv ?? {};
-    this.child = spawn(command, {
+    this.child = this.spawnProcess(command, {
       cwd: appServerCwd,
       env,
       shell: true,
@@ -166,10 +253,7 @@ class AppServerClient extends EventEmitter {
       this.stopMobileConnectionRefresh();
       const reason = `app-server exited (${code ?? "null"} / ${signal ?? "null"})`;
       const error = new Error(reason);
-      for (const pending of this.pending.values()) {
-        pending.reject(error);
-      }
-      this.pending.clear();
+      this.rejectPendingRequests(error);
       this.emit("status", { connected: false, reason });
     });
 

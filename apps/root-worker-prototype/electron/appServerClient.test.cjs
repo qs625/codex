@@ -511,6 +511,71 @@ test("custom CODEX_APP_SERVER_CMD leaves mobile listener ownership to the overri
   });
 });
 
+test("app-server client restart rejects pending requests and starts a fresh child", async () => {
+  const oldChild = new EventEmitter();
+  oldChild.pid = 11;
+  oldChild.exitCode = null;
+  oldChild.kill = () => {
+    oldChild.exitCode = 0;
+    queueMicrotask(() => oldChild.emit("exit", 0, null));
+    return true;
+  };
+  const client = new AppServerClient({ autoStart: false });
+  const statuses = [];
+  let rejectedPending = null;
+  let startCount = 0;
+  client.child = oldChild;
+  client.pending.set(1, {
+    reject: (error) => {
+      rejectedPending = error;
+    },
+  });
+  client.on("status", (status) => statuses.push(status));
+  client.start = async () => {
+    startCount += 1;
+    client.child = { pid: 22, exitCode: null };
+    client.readyResolve();
+  };
+
+  const result = await client.restart("runtime refresh");
+
+  assert.deepEqual(result, {
+    ok: true,
+    restarted: true,
+    pid: 22,
+    reason: "runtime refresh",
+  });
+  assert.equal(startCount, 1);
+  assert.equal(client.pending.size, 0);
+  assert.match(rejectedPending.message, /app-server restarting: runtime refresh/);
+  assert.equal(
+    statuses.some(
+      (status) => status.restarting && status.reason === "runtime refresh",
+    ),
+    true,
+  );
+});
+
+test("app-server client restart rejects ready when start fails", async () => {
+  const oldChild = new EventEmitter();
+  oldChild.pid = 11;
+  oldChild.exitCode = 0;
+  const client = new AppServerClient({ autoStart: false });
+  client.child = oldChild;
+  client.start = async () => {
+    throw new Error("launch failed");
+  };
+
+  const result = await client.restart("runtime refresh");
+
+  assert.deepEqual(result, {
+    ok: false,
+    restarted: false,
+    reason: "launch failed",
+  });
+  await assert.rejects(client.ready(), /launch failed/);
+});
+
 test("morpheus home defaults seed missing compact prompt", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-home-seed-"));
   const seedPath = path.join(dir, "seed-COMPACT.md");

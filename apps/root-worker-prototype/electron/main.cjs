@@ -96,7 +96,10 @@ const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
 });
 const installedArtifactUpdateLifecycle =
   createInstalledArtifactUpdateLifecycleAdapter({
-    fullRelaunch: appRelaunch,
+    appServerRestart: {
+      requestRestart: (reason) => appServerClient.restart(reason),
+    },
+    reloadWindows: reloadRendererWindows,
     resolvePlan: () => resolveInstalledArtifactUpdatePlan(),
     updateArtifacts: (plan) => updateInstalledArtifacts(plan),
     broadcastStatus: (status) =>

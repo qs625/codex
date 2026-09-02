@@ -155,7 +155,7 @@ test("client relaunch notification handler defaults to renderer reload", async (
   assert.deepEqual(reloads, ["restart tool"]);
 });
 
-test("client relaunch notification handler updates installed artifacts before full relaunch", async () => {
+test("client relaunch notification handler updates installed artifacts before backend restart and renderer reload", async () => {
   const statuses = [];
   const calls = [];
   const plan = { appBundlePath: "/Moved App.app" };
@@ -166,18 +166,27 @@ test("client relaunch notification handler updates installed artifacts before fu
       },
     },
     installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      appServerRestart: {
+        requestRestart: async (reason) => {
+          calls.push(["backendRestart", reason]);
+          return { ok: true, restarted: true, pid: 42, reason };
+        },
+      },
+      reloadWindows: async (payload) => {
+        calls.push(["reload", payload]);
+        return { windowsReloaded: 1 };
+      },
       resolvePlan: () => plan,
       updateArtifacts: async (receivedPlan) => {
         calls.push(["update", receivedPlan]);
         return { ok: true, updated: true };
       },
+      broadcastStatus: (status) => statuses.push(status),
       fullRelaunch: {
-        requestRelaunch: (reason) => {
-          calls.push(["relaunch", reason]);
-          return { ok: true, relaunching: true, reason };
+        requestRelaunch: () => {
+          throw new Error("full relaunch should not run for installed updates");
         },
       },
-      broadcastStatus: (status) => statuses.push(status),
     }),
   });
 
@@ -188,22 +197,40 @@ test("client relaunch notification handler updates installed artifacts before fu
     }),
     {
       ok: true,
-      inPlace: false,
-      relaunching: true,
-      reloaded: false,
+      inPlace: true,
+      relaunching: false,
+      reloaded: true,
       updated: true,
-      relaunch: { ok: true, relaunching: true, reason: "restart tool" },
+      backendRestart: {
+        ok: true,
+        pending: false,
+        restarted: true,
+        pid: 42,
+        reason: "restart tool",
+      },
+      mainProcessUpdate: "pendingAppRelaunch",
+      preloadUpdate: "pendingWindowRecreateOrAppRelaunch",
       reason: "restart tool",
+      reload: {
+        ok: true,
+        inPlace: true,
+        relaunching: false,
+        reloaded: true,
+        windowsReloaded: 1,
+        reason: "restart tool",
+      },
     },
   );
   assert.deepEqual(calls, [
     ["update", plan],
-    ["relaunch", "restart tool"],
+    ["backendRestart", "restart tool"],
+    ["reload", { reason: "restart tool" }],
   ]);
   assert.deepEqual(statuses.map((status) => status.lifecycle.phase), [
     "building",
     "updated",
-    "relaunching",
+    "reloading",
+    "reloaded",
   ]);
 });
 
@@ -221,10 +248,13 @@ test("installed artifact update failure does not reload stale renderer", async (
       updateArtifacts: async () => {
         throw new Error("build failed");
       },
-      fullRelaunch: {
-        requestRelaunch: () => {
-          throw new Error("full relaunch should not run after failed update");
+      appServerRestart: {
+        requestRestart: () => {
+          throw new Error("backend restart should not run after failed update");
         },
+      },
+      reloadWindows: () => {
+        throw new Error("renderer reload should not run after failed update");
       },
       logger: { error: () => {} },
       broadcastStatus: (status) => statuses.push(status),
@@ -234,9 +264,12 @@ test("installed artifact update failure does not reload stale renderer", async (
   assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
     ok: false,
     inPlace: false,
+    partial: false,
     relaunching: false,
     reloaded: false,
     updated: false,
+    backendRestart: undefined,
+    reload: undefined,
     reason: "build failed",
   });
   assert.deepEqual(reloads, []);
@@ -320,7 +353,8 @@ test("client relaunch observer catches rejected notification handlers", async ()
 });
 
 test("installed artifact update ok false does not relaunch", async () => {
-  const relaunches = [];
+  const reloads = [];
+  const restarts = [];
   const handler = createClientRelaunchNotificationHandler({
     rendererReload: {
       requestReload: () => {
@@ -334,10 +368,13 @@ test("installed artifact update ok false does not relaunch", async () => {
         updated: false,
         reason: "update declined",
       }),
-      fullRelaunch: {
-        requestRelaunch: () => {
-          relaunches.push("relaunch");
+      appServerRestart: {
+        requestRestart: () => {
+          restarts.push("restart");
         },
+      },
+      reloadWindows: () => {
+        reloads.push("reload");
       },
       logger: { error: () => {} },
       broadcastStatus: () => {},
@@ -347,10 +384,164 @@ test("installed artifact update ok false does not relaunch", async () => {
   assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
     ok: false,
     inPlace: false,
+    partial: false,
     relaunching: false,
     reloaded: false,
     updated: false,
+    backendRestart: undefined,
+    reload: undefined,
     reason: "update declined",
+  });
+  assert.deepEqual(restarts, []);
+  assert.deepEqual(reloads, []);
+});
+
+test("installed artifact update fails partial when backend restart fails", async () => {
+  const reloads = [];
+  const relaunches = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("ordinary renderer reload should not run");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      appServerRestart: {
+        requestRestart: async () => ({
+          ok: false,
+          restarted: false,
+          reason: "backend restart failed",
+        }),
+      },
+      reloadWindows: () => {
+        reloads.push("reload");
+      },
+      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+      updateArtifacts: async () => ({ ok: true, updated: true }),
+      logger: { error: () => {} },
+      broadcastStatus: () => {},
+      fullRelaunch: {
+        requestRelaunch: () => {
+          relaunches.push("relaunch");
+        },
+      },
+    }),
+  });
+
+  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
+    ok: false,
+    inPlace: false,
+    partial: true,
+    relaunching: false,
+    reloaded: false,
+    updated: true,
+    backendRestart: {
+      ok: false,
+      pending: false,
+      restarted: false,
+      pid: null,
+      reason: "backend restart failed",
+    },
+    reload: undefined,
+    reason: "backend restart failed",
+  });
+  assert.deepEqual(reloads, []);
+  assert.deepEqual(relaunches, []);
+});
+
+test("installed artifact update fails partial without backend restart adapter", async () => {
+  const reloads = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("ordinary renderer reload should not run");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      reloadWindows: () => {
+        reloads.push("reload");
+      },
+      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+      updateArtifacts: async () => ({ ok: true, updated: true }),
+      logger: { error: () => {} },
+      broadcastStatus: () => {},
+    }),
+  });
+
+  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
+    ok: false,
+    inPlace: false,
+    partial: true,
+    relaunching: false,
+    reloaded: false,
+    updated: true,
+    backendRestart: {
+      ok: false,
+      restarted: false,
+      reason:
+        "App-server restart adapter is unavailable after installed artifact update.",
+    },
+    reload: undefined,
+    reason:
+      "App-server restart adapter is unavailable after installed artifact update.",
+  });
+  assert.deepEqual(reloads, []);
+});
+
+test("installed artifact update fails partial when renderer reload fails", async () => {
+  const relaunches = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("ordinary renderer reload should not run");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      appServerRestart: {
+        requestRestart: async (reason) => ({
+          ok: true,
+          restarted: true,
+          pid: 42,
+          reason,
+        }),
+      },
+      reloadWindows: async () => {
+        throw new Error("renderer reload failed");
+      },
+      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+      updateArtifacts: async () => ({ ok: true, updated: true }),
+      logger: { error: () => {} },
+      broadcastStatus: () => {},
+      fullRelaunch: {
+        requestRelaunch: () => {
+          relaunches.push("relaunch");
+        },
+      },
+    }),
+  });
+
+  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
+    ok: false,
+    inPlace: false,
+    partial: true,
+    relaunching: false,
+    reloaded: false,
+    updated: true,
+    backendRestart: {
+      ok: true,
+      pending: false,
+      restarted: true,
+      pid: 42,
+      reason: "client/relaunch/requested",
+    },
+    reload: {
+      ok: false,
+      inPlace: true,
+      relaunching: false,
+      reloaded: false,
+      reason: "renderer reload failed",
+    },
+    reason: "renderer reload failed",
   });
   assert.deepEqual(relaunches, []);
 });

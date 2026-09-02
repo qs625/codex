@@ -161,7 +161,8 @@ async function observeClientRelaunchResult(
 }
 
 function createInstalledArtifactUpdateLifecycleAdapter({
-  fullRelaunch,
+  appServerRestart,
+  reloadWindows,
   resolvePlan,
   updateArtifacts,
   broadcastStatus,
@@ -186,7 +187,8 @@ function createInstalledArtifactUpdateLifecycleAdapter({
       }
 
       inFlight = runInstalledArtifactUpdate({
-        fullRelaunch,
+        appServerRestart,
+        reloadWindows,
         updateArtifacts,
         broadcastStatus,
         logger,
@@ -201,7 +203,8 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 }
 
 async function runInstalledArtifactUpdate({
-  fullRelaunch,
+  appServerRestart,
+  reloadWindows,
   updateArtifacts,
   broadcastStatus,
   logger,
@@ -240,30 +243,46 @@ async function runInstalledArtifactUpdate({
         reason,
       },
     });
-    const relaunch =
-      fullRelaunch && typeof fullRelaunch.requestRelaunch === "function"
-        ? fullRelaunch.requestRelaunch(reason)
-        : {
-            ok: false,
-            relaunching: false,
-            reason: "Application relaunch is unavailable in this environment",
-          };
+    const backendRestart = await restartUpdatedAppServer(appServerRestart, reason);
+    if (!backendRestart.ok) {
+      throw partialInstalledUpdateError(
+        backendRestart.reason ?? "App-server restart failed after update",
+        { backendRestart, updated: Boolean(update.updated) },
+      );
+    }
+    const reload = await reloadUpdatedRenderer(reloadWindows, {
+      broadcastStatus,
+      reason,
+    });
+    if (!reload.ok) {
+      throw partialInstalledUpdateError(
+        reload.reason ?? "Renderer reload failed after update",
+        {
+          backendRestart,
+          reload,
+          updated: Boolean(update.updated),
+        },
+      );
+    }
     broadcastStatus?.({
       lifecycle: {
         type: "installedArtifactUpdate",
-        phase: relaunch.ok ? "relaunching" : "failed",
-        reason: relaunch.reason ?? reason,
+        phase: "reloaded",
+        reason,
       },
-      relaunch,
+      reload,
     });
     return {
-      ok: Boolean(update.ok && relaunch.ok),
-      inPlace: false,
-      relaunching: Boolean(relaunch.relaunching),
-      reloaded: false,
+      ok: true,
+      inPlace: true,
+      relaunching: false,
+      reloaded: true,
       updated: Boolean(update.updated),
-      relaunch,
-      reason: relaunch.reason ?? reason,
+      backendRestart,
+      mainProcessUpdate: "pendingAppRelaunch",
+      preloadUpdate: "pendingWindowRecreateOrAppRelaunch",
+      reason,
+      reload,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -281,12 +300,79 @@ async function runInstalledArtifactUpdate({
     return {
       ok: false,
       inPlace: false,
+      partial: Boolean(error?.partial),
       relaunching: false,
       reloaded: false,
-      updated: false,
+      updated: Boolean(error?.updated),
+      backendRestart: error?.backendRestart,
+      reload: error?.reload,
       reason: message,
     };
   }
+}
+
+async function restartUpdatedAppServer(appServerRestart, reason) {
+  if (!appServerRestart || typeof appServerRestart.requestRestart !== "function") {
+    return {
+      ok: false,
+      restarted: false,
+      reason:
+        "App-server restart adapter is unavailable after installed artifact update.",
+    };
+  }
+  const result = await appServerRestart.requestRestart(reason);
+  return {
+    ok: Boolean(result?.ok),
+    pending: false,
+    restarted: Boolean(result?.restarted ?? result?.ok),
+    pid: result?.pid ?? null,
+    reason: result?.reason ?? reason,
+  };
+}
+
+async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, reason }) {
+  if (typeof reloadWindows !== "function") {
+    return {
+      ok: false,
+      inPlace: true,
+      relaunching: false,
+      reloaded: false,
+      reason: "Renderer reload is unavailable after installed artifact update",
+    };
+  }
+  broadcastStatus?.({
+    lifecycle: {
+      type: "installedArtifactUpdate",
+      phase: "reloading",
+      reason,
+    },
+  });
+  try {
+    const reload = await reloadWindows({ reason });
+    return {
+      ok: true,
+      inPlace: true,
+      relaunching: false,
+      reloaded: true,
+      windowsReloaded: reload?.windowsReloaded ?? null,
+      reason,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      inPlace: true,
+      relaunching: false,
+      reloaded: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function partialInstalledUpdateError(message, details = {}) {
+  const error = new Error(message);
+  error.partial = true;
+  Object.assign(error, details);
+  return error;
 }
 
 async function runRendererReload({
