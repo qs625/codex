@@ -191,7 +191,7 @@ test("successful update replaces runnable artifacts and codesigns installed app"
         write(args.at(-1), "new asar");
       }
       if (args.includes("codesign")) {
-        assert.equal(hasBundleSignatureBackup(fixture.appContentsPath), false);
+        assertNoBundleUpdateTemporaryDirs(fixture);
       }
       return { status: 0 };
     },
@@ -242,10 +242,7 @@ test("codesign failure restores old installed artifacts", () => {
         updateId: "codesign-failure",
         spawnSync: (command, args) => {
           if (args.includes("codesign")) {
-            assert.equal(
-              hasBundleSignatureBackup(fixture.appContentsPath),
-              false,
-            );
+            assertNoBundleUpdateTemporaryDirs(fixture);
             return { status: 1, stderr: "signature failed" };
           }
           if (args.includes("@electron/asar")) {
@@ -261,7 +258,7 @@ test("codesign failure restores old installed artifacts", () => {
   assert.equal(read(fixture.targetAppServer), "old server");
   assert.equal(read(fixture.targetCompact), "old compact");
   assert.equal(read(fixture.targetSignature), "old signature");
-  assert.equal(hasBundleSignatureBackup(fixture.appContentsPath), false);
+  assertNoBundleUpdateTemporaryDirs(fixture);
 });
 
 test("backup rename failure restores already moved artifacts", () => {
@@ -283,6 +280,8 @@ test("backup rename failure restores already moved artifacts", () => {
         renameSync: (from, to) => {
           renameCount += 1;
           if (renameCount === 2 && to.includes("backup-failure")) {
+            assert.equal(pathStartsWith(from, fixture.appContentsPath), true);
+            assert.equal(pathStartsWith(to, fixture.appContentsPath), false);
             throw new Error("backup rename failed");
           }
           realRenameSync(from, to);
@@ -314,6 +313,8 @@ test("install rename failure restores old installed artifacts", () => {
         },
         renameSync: (from, to) => {
           if (from.includes(".morpheus-update-staging-install-failure")) {
+            assert.equal(pathStartsWith(from, fixture.appContentsPath), false);
+            assert.equal(pathStartsWith(to, fixture.appContentsPath), true);
             installRenameCount += 1;
             if (installRenameCount === 2) {
               throw new Error("install rename failed");
@@ -443,6 +444,7 @@ function createUpdateFixture() {
     directStagingRoot,
     appContentsPath,
     plan,
+    resourcesPath: installedResources,
     sourceDist,
     targetAppAsar: path.join(installedResources, "app.asar"),
     targetAppServer: path.join(installedResources, "bin/app-server"),
@@ -478,6 +480,30 @@ function hasBundleSignatureBackup(appContentsPath) {
   return fs
     .readdirSync(appContentsPath)
     .some((entry) => entry.startsWith(".morpheus-signature-backup-"));
+}
+
+function assertNoBundleUpdateTemporaryDirs(fixture) {
+  assert.equal(hasBundleSignatureBackup(fixture.appContentsPath), false);
+  assert.equal(hasUpdaterTemporaryDir(fixture.appContentsPath), false);
+  assert.equal(hasUpdaterTemporaryDir(fixture.resourcesPath), false);
+}
+
+function hasUpdaterTemporaryDir(directoryPath) {
+  if (!fs.existsSync(directoryPath)) {
+    return false;
+  }
+  return fs.readdirSync(directoryPath).some((entry) => {
+    return (
+      entry.startsWith(".morpheus-update-staging-") ||
+      entry.startsWith(".morpheus-update-backup-") ||
+      entry.startsWith(".morpheus-signature-backup-")
+    );
+  });
+}
+
+function pathStartsWith(targetPath, parentPath) {
+  const relative = path.relative(parentPath, targetPath);
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
 function write(filePath, content) {

@@ -147,6 +147,7 @@ function updateInstalledArtifacts(plan, options = {}) {
     replacement = replaceArtifacts(stagedPlan, {
       ...options,
       keepBackup: true,
+      replacementWorkRoot: prepared.stagingRoot,
     });
     assertInstalledArtifactsMatchStaged(stagedPlan, options);
     signatureBackup = backupSignatureMetadataSync(stagedPlan, {
@@ -456,12 +457,13 @@ function replaceInstalledArtifactsSync(plan, options = {}) {
   const updateId =
     options.updateId ??
     `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const workRoot = options.replacementWorkRoot ?? os.tmpdir();
   const stagingDir = path.join(
-    plan.resourcesPath,
+    workRoot,
     `.morpheus-update-staging-${updateId}`,
   );
   const backupDir = path.join(
-    plan.resourcesPath,
+    workRoot,
     `.morpheus-update-backup-${updateId}`,
   );
 
