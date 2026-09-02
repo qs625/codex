@@ -11,6 +11,102 @@
 None
 
 ## Active Work
+- id: package-origin-clone-workspace
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/package-origin-clone-workspace
+  task_type: feature/packaging-runtime
+  depends_on: package-installed-source merged in `dfa56a10d52cd4faff15f998830e868aec90c083`
+  files: apps/root-worker-prototype packaging scripts/tests/runtime workspace setup; Electron app-server launch workspace handling; MORPHEUS_HOME instructions-directory loading in codex-rs/config/thread-service paths as needed; project registry/client self command entry points as needed; GitHub Actions desktop installer release workflow; README/docs as needed
+  base_commit: dfa56a10d52cd4faff15f998830e868aec90c083
+  pending_sync_from_main: owner_dev_2 and owner_dev_3 fast-forwarded to main `264def19898a92559f80099d52d5bd6c2723683c` after merge. owner_dev_2 still has unrelated untracked `apps/android-companion/local.properties`. owner_dev has extensive unrelated tracked dirty changes, so PM did not force-sync it; pending sync target is `264def19898a92559f80099d52d5bd6c2723683c`.
+  status: merged
+  objective: Stop bundling repository source snapshots into the mac `.app`/`.dmg`; instead, installed Morpheus should create its writable source workspace as a real git clone from `origin` (`git@github.com:qs625/codex.git`) so version history, update, diff, and local edits remain under git. Also add a simple `MORPHEUS_HOME/instructions/` convention whose files are loaded into model-visible instructions, so installed-app setup can place guidance telling the model where Morpheus's own source workspace lives and that after modifying/building runtime/client/server code it should use `request_runtime_restart`. Product interaction should expose this workspace as a default `/self` project when missing; the command palette is a dedicated `/self` input surface, not a general project switcher, so Cmd+P input defaults to and only targets `/self`. Add GitHub Actions tag release automation that builds desktop installers for macOS, Windows, and Linux when a release tag is pushed.
+  last_update: 2026-09-02 14:20 CST PM accepted the user correction that bundling source snapshots loses version management, removed the `bytedance` remote from all four fixed checkouts, confirmed only `origin` remains, and assigned owner_dev_3. 2026-09-02 PM initially added a dynamic runtime prompt requirement, then user simplified the design: add an instructions directory under the user config home and load all files from it; PM redirected owner_dev_3 to this simpler design. User further added product interaction: default-create `/self` pointing to the source workspace; command palette should be a dedicated input box that can only send to `/self`, not a multi-project selector. User also requested GitHub Actions automation: on tag push, build Windows/Linux/macOS installers. PM confirmed local `gh` exists; after user login, `rtk gh auth status` reports logged in to `github.com` as `qs625`, and `rtk gh repo view --json nameWithOwner,url` resolves current repo as `qs625/codex`. Existing workflows cover Rust CLI release but not Root Worker/Electron desktop installer release. Owner_dev_3 delivered commit `5c5802a416` with reviewer approval; PM design-checked source snapshot removal, origin clone workspace, `MORPHEUS_HOME/instructions/` loading, `/self` dedicated IPC contract, and desktop release workflow. PM merged it into main as `264def19898a92559f80099d52d5bd6c2723683c`.
+  next_action: Use a future `desktop-v*.*.*` tag push to validate full GitHub Actions release matrix; sync owner_dev only after its unrelated dirty tracked work is resolved.
+  blockers: none
+  validation: Owner ran focused JS tests -> 83 passed, `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service agents_md` -> 21 passed, YAML parse, mac app package smoke, no `Resources/source` spot check, skip-Finder DMG smoke and hdiutil verify, gh auth/repo checks, and diff check. Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after CI `rtk` shim, Windows spawn, and DMG CI skip-Finder fixes. PM reran before merge: focused JS tests -> 83 passed; thread-service `agents_md` -> 21 passed; `package:mac:app` -> passed with existing Vite/Rust warnings; no `Contents/Resources/source`; app-server resource executable; desktop-release YAML parse passed; `rtk git diff --check` and `rtk git show --check --stat --oneline 5c5802a416` passed. PM reran after merge: focused JS tests -> 83 passed; thread-service `agents_md` -> 21 passed; desktop-release YAML parse passed; no `Contents/Resources/source`; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` passed. PM started merged-main `package:mac:app` smoke; renderer build completed, but release app-server link stayed idle for >15 minutes, so PM terminated that redundant smoke and records dev-3 package smoke as the completed packaging validation.
+  commit: 264def19898a92559f80099d52d5bd6c2723683c
+- id: package-installed-source
+  owner: /my_codex/owner_dev_2
+  checkout: /Users/bytedance/Projects/my-codex-dev-2
+  branch: feature/package-installed-source
+  task_type: feature/packaging
+  depends_on: in-place-runtime-restart merged in `8f9249ed5f4bd0dbfbd38047ab3ccfe571f8ca65`
+  files: apps/root-worker-prototype packaging scripts/tests/runtime source discovery; app-server packaged resource selection only if needed; README/docs as needed
+  base_commit: 8f9249ed5f4bd0dbfbd38047ab3ccfe571f8ca65
+  pending_sync_from_main: none; owner_dev_2 fast-forwarded to final main `dfa56a10d540feb6d3caea2daf1f41da876847a2` after merge. It still has unrelated untracked `apps/android-companion/local.properties`, which must not be included.
+  status: merged
+  objective: Change mac packaging so an installed Morpheus desktop app includes the project source snapshot and can operate as an installed app with a writable source workspace for future code edits/builds, while still bundling built renderer/app-server artifacts.
+  last_update: 2026-09-02 PM accepted owner_dev_2 commit `384fe737c8afc825a0bee02f3bea50ce721cca5c` and merged it into main as `dfa56a10d540feb6d3caea2daf1f41da876847a2`. PM verified tracked-only source staging, denylist behavior, writable packaged source workspace seeding, packaged app-server cwd/workspace wiring, and macOS permission usage descriptions in packaged Info.plist.
+  next_action: Use `rtk pnpm --dir apps/root-worker-prototype package:mac` to produce a DMG with bundled source snapshot and writable installed source workspace behavior.
+  blockers: none
+  validation: Owner ran `rtk git diff --check`, `rtk pnpm --dir apps/root-worker-prototype test -- scripts/package-mac-app.test.cjs electron/workspace.test.cjs electron/appServerClient.test.cjs` -> 47 passed, `rtk pnpm --dir apps/root-worker-prototype package:mac:app` -> passed, and packaged Resources/source spot checks confirmed no `.git`, `node_modules`, `target`, or `local.properties`. Reviewer passed after replacing direct `git` invocation with `rtk git ls-files -z`. PM reran on merged main: focused package/workspace/appServerClient tests -> 47 passed; `rtk pnpm --dir apps/root-worker-prototype package:mac:app` -> passed with existing Vite chunk-size and app-server warnings; `Resources/source` and executable `Resources/bin/app-server` exist; packaged Info.plist contains microphone, screen capture, and Apple Events usage descriptions; denylist spot check found no `.git`, `node_modules`, `target`, `local.properties`, or `.env*`; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: dfa56a10d540feb6d3caea2daf1f41da876847a2
+- id: runtime-restart-tool-description
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: docs/runtime-restart-tool-description
+  task_type: docs/spec
+  depends_on: in-place-runtime-restart merged in `8f9249ed5f4bd0dbfbd38047ab3ccfe571f8ca65`
+  files: codex-rs/tool-service runtime restart tool spec/description and focused tests only as needed
+  base_commit: 8f9249ed5f4bd0dbfbd38047ab3ccfe571f8ca65
+  pending_sync_from_main: none; owner_dev_3 fast-forwarded to final main `dfa56a10d540feb6d3caea2daf1f41da876847a2` after package merge.
+  status: merged
+  objective: Rewrite `request_runtime_restart` model-visible description so it describes usage scenarios and preconditions rather than internal implementation details: use after developing a feature, fixing a bug, or changing runtime/client/server code, and only after ensuring frontend/backend code has been built.
+  last_update: 2026-09-02 PM accepted owner_dev_3 commit `f6ba12038fe5bf14d8688800a982049be267eb3f` and merged it into main as `cdd02c57267ead43f59493b876bf372dc12d5a85`. PM verified the tool description now focuses on usage scenarios and build preconditions, removes full relaunch/internal implementation wording from the main description, and keeps behavior unchanged.
+  next_action: Restart/reload running Morpheus when ready so the active model-visible tool description updates.
+  blockers: none
+  validation: Owner ran focused rustfmt, `rtk cargo check --manifest-path codex-rs/Cargo.toml -p codex-tool-service`, `rtk cargo test --manifest-path codex-rs/Cargo.toml -p app-server --lib host_lifecycle`, and `rtk git diff --check` successfully. `rtk cargo test --manifest-path codex-rs/Cargo.toml -p codex-tool-service host_lifecycle` remains blocked by known existing test-target compile drift. Reviewer passed after wording cleanup. PM reran on merged main: `rtk cargo check --manifest-path codex-rs/Cargo.toml -p codex-tool-service` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p app-server --lib host_lifecycle` -> passed; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: cdd02c57267ead43f59493b876bf372dc12d5a85
+- id: in-place-runtime-restart
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/in-place-runtime-restart
+  task_type: feature/runtime-client-lifecycle
+  depends_on: runtime-auto-restart-tool merged in `9f4b9ad1f37ee725bf07c1da77cc254a3ed7a9d9`
+  files: apps/root-worker-prototype Electron app-server lifecycle/restart/client state refresh paths; codex-rs/app-server host lifecycle notification semantics only if needed; tests/docs only as needed
+  base_commit: 9f4b9ad1f37ee725bf07c1da77cc254a3ed7a9d9
+  pending_sync_from_main: none; owner_dev_3 is on `feature/in-place-runtime-restart` at base `9f4b9ad1f37ee725bf07c1da77cc254a3ed7a9d9`
+  status: merged
+  objective: Keep the existing app-server/thread recovery flow unchanged, but replace the default supervisor/full Electron relaunch step with Electron main reloading renderer content in the existing BrowserWindow.
+  last_update: 2026-09-02 PM accepted owner_dev_3 commit `c5e6caab1f38f2cb42bc4e3e28189facad27df1b` and merged it into main as `8f9249ed5f4bd0dbfbd38047ab3ccfe571f8ca65`. PM verified the final user semantics: other app-server/thread bootstrap/autoresume flows remain unchanged; default `client/relaunch/requested` now reloads renderer content in existing BrowserWindow, uses single-flight coalescing, and only uses full Electron relaunch as fallback/manual path.
+  next_action: Restart/reload the running Morpheus app once manually if needed so this new renderer-reload behavior is available in the active Electron main process; after that, future `request_runtime_restart` requests should keep the window open and reload renderer content.
+  blockers: none
+  validation: Owner ran `rtk git diff --check`, `rtk pnpm --dir apps/root-worker-prototype exec tsx --test electron/appLifecycle.test.cjs` -> 8 passed, `rtk pnpm --dir apps/root-worker-prototype exec tsx --test electron/threadAutoResume.test.cjs` -> 5 passed, and `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning. Reviewer passed. PM reran on merged main: `rtk pnpm --dir apps/root-worker-prototype exec tsx --test electron/appLifecycle.test.cjs` -> 8 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test electron/threadAutoResume.test.cjs` -> 5 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: 8f9249ed5f4bd0dbfbd38047ab3ccfe571f8ca65
+- id: agent-role-load-tool
+  owner: /my_codex/owner_dev
+  checkout: /Users/bytedance/Projects/my-codex-dev
+  branch: feature/agent-role-load-tool
+  task_type: feature/runtime-tool
+  depends_on: 07c1113e26ba50702188f7965dbb411c033181a5
+  files: codex-rs/thread-service tool/runtime paths; codex-rs/app-server protocol/thread metadata paths; codex-rs/thread-store/state metadata only if needed; tests/docs only as needed
+  base_commit: 07c1113e26ba50702188f7965dbb411c033181a5
+  pending_sync_from_main: owner_dev checkout has unrelated dirty worktree changes reported by owner, so PM merged only commit `f9444cc6e74fb638ee9f297fe45f4af23928787d` and did not force-sync the checkout after main merge.
+  status: merged
+  objective: Add a model-callable runtime tool that loads an existing `*.agent.md` role definition into the current thread as runtime-recognized agent role metadata/effective role state, instead of relying on file edits alone to change behavior.
+  last_update: 2026-09-01 PM accepted owner_dev commit `f9444cc6e74fb638ee9f297fe45f4af23928787d` and merged it into main as `1bcbd0c0e06052c64dfcc4e740677e78a0e7dfcb`. PM design-checked that `agent_role_load` is a native-only model-visible runtime tool with only `agent_type`, resolves through configured/built-in session-visible role definitions, updates persisted `agent_role` metadata plus live session/root agent/AgentControl role state, refreshes skill/plugin/hook runtime state, and avoids arbitrary path read or broad metadata patch surfaces.
+  next_action: Use this merged tool registration/runtime pattern to implement backend glue for `runtime-auto-restart-tool`.
+  blockers: none
+  validation: Owner ran focused rustfmt for touched files, diff checks, `rtk cargo test -p codex-agent-runtime apply_role_uses_active_profile_model_provider_update`, `rtk cargo test -p thread-service agent_role_load_config_uses_current_session_overlays_as_base`, `rtk cargo check -p codex-tool-service --lib`, and `rtk cargo build -p app-server --bin app-server` successfully. `rtk cargo test -p codex-tool-service agent_role_load_tool_requires_agent_type_and_reports_effective_boundary` remains blocked by known existing test-target dependency/import issues; owner reports production lib check passed and reviewer accepted residual risk. PM reran on merged main: `rtk cargo test --manifest-path codex-rs/Cargo.toml -p codex-agent-runtime apply_role_uses_active_profile_model_provider_update` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p thread-service agent_role_load_config_uses_current_session_overlays_as_base` -> passed; `rtk cargo check --manifest-path codex-rs/Cargo.toml -p codex-tool-service --lib` -> passed; `rtk cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: 1bcbd0c0e06052c64dfcc4e740677e78a0e7dfcb
+- id: runtime-auto-restart-tool
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/runtime-auto-restart-tool
+  task_type: feature/runtime-tool-client-lifecycle
+  depends_on: agent-role-load-tool merged in `1bcbd0c0e06052c64dfcc4e740677e78a0e7dfcb`; client/supervisor/autoresume lifecycle path merged in `7671475eefe5754750fb63826be49de7d5374c49`
+  files: codex-rs/thread-service tool/runtime paths; codex-rs/app-server lifecycle/restart/resume paths; apps/root-worker-prototype Electron/app-server restart orchestration and session resume paths; protocol/display tests as needed
+  base_commit: 07c1113e26ba50702188f7965dbb411c033181a5
+  pending_sync_from_main: none; owner_dev_3 fast-forwarded to final main `9f4b9ad1f37ee725bf07c1da77cc254a3ed7a9d9` after merge. owner_dev_2 also fast-forwarded to `9f4b9ad1f37ee725bf07c1da77cc254a3ed7a9d9` and still has unrelated untracked `apps/android-companion/local.properties`. owner_dev has large unrelated dirty worktree changes after completing agent-role-load-tool, so it was not force-synced.
+  status: merged
+  objective: Add a model-callable runtime auto-restart tool so that after a model modifies runtime/client/server code, it can request a productized outer client supervisor to rebuild/restart the full client/app-server stack; after restart, the client/app-server should automatically resume eligible interrupted sessions and hand control back to the model, letting the model judge from restored context how to continue.
+  last_update: 2026-09-01 PM accepted owner_dev_3 commit `48477fa7eb683c08dbcdbdf64b42cebfc1d434bf` and merged it into main as `9f4b9ad1f37ee725bf07c1da77cc254a3ed7a9d9`. PM design-checked the diff: `request_runtime_restart` is a thin model-visible tool, emits typed `client/relaunch/requested`, uses app-server host lifecycle runtime, has unsupported fallback when no host runtime exists, and does not use shell/self-kill/complex restart manifest paths. Combined with the earlier client/autoresume merge, the user-approved simplified flow is now implemented: relaunch request -> client relaunch -> bootstrap autoresume -> restored context lets the model judge next steps.
+  next_action: Restart/relaunch the running Morpheus client/app-server when ready so this new tool is available in the active product runtime.
+  blockers: none; user confirmed the simplified recovery direction is acceptable: after relaunch/autoresume, submit restored context to the model and let it judge the current situation rather than building complex restart manifests.
+  validation: Client/autoresume phase: Owner ran `rtk pnpm --dir apps/root-worker-prototype exec node --test electron/appLifecycle.test.cjs electron/threadAutoResume.test.cjs` -> 8 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/threadSelectionPolicy.test.ts src/lib/thread.test.ts` -> 200 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check` -> passed. Fixed reviewer `/my_codex/owner_dev_3/reviewer` passed after external root eligibility fix. PM merged owner_dev_3 commit `1478b5a169528d768d64b052c8ef810a3703a80b` into main as `7671475eefe5754750fb63826be49de7d5374c49`, reran lifecycle/autoresume tests -> 8 passed, thread selection/thread tests -> 200 passed, Root Worker build -> passed with existing chunk-size warning, and `rtk git diff --check HEAD~1..HEAD` -> passed. Backend glue phase: owner ran `rtk git diff --check`, `rtk cargo check -p codex-tool-service`, `rtk cargo test -p app-server --lib host_lifecycle`, `rtk cargo test -p app-server --lib verify_client_relaunch_requested_notification_serialization`, and `rtk cargo build -p app-server --bin app-server` successfully. `rtk cargo test -p codex-tool-service host_lifecycle` remains blocked by known existing test-target compile drift. PM reran on merged main: `rtk cargo check --manifest-path codex-rs/Cargo.toml -p codex-tool-service` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p app-server --lib host_lifecycle` -> passed; `rtk cargo test --manifest-path codex-rs/Cargo.toml -p app-server --lib verify_client_relaunch_requested_notification_serialization` -> passed; `rtk pnpm --dir apps/root-worker-prototype exec node --test electron/appLifecycle.test.cjs electron/threadAutoResume.test.cjs` -> 8 passed; `rtk cargo build --manifest-path codex-rs/Cargo.toml -p app-server --bin app-server` -> passed with existing linker/future-incompat warnings; `rtk git diff --check HEAD~1..HEAD` and `rtk git show --check --stat --oneline HEAD` -> passed.
+  commit: 9f4b9ad1f37ee725bf07c1da77cc254a3ed7a9d9
 - id: compact-clears-loaded-skills
   owner: /my_codex/owner_dev
   checkout: /Users/bytedance/Projects/my-codex-dev

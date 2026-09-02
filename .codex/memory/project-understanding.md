@@ -16,9 +16,24 @@
   - persisted event/history：供 reload、history replay、UI 恢复使用的持久化事实
   - model-visible context：提供给模型推理的 history / response items / compact context
 - 许多问题都来自把这 3 层混在一起；排查时先判断故障发生在 live path、persisted replay，还是 model context。
+- workflow 不应被理解成固定线性脚本；它应是有限状态机，允许根据 PM/agent 的结构化输出动态路由到不同 owner、reviewer 或等待态。workflow 的核心价值是把流程门禁、状态转移、输出校验和恢复语义 runtime 化：例如 PM 接到新 feature 后，必须基于 progress 状态确认 owner 空闲，再把 feature 从 pending 转为 deving 并输出明确 owner 派发事实；后续状态转移也应由 progress/state file 与校验规则共同约束，而不是只依赖模型自觉遵循 instruction。
+- workflow 也不能被当作绝对可靠性来源：它仍依赖模型正确报告事实、选择状态和调用状态更新工具。workflow 的收益来自把自由文本协作压缩到有限状态、typed schema、runtime 可校验门禁和 durable state，而不是消除模型错误。设计 workflow 时应避免状态机过度膨胀；只把高价值、可验证、会影响下游安全性的状态转移固化，其他判断仍留给 agent instruction 和 PM 审核。
+- workflow 中的 PM agent 不应被设计成一次性输出 owner brief 后就承担隐含持续监督；PM 模型线程结束后不会自动轮询 owner。owner 等待、超时、心跳、状态检查、完成通知消费、输出 schema 校验和异常分支应由 workflow runtime/script 持有；需要新的 PM 判断时，runtime 再显式唤起 PM/coordination step，并带上当前 durable state、owner 活动和异常证据。
+- 长期设计中，workflow 不能替代 PM 对依赖、冲突、owner 空闲、任务拆分和验收风险的语义判断；这些判断本身仍依赖模型理解代码库和当前上下文。workflow 真正能可靠化的是把 PM 的判断结果变成显式状态、有限转移、可审计事实和部分可自动检查的门禁，从而降低漏步骤、遗忘、错误交接和无人监督的概率；不能承诺“有 workflow 就一定正确”。
+- 模型可调用的 inter-agent tools 和 hook 系统已经是 runtime API 的真实样例：它们操作 thread/agent/event/pending input 等 runtime-owned 对象，而不是靠模型修改文件来间接影响行为。
+- 后续评估“是否把某能力做成 tool/API”时，优先问它是否操作 runtime 原生事实、是否能被 runtime enforce、是否需要进入 typed history 并在 compact/reload 后恢复；如果只是结构化记笔记或包装 markdown 修改，通常价值不大。
+- completion gate 的设计可先分为外部环境检查和内部 runtime 检查：外部检查优先用受控 shell gate；内部检查应依赖窄的 runtime introspection primitive，而不是一开始做万能高层 API。
+- completion gate 的 core runtime 不应负责定义“什么叫完成”，而应可靠暴露当前 runtime 状态；具体完成标准由 project/plugin/hook gate 组合 shell 结果和 runtime introspection 结果决定。
+- 当 gate 或插件发现缺少内部 runtime 事实时，合理路径是先补一个小而稳定的 core introspection API，再让插件组合使用；不要为了某个 gate 把一次性策略硬塞进 runtime core。
+- agent role / thread role mutation 是比 memory 文件更有价值的候选 runtime API，因为 role 已经是 thread metadata/listing/resume 相关事实；如果要支持自进化，应优先让 tool 更新 runtime 认可的 role/revision/effective-from-turn，而不是只修改 `*.agent.md` 后期待当前 thread 自动生效。
 
 ## Stable Architecture Rules
 - Morpheus 自己的用户配置 home 使用 `MORPHEUS_HOME`，默认目录是 `~/.morpheus`；不要再让 `CODEX_HOME` 控制 Morpheus config home。project-local `.codex/` 目录、workflow/agents/memory 目录语义保持不变；external official `codex_cli` / `~/.codex` 只在外部 provider 语义中出现。
+- `MORPHEUS_HOME/instructions/` 是用户配置级 model-visible instructions 目录：启动时加载其中直属普通非隐藏文件，按稳定顺序与既有 `instruction_files` / AGENTS/user instructions 组合，并继续受 instruction 总预算约束。不要把它和任意项目内的 `instructions/` 目录混用。
+- 安装态 Root Worker/Morpheus desktop 包不再携带仓库源码 snapshot；`.app/.dmg` 只带运行资源和构建产物。需要源码 workspace 时，packaged app 默认从 `origin` (`git@github.com:qs625/codex.git`) clone 到 `~/.morpheus/source_workspace`，已有 workspace 或显式 `ROOT_WORKER_WORKSPACE` 时不覆盖、不自动 pull/reset。
+- 安装态会维护一份受控 instruction 文件 `MORPHEUS_HOME/instructions/morpheus-source-workspace.md`，告诉模型当前 Morpheus source workspace 路径，以及修改 runtime/client/server/frontend/backend 后应先完成相关 build/test，再调用 `request_runtime_restart`。
+- `/self` 是指向 Morpheus 自身源码 workspace 的 hidden/system self project contract；self command IPC 应只向 `/self` 发送任务，并确保 thread cwd/workspace 是实际源码 workspace。Cmd+P 类命令板的产品方向是专用 `/self` 输入面，不是通用 project selector。
+- Desktop installer release 使用独立 GitHub Actions workflow 和 tag pattern `desktop-v*.*.*`；tag push 后构建 macOS DMG、Windows zip app bundle、Linux tar.gz app bundle并上传 release assets。签名/notarization 若无 secrets 只能明确为 unsigned/dev-signed，不能伪装完成。
 - app-server / root-worker conversation display 走 typed `EventMsg -> ThreadItem` 路径。
 - `ResponseItem` 主要用于模型交互、模型可见 history/context，不应用作 display-only 展示源。
 - 不要从 raw marker、assistant JSON envelope 或 legacy 解析路径反解客户端展示项。

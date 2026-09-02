@@ -19,5 +19,6 @@
 - 优先直接修改代码或文档，不要只停留在分析。
 - 对当前项目的 PM/owner 协作规则，应遵循 `.codex/agents/project-pm.agent.md`。
 - 工作过程中如果识别到新的稳定用户偏好或长期项目事实，应分别更新 `.codex/memory/user-preferences.md` 和 `.codex/memory/project-understanding.md`。
+- 以后开发新功能前要先说清楚实现方式；如果需求、语义边界或实现细节有不清楚的地方，先问清楚再推进。
 - 派发给 owner 的任务 brief 不要只写目标和范围；要写完整设计意图、状态机约束、不变量、预期实现轮廓、禁止路径和验收测试矩阵，避免 owner 自行补全关键设计。
 - owner 完成后，先按设计验收，再看测试验收；如果实现没有按 brief 的设计完成，即使测试通过也要返工。
