@@ -16,6 +16,8 @@ pub(crate) const HIERARCHICAL_AGENTS_MESSAGE: &str =
 pub const DEFAULT_AGENTS_MD_FILENAME: &str = "AGENTS.md";
 /// Preferred local override for AGENTS.md instructions.
 pub const LOCAL_AGENTS_MD_FILENAME: &str = "AGENTS.override.md";
+/// User-home instruction directory loaded from MORPHEUS_HOME.
+pub const MORPHEUS_HOME_INSTRUCTIONS_DIR_NAME: &str = "instructions";
 
 /// When both `Config::instructions` and AGENTS.md docs are present, they will
 /// be concatenated with the following separator.
@@ -96,6 +98,12 @@ impl<'a> AgentsMdManager<'a> {
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
 
+        for path in self.morpheus_home_instruction_sources() {
+            if seen.insert(path.clone()) {
+                sources.push(path);
+            }
+        }
+
         for layer in self.config.config_layer_stack.get_layers(
             config_service::ConfigLayerStackOrdering::LowestPrecedenceFirst,
             /*include_disabled*/ true,
@@ -120,7 +128,8 @@ impl<'a> AgentsMdManager<'a> {
                 // not participate in effective config. Only recover repo-local
                 // instruction files here so initial context can show checked-in
                 // docs without allowing arbitrary out-of-repo file reads.
-                let disabled_path = resolve_project_relative_path(path.as_path(), project_root.as_path());
+                let disabled_path =
+                    resolve_project_relative_path(path.as_path(), project_root.as_path());
                 let Some(canonical_path) =
                     canonical_repo_local_path(disabled_path.as_path(), project_root.as_path())
                 else {
@@ -136,6 +145,39 @@ impl<'a> AgentsMdManager<'a> {
         }
 
         sources
+    }
+
+    fn morpheus_home_instruction_sources(&self) -> Vec<AbsolutePathBuf> {
+        let instructions_dir = self
+            .config
+            .codex_home
+            .join(MORPHEUS_HOME_INSTRUCTIONS_DIR_NAME);
+        let Ok(entries) = std::fs::read_dir(instructions_dir.as_path()) else {
+            return Vec::new();
+        };
+        let mut files = Vec::new();
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let Some(file_name) = file_name.to_str() else {
+                continue;
+            };
+            if file_name.is_empty() || file_name.starts_with('.') {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(path) = AbsolutePathBuf::try_from(path) else {
+                continue;
+            };
+            files.push(path);
+        }
+        files.sort();
+        files
     }
 
     async fn read_instruction_files(

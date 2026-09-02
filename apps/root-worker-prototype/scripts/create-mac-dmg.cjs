@@ -90,6 +90,7 @@ async function createMacDmg({
   cwd = process.cwd(),
   distDirName = DIST_DIR_NAME,
   dmgFileName = DMG_FILE_NAME,
+  env = process.env,
   platform = process.platform,
 } = {}) {
   assertMacPackagingPlatform(platform);
@@ -124,24 +125,28 @@ async function createMacDmg({
       stagingDir: paths.stagingDir,
       tempDmgPath: paths.tempDmgPath,
     }));
-    runCommand("hdiutil", buildHdiutilAttachArgs({
-      mountRootDir: paths.mountRootDir,
-      tempDmgPath: paths.tempDmgPath,
-    }));
-    mounted = true;
 
-    await assertDirectoryExists(paths.volumePath, "Mounted DMG volume");
-    runCommand("osascript", buildFinderLayoutScriptArgs({
-      appName,
-      volumePath: paths.volumePath,
-    }));
-    await waitForFileExists(
-      path.join(paths.volumePath, ".DS_Store"),
-      "Finder layout metadata",
-    );
+    if (shouldUseFinderLayout({ env })) {
+      runCommand("hdiutil", buildHdiutilAttachArgs({
+        mountRootDir: paths.mountRootDir,
+        tempDmgPath: paths.tempDmgPath,
+      }));
+      mounted = true;
 
-    runCommand("hdiutil", buildHdiutilDetachArgs({ volumePath: paths.volumePath }));
-    mounted = false;
+      await assertDirectoryExists(paths.volumePath, "Mounted DMG volume");
+      runCommand("osascript", buildFinderLayoutScriptArgs({
+        appName,
+        volumePath: paths.volumePath,
+      }));
+      await waitForFileExists(
+        path.join(paths.volumePath, ".DS_Store"),
+        "Finder layout metadata",
+      );
+
+      runCommand("hdiutil", buildHdiutilDetachArgs({ volumePath: paths.volumePath }));
+      mounted = false;
+    }
+
     runCommand("hdiutil", buildHdiutilConvertArgs({
       dmgPath: paths.dmgPath,
       tempDmgPath: paths.tempDmgPath,
@@ -308,6 +313,10 @@ function buildFinderLayoutScriptArgs({
   ];
 }
 
+function shouldUseFinderLayout({ env = process.env } = {}) {
+  return env.CI !== "true" && env.ROOT_WORKER_DMG_SKIP_FINDER_LAYOUT !== "1";
+}
+
 function toAppleScriptString(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;
 }
@@ -330,6 +339,7 @@ module.exports = {
   cleanupMountedVolume,
   createMacDmg,
   isMountedVolumeOutput,
+  shouldUseFinderLayout,
   toAppleScriptString,
   waitForFileExists,
 };

@@ -67,6 +67,22 @@ function buildCreateThreadStartParams(payload = {}, options = {}) {
   });
 }
 
+function buildSelfCommandThreadStartParams(project) {
+  const workspace =
+    typeof project?.workspace === "string" && project.workspace.trim()
+      ? project.workspace.trim()
+      : "";
+  if (!workspace) {
+    throw new Error("self command requires a source workspace path");
+  }
+  return buildCreateThreadStartParams({
+    cwd: workspace,
+    threadMode: "project",
+    name: "/self",
+    taskName: "self",
+  });
+}
+
 function buildThreadListParams(cursor = null) {
   return {
     ...(cursor ? { cursor } : {}),
@@ -100,6 +116,7 @@ module.exports = {
   CHAT_COMPAT_CWD_BASENAME,
   buildChatCompatCwd,
   buildCreateThreadStartParams,
+  buildSelfCommandThreadStartParams,
   buildThreadListParams,
   buildSubscribeThreadResumeParams,
   withRealtimeConversationFeature,
