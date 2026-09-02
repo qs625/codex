@@ -107,6 +107,16 @@ fn request_runtime_restart_tool_schema_is_narrow() {
         panic!("restart tool should be a function tool");
     };
     assert_eq!(tool.name, REQUEST_RUNTIME_RESTART_TOOL_NAME);
+    assert!(tool.description.contains("Use after completing a feature"));
+    assert!(tool.description.contains("fixing a bug"));
+    assert!(tool.description.contains("frontend and backend builds"));
+    assert!(
+        !tool
+            .description
+            .contains("full Morpheus client/app-server relaunch")
+    );
+    assert!(!tool.description.contains("run shell commands"));
+    assert!(!tool.description.contains("kill processes"));
     assert_eq!(tool.parameters.required, Some(Vec::new()));
     assert_eq!(tool.parameters.additional_properties, Some(false.into()));
     let properties = tool.parameters.properties.expect("properties");
@@ -127,5 +137,19 @@ fn request_runtime_restart_tool_schema_is_narrow() {
     assert_eq!(
         output_schema["properties"]["status"]["enum"],
         json!(["accepted", "unsupported", "failed"])
+    );
+    assert_eq!(
+        output_schema["properties"]["status"]["description"],
+        "Whether the host accepted, does not support, or failed the refresh request."
+    );
+    assert_eq!(
+        output_schema["properties"]["reason"]["description"],
+        "The normalized refresh reason."
+    );
+    assert!(
+        output_schema["properties"]["relaunching"]["description"]
+            .as_str()
+            .expect("relaunching description")
+            .contains("relaunch-style fallback")
     );
 }

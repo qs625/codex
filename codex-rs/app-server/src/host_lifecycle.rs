@@ -42,7 +42,7 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
                 status: HostRelaunchStatus::Accepted,
                 accepted: true,
                 relaunching: true,
-                message: "Client relaunch request was submitted. Continuation happens after client bootstrap autoresume restores eligible interrupted sessions.".to_string(),
+                message: "Runtime refresh request was submitted. Continuation happens after the host refreshes and restores eligible interrupted sessions.".to_string(),
                 reason: request.reason,
                 resume_strategy: RESUME_STRATEGY.to_string(),
             }
