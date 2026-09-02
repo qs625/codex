@@ -423,6 +423,17 @@ declare global {
             pid?: number | null;
             reason?: string;
             mobileConnection?: AndroidConnectionInfo;
+            lifecycle?: {
+              type: "rendererReload";
+              phase: "reloading" | "reloaded" | "fullRelaunchFallback" | "failed";
+              reason?: string | null;
+            };
+            relaunch?: {
+              ok: boolean;
+              relaunching: boolean;
+              alreadyRequested?: boolean;
+              reason?: string | null;
+            };
           };
         }) => void,
       ) => () => void;
