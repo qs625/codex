@@ -67,12 +67,13 @@ source workspace path and the reminder to build/test Morpheus code changes
 before calling `request_runtime_restart`. That generated file is updated only
 while it still carries the Morpheus managed marker; user-managed replacement
 content is left intact.
-It also maintains `~/.morpheus/self-project.json` as a hidden/system `/self`
-project record whose workspace is the same Morpheus source workspace. The
-Electron IPC contract exposes `getSelfProject` and `startSelfCommand` for a
-dedicated self command surface. Press Cmd+P in the desktop app to open that
-`/self` input; submitting it always creates a `/self` project thread in the
-source workspace and sends the provided task text there.
+It also maintains `~/.morpheus/self-project.json` as a system `/self` project
+record whose workspace is the same Morpheus source workspace. The Electron IPC
+contract exposes `getSelfProject` and `startSelfCommand` for a dedicated self
+command surface. Press Cmd+P in the desktop app to open that `/self` input;
+submitting it always creates a `/self` project thread in the source workspace
+and sends the provided task text there. The `/self` root is also shown in the
+ordinary project tree so it can be selected from the normal sidebar.
 
 Desktop release automation lives in `.github/workflows/desktop-release.yml`.
 Pushing a tag like `desktop-v1.2.3` builds and uploads GitHub Release assets:

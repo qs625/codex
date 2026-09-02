@@ -28,7 +28,6 @@ import {
   getThreadSubtreeIdsChildrenFirst,
   shouldNotifyProjectThreadCompleted,
   isThreadThinking,
-  isSelfCommandRootThread,
   markThreadCommandExecutionRunning,
   mergeDefaultCollapsedProjectIds,
   mergeThreadLifecycleStatus,
@@ -341,12 +340,13 @@ test("buildProjectAgentSidebar groups parentless project chat roots by cwd", () 
   assert.equal(alpha?.descendantCount, 1);
 });
 
-test("buildProjectAgentSidebar keeps self command roots out of ordinary navigation", () => {
+test("buildProjectAgentSidebar shows self command roots in ordinary project navigation", () => {
   const selfRoot = makeSidebarThread({
     id: "self-root",
     name: "/self",
+    path: "/self",
     cwd: "/Users/example/.morpheus/source_workspace",
-    agentPath: "/self",
+    agentPath: null,
     createdAt: 2,
     updatedAt: 10,
   });
@@ -360,10 +360,19 @@ test("buildProjectAgentSidebar keeps self command roots out of ordinary navigati
 
   const sidebar = buildProjectAgentSidebar([selfRoot, project]);
 
-  assert.equal(isSelfCommandRootThread(selfRoot), true);
+  const selfProject = sidebar.projects.find(
+    (item) => item.tree.threadId === "self-root",
+  );
+  assert.ok(selfProject);
+  assert.equal(
+    selfProject.id,
+    "project:/Users/example/.morpheus/source_workspace|path:/self",
+  );
+  assert.equal(selfProject.label, "/self");
+  assert.equal(selfProject.tree.label, "/self");
   assert.deepEqual(
     sidebar.projects.map((item) => item.tree.threadId),
-    ["project-root"],
+    ["self-root", "project-root"],
   );
   assert.equal(sidebar.chat.conversations.length, 0);
 });
@@ -711,6 +720,32 @@ test("findProjectByRootIdentity routes workspace blank identity only to cwd-only
   );
 
   assert.equal(workspaceProject?.tree.threadId, "workspace-root");
+});
+
+test("findProjectByRootIdentity matches self roots by self task identity", () => {
+  const selfRoot = makeSidebarThread({
+    id: "self-root",
+    name: "/self",
+    path: "/self",
+    cwd: "/Users/example/.morpheus/source_workspace",
+    agentPath: null,
+    updatedAt: 12,
+  });
+  const workspaceRoot = makeSidebarThread({
+    id: "workspace-root",
+    cwd: "/Users/example/.morpheus/source_workspace",
+    agentPath: null,
+    updatedAt: 10,
+  });
+  const sidebar = buildProjectAgentSidebar([selfRoot, workspaceRoot]);
+
+  const selfProject = findProjectByRootIdentity(
+    sidebar.projects,
+    "/Users/example/.morpheus/source_workspace",
+    rootAgentPathFromTaskName("self"),
+  );
+
+  assert.equal(selfProject?.tree.threadId, "self-root");
 });
 
 test("rootAgentPathFromTaskName accepts segment and path-form root task names", () => {
