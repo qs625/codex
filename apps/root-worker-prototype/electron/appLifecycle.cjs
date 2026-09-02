@@ -121,6 +121,45 @@ function createClientRelaunchNotificationHandler({
   };
 }
 
+async function observeClientRelaunchResult(
+  resultPromise,
+  { broadcastStatus, logger = console, reason = null } = {},
+) {
+  try {
+    const result = await resultPromise;
+    broadcastStatus?.({
+      lifecycle: {
+        type: "clientRelaunch",
+        phase: result?.ok ? "completed" : "failed",
+        reason: result?.reason ?? reason,
+      },
+      relaunch: result?.relaunch ?? result ?? null,
+    });
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger?.error?.(
+      "[prototype] client relaunch notification failed",
+      JSON.stringify({ reason: message }),
+    );
+    broadcastStatus?.({
+      lifecycle: {
+        type: "clientRelaunch",
+        phase: "failed",
+        reason: message,
+      },
+    });
+    return {
+      ok: false,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      reason: message,
+    };
+  }
+}
+
 function createInstalledArtifactUpdateLifecycleAdapter({
   fullRelaunch,
   resolvePlan,
@@ -342,4 +381,5 @@ module.exports = {
   createInstalledArtifactUpdateLifecycleAdapter,
   createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
+  observeClientRelaunchResult,
 };

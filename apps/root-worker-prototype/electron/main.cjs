@@ -67,6 +67,7 @@ const {
   createInstalledArtifactUpdateLifecycleAdapter,
   createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
+  observeClientRelaunchResult,
 } = require("./appLifecycle.cjs");
 const {
   resolveInstalledArtifactUpdatePlan,
@@ -209,7 +210,21 @@ appServerClient.on("notification", (notification) => {
   }
   const normalizedNotification = normalizeNotification(notification);
   if (isClientRelaunchNotification(normalizedNotification)) {
-    handleClientRelaunchNotification(normalizedNotification);
+    void observeClientRelaunchResult(
+      handleClientRelaunchNotification(normalizedNotification),
+      {
+        broadcastStatus: (status) =>
+          broadcast("codex:status", {
+            ...appServerClient.status,
+            ...status,
+          }),
+        logger: console,
+        reason:
+          normalizedNotification.params?.reason ??
+          normalizedNotification.method ??
+          null,
+      },
+    );
     return;
   }
   broadcast("codex:notification", normalizedNotification);

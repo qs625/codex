@@ -452,7 +452,10 @@ declare global {
             reason?: string;
             mobileConnection?: AndroidConnectionInfo;
             lifecycle?: {
-              type: "rendererReload" | "installedArtifactUpdate";
+              type:
+                | "rendererReload"
+                | "installedArtifactUpdate"
+                | "clientRelaunch";
               phase:
                 | "building"
                 | "updated"
@@ -460,6 +463,7 @@ declare global {
                 | "reloading"
                 | "reloaded"
                 | "fullRelaunchFallback"
+                | "completed"
                 | "failed";
               reason?: string | null;
             };

@@ -64,13 +64,14 @@ otherwise changed automatically by launch.
 The packaged app maintains
 `~/.morpheus/instructions/morpheus-source-workspace.md` with the effective
 source workspace path and the reminder to run relevant tests before calling
-`request_runtime_restart`. In a packaged macOS app, that restart request runs
-the source workspace package build, updates the installed runnable artifacts
-from the staged app bundle, re-signs the current app, and then performs a full
-app relaunch. Build or update failures leave the currently installed artifacts
-in place instead of reloading stale code. That generated file is updated only
-while it still carries the Morpheus managed marker; user-managed replacement
-content is left intact.
+`request_runtime_restart`. In a packaged macOS app, that restart request uses
+the source workspace's existing frontend and backend build outputs to refresh
+the installed `app.asar`, bundled `app-server`, and default config resources,
+re-signs the current app, and then performs a full app relaunch. Missing build
+outputs or update failures leave the currently installed artifacts in place
+instead of reloading stale code. That generated file is updated only while it
+still carries the Morpheus managed marker; user-managed replacement content is
+left intact.
 It also maintains `~/.morpheus/self-project.json` as a system `/self` project
 record whose workspace is the same Morpheus source workspace. The Electron IPC
 contract exposes `getSelfProject` and `startSelfCommand` for a dedicated self

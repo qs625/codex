@@ -5,7 +5,9 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
+  prepareDirectArtifacts,
   resolveInstalledArtifactUpdatePlan,
+  replaceInstalledArtifactsSync,
   updateInstalledArtifacts,
 } = require("./installedArtifactUpdate.cjs");
 
@@ -31,8 +33,16 @@ test("resolves installed update plan from current app resources path", () => {
     "/Users/example/.morpheus/source_workspace/apps/root-worker-prototype",
   );
   assert.equal(
-    plan.stagedResourcesPath,
-    "/Users/example/.morpheus/source_workspace/apps/root-worker-prototype/dist-app/Root Worker Prototype-darwin-arm64/Root Worker Prototype.app/Contents/Resources",
+    plan.frontendDistPath,
+    "/Users/example/.morpheus/source_workspace/apps/root-worker-prototype/dist",
+  );
+  assert.equal(
+    plan.appServerBinaryPath,
+    "/Users/example/.morpheus/source_workspace/codex-rs/target/release/app-server",
+  );
+  assert.equal(
+    plan.defaultCompactPromptSourcePath,
+    "/Users/example/.morpheus/source_workspace/codex-rs/thread-service/templates/compact/prompt.md",
   );
 });
 
@@ -71,19 +81,39 @@ test("does not plan installed artifact update outside packaged mac app", () => {
   );
 });
 
-test("build failure leaves installed artifacts unchanged", () => {
+test("missing frontend dist fails before replacing installed artifacts", () => {
+  const fixture = createUpdateFixture();
+  fs.rmSync(fixture.sourceDist, { force: true, recursive: true });
+
+  assert.throws(
+    () =>
+      updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
+        spawnSync: failUnexpectedSpawn,
+      }),
+    /Missing frontend dist/,
+  );
+
+  assert.equal(read(fixture.targetAppAsar), "old asar");
+  assert.equal(read(fixture.targetAppServer), "old server");
+  assert.equal(read(fixture.targetCompact), "old compact");
+  assert.equal(fs.existsSync(fixture.directStagingRoot), false);
+});
+
+test("asar pack failure leaves installed artifacts unchanged and includes output", () => {
   const fixture = createUpdateFixture();
   const calls = [];
 
   assert.throws(
     () =>
       updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
         spawnSync: (command, args) => {
           calls.push([command, args]);
-          return { status: 1, stderr: "build failed" };
+          return { status: 1, stdout: "packing stdout", stderr: "pack failed" };
         },
       }),
-    /package:mac:app exited with 1: build failed/,
+    /@electron\/asar pack.*stdout=packing stdout.*stderr=pack failed/,
   );
 
   assert.equal(read(fixture.targetAppAsar), "old asar");
@@ -97,9 +127,13 @@ test("successful update replaces runnable artifacts and codesigns installed app"
   const calls = [];
 
   const result = updateInstalledArtifacts(fixture.plan, {
+    directStagingRoot: fixture.directStagingRoot,
     updateId: "unit",
     spawnSync: (command, args) => {
       calls.push([command, args]);
+      if (args.includes("@electron/asar")) {
+        write(args.at(-1), "new asar");
+      }
       return { status: 0 };
     },
   });
@@ -109,10 +143,21 @@ test("successful update replaces runnable artifacts and codesigns installed app"
   assert.equal(read(fixture.targetAppAsar), "new asar");
   assert.equal(read(fixture.targetAppServer), "new server");
   assert.equal(read(fixture.targetCompact), "new compact");
+  assert.equal(
+    calls.some(([_command, args]) => args.includes("package:mac:app")),
+    false,
+  );
   assert.deepEqual(calls, [
     [
       "rtk",
-      ["pnpm", "--dir", fixture.plan.sourceAppDir, "package:mac:app"],
+      [
+        "pnpm",
+        "dlx",
+        "@electron/asar",
+        "pack",
+        path.join(fixture.directStagingRoot, "app-source"),
+        path.join(fixture.directStagingRoot, "resources/app.asar"),
+      ],
     ],
     [
       "rtk",
@@ -134,10 +179,14 @@ test("codesign failure restores old installed artifacts", () => {
   assert.throws(
     () =>
       updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
         updateId: "codesign-failure",
         spawnSync: (command, args) => {
           if (args.includes("codesign")) {
             return { status: 1, stderr: "signature failed" };
+          }
+          if (args.includes("@electron/asar")) {
+            write(args.at(-1), "new asar");
           }
           return { status: 0 };
         },
@@ -159,8 +208,14 @@ test("backup rename failure restores already moved artifacts", () => {
   assert.throws(
     () =>
       updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
         updateId: "backup-failure",
-        spawnSync: () => ({ status: 0 }),
+        spawnSync: (_command, args) => {
+          if (args.includes("@electron/asar")) {
+            write(args.at(-1), "new asar");
+          }
+          return { status: 0 };
+        },
         renameSync: (from, to) => {
           renameCount += 1;
           if (renameCount === 2 && to.includes("backup-failure")) {
@@ -185,8 +240,14 @@ test("install rename failure restores old installed artifacts", () => {
   assert.throws(
     () =>
       updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
         updateId: "install-failure",
-        spawnSync: () => ({ status: 0 }),
+        spawnSync: (_command, args) => {
+          if (args.includes("@electron/asar")) {
+            write(args.at(-1), "new asar");
+          }
+          return { status: 0 };
+        },
         renameSync: (from, to) => {
           if (from.includes(".morpheus-update-staging-install-failure")) {
             installRenameCount += 1;
@@ -205,18 +266,77 @@ test("install rename failure restores old installed artifacts", () => {
   assert.equal(read(fixture.targetCompact), "old compact");
 });
 
+test("postcondition failure restores old installed artifacts", () => {
+  const fixture = createUpdateFixture();
+
+  assert.throws(
+    () =>
+      updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
+        updateId: "postcondition-failure",
+        spawnSync: (_command, args) => {
+          if (args.includes("@electron/asar")) {
+            write(args.at(-1), "new asar");
+          }
+          return { status: 0 };
+        },
+        replaceArtifacts(plan, options) {
+          const replacement = replaceInstalledArtifactsSync(plan, options);
+          fs.writeFileSync(fixture.targetAppAsar, "corrupted asar");
+          return replacement;
+        },
+      }),
+    /Installed artifact does not match staged artifact/,
+  );
+
+  assert.equal(read(fixture.targetAppAsar), "old asar");
+  assert.equal(read(fixture.targetAppServer), "old server");
+  assert.equal(read(fixture.targetCompact), "old compact");
+});
+
+test("prepareDirectArtifacts copies built outputs without full app packaging", () => {
+  const fixture = createUpdateFixture();
+  const calls = [];
+
+  const prepared = prepareDirectArtifacts(fixture.plan, {
+    directStagingRoot: fixture.directStagingRoot,
+    spawnSync: (command, args) => {
+      calls.push([command, args]);
+      write(args.at(-1), "new asar");
+      return { status: 0 };
+    },
+  });
+
+  assert.equal(
+    read(path.join(prepared.stagedResourcesPath, "app.asar")),
+    "new asar",
+  );
+  assert.equal(
+    read(path.join(prepared.stagedResourcesPath, "bin/app-server")),
+    "new server",
+  );
+  assert.equal(
+    read(
+      path.join(
+        prepared.stagedResourcesPath,
+        "default-config/compact/COMPACT.md",
+      ),
+    ),
+    "new compact",
+  );
+  assert.equal(calls[0][1].includes("package:mac:app"), false);
+});
+
 function createUpdateFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-update-"));
   const workspace = path.join(root, "source workspace");
   const sourceAppDir = path.join(workspace, "apps/root-worker-prototype");
+  const sourceDist = path.join(sourceAppDir, "dist");
   const installedResources = path.join(
     root,
     "Moved Root Worker Prototype.app/Contents/Resources",
   );
-  const stagedResources = path.join(
-    sourceAppDir,
-    "dist-app/Root Worker Prototype-darwin-arm64/Root Worker Prototype.app/Contents/Resources",
-  );
+  const directStagingRoot = path.join(root, "direct-staging");
   const plan = resolveInstalledArtifactUpdatePlan({
     env: { ROOT_WORKER_WORKSPACE: workspace },
     platform: "darwin",
@@ -226,18 +346,35 @@ function createUpdateFixture() {
 
   write(path.join(installedResources, "app.asar"), "old asar");
   write(path.join(installedResources, "bin/app-server"), "old server");
-  write(path.join(installedResources, "default-config/compact/COMPACT.md"), "old compact");
   write(
-    path.join(root, "Moved Root Worker Prototype.app/Contents/_CodeSignature/CodeResources"),
+    path.join(installedResources, "default-config/compact/COMPACT.md"),
+    "old compact",
+  );
+  write(
+    path.join(
+      root,
+      "Moved Root Worker Prototype.app/Contents/_CodeSignature/CodeResources",
+    ),
     "old signature",
   );
-  write(path.join(stagedResources, "app.asar"), "new asar");
-  write(path.join(stagedResources, "bin/app-server"), "new server");
-  write(path.join(stagedResources, "default-config/compact/COMPACT.md"), "new compact");
+  write(path.join(sourceDist, "index.html"), "<main>new renderer</main>");
+  write(
+    path.join(workspace, "codex-rs/target/release/app-server"),
+    "new server",
+  );
+  write(
+    path.join(
+      workspace,
+      "codex-rs/thread-service/templates/compact/prompt.md",
+    ),
+    "new compact",
+  );
   fs.mkdirSync(sourceAppDir, { recursive: true });
 
   return {
+    directStagingRoot,
     plan,
+    sourceDist,
     targetAppAsar: path.join(installedResources, "app.asar"),
     targetAppServer: path.join(installedResources, "bin/app-server"),
     targetCompact: path.join(
@@ -249,6 +386,10 @@ function createUpdateFixture() {
       "Moved Root Worker Prototype.app/Contents/_CodeSignature/CodeResources",
     ),
   };
+}
+
+function failUnexpectedSpawn(command, args) {
+  throw new Error(`unexpected spawn: ${command} ${args.join(" ")}`);
 }
 
 function write(filePath, content) {

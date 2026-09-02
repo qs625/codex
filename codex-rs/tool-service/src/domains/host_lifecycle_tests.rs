@@ -24,7 +24,7 @@ impl HostLifecycleToolRuntime for FakeHostLifecycleRuntime {
             HostRelaunchResult {
                 status: HostRelaunchStatus::Accepted,
                 accepted: true,
-                relaunching: true,
+                relaunching: false,
                 message: "accepted".to_string(),
                 reason: Some("runtime update".to_string()),
                 resume_strategy: RESUME_STRATEGY.to_string(),
@@ -74,7 +74,7 @@ async fn request_runtime_restart_dispatches_host_request_and_returns_result() {
     let response_json = tool_output_json(&result);
     assert_eq!(response_json["status"], "accepted");
     assert_eq!(response_json["accepted"], true);
-    assert_eq!(response_json["relaunching"], true);
+    assert_eq!(response_json["relaunching"], false);
     assert_eq!(response_json["resumeStrategy"], RESUME_STRATEGY);
 
     let requests = runtime.requests.lock().expect("requests mutex");
@@ -150,6 +150,6 @@ fn request_runtime_restart_tool_schema_is_narrow() {
         output_schema["properties"]["relaunching"]["description"]
             .as_str()
             .expect("relaunching description")
-            .contains("relaunch-style fallback")
+            .contains("host has already confirmed")
     );
 }

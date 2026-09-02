@@ -1,4 +1,6 @@
 const fs = require("node:fs");
+const crypto = require("node:crypto");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const {
@@ -13,6 +15,7 @@ const APP_ASAR_RELATIVE_PATH = "app.asar";
 const APP_SERVER_RELATIVE_PATH = path.join("bin", "app-server");
 const DEFAULT_CONFIG_RELATIVE_PATH = "default-config";
 const SIGNATURE_RELATIVE_PATH = path.join("Contents", "_CodeSignature");
+const DIRECT_REFRESH_STAGING_PREFIX = "morpheus-runtime-refresh-";
 
 function resolveInstalledArtifactUpdatePlan({
   env = process.env,
@@ -35,24 +38,26 @@ function resolveInstalledArtifactUpdatePlan({
 
   const appBundlePath = path.dirname(path.dirname(resourcesPath));
   const sourceAppDir = path.join(resolvedWorkspace, SOURCE_APP_RELATIVE_PATH);
-  const stagedAppBundlePath = path.join(
-    sourceAppDir,
-    "dist-app",
-    appPlatformDir,
-    `${appName}.app`,
-  );
-  const stagedResourcesPath = path.join(
-    stagedAppBundlePath,
-    "Contents",
-    "Resources",
-  );
+  const codexRsDir = path.join(resolvedWorkspace, "codex-rs");
 
   return {
     appBundlePath,
+    appServerBinaryPath: path.join(
+      codexRsDir,
+      "target",
+      "release",
+      "app-server",
+    ),
+    defaultCompactPromptSourcePath: path.join(
+      codexRsDir,
+      "thread-service",
+      "templates",
+      "compact",
+      "prompt.md",
+    ),
+    frontendDistPath: path.join(sourceAppDir, "dist"),
     resourcesPath,
     sourceAppDir,
-    stagedAppBundlePath,
-    stagedResourcesPath,
     workspace: resolvedWorkspace,
     artifacts: [
       { kind: "file", relativePath: APP_ASAR_RELATIVE_PATH },
@@ -65,7 +70,7 @@ function resolveInstalledArtifactUpdatePlan({
 function updateInstalledArtifacts(plan, options = {}) {
   const spawn = options.spawnSync ?? spawnSync;
   const logger = options.logger ?? console;
-  const runPackage = options.runPackage ?? runPackageMacApp;
+  const prepareArtifacts = options.prepareArtifacts ?? prepareDirectArtifacts;
   const replaceArtifacts =
     options.replaceArtifacts ?? replaceInstalledArtifactsSync;
   const codesign = options.codesign ?? codesignInstalledApp;
@@ -73,22 +78,34 @@ function updateInstalledArtifacts(plan, options = {}) {
   assertSourceWorkspace(plan, options);
   assertInstalledTargetsWritable(plan, options);
 
-  runPackage(plan, { spawnSync: spawn, logger });
-  assertStagedArtifacts(plan, options);
-  const replacement = replaceArtifacts(plan, {
+  const prepared = prepareArtifacts(plan, {
     ...options,
-    keepBackup: true,
+    spawnSync: spawn,
+    logger,
   });
+  const stagedPlan = {
+    ...plan,
+    stagedResourcesPath: prepared.stagedResourcesPath,
+  };
+  let replacement = null;
   let signatureBackup = null;
   try {
-    signatureBackup = backupSignatureMetadataSync(plan, {
+    assertStagedArtifacts(stagedPlan, options);
+    replacement = replaceArtifacts(stagedPlan, {
+      ...options,
+      keepBackup: true,
+    });
+    assertInstalledArtifactsMatchStaged(stagedPlan, options);
+    signatureBackup = backupSignatureMetadataSync(stagedPlan, {
       ...options,
       fsOps: replacement.fsOps,
       updateId: replacement.updateId,
     });
-    codesign(plan, { spawnSync: spawn, logger });
+    codesign(stagedPlan, { spawnSync: spawn, logger });
   } catch (error) {
-    restoreBackups(plan, replacement.backupDir, replacement.fsOps);
+    if (replacement) {
+      restoreBackups(stagedPlan, replacement.backupDir, replacement.fsOps);
+    }
     if (signatureBackup) {
       restoreSignatureMetadataSync(signatureBackup);
     }
@@ -97,7 +114,10 @@ function updateInstalledArtifacts(plan, options = {}) {
     if (signatureBackup) {
       cleanupSignatureBackupSync(signatureBackup);
     }
-    cleanupPath(replacement.backupDir, replacement.fsOps);
+    if (replacement) {
+      cleanupPath(replacement.backupDir, replacement.fsOps);
+    }
+    cleanupPath(prepared.stagingRoot, prepared.fsOps);
   }
 
   return {
@@ -108,11 +128,69 @@ function updateInstalledArtifacts(plan, options = {}) {
   };
 }
 
-function runPackageMacApp(plan, options = {}) {
+function prepareDirectArtifacts(plan, options = {}) {
+  const fsOps = {
+    cpSync: options.cpSync ?? fs.cpSync,
+    mkdirSync: options.mkdirSync ?? fs.mkdirSync,
+    rmSync: options.rmSync ?? fs.rmSync,
+  };
+  assertDirectArtifactSources(plan, options);
+  const stagingRoot =
+    options.directStagingRoot ??
+    fs.mkdtempSync(path.join(os.tmpdir(), DIRECT_REFRESH_STAGING_PREFIX));
+  const stagedResourcesPath = path.join(stagingRoot, "resources");
+  const appSourceStagingPath = path.join(stagingRoot, "app-source");
+  const stagedAppAsarPath = path.join(
+    stagedResourcesPath,
+    APP_ASAR_RELATIVE_PATH,
+  );
+  const stagedAppServerPath = path.join(
+    stagedResourcesPath,
+    APP_SERVER_RELATIVE_PATH,
+  );
+  const stagedDefaultCompactPath = path.join(
+    stagedResourcesPath,
+    DEFAULT_CONFIG_RELATIVE_PATH,
+    "compact",
+    "COMPACT.md",
+  );
+
+  fsOps.rmSync(stagingRoot, { force: true, recursive: true });
+  try {
+    fsOps.mkdirSync(path.dirname(stagedAppAsarPath), { recursive: true });
+    fsOps.mkdirSync(path.dirname(stagedAppServerPath), { recursive: true });
+    fsOps.mkdirSync(path.dirname(stagedDefaultCompactPath), { recursive: true });
+    fsOps.cpSync(plan.sourceAppDir, appSourceStagingPath, {
+      recursive: true,
+      filter: directAppSourceFilter,
+    });
+    packAppAsar(plan, appSourceStagingPath, stagedAppAsarPath, options);
+    fsOps.cpSync(plan.appServerBinaryPath, stagedAppServerPath);
+    fsOps.cpSync(plan.defaultCompactPromptSourcePath, stagedDefaultCompactPath);
+  } catch (error) {
+    cleanupPath(stagingRoot, fsOps);
+    throw error;
+  }
+
+  return {
+    fsOps,
+    stagedResourcesPath,
+    stagingRoot,
+  };
+}
+
+function packAppAsar(plan, appSourceStagingPath, stagedAppAsarPath, options = {}) {
   const spawn = options.spawnSync ?? spawnSync;
   const result = spawn(
     "rtk",
-    ["pnpm", "--dir", plan.sourceAppDir, "package:mac:app"],
+    [
+      "pnpm",
+      "dlx",
+      "@electron/asar",
+      "pack",
+      appSourceStagingPath,
+      stagedAppAsarPath,
+    ],
     {
       cwd: plan.workspace,
       encoding: "utf8",
@@ -121,7 +199,8 @@ function runPackageMacApp(plan, options = {}) {
   );
   assertSuccessfulSpawn(
     result,
-    "rtk pnpm --dir apps/root-worker-prototype package:mac:app",
+    "rtk pnpm dlx @electron/asar pack <source> <app.asar>",
+    { cwd: plan.workspace },
   );
 }
 
@@ -136,19 +215,75 @@ function codesignInstalledApp(plan, options = {}) {
       stdio: options.stdio ?? "pipe",
     },
   );
-  assertSuccessfulSpawn(result, "rtk codesign --force --deep --sign - <app>");
+  assertSuccessfulSpawn(result, "rtk codesign --force --deep --sign - <app>", {
+    cwd: plan.workspace,
+  });
 }
 
-function assertSuccessfulSpawn(result, label) {
+function assertSuccessfulSpawn(result, label, context = {}) {
   if (result.error) {
     throw result.error;
   }
   if (result.status !== 0) {
+    const stdout = result.stdout ? String(result.stdout).trim() : "";
     const stderr = result.stderr ? String(result.stderr).trim() : "";
-    throw new Error(
-      `${label} exited with ${result.status}${stderr ? `: ${stderr}` : ""}`,
-    );
+    const details = [
+      `exited with ${result.status}`,
+      context.cwd ? `cwd=${context.cwd}` : null,
+      stdout ? `stdout=${truncateOutput(stdout)}` : null,
+      stderr ? `stderr=${truncateOutput(stderr)}` : null,
+    ]
+      .filter(Boolean)
+      .join("; ");
+    throw new Error(`${label} ${details}`);
   }
+}
+
+function truncateOutput(value, maxLength = 4000) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}...<truncated>`;
+}
+
+function assertDirectArtifactSources(plan, options = {}) {
+  const statSync = options.statSync ?? fs.statSync;
+  assertPathType(statSync, plan.frontendDistPath, "directory", "frontend dist");
+  assertPathType(
+    statSync,
+    plan.appServerBinaryPath,
+    "file",
+    "release app-server binary",
+  );
+  assertPathType(
+    statSync,
+    plan.defaultCompactPromptSourcePath,
+    "file",
+    "default compact prompt",
+  );
+}
+
+function assertPathType(statSync, targetPath, expectedType, label) {
+  let stat;
+  try {
+    stat = statSync(targetPath);
+  } catch (error) {
+    throw new Error(`Missing ${label}: ${targetPath}${formatCause(error)}`);
+  }
+  const matches =
+    expectedType === "directory" ? stat.isDirectory() : stat.isFile();
+  if (!matches) {
+    throw new Error(`Expected ${label} to be a ${expectedType}: ${targetPath}`);
+  }
+}
+
+function directAppSourceFilter(source) {
+  const name = path.basename(source);
+  return (
+    name !== "dist-app" &&
+    name !== "dist-package-resources" &&
+    !name.startsWith(DIRECT_REFRESH_STAGING_PREFIX)
+  );
 }
 
 function assertSourceWorkspace(plan, options = {}) {
@@ -182,9 +317,79 @@ function assertStagedArtifacts(plan, options = {}) {
     );
     const stat = statSync(artifactPath);
     if (artifact.kind === "directory" ? !stat.isDirectory() : !stat.isFile()) {
-      throw new Error(`Packaged artifact has unexpected type: ${artifactPath}`);
+      throw new Error(
+        `Prepared refresh artifact has unexpected type: ${artifactPath}`,
+      );
     }
   }
+}
+
+function assertInstalledArtifactsMatchStaged(plan, options = {}) {
+  const statSync = options.statSync ?? fs.statSync;
+  for (const artifact of plan.artifacts) {
+    const stagedPath = path.join(plan.stagedResourcesPath, artifact.relativePath);
+    const installedPath = path.join(plan.resourcesPath, artifact.relativePath);
+    if (artifact.kind === "directory") {
+      assertDirectoryDigestsEqual(statSync, stagedPath, installedPath);
+      continue;
+    }
+    assertFileDigestsEqual(stagedPath, installedPath, options);
+  }
+}
+
+function assertDirectoryDigestsEqual(statSync, stagedPath, installedPath) {
+  const stagedFiles = listDirectoryFiles(stagedPath);
+  const installedFiles = listDirectoryFiles(installedPath);
+  if (JSON.stringify(installedFiles) !== JSON.stringify(stagedFiles)) {
+    throw new Error(
+      `Installed directory files differ from staged artifact: ${installedPath}`,
+    );
+  }
+  for (const relativePath of stagedFiles) {
+    const stagedFile = path.join(stagedPath, relativePath);
+    const installedFile = path.join(installedPath, relativePath);
+    assertPathType(statSync, installedFile, "file", "installed artifact file");
+    assertFileDigestsEqual(stagedFile, installedFile);
+  }
+}
+
+function assertFileDigestsEqual(stagedPath, installedPath, options = {}) {
+  const stagedHash = fileDigest(stagedPath, options);
+  const installedHash = fileDigest(installedPath, options);
+  if (stagedHash !== installedHash) {
+    throw new Error(
+      `Installed artifact does not match staged artifact: ${installedPath}`,
+    );
+  }
+}
+
+function fileDigest(filePath, options = {}) {
+  const readFileSync = options.readFileSync ?? fs.readFileSync;
+  return crypto.createHash("sha256").update(readFileSync(filePath)).digest("hex");
+}
+
+function listDirectoryFiles(rootPath) {
+  const files = [];
+  collectDirectoryFiles(rootPath, rootPath, files);
+  return files.sort();
+}
+
+function collectDirectoryFiles(rootPath, currentPath, files) {
+  for (const entry of fs.readdirSync(currentPath, { withFileTypes: true })) {
+    const entryPath = path.join(currentPath, entry.name);
+    if (entry.isDirectory()) {
+      collectDirectoryFiles(rootPath, entryPath, files);
+      continue;
+    }
+    if (entry.isFile()) {
+      files.push(path.relative(rootPath, entryPath));
+    }
+  }
+}
+
+function formatCause(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message ? ` (${message})` : "";
 }
 
 function replaceInstalledArtifactsSync(plan, options = {}) {
@@ -331,8 +536,9 @@ module.exports = {
   DEFAULT_CONFIG_RELATIVE_PATH,
   SIGNATURE_RELATIVE_PATH,
   backupSignatureMetadataSync,
+  packAppAsar,
+  prepareDirectArtifacts,
   resolveInstalledArtifactUpdatePlan,
-  runPackageMacApp,
   updateInstalledArtifacts,
   replaceInstalledArtifactsSync,
   restoreSignatureMetadataSync,

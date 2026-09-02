@@ -7,6 +7,7 @@ const {
   createInstalledArtifactUpdateLifecycleAdapter,
   createRendererReloadLifecycleAdapter,
   isClientRelaunchNotification,
+  observeClientRelaunchResult,
 } = require("./appLifecycle.cjs");
 
 test("app relaunch adapter schedules one full app relaunch", () => {
@@ -244,6 +245,76 @@ test("installed artifact update failure does not reload stale renderer", async (
       type: "installedArtifactUpdate",
       phase: "failed",
       reason: "build failed",
+    },
+  });
+});
+
+test("client relaunch observer broadcasts failed result from handler", async () => {
+  const statuses = [];
+
+  const result = await observeClientRelaunchResult(
+    Promise.resolve({
+      ok: false,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      reason: "pack failed",
+    }),
+    {
+      broadcastStatus: (status) => statuses.push(status),
+      logger: { error: () => {} },
+      reason: "restart tool",
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(statuses, [
+    {
+      lifecycle: {
+        type: "clientRelaunch",
+        phase: "failed",
+        reason: "pack failed",
+      },
+      relaunch: {
+        ok: false,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: false,
+        reason: "pack failed",
+      },
+    },
+  ]);
+});
+
+test("client relaunch observer catches rejected notification handlers", async () => {
+  const logs = [];
+  const statuses = [];
+
+  const result = await observeClientRelaunchResult(
+    Promise.reject(new Error("notification handler failed")),
+    {
+      broadcastStatus: (status) => statuses.push(status),
+      logger: { error: (...args) => logs.push(args) },
+      reason: "restart tool",
+    },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    reason: "notification handler failed",
+  });
+  assert.match(logs[0][0], /client relaunch notification failed/);
+  assert.deepEqual(statuses.at(-1), {
+    lifecycle: {
+      type: "clientRelaunch",
+      phase: "failed",
+      reason: "notification handler failed",
     },
   });
 });

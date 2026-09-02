@@ -41,8 +41,8 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
             HostRelaunchResult {
                 status: HostRelaunchStatus::Accepted,
                 accepted: true,
-                relaunching: true,
-                message: "Runtime refresh request was submitted. Continuation happens after the host refreshes and restores eligible interrupted sessions.".to_string(),
+                relaunching: false,
+                message: "Runtime refresh request was delivered to the host. Watch host lifecycle status for update, relaunch, or failure details.".to_string(),
                 reason: request.reason,
                 resume_strategy: RESUME_STRATEGY.to_string(),
             }
@@ -77,7 +77,7 @@ mod tests {
 
         assert_eq!(result.status, HostRelaunchStatus::Accepted);
         assert!(result.accepted);
-        assert!(result.relaunching);
+        assert!(!result.relaunching);
         assert_eq!(result.reason.as_deref(), Some("runtime update"));
         assert_eq!(result.resume_strategy, RESUME_STRATEGY);
 

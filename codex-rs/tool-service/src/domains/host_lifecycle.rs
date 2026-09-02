@@ -146,7 +146,7 @@ fn request_runtime_restart_output_schema() -> Value {
             },
             "relaunching": {
                 "type": "boolean",
-                "description": "Whether the host reported that a relaunch-style fallback should now be in progress."
+                "description": "Whether the host has already confirmed that a relaunch-style fallback is in progress. A delivered request can still report false while the host update is pending."
             },
             "message": {
                 "type": "string",

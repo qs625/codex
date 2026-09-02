@@ -695,6 +695,19 @@ export type NotificationEnvelope = {
       alreadyRequested?: boolean;
       reason?: string | null;
     };
+    lifecycle?: {
+      type: "rendererReload" | "installedArtifactUpdate" | "clientRelaunch";
+      phase:
+        | "building"
+        | "updated"
+        | "relaunching"
+        | "reloading"
+        | "reloaded"
+        | "fullRelaunchFallback"
+        | "completed"
+        | "failed";
+      reason?: string | null;
+    };
   };
 };
 
