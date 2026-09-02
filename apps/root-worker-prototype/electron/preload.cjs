@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   listSkills: (cwd) => ipcRenderer.invoke("codex:listSkills", cwd),
   listWorkflows: (cwd) => ipcRenderer.invoke("codex:listWorkflows", cwd),
   createThread: (payload) => ipcRenderer.invoke("codex:createThread", payload),
+  getSelfProject: () => ipcRenderer.invoke("codex:getSelfProject"),
+  startSelfCommand: (payload) =>
+    ipcRenderer.invoke("codex:startSelfCommand", payload),
   archiveThread: (threadId) =>
     ipcRenderer.invoke("codex:archiveThread", threadId),
   readThread: (threadId, includeTurns = true) =>

@@ -9,13 +9,20 @@ const { EventEmitter } = require("node:events");
 const { buildDesktopEnvironment } = require("./environment.cjs");
 const {
   ensureDefaultWorkspaceSync,
-  findPackagedSourceSnapshotPath,
+  ensureMorpheusSourceInstructionSync,
+  ensureWorkspaceExistsSync,
 } = require("./workspace.cjs");
+const { ensureSelfProjectSync } = require("./selfProject.cjs");
 
 const DEFAULT_MOBILE_LISTEN_URL = "ws://0.0.0.0:8910";
 const MOBILE_LISTEN_PORT_FALLBACK_ATTEMPTS = 20;
 const MOBILE_CONNECTION_REFRESH_INTERVAL_MS = 5_000;
-const PACKAGED_APP_SERVER_RELATIVE_PATH = path.join("bin", "app-server");
+const PACKAGED_APP_SERVER_FILE_NAME =
+  process.platform === "win32" ? "app-server.exe" : "app-server";
+const PACKAGED_APP_SERVER_RELATIVE_PATH = path.join(
+  "bin",
+  PACKAGED_APP_SERVER_FILE_NAME,
+);
 const PACKAGED_COMPACT_PROMPT_RELATIVE_PATH = path.join(
   "default-config",
   "compact",
@@ -131,14 +138,10 @@ class AppServerClient extends EventEmitter {
     const env = buildAppServerEnvironment(process.env);
     const morpheusHome = env.MORPHEUS_HOME;
     ensureMorpheusHomeDefaults(morpheusHome, { warn: console.warn });
-    let appServerCwd = process.cwd();
-    if (!env.ROOT_WORKER_WORKSPACE && findPackagedSourceSnapshotPath()) {
-      const defaultWorkspace = ensureDefaultWorkspaceSync(env, {
-        warn: console.warn,
-      });
-      env.ROOT_WORKER_WORKSPACE = defaultWorkspace;
-      appServerCwd = defaultWorkspace;
-    }
+    const appServerCwd = prepareAppServerWorkspace(env, {
+      cwd: process.cwd(),
+      warn: console.warn,
+    });
     const launch = await resolveAppServerLaunch(process.env, {
       morpheusHome,
       randomToken: () => crypto.randomBytes(32).toString("base64url"),
@@ -287,6 +290,8 @@ module.exports = {
   buildMobileConnectionLaunch,
   ensureMorpheusHomeDefaults,
   findDefaultCompactPromptSeedPath,
+  findPackagedAppServerBinaryPath,
+  prepareAppServerWorkspace,
   resolveDefaultAppServerBinary,
   resolveAppServerCommand,
   resolveAppServerLaunch,
@@ -318,6 +323,30 @@ function resolveAppServerCommand(baseEnv = process.env) {
     baseEnv.CODEX_APP_SERVER_CMD ??
     `${resolveDefaultAppServerBinary()} --listen stdio://`
   );
+}
+
+function prepareAppServerWorkspace(env, options = {}) {
+  let appServerCwd = options.cwd ?? process.cwd();
+  const packagedBinary = findPackagedAppServerBinaryPath(options);
+  if (!packagedBinary) {
+    return appServerCwd;
+  }
+  if (env.ROOT_WORKER_WORKSPACE) {
+    ensureWorkspaceExistsSync(env.ROOT_WORKER_WORKSPACE);
+    ensureMorpheusSourceInstructionSync(env, env.ROOT_WORKER_WORKSPACE, options);
+    ensureSelfProjectSync(env, env.ROOT_WORKER_WORKSPACE, options);
+    return env.ROOT_WORKER_WORKSPACE;
+  }
+  if (!env.ROOT_WORKER_WORKSPACE) {
+    const defaultWorkspace = ensureDefaultWorkspaceSync(env, {
+      ...options,
+      isPackagedApp: true,
+    });
+    env.ROOT_WORKER_WORKSPACE = defaultWorkspace;
+    ensureSelfProjectSync(env, defaultWorkspace, options);
+    appServerCwd = defaultWorkspace;
+  }
+  return appServerCwd;
 }
 
 async function resolveAppServerLaunch(baseEnv = process.env, options = {}) {
@@ -687,6 +716,14 @@ function formatMobileWebSocketListenUrl(host, port) {
 }
 
 function resolveDefaultAppServerBinary(options = {}) {
+  const packagedBinary = findPackagedAppServerBinaryPath(options);
+  if (packagedBinary) {
+    return shellQuote(packagedBinary);
+  }
+  return resolveWorkspaceAppServerBinary(options);
+}
+
+function findPackagedAppServerBinaryPath(options = {}) {
   const existsSync = options.existsSync ?? fs.existsSync;
   const resourcesPath = options.resourcesPath ?? currentResourcesPath();
   if (resourcesPath) {
@@ -695,10 +732,10 @@ function resolveDefaultAppServerBinary(options = {}) {
       PACKAGED_APP_SERVER_RELATIVE_PATH,
     );
     if (existsSync(packagedBinary)) {
-      return shellQuote(packagedBinary);
+      return packagedBinary;
     }
   }
-  return resolveWorkspaceAppServerBinary(options);
+  return null;
 }
 
 function resolveWorkspaceAppServerBinary(options = {}) {

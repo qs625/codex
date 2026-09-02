@@ -5,6 +5,7 @@ const {
   CHAT_COMPAT_CWD_BASENAME,
   buildChatCompatCwd,
   buildCreateThreadStartParams,
+  buildSelfCommandThreadStartParams,
   buildThreadListParams,
   buildSubscribeThreadResumeParams,
   withRealtimeConversationFeature,
@@ -156,6 +157,29 @@ test("buildCreateThreadStartParams preserves project thread sandbox behavior", (
   assert.equal(params.approvalPolicy, "never");
   assert.equal(params.taskName, "owner_dev");
   assert.equal(params.config.features.unified_exec, true);
+});
+
+test("buildSelfCommandThreadStartParams always targets self workspace", () => {
+  const params = buildSelfCommandThreadStartParams({
+    id: "/self",
+    path: "/self",
+    workspace: " /work/morpheus ",
+    hidden: true,
+    system: true,
+  });
+
+  assert.equal(params.cwd, "/work/morpheus");
+  assert.equal(params.taskName, "self");
+  assert.equal(params.sandbox, "danger-full-access");
+  assert.equal(params.permissions, undefined);
+  assert.equal(params.threadProvider, undefined);
+});
+
+test("buildSelfCommandThreadStartParams rejects missing self workspace", () => {
+  assert.throws(
+    () => buildSelfCommandThreadStartParams({ workspace: " " }),
+    /self command requires a source workspace path/,
+  );
 });
 
 test("buildThreadListParams requests all providers for root-worker navigation", () => {

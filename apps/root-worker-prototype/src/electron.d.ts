@@ -137,6 +137,26 @@ declare global {
         reasoningEffort?: string | null;
         serviceTier?: string | null;
       }) => Promise<{ thread: unknown }>;
+      getSelfProject: () => Promise<{
+        project: null | {
+          id: "/self";
+          path: "/self";
+          workspace: string;
+          hidden: boolean;
+          system: boolean;
+        };
+      }>;
+      startSelfCommand: (payload: { text: string }) => Promise<{
+        project: {
+          id: "/self";
+          path: "/self";
+          workspace: string;
+          hidden: boolean;
+          system: boolean;
+        };
+        thread: unknown;
+        turn: unknown;
+      }>;
       archiveThread: (threadId: string) => Promise<{ ok: boolean }>;
       readThread: (
         threadId: string,

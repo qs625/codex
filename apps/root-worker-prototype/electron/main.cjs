@@ -31,9 +31,11 @@ const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const {
   buildChatCompatCwd,
   buildCreateThreadStartParams,
+  buildSelfCommandThreadStartParams,
   buildSubscribeThreadResumeParams,
 } = require("./threadConfig.cjs");
 const { listThreads: listAllThreads } = require("./threadList.cjs");
+const { ensureSelfProjectSync } = require("./selfProject.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
   buildTurnStartParams,
@@ -42,6 +44,7 @@ const {
 } = require("./turnStart.cjs");
 const {
   ensureDefaultWorkspace,
+  isPackagedApp,
   resolveDefaultWorkspace,
 } = require("./workspace.cjs");
 const {
@@ -333,6 +336,50 @@ ipcMain.handle("codex:createThread", async (_event, payload) => {
       name ? { ...start.thread, name } : start.thread,
       runtime,
     ),
+  };
+});
+
+ipcMain.handle("codex:getSelfProject", async () => {
+  const project = await ensureSelfProjectForCurrentApp();
+  return { project };
+});
+
+ipcMain.handle("codex:startSelfCommand", async (_event, payload = {}) => {
+  const project = await ensureSelfProjectForCurrentApp();
+  if (!project) {
+    throw new Error("Self project is only available from a packaged app.");
+  }
+  const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+  if (!text) {
+    throw new Error("Self command requires task text.");
+  }
+  const start = await appServerClient.request(
+    "thread/start",
+    buildSelfCommandThreadStartParams(project),
+  );
+  await appServerClient.request("thread/name/set", {
+    threadId: start.thread.id,
+    name: "/self",
+  });
+  const runtime = {
+    model: start.model ?? null,
+    modelProvider: start.modelProvider ?? null,
+    reasoningEffort: start.reasoningEffort ?? null,
+  };
+  rememberThreadRuntime(start.thread.id, runtime);
+  const turn = await startThreadTurn(
+    {
+      threadId: start.thread.id,
+      text,
+      skills: [],
+      images: [],
+    },
+    buildTurnInput({ text, skills: [], images: [] }),
+  );
+  return {
+    project,
+    thread: normalizeThread({ ...start.thread, name: "/self" }, runtime),
+    turn,
   };
 });
 
@@ -983,6 +1030,14 @@ async function sendAutoResumeInput(thread) {
     skills: [],
     images: [],
   });
+}
+
+async function ensureSelfProjectForCurrentApp() {
+  if (!isPackagedApp()) {
+    return null;
+  }
+  const workspace = await ensureDefaultWorkspace();
+  return ensureSelfProjectSync(process.env, workspace);
 }
 
 async function startThreadTurn(payload, input = buildTurnInput(payload)) {

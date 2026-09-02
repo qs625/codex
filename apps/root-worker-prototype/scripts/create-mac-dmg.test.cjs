@@ -11,6 +11,7 @@ const {
   buildHdiutilDetachArgs,
   buildMacDmgPaths,
   isMountedVolumeOutput,
+  shouldUseFinderLayout,
   toAppleScriptString,
 } = require("./create-mac-dmg.cjs");
 
@@ -197,4 +198,21 @@ test("assertMacPackagingPlatform rejects non-macOS package runs", () => {
     /requires hdiutil and must run on macOS/,
   );
   assert.doesNotThrow(() => assertMacPackagingPlatform("darwin"));
+});
+
+test("Finder DMG layout is skipped in CI or when explicitly disabled", () => {
+  assert.equal(shouldUseFinderLayout({ env: {} }), true);
+  assert.equal(shouldUseFinderLayout({ env: { CI: "true" } }), false);
+  assert.equal(
+    shouldUseFinderLayout({
+      env: { ROOT_WORKER_DMG_SKIP_FINDER_LAYOUT: "1" },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldUseFinderLayout({
+      env: { CI: "false", ROOT_WORKER_DMG_SKIP_FINDER_LAYOUT: "0" },
+    }),
+    true,
+  );
 });

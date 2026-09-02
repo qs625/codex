@@ -1,0 +1,106 @@
+name: desktop-release
+
+on:
+  push:
+    tags:
+      - "desktop-v*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64 DMG
+            runner: macos-15
+            package_script: package:mac
+            artifact_path: apps/root-worker-prototype/dist-app/Root Worker Prototype-arm64.dmg
+          - name: Windows x64 app bundle
+            runner: windows-latest
+            package_script: package:win
+            artifact_path: apps/root-worker-prototype/dist-app/Root Worker Prototype-win32-x64.zip
+          - name: Linux x64 app bundle
+            runner: ubuntu-24.04
+            package_script: package:linux
+            artifact_path: apps/root-worker-prototype/dist-app/Root Worker Prototype-linux-x64.tar.gz
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Validate desktop release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_TYPE}" == "tag" ]]
+          [[ "${GITHUB_REF_NAME}" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+)?)?$ ]]
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+
+      - name: Install CI rtk shim
+        shell: pwsh
+        run: |
+          $rtkBin = Join-Path $env:RUNNER_TEMP "rtk-bin"
+          New-Item -ItemType Directory -Force -Path $rtkBin | Out-Null
+          if ($IsWindows) {
+            $rtkPath = Join-Path $rtkBin "rtk.cmd"
+            Set-Content -Path $rtkPath -Value "@echo off`r`n%*`r`nexit /b %ERRORLEVEL%`r`n"
+          } else {
+            $rtkPath = Join-Path $rtkBin "rtk"
+            Set-Content -Path $rtkPath -Value "#!/usr/bin/env sh`nexec `"$@`"`n"
+            chmod +x $rtkPath
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $rtkBin
+
+      - name: Install Linux build dependencies
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libssl-dev
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop package
+        env:
+          ROOT_WORKER_DMG_SKIP_FINDER_LAYOUT: "1"
+        run: pnpm --dir apps/root-worker-prototype run ${{ matrix.package_script }}
+
+      - name: Verify package artifact exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${{ matrix.artifact_path }}"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        with:
+          files: ${{ matrix.artifact_path }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}

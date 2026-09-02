@@ -27,12 +27,9 @@ async fn make_config(root: &TempDir, limit: usize, instructions: Option<&str>) -
 
     config.cwd = root.abs();
     config.project_doc_max_bytes = limit;
-    config.config_layer_stack = ConfigLayerStack::new(
-        Vec::new(),
-        Default::default(),
-        Default::default(),
-    )
-    .expect("empty config layer stack");
+    config.config_layer_stack =
+        ConfigLayerStack::new(Vec::new(), Default::default(), Default::default())
+            .expect("empty config layer stack");
 
     config.user_instructions = instructions.map(ToOwned::to_owned);
     config
@@ -94,6 +91,69 @@ async fn explicit_instruction_files_are_loaded_in_order() {
 
     let res = get_user_instructions(&config).await.expect("doc expected");
     assert_eq!(res, "project understanding\n\nuser preferences");
+}
+
+#[tokio::test]
+async fn morpheus_home_instruction_files_are_loaded_in_stable_order() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut config = make_config(&tmp, 4096, None).await;
+    let instructions_dir = config.codex_home.join(MORPHEUS_HOME_INSTRUCTIONS_DIR_NAME);
+    fs::create_dir_all(instructions_dir.as_path()).unwrap();
+    fs::write(instructions_dir.join("20-second.md").as_path(), "second").unwrap();
+    fs::write(instructions_dir.join("10-first.md").as_path(), "first").unwrap();
+
+    let res = get_user_instructions(&config).await.expect("doc expected");
+
+    assert_eq!(res, "first\n\nsecond");
+
+    config.project_doc_max_bytes = 5;
+    let res = get_user_instructions(&config).await.expect("doc expected");
+    assert_eq!(res, "first");
+}
+
+#[tokio::test]
+async fn morpheus_home_instructions_skip_hidden_files_and_directories() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config = make_config(&tmp, 4096, None).await;
+    let instructions_dir = config.codex_home.join(MORPHEUS_HOME_INSTRUCTIONS_DIR_NAME);
+    fs::create_dir_all(instructions_dir.join("nested").as_path()).unwrap();
+    fs::write(instructions_dir.join(".hidden.md").as_path(), "hidden").unwrap();
+    fs::write(instructions_dir.join("visible.md").as_path(), "visible").unwrap();
+
+    let res = get_user_instructions(&config).await.expect("doc expected");
+
+    assert_eq!(res, "visible");
+}
+
+#[tokio::test]
+async fn morpheus_home_instructions_do_not_break_explicit_instruction_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let explicit_path = tmp.path().join("explicit.md");
+    fs::write(&explicit_path, "explicit").unwrap();
+    let config = make_config_with_instruction_files(
+        &tmp,
+        4096,
+        None,
+        vec![AbsolutePathBuf::try_from(explicit_path).expect("absolute path")],
+    )
+    .await;
+    let instructions_dir = config.codex_home.join(MORPHEUS_HOME_INSTRUCTIONS_DIR_NAME);
+    fs::create_dir_all(instructions_dir.as_path()).unwrap();
+    fs::write(instructions_dir.join("home.md").as_path(), "home").unwrap();
+
+    let res = get_user_instructions(&config).await.expect("doc expected");
+
+    assert_eq!(res, "explicit\n\nhome");
+}
+
+#[tokio::test]
+async fn missing_morpheus_home_instructions_dir_is_ignored() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let res =
+        get_user_instructions(&make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await)
+            .await;
+
+    assert!(res.is_none());
 }
 
 #[tokio::test]
@@ -257,8 +317,10 @@ async fn instruction_sources_include_repo_local_files_from_disabled_project_laye
     assert_eq!(
         sources,
         vec![
-            AbsolutePathBuf::try_from(std::fs::canonicalize(instruction_path).expect("canonical path"))
-                .expect("absolute path")
+            AbsolutePathBuf::try_from(
+                std::fs::canonicalize(instruction_path).expect("canonical path")
+            )
+            .expect("absolute path")
         ]
     );
 }
@@ -294,8 +356,10 @@ async fn instruction_sources_resolve_relative_files_from_disabled_project_layers
     assert_eq!(
         sources,
         vec![
-            AbsolutePathBuf::try_from(std::fs::canonicalize(instruction_path).expect("canonical path"))
-                .expect("absolute path")
+            AbsolutePathBuf::try_from(
+                std::fs::canonicalize(instruction_path).expect("canonical path")
+            )
+            .expect("absolute path")
         ]
     );
 }

@@ -11,6 +11,8 @@
     "package:mac": "pnpm run package:mac:app && pnpm run package:mac:dmg",
     "package:mac:app": "node scripts/package-mac-app.cjs",
     "package:mac:dmg": "node scripts/create-mac-dmg.cjs",
+    "package:win": "node scripts/package-platform-app.cjs",
+    "package:linux": "node scripts/package-platform-app.cjs",
     "start": "electron ."
   },
   "dependencies": {

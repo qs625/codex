@@ -11,6 +11,7 @@ const {
   buildAppServerEnvironment,
   buildMobileConnectionLaunch,
   ensureMorpheusHomeDefaults,
+  prepareAppServerWorkspace,
   refreshMobileConnectionInfo,
   resolveDefaultAppServerBinary,
   resolveAppServerCommand,
@@ -161,6 +162,103 @@ test("default app-server launch uses bundled binary without PATH dependency", as
 
   assert.equal(launch.command, `"${packagedBinary}" --listen stdio://`);
   assert.equal(launch.mobileConnection.enabled, false);
+});
+
+test("packaged app-server launch prepares cloned workspace cwd and env", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-packaged-workspace-"));
+  const resourcesPath = path.join(dir, "resources");
+  const packagedBinary = path.join(resourcesPath, "bin/app-server");
+  const morpheusHome = path.join(dir, "home");
+  const env = {
+    MORPHEUS_HOME: morpheusHome,
+  };
+  const calls = [];
+
+  const cwd = prepareAppServerWorkspace(env, {
+    cwd: "/source-tree",
+    resourcesPath,
+    cloneTempSuffix: "test",
+    existsSync: (candidate) => candidate === packagedBinary || fs.existsSync(candidate),
+    spawnSync: (command, args, options) => {
+      calls.push({ command, args, cwd: options.cwd });
+      fs.mkdirSync(args[3], { recursive: true });
+      fs.mkdirSync(path.join(args[3], ".git"), { recursive: true });
+      return { status: 0, stderr: "" };
+    },
+  });
+
+  const workspace = path.join(morpheusHome, "source_workspace");
+  const tempWorkspace = path.join(morpheusHome, ".source_workspace.clone-test");
+  assert.equal(cwd, workspace);
+  assert.equal(env.ROOT_WORKER_WORKSPACE, workspace);
+  assert.match(
+    fs.readFileSync(
+      path.join(morpheusHome, "instructions/morpheus-source-workspace.md"),
+      "utf8",
+    ),
+    new RegExp(escapeRegExp(workspace)),
+  );
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(morpheusHome, "self-project.json"), "utf8")),
+    {
+      id: "/self",
+      path: "/self",
+      workspace,
+      hidden: true,
+      system: true,
+      managedBy: "morpheus",
+    },
+  );
+  assert.deepEqual(calls, [
+    {
+      command: "rtk",
+      args: ["git", "clone", "git@github.com:qs625/codex.git", tempWorkspace],
+      cwd: morpheusHome,
+    },
+  ]);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("packaged app-server launch keeps explicit workspace without clone", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "root-worker-explicit-workspace-"));
+  const resourcesPath = path.join(dir, "resources");
+  const packagedBinary = path.join(resourcesPath, "bin/app-server");
+  const morpheusHome = path.join(dir, "home");
+  const explicitWorkspace = path.join(dir, "custom-workspace");
+  const env = {
+    MORPHEUS_HOME: morpheusHome,
+    ROOT_WORKER_WORKSPACE: explicitWorkspace,
+  };
+  const calls = [];
+
+  const cwd = prepareAppServerWorkspace(env, {
+    cwd: "/source-tree",
+    resourcesPath,
+    existsSync: (candidate) => candidate === packagedBinary,
+    spawnSync: (...args) => {
+      calls.push(args);
+      return { status: 0, stderr: "" };
+    },
+  });
+
+  assert.equal(cwd, explicitWorkspace);
+  assert.equal(env.ROOT_WORKER_WORKSPACE, explicitWorkspace);
+  assert.deepEqual(calls, []);
+  assert.match(
+    fs.readFileSync(
+      path.join(morpheusHome, "instructions/morpheus-source-workspace.md"),
+      "utf8",
+    ),
+    new RegExp(escapeRegExp(explicitWorkspace)),
+  );
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(morpheusHome, "self-project.json"), "utf8"))
+      .workspace,
+    explicitWorkspace,
+  );
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test("default app-server binary falls back to dev workspace binary", () => {
@@ -687,3 +785,7 @@ test("app-server client writes server request responses and rejections", async (
     },
   ]);
 });
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
