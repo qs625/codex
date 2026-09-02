@@ -31,12 +31,14 @@ const { normalizeThreadSnapshot } = require("./threadSnapshots.cjs");
 const {
   buildChatCompatCwd,
   buildCreateThreadStartParams,
-  buildSelfCommandThreadStartParams,
   buildSubscribeThreadResumeParams,
 } = require("./threadConfig.cjs");
 const { listThreads: listAllThreads } = require("./threadList.cjs");
 const { ensureSelfProjectSync } = require("./selfProject.cjs");
-const { ensureSelfProjectThread } = require("./selfProjectThread.cjs");
+const {
+  ensureSelfProjectThread,
+  sendSelfCommandToThread,
+} = require("./selfProjectThread.cjs");
 const { buildTurnInput } = require("./turnInput.cjs");
 const {
   buildTurnStartParams,
@@ -370,37 +372,23 @@ ipcMain.handle("codex:startSelfCommand", async (_event, payload = {}) => {
   if (!project) {
     throw new Error("Self project is only available from a packaged app.");
   }
-  const text = typeof payload?.text === "string" ? payload.text.trim() : "";
-  if (!text) {
-    throw new Error("Self command requires task text.");
-  }
-  const start = await appServerClient.request(
-    "thread/start",
-    buildSelfCommandThreadStartParams(project),
-  );
-  await appServerClient.request("thread/name/set", {
-    threadId: start.thread.id,
-    name: "/self",
+  const result = await sendSelfCommandToThread({
+    appServerClient,
+    buildTurnInput,
+    loadThreadForTurn: async (threadId) =>
+      (await subscribeThread(threadId)).thread ?? null,
+    normalizeThread,
+    project,
+    rememberThreadRuntime,
+    startThreadTurn,
+    text: payload?.text,
+    threads: await listAllThreads(appServerClient, normalizeThread),
   });
-  const runtime = {
-    model: start.model ?? null,
-    modelProvider: start.modelProvider ?? null,
-    reasoningEffort: start.reasoningEffort ?? null,
-  };
-  rememberThreadRuntime(start.thread.id, runtime);
-  const turn = await startThreadTurn(
-    {
-      threadId: start.thread.id,
-      text,
-      skills: [],
-      images: [],
-    },
-    buildTurnInput({ text, skills: [], images: [] }),
-  );
   return {
     project,
-    thread: normalizeThread({ ...start.thread, name: "/self" }, runtime),
-    turn,
+    materializedSelfThreadId: result.materializedSelfThreadId,
+    thread: result.thread,
+    turn: result.turn,
   };
 });
 

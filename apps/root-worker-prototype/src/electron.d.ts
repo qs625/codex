@@ -154,6 +154,7 @@ declare global {
           hidden: boolean;
           system: boolean;
         };
+        materializedSelfThreadId?: string | null;
         thread: unknown;
         turn: unknown;
       }>;

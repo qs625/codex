@@ -144,7 +144,7 @@ export function SelfCommandDialog({
             disabled={submitDisabled}
             type="submit"
           >
-            {isSubmitting ? "Starting..." : "Start /self"}
+            {isSubmitting ? "Sending..." : "Send to /self"}
           </button>
         </footer>
       </form>

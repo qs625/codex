@@ -93,7 +93,7 @@ test("SelfCommandDialog renders packaged self target and input", () => {
   assert.match(markup, /\/self/);
   assert.match(markup, /Morpheus self command/);
   assert.match(markup, /\/Users\/example\/.morpheus\/source_workspace/);
-  assert.match(markup, /Start \/self/);
+  assert.match(markup, /Send to \/self/);
 });
 
 test("SelfCommandDialog renders unavailable and error states", () => {
