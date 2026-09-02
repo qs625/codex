@@ -108,7 +108,8 @@ test("ensureDefaultWorkspace clones installed source workspace when missing", as
   );
   assert.match(instruction, new RegExp(escapeRegExp(workspace)));
   assert.match(instruction, /request_runtime_restart/);
-  assert.match(instruction, /build\/test steps first/);
+  assert.match(instruction, /complete the relevant tests first/);
+  assert.match(instruction, /update the runnable app artifacts/);
 
   await fs.rm(tempRoot, { recursive: true, force: true });
 });

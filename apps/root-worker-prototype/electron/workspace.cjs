@@ -197,7 +197,7 @@ function morpheusSourceInstructionContent(workspace) {
 The Morpheus source workspace for this app is:
 \`${workspace}\`
 
-When modifying Morpheus runtime, client, server, frontend, or backend code in this workspace, complete the relevant build/test steps first. After those builds pass, call \`request_runtime_restart\` so the running app can load the latest compiled code.
+When modifying Morpheus runtime, client, server, frontend, or backend code in this workspace, complete the relevant tests first. After those tests pass, call \`request_runtime_restart\`; installed desktop builds will rebuild this source workspace, update the runnable app artifacts, and relaunch so the running app can load the latest compiled code.
 `;
 }
 
