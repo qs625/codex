@@ -11,6 +11,22 @@
 None
 
 ## Active Work
+- id: self-project-tree-runtime-visibility
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/self-project-tree-runtime-visibility
+  task_type: bugfix/ui-runtime
+  depends_on: self-project-visible-tree merged in `28099f6690`; runtime-restart-installed-artifact-update merged in `7caa489084911d15d01c77364ef0fd75008a4d6a`; main baseline `75ed6d1c3b4acb3a53ee22e436b578d810133fc2`
+  files: apps/root-worker-prototype self project creation/IPC, thread/project tree classification, sidebar rendering, focused tests; Electron self project tests only if data contract is involved
+  base_commit: 75ed6d1c3b4acb3a53ee22e436b578d810133fc2
+  pending_sync_from_main: none; owner_dev_3 is clean and already at main baseline `75ed6d1c3b4acb3a53ee22e436b578d810133fc2`
+  status: merged
+  objective: User reports that `/self` still does not appear in the project tree in the actual UI. Determine whether the missing entry is caused by self project/thread data not being created or loaded, identity/grouping mismatch, sidebar filtering, or installed/runtime version drift, then fix the real path so `/self` appears as an ordinary project root.
+  last_update: 2026-09-02 19:17 CST user reported `/self` is still not visible in the project tree despite prior merge and packaging. PM assigned owner_dev_3, the owner of the previous `/self` tree work, to reproduce and close the real UI/data path. Owner_dev_3 delivered commit `ad3d123c172ddc67761a745ab938ed58a3a222e7`: real packaged bootstrap/listThreads now materializes a real `/self` thread via app-server `thread/start` + `thread/name/set` when missing, keeps ordinary project tree rendering, and avoids stealing initial focus with a newly materialized empty self root. PM merged into main as `d7669fc6b1e96219d39e764d92c86faf123ab2c8`, reran focused validation, updated project memory, and rebuilt/verified the main checkout app and DMG.
+  next_action: none
+  blockers: none
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype exec node --test electron/selfProjectThread.test.cjs` -> 4 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 194 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test src/components/SelfCommandDialog.test.tsx` -> 5 passed; `rtk pnpm --dir apps/root-worker-prototype exec node --test electron/selfProject.test.cjs electron/threadConfig.test.cjs electron/threadList.test.cjs` -> 16 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing Vite chunk-size warning; `rtk git diff --check` -> passed. Fixed reviewer completed two rounds and passed after focus-stealing fix. PM reran the same focused tests on merged main -> 4/194/5/16 passed; main build passed with existing chunk-size warning; main `package:mac:app` passed with existing Rust warnings; main `package:mac:dmg` passed; `codesign --verify --deep --strict` passed; Electron Framework symlinks are relative; `hdiutil verify` passed.
+  commit: d7669fc6b1e96219d39e764d92c86faf123ab2c8
 - id: runtime-restart-installed-artifact-update
   owner: /my_codex/owner_dev_2
   checkout: /Users/bytedance/Projects/my-codex-dev-2
