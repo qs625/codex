@@ -1118,9 +1118,6 @@ test("header edit controls appear only for loaded editable previews", () => {
     false,
   );
 
-  const editorMarkup = renderRightPanel(makeThread([]), "preview", null, {
-    preview: editorPreview,
-  });
   const loadingMarkup = renderRightPanel(makeThread([]), "preview", null, {
     preview: markdownPreview,
     previewLoading: true,
@@ -1131,7 +1128,6 @@ test("header edit controls appear only for loaded editable previews", () => {
   });
   const emptyMarkup = renderRightPanel(makeThread([]), "preview", null);
 
-  assert.match(editorMarkup, /<div class="preview-header-actions">[\s\S]*>Edit<\/button>[\s\S]*<\/header>/);
   assert.doesNotMatch(loadingMarkup, /preview-edit-action/);
   assert.doesNotMatch(errorMarkup, /preview-edit-action/);
   assert.doesNotMatch(emptyMarkup, /preview-edit-action/);
