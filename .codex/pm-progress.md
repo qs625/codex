@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Make markdown file previews editable through the same explicit File Preview edit button flow.
+Make File Preview edit controls clearly visible in the header for editable text and markdown files.
 
 ## Active Work
+- id: file-preview-edit-header-actions
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-refresh-electron-shell-relaunch
+  task_type: bugfix/ui-files
+  depends_on: main baseline `f37e8de7dac85e5912c880e92657d4e7096ea336`
+  files: apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/styles.css if needed
+  base_commit: f37e8de7dac85e5912c880e92657d4e7096ea336
+  pending_sync_from_main: owner_dev_3 is at main `f37e8de7da` but has unrelated dirty Electron lifecycle files; do not touch or commit them
+  status: planned
+  objective: User still cannot see the editor Edit button after markdown support shipped. Installed bundle and fresh renderer were verified, so make the edit controls visually stable by moving or duplicating Edit/Save/Cancel into the File Preview header action area for editable text/markdown previews, while preserving the existing edit state/save semantics.
+  last_update: 2026-09-03 CST PM confirmed the installed `index.html` points to `index-CW7Wz1yP.js`, the bundle contains markdown edit logic, and a fresh `/Applications` renderer process is running. Code inspection shows edit controls currently live inside the preview utility strip next to LSP/status metadata, which can be missed or squeezed in the actual panel.
+  next_action: Assign owner_dev_3 to make edit controls clearly visible in the header and rerun focused RightPanel tests/build.
+  blockers: none
+  validation: pending
+  commit:
 - id: file-preview-markdown-edit-mode
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
