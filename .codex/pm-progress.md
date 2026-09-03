@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix duplicate `Init Context` display in newly created project threads.
+Add explicit edit mode support to the file editor/preview surface.
 
 ## Active Work
+- id: file-preview-edit-mode
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-refresh-installed-update-result
+  task_type: feature/ui-files
+  depends_on: main baseline after `cf6b73dc1f` init-context dedupe merge and progress update
+  files: apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/preload.cjs; apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/types.ts if preload typing requires it; styles only as needed
+  base_commit: pending after PM syncs owner_dev_3 to current main
+  pending_sync_from_main: owner_dev_3 must fast-forward to main after init-context merge/progress commit before starting
+  status: planned
+  objective: User requests file editor support for editing local text/code previews, controlled by an explicit button. Default file preview should remain read-only; clicking Edit enables editing; Save writes the changed content; Cancel exits edit mode without writing.
+  last_update: 2026-09-03 CST PM inspected current file preview path. `RightPanel.tsx` uses Monaco with `readOnly: true`; Electron exposes `readLocalFile` through preload/main but no `writeLocalFile` IPC yet. PM will dispatch owner_dev_3 after syncing it to main.
+  next_action: Sync owner_dev_3 to main and assign implementation brief.
+  blockers: none
+  validation: pending
+  commit:
 - id: init-context-duplicate-new-project
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
@@ -20,13 +36,13 @@ Fix duplicate `Init Context` display in newly created project threads.
   files: apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/thread.test.ts; apps/root-worker-prototype/src/lib/conversation.test.ts if conversation fallback changes; app-server thread_start/read tests only if backend contract is proven wrong
   base_commit: 0c565734bf3dca45dd92f6b8d438c9e0c7ee130c
   pending_sync_from_main: none; owner_dev_3 was clean and at current main baseline when assigned
-  status: in_progress
+  status: merged
   objective: User reports that newly created project conversations show duplicate `Init Context` cards with the same `Developer • AGENTS.md • Environment` preview. Ensure equivalent initial context delivered through thread/start response, thread/started notification, item notification, or later snapshot is visible only once.
-  last_update: 2026-09-03 CST PM inspected screenshot and searched relevant frontend/backend paths. Existing frontend tests cover some init-context merge cases, and backend tests expect thread/start response plus thread/started notification to include initial context display turns, so this is likely a frontend typed merge/dedupe gap across multiple delivery entrances rather than a React-only rendering issue. PM assigned owner_dev_3 with instructions to reproduce the start response + notification/snapshot path and fix semantic typed merge dedupe without hiding all init context.
-  next_action: Wait for owner_dev_3 implementation, reviewer result, and focused validation.
+  last_update: 2026-09-03 CST PM inspected screenshot and searched relevant frontend/backend paths. Existing frontend tests cover some init-context merge cases, and backend tests expect thread/start response plus thread/started notification to include initial context display turns, so this is likely a frontend typed merge/dedupe gap across multiple delivery entrances rather than a React-only rendering issue. PM assigned owner_dev_3 with instructions to reproduce the start response + notification/snapshot path and fix semantic typed merge dedupe without hiding all init context. Owner delivered `cf6b73dc1f`: frontend typed thread normalize/merge now drops equivalent duplicate `Init Context` items across snapshots and within a turn using a semantic key, while preserving distinct non-init contexts and compact/replacement cases. PM merged into main and applied the fix to the installed app through `request_runtime_restart`; installed `app.asar` contains `dropDuplicateInitContextItems` and codesign verification passes.
+  next_action: none
   blockers: none
-  validation: pending
-  commit:
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/conversation.test.ts` -> 254 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check` -> passed; reviewer passed after a legal empty-turn regression was narrowed. PM reran merged-main `rtk pnpm --dir apps/root-worker-prototype test src/lib/thread.test.ts src/lib/conversation.test.ts` -> 254 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check HEAD~1..HEAD` -> passed; installed app `app.asar` contains init context dedupe code; `rtk codesign --verify --deep --strict --verbose=4` -> valid on disk / satisfies Designated Requirement.
+  commit: cf6b73dc1f
 - id: runtime-refresh-installed-update-result
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
