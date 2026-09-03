@@ -29,6 +29,7 @@ const {
   completeFilePreviewSave,
   failFilePreviewSave,
   filePreviewCanEdit,
+  filePreviewHeaderEditControlsVisible,
   filePreviewRenderMode,
   filePreviewSourceEditorVisible,
   resolvePreviewDefinitionPosition,
@@ -122,6 +123,8 @@ function renderRightPanel(
     expandedTreeDirectories?: string[];
     isCollapsed?: boolean;
     preview?: FilePreview | null;
+    previewError?: string | null;
+    previewLoading?: boolean;
     todoItems?: React.ComponentProps<typeof RightPanel>["todoItems"];
   },
 ) {
@@ -153,8 +156,8 @@ function renderRightPanel(
       goalAction={null}
       goalActionError={null}
       preview={options?.preview ?? null}
-      previewError={null}
-      previewLoading={false}
+      previewError={options?.previewError ?? null}
+      previewLoading={options?.previewLoading ?? false}
       skills={[]}
       thread={thread}
       todoItems={options?.todoItems ?? []}
@@ -1015,10 +1018,123 @@ test("enables edit actions for editable text previews while keeping image and PD
   assert.equal(filePreviewCanEdit(markdownPreview), true);
   assert.equal(filePreviewCanEdit(imagePreview), false);
   assert.equal(filePreviewCanEdit(pdfPreview), false);
-  assert.match(markdownMarkup, /preview-edit-action/);
+  assert.match(
+    markdownMarkup,
+    /<div class="preview-header-actions">[\s\S]*preview-edit-action[\s\S]*<\/header>/,
+  );
   assert.match(markdownMarkup, />Edit<\/button>/);
+  assert.doesNotMatch(markdownMarkup, /preview-utility-strip[\s\S]*preview-edit-action/);
   assert.doesNotMatch(imageMarkup, /preview-edit-action/);
   assert.doesNotMatch(pdfMarkup, /preview-edit-action/);
+});
+
+test("header edit controls appear only for loaded editable previews", () => {
+  const markdownPreview = makePreview({
+    path: "/tmp/README.md",
+    displayPath: "README.md",
+    content: "# Title",
+    language: "markdown",
+  });
+  const editorPreview = makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "export const value = 1;",
+    language: "typescript",
+  });
+  const imagePreview = makePreview({
+    path: "/tmp/diagram.png",
+    displayPath: "diagram.png",
+    content: "",
+    language: "plaintext",
+    image: {
+      path: "/tmp/diagram.png",
+      mimeType: "image/png",
+      name: "diagram.png",
+      byteSize: 2048,
+    },
+  });
+
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: markdownPreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    true,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: editorPreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    true,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "tree",
+      preview: markdownPreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    false,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: markdownPreview,
+      previewError: null,
+      previewLoading: true,
+    }),
+    false,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: markdownPreview,
+      previewError: "Failed",
+      previewLoading: false,
+    }),
+    false,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: imagePreview,
+      previewError: null,
+      previewLoading: false,
+    }),
+    false,
+  );
+  assert.equal(
+    filePreviewHeaderEditControlsVisible({
+      filePanelView: "preview",
+      preview: null,
+      previewError: null,
+      previewLoading: false,
+    }),
+    false,
+  );
+
+  const editorMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: editorPreview,
+  });
+  const loadingMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: markdownPreview,
+    previewLoading: true,
+  });
+  const errorMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: markdownPreview,
+    previewError: "Failed to load",
+  });
+  const emptyMarkup = renderRightPanel(makeThread([]), "preview", null);
+
+  assert.match(editorMarkup, /<div class="preview-header-actions">[\s\S]*>Edit<\/button>[\s\S]*<\/header>/);
+  assert.doesNotMatch(loadingMarkup, /preview-edit-action/);
+  assert.doesNotMatch(errorMarkup, /preview-edit-action/);
+  assert.doesNotMatch(emptyMarkup, /preview-edit-action/);
 });
 
 test("markdown previews keep rendered readonly mode until editing or saving", () => {

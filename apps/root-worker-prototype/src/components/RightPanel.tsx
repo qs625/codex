@@ -2568,6 +2568,25 @@ export function filePreviewSourceEditorVisible(
   return renderMode === "editor" || (filePreviewCanEdit(preview) && editMode !== "readonly");
 }
 
+export function filePreviewHeaderEditControlsVisible({
+  filePanelView,
+  preview,
+  previewError,
+  previewLoading,
+}: {
+  filePanelView: FilePanelView;
+  preview: FilePreview | null;
+  previewError: string | null;
+  previewLoading: boolean;
+}) {
+  return (
+    filePanelView === "preview" &&
+    !previewLoading &&
+    !previewError &&
+    filePreviewCanEdit(preview)
+  );
+}
+
 function FilePreviewPanel({
   expandedTreeDirectories,
   filePanelView,
@@ -2619,6 +2638,12 @@ function FilePreviewPanel({
     preview,
     editState.mode,
   );
+  const showPreviewHeaderEditControls = filePreviewHeaderEditControlsVisible({
+    filePanelView,
+    preview,
+    previewError,
+    previewLoading,
+  });
   const isEditingPreview = editState.mode === "editing";
   const isSavingPreview = editState.mode === "saving";
   const previewDraft =
@@ -2725,6 +2750,52 @@ function FilePreviewPanel({
   savePreviewDraftRef.current = () => {
     void savePreviewDraft();
   };
+  const previewHeaderEditActions =
+    preview && showPreviewHeaderEditControls ? (
+      editState.mode === "readonly" ? (
+        <button
+          type="button"
+          className="preview-edit-action preview-header-edit-action"
+          onClick={() =>
+            setEditState((current) =>
+              beginFilePreviewEdit(
+                syncFilePreviewEditState(
+                  current,
+                  preview,
+                  previewRenderMode,
+                ),
+              ),
+            )
+          }
+        >
+          <PencilIcon />
+          Edit
+        </button>
+      ) : (
+        <div className="preview-edit-actions preview-header-edit-actions">
+          <button
+            type="button"
+            className="preview-edit-action primary"
+            onClick={() => void savePreviewDraft()}
+            disabled={!previewDirty || isSavingPreview}
+          >
+            <SaveIcon />
+            {isSavingPreview ? "Saving" : "Save"}
+          </button>
+          <button
+            type="button"
+            className="preview-edit-action"
+            onClick={() =>
+              setEditState((current) => cancelFilePreviewEdit(current))
+            }
+            disabled={isSavingPreview}
+          >
+            <XIcon />
+            Cancel
+          </button>
+        </div>
+      )
+    ) : null;
 
   return (
     <div className="preview-panel">
@@ -2760,6 +2831,7 @@ function FilePreviewPanel({
               CWD Tree
             </button>
           </div>
+          {previewHeaderEditActions}
           <button
             type="button"
             className="panel-inline-action preview-open-button"
@@ -2860,50 +2932,6 @@ function FilePreviewPanel({
               >
                 {preview.lsp.lspStatus.phase.toUpperCase()}
               </button>
-              {previewIsEditable && editState.mode === "readonly" ? (
-                <button
-                  type="button"
-                  className="preview-edit-action"
-                  onClick={() =>
-                    setEditState((current) =>
-                      beginFilePreviewEdit(
-                        syncFilePreviewEditState(
-                          current,
-                          preview,
-                          previewRenderMode,
-                        ),
-                      ),
-                    )
-                  }
-                >
-                  <PencilIcon />
-                  Edit
-                </button>
-              ) : null}
-              {previewIsEditable && editState.mode !== "readonly" ? (
-                <div className="preview-edit-actions">
-                  <button
-                    type="button"
-                    className="preview-edit-action primary"
-                    onClick={() => void savePreviewDraft()}
-                    disabled={!previewDirty || isSavingPreview}
-                  >
-                    <SaveIcon />
-                    {isSavingPreview ? "Saving" : "Save"}
-                  </button>
-                  <button
-                    type="button"
-                    className="preview-edit-action"
-                    onClick={() =>
-                      setEditState((current) => cancelFilePreviewEdit(current))
-                    }
-                    disabled={isSavingPreview}
-                  >
-                    <XIcon />
-                    Cancel
-                  </button>
-                </div>
-              ) : null}
             </div>
             <div className="preview-utility-secondary">
               <span>{preview.language}</span>
