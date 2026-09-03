@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Complete global virtual `/` thread/agent path namespace semantics so inter-agent tools can see ordinary root project threads as well as registered subagents.
 
 ## Active Work
 - id: global-agent-path-namespace
@@ -20,12 +20,12 @@ None
   files: codex-rs/protocol/src/agent_path.rs; codex-rs/agent-runtime/src/control_plan.rs; codex-rs/agent-runtime/src/registry.rs; app-server/thread-service inter-agent path lookup and thread-spawn metadata paths as needed; apps/root-worker-prototype path validation/display tests only if backend contract changes surface in UI
   base_commit: 3266a792cc380cfc37ef38f275b3523d106956dd
   pending_sync_from_main: none; PM realigned dev-3 non-destructively by creating `feature/global-agent-path-namespace` from local source workspace main after confirming the worktree was clean. Old dev-3 branch `bugfix/runtime-refresh-electron-shell-relaunch` remains preserved at `2ccaa5680b`.
-  status: merged
+  status: in_progress
   objective: Fix the current bug where agents in different project roots cannot communicate through inter-agent tools. All threads/agents must hang under a unified virtual `/` namespace for lookup/reference semantics. Project roots may still appear as separate top-level UI/navigation groups, but inter-agent tools must resolve by global absolute path across projects rather than being scoped to the current project root. The historical `/root` path should remain a compatibility spelling where needed, not the runtime definition of the global root.
-  last_update: 2026-09-03 CST PM design-checked owner_dev_3 delivery against the global virtual `/` namespace brief and merged `c58694dbe3` into main as `8cf853b21`. Main validation passed for absolute-global list, cross-project external followup/list, root-level persisted native read/restore protection, diff check, and app-server build. Build warnings are existing linker/future-incompat warnings.
-  next_action: none
+  last_update: 2026-09-03 CST User tested the refreshed runtime and `list_agents(path_prefix="/mycv")` returned empty. PM accepts this as an incomplete fix: the first merge made absolute agent-directory paths global, but the product requirement is that all root project threads also live in the same virtual `/` namespace and are visible/addressable through inter-agent lookup when they have a path such as `/mycv`.
+  next_action: owner_dev_3返工: include ordinary root project threads/state DB metadata in inter-agent list/read/followup absolute path lookup, then validate against a real or fixture `/mycv` root thread scenario.
   blockers: none
-  validation: Owner ran `rtk cargo test -p codex-agent-runtime resolve_agent_reference_path_keeps_absolute_paths_global`; `rtk cargo test -p codex-agent-runtime list_agents_plan_absolute_project_prefix_is_global`; `rtk cargo test -p thread-service root_external_list_agents_is_scoped_to_sender_root`; `rtk cargo test -p thread-service external_followup_and_list_use_global_absolute_agent_paths`; `rtk cargo test -p thread-service persisted_root_level_native_agent_can_be_read_but_not_restored_as_subagent`; `rtk cargo build -p app-server --bin app-server`; `rtk git diff --check` -> all passed. PM reran merged-main `rtk cargo test -p codex-agent-runtime list_agents_plan_absolute_project_prefix_is_global`; `rtk cargo test -p thread-service external_followup_and_list_use_global_absolute_agent_paths`; `rtk cargo test -p thread-service persisted_root_level_native_agent_can_be_read_but_not_restored_as_subagent`; `rtk git diff --check HEAD~1..HEAD`; `rtk cargo build -p app-server --bin app-server` -> all passed. Full `rtk cargo fmt --check` still fails on existing untouched formatting drift; owner ran targeted rustfmt for touched files.
+  validation: Previous partial fix validation passed, but user-facing runtime check `list_agents(path_prefix="/mycv")` returned empty after refresh, so acceptance is reopened. New validation must prove an ordinary root project thread like `/mycv` is visible/addressable, not only registered subagents/external agents.
   commit: 8cf853b21, c58694dbe3
 - id: runtime-refresh-electron-shell-relaunch
   owner: /my_codex/owner_dev_3
