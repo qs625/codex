@@ -11,6 +11,22 @@
 Make File Preview edit controls clearly visible in the header for editable text and markdown files.
 
 ## Active Work
+- id: runtime-refresh-electron-shell-relaunch
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-refresh-electron-shell-relaunch
+  task_type: bugfix/runtime-packaging-lifecycle
+  depends_on: main baseline `73b1eca49ad914214e03b112a2909f8a0403e7fa`; main also has later progress-only commit `71ddf6738`
+  files: apps/root-worker-prototype/electron/appLifecycle.cjs; apps/root-worker-prototype/electron/appLifecycle.test.cjs; apps/root-worker-prototype/electron/appServerClient.cjs; apps/root-worker-prototype/electron/appServerClient.test.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.test.cjs; apps/root-worker-prototype/electron/main.cjs
+  base_commit: 73b1eca49ad914214e03b112a2909f8a0403e7fa
+  pending_sync_from_main: dev-3 branch is behind main progress-only commit `71ddf6738`; merge must preserve that main Known Issues addition. dev-3 also has unrelated dirty File Preview UI files that must not be merged with this runtime task.
+  status: ready_to_merge
+  objective: Fix installed runtime refresh so Electron main/preload/shell changes are not treated as renderer-only hot reloads. Shell/preload changes must full relaunch after successful artifact update/codesign; frontend/backend-only changes should keep hot refresh. App quit/relaunch should stop the current app-server child instead of leaving PPID=1 orphan processes.
+  last_update: 2026-09-03 CST Owner delivered `b507e41617`: installed update plan compares source and installed asar `electron/**/*.cjs` manifests to compute `requiresFullRelaunch`; lifecycle branches between hot app-server restart + renderer reload and full app relaunch; relaunch path stops app-server first; appServerClient stop/restart force-kill cleanup now handles signal-exited children; Electron `before-quit` stops the owned app-server child. Fixed reviewer passed after three rounds, including manifest deletion/ENOENT and signal-exit fixes.
+  next_action: PM design-check owner commit, merge only committed runtime files into main, rerun focused lifecycle/update/client tests and build, then update installed app.
+  blockers: none
+  validation: Owner ran `rtk node --test apps/root-worker-prototype/electron/installedArtifactUpdate.test.cjs apps/root-worker-prototype/electron/appLifecycle.test.cjs apps/root-worker-prototype/electron/appServerClient.test.cjs` -> 77 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check` -> passed.
+  commit: b507e41617
 - id: file-preview-edit-header-actions
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
