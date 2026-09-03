@@ -84,7 +84,11 @@ const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
 const appServerClient = new AppServerClient();
 const lspManager = new LspManager();
-const appRelaunch = createAppRelaunchAdapter({ app });
+const appRelaunch = createAppRelaunchAdapter({
+  app,
+  beforeExit: (reason) =>
+    appServerClient.stop(reason ?? "application relaunch"),
+});
 const rendererReloadLifecycle = createRendererReloadLifecycleAdapter({
   fullRelaunch: appRelaunch,
   reloadWindows: reloadRendererWindows,
@@ -100,6 +104,10 @@ const installedArtifactUpdateLifecycle =
     appServerRestart: {
       requestRestart: (reason) => appServerClient.restart(reason),
     },
+    appServerStop: {
+      requestStop: (reason) => appServerClient.stop(reason),
+    },
+    fullRelaunch: appRelaunch,
     reloadWindows: reloadRendererWindows,
     resolvePlan: () => resolveInstalledArtifactUpdatePlan(),
     updateArtifacts: (plan) => updateInstalledArtifacts(plan),
@@ -120,6 +128,7 @@ const browserPanelsByWindowId = new Map();
 const threadRuntimeById = new Map();
 const localFilePreviewTargetsByToken = new Map();
 let autoResumeCoordinator = null;
+let quittingAfterAppServerStop = false;
 const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
@@ -717,6 +726,27 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", (event) => {
+  if (quittingAfterAppServerStop || !appServerClient.status.connected) {
+    return;
+  }
+  quittingAfterAppServerStop = true;
+  event.preventDefault();
+  void appServerClient
+    .stop("application quit")
+    .catch((error) => {
+      console.error(
+        "[prototype] app-server stop during app quit failed",
+        JSON.stringify({
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    })
+    .finally(() => {
+      app.exit(0);
+    });
 });
 
 function browserPanelForEvent(event) {

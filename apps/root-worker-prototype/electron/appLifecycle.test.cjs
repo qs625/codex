@@ -10,7 +10,7 @@ const {
   observeClientRelaunchResult,
 } = require("./appLifecycle.cjs");
 
-test("app relaunch adapter schedules one full app relaunch", () => {
+test("app relaunch adapter schedules one full app relaunch", async () => {
   const calls = [];
   const timers = [];
   const app = {
@@ -42,8 +42,30 @@ test("app relaunch adapter schedules one full app relaunch", () => {
   });
   assert.deepEqual(calls, ["relaunch"]);
 
-  timers[0].callback();
+  await timers[0].callback();
   assert.deepEqual(calls, ["relaunch", ["exit", 0]]);
+});
+
+test("app relaunch adapter stops owned app-server before exiting", async () => {
+  const calls = [];
+  const timers = [];
+  const app = {
+    relaunch: () => calls.push("relaunch"),
+    exit: (code) => calls.push(["exit", code]),
+  };
+  const adapter = createAppRelaunchAdapter({
+    app,
+    beforeExit: async (reason) => calls.push(["stop", reason]),
+    logger: { error: () => {} },
+    setTimeout: (callback) => {
+      timers.push(callback);
+    },
+  });
+
+  assert.equal(adapter.requestRelaunch("shell update").ok, true);
+  await timers[0]();
+
+  assert.deepEqual(calls, ["relaunch", ["stop", "shell update"], ["exit", 0]]);
 });
 
 test("app relaunch adapter reports unsupported environments", () => {
@@ -155,10 +177,10 @@ test("client relaunch notification handler defaults to renderer reload", async (
   assert.deepEqual(reloads, ["restart tool"]);
 });
 
-test("client relaunch notification handler updates installed artifacts before backend restart and renderer reload", async () => {
+test("client relaunch notification handler hot reloads non-shell installed artifact updates", async () => {
   const statuses = [];
   const calls = [];
-  const plan = { appBundlePath: "/Moved App.app" };
+  const plan = { appBundlePath: "/Moved App.app", requiresFullRelaunch: false };
   const handler = createClientRelaunchNotificationHandler({
     rendererReload: {
       requestReload: () => {
@@ -231,6 +253,95 @@ test("client relaunch notification handler updates installed artifacts before ba
     "updated",
     "reloading",
     "reloaded",
+  ]);
+});
+
+test("client relaunch notification handler full relaunches shell installed artifact updates", async () => {
+  const statuses = [];
+  const calls = [];
+  const plan = {
+    appBundlePath: "/Moved App.app",
+    requiresFullRelaunch: true,
+    runtimeUpdate: {
+      electronShell: {
+        category: "electronShell",
+        changed: true,
+        changedPaths: ["electron/main.cjs"],
+      },
+    },
+  };
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("renderer reload should not run for shell updates");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      appServerRestart: {
+        requestRestart: () => {
+          throw new Error("backend restart should not run for shell updates");
+        },
+      },
+      appServerStop: {
+        requestStop: async (reason) => {
+          calls.push(["backendStop", reason]);
+          return { ok: true, stopped: true, reason };
+        },
+      },
+      fullRelaunch: {
+        requestRelaunch: async (reason) => {
+          calls.push(["relaunch", reason]);
+          return { ok: true, relaunching: true, reason };
+        },
+      },
+      reloadWindows: () => {
+        throw new Error("reload should not run for shell updates");
+      },
+      resolvePlan: () => plan,
+      updateArtifacts: async (receivedPlan) => {
+        calls.push(["update", receivedPlan]);
+        return { ok: true, updated: true };
+      },
+      broadcastStatus: (status) => statuses.push(status),
+    }),
+  });
+
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { reason: "restart tool" },
+    }),
+    {
+      ok: true,
+      inPlace: false,
+      relaunching: true,
+      reloaded: false,
+      updated: true,
+      backendStop: {
+        ok: true,
+        stopped: true,
+        reason: "restart tool",
+      },
+      mainProcessUpdate: "requiresAppRelaunch",
+      preloadUpdate: "requiresAppRelaunch",
+      reason: "restart tool",
+      relaunch: {
+        ok: true,
+        relaunching: true,
+        reason: "restart tool",
+      },
+    },
+  );
+  assert.deepEqual(calls, [
+    ["update", plan],
+    ["backendStop", "restart tool"],
+    ["relaunch", "restart tool"],
+  ]);
+  assert.deepEqual(statuses.map((status) => status.lifecycle.phase), [
+    "building",
+    "updated",
+    "relaunching",
+    "relaunching",
   ]);
 });
 
