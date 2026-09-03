@@ -8,22 +8,22 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix installed runtime refresh so Electron shell/preload changes are actually picked up after updating artifacts.
+Make markdown file previews editable through the same explicit File Preview edit button flow.
 
 ## Active Work
-- id: runtime-refresh-electron-shell-relaunch
+- id: file-preview-markdown-edit-mode
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
-  branch: bugfix/runtime-refresh-electron-shell-relaunch
-  task_type: bugfix/runtime-packaging-lifecycle
-  depends_on: main baseline `6a7b67b087199a92ea82898b5fd0738951ba4b28`
-  files: apps/root-worker-prototype/electron/appLifecycle.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.cjs; apps/root-worker-prototype/electron/appLifecycle.test.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.test.cjs; related main/preload/update tests only as needed
-  base_commit: 6a7b67b087199a92ea82898b5fd0738951ba4b28
-  pending_sync_from_main: none; owner_dev_3 was fast-forwarded to main `6a7b67b087199a92ea82898b5fd0738951ba4b28`
-  status: in_progress
-  objective: User restarted after editable file preview landed but still did not see the latest UI. Investigation shows installed `app.asar` does contain the new code and is codesigned, but running `/Applications/Root Worker Prototype.app` processes include renderer/app-server instances older than the artifact update. Because the feature changed Electron `main.cjs`/`preload.cjs`, renderer hot reload alone is insufficient; installed refresh must full relaunch when Electron shell/preload assets change, while preserving hot app-server/renderer refresh for ordinary frontend/backend-only updates.
-  last_update: 2026-09-03 CST PM confirmed installed `/Applications/Root Worker Prototype.app/Contents/Resources/app.asar` mtime Sep 3 14:12:38 and asar extraction contains `electron/localFileWrite.cjs`, `writeLocalFile`, `preview-edit-action`, and `Cmd/Ctrl+S` code. `codesign --verify --deep --strict` passes. Process inspection still showed an older `/Applications/... Helper (Renderer)` process and many stale app-server children, so the visible app can remain on old in-memory Electron shell/runtime despite updated disk artifacts.
-  next_action: Wait for owner_dev_3 implementation/reviewer result; then PM must verify the shell/preload full relaunch path, frontend/backend-only hot path, and app-server child cleanup before merging.
+  branch: bugfix/file-preview-markdown-edit-mode
+  task_type: feature/ui-files
+  depends_on: main baseline `41426596c31331f42b7ad5b474732183ecfc5eb9`
+  files: apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/styles.css if layout changes are needed
+  base_commit: 41426596c31331f42b7ad5b474732183ecfc5eb9
+  pending_sync_from_main: owner_dev_3 must fast-forward from `6a7b67b087` to `41426596c3` before implementation
+  status: planned
+  objective: User confirmed the missing Edit button happens for `.md` files. Extend the file preview edit feature so markdown previews also show the explicit Edit button. Markdown should keep rendered preview by default; clicking Edit should switch that pane to the Monaco/source editor with the same Save, Cancel, `Cmd/Ctrl+S`, save-failure draft retention, and local file write behavior as other text/code files. Image/pdf remain non-editable.
+  last_update: 2026-09-03 CST PM confirmed installed `app.asar` contains the editable preview code and a real app quit/open produced fresh `/Applications` app/renderer processes. User then clarified only markdown files lack the edit button. Root cause is current `filePreviewCanEdit(preview)` returning true only for `filePreviewRenderMode(preview) === "editor"`, while markdown render mode goes to rendered MarkdownContent and no edit controls.
+  next_action: Sync/recreate owner_dev_3 and assign markdown edit support implementation.
   blockers: none
   validation: pending
   commit:
@@ -1401,6 +1401,7 @@ Fix installed runtime refresh so Electron shell/preload changes are actually pic
 Older completed entries moved to [PM Progress Archive](pm-progress-archive.md#archived-completed) on 2026-08-07 (289 entries).
 
 ## Known Issues
+- 2026-09-03 editable file preview exposed an installed refresh boundary: ordinary frontend/backend changes can use app-server restart + renderer reload, but changes to Electron `main.cjs` or main-process IPC handlers may require a full Electron app relaunch to enter the running process. This was not the root cause of the missing markdown Edit button after a real quit/open, so it is deferred from the markdown UI follow-up and should be handled as a separate runtime lifecycle task.
 - 2026-09-03 after merging editable file preview mode through `1a1d0e9dab`, `/Users/bytedance/Projects/my-codex-dev-3` was fast-forwarded to main. `/Users/bytedance/Projects/my-codex-dev-2` could not fast-forward because its branch still contains old local progress commit `2af1b92db0` while main has the canonical later progress history; it also still has unrelated untracked `apps/android-companion/local.properties`. Do not assign new work there until the checkout is realigned without losing the untracked local file.
 - 2026-08-14 after merging `3a7174f00e`, clean `/Users/bytedance/Projects/my-codex-dev-2` and `/Users/bytedance/Projects/my-codex-dev-3` were fast-forwarded to that commit. `/Users/bytedance/Projects/my-codex-dev` remains unsynced because it still has unrelated unstaged thread-service edits.
 - 2026-08-14 after merging `db18d7efac`, clean `/Users/bytedance/Projects/my-codex-dev-2` and `/Users/bytedance/Projects/my-codex-dev-3` were fast-forwarded to that commit. `/Users/bytedance/Projects/my-codex-dev` remains unsynced because it still has unrelated unstaged thread-service edits.
