@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Fix duplicate `Init Context` display in newly created project threads.
 
 ## Active Work
+- id: init-context-duplicate-new-project
+  owner: /my_codex/owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/runtime-refresh-installed-update-result
+  task_type: bugfix/ui-runtime-display
+  depends_on: main baseline `0c565734bf3dca45dd92f6b8d438c9e0c7ee130c`
+  files: apps/root-worker-prototype/src/lib/thread.ts; apps/root-worker-prototype/src/lib/thread.test.ts; apps/root-worker-prototype/src/lib/conversation.test.ts if conversation fallback changes; app-server thread_start/read tests only if backend contract is proven wrong
+  base_commit: 0c565734bf3dca45dd92f6b8d438c9e0c7ee130c
+  pending_sync_from_main: none; owner_dev_3 was clean and at current main baseline when assigned
+  status: in_progress
+  objective: User reports that newly created project conversations show duplicate `Init Context` cards with the same `Developer • AGENTS.md • Environment` preview. Ensure equivalent initial context delivered through thread/start response, thread/started notification, item notification, or later snapshot is visible only once.
+  last_update: 2026-09-03 CST PM inspected screenshot and searched relevant frontend/backend paths. Existing frontend tests cover some init-context merge cases, and backend tests expect thread/start response plus thread/started notification to include initial context display turns, so this is likely a frontend typed merge/dedupe gap across multiple delivery entrances rather than a React-only rendering issue. PM assigned owner_dev_3 with instructions to reproduce the start response + notification/snapshot path and fix semantic typed merge dedupe without hiding all init context.
+  next_action: Wait for owner_dev_3 implementation, reviewer result, and focused validation.
+  blockers: none
+  validation: pending
+  commit:
 - id: runtime-refresh-installed-update-result
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
