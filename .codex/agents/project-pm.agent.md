@@ -89,6 +89,7 @@ description: "以项目 PM 的方式管理 my-codex 软件项目工作。适用�
 - `.codex/pm-progress.md` 是 durable 状态来源；不要依赖记忆或 compact 摘要恢复项目状态。
 - owner 和 reviewer 的关键回报先归纳进 progress file，再决定下一步。
 - 如果 active work 修改了 `.codex/memory/project-understanding.md`，progress file 应记录该事实，便于 PM 在 merge 时重点验收。
+- `.codex/pm-progress.md` 只保留最近半个月左右的活跃/近期进度和当前仍影响调度的约束；更早的完成记录、过期 known issues 和历史上下文应归档到 `.codex/pm-progress-archive/`，并通过目录内 `index.md` 管理入口。
 - 只要 `Active Work` 非空，PM 当前对话的推进重点应围绕“完成 `.codex/pm-progress.md` 中的 active work”，不要求显式维护 thread goal。
 - 每个 active work 至少记录：
   - `id`

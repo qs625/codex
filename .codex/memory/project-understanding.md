@@ -5,6 +5,7 @@
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
 - 当前项目的 PM / owner / reviewer 协作规则以 `.codex/agents/project-pm.agent.md` 及对应 owner agent 定义为准。
+- `.codex/pm-progress.md` 是当前调度状态文件，只保留最近半个月左右的活跃/近期进度和当前约束；更早历史归档到 `.codex/pm-progress-archive/` 并通过 `index.md` 查找。
 - 我们自己的 agent/runtime 产品名定为 Morpheus；外部官方 Codex provider 仍称 `codex_cli` / external Codex CLI provider。
 - 代码 crate、模块、变量名默认使用语义名，除非明确表达产品本身语义，否则不要带 Morpheus/Codex 等产品名。
 - `daily-cargo-clean-worktrees` schedule 触发时不是只确认通知，而是要实际在四个 checkout 的 `codex-rs/` 下运行 `rtk cargo clean`：`my-codex`、`my-codex-dev`、`my-codex-dev-2`、`my-codex-dev-3`。

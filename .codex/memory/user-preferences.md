@@ -8,6 +8,7 @@
 - 固定 owner 空闲时不要主动关闭；后续同一 checkout 优先直接续用 `followup_task`，只有 thread 不可用时才重建。
 - 固定 owner 的 reviewer 也应长期复用：每个 owner 使用同一个 `<owner>/reviewer` child，不要每个任务或每轮 review 新建 reviewer。
 - 对 subagent 交互不要频繁查看状态或发送催促；大多数情况下派发后等待 subagent 完成通知即可，除非用户明确询问状态、存在超时/阻塞风险，或需要处理已到达的完成通知。
+- `.codex/pm-progress.md` 只保留最近半个月左右的活跃/近期进度和当前约束；更早的完成记录和过期 known issues 归档到 `.codex/pm-progress-archive/`，通过目录 index 管理。
 - 我们自己的 agent/runtime 产品名定为 Morpheus；外部官方 Codex provider 仍称 `codex_cli` / external Codex CLI provider。
 - 我们自己的配置 home 入口应使用 Morpheus 命名；不要把新的配置目录环境变量命名为 `CODEX_HOME`。
 - 代码 crate、模块、变量名默认使用语义名，除非明确表达产品本身语义，否则不要带 Morpheus/Codex 等产品名。
