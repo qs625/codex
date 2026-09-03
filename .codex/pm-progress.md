@@ -18,15 +18,15 @@ Add explicit edit mode support to the file editor/preview surface.
   task_type: feature/ui-files
   depends_on: main baseline after `cf6b73dc1f` init-context dedupe merge and progress update
   files: apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/preload.cjs; apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/types.ts if preload typing requires it; styles only as needed
-  base_commit: pending after PM syncs owner_dev_3 to current main
-  pending_sync_from_main: owner_dev_3 must fast-forward to main after init-context merge/progress commit before starting
-  status: in_progress
+  base_commit: 15afa7bdf885ff5f9bd751b41656693197bf7ceb
+  pending_sync_from_main: none; owner_dev_3 was synced to current main including PM progress commit before implementation
+  status: ready_to_merge
   objective: User requests file editor support for editing local text/code previews, controlled by an explicit button. Default file preview should remain read-only; clicking Edit enables editing; Save writes the changed content; Cancel exits edit mode without writing. The editable editor must also support normal `Cmd+C` / `Cmd+V` behavior and `Cmd+S` must trigger the same save path as the Save button.
-  last_update: 2026-09-03 CST PM inspected current file preview path. `RightPanel.tsx` uses Monaco with `readOnly: true`; Electron exposes `readLocalFile` through preload/main but no `writeLocalFile` IPC yet. PM synced and assigned owner_dev_3. User then added shortcut requirements: `Cmd+C` / `Cmd+V` should work in the editable editor, and `Cmd+S` should save the current draft through the same logic as the Save button without writing in read-only/image/pdf states or losing draft on failure.
-  next_action: Wait for owner_dev_3 implementation and reviewer result, then verify edit button flow plus keyboard shortcut behavior before merging.
+  last_update: 2026-09-03 CST PM inspected current file preview path. `RightPanel.tsx` uses Monaco with `readOnly: true`; Electron exposes `readLocalFile` through preload/main but no `writeLocalFile` IPC yet. PM synced and assigned owner_dev_3. User then added shortcut requirements: `Cmd+C` / `Cmd+V` should work in the editable editor, and `Cmd+S` should save the current draft through the same logic as the Save button without writing in read-only/image/pdf states or losing draft on failure. Owner delivered `8e4a2269d3`: controlled `writeLocalFile` Electron IPC, RightPanel explicit edit/save/cancel state, `Cmd/Ctrl+S` bound to the same save callback, current preview/project preview memory refresh after successful save with root/path guards, and editor-only edit affordances. Fixed reviewer passed after save-during-root-switch memory pollution was fixed.
+  next_action: PM design-checks owner commit, merges into main, reruns focused tests/build, then refreshes installed app.
   blockers: none
-  validation: pending; must include Save button and `Cmd+S` save coverage, plus at least component/manual evidence that copy/paste remain usable in the editor.
-  commit:
+  validation: Owner ran `rtk pnpm --dir apps/root-worker-prototype test src/components/RightPanel.test.tsx src/lib/filePreviewMemory.test.ts electron/localFileWrite.test.cjs` -> 44 passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning; `rtk git diff --check` -> passed. Reviewer passed after three rounds. Cmd+C/Cmd+V were static-verified by confirming no global interception was added and Monaco keeps default editor copy/paste handling.
+  commit: 8e4a2269d3
 - id: init-context-duplicate-new-project
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
