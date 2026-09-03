@@ -30,6 +30,7 @@ const {
   failFilePreviewSave,
   filePreviewCanEdit,
   filePreviewRenderMode,
+  filePreviewSourceEditorVisible,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
   syncFilePreviewEditState,
@@ -961,7 +962,7 @@ test("keeps non-markdown file previews on the editor render path", () => {
   );
 });
 
-test("enables edit actions only for editor file previews", () => {
+test("enables edit actions for editable text previews while keeping image and PDF read-only", () => {
   const editorPreview = makePreview({
     path: "/tmp/src/App.tsx",
     displayPath: "src/App.tsx",
@@ -1011,12 +1012,51 @@ test("enables edit actions only for editor file previews", () => {
   });
 
   assert.equal(filePreviewCanEdit(editorPreview), true);
-  assert.equal(filePreviewCanEdit(markdownPreview), false);
+  assert.equal(filePreviewCanEdit(markdownPreview), true);
   assert.equal(filePreviewCanEdit(imagePreview), false);
   assert.equal(filePreviewCanEdit(pdfPreview), false);
-  assert.doesNotMatch(markdownMarkup, /preview-edit-action/);
+  assert.match(markdownMarkup, /preview-edit-action/);
+  assert.match(markdownMarkup, />Edit<\/button>/);
   assert.doesNotMatch(imageMarkup, /preview-edit-action/);
   assert.doesNotMatch(pdfMarkup, /preview-edit-action/);
+});
+
+test("markdown previews keep rendered readonly mode until editing or saving", () => {
+  const markdownPreview = makePreview({
+    path: "/tmp/README.md",
+    displayPath: "README.md",
+    content: "# Title",
+    language: "markdown",
+  });
+  const editorPreview = makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "export const value = 1;",
+    language: "typescript",
+  });
+  const imagePreview = makePreview({
+    path: "/tmp/diagram.png",
+    displayPath: "diagram.png",
+    content: "",
+    language: "plaintext",
+    image: {
+      path: "/tmp/diagram.png",
+      mimeType: "image/png",
+      name: "diagram.png",
+      byteSize: 2048,
+    },
+  });
+  const markup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: markdownPreview,
+  });
+
+  assert.match(markup, /<h1>Title<\/h1>/);
+  assert.doesNotMatch(markup, /Loading editor/);
+  assert.equal(filePreviewSourceEditorVisible(markdownPreview, "readonly"), false);
+  assert.equal(filePreviewSourceEditorVisible(markdownPreview, "editing"), true);
+  assert.equal(filePreviewSourceEditorVisible(markdownPreview, "saving"), true);
+  assert.equal(filePreviewSourceEditorVisible(editorPreview, "readonly"), true);
+  assert.equal(filePreviewSourceEditorVisible(imagePreview, "editing"), false);
 });
 
 test("file preview edit state saves, cancels, keeps failures, and resets on file switch", () => {
