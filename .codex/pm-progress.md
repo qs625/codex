@@ -36,13 +36,13 @@ Make File Preview edit controls clearly visible in the header for editable text 
   files: apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/styles.css if needed
   base_commit: f37e8de7dac85e5912c880e92657d4e7096ea336
   pending_sync_from_main: owner_dev_3 is at main `f37e8de7da` but has unrelated dirty Electron lifecycle files; do not touch or commit them
-  status: planned
+  status: ready_to_merge
   objective: User still cannot see the editor Edit button after markdown support shipped. Installed bundle and fresh renderer were verified, so make the edit controls visually stable by moving or duplicating Edit/Save/Cancel into the File Preview header action area for editable text/markdown previews, while preserving the existing edit state/save semantics.
-  last_update: 2026-09-03 CST PM confirmed the installed `index.html` points to `index-CW7Wz1yP.js`, the bundle contains markdown edit logic, and a fresh `/Applications` renderer process is running. Code inspection shows edit controls currently live inside the preview utility strip next to LSP/status metadata, which can be missed or squeezed in the actual panel.
-  next_action: Assign owner_dev_3 to make edit controls clearly visible in the header and rerun focused RightPanel tests/build.
+  last_update: 2026-09-03 CST PM confirmed the installed `index.html` points to `index-CW7Wz1yP.js`, the bundle contains markdown edit logic, and a fresh `/Applications` renderer process is running. Code inspection shows edit controls currently live inside the preview utility strip next to LSP/status metadata, which can be missed or squeezed in the actual panel. Owner delivered `5d4cb55554`: Edit/Save/Cancel moved into File Preview header actions, a visibility helper gates controls to loaded editable previews, utility strip keeps only status metadata, and header CSS wraps/no-shrinks edit buttons. Fixed reviewer passed.
+  next_action: PM merge owner UI commit, rerun focused RightPanel tests/build, update installed app, and force a real renderer reload/relaunch verification.
   blockers: none
-  validation: pending
-  commit:
+  validation: Owner ran `rtk git diff --check` on RightPanel/style files -> passed; `rtk pnpm test` in `apps/root-worker-prototype` -> 639 passed; `rtk pnpm build` -> passed with existing chunk-size warning. Reviewer passed.
+  commit: 5d4cb55554
 - id: file-preview-markdown-edit-mode
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
