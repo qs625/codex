@@ -20,10 +20,10 @@ Fix installed runtime refresh so Electron shell/preload changes are actually pic
   files: apps/root-worker-prototype/electron/appLifecycle.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.cjs; apps/root-worker-prototype/electron/appLifecycle.test.cjs; apps/root-worker-prototype/electron/installedArtifactUpdate.test.cjs; related main/preload/update tests only as needed
   base_commit: 6a7b67b087199a92ea82898b5fd0738951ba4b28
   pending_sync_from_main: none; owner_dev_3 was fast-forwarded to main `6a7b67b087199a92ea82898b5fd0738951ba4b28`
-  status: planned
+  status: in_progress
   objective: User restarted after editable file preview landed but still did not see the latest UI. Investigation shows installed `app.asar` does contain the new code and is codesigned, but running `/Applications/Root Worker Prototype.app` processes include renderer/app-server instances older than the artifact update. Because the feature changed Electron `main.cjs`/`preload.cjs`, renderer hot reload alone is insufficient; installed refresh must full relaunch when Electron shell/preload assets change, while preserving hot app-server/renderer refresh for ordinary frontend/backend-only updates.
   last_update: 2026-09-03 CST PM confirmed installed `/Applications/Root Worker Prototype.app/Contents/Resources/app.asar` mtime Sep 3 14:12:38 and asar extraction contains `electron/localFileWrite.cjs`, `writeLocalFile`, `preview-edit-action`, and `Cmd/Ctrl+S` code. `codesign --verify --deep --strict` passes. Process inspection still showed an older `/Applications/... Helper (Renderer)` process and many stale app-server children, so the visible app can remain on old in-memory Electron shell/runtime despite updated disk artifacts.
-  next_action: Assign owner_dev_3 to detect Electron shell/preload changes during installed artifact refresh and choose full relaunch only for that case; keep frontend/backend-only refresh hot.
+  next_action: Wait for owner_dev_3 implementation/reviewer result; then PM must verify the shell/preload full relaunch path, frontend/backend-only hot path, and app-server child cleanup before merging.
   blockers: none
   validation: pending
   commit:
