@@ -6412,6 +6412,55 @@ svg {
   color: #57534e;
 }
 
+.preview-edit-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.preview-edit-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #44403c;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.preview-edit-action.primary {
+  border-color: rgba(37, 99, 235, 0.26);
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.preview-edit-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.preview-edit-action svg {
+  width: 12px;
+  height: 12px;
+}
+
+.preview-edit-error {
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  border-radius: 8px;
+  background: rgba(254, 242, 242, 0.96);
+  color: #991b1b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .preview-signal {
   width: 8px;
   height: 8px;

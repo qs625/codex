@@ -22,10 +22,18 @@ const {
   RightPanel,
   ScheduleAgendaLayout,
   ScheduleAgendaDateGroup,
+  beginFilePreviewEdit,
+  beginFilePreviewSave,
   buildGitGraphVisualModel,
+  cancelFilePreviewEdit,
+  completeFilePreviewSave,
+  failFilePreviewSave,
+  filePreviewCanEdit,
   filePreviewRenderMode,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
+  syncFilePreviewEditState,
+  updateFilePreviewDraft,
 } = await import("./RightPanel");
 
 const FEATURE_DEV_WORKFLOW: WorkflowSummary = {
@@ -130,6 +138,8 @@ function renderRightPanel(
       onNavigateToSymbol={() => {}}
       onOpenPreviewExternally={() => {}}
       onOpenTreeFile={() => {}}
+      onPreviewUpdated={() => {}}
+      previewRootId="root-1"
       onSetActiveView={() => {}}
       onSetCollapsed={() => {}}
       onSetFilePanelView={() => {}}
@@ -949,6 +959,127 @@ test("keeps non-markdown file previews on the editor render path", () => {
     ),
     "editor",
   );
+});
+
+test("enables edit actions only for editor file previews", () => {
+  const editorPreview = makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "export const value = 1;",
+    language: "typescript",
+  });
+  const markdownPreview = makePreview({
+    path: "/tmp/README.md",
+    displayPath: "README.md",
+    content: "# Title",
+    language: "markdown",
+  });
+  const imagePreview = makePreview({
+    path: "/tmp/diagram.png",
+    displayPath: "diagram.png",
+    content: "",
+    language: "plaintext",
+    image: {
+      path: "/tmp/diagram.png",
+      mimeType: "image/png",
+      name: "diagram.png",
+      byteSize: 2048,
+    },
+  });
+  const pdfPreview = makePreview({
+    path: "/tmp/spec.pdf",
+    displayPath: "spec.pdf",
+    content: "",
+    language: "pdf",
+    pdf: {
+      path: "/tmp/spec.pdf",
+      mimeType: "application/pdf",
+      name: "spec.pdf",
+      byteSize: 512,
+      url: "morpheus-file-preview://pdf/token-1/spec.pdf",
+    },
+  });
+
+  const markdownMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: markdownPreview,
+  });
+  const imageMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: imagePreview,
+  });
+  const pdfMarkup = renderRightPanel(makeThread([]), "preview", null, {
+    preview: pdfPreview,
+  });
+
+  assert.equal(filePreviewCanEdit(editorPreview), true);
+  assert.equal(filePreviewCanEdit(markdownPreview), false);
+  assert.equal(filePreviewCanEdit(imagePreview), false);
+  assert.equal(filePreviewCanEdit(pdfPreview), false);
+  assert.doesNotMatch(markdownMarkup, /preview-edit-action/);
+  assert.doesNotMatch(imageMarkup, /preview-edit-action/);
+  assert.doesNotMatch(pdfMarkup, /preview-edit-action/);
+});
+
+test("file preview edit state saves, cancels, keeps failures, and resets on file switch", () => {
+  const preview = makePreview({
+    path: "/tmp/src/App.tsx",
+    displayPath: "src/App.tsx",
+    content: "const value = 1;",
+    language: "typescript",
+  });
+  const nextPreview = makePreview({
+    path: "/tmp/src/Other.tsx",
+    displayPath: "src/Other.tsx",
+    content: "const other = 1;",
+    language: "typescript",
+  });
+
+  let state = syncFilePreviewEditState(
+    {
+      mode: "readonly",
+      path: null,
+      baseContent: "",
+      draft: "",
+      error: null,
+    },
+    preview,
+    "editor",
+  );
+  state = beginFilePreviewEdit(state);
+  state = updateFilePreviewDraft(state, "const value = 2;");
+
+  assert.equal(state.mode, "editing");
+  assert.equal(state.draft, "const value = 2;");
+
+  const saving = beginFilePreviewSave(state);
+  assert.equal(saving.mode, "saving");
+  const failed = failFilePreviewSave(saving, "Permission denied");
+  assert.equal(failed.mode, "editing");
+  assert.equal(failed.draft, "const value = 2;");
+  assert.equal(failed.error, "Permission denied");
+
+  const saved = completeFilePreviewSave(failed, failed.draft);
+  assert.equal(saved.mode, "readonly");
+  assert.equal(saved.baseContent, "const value = 2;");
+  assert.equal(saved.draft, "const value = 2;");
+
+  const editing = updateFilePreviewDraft(beginFilePreviewEdit(saved), "dirty");
+  const cancelled = cancelFilePreviewEdit(editing);
+  assert.equal(cancelled.mode, "readonly");
+  assert.equal(cancelled.draft, "const value = 2;");
+  assert.equal(cancelled.error, null);
+
+  const switched = syncFilePreviewEditState(editing, nextPreview, "editor");
+  assert.equal(switched.mode, "readonly");
+  assert.equal(switched.path, "/tmp/src/Other.tsx");
+  assert.equal(switched.draft, "const other = 1;");
+});
+
+test("file preview save button and Cmd+S use the same save handler", () => {
+  const source = readFileSync(new URL("./RightPanel.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /onClick=\{\(\) => void savePreviewDraft\(\)\}/);
+  assert.match(source, /monaco\.KeyMod\.CtrlCmd \| monaco\.KeyCode\.KeyS/);
+  assert.match(source, /savePreviewDraftRef\.current\(\)/);
 });
 
 test("renders PDF file previews with an embedded PDF object", () => {

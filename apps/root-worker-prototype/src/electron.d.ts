@@ -280,6 +280,14 @@ declare global {
           url: string;
         } | null;
       }>;
+      writeLocalFile: (
+        target: string,
+        content: string,
+      ) => Promise<{
+        ok: true;
+        path: string;
+        byteSize: number;
+      }>;
       lspDefinition: (payload: {
         path: string;
         line: number;

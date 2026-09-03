@@ -79,6 +79,33 @@ export function OpenIcon() {
   );
 }
 
+export function PencilIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4.5 19.5 9 18.7 19.1 8.6a2.1 2.1 0 0 0-3-3L6 15.7z" />
+      <path d="m14.7 7 2.3 2.3" />
+    </svg>
+  );
+}
+
+export function SaveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 5.5A1.5 1.5 0 0 1 6.5 4h9.2L19 7.3v11.2a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 18.5z" />
+      <path d="M8 4v5h7V4" />
+      <path d="M8 20v-6h8v6" />
+    </svg>
+  );
+}
+
+export function XIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m7 7 10 10M17 7 7 17" />
+    </svg>
+  );
+}
+
 export function BrowserIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">

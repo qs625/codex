@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   getProjectFilePreview,
   rememberProjectFilePreview,
+  rememberSavedProjectFilePreview,
   shouldRestoreProjectFilePreview,
   type FilePreviewMemoryByRootId,
 } from "./filePreviewMemory";
@@ -55,6 +56,51 @@ test("leaves preview memory unchanged without a project root", () => {
     rememberProjectFilePreview(memory, null, makePreview("/tmp/ignored.ts")),
     memory,
   );
+});
+
+test("remembers saved previews only for the current root and path", () => {
+  const original = makePreview("/work/project-one/file1.ts");
+  const saved = {
+    ...original,
+    content: "saved",
+  };
+  const otherRootPreview = makePreview("/work/project-two/file2.ts");
+  const memory: FilePreviewMemoryByRootId = {
+    "root-1": original,
+    "root-2": otherRootPreview,
+  };
+
+  assert.deepEqual(
+    rememberSavedProjectFilePreview(
+      memory,
+      "root-2",
+      "root-1",
+      otherRootPreview,
+      saved,
+    ),
+    memory,
+  );
+  assert.deepEqual(
+    rememberSavedProjectFilePreview(
+      memory,
+      "root-1",
+      "root-1",
+      makePreview("/work/project-one/other.ts"),
+      saved,
+    ),
+    memory,
+  );
+
+  const updated = rememberSavedProjectFilePreview(
+    memory,
+    "root-1",
+    "root-1",
+    original,
+    saved,
+  );
+
+  assert.equal(updated["root-1"], saved);
+  assert.equal(updated["root-2"], otherRootPreview);
 });
 
 test("returns no preview for project roots without memory", () => {

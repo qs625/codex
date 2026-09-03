@@ -13,9 +13,12 @@ import {
   MoreIcon,
   GearIcon,
   OpenIcon,
+  PencilIcon,
   RefreshIcon,
+  SaveIcon,
   SearchIcon,
   StopIcon,
+  XIcon,
 } from "./icons";
 import { LocalImagePreview } from "./Conversation";
 import { isChatCompatCwd } from "../lib/chatCompat";
@@ -66,6 +69,14 @@ type BrowserPanelState = {
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  error: string | null;
+};
+
+type FilePreviewEditState = {
+  mode: "readonly" | "editing" | "saving";
+  path: string | null;
+  baseContent: string;
+  draft: string;
   error: string | null;
 };
 
@@ -180,6 +191,7 @@ export function RightPanel({
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
+  onPreviewUpdated,
   onSelectCommandMonitor,
   onSetActiveView,
   onSetCollapsed,
@@ -200,6 +212,7 @@ export function RightPanel({
   preview,
   previewError,
   previewLoading,
+  previewRootId,
   skills,
   thread,
   modelContextWindowOverride,
@@ -214,6 +227,7 @@ export function RightPanel({
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
+  onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSelectCommandMonitor?: (commandItemId: string) => void;
   onSetActiveView: (value: RightPanelView) => void;
   onSetCollapsed: (value: boolean) => void;
@@ -234,6 +248,7 @@ export function RightPanel({
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
+  previewRootId: string | null;
   skills: ThreadSkill[];
   thread: Thread | null;
   modelContextWindowOverride?: number | null;
@@ -284,11 +299,13 @@ export function RightPanel({
                 onNavigateToSymbol={onNavigateToSymbol}
                 onOpenPreviewExternally={onOpenPreviewExternally}
                 onOpenTreeFile={onOpenTreeFile}
+                onPreviewUpdated={onPreviewUpdated}
                 onSetFilePanelView={onSetFilePanelView}
                 onToggleTreeDirectory={onToggleTreeDirectory}
                 preview={preview}
                 previewError={previewError}
                 previewLoading={previewLoading}
+                previewRootId={previewRootId}
                 thread={thread}
               />
             )}
@@ -891,6 +908,122 @@ function toBrowserError(error: unknown) {
     return error;
   }
   return "Browser action failed.";
+}
+
+function toFilePreviewSaveError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return "Failed to save file.";
+}
+
+function initialFilePreviewEditState(): FilePreviewEditState {
+  return {
+    mode: "readonly",
+    path: null,
+    baseContent: "",
+    draft: "",
+    error: null,
+  };
+}
+
+export function syncFilePreviewEditState(
+  state: FilePreviewEditState,
+  preview: FilePreview | null,
+  renderMode: ReturnType<typeof filePreviewRenderMode>,
+): FilePreviewEditState {
+  if (!preview || renderMode !== "editor") {
+    return initialFilePreviewEditState();
+  }
+  if (state.path !== preview.path) {
+    return {
+      mode: "readonly",
+      path: preview.path,
+      baseContent: preview.content,
+      draft: preview.content,
+      error: null,
+    };
+  }
+  if (state.mode === "readonly" && state.baseContent !== preview.content) {
+    return {
+      ...state,
+      baseContent: preview.content,
+      draft: preview.content,
+      error: null,
+    };
+  }
+  return state;
+}
+
+export function beginFilePreviewEdit(
+  state: FilePreviewEditState,
+): FilePreviewEditState {
+  if (!state.path || state.mode === "saving") {
+    return state;
+  }
+  return {
+    ...state,
+    mode: "editing",
+    draft: state.baseContent,
+    error: null,
+  };
+}
+
+export function updateFilePreviewDraft(
+  state: FilePreviewEditState,
+  draft: string,
+): FilePreviewEditState {
+  if (state.mode !== "editing") {
+    return state;
+  }
+  return { ...state, draft, error: null };
+}
+
+export function cancelFilePreviewEdit(
+  state: FilePreviewEditState,
+): FilePreviewEditState {
+  return {
+    ...state,
+    mode: "readonly",
+    draft: state.baseContent,
+    error: null,
+  };
+}
+
+export function beginFilePreviewSave(
+  state: FilePreviewEditState,
+): FilePreviewEditState {
+  if (state.mode !== "editing") {
+    return state;
+  }
+  return { ...state, mode: "saving", error: null };
+}
+
+export function completeFilePreviewSave(
+  state: FilePreviewEditState,
+  content: string,
+): FilePreviewEditState {
+  return {
+    ...state,
+    mode: "readonly",
+    baseContent: content,
+    draft: content,
+    error: null,
+  };
+}
+
+export function failFilePreviewSave(
+  state: FilePreviewEditState,
+  error: string,
+): FilePreviewEditState {
+  return {
+    ...state,
+    mode: "editing",
+    error,
+  };
 }
 
 function ThreadAnalysisPanel({
@@ -2422,6 +2555,10 @@ export function filePreviewRenderMode(preview: FilePreview | null) {
   return "editor";
 }
 
+export function filePreviewCanEdit(preview: FilePreview | null) {
+  return filePreviewRenderMode(preview) === "editor";
+}
+
 function FilePreviewPanel({
   expandedTreeDirectories,
   filePanelView,
@@ -2431,11 +2568,13 @@ function FilePreviewPanel({
   onNavigateToSymbol,
   onOpenPreviewExternally,
   onOpenTreeFile,
+  onPreviewUpdated,
   onSetFilePanelView,
   onToggleTreeDirectory,
   preview,
   previewError,
   previewLoading,
+  previewRootId,
   thread,
 }: {
   expandedTreeDirectories: string[];
@@ -2446,11 +2585,13 @@ function FilePreviewPanel({
   onNavigateToSymbol: (destination: FileLocation, sourceLocation: FileLocation) => void;
   onOpenPreviewExternally: () => void;
   onOpenTreeFile: (path: string) => void;
+  onPreviewUpdated: (preview: FilePreview, rootId: string | null) => void;
   onSetFilePanelView: (value: FilePanelView) => void;
   onToggleTreeDirectory: (path: string) => void;
   preview: FilePreview | null;
   previewError: string | null;
   previewLoading: boolean;
+  previewRootId: string | null;
   thread: Thread | null;
 }) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -2459,10 +2600,33 @@ function FilePreviewPanel({
   const pendingDefinitionRef = useRef(false);
   const modifierPressedRef = useRef(false);
   const previewEnabledRef = useRef(preview?.lsp.enabled ?? false);
+  const savePreviewDraftRef = useRef<() => void>(() => {});
+  const [editState, setEditState] = useState<FilePreviewEditState>(() =>
+    initialFilePreviewEditState(),
+  );
+  const previewRenderMode = filePreviewRenderMode(preview);
+  const previewIsEditable = filePreviewCanEdit(preview);
+  const isEditingPreview = editState.mode === "editing";
+  const isSavingPreview = editState.mode === "saving";
+  const previewDraft =
+    previewIsEditable && editState.path === preview?.path
+      ? editState.draft
+      : (preview?.content ?? "");
+  const previewDirty =
+    previewIsEditable &&
+    editState.path === preview?.path &&
+    editState.draft !== editState.baseContent;
 
   useEffect(() => {
-    previewEnabledRef.current = preview?.lsp.enabled ?? false;
-  }, [preview?.lsp.enabled]);
+    previewEnabledRef.current =
+      (preview?.lsp.enabled ?? false) && editState.mode === "readonly";
+  }, [editState.mode, preview?.lsp.enabled]);
+
+  useEffect(() => {
+    setEditState((current) =>
+      syncFilePreviewEditState(current, preview, previewRenderMode),
+    );
+  }, [preview, previewRenderMode]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -2512,7 +2676,42 @@ function FilePreviewPanel({
 
   const threadRootPath =
     thread && !isChatCompatCwd(thread.cwd) ? thread.cwd : null;
-  const previewRenderMode = filePreviewRenderMode(preview);
+
+  async function savePreviewDraft() {
+    if (
+      !preview ||
+      !previewIsEditable ||
+      !isEditingPreview ||
+      !previewDirty ||
+      isSavingPreview
+    ) {
+      return;
+    }
+    const draft = editState.draft;
+    setEditState((current) => beginFilePreviewSave(current));
+    try {
+      await window.codexDesktop.writeLocalFile(preview.path, draft);
+      const updatedPreview = {
+        ...preview,
+        content: draft,
+      };
+      onPreviewUpdated(updatedPreview, previewRootId);
+      setEditState((current) =>
+        current.path === preview.path
+          ? completeFilePreviewSave(current, draft)
+          : current,
+      );
+    } catch (error) {
+      setEditState((current) =>
+        current.path === preview.path
+          ? failFilePreviewSave(current, toFilePreviewSaveError(error))
+          : current,
+      );
+    }
+  }
+  savePreviewDraftRef.current = () => {
+    void savePreviewDraft();
+  };
 
   return (
     <div className="preview-panel">
@@ -2648,6 +2847,50 @@ function FilePreviewPanel({
               >
                 {preview.lsp.lspStatus.phase.toUpperCase()}
               </button>
+              {previewIsEditable && editState.mode === "readonly" ? (
+                <button
+                  type="button"
+                  className="preview-edit-action"
+                  onClick={() =>
+                    setEditState((current) =>
+                      beginFilePreviewEdit(
+                        syncFilePreviewEditState(
+                          current,
+                          preview,
+                          previewRenderMode,
+                        ),
+                      ),
+                    )
+                  }
+                >
+                  <PencilIcon />
+                  Edit
+                </button>
+              ) : null}
+              {previewIsEditable && editState.mode !== "readonly" ? (
+                <div className="preview-edit-actions">
+                  <button
+                    type="button"
+                    className="preview-edit-action primary"
+                    onClick={() => void savePreviewDraft()}
+                    disabled={!previewDirty || isSavingPreview}
+                  >
+                    <SaveIcon />
+                    {isSavingPreview ? "Saving" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    className="preview-edit-action"
+                    onClick={() =>
+                      setEditState((current) => cancelFilePreviewEdit(current))
+                    }
+                    disabled={isSavingPreview}
+                  >
+                    <XIcon />
+                    Cancel
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="preview-utility-secondary">
               <span>{preview.language}</span>
@@ -2672,12 +2915,23 @@ function FilePreviewPanel({
             </div>
           ) : (
             <div className="preview-editor-pad">
+              {editState.error ? (
+                <div className="preview-edit-error" role="alert">
+                  {editState.error}
+                </div>
+              ) : null}
               <Editor
                 key={`${preview.path}:${preview.line ?? 0}:${preview.column ?? 0}:${preview.lsp.enabled ? "lsp" : "plain"}`}
                 height="100%"
                 onMount={(editor, monaco) => {
                   editorRef.current = editor;
                   decorationCollectionRef.current = editor.createDecorationsCollection();
+                  editor.addCommand(
+                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                    () => {
+                      savePreviewDraftRef.current();
+                    },
+                  );
                   editor.revealPositionInCenter({
                     lineNumber: preview.line ?? 1,
                     column: preview.column ?? 1,
@@ -2693,7 +2947,7 @@ function FilePreviewPanel({
                       event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey;
                     updateLinkDecoration(editor, decorationCollectionRef.current, {
                       modifierPressed: modifierPressedRef.current,
-                      enabled: preview.lsp.enabled,
+                      enabled: previewEnabledRef.current,
                       position: hoverPositionRef.current,
                     });
                   });
@@ -2701,7 +2955,7 @@ function FilePreviewPanel({
                   editor.onMouseLeave(() => {
                     hoverPositionRef.current = null;
                     updateLinkDecoration(editor, decorationCollectionRef.current, {
-                      enabled: preview.lsp.enabled,
+                      enabled: previewEnabledRef.current,
                       modifierPressed: false,
                       position: null,
                     });
@@ -2709,7 +2963,7 @@ function FilePreviewPanel({
 
                   editor.onMouseDown((event) => {
                     if (
-                      !preview.lsp.enabled ||
+                      !previewEnabledRef.current ||
                       !event.target.position ||
                       event.event.browserEvent.button !== 0 ||
                       !(event.event.browserEvent.metaKey || event.event.browserEvent.ctrlKey) ||
@@ -2750,12 +3004,20 @@ function FilePreviewPanel({
                       .finally(() => {
                         pendingDefinitionRef.current = false;
                         updateLinkDecoration(editor, decorationCollectionRef.current, {
-                          enabled: preview.lsp.enabled,
+                          enabled: previewEnabledRef.current,
                           modifierPressed: modifierPressedRef.current,
                           position: hoverPositionRef.current,
                         });
                       });
                   });
+                }}
+                onChange={(value) => {
+                  if (!isEditingPreview) {
+                    return;
+                  }
+                  setEditState((current) =>
+                    updateFilePreviewDraft(current, value ?? ""),
+                  );
                 }}
                 language={preview.language}
                 loading={<div className="preview-empty">Loading editor…</div>}
@@ -2766,7 +3028,7 @@ function FilePreviewPanel({
                   fontSize: 12,
                   lineNumbersMinChars: 3,
                   minimap: { enabled: false },
-                  readOnly: true,
+                  readOnly: !isEditingPreview,
                   renderLineHighlight: "all",
                   roundedSelection: false,
                   scrollBeyondLastLine: false,
@@ -2775,7 +3037,7 @@ function FilePreviewPanel({
                 }}
                 path={preview.path}
                 theme="vs"
-                value={preview.content}
+                value={previewDraft}
               />
             </div>
           )}
