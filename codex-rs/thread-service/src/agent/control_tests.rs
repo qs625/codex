@@ -116,6 +116,19 @@ async fn test_config() -> (TempDir, Config) {
     test_config_with_cli_overrides(Vec::new()).await
 }
 
+async fn test_config_with_cwd_name(cwd_name: &str) -> (TempDir, Config) {
+    let home = TempDir::new().expect("create temp dir");
+    let cwd = home.path().join(cwd_name);
+    std::fs::create_dir_all(&cwd).expect("create cwd");
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(home.path().to_path_buf())
+        .fallback_cwd(Some(cwd))
+        .build()
+        .await
+        .expect("load default test config");
+    (home, config)
+}
+
 fn text_input(text: &str) -> Op {
     vec![UserInput::Text {
         text: text.to_string(),
@@ -156,6 +169,15 @@ struct AgentControlHarness {
 impl AgentControlHarness {
     async fn new() -> Self {
         let (home, config) = test_config().await;
+        Self::from_home_and_config(home, config).await
+    }
+
+    async fn new_with_cwd_name(cwd_name: &str) -> Self {
+        let (home, config) = test_config_with_cwd_name(cwd_name).await;
+        Self::from_home_and_config(home, config).await
+    }
+
+    async fn from_home_and_config(home: TempDir, config: Config) -> Self {
         let state_db = init_state_db(&config).await;
         let manager = ThreadService::with_models_provider_home_and_state_for_tests(
             CodexAuth::from_api_key("dummy"),
@@ -1152,7 +1174,7 @@ async fn external_followup_and_list_use_global_absolute_agent_paths() {
 }
 
 #[tokio::test]
-async fn persisted_root_level_native_agent_can_be_read_but_not_restored_as_subagent() {
+async fn persisted_root_level_native_agent_restores_as_root_thread() {
     let harness = AgentControlHarness::new().await;
     let project_a_path = AgentPath::try_from("/project_a").expect("project A path");
     let project_b_path = AgentPath::try_from("/project_b").expect("project B path");
@@ -1194,7 +1216,7 @@ async fn persisted_root_level_native_agent_can_be_read_but_not_restored_as_subag
         .await
         .expect("project B rollout should flush");
 
-    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
     let read_thread_id = restarted_control
         .resolve_agent_reference_for_read(project_a.thread_id, &SessionSource::Exec, "/project_b")
         .await
@@ -1261,7 +1283,7 @@ async fn persisted_root_level_native_agent_can_be_read_but_not_restored_as_subag
         Some(project_b_path.as_str()),
     );
 
-    let err = restarted_control
+    let resolved_thread_id = restarted_control
         .resolve_agent_reference(
             project_a.thread_id,
             &SessionSource::Exec,
@@ -1269,11 +1291,14 @@ async fn persisted_root_level_native_agent_can_be_read_but_not_restored_as_subag
             "/project_b",
         )
         .await
-        .expect_err("root-level persisted agent must not restore as a subagent");
-    assert_matches!(
-        err,
-        CodexErr::UnsupportedOperation(message)
-            if message.contains("persisted root thread")
+        .expect("root-level persisted agent should restore as a root thread");
+    assert_eq!(resolved_thread_id, project_b.thread_id);
+    assert_eq!(
+        restarted_control
+            .get_agent_metadata(project_b.thread_id)
+            .and_then(|metadata| metadata.agent_path),
+        Some(project_b_path.clone()),
+        "root restore should register canonical metadata for followup_task"
     );
 
     let state_db = harness
@@ -1289,7 +1314,188 @@ async fn persisted_root_level_native_agent_can_be_read_but_not_restored_as_subag
         .expect("project B root should not gain spawn children");
     assert!(
         !child_ids.contains(&project_b.thread_id),
-        "failed restore must not persist a parent==child spawn edge",
+        "root restore must not persist a parent==child spawn edge",
+    );
+
+    let restored_project_b = restarted_manager
+        .get_thread(project_b.thread_id)
+        .await
+        .expect("project B should be restored");
+    let communication = InterAgentCommunication::new(
+        project_a_path,
+        project_b_path.clone(),
+        Vec::new(),
+        "hello restored project".to_string(),
+        protocol::protocol::InterAgentOperation::FollowupTask,
+    )
+    .with_trigger_turn(false);
+    restarted_control
+        .send_inter_agent_communication(project_b.thread_id, communication.clone())
+        .await
+        .expect("followup should route to restored root");
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if restored_project_b.codex.session.has_pending_input().await {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("restored root should receive followup pending input");
+    assert_eq!(
+        restored_project_b.codex.session.get_pending_input().await,
+        vec![PendingInputItem::from(communication)],
+    );
+}
+
+#[tokio::test]
+async fn ordinary_project_root_without_agent_path_is_listed_by_cwd_basename() {
+    let harness = AgentControlHarness::new_with_cwd_name("MyCV").await;
+    let expected_project_path = AgentPath::try_from("/mycv").expect("project path");
+    let (project_thread_id, project_thread) = harness.start_thread().await;
+
+    let other_cwd = harness._home.path().join("Other Project");
+    std::fs::create_dir_all(&other_cwd).expect("create other cwd");
+    let mut other_config = harness.config.clone();
+    other_config.cwd = other_cwd.try_into().expect("absolute cwd");
+    let other_project = harness
+        .manager
+        .start_thread(other_config)
+        .await
+        .expect("other root should start");
+    let other_project_cwd = other_project
+        .thread
+        .codex
+        .session
+        .get_config()
+        .await
+        .cwd
+        .clone();
+
+    persist_thread_for_tree_resume(&project_thread, "mycv persisted").await;
+    emit_turn_complete(&project_thread, "mycv done").await;
+    project_thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("mycv rollout should flush");
+    persist_thread_for_tree_resume(&other_project.thread, "other persisted").await;
+    let sender_config = other_project
+        .thread
+        .codex
+        .session
+        .get_config()
+        .await
+        .as_ref()
+        .clone();
+    let state_db = harness
+        .state_db
+        .as_ref()
+        .expect("sqlite state db should be available");
+    let expected_target_cwd = state_db
+        .get_thread(project_thread_id)
+        .await
+        .expect("target thread metadata should load")
+        .expect("target thread metadata should exist")
+        .cwd;
+
+    let (restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let listed_agents = restarted_control
+        .list_agents(other_project.thread_id, &SessionSource::Exec, Some("/mycv"))
+        .await
+        .expect("cwd-derived project root should be listed globally");
+    assert_eq!(
+        listed_agents
+            .iter()
+            .map(|agent| agent.agent_name.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_project_path.as_str()],
+    );
+
+    let read_thread_id = restarted_control
+        .resolve_agent_reference_for_read(other_project.thread_id, &SessionSource::Exec, "/mycv")
+        .await
+        .expect("cwd-derived project root should resolve for read");
+    assert_eq!(read_thread_id, project_thread_id);
+
+    let resolved_thread_id = restarted_control
+        .resolve_agent_reference(
+            other_project.thread_id,
+            &SessionSource::Exec,
+            Some(sender_config),
+            "/mycv",
+        )
+        .await
+        .expect("cwd-derived project root should restore");
+    assert_eq!(resolved_thread_id, project_thread_id);
+    assert_eq!(
+        restarted_control
+            .get_agent_metadata(project_thread_id)
+            .and_then(|metadata| metadata.agent_path),
+        Some(expected_project_path.clone()),
+        "root restore should register cwd-derived metadata",
+    );
+
+    let child_ids = state_db
+        .list_thread_spawn_children_with_status(
+            project_thread_id,
+            DirectionalThreadSpawnEdgeStatus::Open,
+        )
+        .await
+        .expect("project root should not gain spawn children");
+    assert!(
+        !child_ids.contains(&project_thread_id),
+        "root restore must not persist a parent==child spawn edge",
+    );
+
+    let restored_project = restarted_manager
+        .get_thread(project_thread_id)
+        .await
+        .expect("project should be restored");
+    let restored_config = restored_project.codex.session.get_config().await;
+    assert_eq!(
+        restored_config.cwd.to_path_buf(),
+        expected_target_cwd.clone(),
+        "root restore should use the target project cwd, not the sender cwd",
+    );
+    assert!(
+        restored_config
+            .workspace_roots
+            .iter()
+            .any(|root| root.to_path_buf() == expected_target_cwd),
+        "root restore should rebuild workspace roots for the target cwd",
+    );
+    assert!(
+        !restored_config.workspace_roots.contains(&other_project_cwd),
+        "root restore should not keep sender workspace roots",
+    );
+    let communication = InterAgentCommunication::new(
+        AgentPath::try_from("/other_project").expect("other project path"),
+        expected_project_path.clone(),
+        Vec::new(),
+        "hello cwd project".to_string(),
+        protocol::protocol::InterAgentOperation::FollowupTask,
+    )
+    .with_trigger_turn(false);
+    restarted_control
+        .send_inter_agent_communication(project_thread_id, communication.clone())
+        .await
+        .expect("followup should route to restored cwd-derived root");
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if restored_project.codex.session.has_pending_input().await {
+                break;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("restored cwd-derived root should receive followup pending input");
+    assert_eq!(
+        restored_project.codex.session.get_pending_input().await,
+        vec![PendingInputItem::from(communication)],
     );
 }
 
