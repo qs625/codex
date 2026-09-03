@@ -2072,6 +2072,95 @@ test("mergeThreadSnapshot drops equivalent init context from later snapshots", (
   assert.deepEqual(merged.turns, [nextTurn]);
 });
 
+test("upsertThread merges start response and started notification init context snapshots", () => {
+  const startResponseTurn: Turn = {
+    id: "turn-start-response",
+    items: [makeInitContextItem("ctx-start-response")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1000,
+  };
+  const startedNotificationTurn: Turn = {
+    id: "turn-started-notification",
+    items: [makeInitContextItem("ctx-started-notification")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 3,
+    completedAt: 4,
+    durationMs: 1000,
+  };
+
+  let threads = upsertThread(
+    [
+      {
+        ...makeThread(),
+        turns: [startResponseTurn],
+      },
+    ],
+    {
+      ...makeThread(),
+      updatedAt: 4,
+      turns: [startedNotificationTurn],
+    },
+  );
+  threads = upsertThread(threads, {
+    ...makeThread(),
+    updatedAt: 5,
+    turns: [],
+  });
+
+  const initContextEntries = buildConversationEntries(
+    threads[0] ?? null,
+  ).filter((entry) => entry.toolName === "Init Context");
+
+  assert.equal(initContextEntries.length, 1);
+  assert.deepEqual(threads[0]?.turns, [startedNotificationTurn]);
+});
+
+test("mergeThreadSnapshot drops stale duplicate init context already in thread state", () => {
+  const canonicalTurn: Turn = {
+    id: "turn-canonical",
+    items: [makeInitContextItem("ctx-canonical")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1000,
+  };
+  const duplicateTurn: Turn = {
+    id: "turn-duplicate",
+    items: [makeInitContextItem("ctx-duplicate")],
+    itemsView: "full",
+    status: "completed",
+    error: null,
+    startedAt: 3,
+    completedAt: 4,
+    durationMs: 1000,
+  };
+  const existing = {
+    ...makeThread(),
+    turns: [canonicalTurn, duplicateTurn],
+  };
+
+  const merged = mergeThreadSnapshot(existing, {
+    ...makeThread(),
+    turns: [],
+  });
+
+  assert.deepEqual(merged.turns, [canonicalTurn]);
+  assert.deepEqual(
+    buildConversationEntries(merged)
+      .filter((entry) => entry.toolName === "Init Context")
+      .map((entry) => entry.text),
+    ["Workspace • Instructions"],
+  );
+});
+
 test("mergeThreadSnapshot keeps one completed init context after first user turn", () => {
   const initContextTurn: Turn = {
     id: "turn-init",
