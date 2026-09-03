@@ -20,13 +20,13 @@ Implement global virtual `/` thread/agent path namespace semantics so inter-agen
   files: codex-rs/protocol/src/agent_path.rs; codex-rs/agent-runtime/src/control_plan.rs; codex-rs/agent-runtime/src/registry.rs; app-server/thread-service inter-agent path lookup and thread-spawn metadata paths as needed; apps/root-worker-prototype path validation/display tests only if backend contract changes surface in UI
   base_commit: 3266a792cc380cfc37ef38f275b3523d106956dd
   pending_sync_from_main: none; PM realigned dev-3 non-destructively by creating `feature/global-agent-path-namespace` from local source workspace main after confirming the worktree was clean. Old dev-3 branch `bugfix/runtime-refresh-electron-shell-relaunch` remains preserved at `2ccaa5680b`.
-  status: in_progress
+  status: ready_to_merge
   objective: Fix the current bug where agents in different project roots cannot communicate through inter-agent tools. All threads/agents must hang under a unified virtual `/` namespace for lookup/reference semantics. Project roots may still appear as separate top-level UI/navigation groups, but inter-agent tools must resolve by global absolute path across projects rather than being scoped to the current project root. The historical `/root` path should remain a compatibility spelling where needed, not the runtime definition of the global root.
-  last_update: 2026-09-03 CST User clarified that every project is its own top-level project, while inter-agent tools still need path-based lookup across all threads because all threads conceptually live under a virtual `/`, and confirmed that the current symptom is project-to-project communication does not work. PM confirmed current code still uses `AgentPath::ROOT = "/root"` and `AgentPath::resolve` treats `/root` specially, then assigned owner_dev_3 on a fresh main-based branch.
-  next_action: owner_dev_3 implement and self-validate; PM to review design semantics before merge.
+  last_update: 2026-09-03 CST Owner_dev_3 delivered `c58694dbe3`: absolute reference / absolute prefix list / no-prefix list now use a ThreadService-level global virtual `/` namespace; relative reference/list remains current-root scoped; `read_agent(thread_id)` keeps current-directory visibility checks while resolver-authorized reads use direct details; root-level persisted native threads can be read/listed but are not restored as subagents; external `ReadExternalAgent` uses a read-only resolver while followup/close keep live/restore constraints. Fixed reviewer passed after raw ThreadId visibility, root-level persisted restore, and external read-only resolver issues were fixed.
+  next_action: PM design-check and merge dev-3 commit into main.
   blockers: none
-  validation: pending
-  commit:
+  validation: Owner ran `rtk cargo test -p codex-agent-runtime resolve_agent_reference_path_keeps_absolute_paths_global`; `rtk cargo test -p codex-agent-runtime list_agents_plan_absolute_project_prefix_is_global`; `rtk cargo test -p thread-service root_external_list_agents_is_scoped_to_sender_root`; `rtk cargo test -p thread-service external_followup_and_list_use_global_absolute_agent_paths`; `rtk cargo test -p thread-service persisted_root_level_native_agent_can_be_read_but_not_restored_as_subagent`; `rtk cargo build -p app-server --bin app-server`; `rtk git diff --check` -> all passed. Full `rtk cargo fmt --check` still fails on existing untouched formatting drift; owner ran targeted rustfmt for touched files.
+  commit: c58694dbe3
 - id: runtime-refresh-electron-shell-relaunch
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
