@@ -5,7 +5,9 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
+  listElectronShellSourceRelativePaths,
   prepareDirectArtifacts,
+  resolveElectronShellUpdate,
   resolveCargoTargetDirectory,
   resolveInstalledArtifactUpdatePlan,
   replaceInstalledArtifactsSync,
@@ -135,6 +137,164 @@ test("does not plan installed artifact update outside packaged mac app", () => {
     }),
     null,
   );
+});
+
+test("electron shell update metadata tracks shell runtime digests", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-shell-digest-"));
+  const resourcesPath = path.join(root, "app/Contents/Resources");
+  const sourceAppDir = path.join(root, "source/apps/root-worker-prototype");
+  const relativePaths = ["electron/main.cjs", "electron/preload.cjs"];
+  for (const relativePath of relativePaths) {
+    write(path.join(sourceAppDir, relativePath), `${relativePath}:same`);
+    write(
+      path.join(resourcesPath, "app.asar", relativePath),
+      `${relativePath}:same`,
+    );
+  }
+
+  assert.deepEqual(
+    resolveElectronShellUpdate({
+      resourcesPath,
+      sourceAppDir,
+      relativePaths,
+    }),
+    {
+      category: "electronShell",
+      changed: false,
+      changedPaths: [],
+      missingInstalledPaths: [],
+      missingSourcePaths: [],
+    },
+  );
+
+  write(path.join(sourceAppDir, "electron/preload.cjs"), "new preload");
+
+  assert.deepEqual(
+    resolveElectronShellUpdate({
+      resourcesPath,
+      sourceAppDir,
+      relativePaths,
+    }),
+    {
+      category: "electronShell",
+      changed: true,
+      changedPaths: ["electron/preload.cjs"],
+      missingInstalledPaths: [],
+      missingSourcePaths: [],
+    },
+  );
+});
+
+test("installed update plan marks full relaunch when shell runtime changes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-plan-shell-"));
+  const workspace = path.join(root, "source");
+  const resourcesPath = path.join(
+    root,
+    "Root Worker Prototype.app/Contents/Resources",
+  );
+  const sourceAppDir = path.join(workspace, "apps/root-worker-prototype");
+  const relativePaths = ["electron/main.cjs", "electron/preload.cjs"];
+  for (const relativePath of relativePaths) {
+    write(path.join(sourceAppDir, relativePath), `${relativePath}:old`);
+    write(
+      path.join(resourcesPath, "app.asar", relativePath),
+      `${relativePath}:old`,
+    );
+  }
+  write(path.join(sourceAppDir, "electron/preload.cjs"), "new preload");
+
+  const plan = resolveInstalledArtifactUpdatePlan({
+    env: { ROOT_WORKER_WORKSPACE: workspace },
+    platform: "darwin",
+    resourcesPath,
+    isPackaged: true,
+    spawnSync: fakeCargoMetadataSpawn({
+      target_directory: path.join(workspace, "target"),
+    }),
+  });
+
+  assert.equal(plan.requiresFullRelaunch, true);
+  assert.deepEqual(plan.runtimeUpdate.electronShell.changedPaths, [
+    "electron/preload.cjs",
+  ]);
+});
+
+test("installed update plan keeps hot reload when shell runtime is unchanged", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-plan-renderer-"));
+  const workspace = path.join(root, "source");
+  const resourcesPath = path.join(
+    root,
+    "Root Worker Prototype.app/Contents/Resources",
+  );
+  const sourceAppDir = path.join(workspace, "apps/root-worker-prototype");
+  for (const relativePath of ["electron/main.cjs", "electron/preload.cjs"]) {
+    write(path.join(sourceAppDir, relativePath), `${relativePath}:same`);
+    write(
+      path.join(resourcesPath, "app.asar", relativePath),
+      `${relativePath}:same`,
+    );
+  }
+
+  const plan = resolveInstalledArtifactUpdatePlan({
+    env: { ROOT_WORKER_WORKSPACE: workspace },
+    platform: "darwin",
+    resourcesPath,
+    isPackaged: true,
+    spawnSync: fakeCargoMetadataSpawn({
+      target_directory: path.join(workspace, "target"),
+    }),
+  });
+
+  assert.equal(plan.requiresFullRelaunch, false);
+  assert.deepEqual(plan.runtimeUpdate.electronShell.changedPaths, []);
+});
+
+test("installed update plan full relaunches when source deletes shell runtime", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-plan-delete-"));
+  const workspace = path.join(root, "source");
+  const resourcesPath = path.join(
+    root,
+    "Root Worker Prototype.app/Contents/Resources",
+  );
+  const sourceAppDir = path.join(workspace, "apps/root-worker-prototype");
+  write(path.join(sourceAppDir, "electron/main.cjs"), "main");
+  write(path.join(resourcesPath, "app.asar/electron/main.cjs"), "main");
+  write(path.join(resourcesPath, "app.asar/electron/preload.cjs"), "old preload");
+
+  const plan = resolveInstalledArtifactUpdatePlan({
+    env: { ROOT_WORKER_WORKSPACE: workspace },
+    platform: "darwin",
+    resourcesPath,
+    isPackaged: true,
+    spawnSync: fakeCargoMetadataSpawn({
+      target_directory: path.join(workspace, "target"),
+    }),
+  });
+
+  assert.equal(plan.requiresFullRelaunch, true);
+  assert.deepEqual(plan.runtimeUpdate.electronShell.changedPaths, [
+    "electron/preload.cjs",
+  ]);
+  assert.deepEqual(plan.runtimeUpdate.electronShell.missingSourcePaths, [
+    "electron/preload.cjs",
+  ]);
+});
+
+test("electron shell source manifest includes runtime cjs files and excludes tests", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "morpheus-shell-list-"));
+  const sourceAppDir = path.join(root, "apps/root-worker-prototype");
+  write(path.join(sourceAppDir, "electron/main.cjs"), "main");
+  write(path.join(sourceAppDir, "electron/preload.cjs"), "preload");
+  write(path.join(sourceAppDir, "electron/main.test.cjs"), "test");
+  write(path.join(sourceAppDir, "electron/Info.plist"), "plist");
+  write(path.join(sourceAppDir, "electron/lsp/client.cjs"), "client");
+  write(path.join(sourceAppDir, "electron/lsp/client.test.cjs"), "test");
+
+  assert.deepEqual(listElectronShellSourceRelativePaths(sourceAppDir), [
+    "electron/lsp/client.cjs",
+    "electron/main.cjs",
+    "electron/preload.cjs",
+  ]);
 });
 
 test("missing frontend dist fails before replacing installed artifacts", () => {

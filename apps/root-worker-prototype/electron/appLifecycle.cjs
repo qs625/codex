@@ -1,7 +1,9 @@
 function createAppRelaunchAdapter({
   app,
+  beforeExit,
   setTimeout: scheduleExit = setTimeout,
   exitDelayMs = 50,
+  logger = console,
 } = {}) {
   let requested = false;
 
@@ -36,7 +38,21 @@ function createAppRelaunchAdapter({
       }
 
       requested = true;
-      scheduleExit(() => app.exit(0), exitDelayMs);
+      scheduleExit(async () => {
+        if (typeof beforeExit === "function") {
+          try {
+            await beforeExit(reason);
+          } catch (error) {
+            logger?.error?.(
+              "[prototype] app relaunch cleanup failed",
+              JSON.stringify({
+                reason: error instanceof Error ? error.message : String(error),
+              }),
+            );
+          }
+        }
+        app.exit(0);
+      }, exitDelayMs);
       return {
         ok: true,
         relaunching: true,
@@ -162,6 +178,8 @@ async function observeClientRelaunchResult(
 
 function createInstalledArtifactUpdateLifecycleAdapter({
   appServerRestart,
+  appServerStop,
+  fullRelaunch,
   reloadWindows,
   resolvePlan,
   updateArtifacts,
@@ -188,6 +206,8 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 
       inFlight = runInstalledArtifactUpdate({
         appServerRestart,
+        appServerStop,
+        fullRelaunch,
         reloadWindows,
         updateArtifacts,
         broadcastStatus,
@@ -204,6 +224,8 @@ function createInstalledArtifactUpdateLifecycleAdapter({
 
 async function runInstalledArtifactUpdate({
   appServerRestart,
+  appServerStop,
+  fullRelaunch,
   reloadWindows,
   updateArtifacts,
   broadcastStatus,
@@ -243,6 +265,15 @@ async function runInstalledArtifactUpdate({
         reason,
       },
     });
+    if (plan.requiresFullRelaunch) {
+      return await relaunchUpdatedApp({
+        appServerStop,
+        broadcastStatus,
+        fullRelaunch,
+        reason,
+        update,
+      });
+    }
     const backendRestart = await restartUpdatedAppServer(appServerRestart, reason);
     if (!backendRestart.ok) {
       throw partialInstalledUpdateError(
@@ -297,7 +328,7 @@ async function runInstalledArtifactUpdate({
         reason: message,
       },
     });
-    return {
+    const failure = {
       ok: false,
       inPlace: false,
       partial: Boolean(error?.partial),
@@ -308,7 +339,88 @@ async function runInstalledArtifactUpdate({
       reload: error?.reload,
       reason: message,
     };
+    if (error?.backendStop) {
+      failure.backendStop = error.backendStop;
+    }
+    if (error?.relaunch) {
+      failure.relaunch = error.relaunch;
+    }
+    return failure;
   }
+}
+
+async function relaunchUpdatedApp({
+  appServerStop,
+  broadcastStatus,
+  fullRelaunch,
+  reason,
+  update,
+}) {
+  broadcastStatus?.({
+    lifecycle: {
+      type: "installedArtifactUpdate",
+      phase: "relaunching",
+      reason,
+    },
+  });
+  const backendStop = await stopUpdatedAppServer(appServerStop, reason);
+  if (!backendStop.ok) {
+    throw partialInstalledUpdateError(
+      backendStop.reason ?? "App-server stop failed before app relaunch",
+      { backendStop, updated: Boolean(update.updated) },
+    );
+  }
+  const relaunch =
+    fullRelaunch && typeof fullRelaunch.requestRelaunch === "function"
+      ? await fullRelaunch.requestRelaunch(reason)
+      : {
+          ok: false,
+          relaunching: false,
+          reason: "Application relaunch adapter is unavailable after shell update.",
+        };
+  if (!relaunch.ok) {
+    throw partialInstalledUpdateError(
+      relaunch.reason ?? "Application relaunch failed after shell update",
+      { backendStop, relaunch, updated: Boolean(update.updated) },
+    );
+  }
+  broadcastStatus?.({
+    lifecycle: {
+      type: "installedArtifactUpdate",
+      phase: "relaunching",
+      reason,
+    },
+    relaunch,
+  });
+  return {
+    ok: true,
+    inPlace: false,
+    relaunching: Boolean(relaunch.relaunching),
+    reloaded: false,
+    updated: Boolean(update.updated),
+    backendStop,
+    mainProcessUpdate: "requiresAppRelaunch",
+    preloadUpdate: "requiresAppRelaunch",
+    reason,
+    relaunch,
+  };
+}
+
+async function stopUpdatedAppServer(appServerStop, reason) {
+  if (!appServerStop || typeof appServerStop.requestStop !== "function") {
+    return {
+      ok: false,
+      stopped: false,
+      reason:
+        "App-server stop adapter is unavailable before installed app relaunch.",
+    };
+  }
+  const result = await appServerStop.requestStop(reason);
+  return {
+    ok: Boolean(result?.ok),
+    stopped: Boolean(result?.stopped ?? result?.ok),
+    reason: result?.reason ?? reason,
+  };
 }
 
 async function restartUpdatedAppServer(appServerRestart, reason) {

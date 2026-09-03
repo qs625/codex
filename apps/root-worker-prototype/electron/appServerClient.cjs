@@ -140,32 +140,83 @@ class AppServerClient extends EventEmitter {
   }
 
   async stopForRestart(reason) {
+    return this.stopChildProcess({
+      reason,
+      pendingMessage: `app-server restarting: ${reason}`,
+      timeoutMs: 5_000,
+      forceKill: true,
+    });
+  }
+
+  async stop(reason = "app-server stop requested") {
+    return this.stopChildProcess({
+      reason,
+      pendingMessage: `app-server stopping: ${reason}`,
+      timeoutMs: 5_000,
+      forceKill: true,
+    });
+  }
+
+  async stopChildProcess({
+    reason,
+    pendingMessage,
+    timeoutMs = 5_000,
+    forceKill = true,
+  } = {}) {
     const child = this.child;
     this.stopMobileConnectionRefresh();
-    this.rejectPendingRequests(new Error(`app-server restarting: ${reason}`));
-    if (!child || child.exitCode != null) {
+    this.rejectPendingRequests(new Error(pendingMessage ?? reason));
+    if (!isAppServerChildRunning(child)) {
+      if (this.child === child) {
+        this.child = null;
+      }
       return { ok: true };
     }
     return await new Promise((resolve) => {
       let settled = false;
+      let forced = false;
       const finish = (result = { ok: true }) => {
         if (settled) {
           return;
         }
         settled = true;
         clearTimeout(timeout);
+        clearTimeout(forceTimeout);
+        if (result.ok && this.child === child) {
+          this.child = null;
+        }
         resolve(result);
       };
       const timeout = setTimeout(
+        () => {
+          if (!forceKill || typeof child.kill !== "function") {
+            finish({
+              ok: false,
+              reason: "Timed out waiting for app-server process to exit",
+            });
+            return;
+          }
+          forced = true;
+          if (child.kill("SIGKILL") === false) {
+            finish({
+              ok: false,
+              reason: "Failed to force stop app-server process",
+            });
+          }
+        },
+        timeoutMs,
+      );
+      timeout.unref?.();
+      const forceTimeout = setTimeout(
         () =>
           finish({
             ok: false,
-            reason: "Timed out waiting for app-server process to exit",
+            reason: "Timed out waiting for force-stopped app-server process",
           }),
-        5_000,
+        timeoutMs + 1_000,
       );
-      timeout.unref?.();
-      child.once("exit", () => finish());
+      forceTimeout.unref?.();
+      child.once("exit", () => finish({ ok: true, forced }));
       if (typeof child.kill === "function" && child.kill() === false) {
         finish({ ok: false, reason: "Failed to stop app-server process" });
       }
@@ -211,7 +262,7 @@ class AppServerClient extends EventEmitter {
 
   get status() {
     return {
-      connected: this.child?.exitCode == null,
+      connected: isAppServerChildRunning(this.child),
       pid: this.child?.pid ?? null,
       mobileConnection: this.mobileConnection,
     };
@@ -245,11 +296,16 @@ class AppServerClient extends EventEmitter {
       stdio: "pipe",
     });
 
-    this.child.stderr.on("data", (chunk) => {
+    const child = this.child;
+
+    child.stderr.on("data", (chunk) => {
       process.stderr.write(chunk);
     });
 
-    this.child.on("exit", (code, signal) => {
+    child.on("exit", (code, signal) => {
+      if (this.child === child) {
+        this.child = null;
+      }
       this.stopMobileConnectionRefresh();
       const reason = `app-server exited (${code ?? "null"} / ${signal ?? "null"})`;
       const error = new Error(reason);
@@ -257,7 +313,7 @@ class AppServerClient extends EventEmitter {
       this.emit("status", { connected: false, reason });
     });
 
-    const stdout = createInterface({ input: this.child.stdout });
+    const stdout = createInterface({ input: child.stdout });
     stdout.on("line", (line) => {
       if (!line.trim()) {
         return;
@@ -383,6 +439,14 @@ module.exports = {
   resolveLanEndpoint,
   writeTokenFile,
 };
+
+function isAppServerChildRunning(child) {
+  return Boolean(
+    child &&
+      child.exitCode == null &&
+      (child.signalCode == null || child.signalCode === undefined),
+  );
+}
 
 function buildAppServerEnvironment(baseEnv = process.env, environmentOptions = {}) {
   const home = baseEnv.HOME ?? environmentOptions.home ?? os.homedir();

@@ -556,6 +556,76 @@ test("app-server client restart rejects pending requests and starts a fresh chil
   );
 });
 
+test("app-server client stop rejects pending requests and terminates owned child", async () => {
+  const child = new EventEmitter();
+  child.pid = 11;
+  child.exitCode = null;
+  child.kill = () => {
+    child.exitCode = 0;
+    queueMicrotask(() => child.emit("exit", 0, null));
+    return true;
+  };
+  const client = new AppServerClient({ autoStart: false });
+  let rejectedPending = null;
+  client.child = child;
+  client.pending.set(1, {
+    reject: (error) => {
+      rejectedPending = error;
+    },
+  });
+
+  const result = await client.stop("application quit");
+
+  assert.deepEqual(result, { ok: true, forced: false });
+  assert.equal(client.pending.size, 0);
+  assert.equal(client.child, null);
+  assert.match(rejectedPending.message, /app-server stopping: application quit/);
+});
+
+test("app-server client treats signal-exited children as stopped", async () => {
+  const child = new EventEmitter();
+  child.pid = 11;
+  child.exitCode = null;
+  child.signalCode = "SIGTERM";
+  child.kill = () => {
+    throw new Error("already stopped child should not be killed again");
+  };
+  const client = new AppServerClient({ autoStart: false });
+  client.child = child;
+
+  assert.equal(client.status.connected, false);
+  assert.deepEqual(await client.stop("application relaunch"), { ok: true });
+  assert.equal(client.child, null);
+});
+
+test("app-server client force kills owned child when graceful stop times out", async () => {
+  const child = new EventEmitter();
+  child.pid = 11;
+  child.exitCode = null;
+  const signals = [];
+  child.kill = (signal = "SIGTERM") => {
+    signals.push(signal);
+    if (signal === "SIGKILL") {
+      child.exitCode = 0;
+      queueMicrotask(() => child.emit("exit", 0, signal));
+    }
+    return true;
+  };
+  const client = new AppServerClient({ autoStart: false });
+  client.child = child;
+
+  const result = await client.stopChildProcess({
+    reason: "unit test",
+    pendingMessage: "stopping",
+    timeoutMs: 1,
+    forceKill: true,
+  });
+
+  assert.deepEqual(result, { ok: true, forced: true });
+  assert.equal(client.child, null);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
 test("app-server client restart rejects ready when start fails", async () => {
   const oldChild = new EventEmitter();
   oldChild.pid = 11;

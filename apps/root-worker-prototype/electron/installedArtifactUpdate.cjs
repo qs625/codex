@@ -17,6 +17,7 @@ const APP_SERVER_BINARY_NAME = "app-server";
 const DEFAULT_CONFIG_RELATIVE_PATH = "default-config";
 const SIGNATURE_RELATIVE_PATH = path.join("Contents", "_CodeSignature");
 const DIRECT_REFRESH_STAGING_PREFIX = "morpheus-runtime-refresh-";
+const ELECTRON_SHELL_RELATIVE_DIR = "electron";
 
 function resolveInstalledArtifactUpdatePlan({
   env = process.env,
@@ -48,6 +49,11 @@ function resolveInstalledArtifactUpdatePlan({
     spawnSync: spawn,
   });
 
+  const shellUpdate = resolveElectronShellUpdate({
+    resourcesPath,
+    sourceAppDir,
+  });
+
   return {
     appBundlePath,
     appServerBinaryPath: path.join(
@@ -65,6 +71,10 @@ function resolveInstalledArtifactUpdatePlan({
     ),
     frontendDistPath: path.join(sourceAppDir, "dist"),
     resourcesPath,
+    requiresFullRelaunch: shellUpdate.changed,
+    runtimeUpdate: {
+      electronShell: shellUpdate,
+    },
     sourceAppDir,
     workspace: resolvedWorkspace,
     artifacts: [
@@ -73,6 +83,120 @@ function resolveInstalledArtifactUpdatePlan({
       { kind: "directory", relativePath: DEFAULT_CONFIG_RELATIVE_PATH },
     ],
   };
+}
+
+function resolveElectronShellUpdate({
+  resourcesPath,
+  sourceAppDir,
+  relativePaths,
+  readFileSync = fs.readFileSync,
+  readdirSync = fs.readdirSync,
+} = {}) {
+  const shellRelativePaths = relativePaths ?? [
+    ...new Set([
+      ...listElectronShellSourceRelativePaths(sourceAppDir, { readdirSync }),
+      ...listInstalledElectronShellRelativePaths(resourcesPath, { readdirSync }),
+    ]),
+  ].sort();
+  const changedPaths = [];
+  const missingInstalledPaths = [];
+  const missingSourcePaths = [];
+  for (const relativePath of shellRelativePaths) {
+    const sourcePath = path.join(sourceAppDir, relativePath);
+    const installedPath = path.join(
+      resourcesPath,
+      APP_ASAR_RELATIVE_PATH,
+      relativePath,
+    );
+    let sourceDigest;
+    let installedDigest;
+    try {
+      sourceDigest = bufferDigest(readFileSync(sourcePath));
+    } catch {
+      missingSourcePaths.push(relativePath);
+      changedPaths.push(relativePath);
+      continue;
+    }
+    try {
+      installedDigest = bufferDigest(readFileSync(installedPath));
+    } catch {
+      missingInstalledPaths.push(relativePath);
+      changedPaths.push(relativePath);
+      continue;
+    }
+    if (sourceDigest !== installedDigest) {
+      changedPaths.push(relativePath);
+    }
+  }
+  return {
+    category: "electronShell",
+    changed: changedPaths.length > 0,
+    changedPaths,
+    missingInstalledPaths,
+    missingSourcePaths,
+  };
+}
+
+function listElectronShellSourceRelativePaths(sourceAppDir, options = {}) {
+  return listElectronShellRelativePaths(sourceAppDir, options);
+}
+
+function listInstalledElectronShellRelativePaths(resourcesPath, options = {}) {
+  return listElectronShellRelativePaths(
+    path.join(resourcesPath, APP_ASAR_RELATIVE_PATH),
+    options,
+  );
+}
+
+function listElectronShellRelativePaths(appRoot, options = {}) {
+  const readdirSync = options.readdirSync ?? fs.readdirSync;
+  const electronRoot = path.join(appRoot, ELECTRON_SHELL_RELATIVE_DIR);
+  const relativePaths = [];
+  try {
+    collectElectronShellSourceFiles({
+      currentPath: electronRoot,
+      electronRoot,
+      relativePaths,
+      readdirSync,
+    });
+  } catch (error) {
+    if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") {
+      throw error;
+    }
+  }
+  return relativePaths.sort();
+}
+
+function collectElectronShellSourceFiles({
+  currentPath,
+  electronRoot,
+  relativePaths,
+  readdirSync,
+}) {
+  for (const entry of readdirSync(currentPath, { withFileTypes: true })) {
+    const entryPath = path.join(currentPath, entry.name);
+    if (entry.isDirectory()) {
+      collectElectronShellSourceFiles({
+        currentPath: entryPath,
+        electronRoot,
+        relativePaths,
+        readdirSync,
+      });
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".cjs")) {
+      continue;
+    }
+    if (entry.name.endsWith(".test.cjs")) {
+      continue;
+    }
+    relativePaths.push(
+      path.join(
+        ELECTRON_SHELL_RELATIVE_DIR,
+        path.relative(electronRoot, entryPath),
+      ),
+    );
+  }
 }
 
 function resolveCargoTargetDirectory({
@@ -420,7 +544,11 @@ function assertFileDigestsEqual(stagedPath, installedPath, options = {}) {
 
 function fileDigest(filePath, options = {}) {
   const readFileSync = options.readFileSync ?? fs.readFileSync;
-  return crypto.createHash("sha256").update(readFileSync(filePath)).digest("hex");
+  return bufferDigest(readFileSync(filePath));
+}
+
+function bufferDigest(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
 function listDirectoryFiles(rootPath) {
@@ -600,6 +728,9 @@ module.exports = {
   backupSignatureMetadataSync,
   packAppAsar,
   prepareDirectArtifacts,
+  listInstalledElectronShellRelativePaths,
+  listElectronShellSourceRelativePaths,
+  resolveElectronShellUpdate,
   resolveCargoTargetDirectory,
   resolveInstalledArtifactUpdatePlan,
   updateInstalledArtifacts,
