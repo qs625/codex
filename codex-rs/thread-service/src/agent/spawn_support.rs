@@ -128,7 +128,7 @@ pub(crate) async fn build_agent_spawn_config(
     Ok(config)
 }
 
-async fn reload_spawn_cwd_config(config: &Config) -> Result<Config, FunctionCallError> {
+pub(crate) async fn reload_spawn_cwd_config(config: &Config) -> Result<Config, FunctionCallError> {
     let refreshed_config = ConfigBuilder::default()
         .codex_home(config.codex_home.to_path_buf())
         .harness_overrides(ConfigOverrides {
