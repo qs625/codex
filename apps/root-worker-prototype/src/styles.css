@@ -5342,7 +5342,10 @@ svg {
 .preview-header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
 }
 
 .preview-mode-toggle {
@@ -6417,6 +6420,11 @@ svg {
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.preview-header-edit-actions,
+.preview-header-edit-action {
+  flex: none;
 }
 
 .preview-edit-action {
