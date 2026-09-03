@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Implement global virtual `/` thread/agent path namespace semantics so inter-agent tools can resolve agents across project roots.
 
 ## Active Work
+- id: global-agent-path-namespace
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/global-agent-path-namespace
+  task_type: bugfix/runtime-architecture
+  depends_on: main baseline `3266a792cc380cfc37ef38f275b3523d106956dd`
+  files: codex-rs/protocol/src/agent_path.rs; codex-rs/agent-runtime/src/control_plan.rs; codex-rs/agent-runtime/src/registry.rs; app-server/thread-service inter-agent path lookup and thread-spawn metadata paths as needed; apps/root-worker-prototype path validation/display tests only if backend contract changes surface in UI
+  base_commit: 3266a792cc380cfc37ef38f275b3523d106956dd
+  pending_sync_from_main: none; PM realigned dev-3 non-destructively by creating `feature/global-agent-path-namespace` from local source workspace main after confirming the worktree was clean. Old dev-3 branch `bugfix/runtime-refresh-electron-shell-relaunch` remains preserved at `2ccaa5680b`.
+  status: in_progress
+  objective: Fix the current bug where agents in different project roots cannot communicate through inter-agent tools. All threads/agents must hang under a unified virtual `/` namespace for lookup/reference semantics. Project roots may still appear as separate top-level UI/navigation groups, but inter-agent tools must resolve by global absolute path across projects rather than being scoped to the current project root. The historical `/root` path should remain a compatibility spelling where needed, not the runtime definition of the global root.
+  last_update: 2026-09-03 CST User clarified that every project is its own top-level project, while inter-agent tools still need path-based lookup across all threads because all threads conceptually live under a virtual `/`, and confirmed that the current symptom is project-to-project communication does not work. PM confirmed current code still uses `AgentPath::ROOT = "/root"` and `AgentPath::resolve` treats `/root` specially, then assigned owner_dev_3 on a fresh main-based branch.
+  next_action: owner_dev_3 implement and self-validate; PM to review design semantics before merge.
+  blockers: none
+  validation: pending
+  commit:
 - id: runtime-refresh-electron-shell-relaunch
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
@@ -226,5 +242,5 @@ Recent completed work older than 2026-08-19 is archived in [PM Progress Archive]
 ## Known Issues
 - 2026-09-03 Right Panel File Preview does not keep OS file descriptors open after reading, but text previews are loaded as full UTF-8 strings into React state and one preview is remembered per project root. There is no explicit file-size cap or preview-memory/LRU cap yet, so very large files or many project roots can still increase renderer memory. Future file preview hardening should add bounded preview size and/or memory eviction without changing the basic read-close file behavior.
 - 2026-09-03 editable file preview exposed an installed refresh boundary: ordinary frontend/backend changes can use app-server restart + renderer reload, but changes to Electron `main.cjs` or main-process IPC handlers may require a full Electron app relaunch to enter the running process. This was not the root cause of the missing markdown Edit button after a real quit/open, so it is deferred from the markdown UI follow-up and should be handled as a separate runtime lifecycle task.
-- 2026-09-03 after merging File Preview header edit completion, `/Users/bytedance/Projects/my-codex-dev-3` was fast-forwarded to superseded main progress commit `2ccaa5680b`; PM later amended/replaced progress commits and archived old progress through canonical main `9761cef9c`, so dev-3 is clean but cannot fast-forward and needs explicit clean realignment before its next assignment. `/Users/bytedance/Projects/my-codex-dev-2` could not fast-forward because its branch still contains old local progress commit `2af1b92db0` while main has the canonical later progress history; it also still has unrelated untracked `apps/android-companion/local.properties`. Do not assign new work to dev-2 or dev-3 until the checkout is realigned without losing local files.
+- 2026-09-03 after merging File Preview header edit completion, `/Users/bytedance/Projects/my-codex-dev-3` was fast-forwarded to superseded main progress commit `2ccaa5680b`; PM later amended/replaced progress commits and archived old progress through canonical main `9761cef9c`. PM realigned dev-3 non-destructively for `global-agent-path-namespace` by creating branch `feature/global-agent-path-namespace` from source workspace main `3266a792c`; the old branch remains preserved. `/Users/bytedance/Projects/my-codex-dev-2` could not fast-forward because its branch still contains old local progress commit `2af1b92db0` while main has the canonical later progress history; it also still has unrelated untracked `apps/android-companion/local.properties`. Do not assign new work to dev-2 until the checkout is realigned without losing local files.
 - 2026-09-03 older known issues and undated legacy issues moved to [known-issues-through-2026-08-18.md](pm-progress-archive/known-issues-through-2026-08-18.md).
