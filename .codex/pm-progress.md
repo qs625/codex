@@ -8,7 +8,7 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Implement global virtual `/` thread/agent path namespace semantics so inter-agent tools can resolve agents across project roots.
+None
 
 ## Active Work
 - id: global-agent-path-namespace
@@ -20,13 +20,13 @@ Implement global virtual `/` thread/agent path namespace semantics so inter-agen
   files: codex-rs/protocol/src/agent_path.rs; codex-rs/agent-runtime/src/control_plan.rs; codex-rs/agent-runtime/src/registry.rs; app-server/thread-service inter-agent path lookup and thread-spawn metadata paths as needed; apps/root-worker-prototype path validation/display tests only if backend contract changes surface in UI
   base_commit: 3266a792cc380cfc37ef38f275b3523d106956dd
   pending_sync_from_main: none; PM realigned dev-3 non-destructively by creating `feature/global-agent-path-namespace` from local source workspace main after confirming the worktree was clean. Old dev-3 branch `bugfix/runtime-refresh-electron-shell-relaunch` remains preserved at `2ccaa5680b`.
-  status: ready_to_merge
+  status: merged
   objective: Fix the current bug where agents in different project roots cannot communicate through inter-agent tools. All threads/agents must hang under a unified virtual `/` namespace for lookup/reference semantics. Project roots may still appear as separate top-level UI/navigation groups, but inter-agent tools must resolve by global absolute path across projects rather than being scoped to the current project root. The historical `/root` path should remain a compatibility spelling where needed, not the runtime definition of the global root.
-  last_update: 2026-09-03 CST Owner_dev_3 delivered `c58694dbe3`: absolute reference / absolute prefix list / no-prefix list now use a ThreadService-level global virtual `/` namespace; relative reference/list remains current-root scoped; `read_agent(thread_id)` keeps current-directory visibility checks while resolver-authorized reads use direct details; root-level persisted native threads can be read/listed but are not restored as subagents; external `ReadExternalAgent` uses a read-only resolver while followup/close keep live/restore constraints. Fixed reviewer passed after raw ThreadId visibility, root-level persisted restore, and external read-only resolver issues were fixed.
-  next_action: PM design-check and merge dev-3 commit into main.
+  last_update: 2026-09-03 CST PM design-checked owner_dev_3 delivery against the global virtual `/` namespace brief and merged `c58694dbe3` into main as `8cf853b21`. Main validation passed for absolute-global list, cross-project external followup/list, root-level persisted native read/restore protection, diff check, and app-server build. Build warnings are existing linker/future-incompat warnings.
+  next_action: none
   blockers: none
-  validation: Owner ran `rtk cargo test -p codex-agent-runtime resolve_agent_reference_path_keeps_absolute_paths_global`; `rtk cargo test -p codex-agent-runtime list_agents_plan_absolute_project_prefix_is_global`; `rtk cargo test -p thread-service root_external_list_agents_is_scoped_to_sender_root`; `rtk cargo test -p thread-service external_followup_and_list_use_global_absolute_agent_paths`; `rtk cargo test -p thread-service persisted_root_level_native_agent_can_be_read_but_not_restored_as_subagent`; `rtk cargo build -p app-server --bin app-server`; `rtk git diff --check` -> all passed. Full `rtk cargo fmt --check` still fails on existing untouched formatting drift; owner ran targeted rustfmt for touched files.
-  commit: c58694dbe3
+  validation: Owner ran `rtk cargo test -p codex-agent-runtime resolve_agent_reference_path_keeps_absolute_paths_global`; `rtk cargo test -p codex-agent-runtime list_agents_plan_absolute_project_prefix_is_global`; `rtk cargo test -p thread-service root_external_list_agents_is_scoped_to_sender_root`; `rtk cargo test -p thread-service external_followup_and_list_use_global_absolute_agent_paths`; `rtk cargo test -p thread-service persisted_root_level_native_agent_can_be_read_but_not_restored_as_subagent`; `rtk cargo build -p app-server --bin app-server`; `rtk git diff --check` -> all passed. PM reran merged-main `rtk cargo test -p codex-agent-runtime list_agents_plan_absolute_project_prefix_is_global`; `rtk cargo test -p thread-service external_followup_and_list_use_global_absolute_agent_paths`; `rtk cargo test -p thread-service persisted_root_level_native_agent_can_be_read_but_not_restored_as_subagent`; `rtk git diff --check HEAD~1..HEAD`; `rtk cargo build -p app-server --bin app-server` -> all passed. Full `rtk cargo fmt --check` still fails on existing untouched formatting drift; owner ran targeted rustfmt for touched files.
+  commit: 8cf853b21, c58694dbe3
 - id: runtime-refresh-electron-shell-relaunch
   owner: /my_codex/owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
@@ -238,6 +238,10 @@ Implement global virtual `/` thread/agent path namespace semantics so inter-agen
 
 ## Completed
 Recent completed work older than 2026-08-19 is archived in [PM Progress Archive](pm-progress-archive/index.md).
+- commit: 8cf853b21
+  summary: Merged global virtual `/` agent path namespace semantics so absolute inter-agent reference/list/read can cross project roots while relative references remain scoped and legacy `/root` compatibility is preserved.
+  validation: Main reran focused codex-agent-runtime/thread-service tests, `rtk git diff --check HEAD~1..HEAD`, and `rtk cargo build -p app-server --bin app-server`; all passed, with only existing linker/future-incompat warnings.
+  residual_risk: Global persisted agent directory currently scans state DB non-archived metadata in 1000-row pages; if historical agent volume grows substantially, this may need an indexed lookup optimization.
 
 ## Known Issues
 - 2026-09-03 Right Panel File Preview does not keep OS file descriptors open after reading, but text previews are loaded as full UTF-8 strings into React state and one preview is remembered per project root. There is no explicit file-size cap or preview-memory/LRU cap yet, so very large files or many project roots can still increase renderer memory. Future file preview hardening should add bounded preview size and/or memory eviction without changing the basic read-close file behavior.
