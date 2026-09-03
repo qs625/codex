@@ -730,6 +730,53 @@ mod tests {
     }
 
     #[test]
+    fn list_agents_plan_absolute_project_prefix_is_global() {
+        let project_a_worker = AgentPath::try_from("/project_a/worker").expect("agent path");
+        let project_b_worker = AgentPath::try_from("/project_b/worker").expect("agent path");
+        let project_b_reviewer =
+            AgentPath::try_from("/project_b/worker/reviewer").expect("agent path");
+        let current = AgentPath::try_from("/project_a/owner").expect("agent path");
+        let project_a_thread = ThreadId::new();
+        let project_b_thread = ThreadId::new();
+        let reviewer_thread = ThreadId::new();
+
+        let plan = list_agents_plan(
+            &current,
+            Some("/project_b"),
+            vec![
+                AgentMetadata {
+                    agent_id: Some(project_a_thread),
+                    agent_path: Some(project_a_worker),
+                    ..Default::default()
+                },
+                AgentMetadata {
+                    agent_id: Some(reviewer_thread),
+                    agent_path: Some(project_b_reviewer),
+                    ..Default::default()
+                },
+                AgentMetadata {
+                    agent_id: Some(project_b_thread),
+                    agent_path: Some(project_b_worker.clone()),
+                    ..Default::default()
+                },
+            ],
+        )
+        .expect("plan");
+
+        assert!(!plan.include_root);
+        assert_eq!(
+            plan.candidates
+                .into_iter()
+                .map(|candidate| candidate.agent_name)
+                .collect::<Vec<_>>(),
+            vec![
+                project_b_worker.to_string(),
+                "/project_b/worker/reviewer".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn list_agents_plan_uses_thread_id_when_path_is_missing() {
         let thread_id = ThreadId::new();
         let plan = list_agents_plan(
@@ -928,6 +975,20 @@ mod tests {
         assert_eq!(
             resolve_agent_reference_path(&current, "reviewer").expect("resolved"),
             AgentPath::try_from("/root/owner/reviewer").expect("agent path")
+        );
+    }
+
+    #[test]
+    fn resolve_agent_reference_path_keeps_absolute_paths_global() {
+        let current = AgentPath::try_from("/project_a/owner").expect("agent path");
+
+        assert_eq!(
+            resolve_agent_reference_path(&current, "/project_b/worker").expect("resolved"),
+            AgentPath::try_from("/project_b/worker").expect("agent path")
+        );
+        assert_eq!(
+            resolve_agent_reference_path(&current, "child").expect("resolved"),
+            AgentPath::try_from("/project_a/owner/child").expect("agent path")
         );
     }
 
