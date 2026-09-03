@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld("codexDesktop", {
   listLocalDirectory: (target) =>
     ipcRenderer.invoke("codex:listLocalDirectory", target),
   readLocalFile: (target) => ipcRenderer.invoke("codex:readLocalFile", target),
+  writeLocalFile: (target, content) =>
+    ipcRenderer.invoke("codex:writeLocalFile", target, content),
   readLocalImage: (target) =>
     ipcRenderer.invoke("codex:readLocalImage", target),
   readGitSnapshot: (cwd, options) =>

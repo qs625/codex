@@ -45,6 +45,7 @@ import { isConversationNearBottom } from "./lib/conversationScroll";
 import {
   getProjectFilePreview,
   rememberProjectFilePreview,
+  rememberSavedProjectFilePreview,
   shouldRestoreProjectFilePreview,
   type FilePreviewMemoryByRootId,
 } from "./lib/filePreviewMemory";
@@ -2938,6 +2939,27 @@ function App() {
     }
   }
 
+  function updateFilePreviewAfterSave(
+    preview: FilePreview,
+    rootId: string | null,
+  ) {
+    const currentRootId = selectedTreeRootIdRef.current;
+    const currentPreview = filePreviewRef.current;
+    if (currentRootId !== rootId || currentPreview?.path !== preview.path) {
+      return;
+    }
+    setFilePreview(preview);
+    setFilePreviewByRootId((current) =>
+      rememberSavedProjectFilePreview(
+        current,
+        currentRootId,
+        rootId,
+        currentPreview,
+        preview,
+      ),
+    );
+  }
+
   function beginResize(panel: "left" | "right", clientX: number) {
     resizeStateRef.current = {
       panel,
@@ -3071,6 +3093,8 @@ function App() {
           }
           onOpenPreviewExternally={() => void openPreviewExternally()}
           onOpenTreeFile={handleOpenTreeFile}
+          onPreviewUpdated={updateFilePreviewAfterSave}
+          previewRootId={selectedTreeRootId}
           onSelectCommandMonitor={(commandItemId) =>
             setFocusedConversationItem((current) => ({
               itemId: commandItemId,

@@ -29,6 +29,7 @@ const {
   buildPdfPreview,
   FILE_PREVIEW_PROTOCOL,
 } = require("./localFilePreview.cjs");
+const { writeLocalFileTarget } = require("./localFileWrite.cjs");
 const { languageForFilePath } = require("./filePreviewLanguages.cjs");
 const { readGitCommitFiles, readGitSnapshot } = require("./gitPanel.cjs");
 const { LspManager } = require("./lsp/manager.cjs");
@@ -568,6 +569,10 @@ ipcMain.handle("codex:browser:stop", async (event) => {
 
 ipcMain.handle("codex:readLocalFile", async (_event, target) => {
   return readLocalFileTarget(target);
+});
+
+ipcMain.handle("codex:writeLocalFile", async (_event, target, content) => {
+  return writeLocalFileTarget(target, content, defaultWorkspace);
 });
 
 ipcMain.handle("codex:listLocalDirectory", async (_event, target) => {
