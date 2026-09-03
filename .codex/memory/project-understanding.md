@@ -22,6 +22,7 @@
 - workflow 中的 PM agent 不应被设计成一次性输出 owner brief 后就承担隐含持续监督；PM 模型线程结束后不会自动轮询 owner。owner 等待、超时、心跳、状态检查、完成通知消费、输出 schema 校验和异常分支应由 workflow runtime/script 持有；需要新的 PM 判断时，runtime 再显式唤起 PM/coordination step，并带上当前 durable state、owner 活动和异常证据。
 - 长期设计中，workflow 不能替代 PM 对依赖、冲突、owner 空闲、任务拆分和验收风险的语义判断；这些判断本身仍依赖模型理解代码库和当前上下文。workflow 真正能可靠化的是把 PM 的判断结果变成显式状态、有限转移、可审计事实和部分可自动检查的门禁，从而降低漏步骤、遗忘、错误交接和无人监督的概率；不能承诺“有 workflow 就一定正确”。
 - 模型可调用的 inter-agent tools 和 hook 系统已经是 runtime API 的真实样例：它们操作 thread/agent/event/pending input 等 runtime-owned 对象，而不是靠模型修改文件来间接影响行为。
+- agent path 属于 `ThreadService` 级全局虚拟 `/` namespace：absolute reference / absolute prefix list 可以跨 project/root group 查找，relative reference 仍从当前 agent path/root scope 解析；raw `ThreadId` read 仍必须受当前 agent directory 可见性约束。
 - 后续评估“是否把某能力做成 tool/API”时，优先问它是否操作 runtime 原生事实、是否能被 runtime enforce、是否需要进入 typed history 并在 compact/reload 后恢复；如果只是结构化记笔记或包装 markdown 修改，通常价值不大。
 - completion gate 的设计可先分为外部环境检查和内部 runtime 检查：外部检查优先用受控 shell gate；内部检查应依赖窄的 runtime introspection primitive，而不是一开始做万能高层 API。
 - completion gate 的 core runtime 不应负责定义“什么叫完成”，而应可靠暴露当前 runtime 状态；具体完成标准由 project/plugin/hook gate 组合 shell 结果和 runtime introspection 结果决定。

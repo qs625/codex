@@ -118,6 +118,8 @@ use protocol::protocol::UserMessageEvent;
 use serde::Deserialize;
 use serde_json::json;
 use state_api::DirectionalThreadSpawnEdgeStatus;
+use state_api::SortDirection;
+use state_api::SortKey;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
@@ -155,9 +157,9 @@ use tracing::warn;
 /// Control-plane handle for multi-agent operations.
 /// `AgentControl` is held by each session (via `SessionServices`). It provides capability to
 /// spawn new agents and the inter-agent communication layer.
-/// An `AgentControl` instance is intended to be created at most once per root thread/session
-/// tree. That same `AgentControl` is then shared with every sub-agent spawned from that root,
-/// which keeps the registry scoped to that root thread rather than the entire `ThreadService`.
+/// Agent paths live in a global virtual `/` namespace owned by the `ThreadService`; relative
+/// references are resolved from the current agent path, while absolute references can cross
+/// project root groupings.
 #[derive(Clone, Default)]
 pub(crate) struct AgentControl {
     /// ID shared by the whole agent control session. This means every sub-agents from a common
@@ -173,8 +175,8 @@ pub(crate) struct AgentControl {
 
 struct PersistedAgentTarget {
     thread_id: ThreadId,
-    parent_thread_id: ThreadId,
-    depth: i32,
+    parent_thread_id: Option<ThreadId>,
+    depth: Option<i32>,
 }
 
 #[derive(Clone)]
@@ -189,6 +191,12 @@ struct PersistedAgentPathCandidate {
     target: PersistedAgentTarget,
     updated_at: DateTime<Utc>,
     final_status: Option<AgentStatus>,
+}
+
+impl PersistedAgentTarget {
+    fn subagent_tree_facts(&self) -> Option<(ThreadId, i32)> {
+        Some((self.parent_thread_id?, self.depth?))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2526,21 +2534,11 @@ impl AgentControl {
             }
             ExternalToolName::ReadExternalAgent => {
                 let args: ExternalReadAgentArgs = parse_external_arguments(&call.arguments)?;
-                let source = if is_external_root_sender(&sender) {
-                    SessionSource::Unknown
-                } else {
-                    external_session_source_for(
-                        sender.parent_thread_id,
-                        sender.depth,
-                        sender.agent_path.clone(),
-                        sender.provider,
-                    )
-                };
                 let receiver_thread_id = self
                     .resolve_external_read_target(&sender, &args.target)
                     .await?;
                 let agent = self
-                    .read_agent(sender.thread_id, &source, receiver_thread_id)
+                    .read_resolved_agent(receiver_thread_id)
                     .await
                     .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
                 serde_json::to_value(codex_agent_runtime::ReadAgentToolResult { agent })
@@ -2750,27 +2748,9 @@ impl AgentControl {
         }
 
         let current_session_source = external_tool_directory_session_source(sender);
-        let resolution = self
-            .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
-                current_thread_id: sender.thread_id,
-                current_session_source,
-                agent_reference: target.to_string(),
-            })
+        self.resolve_agent_reference_for_read(sender.thread_id, &current_session_source, target)
             .await
-            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
-        match resolution {
-            AgentReferenceResolution::Live { thread_id }
-            | AgentReferenceResolution::PersistedExternalReadOnly { thread_id, .. }
-            | AgentReferenceResolution::PersistedNative { thread_id, .. } => Ok(thread_id),
-            AgentReferenceResolution::Unsupported { message, .. } => {
-                Err(FunctionCallError::RespondToModel(message))
-            }
-            AgentReferenceResolution::NotFound { agent_path } => {
-                Err(FunctionCallError::RespondToModel(format!(
-                    "unknown external agent target `{agent_path}`"
-                )))
-            }
-        }
+            .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))
     }
 
     /// Returns whether the live agent thread has `feature` enabled.
@@ -3015,26 +2995,42 @@ impl AgentControl {
         {
             return Ok(AgentReferenceResolution::Live { thread_id });
         }
-        let Some(root_thread_id) = self
-            .root_thread_id_for_persisted_agent_lookup(
+        let target = self
+            .persisted_agent_target_for_reference(
                 request.current_thread_id,
                 &request.current_session_source,
+                &request.agent_reference,
+                &agent_path,
             )
-            .await
-        else {
-            return Ok(AgentReferenceResolution::NotFound {
-                agent_path: agent_path.to_string(),
-            });
-        };
-        let Some(target) = self
-            .persisted_agent_target_for_path(root_thread_id, &agent_path)
-            .await?
-        else {
+            .await?;
+        let Some(target) = target else {
             return Ok(AgentReferenceResolution::NotFound {
                 agent_path: agent_path.to_string(),
             });
         };
         self.persisted_agent_reference_resolution(&target, &agent_path)
+            .await
+    }
+
+    async fn persisted_agent_target_for_reference(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+        agent_reference: &str,
+        agent_path: &AgentPath,
+    ) -> CodexResult<Option<PersistedAgentTarget>> {
+        if agent_reference.starts_with('/') {
+            return self
+                .persisted_agent_target_for_global_path(agent_path)
+                .await;
+        }
+        let Some(root_thread_id) = self
+            .root_thread_id_for_persisted_agent_lookup(current_thread_id, current_session_source)
+            .await
+        else {
+            return Ok(None);
+        };
+        self.persisted_agent_target_for_path(root_thread_id, agent_path)
             .await
     }
 
@@ -3089,9 +3085,12 @@ impl AgentControl {
                 )
                 .await?
         {
+            let Some((parent_thread_id, depth)) = target.subagent_tree_facts() else {
+                return Ok(target_thread_id);
+            };
             let session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-                parent_thread_id: target.parent_thread_id,
-                depth: target.depth,
+                parent_thread_id,
+                depth,
                 agent_path: None,
                 agent_nickname: None,
                 agent_role: None,
@@ -3122,10 +3121,19 @@ impl AgentControl {
             .await?;
         let eligibility = external_live_restore_eligibility(&stored_thread);
         if !eligibility.is_external() {
+            let Some((parent_thread_id, depth)) = target.subagent_tree_facts() else {
+                return Ok(AgentReferenceResolution::Unsupported {
+                    agent_path: agent_path.to_string(),
+                    message: format!(
+                        "agent path `{}` refers to a persisted root thread and cannot be restored as a subagent",
+                        agent_path.as_str()
+                    ),
+                });
+            };
             return Ok(AgentReferenceResolution::PersistedNative {
                 thread_id: target.thread_id,
-                parent_thread_id: target.parent_thread_id,
-                depth: target.depth,
+                parent_thread_id,
+                depth,
                 agent_path: agent_path.to_string(),
             });
         }
@@ -3165,10 +3173,19 @@ impl AgentControl {
                 });
             }
             ExternalLiveRestoreEligibility::NotExternal => {
+                let Some((parent_thread_id, depth)) = target.subagent_tree_facts() else {
+                    return Ok(AgentReferenceResolution::Unsupported {
+                        agent_path: agent_path.to_string(),
+                        message: format!(
+                            "agent path `{}` refers to a persisted root thread and cannot be restored as a subagent",
+                            agent_path.as_str()
+                        ),
+                    });
+                };
                 return Ok(AgentReferenceResolution::PersistedNative {
                     thread_id: target.thread_id,
-                    parent_thread_id: target.parent_thread_id,
-                    depth: target.depth,
+                    parent_thread_id,
+                    depth,
                     agent_path: agent_path.to_string(),
                 });
             }
@@ -3275,8 +3292,8 @@ impl AgentControl {
                     }
                     return Ok(Some(PersistedAgentTarget {
                         thread_id: child_thread_id,
-                        parent_thread_id,
-                        depth,
+                        parent_thread_id: Some(parent_thread_id),
+                        depth: Some(depth),
                     }));
                 }
                 let Some(metadata) = child_metadata else {
@@ -3347,8 +3364,8 @@ impl AgentControl {
                 if metadata.agent_path.as_deref() == Some(agent_path.as_str()) {
                     let target = PersistedAgentTarget {
                         thread_id: child_thread_id,
-                        parent_thread_id,
-                        depth,
+                        parent_thread_id: Some(parent_thread_id),
+                        depth: Some(depth),
                     };
                     candidates.push(PersistedAgentPathCandidate {
                         target,
@@ -3360,6 +3377,87 @@ impl AgentControl {
             }
         }
         self.select_persisted_agent_path_target(agent_path, candidates)
+    }
+
+    async fn persisted_agent_target_for_global_path(
+        &self,
+        agent_path: &AgentPath,
+    ) -> CodexResult<Option<PersistedAgentTarget>> {
+        let state = self.upgrade()?;
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return Ok(None);
+        };
+        let mut anchor = None;
+        let mut candidates = Vec::new();
+        let allowed_sources: &[String] = &[];
+        loop {
+            let page = state_db_ctx
+                .list_threads(
+                    1_000,
+                    false,
+                    allowed_sources,
+                    None,
+                    None,
+                    anchor.as_ref(),
+                    SortKey::UpdatedAt,
+                    SortDirection::Desc,
+                    None,
+                )
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!("failed to load persisted agent directory: {err}"))
+                })?;
+            for metadata in page.items {
+                if metadata.agent_path.as_deref() != Some(agent_path.as_str()) {
+                    continue;
+                }
+                if metadata.archived_at.is_some() {
+                    continue;
+                }
+                let Some(target) = self
+                    .persisted_agent_target_for_thread_metadata(&metadata)
+                    .await?
+                else {
+                    continue;
+                };
+                candidates.push(PersistedAgentPathCandidate {
+                    target,
+                    updated_at: metadata.updated_at,
+                    final_status: self.persisted_final_agent_status(metadata.id).await,
+                });
+            }
+            let Some(next_anchor) = page.next_anchor else {
+                break;
+            };
+            anchor = Some(next_anchor);
+        }
+        self.select_persisted_agent_path_target(agent_path, candidates)
+    }
+
+    async fn persisted_agent_target_for_thread_metadata(
+        &self,
+        metadata: &state_api::ThreadMetadata,
+    ) -> CodexResult<Option<PersistedAgentTarget>> {
+        let state = self.upgrade()?;
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return Ok(None);
+        };
+        let root_thread_id = state_db_ctx
+            .find_thread_spawn_root(metadata.id)
+            .await
+            .map_err(|err| {
+                CodexErr::Fatal(format!("failed to load persisted thread-spawn root: {err}"))
+            })?
+            .unwrap_or(metadata.id);
+        if root_thread_id == metadata.id {
+            return Ok(Some(PersistedAgentTarget {
+                thread_id: metadata.id,
+                parent_thread_id: None,
+                depth: None,
+            }));
+        }
+        self.persisted_agent_target_for_thread_id_from_root(root_thread_id, metadata.id)
+            .await
     }
 
     fn select_persisted_agent_path_target(
@@ -3482,37 +3580,96 @@ impl AgentControl {
         current_session_source: &SessionSource,
         agent_id: ThreadId,
     ) -> CodexResult<AgentDetails> {
-        let directory = self
-            .list_agent_directory(AgentDirectoryListRequest {
-                current_thread_id,
-                current_session_source: current_session_source.clone(),
-                path_prefix: None,
-            })
-            .await?;
-
-        let Some(entry) = directory
-            .entries
-            .into_iter()
-            .find(|entry| entry.thread_id == agent_id)
-        else {
+        if !self
+            .agent_id_visible_for_read(current_thread_id, current_session_source, agent_id)
+            .await?
+        {
             return Err(CodexErr::UnsupportedOperation(format!(
-                "agent `{agent_id}` is not visible from the current root thread"
+                "agent `{agent_id}` is not visible from the current agent directory"
+            )));
+        }
+        self.read_resolved_agent(agent_id).await
+    }
+
+    pub(crate) async fn read_resolved_agent(
+        &self,
+        agent_id: ThreadId,
+    ) -> CodexResult<AgentDetails> {
+        let Some(metadata) = self.agent_metadata_for_read(agent_id).await else {
+            return Err(CodexErr::UnsupportedOperation(format!(
+                "agent `{agent_id}` is not visible from the current agent directory"
             )));
         };
 
-        let Some(agent_name) = entry.agent_path else {
+        let Some(agent_name) = metadata.agent_path else {
             return Err(CodexErr::UnsupportedOperation(format!(
                 "agent `{agent_id}` is missing an agent_path"
             )));
         };
 
         Ok(AgentDetails {
-            agent_name,
-            agent_nickname: entry.agent_nickname,
-            agent_role: entry.agent_role,
-            lifecycle_status: entry.lifecycle_status,
-            last_task_message: entry.last_task_message,
+            agent_name: agent_name.to_string(),
+            agent_nickname: metadata.agent_nickname,
+            agent_role: metadata.agent_role,
+            lifecycle_status: self
+                .listed_thread_lifecycle(agent_id)
+                .await
+                .unwrap_or(ThreadLifecycleStatus::NotLoaded),
+            last_task_message: metadata.last_task_message,
         })
+    }
+
+    async fn agent_id_visible_for_read(
+        &self,
+        current_thread_id: ThreadId,
+        current_session_source: &SessionSource,
+        agent_id: ThreadId,
+    ) -> CodexResult<bool> {
+        let Some(root_thread_id) = self
+            .root_thread_id_for_persisted_agent_lookup(current_thread_id, current_session_source)
+            .await
+        else {
+            return Ok(agent_id == current_thread_id);
+        };
+        if agent_id == root_thread_id {
+            return Ok(true);
+        }
+        if self
+            .list_agent_subtree_thread_ids(root_thread_id)
+            .await?
+            .contains(&agent_id)
+        {
+            return Ok(true);
+        }
+
+        let mut visible_external_thread_ids = HashSet::from([root_thread_id]);
+        loop {
+            let mut changed = false;
+            for run in self.external_agents.list() {
+                if visible_external_thread_ids.contains(&run.parent_thread_id)
+                    && visible_external_thread_ids.insert(run.thread_id)
+                {
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        Ok(visible_external_thread_ids.contains(&agent_id))
+    }
+
+    async fn agent_metadata_for_read(&self, agent_id: ThreadId) -> Option<AgentMetadata> {
+        if let Some(metadata) = self.state.agent_metadata_for_thread(agent_id) {
+            return Some(metadata);
+        }
+        if let Some(run) = self.external_agents.get(agent_id) {
+            return Some(external_metadata(&run));
+        }
+        let state = self.upgrade().ok()?;
+        let state_db_ctx = state.thread_state_runtime()?;
+        self.persisted_agent_metadata(agent_id, state_db_ctx.as_ref())
+            .await
     }
 
     pub(crate) async fn list_agent_directory(
@@ -3526,17 +3683,22 @@ impl AgentControl {
                 &request.current_session_source,
             )
             .await;
-        let root_thread_id =
-            if thread_spawn_parent_thread_id(&request.current_session_source).is_none() {
-                Some(request.current_thread_id)
-            } else {
-                self.persisted_thread_spawn_root(request.current_thread_id)
-                    .await
-                    .or_else(|| self.state.agent_id_for_path(&AgentPath::root()))
-            };
+        let use_global_directory = request
+            .path_prefix
+            .as_deref()
+            .is_none_or(|path_prefix| path_prefix.starts_with('/'));
+        let root_thread_id = if use_global_directory {
+            None
+        } else if thread_spawn_parent_thread_id(&request.current_session_source).is_none() {
+            Some(request.current_thread_id)
+        } else {
+            self.persisted_thread_spawn_root(request.current_thread_id)
+                .await
+                .or_else(|| self.state.agent_id_for_path(&AgentPath::root()))
+        };
         let directory_metadata = self
             .registered_agent_directory_metadata(root_thread_id)
-            .await;
+            .await?;
         let source_by_thread_id = directory_metadata
             .iter()
             .filter_map(|entry| {
@@ -3706,7 +3868,7 @@ impl AgentControl {
     async fn registered_agent_directory_metadata(
         &self,
         root_thread_id: Option<ThreadId>,
-    ) -> Vec<AgentDirectoryMetadata> {
+    ) -> CodexResult<Vec<AgentDirectoryMetadata>> {
         let mut registered_agents = Vec::new();
         for metadata in self.state.registered_agents() {
             let source = self
@@ -3723,19 +3885,21 @@ impl AgentControl {
                 depth,
             });
         }
-        let Some(root_thread_id) = root_thread_id else {
-            return registered_agents;
+        let scoped_thread_ids = if let Some(root_thread_id) = root_thread_id {
+            let mut scoped_thread_ids = HashSet::from([root_thread_id]);
+            if let Ok(descendant_ids) = self.live_thread_spawn_descendants(root_thread_id).await {
+                scoped_thread_ids.extend(descendant_ids);
+            }
+            registered_agents.retain(|metadata| {
+                metadata
+                    .metadata
+                    .agent_id
+                    .is_some_and(|thread_id| scoped_thread_ids.contains(&thread_id))
+            });
+            Some(scoped_thread_ids)
+        } else {
+            None
         };
-        let mut scoped_thread_ids = HashSet::from([root_thread_id]);
-        if let Ok(descendant_ids) = self.live_thread_spawn_descendants(root_thread_id).await {
-            scoped_thread_ids.extend(descendant_ids);
-        }
-        registered_agents.retain(|metadata| {
-            metadata
-                .metadata
-                .agent_id
-                .is_some_and(|thread_id| scoped_thread_ids.contains(&thread_id))
-        });
         let mut registered_thread_ids = registered_agents
             .iter()
             .filter_map(|metadata| metadata.metadata.agent_id)
@@ -3751,8 +3915,10 @@ impl AgentControl {
             })
             .collect::<HashSet<_>>();
         for run in self.external_agents.list().into_iter().filter(|run| {
-            scoped_thread_ids.contains(&run.parent_thread_id)
-                || scoped_thread_ids.contains(&run.thread_id)
+            scoped_thread_ids.as_ref().is_none_or(|scoped_thread_ids| {
+                scoped_thread_ids.contains(&run.parent_thread_id)
+                    || scoped_thread_ids.contains(&run.thread_id)
+            })
         }) {
             let metadata = external_metadata(&run);
             if let Some(existing) = registered_agents
@@ -3778,11 +3944,20 @@ impl AgentControl {
                 });
             }
         }
+        let Some(root_thread_id) = root_thread_id else {
+            self.append_global_persisted_agent_directory_metadata(
+                &mut registered_agents,
+                &mut registered_thread_ids,
+                &mut registered_agent_paths,
+            )
+            .await?;
+            return Ok(registered_agents);
+        };
         let Ok(state) = self.upgrade() else {
-            return registered_agents;
+            return Ok(registered_agents);
         };
         let Some(state_db_ctx) = state.thread_state_runtime() else {
-            return registered_agents;
+            return Ok(registered_agents);
         };
         let mut queue = VecDeque::from([(root_thread_id, 0)]);
         let mut seen = HashSet::from([root_thread_id]);
@@ -3794,7 +3969,7 @@ impl AgentControl {
                 )
                 .await
             else {
-                return registered_agents;
+                return Ok(registered_agents);
             };
             for child_thread_id in child_ids {
                 if !seen.insert(child_thread_id) {
@@ -3855,7 +4030,82 @@ impl AgentControl {
             }
         }
 
-        registered_agents
+        Ok(registered_agents)
+    }
+
+    async fn append_global_persisted_agent_directory_metadata(
+        &self,
+        registered_agents: &mut Vec<AgentDirectoryMetadata>,
+        registered_thread_ids: &mut HashSet<ThreadId>,
+        registered_agent_paths: &mut HashSet<String>,
+    ) -> CodexResult<()> {
+        let state = self.upgrade()?;
+        let Some(state_db_ctx) = state.thread_state_runtime() else {
+            return Ok(());
+        };
+        let mut anchor = None;
+        let allowed_sources: &[String] = &[];
+        loop {
+            let page = state_db_ctx
+                .list_threads(
+                    1_000,
+                    false,
+                    allowed_sources,
+                    None,
+                    None,
+                    anchor.as_ref(),
+                    SortKey::UpdatedAt,
+                    SortDirection::Desc,
+                    None,
+                )
+                .await
+                .map_err(|err| {
+                    CodexErr::Fatal(format!("failed to load persisted agent directory: {err}"))
+                })?;
+            for metadata in page.items {
+                if metadata.archived_at.is_some() {
+                    continue;
+                }
+                let Some(agent_metadata) =
+                    persisted_agent_metadata_from_state_metadata(metadata.id, &metadata)
+                else {
+                    continue;
+                };
+                if agent_metadata
+                    .agent_path
+                    .as_ref()
+                    .is_some_and(AgentPath::is_root)
+                {
+                    continue;
+                }
+                let Some(agent_path) = agent_metadata.agent_path.as_ref() else {
+                    continue;
+                };
+                if registered_thread_ids.contains(&metadata.id)
+                    || registered_agent_paths.contains(agent_path.as_str())
+                {
+                    continue;
+                }
+                registered_thread_ids.insert(metadata.id);
+                registered_agent_paths.insert(agent_path.to_string());
+                let (parent_thread_id, depth) = self
+                    .persisted_agent_target_for_thread_metadata(&metadata)
+                    .await?
+                    .map(|target| (target.parent_thread_id, target.depth))
+                    .unwrap_or((None, None));
+                registered_agents.push(AgentDirectoryMetadata {
+                    metadata: agent_metadata,
+                    source: AgentDirectoryEntrySource::Persisted,
+                    parent_thread_id,
+                    depth,
+                });
+            }
+            let Some(next_anchor) = page.next_anchor else {
+                break;
+            };
+            anchor = Some(next_anchor);
+        }
+        Ok(())
     }
 
     async fn persisted_agent_metadata(
@@ -4229,24 +4479,39 @@ impl AgentControl {
         current_session_source: &SessionSource,
         agent_reference: &str,
     ) -> CodexResult<ThreadId> {
-        let resolution = self
-            .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
-                current_thread_id,
-                current_session_source: current_session_source.clone(),
-                agent_reference: agent_reference.to_string(),
-            })
-            .await?;
-        match resolution {
-            AgentReferenceResolution::Live { thread_id }
-            | AgentReferenceResolution::PersistedExternalReadOnly { thread_id, .. }
-            | AgentReferenceResolution::PersistedNative { thread_id, .. } => Ok(thread_id),
-            AgentReferenceResolution::Unsupported { message, .. } => {
-                Err(CodexErr::UnsupportedOperation(message))
-            }
-            AgentReferenceResolution::NotFound { agent_path } => Err(
-                CodexErr::UnsupportedOperation(format!("unknown agent target `{agent_path}`")),
-            ),
+        let current_agent_path = self.current_agent_path(current_thread_id, current_session_source);
+        let agent_path = resolve_agent_reference_path(&current_agent_path, agent_reference)
+            .map_err(CodexErr::UnsupportedOperation)?;
+        if let Some(thread_id) = self.state.agent_id_for_path(&agent_path)
+            && self.agent_thread_is_live(thread_id).await
+        {
+            return Ok(thread_id);
         }
+        if let Some(thread_id) = self
+            .live_directory_thread_id_for_path(
+                current_thread_id,
+                current_session_source,
+                &agent_path,
+            )
+            .await?
+        {
+            return Ok(thread_id);
+        }
+        if let Some(target) = self
+            .persisted_agent_target_for_reference(
+                current_thread_id,
+                current_session_source,
+                agent_reference,
+                &agent_path,
+            )
+            .await?
+        {
+            return Ok(target.thread_id);
+        }
+        Err(CodexErr::UnsupportedOperation(format!(
+            "unknown agent target `{}`",
+            agent_path.as_str()
+        )))
     }
 
     async fn live_thread_spawn_descendants(

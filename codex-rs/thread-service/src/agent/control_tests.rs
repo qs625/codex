@@ -853,6 +853,17 @@ async fn root_external_list_agents_is_scoped_to_sender_root() {
         .await
         .expect("read root scoped agent");
     assert_eq!(details.last_task_message.as_deref(), Some("worker A"));
+    harness
+        .control
+        .read_agent(root_a, &SessionSource::Unknown, worker_b)
+        .await
+        .expect_err("thread id read should not cross root-scoped directories");
+    let details = harness
+        .control
+        .read_agent(root_b, &SessionSource::Unknown, worker_b)
+        .await
+        .expect("read duplicate root scoped agent by thread id");
+    assert_eq!(details.last_task_message.as_deref(), Some("worker B"));
 }
 
 #[tokio::test]
@@ -988,6 +999,297 @@ async fn root_external_followup_resolves_target_within_sender_scope() {
             _ => false,
         }),
         "external followup must not persist provider-visible raw envelopes as ordinary messages"
+    );
+}
+
+#[tokio::test]
+async fn external_followup_and_list_use_global_absolute_agent_paths() {
+    let harness = AgentControlHarness::new().await;
+    let root_a = ThreadId::new();
+    let root_b = ThreadId::new();
+    let worker_a = ThreadId::new();
+    let worker_b = ThreadId::new();
+    let (input_tx_a, mut input_rx_a) = tokio::sync::mpsc::unbounded_channel();
+    let (input_tx_b, mut input_rx_b) = tokio::sync::mpsc::unbounded_channel();
+
+    for (thread_id, parent_thread_id, path, depth, input_sink, task) in [
+        (root_a, root_a, "/project_a", 0, None, "project A"),
+        (root_b, root_b, "/project_b", 0, None, "project B"),
+        (
+            worker_a,
+            root_a,
+            "/project_a/worker",
+            1,
+            Some(crate::agent::external::ExternalAgentInputSink::new(
+                input_tx_a,
+            )),
+            "worker A",
+        ),
+        (
+            worker_b,
+            root_b,
+            "/project_b/worker",
+            1,
+            Some(crate::agent::external::ExternalAgentInputSink::new(
+                input_tx_b,
+            )),
+            "worker B",
+        ),
+    ] {
+        let agent_path = AgentPath::try_from(path).expect("agent path");
+        harness
+            .control
+            .state
+            .register_agent_metadata(AgentMetadata {
+                agent_id: Some(thread_id),
+                agent_path: Some(agent_path.clone()),
+                agent_nickname: Some(task.to_string()),
+                agent_role: Some(provider_label(SpawnAgentProvider::ClaudeCli).to_string()),
+                counted: true,
+                ..Default::default()
+            });
+        harness
+            .control
+            .external_agents
+            .insert_running(ExternalAgentRun {
+                thread_id,
+                parent_thread_id,
+                agent_path,
+                provider: SpawnAgentProvider::ClaudeCli,
+                depth,
+                spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+                input_sink,
+                live_thread: None,
+                status: AgentStatus::Running,
+                active_turn_id: None,
+                last_task_message: Some(task.to_string()),
+                abort_handle: None,
+            });
+    }
+
+    let resolution = harness
+        .control
+        .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
+            current_thread_id: worker_a,
+            current_session_source: SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_a,
+                depth: 1,
+                agent_path: Some(AgentPath::try_from("/project_a/worker").unwrap()),
+                agent_nickname: None,
+                agent_role: None,
+            }),
+            agent_reference: "/project_b/worker".to_string(),
+        })
+        .await
+        .expect("absolute path should resolve globally");
+    assert_matches!(resolution, AgentReferenceResolution::Live { thread_id } if thread_id == worker_b);
+
+    let relative_resolution = harness
+        .control
+        .resolve_agent_reference_in_directory(AgentReferenceResolutionRequest {
+            current_thread_id: root_a,
+            current_session_source: SessionSource::Unknown,
+            agent_reference: "worker".to_string(),
+        })
+        .await
+        .expect("relative path should remain scoped to the current agent path");
+    assert_matches!(
+        relative_resolution,
+        AgentReferenceResolution::Live { thread_id } if thread_id == worker_a
+    );
+
+    let agents = harness
+        .control
+        .list_agents(root_a, &SessionSource::Unknown, Some("/project_b"))
+        .await
+        .expect("absolute prefix should list the project B subtree");
+    let agent_names = agents
+        .iter()
+        .map(|agent| agent.agent_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(agent_names, vec!["/project_b", "/project_b/worker"]);
+
+    let result = harness
+        .control
+        .dispatch_external_tool_call(
+            worker_a,
+            ExternalToolCall {
+                id: "global_followup".to_string(),
+                tool: ExternalToolName::FollowupExternalTask,
+                arguments: serde_json::json!({
+                    "target": "/project_b/worker",
+                    "message": "global hello"
+                }),
+            },
+        )
+        .await;
+
+    assert!(result.ok, "global followup failed: {:?}", result.error);
+    let queued = input_rx_b.recv().await.expect("worker B input");
+    assert_eq!(queued.content, "global hello");
+    assert!(input_rx_a.try_recv().is_err());
+
+    let err = harness
+        .control
+        .read_agent(
+            worker_a,
+            &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id: root_a,
+                depth: 1,
+                agent_path: Some(AgentPath::try_from("/project_a/worker").unwrap()),
+                agent_nickname: None,
+                agent_role: None,
+            }),
+            worker_b,
+        )
+        .await
+        .expect_err("raw thread id read should not bypass reference visibility");
+    assert_matches!(
+        err,
+        CodexErr::UnsupportedOperation(message)
+            if message.contains("not visible from the current agent directory")
+    );
+}
+
+#[tokio::test]
+async fn persisted_root_level_native_agent_can_be_read_but_not_restored_as_subagent() {
+    let harness = AgentControlHarness::new().await;
+    let project_a_path = AgentPath::try_from("/project_a").expect("project A path");
+    let project_b_path = AgentPath::try_from("/project_b").expect("project B path");
+    let start_root = |agent_path: AgentPath| crate::thread::StartThreadOptions {
+        config: harness.config.clone(),
+        initial_history: InitialHistory::New,
+        session_source: None,
+        agent_metadata: Some(AgentMetadata {
+            agent_path: Some(agent_path),
+            ..Default::default()
+        }),
+        thread_source: None,
+        dynamic_tools: Vec::new(),
+        persist_extended_history: false,
+        metrics_service_name: None,
+        parent_trace: None,
+        environments: Vec::new(),
+    };
+
+    let project_a = harness
+        .manager
+        .start_thread_with_options(start_root(project_a_path.clone()))
+        .await
+        .expect("project A root should start");
+    let project_b = harness
+        .manager
+        .start_thread_with_options(start_root(project_b_path.clone()))
+        .await
+        .expect("project B root should start");
+
+    persist_thread_for_tree_resume(&project_a.thread, "project A persisted").await;
+    persist_thread_for_tree_resume(&project_b.thread, "project B persisted").await;
+    emit_turn_complete(&project_b.thread, "project B done").await;
+    project_b
+        .thread
+        .codex
+        .session
+        .flush_rollout()
+        .await
+        .expect("project B rollout should flush");
+
+    let (_restarted_manager, restarted_control) = harness.restarted_manager_and_control();
+    let read_thread_id = restarted_control
+        .resolve_agent_reference_for_read(project_a.thread_id, &SessionSource::Exec, "/project_b")
+        .await
+        .expect("root-level persisted agent should resolve for read");
+    assert_eq!(read_thread_id, project_b.thread_id);
+
+    let listed_agents = restarted_control
+        .list_agents(
+            project_a.thread_id,
+            &SessionSource::Exec,
+            Some("/project_b"),
+        )
+        .await
+        .expect("root-level persisted agent should be listed");
+    assert_eq!(
+        listed_agents
+            .into_iter()
+            .map(|agent| agent.agent_name)
+            .collect::<Vec<_>>(),
+        vec![project_b_path.to_string()]
+    );
+
+    let external_worker = ThreadId::new();
+    restarted_control
+        .external_agents
+        .insert_running(ExternalAgentRun {
+            thread_id: external_worker,
+            parent_thread_id: project_a.thread_id,
+            agent_path: AgentPath::try_from("/project_a/worker").expect("external worker path"),
+            provider: SpawnAgentProvider::ClaudeCli,
+            depth: 1,
+            spawn_config: Some(ExternalSpawnConfig::from_config(&harness.config)),
+            input_sink: None,
+            live_thread: None,
+            status: AgentStatus::Running,
+            active_turn_id: None,
+            last_task_message: Some("external worker".to_string()),
+            abort_handle: None,
+        });
+    let read_result = restarted_control
+        .dispatch_external_tool_call(
+            external_worker,
+            ExternalToolCall {
+                id: "external_read_root".to_string(),
+                tool: ExternalToolName::ReadExternalAgent,
+                arguments: serde_json::json!({
+                    "target": "/project_b"
+                }),
+            },
+        )
+        .await;
+    assert!(
+        read_result.ok,
+        "external read failed: {:?}",
+        read_result.error
+    );
+    assert_eq!(
+        read_result
+            .result
+            .as_ref()
+            .and_then(|result| result.get("agent"))
+            .and_then(|agent| agent.get("agentName"))
+            .and_then(serde_json::Value::as_str),
+        Some(project_b_path.as_str()),
+    );
+
+    let err = restarted_control
+        .resolve_agent_reference(
+            project_a.thread_id,
+            &SessionSource::Exec,
+            Some(harness.config.clone()),
+            "/project_b",
+        )
+        .await
+        .expect_err("root-level persisted agent must not restore as a subagent");
+    assert_matches!(
+        err,
+        CodexErr::UnsupportedOperation(message)
+            if message.contains("persisted root thread")
+    );
+
+    let state_db = harness
+        .state_db
+        .as_ref()
+        .expect("sqlite state db should be available");
+    let child_ids = state_db
+        .list_thread_spawn_children_with_status(
+            project_b.thread_id,
+            DirectionalThreadSpawnEdgeStatus::Open,
+        )
+        .await
+        .expect("project B root should not gain spawn children");
+    assert!(
+        !child_ids.contains(&project_b.thread_id),
+        "failed restore must not persist a parent==child spawn edge",
     );
 }
 
