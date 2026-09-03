@@ -933,9 +933,9 @@ function initialFilePreviewEditState(): FilePreviewEditState {
 export function syncFilePreviewEditState(
   state: FilePreviewEditState,
   preview: FilePreview | null,
-  renderMode: ReturnType<typeof filePreviewRenderMode>,
+  _renderMode: ReturnType<typeof filePreviewRenderMode>,
 ): FilePreviewEditState {
-  if (!preview || renderMode !== "editor") {
+  if (!preview || !filePreviewCanEdit(preview)) {
     return initialFilePreviewEditState();
   }
   if (state.path !== preview.path) {
@@ -2556,7 +2556,16 @@ export function filePreviewRenderMode(preview: FilePreview | null) {
 }
 
 export function filePreviewCanEdit(preview: FilePreview | null) {
-  return filePreviewRenderMode(preview) === "editor";
+  const renderMode = filePreviewRenderMode(preview);
+  return renderMode === "editor" || renderMode === "markdown";
+}
+
+export function filePreviewSourceEditorVisible(
+  preview: FilePreview | null,
+  editMode: FilePreviewEditState["mode"],
+) {
+  const renderMode = filePreviewRenderMode(preview);
+  return renderMode === "editor" || (filePreviewCanEdit(preview) && editMode !== "readonly");
 }
 
 function FilePreviewPanel({
@@ -2606,6 +2615,10 @@ function FilePreviewPanel({
   );
   const previewRenderMode = filePreviewRenderMode(preview);
   const previewIsEditable = filePreviewCanEdit(preview);
+  const previewSourceEditorVisible = filePreviewSourceEditorVisible(
+    preview,
+    editState.mode,
+  );
   const isEditingPreview = editState.mode === "editing";
   const isSavingPreview = editState.mode === "saving";
   const previewDraft =
@@ -2902,7 +2915,7 @@ function FilePreviewPanel({
               </span>
             </div>
           </div>
-          {previewRenderMode === "markdown" ? (
+          {!previewSourceEditorVisible ? (
             <div className="preview-markdown-pad">
               <MarkdownContent
                 text={preview.content}
