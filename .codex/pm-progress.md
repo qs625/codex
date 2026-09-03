@@ -20,12 +20,12 @@ Add explicit edit mode support to the file editor/preview surface.
   files: apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/preload.cjs; apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/types.ts if preload typing requires it; styles only as needed
   base_commit: pending after PM syncs owner_dev_3 to current main
   pending_sync_from_main: owner_dev_3 must fast-forward to main after init-context merge/progress commit before starting
-  status: planned
-  objective: User requests file editor support for editing local text/code previews, controlled by an explicit button. Default file preview should remain read-only; clicking Edit enables editing; Save writes the changed content; Cancel exits edit mode without writing.
-  last_update: 2026-09-03 CST PM inspected current file preview path. `RightPanel.tsx` uses Monaco with `readOnly: true`; Electron exposes `readLocalFile` through preload/main but no `writeLocalFile` IPC yet. PM will dispatch owner_dev_3 after syncing it to main.
-  next_action: Sync owner_dev_3 to main and assign implementation brief.
+  status: in_progress
+  objective: User requests file editor support for editing local text/code previews, controlled by an explicit button. Default file preview should remain read-only; clicking Edit enables editing; Save writes the changed content; Cancel exits edit mode without writing. The editable editor must also support normal `Cmd+C` / `Cmd+V` behavior and `Cmd+S` must trigger the same save path as the Save button.
+  last_update: 2026-09-03 CST PM inspected current file preview path. `RightPanel.tsx` uses Monaco with `readOnly: true`; Electron exposes `readLocalFile` through preload/main but no `writeLocalFile` IPC yet. PM synced and assigned owner_dev_3. User then added shortcut requirements: `Cmd+C` / `Cmd+V` should work in the editable editor, and `Cmd+S` should save the current draft through the same logic as the Save button without writing in read-only/image/pdf states or losing draft on failure.
+  next_action: Wait for owner_dev_3 implementation and reviewer result, then verify edit button flow plus keyboard shortcut behavior before merging.
   blockers: none
-  validation: pending
+  validation: pending; must include Save button and `Cmd+S` save coverage, plus at least component/manual evidence that copy/paste remain usable in the editor.
   commit:
 - id: init-context-duplicate-new-project
   owner: /my_codex/owner_dev_3
