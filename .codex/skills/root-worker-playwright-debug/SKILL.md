@@ -102,11 +102,10 @@ rtk env ROOT_WORKER_OPEN_DEVTOOLS=1 \
 需要用客户端内置 Browser panel 作为载体，通过 Playwright/CDP 调试其它前端页面时，使用 `client-browser-cdp-debug` skill。该场景可用：
 
 ```bash
-rtk env ROOT_WORKER_ENABLE_CDP=1 \
-  scripts/launch-electron-dev.sh
+rtk scripts/launch-electron-dev.sh
 ```
 
-脚本会打印 `CDP_URL=http://127.0.0.1:<port>`；默认不启用 CDP。
+脚本会打印 `CDP_URL=http://127.0.0.1:9222`；CDP 默认只绑定 loopback。需要避开端口冲突时设置 `ROOT_WORKER_REMOTE_DEBUGGING_PORT=<port>`，需要关闭本地 CDP endpoint 时设置 `ROOT_WORKER_DISABLE_CDP=1`。
 
 ## Morpheus 状态
 
