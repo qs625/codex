@@ -180,6 +180,124 @@ test("client relaunch notification handler hot reloads renderer without app rela
   assert.deepEqual(reloads, ["restart tool"]);
 });
 
+test("client relaunch notification handler coalesces the same explicit mode", async () => {
+  let resolveReload;
+  let reloadCount = 0;
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("generic reload should not run for hot mode");
+      },
+      requestHotReload: () => {
+        reloadCount += 1;
+        return new Promise((resolve) => {
+          resolveReload = resolve;
+        });
+      },
+    },
+  });
+
+  const first = handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot", reason: "first" },
+  });
+  const second = handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot", reason: "second" },
+  });
+  resolveReload({
+    ok: true,
+    inPlace: true,
+    relaunching: false,
+    reloaded: true,
+    mode: "hot",
+    reason: "first",
+  });
+
+  await first;
+  assert.deepEqual(
+    {
+      alreadyRequested: (await second).alreadyRequested,
+      requestedMode: (await second).requestedMode,
+      executingMode: (await second).executingMode,
+    },
+    {
+      alreadyRequested: true,
+      requestedMode: "hot",
+      executingMode: "hot",
+    },
+  );
+  assert.equal(reloadCount, 1);
+});
+
+for (const [executingMode, requestedMode] of [
+  ["hot", "full"],
+  ["full", "hot"],
+]) {
+  test(`client relaunch notification handler rejects ${requestedMode} while ${executingMode} is in flight`, async () => {
+    let resolveActiveRequest;
+    const calls = [];
+    const handler = createClientRelaunchNotificationHandler({
+      rendererReload: {
+        requestReload: () => {
+          throw new Error("generic reload should not run for hot mode");
+        },
+        requestHotReload: (reason) => {
+          calls.push(["hot", reason]);
+          return new Promise((resolve) => {
+            resolveActiveRequest = () =>
+              resolve({
+                ok: true,
+                inPlace: true,
+                relaunching: false,
+                reloaded: true,
+                mode: "hot",
+                reason,
+              });
+          });
+        },
+      },
+      fullRelaunch: {
+        requestRelaunch: (reason) => {
+          calls.push(["full", reason]);
+          return new Promise((resolve) => {
+            resolveActiveRequest = () =>
+              resolve({ ok: true, relaunching: true, reason });
+          });
+        },
+      },
+    });
+
+    const first = handler({
+      method: "client/relaunch/requested",
+      params: { mode: executingMode, reason: "first" },
+    });
+    assert.deepEqual(
+      await handler({
+        method: "client/relaunch/requested",
+        params: { mode: requestedMode, reason: "conflict" },
+      }),
+      {
+        ok: false,
+        busy: true,
+        conflict: true,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: false,
+        mode: null,
+        requestedMode,
+        executingMode,
+        reason: `Runtime refresh mode conflict: requested ${requestedMode} while ${executingMode} is in progress`,
+      },
+    );
+    assert.deepEqual(calls, [[executingMode, "first"]]);
+
+    resolveActiveRequest();
+    await first;
+  });
+}
+
 test("client relaunch notification handler hot reloads installed artifact updates", async () => {
   const statuses = [];
   const calls = [];
@@ -576,6 +694,59 @@ test("client relaunch observer preserves failed hot mode status", async () => {
   ]);
 });
 
+test("client relaunch observer reports mode conflicts without claiming execution", async () => {
+  const statuses = [];
+
+  const result = await observeClientRelaunchResult(
+    Promise.resolve({
+      ok: false,
+      busy: true,
+      conflict: true,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      mode: null,
+      requestedMode: "full",
+      executingMode: "hot",
+      reason:
+        "Runtime refresh mode conflict: requested full while hot is in progress",
+    }),
+    {
+      broadcastStatus: (status) => statuses.push(status),
+      logger: { error: () => {} },
+      reason: "restart tool",
+    },
+  );
+
+  assert.equal(result.conflict, true);
+  assert.deepEqual(statuses, [
+    {
+      lifecycle: {
+        type: "clientRelaunch",
+        phase: "failed",
+        mode: null,
+        reason:
+          "Runtime refresh mode conflict: requested full while hot is in progress",
+      },
+      relaunch: {
+        ok: false,
+        busy: true,
+        conflict: true,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: false,
+        mode: null,
+        requestedMode: "full",
+        executingMode: "hot",
+        reason:
+          "Runtime refresh mode conflict: requested full while hot is in progress",
+      },
+    },
+  ]);
+});
+
 test("installed artifact update ok false does not relaunch", async () => {
   const reloads = [];
   const restarts = [];
@@ -831,7 +1002,7 @@ test("client relaunch notification falls back to renderer reload when update uns
   assert.deepEqual(reloads, ["client/relaunch/requested"]);
 });
 
-test("installed artifact update coalesces concurrent restart requests", async () => {
+test("installed artifact update coalesces concurrent requests with the same mode", async () => {
   let resolveUpdate;
   let updateCount = 0;
   let resolveCount = 0;
@@ -856,18 +1027,97 @@ test("installed artifact update coalesces concurrent restart requests", async ()
         reason,
       }),
     },
+    appServerStop: {
+      requestStop: (reason) => ({ ok: true, stopped: true, reason }),
+    },
     broadcastStatus: () => {},
   });
 
   const first = adapter.requestUpdateAndRelaunch("first", "full");
-  const second = adapter.requestUpdateAndRelaunch("second", "hot");
+  const second = adapter.requestUpdateAndRelaunch("second", "full");
   resolveUpdate({ ok: true, updated: true });
 
   assert.equal((await first).alreadyRequested, undefined);
-  assert.equal((await second).alreadyRequested, true);
+  assert.deepEqual(
+    {
+      alreadyRequested: (await second).alreadyRequested,
+      requestedMode: (await second).requestedMode,
+      executingMode: (await second).executingMode,
+    },
+    {
+      alreadyRequested: true,
+      requestedMode: "full",
+      executingMode: "full",
+    },
+  );
   assert.equal(resolveCount, 1);
   assert.equal(updateCount, 1);
 });
+
+for (const [executingMode, requestedMode] of [
+  ["hot", "full"],
+  ["full", "hot"],
+]) {
+  test(`installed artifact update rejects ${requestedMode} while ${executingMode} is in flight`, async () => {
+    let resolveUpdate;
+    let updateCount = 0;
+    let resolveCount = 0;
+    const adapter = createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => {
+        resolveCount += 1;
+        return { appBundlePath: "/Moved App.app" };
+      },
+      updateArtifacts: () => {
+        updateCount += 1;
+        return new Promise((resolve) => {
+          resolveUpdate = resolve;
+        });
+      },
+      appServerRestart: {
+        requestRestart: (reason) => ({
+          ok: true,
+          restarted: true,
+          reason,
+        }),
+      },
+      appServerStop: {
+        requestStop: (reason) => ({ ok: true, stopped: true, reason }),
+      },
+      reloadWindows: async () => ({ windowsReloaded: 1 }),
+      fullRelaunch: {
+        requestRelaunch: (reason) => ({
+          ok: true,
+          relaunching: true,
+          reason,
+        }),
+      },
+      broadcastStatus: () => {},
+    });
+
+    const first = adapter.requestUpdateAndRelaunch("first", executingMode);
+    assert.deepEqual(
+      await adapter.requestUpdateAndRelaunch("conflict", requestedMode),
+      {
+        ok: false,
+        busy: true,
+        conflict: true,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: false,
+        mode: null,
+        requestedMode,
+        executingMode,
+        reason: `Runtime refresh mode conflict: requested ${requestedMode} while ${executingMode} is in progress`,
+      },
+    );
+    assert.equal(resolveCount, 1);
+    assert.equal(updateCount, 1);
+
+    resolveUpdate({ ok: true, updated: true });
+    await first;
+  });
+}
 
 test("client relaunch notification handler does not use app relaunch directly", async () => {
   const handler = createClientRelaunchNotificationHandler({
@@ -923,8 +1173,147 @@ test("renderer reload lifecycle adapter coalesces duplicate requests", async () 
     windowsReloaded: 1,
     mode: null,
     reason: "restart tool",
+    requestedMode: null,
+    executingMode: null,
   });
   assert.equal(reloadCount, 1);
+});
+
+test("renderer hot reload coalesces another explicit hot request", async () => {
+  let resolveReload;
+  let reloadCount = 0;
+  const adapter = createRendererReloadLifecycleAdapter({
+    broadcastStatus: () => {},
+    reloadWindows: () => {
+      reloadCount += 1;
+      return new Promise((resolve) => {
+        resolveReload = resolve;
+      });
+    },
+  });
+
+  const first = adapter.requestHotReload("first");
+  const second = adapter.requestHotReload("second");
+  resolveReload({ windowsReloaded: 1 });
+
+  assert.equal((await first).alreadyRequested, false);
+  assert.deepEqual(
+    {
+      alreadyRequested: (await second).alreadyRequested,
+      requestedMode: (await second).requestedMode,
+      executingMode: (await second).executingMode,
+    },
+    {
+      alreadyRequested: true,
+      requestedMode: "hot",
+      executingMode: "hot",
+    },
+  );
+  assert.equal(reloadCount, 1);
+});
+
+for (const [
+  firstMethod,
+  executingMode,
+  executingModeLabel,
+  secondMethod,
+  requestedMode,
+  requestedModeLabel,
+] of [
+  ["requestReload", null, "generic reload", "requestHotReload", "hot", "hot"],
+  ["requestHotReload", "hot", "hot", "requestReload", null, "generic reload"],
+]) {
+  test(`renderer reload rejects ${requestedModeLabel} while ${executingModeLabel} is in flight`, async () => {
+    let resolveReload;
+    let reloadCount = 0;
+    const adapter = createRendererReloadLifecycleAdapter({
+      broadcastStatus: () => {},
+      reloadWindows: () => {
+        reloadCount += 1;
+        return new Promise((resolve) => {
+          resolveReload = resolve;
+        });
+      },
+    });
+
+    const first = adapter[firstMethod]("first");
+    assert.deepEqual(await adapter[secondMethod]("conflict"), {
+      ok: false,
+      busy: true,
+      conflict: true,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      mode: null,
+      requestedMode,
+      executingMode,
+      reason: `Runtime refresh mode conflict: requested ${requestedModeLabel} while ${executingModeLabel} is in progress`,
+    });
+    assert.equal(reloadCount, 1);
+
+    resolveReload({ windowsReloaded: 1 });
+    await first;
+  });
+}
+
+test("outer coalesce preserves a nested renderer mode conflict", async () => {
+  let resolveReload;
+  let reloadCount = 0;
+  const rendererReload = createRendererReloadLifecycleAdapter({
+    broadcastStatus: () => {},
+    reloadWindows: () => {
+      reloadCount += 1;
+      return new Promise((resolve) => {
+        resolveReload = resolve;
+      });
+    },
+  });
+  const genericReload = rendererReload.requestReload("generic");
+  const handler = createClientRelaunchNotificationHandler({ rendererReload });
+
+  const first = handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot", reason: "first hot" },
+  });
+  const second = handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot", reason: "second hot" },
+  });
+
+  assert.deepEqual(await first, {
+    ok: false,
+    busy: true,
+    conflict: true,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    mode: null,
+    requestedMode: "hot",
+    executingMode: null,
+    reason:
+      "Runtime refresh mode conflict: requested hot while generic reload is in progress",
+  });
+  assert.deepEqual(await second, {
+    ok: false,
+    busy: true,
+    conflict: true,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    mode: null,
+    requestedMode: "hot",
+    executingMode: null,
+    reason:
+      "Runtime refresh mode conflict: requested hot while generic reload is in progress",
+    alreadyRequested: true,
+  });
+  assert.equal(reloadCount, 1);
+
+  resolveReload({ windowsReloaded: 1 });
+  await genericReload;
 });
 
 test("renderer reload lifecycle adapter falls back to full app relaunch", async () => {

@@ -46,7 +46,7 @@ impl HostLifecycleToolRuntime for AppServerHostLifecycleToolRuntime {
                 accepted: true,
                 relaunching: false,
                 requested_mode: request.mode.clone(),
-                executed_mode: Some(request.mode.clone()),
+                executed_mode: None,
                 message: format!(
                     "Runtime refresh request ({}) was delivered to the host. Watch host lifecycle status for update, relaunch, or failure details.",
                     host_relaunch_mode_wire_value(&request.mode),
@@ -102,7 +102,7 @@ mod tests {
         assert!(result.accepted);
         assert!(!result.relaunching);
         assert_eq!(result.requested_mode, HostRelaunchMode::Hot);
-        assert_eq!(result.executed_mode, Some(HostRelaunchMode::Hot));
+        assert_eq!(result.executed_mode, None);
         assert_eq!(result.reason.as_deref(), Some("runtime update"));
         assert_eq!(result.resume_strategy, RESUME_STRATEGY);
 

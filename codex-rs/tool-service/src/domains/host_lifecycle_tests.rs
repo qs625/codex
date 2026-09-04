@@ -27,7 +27,7 @@ impl HostLifecycleToolRuntime for FakeHostLifecycleRuntime {
                 accepted: true,
                 relaunching: false,
                 requested_mode: request.mode.clone(),
-                executed_mode: Some(request.mode.clone()),
+                executed_mode: None,
                 message: "accepted".to_string(),
                 reason: Some("runtime update".to_string()),
                 resume_strategy: RESUME_STRATEGY.to_string(),
@@ -80,7 +80,7 @@ async fn request_runtime_restart_dispatches_host_request_and_returns_result() {
     assert_eq!(response_json["accepted"], true);
     assert_eq!(response_json["relaunching"], false);
     assert_eq!(response_json["requestedMode"], "full");
-    assert_eq!(response_json["executedMode"], "full");
+    assert_eq!(response_json["executedMode"], serde_json::Value::Null);
     assert_eq!(response_json["resumeStrategy"], RESUME_STRATEGY);
 
     let requests = runtime.requests.lock().expect("requests mutex");
