@@ -693,6 +693,7 @@ export type NotificationEnvelope = {
       ok: boolean;
       relaunching: boolean;
       alreadyRequested?: boolean;
+      mode?: "hot" | "full" | null;
       reason?: string | null;
     };
     lifecycle?: {
@@ -706,6 +707,7 @@ export type NotificationEnvelope = {
         | "fullRelaunchFallback"
         | "completed"
         | "failed";
+      mode?: "hot" | "full" | null;
       reason?: string | null;
     };
   };

@@ -197,7 +197,7 @@ function morpheusSourceInstructionContent(workspace) {
 The Morpheus source workspace for this app is:
 \`${workspace}\`
 
-When modifying Morpheus runtime, client, server, frontend, or backend code in this workspace, complete the relevant tests first. After those tests pass, call \`request_runtime_restart\`; installed desktop builds will rebuild this source workspace, update the runnable app artifacts, and relaunch so the running app can load the latest compiled code.
+When modifying Morpheus runtime, client, server, frontend, or backend code in this workspace, complete the relevant tests first. After those tests pass, call \`request_runtime_restart\` with an explicit \`mode\`: use \`"hot"\` for app-server restart plus renderer reload, or \`"full"\` when Electron main/preload changes must be loaded by a full app relaunch. Installed desktop builds will rebuild this source workspace and update the runnable app artifacts before applying the requested mode.
 `;
 }
 

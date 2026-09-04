@@ -42,6 +42,7 @@ pub struct ToolService {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HostRelaunchRequest {
+    pub mode: HostRelaunchMode,
     pub reason: Option<String>,
     pub requested_by_thread_id: Option<String>,
 }
@@ -52,9 +53,18 @@ pub struct HostRelaunchResult {
     pub status: HostRelaunchStatus,
     pub accepted: bool,
     pub relaunching: bool,
+    pub requested_mode: HostRelaunchMode,
+    pub executed_mode: Option<HostRelaunchMode>,
     pub message: String,
     pub reason: Option<String>,
     pub resume_strategy: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HostRelaunchMode {
+    Hot,
+    Full,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]

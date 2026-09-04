@@ -131,6 +131,7 @@ const handleClientRelaunchNotification =
   createClientRelaunchNotificationHandler({
     rendererReload: rendererReloadLifecycle,
     installedArtifactUpdate: installedArtifactUpdateLifecycle,
+    fullRelaunch: appRelaunch,
   });
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
