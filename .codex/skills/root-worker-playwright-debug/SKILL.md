@@ -99,10 +99,10 @@ rtk env ROOT_WORKER_OPEN_DEVTOOLS=1 \
   scripts/launch-electron-dev.sh
 ```
 
-需要用客户端内置 Browser panel 作为载体，通过 Playwright/CDP 调试其它前端页面时，使用用户配置目录中的 `client-browser-cdp-debug` skill：
+需要用客户端内置 Browser panel 作为载体，通过 Playwright/CDP 调试其它前端页面时，使用用户配置目录中的通用 `frontend-debug` skill。该场景不是 Root Worker 专用前端调试流程；Root Worker 文档只负责提供完整客户端启动方式和 CDP endpoint，具体 DOM、console、network、截图和交互排查使用 `playwright-cli`：
 
 ```text
-/Users/bytedance/.morpheus/skills/client-browser-cdp-debug/SKILL.md
+/Users/bytedance/.morpheus/skills/frontend-debug/SKILL.md
 ```
 
 该场景可用：
@@ -111,7 +111,11 @@ rtk env ROOT_WORKER_OPEN_DEVTOOLS=1 \
 rtk scripts/launch-electron-dev.sh
 ```
 
-脚本会打印 `CDP_URL=http://127.0.0.1:9222`；CDP 默认只绑定 loopback。需要避开端口冲突时设置 `ROOT_WORKER_REMOTE_DEBUGGING_PORT=<port>`，需要关闭本地 CDP endpoint 时设置 `ROOT_WORKER_DISABLE_CDP=1`。
+脚本会打印 `CDP_URL=http://127.0.0.1:9222`；CDP 默认只绑定 loopback。需要避开端口冲突时设置 `ROOT_WORKER_REMOTE_DEBUGGING_PORT=<port>`，需要关闭本地 CDP endpoint 时设置 `ROOT_WORKER_DISABLE_CDP=1`。连接后按通用 skill 使用：
+
+```bash
+rtk playwright-cli attach --cdp=http://127.0.0.1:9222
+```
 
 ## Morpheus 状态
 
