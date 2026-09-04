@@ -46,7 +46,7 @@ import {
   getThreadPresenceLabel,
   getThreadPath,
   isThreadThinking,
-  isTurnInFlight,
+  getInterruptibleTurn,
   isRootThread,
   threadDisplayStatusClass,
   treeThreadLifecycleStatusClass,
@@ -1230,9 +1230,7 @@ export function ConversationPanel({
   voiceCaptureMessage: string | null;
   voiceCaptureStatus: VoiceCaptureStatus;
 }) {
-  const lastTurn = selectedThread?.turns.at(-1) ?? null;
-  const lastTurnInProgress = lastTurn != null && isTurnInFlight(lastTurn);
-  const activeTurnId = lastTurnInProgress ? lastTurn.id : null;
+  const activeTurnId = getInterruptibleTurn(selectedThread)?.id ?? null;
   const isThinking = isThreadThinking(selectedThread, {
     isLoadingThread,
     isSending,
@@ -1494,7 +1492,7 @@ export function ConversationPanel({
             <span>{getThreadPresenceLabel(selectedThread)}</span>
             <span className="subtitle-separator">•</span>
             <RunConfigPicker
-              disabled={isSending || lastTurnInProgress}
+              disabled={isSending || activeTurnId != null}
               onApply={onUpdateRunConfig}
               selectedThread={selectedThread}
             />
