@@ -14,10 +14,23 @@ port="$(
   node -e "const net=require('net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close();});"
 )"
 
+electron_env=(
+  "ROOT_WORKER_RENDERER_MODE=dev"
+  "ROOT_WORKER_OPEN_DEVTOOLS=${ROOT_WORKER_OPEN_DEVTOOLS:-0}"
+)
+
+if [ "${ROOT_WORKER_ENABLE_CDP:-0}" = "1" ]; then
+  cdp_port="${ROOT_WORKER_REMOTE_DEBUGGING_PORT:-$(
+    node -e "const net=require('net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close();});"
+  )}"
+  echo "CDP_URL=http://127.0.0.1:$cdp_port"
+  electron_env+=("ROOT_WORKER_REMOTE_DEBUGGING_PORT=$cdp_port")
+fi
+
 ROOT_WORKER_DEV_SERVER_URL="http://127.0.0.1:$port" \
   MORPHEUS_HOME="$debug_morpheus_home" \
   ROOT_WORKER_WORKSPACE="$debug_workspace" \
   CODEX_APP_SERVER_CMD="$codex_cmd" \
   pnpm --dir "$app_dir" exec concurrently -k \
     "vite --host 127.0.0.1 --port $port --strictPort" \
-    "wait-on tcp:127.0.0.1:$port && ROOT_WORKER_RENDERER_MODE=dev ROOT_WORKER_OPEN_DEVTOOLS=${ROOT_WORKER_OPEN_DEVTOOLS:-0} electron ."
+    "wait-on tcp:127.0.0.1:$port && env ${electron_env[*]} electron ."

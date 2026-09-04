@@ -21,6 +21,10 @@ const {
   normalizeBrowserTarget,
 } = require("./browserPanelSecurity.cjs");
 const {
+  browserPanelWebPreferences,
+  browserSessionPartition,
+} = require("./browserPanelConfig.cjs");
+const {
   isLocalLinkTarget,
   localFilePathFromTarget,
   parseLocalFileTarget,
@@ -79,6 +83,7 @@ const {
   createJsonAutoResumeStateStore,
   createThreadAutoResumeCoordinator,
 } = require("./threadAutoResume.cjs");
+const { applyRemoteDebuggingConfig } = require("./remoteDebugging.cjs");
 
 const rendererMode = process.env.ROOT_WORKER_RENDERER_MODE ?? "built";
 const isDev = rendererMode === "dev";
@@ -133,7 +138,8 @@ const defaultWorkspace = resolveDefaultWorkspace();
 const devServerUrl =
   process.env.ROOT_WORKER_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 const builtRendererPath = path.join(__dirname, "../dist/index.html");
-const browserSessionPartition = "persist:root-worker-browser";
+
+applyRemoteDebuggingConfig(app, process.env, console);
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -768,14 +774,7 @@ function browserPanelForWindow(window) {
   }
 
   const view = new WebContentsView({
-    webPreferences: {
-      allowRunningInsecureContent: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      partition: browserSessionPartition,
-      sandbox: true,
-      webSecurity: true,
-    },
+    webPreferences: browserPanelWebPreferences(),
   });
 
   const panel = {
