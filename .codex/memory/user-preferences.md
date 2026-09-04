@@ -2,7 +2,6 @@
 
 ## Stable Preferences
 - 全程使用中文进行工作和记录。
-- 所有 shell 命令必须以 `rtk` 开头。
 - 普通开发应先在对应 `dev` checkout 提交，再 merge 回主分支。
 - 不要把 `dev` checkout 的改动文件手工复制、覆盖或 apply 回主仓库代替 merge。
 - 固定 owner 空闲时不要主动关闭；后续同一 checkout 优先直接续用 `followup_task`，只有 thread 不可用时才重建。
