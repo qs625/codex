@@ -15,6 +15,7 @@ import {
   EventRow,
   MessageRow,
   ToolRow,
+  TurnProcessGroupRow,
 } from "./Conversation";
 import {
   buildConversationVirtualLayout,
@@ -128,6 +129,9 @@ export function ConversationVirtualList({
   const [openToolCellIds, setOpenToolCellIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const [openTurnProcessCellIds, setOpenTurnProcessCellIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [selectedToolEntryIds, setSelectedToolEntryIds] = useState<
     Map<string, string>
   >(() => new Map());
@@ -168,6 +172,13 @@ export function ConversationVirtualList({
     }
 
     setOpenToolCellIds((current) => {
+      const next = new Set(
+        Array.from(current).filter((cellId) => liveCellIds.has(cellId)),
+      );
+      return next.size === current.size ? current : next;
+    });
+
+    setOpenTurnProcessCellIds((current) => {
       const next = new Set(
         Array.from(current).filter((cellId) => liveCellIds.has(cellId)),
       );
@@ -440,6 +451,30 @@ export function ConversationVirtualList({
     });
   }
 
+  function handleTurnProcessOpenChange(cellId: string, isOpen: boolean) {
+    setOpenTurnProcessCellIds((current) => {
+      const next = new Set(current);
+      if (isOpen) {
+        next.add(cellId);
+      } else {
+        next.delete(cellId);
+      }
+      if (next.size === current.size) {
+        let identical = true;
+        for (const value of next) {
+          if (!current.has(value)) {
+            identical = false;
+            break;
+          }
+        }
+        if (identical) {
+          return current;
+        }
+      }
+      return next;
+    });
+  }
+
   return (
     <div
       className="conversation-virtual-list"
@@ -464,12 +499,14 @@ export function ConversationVirtualList({
                 cell,
                 compactHistoryById[cell.entries[0]?.id ?? cell.id] ?? null,
                 openToolCellIds.has(cell.id),
+                openTurnProcessCellIds.has(cell.id),
                 selectedToolEntryIds.get(cell.id) ?? null,
                 onToggleCompactHistory,
                 onOpenLocalFile,
                 onOpenArtifactUrl,
                 handleToolOpenChange,
                 handleToolEntrySelection,
+                handleTurnProcessOpenChange,
               )}
             </MeasuredConversationCell>
           );
@@ -513,12 +550,14 @@ function renderConversationCell(
     | { isLoading: boolean; isExpanded: boolean; error: string | null }
     | null,
   isToolOpen: boolean,
+  isTurnProcessOpen: boolean,
   selectedToolEntryId: string | null,
   onToggleCompactHistory: (entryId: string) => void,
   onOpenLocalFile: (target: string) => void,
   onOpenArtifactUrl: (url: string) => void,
   onToolOpenChange: (cellId: string, isOpen: boolean) => void,
   onToolEntrySelection: (cellId: string, entryId: string | null) => void,
+  onTurnProcessOpenChange: (cellId: string, isOpen: boolean) => void,
 ) {
   if (cell.kind === "event") {
     return <EventRow entry={cell.entries[0]} />;
@@ -565,6 +604,18 @@ function renderConversationCell(
     return (
       <ArtifactRow
         entry={cell.entries[0]}
+        onOpenArtifactUrl={onOpenArtifactUrl}
+      />
+    );
+  }
+
+  if (cell.kind === "turnProcess") {
+    return (
+      <TurnProcessGroupRow
+        cell={cell}
+        isOpen={isTurnProcessOpen}
+        onToggleOpen={(open) => onTurnProcessOpenChange(cell.id, open)}
+        onOpenLocalFile={onOpenLocalFile}
         onOpenArtifactUrl={onOpenArtifactUrl}
       />
     );

@@ -125,6 +125,39 @@ test("searches collapsed tool output text", () => {
   );
 });
 
+test("searches folded terminal turn process entries by their group cell", () => {
+  const cells = [
+    makeCell(
+      "turn-process:turn-1:tool-1:event-1:2",
+      [
+        makeEntry("tool-1", "summary", {
+          kind: "tool",
+          toolName: "exec_command",
+          toolStatus: "completed",
+          toolDetails: "folded needle",
+        }),
+        makeEntry("event-1", "process event"),
+      ],
+      "turnProcess",
+    ),
+  ];
+
+  assert.deepEqual(
+    buildConversationSearchResults(cells, "needle").map((result) => ({
+      cellId: result.cellId,
+      entryId: result.entryId,
+      source: result.source,
+    })),
+    [
+      {
+        cellId: "turn-process:turn-1:tool-1:event-1:2",
+        entryId: "tool-1",
+        source: "toolDetails",
+      },
+    ],
+  );
+});
+
 test("keeps same text in different thread item entries as separate results", () => {
   const cells = [
     makeCell("cell-1", [makeEntry("entry-1", "repeat")]),

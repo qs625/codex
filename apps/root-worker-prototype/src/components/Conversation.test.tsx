@@ -11,6 +11,7 @@ import {
   CompactRow,
   MessageRow,
   ToolRow,
+  TurnProcessGroupRow,
 } from "./Conversation";
 import {
   ConversationVirtualList,
@@ -166,6 +167,91 @@ test("tool rows show compact lists first and only reveal the selected detail bod
   assert.match(detailMarkup, /tool-card-item-head selected/);
 });
 
+test("turn process rows hide nested details until expanded", () => {
+  const processCell = {
+    id: "turn-process:turn-1:tool-1:event-1:2",
+    kind: "turnProcess" as const,
+    entries: [
+      {
+        id: "tool-1",
+        kind: "tool" as const,
+        author: "root",
+        role: "system" as const,
+        text: "ran command",
+        timestamp: "09:41",
+        attachments: [],
+        toolName: "npm test",
+        toolStatus: "completed",
+        toolDetails: "command details",
+        toolCategory: "command" as const,
+      },
+      {
+        id: "event-1",
+        kind: "event" as const,
+        author: "root",
+        role: "system" as const,
+        text: "wait completed",
+        timestamp: "09:42",
+        attachments: [],
+      },
+    ],
+    collapsedCells: [
+      {
+        id: "tool-1",
+        kind: "tool" as const,
+        entries: [
+          {
+            id: "tool-1",
+            kind: "tool" as const,
+            author: "root",
+            role: "system" as const,
+            text: "ran command",
+            timestamp: "09:41",
+            attachments: [],
+            toolName: "npm test",
+            toolStatus: "completed",
+            toolDetails: "command details",
+            toolCategory: "command" as const,
+          },
+        ],
+      },
+      {
+        id: "event-1",
+        kind: "event" as const,
+        entries: [
+          {
+            id: "event-1",
+            kind: "event" as const,
+            author: "root",
+            role: "system" as const,
+            text: "wait completed",
+            timestamp: "09:42",
+            attachments: [],
+          },
+        ],
+      },
+    ],
+  };
+
+  const collapsedMarkup = renderToStaticMarkup(
+    <TurnProcessGroupRow cell={processCell} />,
+  );
+  const expandedMarkup = renderToStaticMarkup(
+    <TurnProcessGroupRow cell={processCell} isOpen />,
+  );
+
+  assert.match(collapsedMarkup, /Turn process items/);
+  assert.match(collapsedMarkup, /2 process items/);
+  assert.match(collapsedMarkup, /npm test/);
+  assert.doesNotMatch(collapsedMarkup, /command details/);
+  assert.doesNotMatch(collapsedMarkup, /wait completed/);
+
+  assert.match(expandedMarkup, /open=""/);
+  assert.match(expandedMarkup, /aria-expanded="true"/);
+  assert.match(expandedMarkup, /command details/);
+  assert.match(expandedMarkup, /wait completed/);
+});
+
 test("message rows expose role classes for chat alignment", () => {
   const userEntry: ConversationEntry = {
     id: "user-1",
@@ -195,6 +281,64 @@ test("message rows expose role classes for chat alignment", () => {
   assert.match(userMarkup, /class="message-avatar user"/);
   assert.match(agentMarkup, /class="message-row message-row-agent"/);
   assert.match(agentMarkup, /class="message-avatar agent"/);
+});
+
+test("message rows label known assistant message phases", () => {
+  const finalMarkup = renderToStaticMarkup(
+    <MessageRow
+      entries={[
+        {
+          id: "agent-final",
+          kind: "message",
+          sourceItemType: "agentMessage",
+          author: "Codex",
+          role: "agent",
+          text: "done",
+          timestamp: "09:41",
+          messagePhase: "final_answer",
+          attachments: [],
+        },
+      ]}
+    />,
+  );
+  const commentaryMarkup = renderToStaticMarkup(
+    <MessageRow
+      entries={[
+        {
+          id: "agent-commentary",
+          kind: "message",
+          sourceItemType: "agentMessage",
+          author: "Codex",
+          role: "agent",
+          text: "working",
+          timestamp: "09:42",
+          messagePhase: "commentary",
+          attachments: [],
+        },
+      ]}
+    />,
+  );
+  const unknownMarkup = renderToStaticMarkup(
+    <MessageRow
+      entries={[
+        {
+          id: "agent-unknown",
+          kind: "message",
+          sourceItemType: "agentMessage",
+          author: "Codex",
+          role: "agent",
+          text: "legacy",
+          timestamp: "09:43",
+          messagePhase: null,
+          attachments: [],
+        },
+      ]}
+    />,
+  );
+
+  assert.match(finalMarkup, /Final answer/);
+  assert.match(commentaryMarkup, /Commentary/);
+  assert.doesNotMatch(unknownMarkup, /Final answer|Commentary/);
 });
 
 test("artifact row renders html preview in a sandboxed iframe", () => {
@@ -505,7 +649,7 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   );
   assert.match(
     styles,
-    /\.message-row,[\s\S]*\.archive-row \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/,
+    /\.message-row,[\s\S]*\.archive-row,[\s\S]*\.turn-process-row \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/,
   );
   assert.match(styles, /\.tool-card \{[\s\S]*flex: 1 1 auto;/);
   assert.match(styles, /\.tool-card \{[\s\S]*max-width: 100%;/);
@@ -533,7 +677,10 @@ test("conversation text surfaces keep long urls inside measured cells", () => {
   );
   assert.match(styles, /\.tool-card-body pre[\s\S]*overflow-wrap: anywhere;/);
   assert.match(styles, /\.tool-output-block summary[\s\S]*overflow-wrap: anywhere;/);
-  assert.match(styles, /\.compact-card,[\s\S]*\.archive-card \{[\s\S]*flex: 1 1 auto;/);
+  assert.match(
+    styles,
+    /\.compact-card,[\s\S]*\.archive-card,[\s\S]*\.turn-process-card \{[\s\S]*flex: 1 1 auto;/,
+  );
   assert.match(styles, /\.archive-cell \{[\s\S]*min-width: 0;/);
   assert.match(styles, /\.approval-request-metadata dd[\s\S]*white-space: normal;/);
   assert.match(styles, /\.approval-request-metadata dd[\s\S]*overflow-wrap: anywhere;/);
