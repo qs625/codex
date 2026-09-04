@@ -24,14 +24,17 @@ const {
   ScheduleAgendaDateGroup,
   beginFilePreviewEdit,
   beginFilePreviewSave,
+  browserTabLabel,
   buildGitGraphVisualModel,
   cancelFilePreviewEdit,
   completeFilePreviewSave,
+  currentBrowserPanelApi,
   failFilePreviewSave,
   filePreviewCanEdit,
   filePreviewHeaderEditControlsVisible,
   filePreviewRenderMode,
   filePreviewSourceEditorVisible,
+  normalizeBrowserPanelState,
   resolvePreviewDefinitionPosition,
   resolveMarkdownPreviewLocalFileTarget,
   syncFilePreviewEditState,
@@ -292,9 +295,128 @@ test("renders browser panel and rail button", () => {
   const markup = renderRightPanel(makeThread([]), "browser");
 
   assert.match(markup, /aria-label="Browser"/);
+  assert.match(markup, /aria-label="Browser tabs"/);
+  assert.match(markup, /New tab/);
+  assert.match(markup, /browser-new-tab-button/);
+  assert.match(markup, /aria-label="New browser tab"/);
   assert.match(markup, /Browser URL/);
   assert.match(markup, /class="browser-go-button" disabled=""/);
   assert.match(markup, /Open a page in the right panel/);
+});
+
+test("browser tab helpers preserve active tab state and readable labels", () => {
+  const state = normalizeBrowserPanelState({
+    url: "https://active.example/docs",
+    title: "Active page",
+    loading: false,
+    canGoBack: true,
+    canGoForward: false,
+    error: null,
+    activeTabId: "tab-2",
+    tabs: [
+      {
+        id: "tab-1",
+        url: "https://old.example/",
+        title: "Old page",
+        loading: false,
+        canGoBack: false,
+        canGoForward: true,
+        error: null,
+      },
+      {
+        id: "tab-2",
+        url: "https://active.example/docs",
+        title: "Active page",
+        loading: true,
+        canGoBack: true,
+        canGoForward: false,
+        error: "Loading took too long",
+      },
+    ],
+  });
+
+  assert.equal(state.url, "https://active.example/docs");
+  assert.equal(state.title, "Active page");
+  assert.equal(state.loading, true);
+  assert.equal(state.error, "Loading took too long");
+  assert.equal(browserTabLabel(state.tabs[0]), "Old page");
+  assert.equal(
+    browserTabLabel({
+      id: "tab-host",
+      url: "https://docs.example/path",
+      title: null,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    }),
+    "docs.example",
+  );
+  assert.equal(
+    browserTabLabel({
+      id: "tab-empty",
+      url: null,
+      title: null,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    }),
+    "New tab",
+  );
+
+  const legacyState = normalizeBrowserPanelState({
+    url: "https://legacy.example/",
+    title: "Legacy page",
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  });
+  assert.equal(legacyState.activeTabId, "browser-tab-active");
+  assert.equal(legacyState.tabs.length, 1);
+  assert.equal(legacyState.tabs[0]?.title, "Legacy page");
+});
+
+test("browser API detection requires tab actions", () => {
+  const originalWindow = globalThis.window;
+  const baseApi = {
+    browserGoBack: async () => ({}),
+    browserGoForward: async () => ({}),
+    hideBrowserView: async () => ({}),
+    navigateBrowserView: async () => ({}),
+    openLink: async () => ({ ok: true }),
+    reloadBrowserView: async () => ({}),
+    setBrowserViewBounds: async () => ({}),
+    showBrowserView: async () => ({}),
+    stopBrowserView: async () => ({}),
+    subscribeBrowserState: () => () => {},
+  };
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { codexDesktop: baseApi },
+  });
+
+  try {
+    assert.equal(currentBrowserPanelApi(), null);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        codexDesktop: {
+          ...baseApi,
+          createBrowserTab: async () => ({}),
+          selectBrowserTab: async () => ({}),
+          closeBrowserTab: async () => ({}),
+        },
+      },
+    });
+    assert.ok(currentBrowserPanelApi());
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: originalWindow,
+    });
+  }
 });
 
 test("collapsed browser panel keeps rail and omits browser content", () => {
