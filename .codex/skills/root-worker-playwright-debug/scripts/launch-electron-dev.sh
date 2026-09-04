@@ -19,12 +19,39 @@ electron_env=(
   "ROOT_WORKER_OPEN_DEVTOOLS=${ROOT_WORKER_OPEN_DEVTOOLS:-0}"
 )
 
-if [ "${ROOT_WORKER_ENABLE_CDP:-0}" = "1" ]; then
-  cdp_port="${ROOT_WORKER_REMOTE_DEBUGGING_PORT:-$(
-    node -e "const net=require('net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close();});"
-  )}"
+trim_value() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+disable_cdp_value="$(trim_value "$(printf '%s' "${ROOT_WORKER_DISABLE_CDP:-}" | tr '[:upper:]' '[:lower:]')")"
+cdp_port="$(trim_value "${ROOT_WORKER_REMOTE_DEBUGGING_PORT:-}")"
+
+case "$disable_cdp_value" in
+  1|true|yes|on)
+    cdp_disabled=1
+    ;;
+  *)
+    cdp_disabled=0
+    ;;
+esac
+
+if [ "$cdp_disabled" = "1" ]; then
+  echo "CDP disabled by ROOT_WORKER_DISABLE_CDP=$(trim_value "$ROOT_WORKER_DISABLE_CDP")"
+  electron_env+=("ROOT_WORKER_DISABLE_CDP=1")
+elif [ -n "$cdp_port" ]; then
+  if [[ "$cdp_port" =~ ^[0-9]{1,5}$ ]] && [ "$cdp_port" -ge 1 ] && [ "$cdp_port" -le 65535 ]; then
+    echo "CDP_URL=http://127.0.0.1:$cdp_port"
+    electron_env+=("ROOT_WORKER_REMOTE_DEBUGGING_PORT=$cdp_port")
+  else
+    echo "CDP disabled by invalid ROOT_WORKER_REMOTE_DEBUGGING_PORT=$(trim_value "$ROOT_WORKER_REMOTE_DEBUGGING_PORT")"
+    electron_env+=("ROOT_WORKER_REMOTE_DEBUGGING_PORT=0")
+  fi
+else
+  cdp_port="9222"
   echo "CDP_URL=http://127.0.0.1:$cdp_port"
-  electron_env+=("ROOT_WORKER_REMOTE_DEBUGGING_PORT=$cdp_port")
 fi
 
 ROOT_WORKER_DEV_SERVER_URL="http://127.0.0.1:$port" \

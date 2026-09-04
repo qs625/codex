@@ -1,12 +1,18 @@
 "use strict";
 
 const REMOTE_DEBUGGING_PORT_ENV = "ROOT_WORKER_REMOTE_DEBUGGING_PORT";
+const REMOTE_DEBUGGING_DISABLE_ENV = "ROOT_WORKER_DISABLE_CDP";
 const REMOTE_DEBUGGING_ADDRESS = "127.0.0.1";
+const DEFAULT_REMOTE_DEBUGGING_PORT = "9222";
 
 function parseRemoteDebuggingConfig(env = process.env) {
+  if (isTruthyEnv(env[REMOTE_DEBUGGING_DISABLE_ENV])) {
+    return { enabled: false };
+  }
+
   const rawPort = env[REMOTE_DEBUGGING_PORT_ENV];
   if (rawPort == null || String(rawPort).trim() === "") {
-    return { enabled: false };
+    return enabledConfig(DEFAULT_REMOTE_DEBUGGING_PORT);
   }
 
   const portText = String(rawPort).trim();
@@ -19,9 +25,13 @@ function parseRemoteDebuggingConfig(env = process.env) {
     return invalidConfig(portText);
   }
 
+  return enabledConfig(String(port));
+}
+
+function enabledConfig(port) {
   return {
     enabled: true,
-    port: String(port),
+    port,
     address: REMOTE_DEBUGGING_ADDRESS,
     cdpUrl: `http://${REMOTE_DEBUGGING_ADDRESS}:${port}`,
   };
@@ -58,8 +68,17 @@ function invalidConfig(value) {
   };
 }
 
+function isTruthyEnv(value) {
+  if (value == null) {
+    return false;
+  }
+  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
 module.exports = {
+  DEFAULT_REMOTE_DEBUGGING_PORT,
   REMOTE_DEBUGGING_ADDRESS,
+  REMOTE_DEBUGGING_DISABLE_ENV,
   REMOTE_DEBUGGING_PORT_ENV,
   applyRemoteDebuggingConfig,
   parseRemoteDebuggingConfig,
