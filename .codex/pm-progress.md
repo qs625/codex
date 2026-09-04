@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-Fix Root Worker interrupt button stale active-turn-id error.
+Add multi-tab support to the Root Worker Browser panel.
 
 ## Active Work
+- id: browser-panel-multi-tab
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/browser-panel-multi-tab
+  task_type: feature/ui-electron
+  depends_on: main baseline `f706bf118`
+  files: apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/preload.cjs; apps/root-worker-prototype/electron/browser* tests as needed; apps/root-worker-prototype/src/electron.d.ts; apps/root-worker-prototype/src/components/RightPanel.tsx; apps/root-worker-prototype/src/components/RightPanel.test.tsx; apps/root-worker-prototype/src/styles.css; docs/skills only if debug workflow changes
+  base_commit: 4c0a0ca349 in dev-3; source main is `f706bf118`, with docs/progress-only commits already merged after the product baseline
+  pending_sync_from_main: dev-3 has local AGENTS/memory cleanup diffs, so do not force-sync or include them; product code includes the stale interrupt fix and should merge cleanly back to main after implementation.
+  status: merged
+  objective: Browser panel should support multiple in-app tabs instead of one page per window. Users should be able to create a tab, switch tabs, close tabs, navigate each tab independently, and keep CDP debugging able to select the desired page target.
+  last_update: 2026-09-04 CST PM merged owner commit `43859ef07b` into main as `51d8daa96`. The result provides real per-tab `WebContentsView` state, new/select/close actions, independent navigation histories, in-app `window.open`, compact accessible tab UI, CDP multi-target behavior, and guarded idempotent cleanup for destroyed BrowserWindow/WebContentsView objects.
+  next_action: refresh the running client so the installed app picks up the Electron shell and renderer changes.
+  blockers: none for merge. dev-3 retains unrelated local cleanup diffs in `AGENTS.md` and `.codex/memory/*`, but they are not included in the feature commit.
+  validation: Owner: browserPanelTabs tests 5 passed; RightPanel tests 39 passed; full Root Worker tests 658 passed; build passed with existing chunk warning; cached diff check passed. Electron/CDP smoke created three distinct in-app page targets (`tab=one`, `tab=two`, `tab=popup`), retained one empty tab after closing all, preserved it across hide/show, and reported no process errors. PM reran merged-main browserPanelTabs tests -> 5 passed; RightPanel tests -> 39 passed; full Root Worker tests -> 658 passed; build -> passed with existing chunk warning; merge diff and show checks -> passed.
+  commit: 51d8daa96, 43859ef07b
 - id: interrupt-turn-stale-active-turn-id
   owner: /self/my_codex_owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
