@@ -1,5 +1,20 @@
 export {};
 
+type BrowserPanelTabState = {
+  id: string;
+  url: string | null;
+  title: string | null;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  error: string | null;
+};
+
+type BrowserPanelState = Omit<BrowserPanelTabState, "id"> & {
+  activeTabId: string | null;
+  tabs: BrowserPanelTabState[];
+};
+
 declare global {
   interface Window {
     codexDesktop: {
@@ -322,84 +337,24 @@ declare global {
         y: number;
         width: number;
         height: number;
-      }) => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      hideBrowserView: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
+      }) => Promise<BrowserPanelState>;
+      hideBrowserView: () => Promise<BrowserPanelState>;
       setBrowserViewBounds: (bounds: {
         x: number;
         y: number;
         width: number;
         height: number;
-      }) => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      navigateBrowserView: (target: string) => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      browserGoBack: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      browserGoForward: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      reloadBrowserView: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
-      stopBrowserView: () => Promise<{
-        url: string | null;
-        title: string | null;
-        loading: boolean;
-        canGoBack: boolean;
-        canGoForward: boolean;
-        error: string | null;
-      }>;
+      }) => Promise<BrowserPanelState>;
+      navigateBrowserView: (target: string) => Promise<BrowserPanelState>;
+      createBrowserTab: (target?: string | null) => Promise<BrowserPanelState>;
+      selectBrowserTab: (tabId: string) => Promise<BrowserPanelState>;
+      closeBrowserTab: (tabId: string) => Promise<BrowserPanelState>;
+      browserGoBack: () => Promise<BrowserPanelState>;
+      browserGoForward: () => Promise<BrowserPanelState>;
+      reloadBrowserView: () => Promise<BrowserPanelState>;
+      stopBrowserView: () => Promise<BrowserPanelState>;
       subscribeBrowserState: (
-        listener: (state: {
-          url: string | null;
-          title: string | null;
-          loading: boolean;
-          canGoBack: boolean;
-          canGoForward: boolean;
-          error: string | null;
-        }) => void,
+        listener: (state: BrowserPanelState) => void,
       ) => () => void;
       sendMessage: (payload: {
         threadId: string;

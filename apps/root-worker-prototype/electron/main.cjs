@@ -25,6 +25,10 @@ const {
   browserSessionPartition,
 } = require("./browserPanelConfig.cjs");
 const {
+  nextBrowserTabIdAfterClose,
+  shouldDetachAttachedBrowserPanelView,
+} = require("./browserPanelTabs.cjs");
+const {
   isLocalLinkTarget,
   localFilePathFromTarget,
   parseLocalFileTarget,
@@ -130,6 +134,7 @@ const handleClientRelaunchNotification =
   });
 const windows = new Set();
 const browserPanelsByWindowId = new Map();
+let browserPanelTabCounter = 0;
 const threadRuntimeById = new Map();
 const localFilePreviewTargetsByToken = new Map();
 let autoResumeCoordinator = null;
@@ -539,45 +544,91 @@ ipcMain.handle("codex:browser:setBounds", async (event, bounds) => {
 
 ipcMain.handle("codex:browser:navigate", async (event, target) => {
   const panel = browserPanelForEvent(event);
+  const tab = activeBrowserPanelTab(panel);
+  if (!tab) {
+    throw new Error("Browser panel has no active tab");
+  }
   const normalized = normalizeBrowserTarget(target);
   if (!normalized.ok) {
     throw new Error(normalized.reason);
   }
-  panel.state.error = null;
-  await panel.view.webContents.loadURL(normalized.url);
+  tab.state.error = null;
+  await loadBrowserPanelTabUrl(panel, tab, normalized.url);
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:newTab", async (event, target) => {
+  const panel = browserPanelForEvent(event);
+  const normalized =
+    typeof target === "string" && target.trim()
+      ? normalizeBrowserTarget(target)
+      : { ok: true, url: null };
+  if (!normalized.ok) {
+    throw new Error(normalized.reason);
+  }
+  const tab = createBrowserPanelTab(panel, { activate: true });
+  if (normalized.url) {
+    await loadBrowserPanelTabUrl(panel, tab, normalized.url);
+  }
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:selectTab", async (event, tabId) => {
+  const panel = browserPanelForEvent(event);
+  if (!selectBrowserPanelTab(panel, tabId)) {
+    throw new Error("Browser tab not found");
+  }
+  return browserPanelState(panel);
+});
+
+ipcMain.handle("codex:browser:closeTab", async (event, tabId) => {
+  const panel = browserPanelForEvent(event);
+  if (!closeBrowserPanelTab(panel, tabId)) {
+    throw new Error("Browser tab not found");
+  }
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:browser:goBack", async (event) => {
   const panel = browserPanelForEvent(event);
-  const navigation = browserNavigation(panel.view.webContents);
-  if (navigation.canGoBack()) {
-    navigation.goBack();
+  const tab = activeBrowserPanelTab(panel);
+  if (tab) {
+    const navigation = browserNavigation(tab.view.webContents);
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    }
   }
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:browser:goForward", async (event) => {
   const panel = browserPanelForEvent(event);
-  const navigation = browserNavigation(panel.view.webContents);
-  if (navigation.canGoForward()) {
-    navigation.goForward();
+  const tab = activeBrowserPanelTab(panel);
+  if (tab) {
+    const navigation = browserNavigation(tab.view.webContents);
+    if (navigation.canGoForward()) {
+      navigation.goForward();
+    }
   }
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:browser:reload", async (event) => {
   const panel = browserPanelForEvent(event);
-  if (panel.view.webContents.getURL()) {
-    panel.view.webContents.reload();
+  const tab = activeBrowserPanelTab(panel);
+  if (tab && tab.view.webContents.getURL()) {
+    tab.view.webContents.reload();
   }
   return browserPanelState(panel);
 });
 
 ipcMain.handle("codex:browser:stop", async (event) => {
   const panel = browserPanelForEvent(event);
-  panel.view.webContents.stop();
-  panel.state.loading = false;
+  const tab = activeBrowserPanelTab(panel);
+  if (tab) {
+    tab.view.webContents.stop();
+    tab.state.loading = false;
+  }
   sendBrowserPanelState(panel);
   return browserPanelState(panel);
 });
@@ -773,83 +824,18 @@ function browserPanelForWindow(window) {
     throw new Error("This Electron version does not support WebContentsView");
   }
 
-  const view = new WebContentsView({
-    webPreferences: browserPanelWebPreferences(),
-  });
-
   const panel = {
     window,
-    view,
     visible: false,
-    state: {
-      url: null,
-      title: null,
-      loading: false,
-      canGoBack: false,
-      canGoForward: false,
-      error: null,
-    },
+    bounds: normalizeBrowserBounds(null),
+    tabs: [],
+    activeTabId: null,
+    attachedTabId: null,
+    destroying: false,
   };
 
-  view.webContents.setWindowOpenHandler(({ url }) => {
-    const normalized = normalizeBrowserTarget(url);
-    if (normalized.ok) {
-      void shell.openExternal(normalized.url);
-    }
-    return { action: "deny" };
-  });
-
-  view.webContents.on("will-navigate", (event, url) =>
-    guardBrowserPanelNavigation(panel, event, url),
-  );
-  view.webContents.on("will-frame-navigate", (event, url) =>
-    guardBrowserPanelNavigation(panel, event, url),
-  );
-  view.webContents.on("will-redirect", (event, url) =>
-    guardBrowserPanelNavigation(panel, event, url),
-  );
-  view.webContents.on("did-start-loading", () => {
-    panel.state.loading = true;
-    panel.state.error = null;
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on("did-stop-loading", () => {
-    updateBrowserPanelLocationState(panel);
-    panel.state.loading = false;
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on("did-navigate", (_event, url) => {
-    panel.state.url = url || null;
-    updateBrowserPanelLocationState(panel);
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on("did-navigate-in-page", (_event, url) => {
-    panel.state.url = url || null;
-    updateBrowserPanelLocationState(panel);
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on("page-title-updated", (_event, title) => {
-    panel.state.title = title || null;
-    sendBrowserPanelState(panel);
-  });
-  view.webContents.on(
-    "did-fail-load",
-    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
-      if (!isMainFrame || errorCode === -3) {
-        return;
-      }
-      panel.state.url = validatedUrl || panel.state.url;
-      panel.state.loading = false;
-      panel.state.error = errorDescription || "Page failed to load";
-      updateBrowserPanelLocationState(panel);
-      sendBrowserPanelState(panel);
-    },
-  );
-  view.webContents.on("destroyed", () => {
-    browserPanelsByWindowId.delete(window.id);
-  });
-
   browserPanelsByWindowId.set(window.id, panel);
+  createBrowserPanelTab(panel, { activate: true });
   return panel;
 }
 
@@ -857,15 +843,15 @@ function attachBrowserPanel(panel) {
   if (panel.visible) {
     return;
   }
-  panel.window.contentView.addChildView(panel.view);
   panel.visible = true;
+  attachActiveBrowserPanelView(panel);
 }
 
 function detachBrowserPanel(panel) {
   if (!panel.visible) {
     return;
   }
-  panel.window.contentView.removeChildView(panel.view);
+  detachAttachedBrowserPanelView(panel);
   panel.visible = false;
 }
 
@@ -874,13 +860,27 @@ function destroyBrowserPanel(window) {
   if (!panel) {
     return;
   }
-  detachBrowserPanel(panel);
-  panel.view.webContents.close({ waitForBeforeUnload: false });
+  panel.destroying = true;
   browserPanelsByWindowId.delete(window.id);
+  detachBrowserPanel(panel);
+  for (const tab of panel.tabs) {
+    closeBrowserPanelTabContents(tab);
+  }
+  panel.tabs = [];
+  panel.activeTabId = null;
 }
 
 function setBrowserPanelBounds(panel, bounds) {
-  panel.view.setBounds(normalizeBrowserBounds(bounds));
+  panel.bounds = normalizeBrowserBounds(bounds);
+  const tab = activeBrowserPanelTab(panel);
+  if (
+    panel.visible &&
+    tab &&
+    !panel.window.isDestroyed() &&
+    !tab.view.webContents.isDestroyed()
+  ) {
+    tab.view.setBounds(panel.bounds);
+  }
 }
 
 function normalizeBrowserBounds(bounds) {
@@ -899,18 +899,260 @@ function sendBrowserPanelState(panel) {
 }
 
 function browserPanelState(panel) {
-  updateBrowserPanelLocationState(panel);
-  return { ...panel.state };
+  const activeTab = activeBrowserPanelTab(panel);
+  if (activeTab) {
+    updateBrowserPanelLocationState(activeTab);
+  }
+  const activeState = activeTab?.state ?? emptyBrowserPanelTabState();
+  return {
+    ...activeState,
+    activeTabId: panel.activeTabId,
+    tabs: panel.tabs.map((tab) => {
+      updateBrowserPanelLocationState(tab);
+      return {
+        id: tab.id,
+        ...tab.state,
+      };
+    }),
+  };
 }
 
-function updateBrowserPanelLocationState(panel) {
-  if (!panel.view.webContents.isDestroyed()) {
-    const navigation = browserNavigation(panel.view.webContents);
-    panel.state.url = panel.view.webContents.getURL() || panel.state.url;
-    panel.state.title = panel.view.webContents.getTitle() || panel.state.title;
-    panel.state.loading = panel.view.webContents.isLoading();
-    panel.state.canGoBack = navigation.canGoBack();
-    panel.state.canGoForward = navigation.canGoForward();
+function emptyBrowserPanelTabState() {
+  return {
+    url: null,
+    title: null,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    error: null,
+  };
+}
+
+function createBrowserPanelTab(panel, { url = null, activate = true } = {}) {
+  const view = new WebContentsView({
+    webPreferences: browserPanelWebPreferences(),
+  });
+  const tab = {
+    id: `browser-tab-${++browserPanelTabCounter}`,
+    view,
+    state: emptyBrowserPanelTabState(),
+  };
+  panel.tabs.push(tab);
+  bindBrowserPanelTab(panel, tab);
+  if (activate || !panel.activeTabId) {
+    selectBrowserPanelTab(panel, tab.id);
+  }
+  if (url) {
+    void loadBrowserPanelTabUrl(panel, tab, url).catch((error) => {
+      tab.state.loading = false;
+      tab.state.error = error instanceof Error ? error.message : String(error);
+      sendBrowserPanelState(panel);
+    });
+  }
+  return tab;
+}
+
+async function loadBrowserPanelTabUrl(panel, tab, target) {
+  const normalized = normalizeBrowserTarget(target);
+  if (!normalized.ok) {
+    tab.state.error = normalized.reason;
+    tab.state.loading = false;
+    sendBrowserPanelState(panel);
+    throw new Error(normalized.reason);
+  }
+  tab.state.error = null;
+  await tab.view.webContents.loadURL(normalized.url);
+}
+
+function bindBrowserPanelTab(panel, tab) {
+  tab.view.webContents.setWindowOpenHandler(({ url }) => {
+    const normalized = normalizeBrowserTarget(url);
+    if (normalized.ok) {
+      createBrowserPanelTab(panel, { url: normalized.url, activate: true });
+      sendBrowserPanelState(panel);
+    }
+    return { action: "deny" };
+  });
+
+  tab.view.webContents.on("will-navigate", (event, url) =>
+    guardBrowserPanelNavigation(panel, tab, event, url),
+  );
+  tab.view.webContents.on("will-frame-navigate", (event, url) =>
+    guardBrowserPanelNavigation(panel, tab, event, url),
+  );
+  tab.view.webContents.on("will-redirect", (event, url) =>
+    guardBrowserPanelNavigation(panel, tab, event, url),
+  );
+  tab.view.webContents.on("did-start-loading", () => {
+    tab.state.loading = true;
+    tab.state.error = null;
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("did-stop-loading", () => {
+    updateBrowserPanelLocationState(tab);
+    tab.state.loading = false;
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("did-navigate", (_event, url) => {
+    tab.state.url = url || null;
+    updateBrowserPanelLocationState(tab);
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("did-navigate-in-page", (_event, url) => {
+    tab.state.url = url || null;
+    updateBrowserPanelLocationState(tab);
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on("page-title-updated", (_event, title) => {
+    tab.state.title = title || null;
+    sendBrowserPanelState(panel);
+  });
+  tab.view.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) {
+        return;
+      }
+      tab.state.url = validatedUrl || tab.state.url;
+      tab.state.loading = false;
+      tab.state.error = errorDescription || "Page failed to load";
+      updateBrowserPanelLocationState(tab);
+      sendBrowserPanelState(panel);
+    },
+  );
+  tab.view.webContents.on("destroyed", () => {
+    removeDestroyedBrowserPanelTab(panel, tab);
+  });
+}
+
+function activeBrowserPanelTab(panel) {
+  return panel.tabs.find((tab) => tab.id === panel.activeTabId) ?? panel.tabs[0] ?? null;
+}
+
+function selectBrowserPanelTab(panel, tabId) {
+  const nextTab = panel.tabs.find((tab) => tab.id === tabId);
+  if (!nextTab) {
+    return false;
+  }
+  if (panel.activeTabId === nextTab.id) {
+    if (panel.visible) {
+      attachActiveBrowserPanelView(panel);
+    }
+    return true;
+  }
+  detachAttachedBrowserPanelView(panel);
+  panel.activeTabId = nextTab.id;
+  if (panel.visible) {
+    attachActiveBrowserPanelView(panel);
+  }
+  return true;
+}
+
+function closeBrowserPanelTab(panel, tabId) {
+  const index = panel.tabs.findIndex((tab) => tab.id === tabId);
+  if (index === -1) {
+    return false;
+  }
+  const tab = panel.tabs[index];
+  const wasActive = panel.activeTabId === tab.id;
+  const nextActiveTabId = nextBrowserTabIdAfterClose(
+    panel.tabs,
+    panel.activeTabId,
+    tab.id,
+  );
+  if (wasActive) {
+    detachAttachedBrowserPanelView(panel);
+  }
+  panel.tabs.splice(index, 1);
+  closeBrowserPanelTabContents(tab);
+  if (panel.tabs.length === 0 && !panel.destroying) {
+    createBrowserPanelTab(panel, { activate: true });
+    return true;
+  }
+  if (wasActive) {
+    panel.activeTabId = nextActiveTabId;
+    if (panel.visible) {
+      attachActiveBrowserPanelView(panel);
+    }
+  }
+  return true;
+}
+
+function removeDestroyedBrowserPanelTab(panel, tab) {
+  const index = panel.tabs.findIndex((candidate) => candidate.id === tab.id);
+  if (index === -1) {
+    return;
+  }
+  const wasActive = panel.activeTabId === tab.id;
+  panel.tabs.splice(index, 1);
+  if (panel.attachedTabId === tab.id) {
+    panel.attachedTabId = null;
+  }
+  if (panel.destroying || panel.window.isDestroyed()) {
+    return;
+  }
+  if (panel.tabs.length === 0) {
+    createBrowserPanelTab(panel, { activate: true });
+  } else if (wasActive) {
+    const nextTab = panel.tabs[Math.min(index, panel.tabs.length - 1)] ?? panel.tabs[0];
+    panel.activeTabId = nextTab.id;
+    if (panel.visible) {
+      attachActiveBrowserPanelView(panel);
+    }
+  }
+  sendBrowserPanelState(panel);
+}
+
+function closeBrowserPanelTabContents(tab) {
+  if (!tab.view.webContents.isDestroyed()) {
+    tab.view.webContents.close({ waitForBeforeUnload: false });
+  }
+}
+
+function attachActiveBrowserPanelView(panel) {
+  const tab = activeBrowserPanelTab(panel);
+  if (
+    !tab ||
+    !panel.visible ||
+    panel.window.isDestroyed() ||
+    tab.view.webContents.isDestroyed()
+  ) {
+    return;
+  }
+  if (panel.attachedTabId === tab.id) {
+    tab.view.setBounds(panel.bounds);
+    return;
+  }
+  detachAttachedBrowserPanelView(panel);
+  panel.window.contentView.addChildView(tab.view);
+  panel.attachedTabId = tab.id;
+  tab.view.setBounds(panel.bounds);
+}
+
+function detachAttachedBrowserPanelView(panel) {
+  const attachedTabId = panel.attachedTabId;
+  panel.attachedTabId = null;
+  const tab = panel.tabs.find((candidate) => candidate.id === attachedTabId);
+  const tabDestroyed = !tab || tab.view.webContents.isDestroyed();
+  if (
+    shouldDetachAttachedBrowserPanelView({
+      attachedTabId,
+      tabDestroyed,
+      windowDestroyed: panel.window.isDestroyed(),
+    })
+  ) {
+    panel.window.contentView.removeChildView(tab.view);
+  }
+}
+
+function updateBrowserPanelLocationState(tab) {
+  if (!tab.view.webContents.isDestroyed()) {
+    const navigation = browserNavigation(tab.view.webContents);
+    tab.state.url = tab.view.webContents.getURL() || tab.state.url;
+    tab.state.title = tab.view.webContents.getTitle() || tab.state.title;
+    tab.state.loading = tab.view.webContents.isLoading();
+    tab.state.canGoBack = navigation.canGoBack();
+    tab.state.canGoForward = navigation.canGoForward();
   }
 }
 
@@ -930,22 +1172,24 @@ function browserNavigation(webContents) {
 
 function isBrowserPanelWebContents(webContents) {
   for (const panel of browserPanelsByWindowId.values()) {
-    if (panel.view.webContents === webContents) {
-      return true;
+    for (const tab of panel.tabs) {
+      if (tab.view.webContents === webContents) {
+        return true;
+      }
     }
   }
   return false;
 }
 
-function guardBrowserPanelNavigation(panel, event, target) {
+function guardBrowserPanelNavigation(panel, tab, event, target) {
   const decision = browserNavigationEventDecision(event, target);
   if (decision.allow) {
     return;
   }
 
   event.preventDefault();
-  panel.state.error = decision.reason;
-  panel.state.loading = false;
+  tab.state.error = decision.reason;
+  tab.state.loading = false;
   sendBrowserPanelState(panel);
 }
 

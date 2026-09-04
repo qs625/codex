@@ -14,6 +14,7 @@ import {
   GearIcon,
   OpenIcon,
   PencilIcon,
+  PlusIcon,
   RefreshIcon,
   SaveIcon,
   SearchIcon,
@@ -63,13 +64,21 @@ type BrowserViewBounds = {
   height: number;
 };
 
-type BrowserPanelState = {
+type BrowserPanelTabState = {
+  id: string;
   url: string | null;
   title: string | null;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   error: string | null;
+};
+
+type BrowserPanelActiveState = Omit<BrowserPanelTabState, "id">;
+
+type BrowserPanelState = BrowserPanelActiveState & {
+  activeTabId: string | null;
+  tabs: BrowserPanelTabState[];
 };
 
 type FilePreviewEditState = {
@@ -84,10 +93,13 @@ type BrowserPanelApi = Pick<
   Window["codexDesktop"],
   | "browserGoBack"
   | "browserGoForward"
+  | "closeBrowserTab"
+  | "createBrowserTab"
   | "hideBrowserView"
   | "navigateBrowserView"
   | "openLink"
   | "reloadBrowserView"
+  | "selectBrowserTab"
   | "setBrowserViewBounds"
   | "showBrowserView"
   | "stopBrowserView"
@@ -152,6 +164,8 @@ const EMPTY_BROWSER_STATE: BrowserPanelState = {
   canGoBack: false,
   canGoForward: false,
   error: null,
+  activeTabId: null,
+  tabs: [],
 };
 
 function formatByteSize(bytes: number) {
@@ -633,21 +647,27 @@ function BrowserPanel({
   const [state, setState] = useState<BrowserPanelState>(EMPTY_BROWSER_STATE);
   const [localError, setLocalError] = useState<string | null>(null);
   const hasBrowserApi = currentBrowserPanelApi() !== null;
+  const tabs = state.tabs.length > 0 ? state.tabs : browserTabsFromActiveState(state);
+  const activeTab =
+    tabs.find((tab) => tab.id === state.activeTabId) ?? tabs[0] ?? null;
+  const displayUrl = activeTab?.url ?? state.url ?? "";
+  const error = localError ?? activeTab?.error ?? state.error;
+  const activeTitle = activeTab?.title || state.title || "Browser";
+
+  const applyBrowserState = (nextState: BrowserPanelState) => {
+    const normalizedState = normalizeBrowserPanelState(nextState);
+    setState(normalizedState);
+    const normalizedActiveTab =
+      normalizedState.tabs.find(
+        (tab) => tab.id === normalizedState.activeTabId,
+      ) ?? normalizedState.tabs[0] ?? null;
+    setAddress(normalizedActiveTab?.url ?? "");
+  };
 
   useEffect(() => {
     const browserApi = currentBrowserPanelApi();
     const unsubscribe = browserApi?.subscribeBrowserState((nextState) => {
-      setState({
-        url: nextState.url,
-        title: nextState.title,
-        loading: nextState.loading,
-        canGoBack: nextState.canGoBack,
-        canGoForward: nextState.canGoForward,
-        error: nextState.error,
-      });
-      if (nextState.url) {
-        setAddress(nextState.url);
-      }
+      applyBrowserState(nextState);
     });
 
     return () => {
@@ -674,7 +694,7 @@ function BrowserPanel({
     setLocalError(null);
     void browserApi
       .navigateBrowserView(normalized.url)
-      .then(setState)
+      .then(applyBrowserState)
       .catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   }, [navigationRequest, onNavigationRequestHandled]);
 
@@ -695,10 +715,7 @@ function BrowserPanel({
     void browserApi
       .showBrowserView(browserBoundsFromElement(viewport))
       .then((nextState) => {
-        setState(nextState);
-        if (nextState.url) {
-          setAddress(nextState.url);
-        }
+        applyBrowserState(nextState);
       })
       .catch((error) => setLocalError(toBrowserError(error)));
 
@@ -714,9 +731,6 @@ function BrowserPanel({
     };
   }, []);
 
-  const displayUrl = state.url ?? "";
-  const error = localError ?? state.error;
-
   const navigate = () => {
     const normalized = normalizeBrowserUrl(address);
     if (!normalized.ok) {
@@ -731,7 +745,7 @@ function BrowserPanel({
     setLocalError(null);
     void browserApi
       .navigateBrowserView(normalized.url)
-      .then(setState)
+      .then(applyBrowserState)
       .catch((navigationError) => setLocalError(toBrowserError(navigationError)));
   };
 
@@ -746,10 +760,31 @@ function BrowserPanel({
     }
     setLocalError(null);
     void command(browserApi)
-      .then(setState)
+      .then(applyBrowserState)
       .catch((commandError) =>
         setLocalError(toBrowserError(commandError) || fallbackError),
       );
+  };
+
+  const createTab = () => {
+    runCommand((browserApi) => browserApi.createBrowserTab(), "Could not create a tab.");
+  };
+
+  const selectTab = (tabId: string) => {
+    if (tabId === state.activeTabId) {
+      return;
+    }
+    runCommand(
+      (browserApi) => browserApi.selectBrowserTab(tabId),
+      "Could not switch tabs.",
+    );
+  };
+
+  const closeTab = (tabId: string) => {
+    runCommand(
+      (browserApi) => browserApi.closeBrowserTab(tabId),
+      "Could not close the tab.",
+    );
   };
 
   return (
@@ -757,7 +792,7 @@ function BrowserPanel({
       <header className="panel-content-header browser-header">
         <div className="panel-content-copy">
           <span className="panel-eyebrow">Browser</span>
-          <h2>{state.title || "Browser"}</h2>
+          <h2>{activeTitle}</h2>
         </div>
         <button
           type="button"
@@ -779,6 +814,62 @@ function BrowserPanel({
         </button>
       </header>
 
+      <div className="browser-tab-strip" role="tablist" aria-label="Browser tabs">
+        <div className="browser-tabs">
+          {tabs.map((tab) => {
+            const isActive = tab.id === (state.activeTabId ?? activeTab?.id);
+            return (
+              <div
+                key={tab.id}
+                className={`browser-tab-shell ${isActive ? "active" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="browser-tab"
+                  role="tab"
+                  aria-selected={isActive}
+                  title={browserTabLabel(tab)}
+                  onClick={() => selectTab(tab.id)}
+                >
+                  <span className={`browser-tab-dot ${tab.loading ? "loading" : ""}`} />
+                  <span className="browser-tab-title">{browserTabLabel(tab)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="browser-tab-close"
+                  aria-label={`Close ${browserTabLabel(tab)}`}
+                  title="Close tab"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      closeTab(tab.id);
+                    }
+                  }}
+                >
+                  <XIcon />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="browser-icon-button browser-new-tab-button"
+          aria-label="New browser tab"
+          title="New tab"
+          disabled={!hasBrowserApi}
+          onClick={createTab}
+        >
+          <PlusIcon />
+        </button>
+      </div>
+
       <form
         className="browser-toolbar"
         onSubmit={(event) => {
@@ -791,7 +882,7 @@ function BrowserPanel({
           className="browser-icon-button"
           aria-label="Go back"
           title="Back"
-          disabled={!state.canGoBack || !hasBrowserApi}
+          disabled={!activeTab?.canGoBack || !hasBrowserApi}
           onClick={() =>
             runCommand(
               (browserApi) => browserApi.browserGoBack(),
@@ -806,7 +897,7 @@ function BrowserPanel({
           className="browser-icon-button"
           aria-label="Go forward"
           title="Forward"
-          disabled={!state.canGoForward || !hasBrowserApi}
+          disabled={!activeTab?.canGoForward || !hasBrowserApi}
           onClick={() =>
             runCommand(
               (browserApi) => browserApi.browserGoForward(),
@@ -819,20 +910,20 @@ function BrowserPanel({
         <button
           type="button"
           className="browser-icon-button"
-          aria-label={state.loading ? "Stop loading" : "Reload"}
-          title={state.loading ? "Stop" : "Reload"}
+          aria-label={activeTab?.loading ? "Stop loading" : "Reload"}
+          title={activeTab?.loading ? "Stop" : "Reload"}
           disabled={!hasBrowserApi}
           onClick={() =>
             runCommand(
               (browserApi) =>
-                state.loading
+                activeTab?.loading
                   ? browserApi.stopBrowserView()
                   : browserApi.reloadBrowserView(),
               "Could not update the page.",
             )
           }
         >
-          {state.loading ? <StopIcon /> : <RefreshIcon />}
+          {activeTab?.loading ? <StopIcon /> : <RefreshIcon />}
         </button>
         <input
           aria-label="Browser URL"
@@ -850,7 +941,7 @@ function BrowserPanel({
       </form>
 
       <div className="browser-status-row" role="status">
-        <span className={`browser-status-dot ${state.loading ? "loading" : "idle"}`} />
+        <span className={`browser-status-dot ${activeTab?.loading ? "loading" : "idle"}`} />
         <span title={error ?? displayUrl}>
           {error ?? (displayUrl || "Ready")}
         </span>
@@ -868,6 +959,61 @@ function BrowserPanel({
   );
 }
 
+export function normalizeBrowserPanelState(
+  state: BrowserPanelState | BrowserPanelActiveState,
+): BrowserPanelState {
+  const candidateState = state as Partial<BrowserPanelState> & BrowserPanelActiveState;
+  const tabs =
+    Array.isArray(candidateState.tabs) && candidateState.tabs.length > 0
+      ? candidateState.tabs
+      : browserTabsFromActiveState(candidateState);
+  const activeTabId =
+    typeof candidateState.activeTabId === "string"
+      ? candidateState.activeTabId
+      : null;
+  const activeTab =
+    tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
+  return {
+    url: activeTab?.url ?? candidateState.url,
+    title: activeTab?.title ?? candidateState.title,
+    loading: activeTab?.loading ?? candidateState.loading,
+    canGoBack: activeTab?.canGoBack ?? candidateState.canGoBack,
+    canGoForward: activeTab?.canGoForward ?? candidateState.canGoForward,
+    error: activeTab?.error ?? candidateState.error,
+    activeTabId: activeTab?.id ?? null,
+    tabs,
+  };
+}
+
+function browserTabsFromActiveState(state: BrowserPanelActiveState) {
+  return [
+    {
+      id: "browser-tab-active",
+      url: state.url,
+      title: state.title,
+      loading: state.loading,
+      canGoBack: state.canGoBack,
+      canGoForward: state.canGoForward,
+      error: state.error,
+    },
+  ];
+}
+
+export function browserTabLabel(tab: BrowserPanelTabState) {
+  if (tab.title?.trim()) {
+    return tab.title.trim();
+  }
+  if (!tab.url) {
+    return "New tab";
+  }
+  try {
+    const parsed = new URL(tab.url);
+    return parsed.host || tab.url;
+  } catch {
+    return tab.url;
+  }
+}
+
 function browserBoundsFromElement(element: HTMLElement): BrowserViewBounds {
   const rect = element.getBoundingClientRect();
   return {
@@ -878,7 +1024,7 @@ function browserBoundsFromElement(element: HTMLElement): BrowserViewBounds {
   };
 }
 
-function currentBrowserPanelApi(): BrowserPanelApi | null {
+export function currentBrowserPanelApi(): BrowserPanelApi | null {
   if (typeof window === "undefined") {
     return null;
   }
@@ -886,10 +1032,13 @@ function currentBrowserPanelApi(): BrowserPanelApi | null {
   if (
     !browserApi?.browserGoBack ||
     !browserApi.browserGoForward ||
+    !browserApi.closeBrowserTab ||
+    !browserApi.createBrowserTab ||
     !browserApi.hideBrowserView ||
     !browserApi.navigateBrowserView ||
     !browserApi.openLink ||
     !browserApi.reloadBrowserView ||
+    !browserApi.selectBrowserTab ||
     !browserApi.setBrowserViewBounds ||
     !browserApi.showBrowserView ||
     !browserApi.stopBrowserView ||
