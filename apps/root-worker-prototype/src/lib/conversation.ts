@@ -2,6 +2,7 @@ import type {
   ConversationArtifactSource,
   ConversationCell,
   ConversationEntry,
+  Turn,
   Thread,
   ThreadItem,
   ThreadLifecycleStatus,
@@ -88,9 +89,13 @@ export function buildConversationState(
     previous?.threadId === thread.id && previous.author === author;
   const flatItems: ConversationFlatItemState[] = [];
   const entries: ConversationEntry[] = [];
+  const terminalTurnIds = new Set<string>();
   let flatItemIndex = 0;
 
   for (const turn of thread.turns) {
+    if (isTerminalTurnStatus(turn.status)) {
+      terminalTurnIds.add(turn.id);
+    }
     const turnTimestamp = formatClockTime(
       turn.completedAt ?? turn.startedAt ?? thread.updatedAt,
     );
@@ -113,6 +118,7 @@ export function buildConversationState(
             }).map((entry) => ({
               ...entry,
               turnId: turn.id,
+              ...(entry.kind === "message" ? { sourceItemType: item.type } : {}),
             }));
 
       flatItems.push({
@@ -124,14 +130,74 @@ export function buildConversationState(
       entries.push(...rebuiltEntries);
       flatItemIndex += 1;
     }
+
+    const terminalOutcome = buildTurnTerminalOutcomeEntry(turn, {
+      author,
+      timestamp: turnTimestamp,
+    });
+    if (terminalOutcome) {
+      entries.push(terminalOutcome);
+    }
   }
   return {
     threadId: thread.id,
     author,
     flatItems,
     entries,
-    cells: buildConversationCells(entries, previous?.cells, options),
+    cells: buildConversationCells(entries, previous?.cells, {
+      ...options,
+      terminalTurnIds,
+    }),
   };
+}
+
+function isTerminalTurnStatus(status: string) {
+  const normalized = status.trim().toLowerCase().replace(/[_-]/g, "");
+  return (
+    normalized === "completed" ||
+    normalized === "failed" ||
+    normalized === "interrupted"
+  );
+}
+
+function buildTurnTerminalOutcomeEntry(
+  turn: Turn,
+  {
+    author,
+    timestamp,
+  }: {
+    author: string;
+    timestamp: string;
+  },
+): ConversationEntry | null {
+  const normalized = turn.status.trim().toLowerCase().replace(/[_-]/g, "");
+  if (normalized === "failed") {
+    return {
+      id: `${turn.id}:terminal-outcome`,
+      turnId: turn.id,
+      kind: "event",
+      author,
+      role: "system",
+      text: `Turn failed${turn.error?.message ? `: ${turn.error.message}` : "."}`,
+      timestamp,
+      attachments: [],
+      isTurnTerminalOutcome: true,
+    };
+  }
+  if (normalized === "interrupted") {
+    return {
+      id: `${turn.id}:terminal-outcome`,
+      turnId: turn.id,
+      kind: "event",
+      author,
+      role: "system",
+      text: "Turn interrupted.",
+      timestamp,
+      attachments: [],
+      isTurnTerminalOutcome: true,
+    };
+  }
+  return null;
 }
 
 function buildConversationItemEntries(
@@ -170,6 +236,7 @@ function buildConversationItemEntries(
         role: "agent" as const,
         text: item.text || "…",
         timestamp,
+        messagePhase: item.phase,
         attachments: [],
       },
     ];

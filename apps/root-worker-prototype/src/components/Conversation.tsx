@@ -58,6 +58,14 @@ type ArchivedHistoryRowProps = {
   onOpenArtifactUrl?: (url: string) => void;
 };
 
+type TurnProcessGroupRowProps = {
+  cell: ConversationCell;
+  isOpen?: boolean;
+  onToggleOpen?: (open: boolean) => void;
+  onOpenLocalFile?: (target: string) => void;
+  onOpenArtifactUrl?: (url: string) => void;
+};
+
 type ApprovalRequestsPanelProps = {
   requests: ApprovalRequest[];
   onRespond: (request: ApprovalRequest, decision: ApprovalDecision) => void;
@@ -733,6 +741,7 @@ export const MessageRow = memo(function MessageRow({
   onOpenLocalFile,
 }: MessageRowProps) {
   const firstEntry = entries[0];
+  const phaseLabel = messagePhaseLabel(entries);
   const shouldUseSingleBubble =
     entries.length > 1 &&
     entries.every(
@@ -747,7 +756,10 @@ export const MessageRow = memo(function MessageRow({
       <div className="message-main">
         <div className="message-head">
           <strong>{firstEntry.author}</strong>
-          <span>{entries.at(-1)?.timestamp ?? firstEntry.timestamp}</span>
+          <span>
+            {phaseLabel ? <em>{phaseLabel} · </em> : null}
+            {entries.at(-1)?.timestamp ?? firstEntry.timestamp}
+          </span>
         </div>
         <div className="message-stack">
           {shouldUseSingleBubble ? (
@@ -770,6 +782,21 @@ export const MessageRow = memo(function MessageRow({
     </article>
   );
 }, areMessageRowPropsEqual);
+
+function messagePhaseLabel(entries: ConversationEntry[]) {
+  const phases = new Set(
+    entries
+      .map((entry) => entry.messagePhase?.trim())
+      .filter((phase): phase is string => Boolean(phase)),
+  );
+  if (phases.has("final_answer")) {
+    return "Final answer";
+  }
+  if (phases.has("commentary")) {
+    return "Commentary";
+  }
+  return null;
+}
 
 function renderMessageEntryContent(
   entry: ConversationEntry,
@@ -1459,6 +1486,86 @@ export const ArchivedHistoryRow = memo(function ArchivedHistoryRow({
   );
 }, areArchivedHistoryRowPropsEqual);
 
+export const TurnProcessGroupRow = memo(function TurnProcessGroupRow({
+  cell,
+  isOpen = false,
+  onToggleOpen,
+  onOpenLocalFile,
+  onOpenArtifactUrl,
+}: TurnProcessGroupRowProps) {
+  const entries = cell.entries;
+  const collapsedCells = cell.collapsedCells ?? [];
+  const firstEntry = entries[0];
+  const lastEntry = entries.at(-1);
+  const itemCount = entries.length;
+  const summaryText = summarizeTurnProcessEntries(entries);
+  return (
+    <section className="turn-process-row" aria-label="Turn process items">
+      <div className="event-icon turn-process-icon">
+        <BranchIcon />
+      </div>
+      <details
+        className="turn-process-card"
+        open={isOpen}
+        aria-expanded={isOpen}
+        onToggle={(event) => onToggleOpen?.(event.currentTarget.open)}
+      >
+        <summary className="turn-process-summary">
+          <div className="turn-process-copy">
+            <strong>Process items</strong>
+            <span>{summaryText}</span>
+          </div>
+          <div className="turn-process-meta">
+            <span>
+              {itemCount} process item{itemCount === 1 ? "" : "s"}
+            </span>
+            <time>{lastEntry?.timestamp ?? firstEntry?.timestamp ?? ""}</time>
+          </div>
+        </summary>
+        {isOpen ? (
+          <div className="turn-process-body">
+            {collapsedCells.map((collapsedCell) => (
+              <div
+                key={collapsedCell.id}
+                className={`turn-process-cell turn-process-cell-${collapsedCell.kind}`}
+              >
+                {renderNestedConversationCell(
+                  collapsedCell,
+                  onOpenLocalFile,
+                  onOpenArtifactUrl,
+                )}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </details>
+    </section>
+  );
+}, areTurnProcessGroupRowPropsEqual);
+
+function summarizeTurnProcessEntries(entries: ConversationEntry[]) {
+  const labels = entries
+    .map((entry) => {
+      if (entry.kind === "tool") {
+        return entry.toolName ?? entry.author;
+      }
+      if (entry.kind === "event") {
+        return entry.toolName ?? "Event";
+      }
+      if (entry.kind === "artifact") {
+        return entry.artifact?.title ?? "Artifact";
+      }
+      return entry.kind;
+    })
+    .map((label) => label.trim())
+    .filter(Boolean);
+  if (labels.length === 0) {
+    return "Turn process details";
+  }
+  const preview = labels.slice(0, 2).join(" · ");
+  return labels.length > 2 ? `${preview} · ${labels.length - 2} more` : preview;
+}
+
 function renderArchivedConversationCell(
   cell: ConversationCell,
   onOpenLocalFile?: (target: string) => void,
@@ -1511,6 +1618,16 @@ function renderNestedConversationCell(
     return (
       <ArchivedHistoryRow
         entry={cell.entries[0]}
+        onOpenLocalFile={onOpenLocalFile}
+        onOpenArtifactUrl={onOpenArtifactUrl}
+      />
+    );
+  }
+  if (cell.kind === "turnProcess") {
+    return (
+      <TurnProcessGroupRow
+        cell={cell}
+        isOpen
         onOpenLocalFile={onOpenLocalFile}
         onOpenArtifactUrl={onOpenArtifactUrl}
       />
@@ -1569,6 +1686,19 @@ function areArchivedHistoryRowPropsEqual(
 ) {
   return (
     previous.entry === next.entry &&
+    previous.onOpenLocalFile === next.onOpenLocalFile &&
+    previous.onOpenArtifactUrl === next.onOpenArtifactUrl
+  );
+}
+
+function areTurnProcessGroupRowPropsEqual(
+  previous: Readonly<TurnProcessGroupRowProps>,
+  next: Readonly<TurnProcessGroupRowProps>,
+) {
+  return (
+    previous.cell === next.cell &&
+    previous.isOpen === next.isOpen &&
+    previous.onToggleOpen === next.onToggleOpen &&
     previous.onOpenLocalFile === next.onOpenLocalFile &&
     previous.onOpenArtifactUrl === next.onOpenArtifactUrl
   );
