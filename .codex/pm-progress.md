@@ -11,6 +11,22 @@
 None
 
 ## Active Work
+- id: client-browser-cdp-default-on
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/browser-panel-cdp-debug
+  task_type: feature/electron-debugging
+  depends_on: main baseline `8cb249137df81917b42c67245946c39f9e8cef83`
+  files: apps/root-worker-prototype/electron/remoteDebugging.cjs; apps/root-worker-prototype/electron/remoteDebugging.test.cjs; `.codex/skills/root-worker-playwright-debug` only if repo-local launch docs/scripts need updating; user config skill under `/Users/bytedance/.morpheus/skills/client-browser-cdp-debug`
+  base_commit: 8cb249137df81917b42c67245946c39f9e8cef83
+  pending_sync_from_main: none; dev-3 is clean and at `8cb249137df81917b42c67245946c39f9e8cef83`.
+  status: merged
+  objective: User corrected the desired CDP behavior: the Root Worker client browser should open CDP by default, not only when an env var is set. Keep it loopback-only and make the user-facing skill Chinese in the user config directory.
+  last_update: 2026-09-04 CST owner_dev_3 delivered `89b8a94f90`; PM merged it into main as `28074a9f4`. CDP is now default-on at `127.0.0.1:9222`; `ROOT_WORKER_DISABLE_CDP=1|true|yes|on` disables it; `ROOT_WORKER_REMOTE_DEBUGGING_PORT=<1..65535>` overrides the port; invalid override fails closed. PM installed the Chinese `client-browser-cdp-debug` skill under `/Users/bytedance/.morpheus/skills/client-browser-cdp-debug` and removed the duplicate repo-local `client-browser-cdp-debug` skill, leaving repo-local `root-worker-playwright-debug` to reference the user-config skill path. PM refreshed installed app artifacts, verified codesign, and requested runtime restart.
+  next_action: none
+  blockers: none
+  validation: Owner ran default-on CDP helper/security tests -> 9/13 passed; script syntax checks passed; reviewer passed after launch script normalization fixes. PM reran merged-main `rtk node --test apps/root-worker-prototype/electron/remoteDebugging.test.cjs apps/root-worker-prototype/electron/browserPanelConfig.test.cjs` -> 9 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test electron/remoteDebugging.test.cjs electron/browserPanelConfig.test.cjs electron/browserPanelSecurity.test.cjs` -> 13 passed; launch/user-skill smoke script syntax checks -> passed; repo-local duplicate skill removed and Chinese user config skill verified at `/Users/bytedance/.morpheus/skills/client-browser-cdp-debug/SKILL.md`; `rtk git show --check --stat --oneline HEAD` and diff checks -> passed. Installed artifact updater returned `{ ok: true, updated: true }`; `/Applications/Root Worker Prototype.app` codesign verify passed; installed `app.asar` and `bin/app-server` mtimes are Sep 4 13:13:12 2026.
+  commit: 28074a9f4, 89b8a94f90
 - id: client-browser-cdp-debug
   owner: /self/my_codex_owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3

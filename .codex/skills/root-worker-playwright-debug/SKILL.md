@@ -99,7 +99,13 @@ rtk env ROOT_WORKER_OPEN_DEVTOOLS=1 \
   scripts/launch-electron-dev.sh
 ```
 
-需要用客户端内置 Browser panel 作为载体，通过 Playwright/CDP 调试其它前端页面时，使用 `client-browser-cdp-debug` skill。该场景可用：
+需要用客户端内置 Browser panel 作为载体，通过 Playwright/CDP 调试其它前端页面时，使用用户配置目录中的 `client-browser-cdp-debug` skill：
+
+```text
+/Users/bytedance/.morpheus/skills/client-browser-cdp-debug/SKILL.md
+```
+
+该场景可用：
 
 ```bash
 rtk scripts/launch-electron-dev.sh
