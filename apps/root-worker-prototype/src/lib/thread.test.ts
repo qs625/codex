@@ -17,6 +17,7 @@ import {
   formatUpdatedLabel,
   findProjectByRootIdentity,
   getAgentRoleLabel,
+  getInterruptibleTurn,
   getPresenceLabel,
   getParentThreadId,
   getRootThreadConversationTitle,
@@ -28,6 +29,7 @@ import {
   getThreadSubtreeIdsChildrenFirst,
   shouldNotifyProjectThreadCompleted,
   isThreadThinking,
+  isActiveTurnMismatchError,
   markThreadCommandExecutionRunning,
   mergeDefaultCollapsedProjectIds,
   mergeThreadLifecycleStatus,
@@ -7054,6 +7056,101 @@ test("getPresenceLabel surfaces canonical thread lifecycle status", () => {
     }),
     "Complete",
   );
+});
+
+test("getInterruptibleTurn returns the single running turn", () => {
+  const runningTurn = {
+    ...makeTurn("turn-running", []),
+    status: "running" as const,
+    startedAt: 3,
+    completedAt: null,
+  };
+  const thread: Thread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [runningTurn],
+  };
+
+  assert.equal(getInterruptibleTurn(thread)?.id, "turn-running");
+});
+
+test("getInterruptibleTurn ignores a completed last turn", () => {
+  const runningTurn = {
+    ...makeTurn("turn-running", []),
+    status: "running" as const,
+    startedAt: 3,
+    completedAt: null,
+  };
+  const completedTurn = {
+    ...makeTurn("turn-completed", []),
+    status: "completed" as const,
+    startedAt: 4,
+    completedAt: 5,
+  };
+  const thread: Thread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [runningTurn, completedTurn],
+  };
+
+  assert.equal(getInterruptibleTurn(thread)?.id, "turn-running");
+});
+
+test("getInterruptibleTurn prefers running over stale in-progress turns", () => {
+  const activeTurn = {
+    ...makeTurn("turn-active", []),
+    status: "running" as const,
+    startedAt: 3,
+    completedAt: null,
+  };
+  const staleTurn = {
+    ...makeTurn("turn-stale", []),
+    status: "inProgress" as const,
+    startedAt: 4,
+    completedAt: null,
+  };
+  const thread: Thread = {
+    ...makeThread(),
+    lifecycleStatus: { type: "active" as const, activeFlags: ["running"] },
+    turns: [activeTurn, staleTurn],
+  };
+
+  assert.equal(getInterruptibleTurn(thread)?.id, "turn-active");
+});
+
+test("getInterruptibleTurn ignores stale in-flight turns on final threads", () => {
+  const thread: Thread = {
+    ...makeThread(),
+    lifecycleStatus: {
+      type: "final" as const,
+      result: { type: "completed" as const },
+    },
+    turns: [
+      {
+        ...makeTurn("turn-stale", []),
+        status: "inProgress" as const,
+        completedAt: null,
+      },
+    ],
+  };
+
+  assert.equal(getInterruptibleTurn(thread), null);
+});
+
+test("isActiveTurnMismatchError matches non-uuid turn ids", () => {
+  assert.equal(
+    isActiveTurnMismatchError(
+      "expected active turn id auto-compact-0 but found auto-compact-1",
+    ),
+    true,
+  );
+  assert.equal(
+    isActiveTurnMismatchError(
+      "app-server request failed (-32600): expected active turn id turn-a but found turn-b",
+    ),
+    true,
+  );
+  assert.equal(isActiveTurnMismatchError("expected active turn id a"), false);
 });
 
 test("isThreadThinking stays false while a turn only injects init context", () => {

@@ -89,7 +89,9 @@ import {
   getThreadItemNotificationTargetThreadIds,
   getTreeRootThreadId,
   getThreadDepth,
+  getInterruptibleTurn,
   isCompletedFinalLifecycleStatus,
+  isActiveTurnMismatchError,
   isRootThread,
   isSubagentThread,
   markThreadCommandExecutionRunning,
@@ -1856,11 +1858,11 @@ function App() {
       return;
     }
 
-    const currentTurn = selectedThread?.turns.at(-1) ?? null;
-    const turnInProgress =
-      currentTurn != null &&
-      (currentTurn.status === "inProgress" || currentTurn.completedAt == null);
-    if (!turnInProgress) {
+    const thread =
+      threadsRef.current.find((candidate) => candidate.id === selectedThreadId) ??
+      selectedThread;
+    const currentTurn = getInterruptibleTurn(thread);
+    if (!currentTurn) {
       return;
     }
 
@@ -1872,7 +1874,13 @@ function App() {
         turnId: currentTurn.id,
       });
     } catch (interruptError) {
-      setError(toErrorMessage(interruptError));
+      const message = toErrorMessage(interruptError);
+      if (isActiveTurnMismatchError(message)) {
+        void loadThread(selectedThreadId);
+        setError("The running turn changed. Refreshed the thread status.");
+      } else {
+        setError(message);
+      }
       setIsStoppingTurn(false);
     }
   }

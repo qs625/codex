@@ -1895,6 +1895,51 @@ export function isTurnInFlight(turn: Turn) {
   return turn.status === "running" || turn.status === "inProgress";
 }
 
+export function getInterruptibleTurn(thread: Thread | null) {
+  if (!thread || isTerminalThreadLifecycle(thread.lifecycleStatus)) {
+    return null;
+  }
+
+  const candidates = thread.turns.filter(
+    (turn) => isTurnInFlight(turn) && turn.completedAt == null,
+  );
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const runningCandidates = candidates.filter(
+    (turn) => turn.status === "running",
+  );
+  return pickLatestStartedTurn(
+    runningCandidates.length > 0 ? runningCandidates : candidates,
+  );
+}
+
+function isTerminalThreadLifecycle(status: ThreadLifecycleStatus) {
+  return (
+    status.type === "final" ||
+    status.type === "notLoaded" ||
+    status.type === "systemError"
+  );
+}
+
+function pickLatestStartedTurn(turns: Turn[]) {
+  return [...turns].sort(compareTurnRecency)[0] ?? null;
+}
+
+function compareTurnRecency(left: Turn, right: Turn) {
+  const leftStarted = left.startedAt ?? Number.NEGATIVE_INFINITY;
+  const rightStarted = right.startedAt ?? Number.NEGATIVE_INFINITY;
+  if (leftStarted !== rightStarted) {
+    return rightStarted - leftStarted;
+  }
+  return right.id.localeCompare(left.id);
+}
+
+export function isActiveTurnMismatchError(message: string) {
+  return /\bexpected active turn id \S+ but found \S+\b/i.test(message);
+}
+
 export function isThreadThinking(
   thread: Thread | null,
   {
