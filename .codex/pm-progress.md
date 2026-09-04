@@ -11,6 +11,22 @@
 None
 
 ## Active Work
+- id: client-browser-cdp-debug
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: feature/browser-panel-cdp-debug
+  task_type: feature/electron-debugging
+  depends_on: main baseline `7ba8546b6a2d90287af47f5834532c14247edab4`
+  files: apps/root-worker-prototype/electron/main.cjs; apps/root-worker-prototype/electron/preload.cjs if IPC surface changes; apps/root-worker-prototype/electron/*browser* tests; apps/root-worker-prototype/src/electron.d.ts if preload typing changes; user skill for Root Worker client browser Playwright/CDP debugging; `.codex/skills/root-worker-playwright-debug` scripts/docs if needed
+  base_commit: 7ba8546b6a2d90287af47f5834532c14247edab4
+  pending_sync_from_main: none; dev-3 is clean and already on `feature/browser-panel-cdp-debug` at the main baseline.
+  status: merged
+  objective: Add an explicit opt-in CDP debugging path for the Root Worker client browser, so developers can open arbitrary frontend URLs in the built-in Browser panel and use Playwright/CDP to inspect DOM, console, network, screenshots, and interactions.
+  last_update: 2026-09-04 CST owner_dev_3 delivered `4ec0f90345`; PM merged it into main as `d16091e66`. The fix adds explicit `ROOT_WORKER_REMOTE_DEBUGGING_PORT` Electron CDP on `127.0.0.1`; keeps Browser panel webPreferences behind a tested helper without weakening sandbox/security; lets `root-worker-playwright-debug` opt into CDP; and adds `client-browser-cdp-debug` skill that references `bytedance-frontend-debug` plus `root-worker-playwright-debug` instead of duplicating generic Playwright CLI guidance, while keeping the Root Worker client browser as the primary debugging surface. Fixed reviewer passed after smoke cleanup and strict parsing fixes.
+  next_action: none
+  blockers: none
+  validation: Owner ran `rtk node --test apps/root-worker-prototype/electron/remoteDebugging.test.cjs apps/root-worker-prototype/electron/browserPanelConfig.test.cjs` -> 6 passed; focused Electron/browser security tests -> 10 passed; script syntax checks passed; actual `rtk .codex/skills/client-browser-cdp-debug/scripts/run-client-browser-cdp-smoke.sh` passed, connecting to CDP URL `http://127.0.0.1:58324`, finding Browser panel target `http://127.0.0.1:58326/`, clicking DOM marker to `clicked`, capturing `/ping`, and writing screenshot `/tmp/root-worker-electron-cdp-browser-panel.png`; no residual Electron/Vite/app-server process found. PM reran merged-main `rtk node --test apps/root-worker-prototype/electron/remoteDebugging.test.cjs apps/root-worker-prototype/electron/browserPanelConfig.test.cjs` -> 6 passed; `rtk pnpm --dir apps/root-worker-prototype exec tsx --test electron/remoteDebugging.test.cjs electron/browserPanelConfig.test.cjs electron/browserPanelSecurity.test.cjs` -> 10 passed; script syntax checks -> passed; `rtk git show --check --stat --oneline HEAD` -> passed; `rtk pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  commit: d16091e66, 4ec0f90345
 - id: global-agent-path-namespace
   owner: /self/my_codex_owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
