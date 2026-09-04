@@ -8,9 +8,25 @@
 - [Known Issues](#known-issues)
 
 ## Current Goal
-None
+Fix Root Worker interrupt button stale active-turn-id error.
 
 ## Active Work
+- id: interrupt-turn-stale-active-turn-id
+  owner: /self/my_codex_owner_dev_3
+  checkout: /Users/bytedance/Projects/my-codex-dev-3
+  branch: bugfix/interrupt-turn-stale-active-turn-id
+  task_type: bugfix/ui-runtime
+  depends_on: main baseline `481955331`
+  files: apps/root-worker-prototype/src/App.tsx; apps/root-worker-prototype/src/components/Panels.tsx; apps/root-worker-prototype/src/lib/thread.ts; focused frontend tests; backend turn interrupt tests only if the contract proves wrong
+  base_commit: 481955331
+  pending_sync_from_main: dev checkout selection blocked by current worktree-local AGENTS/memory cleanup diffs and pre-existing dirty files; owner must not include unrelated cleanup or existing dirty files in product fix.
+  status: merged
+  objective: User clicked runtime stop/interrupt and saw `Error invoking remote method 'codex:interruptTurn': Error: app-server request failed (-32600): expected active turn id 01a06b64-40b2-79b1-82f8-b419f5f22678 but found 01a06b60-0f0a-7382-9392-a1e6fa97d7a4`. Stop should target the actual latest active turn and should not surface stale-turn mismatch as a raw runtime error.
+  last_update: 2026-09-04 CST PM merged owner commit `4c0a0ca349` into main as `6aec33914`. The merged fix keeps backend `turn/interrupt` active-turn-id precondition intact, moves Stop button visibility and payload selection onto shared `getInterruptibleTurn()`, and handles stale active-turn mismatch by refreshing the thread and showing a gentle UI message.
+  next_action: refresh running runtime/client artifacts so the installed app picks up the merged frontend fix.
+  blockers: dev checkouts currently not clean: dev has large unrelated dirty product files, dev-2 has untracked `apps/android-companion/local.properties` plus cleanup diffs, dev-3 has cleanup diffs.
+  validation: Owner ran `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts` -> 201 passed; `pnpm --dir apps/root-worker-prototype exec tsx --test src/components/Panels.test.tsx` -> 19 passed; combined focused run -> 220 passed; `git diff --check -- <4 files>` -> passed. Owner `pnpm --dir apps/root-worker-prototype exec tsc --noEmit` still fails on existing scattered TS errors; owner confirmed the task-introduced `lastTurnInProgress` issue no longer appears. PM reran merged-main `pnpm --dir apps/root-worker-prototype exec tsx --test src/lib/thread.test.ts src/components/Panels.test.tsx` -> 220 passed; `git diff --check HEAD~1..HEAD` -> passed; `git show --check --stat --oneline HEAD` -> passed; `pnpm --dir apps/root-worker-prototype build` -> passed with existing chunk-size warning.
+  commit: 6aec33914, 4c0a0ca349
 - id: client-browser-cdp-default-on
   owner: /self/my_codex_owner_dev_3
   checkout: /Users/bytedance/Projects/my-codex-dev-3
