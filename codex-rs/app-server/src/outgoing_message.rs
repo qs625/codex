@@ -891,6 +891,7 @@ mod tests {
     fn verify_client_relaunch_requested_notification_serialization() {
         let notification =
             ServerNotification::ClientRelaunchRequested(ClientRelaunchRequestedNotification {
+                mode: app_server_protocol::ClientRelaunchMode::Full,
                 reason: Some("runtime update".to_string()),
                 requested_by_thread_id: Some("thread-1".to_string()),
                 resume_strategy: "client_bootstrap_autoresume".to_string(),
@@ -901,6 +902,7 @@ mod tests {
             json!({
                 "method": "client/relaunch/requested",
                 "params": {
+                    "mode": "full",
                     "reason": "runtime update",
                     "requestedByThreadId": "thread-1",
                     "resumeStrategy": "client_bootstrap_autoresume",

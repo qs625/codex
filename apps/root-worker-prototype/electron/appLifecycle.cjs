@@ -84,57 +84,216 @@ function createRendererReloadLifecycleAdapter({
   logger = console,
 } = {}) {
   let inFlight = null;
+  let inFlightMode = null;
+
+  function requestReloadWithMode({
+    allowFullRelaunchFallback,
+    publicMode,
+    reason,
+    semanticMode,
+  }) {
+    if (inFlight) {
+      if (inFlightMode.semanticMode !== semanticMode) {
+        return Promise.resolve(
+          restartModeConflictResult({
+            requestedMode: publicMode,
+            executingMode: inFlightMode.publicMode,
+            requestedModeLabel: semanticMode,
+            executingModeLabel: inFlightMode.semanticMode,
+          }),
+        );
+      }
+      const executingMode = inFlightMode.publicMode;
+      return inFlight.then((result) =>
+        coalescedRestartResult(result, {
+          requestedMode: publicMode,
+          executingMode,
+        }),
+      );
+    }
+
+    inFlightMode = { publicMode, semanticMode };
+    inFlight = runRendererReload({
+      fullRelaunch,
+      reloadWindows,
+      broadcastStatus,
+      logger,
+      reason,
+      allowFullRelaunchFallback,
+      mode: publicMode,
+    }).finally(() => {
+      inFlight = null;
+      inFlightMode = null;
+    });
+    return inFlight;
+  }
 
   return {
     requestReload(reason = null) {
-      if (inFlight) {
-        return inFlight.then((result) => ({
-          ...result,
-          alreadyRequested: true,
-        }));
-      }
-
-      inFlight = runRendererReload({
-        fullRelaunch,
-        reloadWindows,
-        broadcastStatus,
-        logger,
+      return requestReloadWithMode({
+        allowFullRelaunchFallback: true,
+        publicMode: null,
         reason,
-      }).finally(() => {
-        inFlight = null;
+        semanticMode: "generic reload",
       });
-      return inFlight;
+    },
+    requestHotReload(reason = null) {
+      return requestReloadWithMode({
+        allowFullRelaunchFallback: false,
+        publicMode: "hot",
+        reason,
+        semanticMode: "hot",
+      });
     },
   };
+}
+
+function coalescedRestartResult(result, { requestedMode, executingMode }) {
+  if (result?.busy || result?.conflict) {
+    return {
+      ...result,
+      alreadyRequested: true,
+    };
+  }
+  return {
+    ...result,
+    alreadyRequested: true,
+    requestedMode,
+    executingMode,
+  };
+}
+
+function restartModeConflictResult({
+  requestedMode,
+  executingMode,
+  requestedModeLabel = requestedMode,
+  executingModeLabel = executingMode,
+}) {
+  return {
+    ok: false,
+    busy: true,
+    conflict: true,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    mode: null,
+    requestedMode,
+    executingMode,
+    reason: `Runtime refresh mode conflict: requested ${requestedModeLabel} while ${executingModeLabel} is in progress`,
+  };
+}
+
+function normalizeClientRelaunchMode(mode) {
+  if (mode === "hot" || mode === "full") {
+    return mode;
+  }
+  return null;
 }
 
 function createClientRelaunchNotificationHandler({
   rendererReload,
   installedArtifactUpdate,
+  fullRelaunch,
 } = {}) {
+  let inFlight = null;
+  let inFlightMode = null;
+
   return async function handleClientRelaunchNotification(notification) {
     const reason = notification?.params?.reason ?? notification?.method ?? null;
-    if (
-      installedArtifactUpdate &&
-      typeof installedArtifactUpdate.requestUpdateAndRelaunch === "function"
-    ) {
-      const updateResult =
-        await installedArtifactUpdate.requestUpdateAndRelaunch(reason);
-      if (!updateResult.unsupported) {
-        return updateResult;
-      }
-    }
-    if (!rendererReload || typeof rendererReload.requestReload !== "function") {
+    const mode = normalizeClientRelaunchMode(notification?.params?.mode);
+    if (!mode) {
       return {
         ok: false,
         inPlace: false,
         relaunching: false,
         reloaded: false,
-        reason: "Renderer reload adapter is unavailable",
+        updated: false,
+        mode: null,
+        reason: `Invalid client relaunch mode: ${String(notification?.params?.mode ?? "missing")}`,
       };
     }
-    return rendererReload.requestReload(reason);
+    if (inFlight) {
+      if (inFlightMode !== mode) {
+        return restartModeConflictResult({
+          requestedMode: mode,
+          executingMode: inFlightMode,
+        });
+      }
+      const executingMode = inFlightMode;
+      return inFlight.then((result) =>
+        coalescedRestartResult(result, {
+          requestedMode: mode,
+          executingMode,
+        }),
+      );
+    }
+
+    inFlightMode = mode;
+    inFlight = runClientRelaunchNotification({
+      fullRelaunch,
+      installedArtifactUpdate,
+      mode,
+      reason,
+      rendererReload,
+    }).finally(() => {
+      inFlight = null;
+      inFlightMode = null;
+    });
+    return inFlight;
   };
+}
+
+async function runClientRelaunchNotification({
+  fullRelaunch,
+  installedArtifactUpdate,
+  mode,
+  reason,
+  rendererReload,
+}) {
+  if (
+    installedArtifactUpdate &&
+    typeof installedArtifactUpdate.requestUpdateAndRelaunch === "function"
+  ) {
+    const updateResult =
+      await installedArtifactUpdate.requestUpdateAndRelaunch(reason, mode);
+    if (!updateResult.unsupported) {
+      return updateResult;
+    }
+  }
+  if (mode === "full") {
+    const relaunch =
+      fullRelaunch && typeof fullRelaunch.requestRelaunch === "function"
+        ? await fullRelaunch.requestRelaunch(reason)
+        : {
+            ok: false,
+            relaunching: false,
+            reason: "Application relaunch adapter is unavailable",
+          };
+    return {
+      ok: Boolean(relaunch.ok),
+      inPlace: false,
+      relaunching: Boolean(relaunch.relaunching),
+      reloaded: false,
+      updated: false,
+      mode,
+      relaunch,
+      reason: relaunch.reason ?? reason,
+    };
+  }
+  if (!rendererReload || typeof rendererReload.requestReload !== "function") {
+    return {
+      ok: false,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      reason: "Renderer reload adapter is unavailable",
+    };
+  }
+  if (typeof rendererReload.requestHotReload === "function") {
+    return rendererReload.requestHotReload(reason);
+  }
+  return rendererReload.requestReload(reason);
 }
 
 async function observeClientRelaunchResult(
@@ -147,9 +306,13 @@ async function observeClientRelaunchResult(
       lifecycle: {
         type: "clientRelaunch",
         phase: result?.ok ? "completed" : "failed",
+        mode: result?.mode ?? null,
         reason: result?.reason ?? reason,
       },
-      relaunch: result?.relaunch ?? result ?? null,
+      relaunch:
+        result && typeof result === "object"
+          ? { ...(result.relaunch ?? result), mode: result.mode ?? null }
+          : result ?? null,
     });
     return result;
   } catch (error) {
@@ -162,6 +325,7 @@ async function observeClientRelaunchResult(
       lifecycle: {
         type: "clientRelaunch",
         phase: "failed",
+        mode: null,
         reason: message,
       },
     });
@@ -187,14 +351,37 @@ function createInstalledArtifactUpdateLifecycleAdapter({
   logger = console,
 } = {}) {
   let inFlight = null;
+  let inFlightMode = null;
 
   return {
-    requestUpdateAndRelaunch(reason = null) {
+    requestUpdateAndRelaunch(reason = null, mode = null) {
+      const normalizedMode = normalizeClientRelaunchMode(mode);
+      if (!normalizedMode) {
+        return Promise.resolve({
+          ok: false,
+          unsupported: false,
+          relaunching: false,
+          updated: false,
+          mode: null,
+          reason: `Invalid installed artifact refresh mode: ${String(mode ?? "missing")}`,
+        });
+      }
       if (inFlight) {
-        return inFlight.then((result) => ({
-          ...result,
-          alreadyRequested: true,
-        }));
+        if (inFlightMode !== normalizedMode) {
+          return Promise.resolve(
+            restartModeConflictResult({
+              requestedMode: normalizedMode,
+              executingMode: inFlightMode,
+            }),
+          );
+        }
+        const executingMode = inFlightMode;
+        return inFlight.then((result) =>
+          coalescedRestartResult(result, {
+            requestedMode: normalizedMode,
+            executingMode,
+          }),
+        );
       }
       if (!resolvePlan || typeof resolvePlan !== "function") {
         return Promise.resolve({ ok: false, unsupported: true });
@@ -204,6 +391,7 @@ function createInstalledArtifactUpdateLifecycleAdapter({
         return Promise.resolve({ ok: false, unsupported: true });
       }
 
+      inFlightMode = normalizedMode;
       inFlight = runInstalledArtifactUpdate({
         appServerRestart,
         appServerStop,
@@ -214,8 +402,10 @@ function createInstalledArtifactUpdateLifecycleAdapter({
         logger,
         plan,
         reason,
+        mode: normalizedMode,
       }).finally(() => {
         inFlight = null;
+        inFlightMode = null;
       });
       return inFlight;
     },
@@ -232,6 +422,7 @@ async function runInstalledArtifactUpdate({
   logger,
   plan,
   reason,
+  mode,
 }) {
   if (!updateArtifacts || typeof updateArtifacts !== "function") {
     return {
@@ -239,6 +430,7 @@ async function runInstalledArtifactUpdate({
       unsupported: false,
       relaunching: false,
       updated: false,
+      mode,
       reason: "Installed artifact updater is unavailable",
     };
   }
@@ -247,6 +439,7 @@ async function runInstalledArtifactUpdate({
     lifecycle: {
       type: "installedArtifactUpdate",
       phase: "building",
+      mode,
       reason,
     },
   });
@@ -262,14 +455,16 @@ async function runInstalledArtifactUpdate({
       lifecycle: {
         type: "installedArtifactUpdate",
         phase: "updated",
+        mode,
         reason,
       },
     });
-    if (plan.requiresFullRelaunch) {
+    if (mode === "full") {
       return await relaunchUpdatedApp({
         appServerStop,
         broadcastStatus,
         fullRelaunch,
+        mode,
         reason,
         update,
       });
@@ -283,6 +478,7 @@ async function runInstalledArtifactUpdate({
     }
     const reload = await reloadUpdatedRenderer(reloadWindows, {
       broadcastStatus,
+      mode,
       reason,
     });
     if (!reload.ok) {
@@ -299,6 +495,7 @@ async function runInstalledArtifactUpdate({
       lifecycle: {
         type: "installedArtifactUpdate",
         phase: "reloaded",
+        mode,
         reason,
       },
       reload,
@@ -310,6 +507,7 @@ async function runInstalledArtifactUpdate({
       reloaded: true,
       updated: Boolean(update.updated),
       backendRestart,
+      mode,
       mainProcessUpdate: "pendingAppRelaunch",
       preloadUpdate: "pendingWindowRecreateOrAppRelaunch",
       reason,
@@ -325,6 +523,7 @@ async function runInstalledArtifactUpdate({
       lifecycle: {
         type: "installedArtifactUpdate",
         phase: "failed",
+        mode,
         reason: message,
       },
     });
@@ -337,6 +536,7 @@ async function runInstalledArtifactUpdate({
       updated: Boolean(error?.updated),
       backendRestart: error?.backendRestart,
       reload: error?.reload,
+      mode,
       reason: message,
     };
     if (error?.backendStop) {
@@ -353,6 +553,7 @@ async function relaunchUpdatedApp({
   appServerStop,
   broadcastStatus,
   fullRelaunch,
+  mode,
   reason,
   update,
 }) {
@@ -360,6 +561,7 @@ async function relaunchUpdatedApp({
     lifecycle: {
       type: "installedArtifactUpdate",
       phase: "relaunching",
+      mode,
       reason,
     },
   });
@@ -388,6 +590,7 @@ async function relaunchUpdatedApp({
     lifecycle: {
       type: "installedArtifactUpdate",
       phase: "relaunching",
+      mode,
       reason,
     },
     relaunch,
@@ -399,6 +602,7 @@ async function relaunchUpdatedApp({
     reloaded: false,
     updated: Boolean(update.updated),
     backendStop,
+    mode,
     mainProcessUpdate: "requiresAppRelaunch",
     preloadUpdate: "requiresAppRelaunch",
     reason,
@@ -442,13 +646,14 @@ async function restartUpdatedAppServer(appServerRestart, reason) {
   };
 }
 
-async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, reason }) {
+async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, mode, reason }) {
   if (typeof reloadWindows !== "function") {
     return {
       ok: false,
       inPlace: true,
       relaunching: false,
       reloaded: false,
+      mode,
       reason: "Renderer reload is unavailable after installed artifact update",
     };
   }
@@ -456,6 +661,7 @@ async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, reason })
     lifecycle: {
       type: "installedArtifactUpdate",
       phase: "reloading",
+      mode,
       reason,
     },
   });
@@ -467,6 +673,7 @@ async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, reason })
       relaunching: false,
       reloaded: true,
       windowsReloaded: reload?.windowsReloaded ?? null,
+      mode,
       reason,
     };
   } catch (error) {
@@ -475,6 +682,7 @@ async function reloadUpdatedRenderer(reloadWindows, { broadcastStatus, reason })
       inPlace: true,
       relaunching: false,
       reloaded: false,
+      mode,
       reason: error instanceof Error ? error.message : String(error),
     };
   }
@@ -493,12 +701,25 @@ async function runRendererReload({
   broadcastStatus,
   logger,
   reason,
+  allowFullRelaunchFallback = true,
+  mode = null,
 }) {
   if (typeof reloadWindows !== "function") {
+    if (!allowFullRelaunchFallback) {
+      return {
+        ok: false,
+        inPlace: true,
+        relaunching: false,
+        reloaded: false,
+        mode,
+        reason: "Renderer reload is unavailable in this environment",
+      };
+    }
     return requestFullRelaunchFallback(fullRelaunch, reason, {
       reason: "Renderer reload is unavailable in this environment",
       broadcastStatus,
       logger,
+      mode,
     });
   }
 
@@ -506,6 +727,7 @@ async function runRendererReload({
     lifecycle: {
       type: "rendererReload",
       phase: "reloading",
+      mode,
       reason,
     },
   });
@@ -516,6 +738,7 @@ async function runRendererReload({
       lifecycle: {
         type: "rendererReload",
         phase: "reloaded",
+        mode,
         reason,
       },
     });
@@ -526,13 +749,25 @@ async function runRendererReload({
       reloaded: true,
       alreadyRequested: false,
       windowsReloaded: reload?.windowsReloaded ?? null,
+      mode,
       reason,
     };
   } catch (error) {
+    if (!allowFullRelaunchFallback) {
+      return {
+        ok: false,
+        inPlace: true,
+        relaunching: false,
+        reloaded: false,
+        mode,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
     return requestFullRelaunchFallback(fullRelaunch, reason, {
       reason: error instanceof Error ? error.message : String(error),
       broadcastStatus,
       logger,
+      mode,
     });
   }
 }
@@ -540,7 +775,7 @@ async function runRendererReload({
 function requestFullRelaunchFallback(
   fullRelaunch,
   reason,
-  { reason: fallbackReason, broadcastStatus, logger } = {},
+  { reason: fallbackReason, broadcastStatus, logger, mode = null } = {},
 ) {
   logger?.warn?.(
     "[prototype] renderer reload unavailable; falling back to full relaunch",
@@ -560,12 +795,14 @@ function requestFullRelaunchFallback(
     relaunching: Boolean(fallback.relaunching),
     reloaded: false,
     fallback,
+    mode,
     reason: fallback.reason ?? fallbackReason ?? reason,
   };
   broadcastStatus?.({
     lifecycle: {
       type: "rendererReload",
       phase: fallback.ok ? "fullRelaunchFallback" : "failed",
+      mode,
       reason: result.reason,
     },
     relaunch: fallback,

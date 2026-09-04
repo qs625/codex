@@ -693,6 +693,11 @@ export type NotificationEnvelope = {
       ok: boolean;
       relaunching: boolean;
       alreadyRequested?: boolean;
+      busy?: boolean;
+      conflict?: boolean;
+      mode?: "hot" | "full" | null;
+      requestedMode?: "hot" | "full" | null;
+      executingMode?: "hot" | "full" | null;
       reason?: string | null;
     };
     lifecycle?: {
@@ -706,6 +711,7 @@ export type NotificationEnvelope = {
         | "fullRelaunchFallback"
         | "completed"
         | "failed";
+      mode?: "hot" | "full" | null;
       reason?: string | null;
     };
   };

@@ -123,6 +123,7 @@ test("renderer reload lifecycle adapter reloads windows without full app relaunc
     reloaded: true,
     alreadyRequested: false,
     windowsReloaded: 1,
+    mode: null,
     reason: "restart tool",
   });
   assert.deepEqual(reloads, [{ reason: "restart tool" }]);
@@ -131,6 +132,7 @@ test("renderer reload lifecycle adapter reloads windows without full app relaunc
       lifecycle: {
         type: "rendererReload",
         phase: "reloading",
+        mode: null,
         reason: "restart tool",
       },
     },
@@ -138,13 +140,14 @@ test("renderer reload lifecycle adapter reloads windows without full app relaunc
       lifecycle: {
         type: "rendererReload",
         phase: "reloaded",
+        mode: null,
         reason: "restart tool",
       },
     },
   ]);
 });
 
-test("client relaunch notification handler defaults to renderer reload", async () => {
+test("client relaunch notification handler hot reloads renderer without app relaunch", async () => {
   const reloads = [];
   const handler = createClientRelaunchNotificationHandler({
     rendererReload: {
@@ -164,7 +167,7 @@ test("client relaunch notification handler defaults to renderer reload", async (
   assert.deepEqual(
     await handler({
       method: "client/relaunch/requested",
-      params: { reason: "restart tool" },
+      params: { mode: "hot", reason: "restart tool" },
     }),
     {
       ok: true,
@@ -177,10 +180,138 @@ test("client relaunch notification handler defaults to renderer reload", async (
   assert.deepEqual(reloads, ["restart tool"]);
 });
 
-test("client relaunch notification handler hot reloads non-shell installed artifact updates", async () => {
+test("client relaunch notification handler coalesces the same explicit mode", async () => {
+  let resolveReload;
+  let reloadCount = 0;
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("generic reload should not run for hot mode");
+      },
+      requestHotReload: () => {
+        reloadCount += 1;
+        return new Promise((resolve) => {
+          resolveReload = resolve;
+        });
+      },
+    },
+  });
+
+  const first = handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot", reason: "first" },
+  });
+  const second = handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot", reason: "second" },
+  });
+  resolveReload({
+    ok: true,
+    inPlace: true,
+    relaunching: false,
+    reloaded: true,
+    mode: "hot",
+    reason: "first",
+  });
+
+  await first;
+  assert.deepEqual(
+    {
+      alreadyRequested: (await second).alreadyRequested,
+      requestedMode: (await second).requestedMode,
+      executingMode: (await second).executingMode,
+    },
+    {
+      alreadyRequested: true,
+      requestedMode: "hot",
+      executingMode: "hot",
+    },
+  );
+  assert.equal(reloadCount, 1);
+});
+
+for (const [executingMode, requestedMode] of [
+  ["hot", "full"],
+  ["full", "hot"],
+]) {
+  test(`client relaunch notification handler rejects ${requestedMode} while ${executingMode} is in flight`, async () => {
+    let resolveActiveRequest;
+    const calls = [];
+    const handler = createClientRelaunchNotificationHandler({
+      rendererReload: {
+        requestReload: () => {
+          throw new Error("generic reload should not run for hot mode");
+        },
+        requestHotReload: (reason) => {
+          calls.push(["hot", reason]);
+          return new Promise((resolve) => {
+            resolveActiveRequest = () =>
+              resolve({
+                ok: true,
+                inPlace: true,
+                relaunching: false,
+                reloaded: true,
+                mode: "hot",
+                reason,
+              });
+          });
+        },
+      },
+      fullRelaunch: {
+        requestRelaunch: (reason) => {
+          calls.push(["full", reason]);
+          return new Promise((resolve) => {
+            resolveActiveRequest = () =>
+              resolve({ ok: true, relaunching: true, reason });
+          });
+        },
+      },
+    });
+
+    const first = handler({
+      method: "client/relaunch/requested",
+      params: { mode: executingMode, reason: "first" },
+    });
+    assert.deepEqual(
+      await handler({
+        method: "client/relaunch/requested",
+        params: { mode: requestedMode, reason: "conflict" },
+      }),
+      {
+        ok: false,
+        busy: true,
+        conflict: true,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: false,
+        mode: null,
+        requestedMode,
+        executingMode,
+        reason: `Runtime refresh mode conflict: requested ${requestedMode} while ${executingMode} is in progress`,
+      },
+    );
+    assert.deepEqual(calls, [[executingMode, "first"]]);
+
+    resolveActiveRequest();
+    await first;
+  });
+}
+
+test("client relaunch notification handler hot reloads installed artifact updates", async () => {
   const statuses = [];
   const calls = [];
-  const plan = { appBundlePath: "/Moved App.app", requiresFullRelaunch: false };
+  const plan = {
+    appBundlePath: "/Moved App.app",
+    requiresFullRelaunch: true,
+    runtimeUpdate: {
+      electronShell: {
+        category: "electronShell",
+        changed: true,
+        changedPaths: ["electron/preload.cjs"],
+      },
+    },
+  };
   const handler = createClientRelaunchNotificationHandler({
     rendererReload: {
       requestReload: () => {
@@ -215,7 +346,7 @@ test("client relaunch notification handler hot reloads non-shell installed artif
   assert.deepEqual(
     await handler({
       method: "client/relaunch/requested",
-      params: { reason: "restart tool" },
+      params: { mode: "hot", reason: "restart tool" },
     }),
     {
       ok: true,
@@ -230,6 +361,7 @@ test("client relaunch notification handler hot reloads non-shell installed artif
         pid: 42,
         reason: "restart tool",
       },
+      mode: "hot",
       mainProcessUpdate: "pendingAppRelaunch",
       preloadUpdate: "pendingWindowRecreateOrAppRelaunch",
       reason: "restart tool",
@@ -239,6 +371,7 @@ test("client relaunch notification handler hot reloads non-shell installed artif
         relaunching: false,
         reloaded: true,
         windowsReloaded: 1,
+        mode: "hot",
         reason: "restart tool",
       },
     },
@@ -256,12 +389,12 @@ test("client relaunch notification handler hot reloads non-shell installed artif
   ]);
 });
 
-test("client relaunch notification handler full relaunches shell installed artifact updates", async () => {
+test("client relaunch notification handler full relaunches installed artifact updates", async () => {
   const statuses = [];
   const calls = [];
   const plan = {
     appBundlePath: "/Moved App.app",
-    requiresFullRelaunch: true,
+    requiresFullRelaunch: false,
     runtimeUpdate: {
       electronShell: {
         category: "electronShell",
@@ -309,7 +442,7 @@ test("client relaunch notification handler full relaunches shell installed artif
   assert.deepEqual(
     await handler({
       method: "client/relaunch/requested",
-      params: { reason: "restart tool" },
+      params: { mode: "full", reason: "restart tool" },
     }),
     {
       ok: true,
@@ -322,6 +455,7 @@ test("client relaunch notification handler full relaunches shell installed artif
         stopped: true,
         reason: "restart tool",
       },
+      mode: "full",
       mainProcessUpdate: "requiresAppRelaunch",
       preloadUpdate: "requiresAppRelaunch",
       reason: "restart tool",
@@ -372,22 +506,30 @@ test("installed artifact update failure does not reload stale renderer", async (
     }),
   });
 
-  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
-    ok: false,
-    inPlace: false,
-    partial: false,
-    relaunching: false,
-    reloaded: false,
-    updated: false,
-    backendRestart: undefined,
-    reload: undefined,
-    reason: "build failed",
-  });
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "hot" },
+    }),
+    {
+      ok: false,
+      inPlace: false,
+      partial: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      backendRestart: undefined,
+      reload: undefined,
+      mode: "hot",
+      reason: "build failed",
+    },
+  );
   assert.deepEqual(reloads, []);
   assert.deepEqual(statuses.at(-1), {
     lifecycle: {
       type: "installedArtifactUpdate",
       phase: "failed",
+      mode: "hot",
       reason: "build failed",
     },
   });
@@ -418,6 +560,7 @@ test("client relaunch observer broadcasts failed result from handler", async () 
       lifecycle: {
         type: "clientRelaunch",
         phase: "failed",
+        mode: null,
         reason: "pack failed",
       },
       relaunch: {
@@ -426,6 +569,7 @@ test("client relaunch observer broadcasts failed result from handler", async () 
         relaunching: false,
         reloaded: false,
         updated: false,
+        mode: null,
         reason: "pack failed",
       },
     },
@@ -458,9 +602,149 @@ test("client relaunch observer catches rejected notification handlers", async ()
     lifecycle: {
       type: "clientRelaunch",
       phase: "failed",
+      mode: null,
       reason: "notification handler failed",
     },
   });
+});
+
+test("client relaunch observer preserves completed full mode status", async () => {
+  const statuses = [];
+
+  const result = await observeClientRelaunchResult(
+    Promise.resolve({
+      ok: true,
+      inPlace: false,
+      relaunching: true,
+      reloaded: false,
+      updated: true,
+      mode: "full",
+      reason: "restart tool",
+      relaunch: {
+        ok: true,
+        relaunching: true,
+        reason: "restart tool",
+      },
+    }),
+    {
+      broadcastStatus: (status) => statuses.push(status),
+      logger: { error: () => {} },
+      reason: "restart tool",
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(statuses, [
+    {
+      lifecycle: {
+        type: "clientRelaunch",
+        phase: "completed",
+        mode: "full",
+        reason: "restart tool",
+      },
+      relaunch: {
+        ok: true,
+        relaunching: true,
+        reason: "restart tool",
+        mode: "full",
+      },
+    },
+  ]);
+});
+
+test("client relaunch observer preserves failed hot mode status", async () => {
+  const statuses = [];
+
+  const result = await observeClientRelaunchResult(
+    Promise.resolve({
+      ok: false,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: true,
+      mode: "hot",
+      reason: "reload failed",
+    }),
+    {
+      broadcastStatus: (status) => statuses.push(status),
+      logger: { error: () => {} },
+      reason: "restart tool",
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(statuses, [
+    {
+      lifecycle: {
+        type: "clientRelaunch",
+        phase: "failed",
+        mode: "hot",
+        reason: "reload failed",
+      },
+      relaunch: {
+        ok: false,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: true,
+        mode: "hot",
+        reason: "reload failed",
+      },
+    },
+  ]);
+});
+
+test("client relaunch observer reports mode conflicts without claiming execution", async () => {
+  const statuses = [];
+
+  const result = await observeClientRelaunchResult(
+    Promise.resolve({
+      ok: false,
+      busy: true,
+      conflict: true,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      mode: null,
+      requestedMode: "full",
+      executingMode: "hot",
+      reason:
+        "Runtime refresh mode conflict: requested full while hot is in progress",
+    }),
+    {
+      broadcastStatus: (status) => statuses.push(status),
+      logger: { error: () => {} },
+      reason: "restart tool",
+    },
+  );
+
+  assert.equal(result.conflict, true);
+  assert.deepEqual(statuses, [
+    {
+      lifecycle: {
+        type: "clientRelaunch",
+        phase: "failed",
+        mode: null,
+        reason:
+          "Runtime refresh mode conflict: requested full while hot is in progress",
+      },
+      relaunch: {
+        ok: false,
+        busy: true,
+        conflict: true,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: false,
+        mode: null,
+        requestedMode: "full",
+        executingMode: "hot",
+        reason:
+          "Runtime refresh mode conflict: requested full while hot is in progress",
+      },
+    },
+  ]);
 });
 
 test("installed artifact update ok false does not relaunch", async () => {
@@ -492,17 +776,24 @@ test("installed artifact update ok false does not relaunch", async () => {
     }),
   });
 
-  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
-    ok: false,
-    inPlace: false,
-    partial: false,
-    relaunching: false,
-    reloaded: false,
-    updated: false,
-    backendRestart: undefined,
-    reload: undefined,
-    reason: "update declined",
-  });
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "hot" },
+    }),
+    {
+      ok: false,
+      inPlace: false,
+      partial: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      backendRestart: undefined,
+      reload: undefined,
+      mode: "hot",
+      reason: "update declined",
+    },
+  );
   assert.deepEqual(restarts, []);
   assert.deepEqual(reloads, []);
 });
@@ -539,23 +830,30 @@ test("installed artifact update fails partial when backend restart fails", async
     }),
   });
 
-  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
-    ok: false,
-    inPlace: false,
-    partial: true,
-    relaunching: false,
-    reloaded: false,
-    updated: true,
-    backendRestart: {
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "hot" },
+    }),
+    {
       ok: false,
-      pending: false,
-      restarted: false,
-      pid: null,
+      inPlace: false,
+      partial: true,
+      relaunching: false,
+      reloaded: false,
+      updated: true,
+      backendRestart: {
+        ok: false,
+        pending: false,
+        restarted: false,
+        pid: null,
+        reason: "backend restart failed",
+      },
+      reload: undefined,
+      mode: "hot",
       reason: "backend restart failed",
     },
-    reload: undefined,
-    reason: "backend restart failed",
-  });
+  );
   assert.deepEqual(reloads, []);
   assert.deepEqual(relaunches, []);
 });
@@ -579,23 +877,30 @@ test("installed artifact update fails partial without backend restart adapter", 
     }),
   });
 
-  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
-    ok: false,
-    inPlace: false,
-    partial: true,
-    relaunching: false,
-    reloaded: false,
-    updated: true,
-    backendRestart: {
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "hot" },
+    }),
+    {
       ok: false,
-      restarted: false,
+      inPlace: false,
+      partial: true,
+      relaunching: false,
+      reloaded: false,
+      updated: true,
+      backendRestart: {
+        ok: false,
+        restarted: false,
+        reason:
+          "App-server restart adapter is unavailable after installed artifact update.",
+      },
+      reload: undefined,
+      mode: "hot",
       reason:
         "App-server restart adapter is unavailable after installed artifact update.",
     },
-    reload: undefined,
-    reason:
-      "App-server restart adapter is unavailable after installed artifact update.",
-  });
+  );
   assert.deepEqual(reloads, []);
 });
 
@@ -631,29 +936,37 @@ test("installed artifact update fails partial when renderer reload fails", async
     }),
   });
 
-  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
-    ok: false,
-    inPlace: false,
-    partial: true,
-    relaunching: false,
-    reloaded: false,
-    updated: true,
-    backendRestart: {
-      ok: true,
-      pending: false,
-      restarted: true,
-      pid: 42,
-      reason: "client/relaunch/requested",
-    },
-    reload: {
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "hot" },
+    }),
+    {
       ok: false,
-      inPlace: true,
+      inPlace: false,
+      partial: true,
       relaunching: false,
       reloaded: false,
+      updated: true,
+      backendRestart: {
+        ok: true,
+        pending: false,
+        restarted: true,
+        pid: 42,
+        reason: "client/relaunch/requested",
+      },
+      reload: {
+        ok: false,
+        inPlace: true,
+        relaunching: false,
+        reloaded: false,
+        mode: "hot",
+        reason: "renderer reload failed",
+      },
+      mode: "hot",
       reason: "renderer reload failed",
     },
-    reason: "renderer reload failed",
-  });
+  );
   assert.deepEqual(relaunches, []);
 });
 
@@ -674,16 +987,22 @@ test("client relaunch notification falls back to renderer reload when update uns
     }),
   });
 
-  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
-    ok: true,
-    inPlace: true,
-    reloaded: true,
-    reason: "client/relaunch/requested",
-  });
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "hot" },
+    }),
+    {
+      ok: true,
+      inPlace: true,
+      reloaded: true,
+      reason: "client/relaunch/requested",
+    },
+  );
   assert.deepEqual(reloads, ["client/relaunch/requested"]);
 });
 
-test("installed artifact update coalesces concurrent restart requests", async () => {
+test("installed artifact update coalesces concurrent requests with the same mode", async () => {
   let resolveUpdate;
   let updateCount = 0;
   let resolveCount = 0;
@@ -708,18 +1027,97 @@ test("installed artifact update coalesces concurrent restart requests", async ()
         reason,
       }),
     },
+    appServerStop: {
+      requestStop: (reason) => ({ ok: true, stopped: true, reason }),
+    },
     broadcastStatus: () => {},
   });
 
-  const first = adapter.requestUpdateAndRelaunch("first");
-  const second = adapter.requestUpdateAndRelaunch("second");
+  const first = adapter.requestUpdateAndRelaunch("first", "full");
+  const second = adapter.requestUpdateAndRelaunch("second", "full");
   resolveUpdate({ ok: true, updated: true });
 
   assert.equal((await first).alreadyRequested, undefined);
-  assert.equal((await second).alreadyRequested, true);
+  assert.deepEqual(
+    {
+      alreadyRequested: (await second).alreadyRequested,
+      requestedMode: (await second).requestedMode,
+      executingMode: (await second).executingMode,
+    },
+    {
+      alreadyRequested: true,
+      requestedMode: "full",
+      executingMode: "full",
+    },
+  );
   assert.equal(resolveCount, 1);
   assert.equal(updateCount, 1);
 });
+
+for (const [executingMode, requestedMode] of [
+  ["hot", "full"],
+  ["full", "hot"],
+]) {
+  test(`installed artifact update rejects ${requestedMode} while ${executingMode} is in flight`, async () => {
+    let resolveUpdate;
+    let updateCount = 0;
+    let resolveCount = 0;
+    const adapter = createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => {
+        resolveCount += 1;
+        return { appBundlePath: "/Moved App.app" };
+      },
+      updateArtifacts: () => {
+        updateCount += 1;
+        return new Promise((resolve) => {
+          resolveUpdate = resolve;
+        });
+      },
+      appServerRestart: {
+        requestRestart: (reason) => ({
+          ok: true,
+          restarted: true,
+          reason,
+        }),
+      },
+      appServerStop: {
+        requestStop: (reason) => ({ ok: true, stopped: true, reason }),
+      },
+      reloadWindows: async () => ({ windowsReloaded: 1 }),
+      fullRelaunch: {
+        requestRelaunch: (reason) => ({
+          ok: true,
+          relaunching: true,
+          reason,
+        }),
+      },
+      broadcastStatus: () => {},
+    });
+
+    const first = adapter.requestUpdateAndRelaunch("first", executingMode);
+    assert.deepEqual(
+      await adapter.requestUpdateAndRelaunch("conflict", requestedMode),
+      {
+        ok: false,
+        busy: true,
+        conflict: true,
+        inPlace: false,
+        relaunching: false,
+        reloaded: false,
+        updated: false,
+        mode: null,
+        requestedMode,
+        executingMode,
+        reason: `Runtime refresh mode conflict: requested ${requestedMode} while ${executingMode} is in progress`,
+      },
+    );
+    assert.equal(resolveCount, 1);
+    assert.equal(updateCount, 1);
+
+    resolveUpdate({ ok: true, updated: true });
+    await first;
+  });
+}
 
 test("client relaunch notification handler does not use app relaunch directly", async () => {
   const handler = createClientRelaunchNotificationHandler({
@@ -733,7 +1131,10 @@ test("client relaunch notification handler does not use app relaunch directly", 
     },
   });
 
-  await handler({ method: "client/relaunch/requested" });
+  await handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot" },
+  });
 });
 
 test("renderer reload lifecycle adapter coalesces duplicate requests", async () => {
@@ -760,6 +1161,7 @@ test("renderer reload lifecycle adapter coalesces duplicate requests", async () 
     reloaded: true,
     alreadyRequested: false,
     windowsReloaded: 1,
+    mode: null,
     reason: "restart tool",
   });
   assert.deepEqual(await second, {
@@ -769,9 +1171,149 @@ test("renderer reload lifecycle adapter coalesces duplicate requests", async () 
     reloaded: true,
     alreadyRequested: true,
     windowsReloaded: 1,
+    mode: null,
     reason: "restart tool",
+    requestedMode: null,
+    executingMode: null,
   });
   assert.equal(reloadCount, 1);
+});
+
+test("renderer hot reload coalesces another explicit hot request", async () => {
+  let resolveReload;
+  let reloadCount = 0;
+  const adapter = createRendererReloadLifecycleAdapter({
+    broadcastStatus: () => {},
+    reloadWindows: () => {
+      reloadCount += 1;
+      return new Promise((resolve) => {
+        resolveReload = resolve;
+      });
+    },
+  });
+
+  const first = adapter.requestHotReload("first");
+  const second = adapter.requestHotReload("second");
+  resolveReload({ windowsReloaded: 1 });
+
+  assert.equal((await first).alreadyRequested, false);
+  assert.deepEqual(
+    {
+      alreadyRequested: (await second).alreadyRequested,
+      requestedMode: (await second).requestedMode,
+      executingMode: (await second).executingMode,
+    },
+    {
+      alreadyRequested: true,
+      requestedMode: "hot",
+      executingMode: "hot",
+    },
+  );
+  assert.equal(reloadCount, 1);
+});
+
+for (const [
+  firstMethod,
+  executingMode,
+  executingModeLabel,
+  secondMethod,
+  requestedMode,
+  requestedModeLabel,
+] of [
+  ["requestReload", null, "generic reload", "requestHotReload", "hot", "hot"],
+  ["requestHotReload", "hot", "hot", "requestReload", null, "generic reload"],
+]) {
+  test(`renderer reload rejects ${requestedModeLabel} while ${executingModeLabel} is in flight`, async () => {
+    let resolveReload;
+    let reloadCount = 0;
+    const adapter = createRendererReloadLifecycleAdapter({
+      broadcastStatus: () => {},
+      reloadWindows: () => {
+        reloadCount += 1;
+        return new Promise((resolve) => {
+          resolveReload = resolve;
+        });
+      },
+    });
+
+    const first = adapter[firstMethod]("first");
+    assert.deepEqual(await adapter[secondMethod]("conflict"), {
+      ok: false,
+      busy: true,
+      conflict: true,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      mode: null,
+      requestedMode,
+      executingMode,
+      reason: `Runtime refresh mode conflict: requested ${requestedModeLabel} while ${executingModeLabel} is in progress`,
+    });
+    assert.equal(reloadCount, 1);
+
+    resolveReload({ windowsReloaded: 1 });
+    await first;
+  });
+}
+
+test("outer coalesce preserves a nested renderer mode conflict", async () => {
+  let resolveReload;
+  let reloadCount = 0;
+  const rendererReload = createRendererReloadLifecycleAdapter({
+    broadcastStatus: () => {},
+    reloadWindows: () => {
+      reloadCount += 1;
+      return new Promise((resolve) => {
+        resolveReload = resolve;
+      });
+    },
+  });
+  const genericReload = rendererReload.requestReload("generic");
+  const handler = createClientRelaunchNotificationHandler({ rendererReload });
+
+  const first = handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot", reason: "first hot" },
+  });
+  const second = handler({
+    method: "client/relaunch/requested",
+    params: { mode: "hot", reason: "second hot" },
+  });
+
+  assert.deepEqual(await first, {
+    ok: false,
+    busy: true,
+    conflict: true,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    mode: null,
+    requestedMode: "hot",
+    executingMode: null,
+    reason:
+      "Runtime refresh mode conflict: requested hot while generic reload is in progress",
+  });
+  assert.deepEqual(await second, {
+    ok: false,
+    busy: true,
+    conflict: true,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    mode: null,
+    requestedMode: "hot",
+    executingMode: null,
+    reason:
+      "Runtime refresh mode conflict: requested hot while generic reload is in progress",
+    alreadyRequested: true,
+  });
+  assert.equal(reloadCount, 1);
+
+  resolveReload({ windowsReloaded: 1 });
+  await genericReload;
 });
 
 test("renderer reload lifecycle adapter falls back to full app relaunch", async () => {
@@ -809,6 +1351,7 @@ test("renderer reload lifecycle adapter falls back to full app relaunch", async 
       alreadyRequested: false,
       reason: "restart tool",
     },
+    mode: null,
     reason: "restart tool",
   });
   assert.deepEqual(calls, ["restart tool"]);
@@ -816,6 +1359,7 @@ test("renderer reload lifecycle adapter falls back to full app relaunch", async 
     lifecycle: {
       type: "rendererReload",
       phase: "fullRelaunchFallback",
+      mode: null,
       reason: "restart tool",
     },
     relaunch: {
@@ -825,4 +1369,185 @@ test("renderer reload lifecycle adapter falls back to full app relaunch", async 
       reason: "restart tool",
     },
   });
+});
+
+test("client relaunch notification handler rejects missing mode without side effects", async () => {
+  const calls = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => calls.push("reload"),
+    },
+    installedArtifactUpdate: {
+      requestUpdateAndRelaunch: () => calls.push("update"),
+    },
+    fullRelaunch: {
+      requestRelaunch: () => calls.push("relaunch"),
+    },
+  });
+
+  assert.deepEqual(await handler({ method: "client/relaunch/requested" }), {
+    ok: false,
+    inPlace: false,
+    relaunching: false,
+    reloaded: false,
+    updated: false,
+    mode: null,
+    reason: "Invalid client relaunch mode: missing",
+  });
+  assert.deepEqual(calls, []);
+});
+
+test("client relaunch notification handler rejects invalid mode without side effects", async () => {
+  const calls = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => calls.push("reload"),
+    },
+    installedArtifactUpdate: {
+      requestUpdateAndRelaunch: () => calls.push("update"),
+    },
+    fullRelaunch: {
+      requestRelaunch: () => calls.push("relaunch"),
+    },
+  });
+
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "auto" },
+    }),
+    {
+      ok: false,
+      inPlace: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      mode: null,
+      reason: "Invalid client relaunch mode: auto",
+    },
+  );
+  assert.deepEqual(calls, []);
+});
+
+test("hot renderer reload does not fall back to full relaunch", async () => {
+  const calls = [];
+  const adapter = createRendererReloadLifecycleAdapter({
+    broadcastStatus: () => {},
+    logger: { warn: () => calls.push("warn") },
+    reloadWindows: async () => {
+      throw new Error("reload failed");
+    },
+    fullRelaunch: {
+      requestRelaunch: () => calls.push("relaunch"),
+    },
+  });
+
+  assert.deepEqual(await adapter.requestHotReload("restart tool"), {
+    ok: false,
+    inPlace: true,
+    relaunching: false,
+    reloaded: false,
+    mode: "hot",
+    reason: "reload failed",
+  });
+  assert.deepEqual(calls, []);
+});
+
+test("full mode relaunches directly when installed artifact update is unsupported", async () => {
+  const calls = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("renderer reload should not run for full mode");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => null,
+      updateArtifacts: () => {
+        throw new Error("unsupported update should not run");
+      },
+    }),
+    fullRelaunch: {
+      requestRelaunch: (reason) => {
+        calls.push(["relaunch", reason]);
+        return { ok: true, relaunching: true, reason };
+      },
+    },
+  });
+
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "full", reason: "restart tool" },
+    }),
+    {
+      ok: true,
+      inPlace: false,
+      relaunching: true,
+      reloaded: false,
+      updated: false,
+      mode: "full",
+      relaunch: {
+        ok: true,
+        relaunching: true,
+        reason: "restart tool",
+      },
+      reason: "restart tool",
+    },
+  );
+  assert.deepEqual(calls, [["relaunch", "restart tool"]]);
+});
+
+test("full installed artifact update stops when app-server stop fails", async () => {
+  const calls = [];
+  const handler = createClientRelaunchNotificationHandler({
+    rendererReload: {
+      requestReload: () => {
+        throw new Error("renderer reload should not run for full mode");
+      },
+    },
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      appServerStop: {
+        requestStop: async (reason) => {
+          calls.push(["backendStop", reason]);
+          return { ok: false, stopped: false, reason: "stop failed" };
+        },
+      },
+      fullRelaunch: {
+        requestRelaunch: () => calls.push("relaunch"),
+      },
+      reloadWindows: () => {
+        throw new Error("reload should not run for full mode");
+      },
+      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+      updateArtifacts: async () => ({ ok: true, updated: true }),
+      logger: { error: () => {} },
+      broadcastStatus: () => {},
+    }),
+  });
+
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "full", reason: "restart tool" },
+    }),
+    {
+      ok: false,
+      inPlace: false,
+      partial: true,
+      relaunching: false,
+      reloaded: false,
+      updated: true,
+      backendRestart: undefined,
+      reload: undefined,
+      mode: "full",
+      reason: "stop failed",
+      backendStop: {
+        ok: false,
+        stopped: false,
+        reason: "stop failed",
+      },
+    },
+  );
+  assert.deepEqual(calls, [["backendStop", "restart tool"]]);
 });

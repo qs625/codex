@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use serde_json::json;
 use thread_service::test_support;
 use thread_service_api::ThreadSessionCapability;
+use tool_service_api::FunctionCallError;
 use tool_service_api::ToolName;
 use tool_service_api::ToolOutput;
 use tool_service_api::ToolPayload;
@@ -25,6 +26,8 @@ impl HostLifecycleToolRuntime for FakeHostLifecycleRuntime {
                 status: HostRelaunchStatus::Accepted,
                 accepted: true,
                 relaunching: false,
+                requested_mode: request.mode.clone(),
+                executed_mode: None,
                 message: "accepted".to_string(),
                 reason: Some("runtime update".to_string()),
                 resume_strategy: RESUME_STRATEGY.to_string(),
@@ -65,6 +68,7 @@ async fn request_runtime_restart_dispatches_host_request_and_returns_result() {
         Some(runtime.clone()),
         tool_call(json!({
             "reason": " runtime update ",
+            "mode": "full",
         })),
     )
     .await
@@ -75,10 +79,13 @@ async fn request_runtime_restart_dispatches_host_request_and_returns_result() {
     assert_eq!(response_json["status"], "accepted");
     assert_eq!(response_json["accepted"], true);
     assert_eq!(response_json["relaunching"], false);
+    assert_eq!(response_json["requestedMode"], "full");
+    assert_eq!(response_json["executedMode"], serde_json::Value::Null);
     assert_eq!(response_json["resumeStrategy"], RESUME_STRATEGY);
 
     let requests = runtime.requests.lock().expect("requests mutex");
     assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].mode, HostRelaunchMode::Full);
     assert_eq!(requests[0].reason.as_deref(), Some("runtime update"));
     let expected_thread_id = session.conversation_id().to_string();
     assert_eq!(requests[0].requested_by_thread_id, Some(expected_thread_id));
@@ -89,7 +96,7 @@ async fn request_runtime_restart_dispatches_host_request_and_returns_result() {
 async fn request_runtime_restart_reports_unsupported_without_host_runtime() {
     let (session, turn) = test_support::make_session_and_context().await;
 
-    let result = dispatch(session, turn, None, tool_call(json!({})))
+    let result = dispatch(session, turn, None, tool_call(json!({ "mode": "hot" })))
         .await
         .expect("unsupported is a model-visible result");
     let response_json = tool_output_json(&result);
@@ -97,7 +104,50 @@ async fn request_runtime_restart_reports_unsupported_without_host_runtime() {
     assert_eq!(response_json["status"], "unsupported");
     assert_eq!(response_json["accepted"], false);
     assert_eq!(response_json["relaunching"], false);
+    assert_eq!(response_json["requestedMode"], "hot");
+    assert_eq!(response_json["executedMode"], serde_json::Value::Null);
     assert_eq!(response_json["resumeStrategy"], RESUME_STRATEGY);
+}
+
+#[tokio::test]
+async fn request_runtime_restart_rejects_missing_mode_before_host_request() {
+    let (session, turn) = test_support::make_session_and_context().await;
+    let runtime = Arc::new(FakeHostLifecycleRuntime::default());
+
+    let error = dispatch(session, turn, Some(runtime.clone()), tool_call(json!({})))
+        .await
+        .expect_err("missing mode should fail");
+
+    match error {
+        FunctionCallError::RespondToModel(message) => {
+            assert!(message.contains("missing field `mode`"));
+        }
+        other => panic!("expected model-visible parse error, got {other:?}"),
+    }
+    assert!(runtime.requests.lock().expect("requests mutex").is_empty());
+}
+
+#[tokio::test]
+async fn request_runtime_restart_rejects_invalid_mode_before_host_request() {
+    let (session, turn) = test_support::make_session_and_context().await;
+    let runtime = Arc::new(FakeHostLifecycleRuntime::default());
+
+    let error = dispatch(
+        session,
+        turn,
+        Some(runtime.clone()),
+        tool_call(json!({ "mode": "auto" })),
+    )
+    .await
+    .expect_err("invalid mode should fail");
+
+    match error {
+        FunctionCallError::RespondToModel(message) => {
+            assert!(message.contains("unknown variant `auto`"));
+        }
+        other => panic!("expected model-visible parse error, got {other:?}"),
+    }
+    assert!(runtime.requests.lock().expect("requests mutex").is_empty());
 }
 
 #[test]
@@ -117,10 +167,12 @@ fn request_runtime_restart_tool_schema_is_narrow() {
     );
     assert!(!tool.description.contains("run shell commands"));
     assert!(!tool.description.contains("kill processes"));
-    assert_eq!(tool.parameters.required, Some(Vec::new()));
+    assert_eq!(tool.parameters.required, Some(vec!["mode".to_string()]));
     assert_eq!(tool.parameters.additional_properties, Some(false.into()));
     let properties = tool.parameters.properties.expect("properties");
-    assert_eq!(properties.len(), 1);
+    assert_eq!(properties.len(), 2);
+    let mode = properties.get("mode").expect("mode property");
+    assert_eq!(mode.enum_values, Some(vec![json!("hot"), json!("full")]));
     assert!(properties.contains_key("reason"));
     let output_schema = tool.output_schema.expect("output schema");
     assert_eq!(
@@ -129,6 +181,8 @@ fn request_runtime_restart_tool_schema_is_narrow() {
             "status",
             "accepted",
             "relaunching",
+            "requestedMode",
+            "executedMode",
             "message",
             "reason",
             "resumeStrategy"

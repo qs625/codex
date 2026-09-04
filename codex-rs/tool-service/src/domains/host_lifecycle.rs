@@ -18,6 +18,7 @@ use tool_service_api::ToolName;
 use tool_service_api::ToolSpec;
 
 use crate::HostLifecycleToolRuntime;
+use crate::HostRelaunchMode;
 use crate::HostRelaunchRequest;
 use crate::HostRelaunchResult;
 use crate::HostRelaunchStatus;
@@ -54,7 +55,9 @@ pub(crate) async fn dispatch(
 ) -> Result<AnyToolResult, FunctionCallError> {
     let args: RequestRuntimeRestartArgs = parse_arguments(&call)?;
     let reason = normalize_reason(args.reason);
+    let mode = args.mode;
     let display_arguments = json!({
+        "mode": mode,
         "reason": reason.clone(),
     });
     session
@@ -73,12 +76,13 @@ pub(crate) async fn dispatch(
         Some(runtime) => {
             runtime
                 .request_client_relaunch(HostRelaunchRequest {
+                    mode: mode.clone(),
                     reason: reason.clone(),
                     requested_by_thread_id: Some(session.conversation_id().to_string()),
                 })
                 .await
         }
-        None => unsupported_relaunch_result(reason.clone()),
+        None => unsupported_relaunch_result(mode.clone(), reason.clone()),
     };
     let output = serde_json::to_value(&result).map_err(|err| {
         FunctionCallError::Fatal(format!(
@@ -114,19 +118,42 @@ pub(crate) async fn dispatch(
 }
 
 fn create_request_runtime_restart_tool() -> ToolSpec {
-    let properties = std::collections::BTreeMap::from([(
-        "reason".to_string(),
-        JsonSchema::string(Some(
-            "Optional concise reason for refreshing the running Morpheus host.".to_string(),
-        )),
-    )]);
+    let properties = std::collections::BTreeMap::from([
+        (
+            "mode".to_string(),
+            JsonSchema::string_enum(
+                vec![json!("hot"), json!("full")],
+                Some(
+                    "Required refresh mode. Use hot to restart the app-server and reload renderer windows after updating artifacts. Use full when Electron main or preload code must be loaded by a full app relaunch.".to_string(),
+                ),
+            ),
+        ),
+        (
+            "reason".to_string(),
+            JsonSchema::string(Some(
+                "Optional concise reason for refreshing the running Morpheus host.".to_string(),
+            )),
+        ),
+    ]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: REQUEST_RUNTIME_RESTART_TOOL_NAME.to_string(),
-        description: "Use after completing a feature, fixing a bug, or changing Morpheus runtime, client, server, frontend, or backend code when the running app needs to pick up the latest compiled code. Before calling, ensure the relevant frontend and backend builds needed for the changes have already completed.".to_string(),
+        description: concat!(
+            "Use after completing a feature, fixing a bug, or changing Morpheus runtime, ",
+            "client, server, frontend, or backend code when the running app needs to pick up ",
+            "the latest compiled code. You must explicitly choose mode: \"hot\" for app-server ",
+            "restart plus renderer reload, or mode: \"full\" when Electron main/preload changes ",
+            "require a full app relaunch. Before calling, ensure the relevant frontend and ",
+            "backend builds needed for the changes have already completed."
+        )
+        .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::object(properties, Some(Vec::new()), Some(false.into())),
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["mode".to_string()]),
+            Some(false.into()),
+        ),
         output_schema: Some(request_runtime_restart_output_schema()),
     })
 }
@@ -148,6 +175,16 @@ fn request_runtime_restart_output_schema() -> Value {
                 "type": "boolean",
                 "description": "Whether the host has already confirmed that a relaunch-style fallback is in progress. A delivered request can still report false while the host update is pending."
             },
+            "requestedMode": {
+                "type": "string",
+                "enum": ["hot", "full"],
+                "description": "The explicit refresh mode requested by the tool caller."
+            },
+            "executedMode": {
+                "type": ["string", "null"],
+                "enum": ["hot", "full", null],
+                "description": "The refresh mode the host accepted for execution, when available."
+            },
             "message": {
                 "type": "string",
                 "description": "Human-readable result summary for the model."
@@ -162,7 +199,7 @@ fn request_runtime_restart_output_schema() -> Value {
                 "description": "How continuation is attempted after the host refreshes."
             }
         },
-        "required": ["status", "accepted", "relaunching", "message", "reason", "resumeStrategy"],
+        "required": ["status", "accepted", "relaunching", "requestedMode", "executedMode", "message", "reason", "resumeStrategy"],
         "additionalProperties": false
     })
 }
@@ -212,11 +249,16 @@ fn normalize_reason(reason: Option<String>) -> Option<String> {
     })
 }
 
-fn unsupported_relaunch_result(reason: Option<String>) -> HostRelaunchResult {
+fn unsupported_relaunch_result(
+    requested_mode: HostRelaunchMode,
+    reason: Option<String>,
+) -> HostRelaunchResult {
     HostRelaunchResult {
         status: HostRelaunchStatus::Unsupported,
         accepted: false,
         relaunching: false,
+        requested_mode,
+        executed_mode: None,
         message: "The current host does not expose a client relaunch runtime.".to_string(),
         reason,
         resume_strategy: RESUME_STRATEGY.to_string(),
@@ -254,6 +296,7 @@ fn now_unix_timestamp_ms() -> i64 {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RequestRuntimeRestartArgs {
+    mode: HostRelaunchMode,
     reason: Option<String>,
 }
 

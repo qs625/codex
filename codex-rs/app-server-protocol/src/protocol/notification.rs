@@ -46,7 +46,18 @@ pub struct GuardianWarningNotification {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "schema-export", ts(export))]
+pub enum ClientRelaunchMode {
+    Hot,
+    Full,
+}
+
+#[cfg_attr(feature = "schema-export", derive(JsonSchema, TS))]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema-export", ts(export))]
 pub struct ClientRelaunchRequestedNotification {
+    /// Required refresh mode chosen by the runtime tool caller.
+    pub mode: ClientRelaunchMode,
     /// Optional human-readable reason supplied by the runtime tool caller.
     pub reason: Option<String>,
     /// Thread that requested the client relaunch, when the request originated from a thread turn.
