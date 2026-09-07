@@ -535,6 +535,116 @@ test("installed artifact update failure does not reload stale renderer", async (
   });
 });
 
+test("full installed artifact build failure does not stop or relaunch", async () => {
+  const calls = [];
+  const statuses = [];
+  const handler = createClientRelaunchNotificationHandler({
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => ({ appBundlePath: "/Moved App.app" }),
+      updateArtifacts: async () => {
+        calls.push("update");
+        throw new Error("cargo build failed");
+      },
+      appServerStop: {
+        requestStop: () => {
+          calls.push("stop");
+          throw new Error("app-server stop should not run");
+        },
+      },
+      fullRelaunch: {
+        requestRelaunch: () => {
+          calls.push("relaunch");
+          throw new Error("full relaunch should not run");
+        },
+      },
+      logger: { error: () => {} },
+      broadcastStatus: (status) => statuses.push(status),
+    }),
+    fullRelaunch: {
+      requestRelaunch: () => {
+        calls.push("fallback relaunch");
+        throw new Error("fallback relaunch should not run");
+      },
+    },
+  });
+
+  const result = await handler({
+    method: "client/relaunch/requested",
+    params: { mode: "full", reason: "restart tool" },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.mode, "full");
+  assert.equal(result.reason, "cargo build failed");
+  assert.deepEqual(calls, ["update"]);
+  assert.deepEqual(statuses.at(-1), {
+    lifecycle: {
+      type: "installedArtifactUpdate",
+      phase: "failed",
+      mode: "full",
+      reason: "cargo build failed",
+    },
+  });
+});
+
+test("installed artifact planning failure is typed and does not activate", async () => {
+  const calls = [];
+  const statuses = [];
+  const handler = createClientRelaunchNotificationHandler({
+    installedArtifactUpdate: createInstalledArtifactUpdateLifecycleAdapter({
+      resolvePlan: () => {
+        calls.push("resolve");
+        throw new Error("cargo metadata failed");
+      },
+      updateArtifacts: () => calls.push("update"),
+      appServerRestart: {
+        requestRestart: () => calls.push("restart"),
+      },
+      appServerStop: {
+        requestStop: () => calls.push("stop"),
+      },
+      reloadWindows: () => calls.push("reload"),
+      fullRelaunch: {
+        requestRelaunch: () => calls.push("relaunch"),
+      },
+      logger: { error: () => {} },
+      broadcastStatus: (status) => statuses.push(status),
+    }),
+    fullRelaunch: {
+      requestRelaunch: () => calls.push("fallback relaunch"),
+    },
+  });
+
+  assert.deepEqual(
+    await handler({
+      method: "client/relaunch/requested",
+      params: { mode: "full", reason: "restart tool" },
+    }),
+    {
+      ok: false,
+      unsupported: false,
+      inPlace: false,
+      partial: false,
+      relaunching: false,
+      reloaded: false,
+      updated: false,
+      mode: "full",
+      reason: "cargo metadata failed",
+    },
+  );
+  assert.deepEqual(calls, ["resolve"]);
+  assert.deepEqual(statuses, [
+    {
+      lifecycle: {
+        type: "installedArtifactUpdate",
+        phase: "failed",
+        mode: "full",
+        reason: "cargo metadata failed",
+      },
+    },
+  ]);
+});
+
 test("client relaunch observer broadcasts failed result from handler", async () => {
   const statuses = [];
 

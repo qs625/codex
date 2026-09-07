@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {
+  buildDirectArtifactSources,
   listElectronShellSourceRelativePaths,
   prepareDirectArtifacts,
   resolveElectronShellUpdate,
@@ -80,7 +81,12 @@ test("resolves installed update plan from explicit workspace", () => {
 test("resolves release app-server from cargo metadata target directory", () => {
   const workspace = "/repo/source";
   const calls = [];
+  const commandEnv = {
+    CARGO_TARGET_DIR: "/repo/target",
+    PATH: "/test/bin",
+  };
   const plan = resolveInstalledArtifactUpdatePlan({
+    commandEnv,
     env: { ROOT_WORKER_WORKSPACE: workspace },
     platform: "darwin",
     resourcesPath: "/Applications/Root Worker Prototype.app/Contents/Resources",
@@ -94,9 +100,8 @@ test("resolves release app-server from cargo metadata target directory", () => {
   assert.equal(plan.appServerBinaryPath, "/repo/target/release/app-server");
   assert.deepEqual(calls, [
     {
-      command: "rtk",
+      command: "cargo",
       args: [
-        "cargo",
         "metadata",
         "--format-version=1",
         "--no-deps",
@@ -104,8 +109,10 @@ test("resolves release app-server from cargo metadata target directory", () => {
         "/repo/source/codex-rs/Cargo.toml",
       ],
       cwd: "/repo/source/codex-rs",
+      env: commandEnv,
     },
   ]);
+  assert.equal(plan.commandEnv, commandEnv);
 });
 
 test("cargo target directory parsing rejects missing metadata field", () => {
@@ -117,6 +124,21 @@ test("cargo target directory parsing rejects missing metadata field", () => {
         spawnSync: fakeCargoMetadataSpawn({}),
       }),
     /Cargo metadata did not include target_directory/,
+  );
+});
+
+test("cargo metadata failure reports the direct command and workspace", () => {
+  assert.throws(
+    () =>
+      resolveCargoTargetDirectory({
+        codexRsCargoManifestPath: "/repo/source/codex-rs/Cargo.toml",
+        codexRsDir: "/repo/source/codex-rs",
+        spawnSync: () => ({
+          status: 1,
+          stderr: "metadata failed",
+        }),
+      }),
+    /cargo metadata.*cwd=\/repo\/source\/codex-rs.*metadata failed/,
   );
 });
 
@@ -297,22 +319,151 @@ test("electron shell source manifest includes runtime cjs files and excludes tes
   ]);
 });
 
-test("missing frontend dist fails before replacing installed artifacts", () => {
+test("builds current workspace frontend and release app-server before preparing artifacts", () => {
   const fixture = createUpdateFixture();
-  fs.rmSync(fixture.sourceDist, { force: true, recursive: true });
+  const calls = [];
+  const invocationEnv = { PATH: "/override/bin" };
+
+  buildDirectArtifactSources(fixture.plan, {
+    env: invocationEnv,
+    spawnSync: (command, args, options = {}) => {
+      calls.push({ command, args, cwd: options.cwd, env: options.env });
+      return { status: 0 };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      command: "pnpm",
+      args: ["--filter", "@my-codex/root-worker-prototype", "build"],
+      cwd: fixture.plan.workspace,
+      env: fixture.plan.commandEnv,
+    },
+    {
+      command: "cargo",
+      args: [
+        "build",
+        "--release",
+        "--package",
+        "app-server",
+        "--bin",
+        "app-server",
+        "--manifest-path",
+        fixture.plan.codexRsCargoManifestPath,
+      ],
+      cwd: path.dirname(fixture.plan.codexRsCargoManifestPath),
+      env: fixture.plan.commandEnv,
+    },
+  ]);
+});
+
+test("frontend build failure leaves installed artifacts unchanged", () => {
+  const fixture = createUpdateFixture();
+  const calls = [];
 
   assert.throws(
     () =>
       updateInstalledArtifacts(fixture.plan, {
         directStagingRoot: fixture.directStagingRoot,
-        spawnSync: failUnexpectedSpawn,
+        spawnSync: (command, args, options = {}) => {
+          calls.push({ command, args, cwd: options.cwd });
+          return { status: 1, stderr: "frontend build failed" };
+        },
+        replaceArtifacts: failUnexpectedReplacement,
+        codesign: failUnexpectedCodesign,
+      }),
+    /pnpm --filter.*frontend build failed/,
+  );
+
+  assert.deepEqual(calls, [
+    {
+      command: "pnpm",
+      args: ["--filter", "@my-codex/root-worker-prototype", "build"],
+      cwd: fixture.plan.workspace,
+    },
+  ]);
+  assertInstalledArtifactsUnchanged(fixture);
+  assert.equal(fs.existsSync(fixture.directStagingRoot), false);
+});
+
+test("missing frontend build output fails before cargo build or replacement", () => {
+  const fixture = createUpdateFixture();
+  fs.rmSync(fixture.sourceDist, { force: true, recursive: true });
+  const calls = [];
+
+  assert.throws(
+    () =>
+      updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
+        spawnSync: (command, args, options = {}) => {
+          calls.push({ command, args, cwd: options.cwd });
+          return { status: 0 };
+        },
+        replaceArtifacts: failUnexpectedReplacement,
+        codesign: failUnexpectedCodesign,
       }),
     /Missing frontend dist/,
   );
 
-  assert.equal(read(fixture.targetAppAsar), "old asar");
-  assert.equal(read(fixture.targetAppServer), "old server");
-  assert.equal(read(fixture.targetCompact), "old compact");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "pnpm");
+  assertInstalledArtifactsUnchanged(fixture);
+  assert.equal(fs.existsSync(fixture.directStagingRoot), false);
+});
+
+test("release app-server build failure leaves installed artifacts unchanged", () => {
+  const fixture = createUpdateFixture();
+  const calls = [];
+
+  assert.throws(
+    () =>
+      updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
+        spawnSync: (command, args, options = {}) => {
+          calls.push({ command, args, cwd: options.cwd });
+          if (command === "cargo") {
+            return { status: 1, stderr: "app-server build failed" };
+          }
+          return { status: 0 };
+        },
+        replaceArtifacts: failUnexpectedReplacement,
+        codesign: failUnexpectedCodesign,
+      }),
+    /cargo build --release.*app-server build failed/,
+  );
+
+  assert.deepEqual(
+    calls.map(({ command }) => command),
+    ["pnpm", "cargo"],
+  );
+  assertInstalledArtifactsUnchanged(fixture);
+  assert.equal(fs.existsSync(fixture.directStagingRoot), false);
+});
+
+test("missing release app-server build output fails before packing or replacement", () => {
+  const fixture = createUpdateFixture();
+  fs.rmSync(fixture.plan.appServerBinaryPath, { force: true });
+  const calls = [];
+
+  assert.throws(
+    () =>
+      updateInstalledArtifacts(fixture.plan, {
+        directStagingRoot: fixture.directStagingRoot,
+        spawnSync: (command, args, options = {}) => {
+          calls.push({ command, args, cwd: options.cwd });
+          return { status: 0 };
+        },
+        replaceArtifacts: failUnexpectedReplacement,
+        codesign: failUnexpectedCodesign,
+      }),
+    /Missing release app-server binary/,
+  );
+
+  assert.deepEqual(
+    calls.map(({ command }) => command),
+    ["pnpm", "cargo"],
+  );
+  assertInstalledArtifactsUnchanged(fixture);
   assert.equal(fs.existsSync(fixture.directStagingRoot), false);
 });
 
@@ -324,33 +475,62 @@ test("asar pack failure leaves installed artifacts unchanged and includes output
     () =>
       updateInstalledArtifacts(fixture.plan, {
         directStagingRoot: fixture.directStagingRoot,
-        spawnSync: (command, args) => {
-          calls.push([command, args]);
+        spawnSync: (command, args, options = {}) => {
+          calls.push({ command, args, cwd: options.cwd });
+          if (!args.includes("@electron/asar")) {
+            return { status: 0 };
+          }
           return { status: 1, stdout: "packing stdout", stderr: "pack failed" };
         },
+        replaceArtifacts: failUnexpectedReplacement,
+        codesign: failUnexpectedCodesign,
       }),
     /@electron\/asar pack.*stdout=packing stdout.*stderr=pack failed/,
   );
 
-  assert.equal(read(fixture.targetAppAsar), "old asar");
-  assert.equal(read(fixture.targetAppServer), "old server");
-  assert.equal(read(fixture.targetCompact), "old compact");
-  assert.equal(calls.length, 1);
+  assertInstalledArtifactsUnchanged(fixture);
+  assert.deepEqual(
+    calls.map(({ command }) => command),
+    ["pnpm", "cargo", "pnpm"],
+  );
 });
 
 test("successful update replaces runnable artifacts and codesigns installed app", () => {
   const fixture = createUpdateFixture();
   const calls = [];
+  write(path.join(fixture.sourceDist, "index.html"), "stale renderer");
+  write(fixture.plan.appServerBinaryPath, "stale server");
 
   const result = updateInstalledArtifacts(fixture.plan, {
     directStagingRoot: fixture.directStagingRoot,
     updateId: "unit",
-    spawnSync: (command, args) => {
-      calls.push([command, args]);
+    env: { PATH: "/override/bin" },
+    spawnSync: (command, args, options = {}) => {
+      calls.push({
+        command,
+        args,
+        cwd: options.cwd,
+        env: options.env,
+      });
+      if (command === "pnpm" && args[0] === "--filter") {
+        write(path.join(fixture.sourceDist, "index.html"), "fresh renderer");
+      }
+      if (command === "cargo" && args[0] === "build") {
+        write(fixture.plan.appServerBinaryPath, "fresh server");
+      }
       if (args.includes("@electron/asar")) {
+        assert.equal(
+          read(
+            path.join(
+              fixture.directStagingRoot,
+              "app-source/dist/index.html",
+            ),
+          ),
+          "fresh renderer",
+        );
         write(args.at(-1), "new asar");
       }
-      if (args.includes("codesign")) {
+      if (command === "codesign") {
         assertNoBundleUpdateTemporaryDirs(fixture);
       }
       return { status: 0 };
@@ -360,35 +540,58 @@ test("successful update replaces runnable artifacts and codesigns installed app"
   assert.equal(result.ok, true);
   assert.equal(result.updated, true);
   assert.equal(read(fixture.targetAppAsar), "new asar");
-  assert.equal(read(fixture.targetAppServer), "new server");
+  assert.equal(read(fixture.targetAppServer), "fresh server");
   assert.equal(read(fixture.targetCompact), "new compact");
   assert.equal(
-    calls.some(([_command, args]) => args.includes("package:mac:app")),
+    calls.some(({ args }) => args.includes("package:mac:app")),
     false,
   );
   assert.deepEqual(calls, [
-    [
-      "rtk",
-      [
-        "pnpm",
+    {
+      command: "pnpm",
+      args: ["--filter", "@my-codex/root-worker-prototype", "build"],
+      cwd: fixture.plan.workspace,
+      env: fixture.plan.commandEnv,
+    },
+    {
+      command: "cargo",
+      args: [
+        "build",
+        "--release",
+        "--package",
+        "app-server",
+        "--bin",
+        "app-server",
+        "--manifest-path",
+        fixture.plan.codexRsCargoManifestPath,
+      ],
+      cwd: path.dirname(fixture.plan.codexRsCargoManifestPath),
+      env: fixture.plan.commandEnv,
+    },
+    {
+      command: "pnpm",
+      args: [
         "dlx",
         "@electron/asar",
         "pack",
         path.join(fixture.directStagingRoot, "app-source"),
         path.join(fixture.directStagingRoot, "resources/app.asar"),
       ],
-    ],
-    [
-      "rtk",
-      [
-        "codesign",
+      cwd: fixture.plan.workspace,
+      env: fixture.plan.commandEnv,
+    },
+    {
+      command: "codesign",
+      args: [
         "--force",
         "--deep",
         "--sign",
         "-",
         fixture.plan.appBundlePath,
       ],
-    ],
+      cwd: fixture.plan.workspace,
+      env: fixture.plan.commandEnv,
+    },
   ]);
 });
 
@@ -401,7 +604,7 @@ test("codesign failure restores old installed artifacts", () => {
         directStagingRoot: fixture.directStagingRoot,
         updateId: "codesign-failure",
         spawnSync: (command, args) => {
-          if (args.includes("codesign")) {
+          if (command === "codesign") {
             assertNoBundleUpdateTemporaryDirs(fixture);
             return { status: 1, stderr: "signature failed" };
           }
@@ -525,9 +728,11 @@ test("prepareDirectArtifacts copies built outputs without full app packaging", (
 
   const prepared = prepareDirectArtifacts(fixture.plan, {
     directStagingRoot: fixture.directStagingRoot,
-    spawnSync: (command, args) => {
-      calls.push([command, args]);
-      write(args.at(-1), "new asar");
+    spawnSync: (command, args, options = {}) => {
+      calls.push({ command, args, cwd: options.cwd });
+      if (args.includes("@electron/asar")) {
+        write(args.at(-1), "new asar");
+      }
       return { status: 0 };
     },
   });
@@ -549,7 +754,14 @@ test("prepareDirectArtifacts copies built outputs without full app packaging", (
     ),
     "new compact",
   );
-  assert.equal(calls[0][1].includes("package:mac:app"), false);
+  assert.deepEqual(
+    calls.map(({ command }) => command),
+    ["pnpm", "cargo", "pnpm"],
+  );
+  assert.equal(
+    calls.some(({ args }) => args.includes("package:mac:app")),
+    false,
+  );
 });
 
 function createUpdateFixture() {
@@ -566,7 +778,12 @@ function createUpdateFixture() {
     "Moved Root Worker Prototype.app/Contents",
   );
   const directStagingRoot = path.join(root, "direct-staging");
+  const commandEnv = {
+    CARGO_TARGET_DIR: path.join(workspace, "target"),
+    PATH: "/test/bin",
+  };
   const plan = resolveInstalledArtifactUpdatePlan({
+    commandEnv,
     env: { ROOT_WORKER_WORKSPACE: workspace },
     platform: "darwin",
     resourcesPath: installedResources,
@@ -619,13 +836,23 @@ function createUpdateFixture() {
   };
 }
 
-function failUnexpectedSpawn(command, args) {
-  throw new Error(`unexpected spawn: ${command} ${args.join(" ")}`);
+function failUnexpectedReplacement() {
+  throw new Error("replacement should not run");
+}
+
+function failUnexpectedCodesign() {
+  throw new Error("codesign should not run");
+}
+
+function assertInstalledArtifactsUnchanged(fixture) {
+  assert.equal(read(fixture.targetAppAsar), "old asar");
+  assert.equal(read(fixture.targetAppServer), "old server");
+  assert.equal(read(fixture.targetCompact), "old compact");
 }
 
 function fakeCargoMetadataSpawn(metadata, calls = []) {
   return (command, args, options = {}) => {
-    calls.push({ command, args, cwd: options.cwd });
+    calls.push({ command, args, cwd: options.cwd, env: options.env });
     return {
       status: 0,
       stdout: JSON.stringify(metadata),
